@@ -1,45 +1,26 @@
-# Torca client application
+# Torca client
 
-## Purpose
+Torca has one client application: `apps/client/flutter`.
 
-Compose the shared Flutter presentation, generated bridge, Rust ClientEngine and platform adapters into Windows and Android applications.
-
-## Current layout
+The same responsive Flutter source is used on every supported device. Windows and Android are platform targets generated and prepared by the private build tooling; they are not separate application implementations.
 
 ```text
 apps/client/
-  flutter/              shared Flutter application baseline
-  android/              Android host integration, added in Batch 18
-  windows/              Windows host integration, added in Batch 17
+└── flutter/
+    ├── lib/       shared responsive UI and gateway
+    ├── test/      shared widget/gateway tests
+    ├── windows/   generated locally when a Windows target is built/run
+    └── android/   generated locally when an Android target is built/run
 ```
 
-The Flutter baseline is buildable and testable, but it intentionally contains no product workflow state. It exists to validate the workspace until generated bridge contracts and UI features are introduced.
+Generated platform scaffolds are intentionally ignored by Git. Torca-specific Android system overlays live under `tools/build/overlays/android`; the build tooling applies them after Flutter creates the standard platform project.
 
-## Owns
+The client owns presentation, startup/shutdown and platform composition. It does not own messaging, pairing, contacts, persistence, cryptography, Tor protocol logic or retry state machines.
 
-- application startup and shutdown composition;
-- platform-specific entrypoints;
-- loading platform-protected configuration;
-- selection of concrete storage, crypto, Tor and notification adapters;
-- Flutter routing and presentation composition;
-- packaging metadata.
-
-## Does not own
-
-- messaging, pairing or contact rules;
-- database queries;
-- cryptographic algorithms;
-- wire protocol encoding;
-- retry state machines.
-
-## Validation
-
-Run the canonical root command:
+Developer entrypoints from the repository root:
 
 ```powershell
-./scripts/validate.ps1
+./scripts/build.ps1
+./scripts/run.ps1
+./scripts/deploy.ps1
 ```
-
-## 0.1 completion
-
-The Windows and Android builds initialize the same engine contracts, render equivalent snapshots and complete the same pairing and direct-message journey.
