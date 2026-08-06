@@ -9,24 +9,19 @@ This document records the supported development baseline for the active 0.1 rele
 | Rust | `1.97.1` | `rust-toolchain.toml` |
 | Cargo | bundled with Rust `1.97.1` | Rust toolchain |
 | Rust edition | `2024` | root `Cargo.toml` |
-| Flutter CI baseline | `3.44.7` stable | CI workflow and this document |
-| Flutter local minimum | `3.44.0` | `pubspec.yaml` and toolchain preflight |
-| Dart local minimum | `3.12.0` | `pubspec.yaml` and toolchain preflight |
-| PowerShell | `7+` | validation script runtime |
+| Flutter CI baseline | `3.44.7` stable | CI workflow |
+| Flutter local minimum | `3.44.0` | `pubspec.yaml` / build preflight |
+| Dart local minimum | `3.12.0` | `pubspec.yaml` / build preflight |
+| cargo-ndk | bootstrap baseline `4.1.2` | `tools/build/Torca.Build.psm1` |
+| PowerShell | `7+` | public workflow scripts |
 
-Rust `1.97.1` is used instead of `1.97.0` because the point release fixes an LLVM miscompilation. Flutter 3.44 is the supported release line for Torca 0.1 and bundles Dart 3.12. CI remains pinned to Flutter `3.44.7`; a newer stable 3.44 patch is acceptable for local validation as long as it satisfies the minimum versions above.
+A newer compatible Flutter 3.44 patch is acceptable locally; the owner validation currently uses Flutter `3.44.9` / Dart `3.12.2`.
 
 ## Toolchain preflight
 
-Before Flutter dependency resolution, `scripts/validate.ps1` runs:
+Developers do not invoke separate preflight scripts. `build.ps1`, `run.ps1` and `deploy.ps1` perform the relevant checks internally.
 
-```powershell
-./scripts/check-flutter-toolchain.ps1
-```
-
-The preflight reads `flutter --version --machine` and rejects local Flutter/Dart installations older than the supported baseline. This prevents a package-solver failure from being mistaken for an application dependency defect.
-
-When the preflight reports an older SDK, update the stable Flutter installation and verify the bundled Dart version:
+When Flutter is older than the supported baseline:
 
 ```powershell
 flutter channel stable
@@ -34,16 +29,24 @@ flutter upgrade
 flutter --version
 ```
 
-## Canonical validation
+Android native builds install `cargo-ndk` automatically when it is missing and ensure the required Rust Android targets are present. The Android NDK itself is provided by the normal Flutter/Android SDK installation.
 
-The only supported repository-wide validation entrypoint is:
+## Canonical workflows
 
 ```powershell
-./scripts/validate.ps1
+./scripts/build.ps1
+./scripts/run.ps1
+./scripts/deploy.ps1
 ```
 
-It runs Rust formatting, generated-contract verification, build checks, Clippy, Rust tests, Flutter toolchain preflight, Flutter dependency resolution, Dart formatting, Flutter static analysis and Flutter tests. The GitHub Actions workflow calls the same script.
+CI uses:
+
+```powershell
+./scripts/build.ps1 -Target check -CI
+```
+
+`build.ps1` owns formatting/codegen, release and architecture checks, Cargo dependency resolution, Rust check/Clippy/tests, Flutter dependency resolution, static analysis and Flutter tests. Platform builds add the native dynamic library and standard Flutter platform scaffold.
 
 ## Upgrade policy
 
-A toolchain baseline change must update every affected pin and document in one commit, run the canonical validation command, and record the result in `0.1_PROGRESS.md`. Toolchain upgrades must not be mixed with domain behavior changes.
+A toolchain baseline change must update every affected pin and document in one coherent change, pass the canonical build command, and be recorded in `0.1_PROGRESS.md`. Toolchain upgrades must not be mixed with product-domain behavior changes.
