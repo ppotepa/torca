@@ -4,9 +4,7 @@ Torca 0.1 is the first clean engineering baseline for the new repository. It is 
 
 ## Start here
 
-The current implementation state is maintained in the repository root at [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md).
-
-That file is the operational entrypoint for every developer or agent. It records what is complete, what remains, the current batch, blockers, validation evidence and the exact next action.
+Read [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md) before changing the repository. It is the only live implementation and handoff record.
 
 ## Goal
 
@@ -20,10 +18,15 @@ Deliver a coherent private 1:1 messenger skeleton in which two client installati
 - [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — concrete dependency-aware sequence.
 - [`TRACEABILITY.md`](TRACEABILITY.md) — mapping from required capabilities to domains and milestones.
 - [`RISKS.md`](RISKS.md) — active technical and product risks.
-- [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md) — live progress, validation and handoff.
+- [`TOOLCHAIN.md`](TOOLCHAIN.md) — pinned development baseline.
+- [`FOUNDATION_CONTRACTS.md`](FOUNDATION_CONTRACTS.md) — identifiers, time, command/event, error and cancellation contracts.
 - [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) — release completion rules.
 
-`STATUS.md` remains only as a compatibility pointer to the canonical root progress document and must not contain a separate checklist.
+`STATUS.md` is only a compatibility pointer. Current progress is maintained at the repository root.
+
+## Validation ownership
+
+Implementation agents record static review and add tests with each batch. The project owner executes the full local validation suite and supplies results for addition to `0.1_PROGRESS.md`. Pending local test evidence is recorded explicitly and is never represented as a passing result.
 
 ## Release posture
 
