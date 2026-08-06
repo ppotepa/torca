@@ -2,6 +2,7 @@ use core::fmt;
 use std::path::Path;
 
 use rusqlite::{OptionalExtension, params};
+use torca_client_engine::{EngineError, RelationshipRepository};
 use torca_contacts::{
     Contact, ContactError, ContactId, ContactRepository, ContactRoute, ContactStatus,
 };
@@ -16,8 +17,8 @@ use torca_identity::{
 };
 
 use crate::{
-    DatabaseKey, MigrationError, SqlCipherBackend, StorageBackendError, StorageKernel, contact_sql,
-    conversation_sql, identity_sql,
+    DatabaseKey, MigrationError, SqlCipherBackend, StorageBackend, StorageBackendError,
+    StorageKernel, contact_sql, conversation_sql, identity_sql,
 };
 
 /// Failure while opening and migrating a concrete encrypted store.
@@ -165,7 +166,7 @@ impl IdentityRepository for SqlCipherStore {
 
 impl ContactRepository for SqlCipherStore {
     fn insert(&mut self, contact: Contact) -> Result<(), ContactError> {
-        if self.get(contact.id())?.is_some() {
+        if ContactRepository::get(self, contact.id())?.is_some() {
             return Err(ContactError::AlreadyExists);
         }
         execute_contact(&self.backend, contact_sql::INSERT.sql, &contact)
@@ -197,7 +198,7 @@ impl ContactRepository for SqlCipherStore {
     }
 
     fn update(&mut self, contact: Contact) -> Result<(), ContactError> {
-        if self.get(contact.id())?.is_none() {
+        if ContactRepository::get(self, contact.id())?.is_none() {
             return Err(ContactError::NotFound);
         }
         execute_contact(&self.backend, contact_sql::UPDATE.sql, &contact)
@@ -236,28 +237,13 @@ impl ContactRepository for SqlCipherStore {
 
 impl ConversationRepository for SqlCipherStore {
     fn insert(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
-        if self.get(conversation.id())?.is_some() {
+        if ConversationRepository::get(self, conversation.id())?.is_some() {
             return Err(ConversationError::AlreadyExists);
         }
-        if self.for_contact(conversation.contact_id())?.is_some() {
+        if ConversationRepository::for_contact(self, conversation.contact_id())?.is_some() {
             return Err(ConversationError::ContactAlreadyHasConversation);
         }
-        let id = conversation.id().to_opaque().into_bytes();
-        let contact_id = conversation.contact_id().to_opaque().into_bytes();
-        self.backend
-            .connection()
-            .execute(
-                conversation_sql::INSERT.sql,
-                params![
-                    id.as_slice(),
-                    contact_id.as_slice(),
-                    encode_conversation_status(conversation.status()),
-                    conversation.created_at().to_unix_millis(),
-                    conversation.updated_at().to_unix_millis(),
-                ],
-            )
-            .map_err(|_| ConversationError::RepositoryFailure)?;
-        Ok(())
+        insert_conversation(&self.backend, &conversation)
     }
 
     fn get(&self, id: ConversationId) -> Result<Option<DirectConversation>, ConversationError> {
@@ -331,6 +317,47 @@ impl ConversationRepository for SqlCipherStore {
                 .into_conversation()
         })
         .collect()
+    }
+}
+
+impl RelationshipRepository for SqlCipherStore {
+    fn insert_pairing_result(
+        &mut self,
+        contact: Contact,
+        conversation: DirectConversation,
+    ) -> Result<(), EngineError> {
+        if contact.id() != conversation.contact_id() {
+            return Err(EngineError("pairing relationship identifiers do not match".into()));
+        }
+        if ContactRepository::get(self, contact.id()).map_err(relationship_error)?.is_some()
+            || ConversationRepository::get(self, conversation.id())
+                .map_err(relationship_error)?
+                .is_some()
+            || ConversationRepository::for_contact(self, contact.id())
+                .map_err(relationship_error)?
+                .is_some()
+        {
+            return Err(EngineError("contact or conversation already exists".into()));
+        }
+
+        self.backend.begin().map_err(|_| relationship_failure())?;
+        let result = (|| {
+            execute_contact(&self.backend, contact_sql::INSERT.sql, &contact)
+                .map_err(relationship_error)?;
+            insert_conversation(&self.backend, &conversation).map_err(relationship_error)?;
+            Ok::<(), EngineError>(())
+        })();
+
+        match result {
+            Ok(()) => self
+                .backend
+                .commit()
+                .map_err(|_| relationship_failure()),
+            Err(error) => {
+                let _ = self.backend.rollback();
+                Err(error)
+            }
+        }
     }
 }
 
@@ -507,6 +534,28 @@ fn execute_contact(
     Ok(())
 }
 
+fn insert_conversation(
+    backend: &SqlCipherBackend,
+    conversation: &DirectConversation,
+) -> Result<(), ConversationError> {
+    let id = conversation.id().to_opaque().into_bytes();
+    let contact_id = conversation.contact_id().to_opaque().into_bytes();
+    backend
+        .connection()
+        .execute(
+            conversation_sql::INSERT.sql,
+            params![
+                id.as_slice(),
+                contact_id.as_slice(),
+                encode_conversation_status(conversation.status()),
+                conversation.created_at().to_unix_millis(),
+                conversation.updated_at().to_unix_millis(),
+            ],
+        )
+        .map_err(|_| ConversationError::RepositoryFailure)?;
+    Ok(())
+}
+
 fn fixed_16_identity(
     value: Vec<u8>,
     field: &str,
@@ -550,6 +599,15 @@ const fn encode_conversation_status(value: ConversationStatus) -> i64 {
     }
 }
 
+fn relationship_error(error: impl fmt::Display) -> EngineError {
+    let _ = error;
+    relationship_failure()
+}
+
+fn relationship_failure() -> EngineError {
+    EngineError("relationship repository operation failed".into())
+}
+
 fn repository_error(error: rusqlite::Error) -> IdentityRepositoryError {
     let code = error
         .sqlite_error_code()
@@ -563,10 +621,9 @@ fn data_error(message: &str) -> IdentityRepositoryError {
 
 #[cfg(test)]
 mod tests {
+    use torca_client_engine::RelationshipRepository;
     use torca_contacts::{Contact, ContactId, ContactRepository, ContactRoute};
-    use torca_conversations::{
-        ConversationId, ConversationRepository, DirectConversation,
-    };
+    use torca_conversations::{ConversationId, ConversationRepository, DirectConversation};
     use torca_foundation::{OpaqueId, Timestamp};
     use torca_identity::{
         Identity, IdentityId, IdentityKey, IdentityRepository, KeyAlgorithm, KeyId, Profile,
@@ -591,8 +648,8 @@ mod tests {
         let public = PublicIdentity::new(IdentityId::from_u128(1), public_key, 0);
         let identity = Identity::new(public, profile, Timestamp::UNIX_EPOCH);
 
-        store.insert(&identity).expect("insert");
-        assert_eq!(store.load().expect("load"), Some(identity));
+        IdentityRepository::insert(&mut store, &identity).expect("insert");
+        assert_eq!(IdentityRepository::load(&store).expect("load"), Some(identity));
     }
 
     #[test]
@@ -605,15 +662,18 @@ mod tests {
             ContactRoute::new("peer.onion", OpaqueId::from_u128(22)).expect("route"),
             Timestamp::UNIX_EPOCH,
         );
-        store.insert(contact.clone()).expect("insert contact");
-        assert_eq!(ContactRepository::get(&store, contact.id()).expect("get contact"), Some(contact.clone()));
-
         let conversation = DirectConversation::new(
             ConversationId::from_u128(23),
             contact.id(),
             Timestamp::UNIX_EPOCH,
         );
-        store.insert(conversation.clone()).expect("insert conversation");
+        store
+            .insert_pairing_result(contact.clone(), conversation.clone())
+            .expect("insert relationship");
+        assert_eq!(
+            ContactRepository::get(&store, contact.id()).expect("get contact"),
+            Some(contact)
+        );
         assert_eq!(
             ConversationRepository::get(&store, conversation.id()).expect("get conversation"),
             Some(conversation)
