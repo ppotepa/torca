@@ -2,6 +2,10 @@ use core::fmt;
 
 use torca_client_engine::{ClientEngineActor, EngineHandle};
 
+#[cfg(target_os = "android")]
+#[path = "android.rs"]
+mod android;
+
 /// Redaction-safe native composition failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeCompositionError(String);
@@ -20,6 +24,9 @@ impl fmt::Display for NativeCompositionError {
 
 impl std::error::Error for NativeCompositionError {}
 
+const DATABASE_KEY_HANDLE: torca_identity::KeyId =
+    torca_identity::KeyId::from_u128(0x746f7263615f64625f6b6579);
+
 #[cfg(windows)]
 pub(crate) fn spawn_production_engine(
 ) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
@@ -27,14 +34,9 @@ pub(crate) fn spawn_production_engine(
 
     use torca_client_engine::ClientEngine;
     use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
-    use torca_identity::KeyId;
     use torca_pairing::InMemoryPairingRepository;
     use torca_platform_windows::DpapiFileSecretStore;
-    use torca_storage_sqlite::{
-        SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore,
-    };
-
-    const DATABASE_KEY_HANDLE: KeyId = KeyId::from_u128(0x746f7263615f64625f6b6579);
+    use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore};
 
     let local_app_data = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -77,7 +79,50 @@ pub(crate) fn spawn_production_engine(
     Ok(ClientEngineActor::spawn(engine))
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "android")]
+pub(crate) fn spawn_production_engine(
+) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
+    use torca_client_engine::ClientEngine;
+    use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
+    use torca_pairing::InMemoryPairingRepository;
+    use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore};
+
+    use self::android::{AndroidProtectedSecretStore, database_path};
+
+    let database_path = database_path()
+        .map_err(|error| secret_error("resolve Android database path", &error))?;
+    let mut database_secret_store = AndroidProtectedSecretStore::new("database");
+    let database_key = load_or_create_database_key(
+        &mut database_secret_store,
+        DATABASE_KEY_HANDLE,
+        RustCryptoProvider,
+    )?;
+
+    let identity_repository = SqlCipherStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open identity repository", &error))?;
+    let relationships = SqlCipherStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open relationship repository", &error))?;
+    let messages = SqlCipherMessageStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open message repository", &error))?;
+    let receipts = SqlCipherReceiptStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open receipt repository", &error))?;
+
+    let identity_keys = ManagedIdentityKeys::new(
+        RustCryptoProvider,
+        AndroidProtectedSecretStore::new("identity"),
+    );
+    let engine = ClientEngine::new(
+        identity_repository,
+        identity_keys,
+        InMemoryPairingRepository::default(),
+        relationships,
+        messages,
+        receipts,
+    );
+    Ok(ClientEngineActor::spawn(engine))
+}
+
+#[cfg(any(windows, target_os = "android"))]
 fn load_or_create_database_key<S: torca_crypto::ProtectedSecretStore, C: torca_crypto::CryptoProvider>(
     store: &mut S,
     handle: torca_identity::KeyId,
@@ -118,7 +163,7 @@ fn io_error(operation: &str, error: &std::io::Error) -> NativeCompositionError {
     NativeCompositionError::new(format!("{operation} failed ({:?})", error.kind()))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "android"))]
 fn secret_error(
     operation: &str,
     error: &torca_crypto::ProtectedSecretStoreError,
@@ -126,12 +171,12 @@ fn secret_error(
     NativeCompositionError::new(format!("{operation} failed: {error}"))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "android"))]
 fn storage_error(operation: &str, error: &impl fmt::Display) -> NativeCompositionError {
     NativeCompositionError::new(format!("{operation} failed: {error}"))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "android")))]
 pub(crate) fn spawn_production_engine(
 ) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
     Err(NativeCompositionError::new(
