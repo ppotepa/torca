@@ -1,11 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:torca_app/main.dart';
+import 'package:torca_app/app.dart';
+import 'package:torca_app/gateway/memory_engine_gateway.dart';
 
 void main() {
-  testWidgets('renders the foundation shell', (WidgetTester tester) async {
-    await tester.pumpWidget(const TorcaApp());
-
-    expect(find.text('Torca 0.1'), findsOneWidget);
-    expect(find.text('Foundation workspace'), findsOneWidget);
+  testWidgets('identity setup is the initial recoverable route', (tester) async {
+    await tester.pumpWidget(TorcaApp(gateway: MemoryEngineGateway()));
+    expect(find.text('Create local identity'), findsOneWidget);
+    expect(find.text('Torca'), findsOneWidget);
   });
 }

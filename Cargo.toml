@@ -17,6 +17,9 @@ members = [
     "crates/protocol/torca-peer-protocol",
     "crates/infrastructure/torca-peer",
     "crates/infrastructure/torca-transport-tor",
+    "crates/platform/torca-bridge",
+    "crates/platform/torca-platform",
+    "tools/torca-contract-gen",
 ]
 resolver = "3"
 

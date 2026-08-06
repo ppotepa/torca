@@ -3,6 +3,11 @@
 version = 4
 
 [[package]]
+name = "torca-bridge"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-client-engine", "torca-contacts", "torca-conversations", "torca-foundation", "torca-identity", "torca-messaging", "torca-pairing", "torca-receipts"]
+
+[[package]]
 name = "torca-client-engine"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-contacts", "torca-conversations", "torca-foundation", "torca-identity", "torca-messaging", "torca-pairing", "torca-receipts"]
@@ -11,6 +16,11 @@ dependencies = ["torca-contacts", "torca-conversations", "torca-foundation", "to
 name = "torca-contacts"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation", "torca-identity"]
+
+[[package]]
+name = "torca-contract-gen"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-bridge"]
 
 [[package]]
 name = "torca-conversations"
@@ -50,6 +60,10 @@ dependencies = ["torca-foundation", "torca-peer-protocol"]
 name = "torca-peer-protocol"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation", "torca-wire"]
+
+[[package]]
+name = "torca-platform"
+version = "0.1.0-alpha.0"
 
 [[package]]
 name = "torca-projections"

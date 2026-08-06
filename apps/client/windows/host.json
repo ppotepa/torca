@@ -1,0 +1,7 @@
+{
+  "nativeLibrary": "torca_bridge.dll",
+  "closeBehavior": "minimize_to_tray",
+  "singleInstance": true,
+  "restoreOnSecondLaunch": true,
+  "diagnosticExportRedacted": true
+}

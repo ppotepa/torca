@@ -1,0 +1,22 @@
+[package]
+name = "torca-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-client-engine = { path = "../../application/torca-client-engine" }
+torca-identity = { path = "../../domains/torca-identity" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-conversations = { path = "../../domains/torca-conversations" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+torca-messaging = { path = "../../domains/torca-messaging" }
+torca-receipts = { path = "../../domains/torca-receipts" }
+
+[lints]
+workspace = true
