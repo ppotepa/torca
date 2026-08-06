@@ -1,14 +1,19 @@
 //! Semantic cryptographic contracts, production RustCrypto adapters and redaction-safe value types.
 //!
-//! [`RustCryptoProvider`] is the production algorithm implementation. The deterministic provider
-//! remains available only for tests and simulations. Platform-protected persistence of private
-//! keys is intentionally a separate integration boundary.
+//! [`RustCryptoProvider`] is the production algorithm implementation. Platform-protected
+//! persistence is composed through [`ProtectedSecretStore`] and [`ManagedIdentityKeys`].
+//! The deterministic algorithm and in-memory secret store remain test-only.
 
+mod key_management;
 mod ports;
 mod production;
 mod test_support;
 mod types;
 
+pub use key_management::{
+    InMemoryProtectedSecretStore, ManagedIdentityKeys, ManagedKeyError, ProtectedSecretStore,
+    ProtectedSecretStoreError,
+};
 pub use ports::CryptoProvider;
 pub use production::RustCryptoProvider;
 pub use test_support::DeterministicTestCrypto;
