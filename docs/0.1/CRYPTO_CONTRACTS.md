@@ -2,11 +2,12 @@
 
 `torca-crypto` defines redaction-safe semantic crypto interfaces and value types.
 
-## Implemented
+Implemented:
 
-- private/public key, signature, nonce and ciphertext value types;
-- redacted private-key diagnostics and best-effort zeroing;
-- signing, verification, randomness and authenticated sealing/opening port;
+- separate signing-secret and symmetric sealing-key types, preventing cross-purpose key use;
+- public key, signature, nonce and ciphertext value types;
+- redacted secret diagnostics and best-effort zeroing;
+- signing, verification, secure-randomness and authenticated sealing/opening port;
 - deterministic provider for tests and simulations.
 
 ## Security gate
