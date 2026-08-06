@@ -1,4 +1,4 @@
-name: Validate
+name: Build
 
 on:
   push:
@@ -11,12 +11,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: Rust and Flutter
+  build:
+    name: Shared Rust and Flutter client
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -37,6 +37,6 @@ jobs:
           flutter-version: 3.44.7
           cache: true
 
-      - name: Validate repository
+      - name: Build and validate repository
         shell: pwsh
-        run: ./scripts/validate.ps1
+        run: ./scripts/build.ps1 -Target check -CI
