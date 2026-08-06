@@ -9,6 +9,9 @@
 .packages
 .pub-cache/
 build/
+apps/client/flutter/.metadata
+apps/client/flutter/windows/
+apps/client/flutter/android/
 
 # Android
 .gradle/
