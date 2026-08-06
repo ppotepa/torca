@@ -10,10 +10,12 @@ publish = false
 
 [dependencies]
 rusqlite = { version = "0.38", features = ["bundled-sqlcipher-vendored-openssl"] }
+torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-messaging = { path = "../../domains/torca-messaging" }
+torca-receipts = { path = "../../domains/torca-receipts" }
 
 [lints]
 workspace = true
