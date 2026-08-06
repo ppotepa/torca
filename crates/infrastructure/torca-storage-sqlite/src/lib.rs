@@ -6,13 +6,14 @@ mod durable;
 mod durable_sqlcipher;
 mod message_repository;
 mod migration;
+mod receipt_repository;
 mod repository;
 mod sqlcipher;
 mod storage;
 
 pub use backend::{MemoryStorageBackend, StorageBackend, StorageBackendError};
 pub use catalog::{
-    SqlStatement, contact_sql, conversation_sql, identity_sql, messaging_sql,
+    SqlStatement, contact_sql, conversation_sql, identity_sql, messaging_sql, receipt_sql,
 };
 pub use durable::{
     DurableDeliveryError, DurableDeliveryStore, InMemoryDurableDeliveryStore, OutboxRecord,
@@ -21,6 +22,7 @@ pub use durable::{
 pub use durable_sqlcipher::{SqlCipherDurableStore, SqlCipherDurableStoreOpenError};
 pub use message_repository::{SqlCipherMessageStore, SqlCipherMessageStoreOpenError};
 pub use migration::{Migration, MigrationError, MigrationRunner, migrations};
+pub use receipt_repository::{SqlCipherReceiptStore, SqlCipherReceiptStoreOpenError};
 pub use repository::{SqlCipherStore, SqlCipherStoreOpenError};
 pub use sqlcipher::{DatabaseKey, SqlCipherBackend};
 pub use storage::StorageKernel;
