@@ -13,27 +13,28 @@ Future<void> main() async {
     defaultValue: false,
   );
 
-  final EngineGateway gateway;
-  if (useMemoryGateway) {
-    gateway = MemoryEngineGateway();
-  } else {
-    try {
-      final FfiEngineGateway nativeGateway = FfiEngineGateway.open();
-      final result = await nativeGateway.initialize();
-      gateway = result.ok
-          ? nativeGateway
-          : UnavailableEngineGateway(
-              result.error ?? 'native Torca engine failed to initialize',
-            );
-      if (!result.ok) {
-        await nativeGateway.dispose();
-      }
-    } on Object catch (error) {
-      gateway = UnavailableEngineGateway(
-        'native Torca engine is unavailable: $error',
-      );
-    }
-  }
+  final EngineGateway gateway = useMemoryGateway
+      ? MemoryEngineGateway()
+      : await _openNativeGateway();
 
   runApp(TorcaApp(gateway: gateway));
+}
+
+Future<EngineGateway> _openNativeGateway() async {
+  try {
+    final FfiEngineGateway nativeGateway = FfiEngineGateway.open();
+    final result = await nativeGateway.initialize();
+    if (result.ok) {
+      return nativeGateway;
+    }
+
+    await nativeGateway.dispose();
+    return UnavailableEngineGateway(
+      result.error ?? 'native Torca engine failed to initialize',
+    );
+  } on Object catch (error) {
+    return UnavailableEngineGateway(
+      'native Torca engine is unavailable: $error',
+    );
+  }
 }
