@@ -17,12 +17,7 @@ impl EventMetadata {
         correlation_id: CorrelationId,
         causation_id: CausationId,
     ) -> Self {
-        Self {
-            event_id,
-            occurred_at,
-            correlation_id,
-            causation_id,
-        }
+        Self { event_id, occurred_at, correlation_id, causation_id }
     }
 
     /// Returns the unique event occurrence identifier.

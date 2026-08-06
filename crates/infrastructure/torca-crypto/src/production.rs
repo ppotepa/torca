@@ -46,15 +46,12 @@ impl CryptoProvider for RustCryptoProvider {
         let verifying_key =
             VerifyingKey::from_bytes(&public.0).map_err(|_| CryptoError::InvalidKey)?;
         let signature = DalekSignature::from_bytes(&signature.0);
-        verifying_key
-            .verify_strict(message, &signature)
-            .map_err(|_| CryptoError::InvalidSignature)
+        verifying_key.verify_strict(message, &signature).map_err(|_| CryptoError::InvalidSignature)
     }
 
     fn fill_random(&mut self, output: &mut [u8]) -> Result<(), CryptoError> {
         let mut rng = OsRng;
-        rng.try_fill_bytes(output)
-            .map_err(|_| CryptoError::RandomnessUnavailable)
+        rng.try_fill_bytes(output).map_err(|_| CryptoError::RandomnessUnavailable)
     }
 
     fn seal(
@@ -64,16 +61,10 @@ impl CryptoProvider for RustCryptoProvider {
         associated_data: &[u8],
         plaintext: &[u8],
     ) -> Result<Ciphertext, CryptoError> {
-        let cipher = XChaCha20Poly1305::new_from_slice(key.expose())
-            .map_err(|_| CryptoError::InvalidKey)?;
+        let cipher =
+            XChaCha20Poly1305::new_from_slice(key.expose()).map_err(|_| CryptoError::InvalidKey)?;
         cipher
-            .encrypt(
-                XNonce::from_slice(&nonce.0),
-                Payload {
-                    msg: plaintext,
-                    aad: associated_data,
-                },
-            )
+            .encrypt(XNonce::from_slice(&nonce.0), Payload { msg: plaintext, aad: associated_data })
             .map(Ciphertext)
             .map_err(|_| CryptoError::Internal)
     }
@@ -85,15 +76,12 @@ impl CryptoProvider for RustCryptoProvider {
         associated_data: &[u8],
         ciphertext: &Ciphertext,
     ) -> Result<Vec<u8>, CryptoError> {
-        let cipher = XChaCha20Poly1305::new_from_slice(key.expose())
-            .map_err(|_| CryptoError::InvalidKey)?;
+        let cipher =
+            XChaCha20Poly1305::new_from_slice(key.expose()).map_err(|_| CryptoError::InvalidKey)?;
         cipher
             .decrypt(
                 XNonce::from_slice(&nonce.0),
-                Payload {
-                    msg: &ciphertext.0,
-                    aad: associated_data,
-                },
+                Payload { msg: &ciphertext.0, aad: associated_data },
             )
             .map_err(|_| CryptoError::AuthenticationFailed)
     }
@@ -141,9 +129,7 @@ mod tests {
         let signature = provider.sign(&signing_key, b"").expect("sign");
 
         assert_eq!(signature, Signature(expected_signature));
-        provider
-            .verify(&PublicKey(expected_public), b"", &signature)
-            .expect("verify");
+        provider.verify(&PublicKey(expected_public), b"", &signature).expect("verify");
     }
 
     #[test]
@@ -166,15 +152,11 @@ mod tests {
 
         let provider = RustCryptoProvider;
         let sealing_key = SealingKey::new(key);
-        let ciphertext = provider
-            .seal(&sealing_key, Nonce(nonce), &aad, plaintext)
-            .expect("seal");
+        let ciphertext = provider.seal(&sealing_key, Nonce(nonce), &aad, plaintext).expect("seal");
 
         assert_eq!(ciphertext, Ciphertext(expected));
         assert_eq!(
-            provider
-                .open(&sealing_key, Nonce(nonce), &aad, &ciphertext)
-                .expect("open"),
+            provider.open(&sealing_key, Nonce(nonce), &aad, &ciphertext).expect("open"),
             plaintext
         );
     }
@@ -184,9 +166,7 @@ mod tests {
         let provider = RustCryptoProvider;
         let key = SealingKey::new([7; 32]);
         let nonce = Nonce([9; 24]);
-        let mut ciphertext = provider
-            .seal(&key, nonce, b"context", b"payload")
-            .expect("seal");
+        let mut ciphertext = provider.seal(&key, nonce, b"context", b"payload").expect("seal");
         ciphertext.0[0] ^= 1;
 
         assert!(provider.open(&key, nonce, b"context", &ciphertext).is_err());

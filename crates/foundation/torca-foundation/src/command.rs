@@ -28,12 +28,7 @@ impl CommandMetadata {
         correlation_id: CorrelationId,
         causation_id: CausationId,
     ) -> Self {
-        Self {
-            command_id,
-            issued_at,
-            correlation_id,
-            causation_id: Some(causation_id),
-        }
+        Self { command_id, issued_at, correlation_id, causation_id: Some(causation_id) }
     }
 
     /// Returns the stable idempotency identifier.

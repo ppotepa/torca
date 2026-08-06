@@ -16,14 +16,8 @@ struct TemporaryDatabase(PathBuf);
 
 impl TemporaryDatabase {
     fn new(label: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        Self(std::env::temp_dir().join(format!(
-            "torca-{label}-{}-{nanos}.db",
-            std::process::id()
-        )))
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos();
+        Self(std::env::temp_dir().join(format!("torca-{label}-{}-{nanos}.db", std::process::id())))
     }
 
     fn path(&self) -> &Path {
@@ -41,12 +35,8 @@ impl Drop for TemporaryDatabase {
 
 fn identity() -> Identity {
     let profile = Profile::new(ProfileName::new("Restart Orca").expect("name"), None);
-    let key = IdentityKey::new(
-        KeyId::from_u128(2),
-        KeyAlgorithm::Ed25519,
-        vec![3; 32],
-    )
-    .expect("key");
+    let key =
+        IdentityKey::new(KeyId::from_u128(2), KeyAlgorithm::Ed25519, vec![3; 32]).expect("key");
     Identity::new(
         PublicIdentity::new(IdentityId::from_u128(1), key, 0),
         profile,
@@ -100,27 +90,10 @@ fn claimed_outbox_is_recovered_after_restart() {
         store
             .queue_outbound(message, CommandId::from_u128(13), Timestamp::UNIX_EPOCH)
             .expect("queue");
-        assert_eq!(
-            store
-                .claim_due(Timestamp::UNIX_EPOCH, 1)
-                .expect("claim")
-                .len(),
-            1
-        );
+        assert_eq!(store.claim_due(Timestamp::UNIX_EPOCH, 1).expect("claim").len(), 1);
     }
 
     let mut reopened = SqlCipherDurableStore::open(database.path(), &key).expect("reopen");
-    assert_eq!(
-        reopened
-            .recover_stale_claims(Timestamp::UNIX_EPOCH)
-            .expect("recover"),
-        1
-    );
-    assert_eq!(
-        reopened
-            .claim_due(Timestamp::UNIX_EPOCH, 1)
-            .expect("reclaim")
-            .len(),
-        1
-    );
+    assert_eq!(reopened.recover_stale_claims(Timestamp::UNIX_EPOCH).expect("recover"), 1);
+    assert_eq!(reopened.claim_due(Timestamp::UNIX_EPOCH, 1).expect("reclaim").len(), 1);
 }

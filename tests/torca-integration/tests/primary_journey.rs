@@ -55,29 +55,19 @@ fn identity_pairing_message_receipt_and_attachment_flow_is_coherent() {
 
     assert_eq!(
         engine
-            .dispatch(EngineCommand::PeerJoined {
-                session_id,
-                proposal,
-                at: at(2),
-            })
+            .dispatch(EngineCommand::PeerJoined { session_id, proposal, at: at(2) })
             .expect("peer joined"),
         EngineResult::PairingUpdated
     );
     assert_eq!(
         engine
-            .dispatch(EngineCommand::ApprovePairing {
-                session_id,
-                at: at(3),
-            })
+            .dispatch(EngineCommand::ApprovePairing { session_id, at: at(3) })
             .expect("local approval"),
         EngineResult::PairingUpdated
     );
     assert_eq!(
         engine
-            .dispatch(EngineCommand::RemoteApproved {
-                session_id,
-                at: at(4),
-            })
+            .dispatch(EngineCommand::RemoteApproved { session_id, at: at(4) })
             .expect("remote approval"),
         EngineResult::PairingUpdated
     );
@@ -93,10 +83,7 @@ fn identity_pairing_message_receipt_and_attachment_flow_is_coherent() {
                 at: at(5),
             })
             .expect("complete"),
-        EngineResult::PairingCompleted {
-            contact_id,
-            conversation_id,
-        }
+        EngineResult::PairingCompleted { contact_id, conversation_id }
     );
 
     let message_id = MessageId::from_u128(8);
@@ -114,20 +101,12 @@ fn identity_pairing_message_receipt_and_attachment_flow_is_coherent() {
     );
     assert_eq!(
         engine
-            .dispatch(EngineCommand::BeginMessageSend {
-                message_id,
-                at: at(7),
-            })
+            .dispatch(EngineCommand::BeginMessageSend { message_id, at: at(7) })
             .expect("begin send"),
         EngineResult::MessageUpdated { message_id }
     );
     assert_eq!(
-        engine
-            .dispatch(EngineCommand::MarkMessageSent {
-                message_id,
-                at: at(8),
-            })
-            .expect("sent"),
+        engine.dispatch(EngineCommand::MarkMessageSent { message_id, at: at(8) }).expect("sent"),
         EngineResult::MessageUpdated { message_id }
     );
     assert_eq!(
@@ -139,10 +118,7 @@ fn identity_pairing_message_receipt_and_attachment_flow_is_coherent() {
                 at: at(9),
             }))
             .expect("read receipt"),
-        EngineResult::ReceiptApplied {
-            message_id,
-            changed: true,
-        }
+        EngineResult::ReceiptApplied { message_id, changed: true }
     );
 
     let snapshot = engine.snapshot().expect("snapshot");
@@ -164,15 +140,9 @@ fn identity_pairing_message_receipt_and_attachment_flow_is_coherent() {
     let mut crypto = DeterministicTestCrypto::default();
     let sealing = crypto.generate_sealing_key().expect("test sealing key");
     let mut storage = EncryptedAttachmentStore::new(crypto, MemoryBlobStore::default());
-    let _nonce = storage
-        .store(attachment.id(), &sealing, b"attachment-v1", b"image")
-        .expect("store");
-    assert_eq!(
-        storage
-            .load(attachment.id(), &sealing, b"attachment-v1")
-            .expect("load"),
-        b"image"
-    );
+    let _nonce =
+        storage.store(attachment.id(), &sealing, b"attachment-v1", b"image").expect("store");
+    assert_eq!(storage.load(attachment.id(), &sealing, b"attachment-v1").expect("load"), b"image");
 
     attachment.mark_queued(at(12)).expect("queued");
     let attempt = attachment.begin_transfer(at(13)).expect("transfer");

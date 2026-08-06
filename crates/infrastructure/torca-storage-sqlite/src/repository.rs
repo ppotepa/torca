@@ -9,8 +9,7 @@ use torca_identity::{
 };
 
 use crate::{
-    DatabaseKey, MigrationError, SqlCipherBackend, StorageBackendError, StorageKernel,
-    identity_sql,
+    DatabaseKey, MigrationError, SqlCipherBackend, StorageBackendError, StorageKernel, identity_sql,
 };
 
 /// Failure while opening and migrating a concrete encrypted store.
@@ -66,9 +65,7 @@ impl SqlCipherStore {
     fn bootstrap(backend: SqlCipherBackend) -> Result<Self, SqlCipherStoreOpenError> {
         let mut kernel = StorageKernel::new(backend);
         kernel.bootstrap()?;
-        Ok(Self {
-            backend: kernel.into_backend(),
-        })
+        Ok(Self { backend: kernel.into_backend() })
     }
 
     /// Returns the active SQLCipher version.
@@ -205,9 +202,7 @@ impl IdentityRow {
 }
 
 fn fixed_16(value: Vec<u8>, field: &str) -> Result<[u8; 16], IdentityRepositoryError> {
-    value
-        .try_into()
-        .map_err(|_| data_error(&format!("{field} must contain 16 bytes")))
+    value.try_into().map_err(|_| data_error(&format!("{field} must contain 16 bytes")))
 }
 
 const fn encode_algorithm(value: KeyAlgorithm) -> i64 {
@@ -249,12 +244,8 @@ mod tests {
         let key = DatabaseKey::new([0x24; 32]);
         let mut store = SqlCipherStore::open_in_memory(&key).expect("open store");
         let profile = Profile::new(ProfileName::new("Orca").expect("name"), None);
-        let public_key = IdentityKey::new(
-            KeyId::from_u128(2),
-            KeyAlgorithm::Ed25519,
-            vec![7; 32],
-        )
-        .expect("key");
+        let public_key =
+            IdentityKey::new(KeyId::from_u128(2), KeyAlgorithm::Ed25519, vec![7; 32]).expect("key");
         let public = PublicIdentity::new(IdentityId::from_u128(1), public_key, 0);
         let identity = Identity::new(public, profile, Timestamp::UNIX_EPOCH);
 

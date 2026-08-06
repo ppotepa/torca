@@ -1,6 +1,6 @@
 use crate::{
-    DecodeError, EncodeError, FrameMetadata, ProtocolFamily, VersionSupport, WireFrame, WireHeader,
-    WireLimits, WIRE_HEADER_LEN,
+    DecodeError, EncodeError, FrameMetadata, ProtocolFamily, VersionSupport, WIRE_HEADER_LEN,
+    WireFrame, WireHeader, WireLimits,
 };
 
 /// Result of attempting to decode one frame from a byte slice.
@@ -37,11 +37,7 @@ impl WireCodec {
         supported: VersionSupport,
         limits: WireLimits,
     ) -> Self {
-        Self {
-            family,
-            supported,
-            limits,
-        }
+        Self { family, supported, limits }
     }
 
     /// Returns the configured protocol family.
@@ -65,11 +61,7 @@ impl WireCodec {
     ///
     /// Returns [`EncodeError`] when the version is unsupported, the payload exceeds configured
     /// limits or the frame length cannot be represented safely.
-    pub fn encode(
-        self,
-        metadata: FrameMetadata,
-        payload: &[u8],
-    ) -> Result<Vec<u8>, EncodeError> {
+    pub fn encode(self, metadata: FrameMetadata, payload: &[u8]) -> Result<Vec<u8>, EncodeError> {
         if !self.supported.supports(metadata.version()) {
             return Err(EncodeError::UnsupportedProtocolVersion {
                 received: metadata.version(),
@@ -82,9 +74,8 @@ impl WireCodec {
                 maximum: self.limits.max_payload_len(),
             });
         }
-        let frame_len = WIRE_HEADER_LEN
-            .checked_add(payload.len())
-            .ok_or(EncodeError::FrameLengthOverflow)?;
+        let frame_len =
+            WIRE_HEADER_LEN.checked_add(payload.len()).ok_or(EncodeError::FrameLengthOverflow)?;
         let header = WireHeader::new(self.family, metadata, payload.len()).encode()?;
         let mut encoded = Vec::with_capacity(frame_len);
         encoded.extend_from_slice(&header);
@@ -107,26 +98,15 @@ impl WireCodec {
                 minimum_additional: WIRE_HEADER_LEN - input.len(),
             });
         }
-        let header_bytes: &[u8; WIRE_HEADER_LEN] = input[..WIRE_HEADER_LEN]
-            .try_into()
-            .map_err(|_| DecodeError::LengthConversion)?;
-        let header = WireHeader::decode(
-            header_bytes,
-            self.family,
-            self.supported,
-            self.limits,
-        )?;
+        let header_bytes: &[u8; WIRE_HEADER_LEN] =
+            input[..WIRE_HEADER_LEN].try_into().map_err(|_| DecodeError::LengthConversion)?;
+        let header = WireHeader::decode(header_bytes, self.family, self.supported, self.limits)?;
         let frame_len = header.frame_len();
         if input.len() < frame_len {
-            return Ok(DecodeOutcome::Incomplete {
-                minimum_additional: frame_len - input.len(),
-            });
+            return Ok(DecodeOutcome::Incomplete { minimum_additional: frame_len - input.len() });
         }
         let payload = input[WIRE_HEADER_LEN..frame_len].to_vec();
-        Ok(DecodeOutcome::Complete {
-            frame: WireFrame::new(header, payload),
-            consumed: frame_len,
-        })
+        Ok(DecodeOutcome::Complete { frame: WireFrame::new(header, payload), consumed: frame_len })
     }
 
     /// Decodes exactly one complete frame and rejects trailing bytes.
@@ -139,15 +119,12 @@ impl WireCodec {
         match self.decode(input)? {
             DecodeOutcome::Incomplete { .. } => {
                 let required = required_frame_len(self, input)?;
-                Err(DecodeError::UnexpectedEnd {
-                    required,
-                    actual: input.len(),
-                })
+                Err(DecodeError::UnexpectedEnd { required, actual: input.len() })
             }
             DecodeOutcome::Complete { frame, consumed } if consumed == input.len() => Ok(frame),
-            DecodeOutcome::Complete { consumed, .. } => Err(DecodeError::TrailingBytes {
-                count: input.len() - consumed,
-            }),
+            DecodeOutcome::Complete { consumed, .. } => {
+                Err(DecodeError::TrailingBytes { count: input.len() - consumed })
+            }
         }
     }
 }
@@ -156,16 +133,10 @@ fn required_frame_len(codec: WireCodec, input: &[u8]) -> Result<usize, DecodeErr
     if input.len() < WIRE_HEADER_LEN {
         return Ok(WIRE_HEADER_LEN);
     }
-    let header_bytes: &[u8; WIRE_HEADER_LEN] = input[..WIRE_HEADER_LEN]
-        .try_into()
-        .map_err(|_| DecodeError::LengthConversion)?;
-    WireHeader::decode(
-        header_bytes,
-        codec.family,
-        codec.supported,
-        codec.limits,
-    )
-    .map(WireHeader::frame_len)
+    let header_bytes: &[u8; WIRE_HEADER_LEN] =
+        input[..WIRE_HEADER_LEN].try_into().map_err(|_| DecodeError::LengthConversion)?;
+    WireHeader::decode(header_bytes, codec.family, codec.supported, codec.limits)
+        .map(WireHeader::frame_len)
 }
 
 /// Incremental decoder that buffers at most one validated frame at a time.
@@ -179,11 +150,7 @@ pub struct FrameDecoder {
 impl FrameDecoder {
     /// Creates an incremental decoder.
     pub const fn new(codec: WireCodec) -> Self {
-        Self {
-            codec,
-            buffer: Vec::new(),
-            expected_frame_len: None,
-        }
+        Self { codec, buffer: Vec::new(), expected_frame_len: None }
     }
 
     /// Pushes an arbitrary byte chunk and returns every complete frame found in order.
@@ -214,9 +181,7 @@ impl FrameDecoder {
 
             if self.expected_frame_len.is_none() {
                 match self.codec.decode(&self.buffer) {
-                    Ok(DecodeOutcome::Incomplete {
-                        minimum_additional,
-                    }) => {
+                    Ok(DecodeOutcome::Incomplete { minimum_additional }) => {
                         let expected = self
                             .buffer
                             .len()

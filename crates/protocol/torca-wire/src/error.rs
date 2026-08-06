@@ -26,10 +26,7 @@ pub enum EncodeError {
 impl fmt::Display for EncodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedProtocolVersion {
-                received,
-                supported,
-            } => write!(
+            Self::UnsupportedProtocolVersion { received, supported } => write!(
                 formatter,
                 "protocol version {received} is unsupported; expected major {} and minor at most {}",
                 supported.major(),
@@ -123,7 +120,9 @@ impl fmt::Display for DecodeError {
             Self::UnsupportedHeaderVersion { actual } => {
                 write!(formatter, "unsupported wire header version {actual}")
             }
-            Self::InvalidFlags { actual } => write!(formatter, "invalid wire flag bits 0x{actual:02x}"),
+            Self::InvalidFlags { actual } => {
+                write!(formatter, "invalid wire flag bits 0x{actual:02x}")
+            }
             Self::ReservedBitsSet { actual } => {
                 write!(formatter, "reserved header bits are set: 0x{actual:04x}")
             }
@@ -132,27 +131,21 @@ impl fmt::Display for DecodeError {
             Self::InvalidProtocolVersion { major, minor } => {
                 write!(formatter, "invalid protocol version {major}.{minor}")
             }
-            Self::UnexpectedProtocolFamily { expected, actual } => write!(
-                formatter,
-                "unexpected protocol family {actual}; expected {expected}"
-            ),
-            Self::UnsupportedProtocolVersion {
-                received,
-                supported,
-            } => write!(
+            Self::UnexpectedProtocolFamily { expected, actual } => {
+                write!(formatter, "unexpected protocol family {actual}; expected {expected}")
+            }
+            Self::UnsupportedProtocolVersion { received, supported } => write!(
                 formatter,
                 "protocol version {received} is unsupported; expected major {} and minor at most {}",
                 supported.major(),
                 supported.max_minor()
             ),
-            Self::PayloadTooLarge { actual, maximum } => write!(
-                formatter,
-                "declared payload length {actual} exceeds limit {maximum}"
-            ),
-            Self::UnexpectedEnd { required, actual } => write!(
-                formatter,
-                "incomplete frame: required {required} bytes, received {actual}"
-            ),
+            Self::PayloadTooLarge { actual, maximum } => {
+                write!(formatter, "declared payload length {actual} exceeds limit {maximum}")
+            }
+            Self::UnexpectedEnd { required, actual } => {
+                write!(formatter, "incomplete frame: required {required} bytes, received {actual}")
+            }
             Self::TrailingBytes { count } => {
                 write!(formatter, "exact decoder received {count} trailing bytes")
             }

@@ -16,9 +16,7 @@ pub struct WireLimits {
 
 impl WireLimits {
     /// Default limits for Torca 0.1 generic frames.
-    pub const DEFAULT: Self = Self {
-        max_payload_len: DEFAULT_MAX_PAYLOAD_LEN,
-    };
+    pub const DEFAULT: Self = Self { max_payload_len: DEFAULT_MAX_PAYLOAD_LEN };
 
     /// Creates limits when the payload bound is non-zero and representable by the header.
     pub const fn new(max_payload_len: usize) -> Option<Self> {

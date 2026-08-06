@@ -18,7 +18,11 @@ pub enum CryptoError {
     /// Provider failed without a safely exposable cause.
     Internal,
 }
-impl fmt::Display for CryptoError { fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { write!(formatter, "{self:?}") } }
+impl fmt::Display for CryptoError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
 impl std::error::Error for CryptoError {}
 
 /// Public signing key bytes.
@@ -44,11 +48,23 @@ pub struct Ciphertext(pub Vec<u8>);
 pub struct SigningSecretKey([u8; 32]);
 impl SigningSecretKey {
     /// Creates signing-key bytes for a provider implementation.
-    pub const fn new(bytes: [u8; 32]) -> Self { Self(bytes) }
-    pub(crate) const fn expose(&self) -> &[u8; 32] { &self.0 }
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+    pub(crate) const fn expose(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
-impl fmt::Debug for SigningSecretKey { fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { formatter.write_str("SigningSecretKey([REDACTED])") } }
-impl Drop for SigningSecretKey { fn drop(&mut self) { self.0.fill(0); } }
+impl fmt::Debug for SigningSecretKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SigningSecretKey([REDACTED])")
+    }
+}
+impl Drop for SigningSecretKey {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
+}
 
 /// Symmetric authenticated-encryption key with redacted diagnostics and best-effort zeroing.
 #[must_use]
@@ -56,8 +72,20 @@ impl Drop for SigningSecretKey { fn drop(&mut self) { self.0.fill(0); } }
 pub struct SealingKey([u8; 32]);
 impl SealingKey {
     /// Creates sealing-key bytes for a provider implementation.
-    pub const fn new(bytes: [u8; 32]) -> Self { Self(bytes) }
-    pub(crate) const fn expose(&self) -> &[u8; 32] { &self.0 }
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+    pub(crate) const fn expose(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
-impl fmt::Debug for SealingKey { fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { formatter.write_str("SealingKey([REDACTED])") } }
-impl Drop for SealingKey { fn drop(&mut self) { self.0.fill(0); } }
+impl fmt::Debug for SealingKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SealingKey([REDACTED])")
+    }
+}
+impl Drop for SealingKey {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
+}

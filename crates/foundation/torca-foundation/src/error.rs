@@ -99,16 +99,8 @@ pub struct ErrorDescriptor {
 
 impl ErrorDescriptor {
     /// Creates an error descriptor.
-    pub const fn new(
-        code: ErrorCode,
-        category: ErrorCategory,
-        retry_advice: RetryAdvice,
-    ) -> Self {
-        Self {
-            code,
-            category,
-            retry_advice,
-        }
+    pub const fn new(code: ErrorCode, category: ErrorCategory, retry_advice: RetryAdvice) -> Self {
+        Self { code, category, retry_advice }
     }
 
     /// Returns the stable error code.

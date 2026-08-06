@@ -14,9 +14,7 @@ pub use codec::{DecodeOutcome, FrameDecoder, WireCodec};
 pub use error::{DecodeError, EncodeError};
 pub use frame::WireFrame;
 pub use header::WireHeader;
-pub use limits::{
-    DEFAULT_MAX_PAYLOAD_LEN, HARD_MAX_PAYLOAD_LEN, WIRE_HEADER_LEN, WireLimits,
-};
+pub use limits::{DEFAULT_MAX_PAYLOAD_LEN, HARD_MAX_PAYLOAD_LEN, WIRE_HEADER_LEN, WireLimits};
 pub use types::{
     EnvelopeId, FrameMetadata, MessageKind, ProtocolFamily, ProtocolVersion, VersionSupport,
     WireFlags,
@@ -28,8 +26,8 @@ mod tests {
 
     use crate::{
         DecodeError, EncodeError, EnvelopeId, FrameDecoder, FrameMetadata, MessageKind,
-        ProtocolFamily, ProtocolVersion, VersionSupport, WireCodec, WireFlags, WireLimits,
-        WIRE_HEADER_LEN,
+        ProtocolFamily, ProtocolVersion, VersionSupport, WIRE_HEADER_LEN, WireCodec, WireFlags,
+        WireLimits,
     };
 
     fn codec() -> WireCodec {
@@ -103,10 +101,7 @@ mod tests {
 
         assert_eq!(
             codec.decode(&encoded).expect_err("oversized length must fail"),
-            DecodeError::PayloadTooLarge {
-                actual: 65,
-                maximum: 64,
-            }
+            DecodeError::PayloadTooLarge { actual: 65, maximum: 64 }
         );
     }
 
@@ -114,16 +109,10 @@ mod tests {
     fn incremental_decoder_handles_partial_and_concatenated_frames() {
         let codec = codec();
         let first = codec
-            .encode(
-                metadata(ProtocolVersion::new(1, 0).expect("test version is valid"), 1),
-                b"one",
-            )
+            .encode(metadata(ProtocolVersion::new(1, 0).expect("test version is valid"), 1), b"one")
             .expect("first frame must encode");
         let second = codec
-            .encode(
-                metadata(ProtocolVersion::new(1, 0).expect("test version is valid"), 2),
-                b"two",
-            )
+            .encode(metadata(ProtocolVersion::new(1, 0).expect("test version is valid"), 2), b"two")
             .expect("second frame must encode");
         let mut bytes = first;
         bytes.extend_from_slice(&second);
@@ -146,10 +135,7 @@ mod tests {
         let mut invalid = vec![0_u8; WIRE_HEADER_LEN];
         invalid[..4].copy_from_slice(b"NOPE");
 
-        assert!(matches!(
-            decoder.push(&invalid),
-            Err(DecodeError::InvalidMagic { .. })
-        ));
+        assert!(matches!(decoder.push(&invalid), Err(DecodeError::InvalidMagic { .. })));
         assert!(decoder.is_idle());
     }
 }

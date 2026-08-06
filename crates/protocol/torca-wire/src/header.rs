@@ -2,7 +2,7 @@ use torca_foundation::{CorrelationId, OpaqueId};
 
 use crate::{
     DecodeError, EnvelopeId, FrameMetadata, MessageKind, ProtocolFamily, ProtocolVersion,
-    VersionSupport, WireFlags, WireLimits, WIRE_HEADER_LEN,
+    VersionSupport, WIRE_HEADER_LEN, WireFlags, WireLimits,
 };
 
 pub(crate) const MAGIC: [u8; 4] = *b"TRCA";
@@ -23,11 +23,7 @@ impl WireHeader {
         metadata: FrameMetadata,
         payload_len: usize,
     ) -> Self {
-        Self {
-            family,
-            metadata,
-            payload_len,
-        }
+        Self { family, metadata, payload_len }
     }
 
     /// Returns the protocol family.
@@ -51,8 +47,8 @@ impl WireHeader {
     }
 
     pub(crate) fn encode(self) -> Result<[u8; WIRE_HEADER_LEN], crate::EncodeError> {
-        let payload_len = u32::try_from(self.payload_len)
-            .map_err(|_| crate::EncodeError::FrameLengthOverflow)?;
+        let payload_len =
+            u32::try_from(self.payload_len).map_err(|_| crate::EncodeError::FrameLengthOverflow)?;
         let mut bytes = [0_u8; WIRE_HEADER_LEN];
         bytes[0..4].copy_from_slice(&MAGIC);
         bytes[4] = HEADER_VERSION;
@@ -76,15 +72,13 @@ impl WireHeader {
     ) -> Result<Self, DecodeError> {
         let actual_magic = [input[0], input[1], input[2], input[3]];
         if actual_magic != MAGIC {
-            return Err(DecodeError::InvalidMagic {
-                actual: actual_magic,
-            });
+            return Err(DecodeError::InvalidMagic { actual: actual_magic });
         }
         if input[4] != HEADER_VERSION {
             return Err(DecodeError::UnsupportedHeaderVersion { actual: input[4] });
         }
-        let flags = WireFlags::from_bits(input[5])
-            .ok_or(DecodeError::InvalidFlags { actual: input[5] })?;
+        let flags =
+            WireFlags::from_bits(input[5]).ok_or(DecodeError::InvalidFlags { actual: input[5] })?;
         let family_raw = u16::from_be_bytes([input[6], input[7]]);
         let family = ProtocolFamily::new(family_raw).ok_or(DecodeError::InvalidProtocolFamily)?;
         if family != expected_family {
@@ -98,10 +92,7 @@ impl WireHeader {
         let version = ProtocolVersion::new(major, minor)
             .ok_or(DecodeError::InvalidProtocolVersion { major, minor })?;
         if !supported.supports(version) {
-            return Err(DecodeError::UnsupportedProtocolVersion {
-                received: version,
-                supported,
-            });
+            return Err(DecodeError::UnsupportedProtocolVersion { received: version, supported });
         }
         let message_kind_raw = u16::from_be_bytes([input[12], input[13]]);
         let message_kind =

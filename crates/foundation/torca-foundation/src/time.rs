@@ -109,19 +109,14 @@ mod tests {
 
     #[test]
     fn timestamp_rejects_values_outside_the_supported_range() {
-        assert_eq!(
-            Timestamp::from_unix_millis(-1),
-            Err(TimestampError::OutOfRange { value: -1 })
-        );
+        assert_eq!(Timestamp::from_unix_millis(-1), Err(TimestampError::OutOfRange { value: -1 }));
         assert!(Timestamp::from_unix_millis(Timestamp::MAX_UNIX_MILLIS).is_ok());
     }
 
     #[test]
     fn timestamp_arithmetic_preserves_bounds() {
         let start = Timestamp::from_unix_millis(1_000).expect("timestamp is valid");
-        let end = start
-            .checked_add(Duration::from_millis(250))
-            .expect("addition remains in range");
+        let end = start.checked_add(Duration::from_millis(250)).expect("addition remains in range");
 
         assert_eq!(end.to_unix_millis(), 1_250);
         assert_eq!(end.duration_since(start), Some(Duration::from_millis(250)));

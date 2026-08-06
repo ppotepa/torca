@@ -7,7 +7,11 @@ pub trait IdentityRepository {
     /// Inserts an identity only when none exists.
     fn insert(&mut self, identity: &Identity) -> Result<(), IdentityRepositoryError>;
     /// Replaces an identity when the stored generation matches the expected value.
-    fn replace(&mut self, expected_generation: u32, identity: &Identity) -> Result<bool, IdentityRepositoryError>;
+    fn replace(
+        &mut self,
+        expected_generation: u32,
+        identity: &Identity,
+    ) -> Result<bool, IdentityRepositoryError>;
 }
 
 /// Private-key management port. Implementations retain all private material.

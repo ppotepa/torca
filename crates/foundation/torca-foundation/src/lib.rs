@@ -16,7 +16,5 @@ pub use cancellation::{CancellationProbe, CancellationReason, Cancelled, NeverCa
 pub use command::{CommandEnvelope, CommandMetadata};
 pub use error::{ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, RetryAdvice};
 pub use event::{DomainEventEnvelope, EventMetadata};
-pub use id::{
-    CausationId, CommandId, CorrelationId, EventId, OpaqueId, ParseOpaqueIdError,
-};
+pub use id::{CausationId, CommandId, CorrelationId, EventId, OpaqueId, ParseOpaqueIdError};
 pub use time::{Timestamp, TimestampError};

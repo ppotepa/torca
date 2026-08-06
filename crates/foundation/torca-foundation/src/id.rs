@@ -73,9 +73,7 @@ impl FromStr for OpaqueId {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let encoded = value.as_bytes();
         if encoded.len() != Self::ENCODED_LEN {
-            return Err(ParseOpaqueIdError::InvalidLength {
-                actual: encoded.len(),
-            });
+            return Err(ParseOpaqueIdError::InvalidLength { actual: encoded.len() });
         }
 
         let mut bytes = [0_u8; Self::BYTE_LEN];
@@ -86,10 +84,8 @@ impl FromStr for OpaqueId {
                 index: high_index,
                 value: pair[0],
             })?;
-            let low = decode_nibble(pair[1]).ok_or(ParseOpaqueIdError::InvalidCharacter {
-                index: low_index,
-                value: pair[1],
-            })?;
+            let low = decode_nibble(pair[1])
+                .ok_or(ParseOpaqueIdError::InvalidCharacter { index: low_index, value: pair[1] })?;
             bytes[byte_index] = (high << 4) | low;
         }
 
@@ -204,8 +200,14 @@ macro_rules! identifier_type {
 }
 
 identifier_type!(CommandId, "Stable idempotency identifier of an application command.");
-identifier_type!(CorrelationId, "Identifier shared by operations belonging to one logical workflow.");
-identifier_type!(CausationId, "Identifier of the command or event that directly caused another operation.");
+identifier_type!(
+    CorrelationId,
+    "Identifier shared by operations belonging to one logical workflow."
+);
+identifier_type!(
+    CausationId,
+    "Identifier of the command or event that directly caused another operation."
+);
 identifier_type!(EventId, "Unique identifier of an immutable domain event occurrence.");
 
 impl From<CommandId> for CorrelationId {
@@ -246,12 +248,6 @@ mod tests {
             .parse::<OpaqueId>()
             .expect_err("invalid hexadecimal input must fail");
 
-        assert_eq!(
-            error,
-            ParseOpaqueIdError::InvalidCharacter {
-                index: 31,
-                value: b'z'
-            }
-        );
+        assert_eq!(error, ParseOpaqueIdError::InvalidCharacter { index: 31, value: b'z' });
     }
 }

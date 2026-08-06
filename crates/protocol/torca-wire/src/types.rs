@@ -39,11 +39,7 @@ pub struct ProtocolVersion {
 impl ProtocolVersion {
     /// Creates a version. Major version zero is reserved and rejected.
     pub const fn new(major: u16, minor: u16) -> Option<Self> {
-        if major == 0 {
-            None
-        } else {
-            Some(Self { major, minor })
-        }
+        if major == 0 { None } else { Some(Self { major, minor }) }
     }
 
     /// Returns the major version.
@@ -74,11 +70,7 @@ pub struct VersionSupport {
 impl VersionSupport {
     /// Creates support for one major version and all minor versions up to `max_minor`.
     pub const fn new(major: u16, max_minor: u16) -> Option<Self> {
-        if major == 0 {
-            None
-        } else {
-            Some(Self { major, max_minor })
-        }
+        if major == 0 { None } else { Some(Self { major, max_minor }) }
     }
 
     /// Returns whether the supplied version is compatible.
@@ -139,11 +131,7 @@ impl WireFlags {
 
     /// Creates flags when all bits are known to this header version.
     pub const fn from_bits(bits: u8) -> Option<Self> {
-        if bits & !Self::KNOWN_MASK == 0 {
-            Some(Self(bits))
-        } else {
-            None
-        }
+        if bits & !Self::KNOWN_MASK == 0 { Some(Self(bits)) } else { None }
     }
 
     /// Returns the raw flag bits.
@@ -218,13 +206,7 @@ impl FrameMetadata {
         envelope_id: EnvelopeId,
         correlation_id: CorrelationId,
     ) -> Self {
-        Self {
-            version,
-            message_kind,
-            flags,
-            envelope_id,
-            correlation_id,
-        }
+        Self { version, message_kind, flags, envelope_id, correlation_id }
     }
 
     /// Returns the protocol version.

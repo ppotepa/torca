@@ -62,11 +62,7 @@ impl SqlCipherBackend {
     ) -> Result<Self, StorageBackendError> {
         apply_database_key(&connection, key.expose())?;
         let cipher_version = verify_sqlcipher(&connection)?;
-        Ok(Self {
-            connection,
-            in_transaction: false,
-            cipher_version,
-        })
+        Ok(Self { connection, in_transaction: false, cipher_version })
     }
 
     /// Returns the active SQLCipher version string.
@@ -86,14 +82,9 @@ impl StorageBackend for SqlCipherBackend {
             .map_err(map_sqlite_error)
     }
 
-    fn execute_connection_batch(
-        &mut self,
-        sql: &'static str,
-    ) -> Result<(), StorageBackendError> {
+    fn execute_connection_batch(&mut self, sql: &'static str) -> Result<(), StorageBackendError> {
         if self.in_transaction {
-            return Err(StorageBackendError(
-                "connection batch cannot run in transaction".into(),
-            ));
+            return Err(StorageBackendError("connection batch cannot run in transaction".into()));
         }
         self.connection.execute_batch(sql).map_err(map_sqlite_error)
     }
@@ -102,9 +93,7 @@ impl StorageBackend for SqlCipherBackend {
         if self.in_transaction {
             return Err(StorageBackendError("transaction already active".into()));
         }
-        self.connection
-            .execute_batch("BEGIN IMMEDIATE;")
-            .map_err(map_sqlite_error)?;
+        self.connection.execute_batch("BEGIN IMMEDIATE;").map_err(map_sqlite_error)?;
         self.in_transaction = true;
         Ok(())
     }
@@ -120,50 +109,38 @@ impl StorageBackend for SqlCipherBackend {
         if !self.in_transaction {
             return Err(StorageBackendError("no active transaction".into()));
         }
-        self.connection
-            .pragma_update(None, "user_version", version)
-            .map_err(map_sqlite_error)
+        self.connection.pragma_update(None, "user_version", version).map_err(map_sqlite_error)
     }
 
     fn commit(&mut self) -> Result<(), StorageBackendError> {
         if !self.in_transaction {
             return Err(StorageBackendError("no active transaction".into()));
         }
-        self.connection
-            .execute_batch("COMMIT;")
-            .map_err(map_sqlite_error)?;
+        self.connection.execute_batch("COMMIT;").map_err(map_sqlite_error)?;
         self.in_transaction = false;
         Ok(())
     }
 
     fn rollback(&mut self) -> Result<(), StorageBackendError> {
         if self.in_transaction {
-            self.connection
-                .execute_batch("ROLLBACK;")
-                .map_err(map_sqlite_error)?;
+            self.connection.execute_batch("ROLLBACK;").map_err(map_sqlite_error)?;
             self.in_transaction = false;
         }
         Ok(())
     }
 }
 
-fn apply_database_key(
-    connection: &Connection,
-    key: &[u8; 32],
-) -> Result<(), StorageBackendError> {
+fn apply_database_key(connection: &Connection, key: &[u8; 32]) -> Result<(), StorageBackendError> {
     let mut hex = String::with_capacity(64);
     for byte in key {
         use fmt::Write as _;
-        write!(&mut hex, "{byte:02x}").map_err(|_| {
-            StorageBackendError("database key encoding failed".into())
-        })?;
+        write!(&mut hex, "{byte:02x}")
+            .map_err(|_| StorageBackendError("database key encoding failed".into()))?;
     }
 
     // SQLCipher raw-key syntax requires the x'...' value inside a quoted PRAGMA value.
     // The generated content is fixed-length lowercase hexadecimal and contains no user text.
-    connection
-        .execute_batch(&format!("PRAGMA key = \"x'{hex}'\";"))
-        .map_err(map_sqlite_error)
+    connection.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).map_err(map_sqlite_error)
 }
 
 fn verify_sqlcipher(connection: &Connection) -> Result<String, StorageBackendError> {
@@ -171,15 +148,11 @@ fn verify_sqlcipher(connection: &Connection) -> Result<String, StorageBackendErr
         .query_row("PRAGMA cipher_version;", [], |row| row.get(0))
         .map_err(|_| StorageBackendError("SQLCipher support is unavailable".into()))?;
     if version.trim().is_empty() {
-        return Err(StorageBackendError(
-            "SQLCipher returned an empty cipher version".into(),
-        ));
+        return Err(StorageBackendError("SQLCipher returned an empty cipher version".into()));
     }
 
     connection
-        .query_row("SELECT count(*) FROM sqlite_master;", [], |row| {
-            row.get::<_, i64>(0)
-        })
+        .query_row("SELECT count(*) FROM sqlite_master;", [], |row| row.get::<_, i64>(0))
         .map_err(|_| StorageBackendError("database key verification failed".into()))?;
 
     Ok(version)

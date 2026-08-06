@@ -28,10 +28,14 @@ impl core::fmt::Display for SqlCipherDurableStoreOpenError {
 }
 impl std::error::Error for SqlCipherDurableStoreOpenError {}
 impl From<StorageBackendError> for SqlCipherDurableStoreOpenError {
-    fn from(value: StorageBackendError) -> Self { Self::Backend(value) }
+    fn from(value: StorageBackendError) -> Self {
+        Self::Backend(value)
+    }
 }
 impl From<MigrationError> for SqlCipherDurableStoreOpenError {
-    fn from(value: MigrationError) -> Self { Self::Migration(value) }
+    fn from(value: MigrationError) -> Self {
+        Self::Migration(value)
+    }
 }
 
 /// SQLCipher implementation of the transactional outbox and inbound deduplication port.
@@ -41,7 +45,10 @@ pub struct SqlCipherDurableStore {
 
 impl SqlCipherDurableStore {
     /// Opens, keys and migrates a durable-delivery database.
-    pub fn open(path: impl AsRef<Path>, key: &DatabaseKey) -> Result<Self, SqlCipherDurableStoreOpenError> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        key: &DatabaseKey,
+    ) -> Result<Self, SqlCipherDurableStoreOpenError> {
         let backend = SqlCipherBackend::open(path, key)?;
         Self::bootstrap(backend)
     }
@@ -60,10 +67,10 @@ impl SqlCipherDurableStore {
 
     fn load_message(&self, id: MessageId) -> Result<Message, DurableDeliveryError> {
         let bytes = id.to_opaque().into_bytes();
-        let row = self.backend.connection().query_row(
-            messaging_sql::SELECT_MESSAGE.sql,
-            params![bytes.as_slice()],
-            |row| {
+        let row = self
+            .backend
+            .connection()
+            .query_row(messaging_sql::SELECT_MESSAGE.sql, params![bytes.as_slice()], |row| {
                 Ok(MessageRow {
                     conversation_id: row.get(0)?,
                     direction: row.get(1)?,
@@ -73,18 +80,20 @@ impl SqlCipherDurableStore {
                     created_at_ms: row.get(5)?,
                     updated_at_ms: row.get(6)?,
                 })
-            },
-        ).optional().map_err(storage_error)?;
+            })
+            .optional()
+            .map_err(storage_error)?;
         row.ok_or(DurableDeliveryError::NotFound)?.into_message(id)
     }
 
     fn outbox_exists(&self, id: MessageId) -> Result<bool, DurableDeliveryError> {
         let bytes = id.to_opaque().into_bytes();
-        self.backend.connection().query_row(
-            messaging_sql::EXISTS.sql,
-            params![bytes.as_slice()],
-            |row| row.get::<_, bool>(0),
-        ).map_err(storage_error)
+        self.backend
+            .connection()
+            .query_row(messaging_sql::EXISTS.sql, params![bytes.as_slice()], |row| {
+                row.get::<_, bool>(0)
+            })
+            .map_err(storage_error)
     }
 
     fn transition_result(&self, changed: usize, id: MessageId) -> Result<(), DurableDeliveryError> {
@@ -105,7 +114,9 @@ impl DurableDeliveryStore for SqlCipherDurableStore {
         command_id: CommandId,
         next_attempt_at: Timestamp,
     ) -> Result<(), DurableDeliveryError> {
-        if message.direction() != MessageDirection::Outbound || message.status() != MessageStatus::Queued {
+        if message.direction() != MessageDirection::Outbound
+            || message.status() != MessageStatus::Queued
+        {
             return Err(DurableDeliveryError::InvalidState);
         }
 
@@ -154,73 +165,120 @@ impl DurableDeliveryStore for SqlCipherDurableStore {
         }
     }
 
-    fn claim_due(&mut self, now: Timestamp, limit: usize) -> Result<Vec<OutboxRecord>, DurableDeliveryError> {
-        let limit = i64::try_from(limit).map_err(|_| DurableDeliveryError::Storage("claim limit is too large".into()))?;
-        let mut statement = self.backend.connection().prepare(messaging_sql::CLAIM_DUE.sql).map_err(storage_error)?;
-        let rows = statement.query_map(params![now.to_unix_millis(), limit], |row| {
-            Ok(ClaimRow {
-                message_id: row.get(0)?,
-                command_id: row.get(1)?,
-                attempts: row.get(2)?,
-                next_attempt_at_ms: row.get(3)?,
-                claimed_at_ms: row.get(4)?,
+    fn claim_due(
+        &mut self,
+        now: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<OutboxRecord>, DurableDeliveryError> {
+        let limit = i64::try_from(limit)
+            .map_err(|_| DurableDeliveryError::Storage("claim limit is too large".into()))?;
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(messaging_sql::CLAIM_DUE.sql)
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![now.to_unix_millis(), limit], |row| {
+                Ok(ClaimRow {
+                    message_id: row.get(0)?,
+                    command_id: row.get(1)?,
+                    attempts: row.get(2)?,
+                    next_attempt_at_ms: row.get(3)?,
+                    claimed_at_ms: row.get(4)?,
+                })
             })
-        }).map_err(storage_error)?;
+            .map_err(storage_error)?;
         let claims: Vec<ClaimRow> = rows.collect::<Result<_, _>>().map_err(storage_error)?;
         drop(statement);
 
-        claims.into_iter().map(|claim| {
-            let message_id = MessageId::from_opaque(OpaqueId::from_bytes(fixed_16(claim.message_id, "message_id")?));
-            let command_id = CommandId::from_opaque(OpaqueId::from_bytes(fixed_16(claim.command_id, "command_id")?));
-            let attempts = u32::try_from(claim.attempts).map_err(|_| DurableDeliveryError::Storage("attempt count is invalid".into()))?;
-            let next_attempt_at = timestamp(claim.next_attempt_at_ms, "next_attempt_at")?;
-            let claimed_at = claim.claimed_at_ms.map(|value| timestamp(value, "claimed_at")).transpose()?;
-            Ok(OutboxRecord {
-                message: self.load_message(message_id)?,
-                command_id,
-                attempts,
-                next_attempt_at,
-                claimed_at,
-                state: OutboxState::Claimed,
+        claims
+            .into_iter()
+            .map(|claim| {
+                let message_id = MessageId::from_opaque(OpaqueId::from_bytes(fixed_16(
+                    claim.message_id,
+                    "message_id",
+                )?));
+                let command_id = CommandId::from_opaque(OpaqueId::from_bytes(fixed_16(
+                    claim.command_id,
+                    "command_id",
+                )?));
+                let attempts = u32::try_from(claim.attempts).map_err(|_| {
+                    DurableDeliveryError::Storage("attempt count is invalid".into())
+                })?;
+                let next_attempt_at = timestamp(claim.next_attempt_at_ms, "next_attempt_at")?;
+                let claimed_at =
+                    claim.claimed_at_ms.map(|value| timestamp(value, "claimed_at")).transpose()?;
+                Ok(OutboxRecord {
+                    message: self.load_message(message_id)?,
+                    command_id,
+                    attempts,
+                    next_attempt_at,
+                    claimed_at,
+                    state: OutboxState::Claimed,
+                })
             })
-        }).collect()
+            .collect()
     }
 
-    fn reschedule(&mut self, message_id: MessageId, attempts: u32, next_attempt_at: Timestamp) -> Result<(), DurableDeliveryError> {
+    fn reschedule(
+        &mut self,
+        message_id: MessageId,
+        attempts: u32,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), DurableDeliveryError> {
         let id = message_id.to_opaque().into_bytes();
-        let changed = self.backend.connection().execute(
-            messaging_sql::RESCHEDULE.sql,
-            params![id.as_slice(), i64::from(attempts), next_attempt_at.to_unix_millis()],
-        ).map_err(storage_error)?;
+        let changed = self
+            .backend
+            .connection()
+            .execute(
+                messaging_sql::RESCHEDULE.sql,
+                params![id.as_slice(), i64::from(attempts), next_attempt_at.to_unix_millis()],
+            )
+            .map_err(storage_error)?;
         self.transition_result(changed, message_id)
     }
 
     fn complete(&mut self, message_id: MessageId) -> Result<(), DurableDeliveryError> {
         let id = message_id.to_opaque().into_bytes();
-        let changed = self.backend.connection().execute(messaging_sql::COMPLETE.sql, params![id.as_slice()]).map_err(storage_error)?;
+        let changed = self
+            .backend
+            .connection()
+            .execute(messaging_sql::COMPLETE.sql, params![id.as_slice()])
+            .map_err(storage_error)?;
         self.transition_result(changed, message_id)
     }
 
     fn dead_letter(&mut self, message_id: MessageId) -> Result<(), DurableDeliveryError> {
         let id = message_id.to_opaque().into_bytes();
-        let changed = self.backend.connection().execute(messaging_sql::DEAD_LETTER.sql, params![id.as_slice()]).map_err(storage_error)?;
+        let changed = self
+            .backend
+            .connection()
+            .execute(messaging_sql::DEAD_LETTER.sql, params![id.as_slice()])
+            .map_err(storage_error)?;
         self.transition_result(changed, message_id)
     }
 
-    fn recover_stale_claims(&mut self, claimed_before: Timestamp) -> Result<usize, DurableDeliveryError> {
-        self.backend.connection().execute(
-            messaging_sql::RECOVER_STALE.sql,
-            params![claimed_before.to_unix_millis()],
-        ).map_err(storage_error)
+    fn recover_stale_claims(
+        &mut self,
+        claimed_before: Timestamp,
+    ) -> Result<usize, DurableDeliveryError> {
+        self.backend
+            .connection()
+            .execute(messaging_sql::RECOVER_STALE.sql, params![claimed_before.to_unix_millis()])
+            .map_err(storage_error)
     }
 
     fn record_inbound(&mut self, envelope_id: OpaqueId) -> Result<bool, DurableDeliveryError> {
         let id = envelope_id.into_bytes();
         let accepted_at = system_timestamp()?;
-        let changed = self.backend.connection().execute(
-            messaging_sql::INSERT_INBOUND_DEDUP.sql,
-            params![id.as_slice(), accepted_at.to_unix_millis()],
-        ).map_err(storage_error)?;
+        let changed = self
+            .backend
+            .connection()
+            .execute(
+                messaging_sql::INSERT_INBOUND_DEDUP.sql,
+                params![id.as_slice(), accepted_at.to_unix_millis()],
+            )
+            .map_err(storage_error)?;
         Ok(changed == 1)
     }
 }
@@ -245,14 +303,27 @@ struct MessageRow {
 
 impl MessageRow {
     fn into_message(self, id: MessageId) -> Result<Message, DurableDeliveryError> {
-        if self.direction != encode_direction(MessageDirection::Outbound) || self.status != encode_status(MessageStatus::Queued) {
-            return Err(DurableDeliveryError::Storage("outbox references a non-queued outbound message".into()));
+        if self.direction != encode_direction(MessageDirection::Outbound)
+            || self.status != encode_status(MessageStatus::Queued)
+        {
+            return Err(DurableDeliveryError::Storage(
+                "outbox references a non-queued outbound message".into(),
+            ));
         }
-        let conversation_id = ConversationId::from_opaque(OpaqueId::from_bytes(fixed_16(self.conversation_id, "conversation_id")?));
-        let body = MessageBody::new(self.body).map_err(|_| DurableDeliveryError::Storage("stored message body is invalid".into()))?;
-        let reply_to = self.reply_to.map(|value| {
-            fixed_16(value, "reply_to_message_id").map(|bytes| ReplyReference { message_id: MessageId::from_opaque(OpaqueId::from_bytes(bytes)) })
-        }).transpose()?;
+        let conversation_id = ConversationId::from_opaque(OpaqueId::from_bytes(fixed_16(
+            self.conversation_id,
+            "conversation_id",
+        )?));
+        let body = MessageBody::new(self.body)
+            .map_err(|_| DurableDeliveryError::Storage("stored message body is invalid".into()))?;
+        let reply_to = self
+            .reply_to
+            .map(|value| {
+                fixed_16(value, "reply_to_message_id").map(|bytes| ReplyReference {
+                    message_id: MessageId::from_opaque(OpaqueId::from_bytes(bytes)),
+                })
+            })
+            .transpose()?;
         let created_at = timestamp(self.created_at_ms, "created_at")?;
         let updated_at = timestamp(self.updated_at_ms, "updated_at")?;
         if created_at != updated_at {
@@ -263,7 +334,10 @@ impl MessageRow {
 }
 
 const fn encode_direction(value: MessageDirection) -> i64 {
-    match value { MessageDirection::Outbound => 0, MessageDirection::Inbound => 1 }
+    match value {
+        MessageDirection::Outbound => 0,
+        MessageDirection::Inbound => 1,
+    }
 }
 const fn encode_status(value: MessageStatus) -> i64 {
     match value {
@@ -278,21 +352,31 @@ const fn encode_status(value: MessageStatus) -> i64 {
 }
 
 fn fixed_16(value: Vec<u8>, field: &str) -> Result<[u8; 16], DurableDeliveryError> {
-    value.try_into().map_err(|_| DurableDeliveryError::Storage(format!("{field} must contain 16 bytes")))
+    value
+        .try_into()
+        .map_err(|_| DurableDeliveryError::Storage(format!("{field} must contain 16 bytes")))
 }
 fn timestamp(value: i64, field: &str) -> Result<Timestamp, DurableDeliveryError> {
-    Timestamp::from_unix_millis(value).map_err(|_| DurableDeliveryError::Storage(format!("{field} is outside the supported range")))
+    Timestamp::from_unix_millis(value).map_err(|_| {
+        DurableDeliveryError::Storage(format!("{field} is outside the supported range"))
+    })
 }
 fn system_timestamp() -> Result<Timestamp, DurableDeliveryError> {
-    let duration = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| DurableDeliveryError::Storage("system clock is before Unix epoch".into()))?;
-    let millis = i64::try_from(duration.as_millis()).map_err(|_| DurableDeliveryError::Storage("system clock exceeds timestamp range".into()))?;
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| DurableDeliveryError::Storage("system clock is before Unix epoch".into()))?;
+    let millis = i64::try_from(duration.as_millis()).map_err(|_| {
+        DurableDeliveryError::Storage("system clock exceeds timestamp range".into())
+    })?;
     timestamp(millis, "system time")
 }
 fn backend_error(error: StorageBackendError) -> DurableDeliveryError {
     DurableDeliveryError::Storage(error.0)
 }
 fn storage_error(error: rusqlite::Error) -> DurableDeliveryError {
-    let code = error.sqlite_error_code().map_or_else(|| "unknown".to_owned(), |value| format!("{value:?}"));
+    let code = error
+        .sqlite_error_code()
+        .map_or_else(|| "unknown".to_owned(), |value| format!("{value:?}"));
     DurableDeliveryError::Storage(format!("SQLite durable operation failed ({code})"))
 }
 
@@ -315,7 +399,9 @@ mod tests {
             None,
             Timestamp::UNIX_EPOCH,
         );
-        store.queue_outbound(message, CommandId::from_u128(3), Timestamp::UNIX_EPOCH).expect("queue");
+        store
+            .queue_outbound(message, CommandId::from_u128(3), Timestamp::UNIX_EPOCH)
+            .expect("queue");
         let claimed = store.claim_due(Timestamp::UNIX_EPOCH, 10).expect("claim");
         assert_eq!(claimed.len(), 1);
         let next = Timestamp::from_unix_millis(1).expect("timestamp");
