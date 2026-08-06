@@ -53,7 +53,7 @@ impl DirectConversation {
         Self { id, contact_id, status: ConversationStatus::Active, created_at: at, updated_at: at }
     }
     /// Restores a conversation aggregate from persistence.
-    pub const fn restore(
+    pub const fn from_persisted(
         id: ConversationId,
         contact_id: ContactId,
         status: ConversationStatus,
@@ -92,7 +92,7 @@ impl DirectConversation {
         Ok(())
     }
     /// Restores the conversation.
-    pub fn restore_active(&mut self, at: Timestamp) -> Result<(), ConversationError> {
+    pub fn restore(&mut self, at: Timestamp) -> Result<(), ConversationError> {
         if self.status == ConversationStatus::Active {
             return Err(ConversationError::InvalidTransition);
         }
