@@ -10,31 +10,25 @@ dependencies = [
  "torca-conversations",
  "torca-foundation",
  "torca-identity",
+ "torca-messaging",
  "torca-pairing",
+ "torca-receipts",
 ]
 
 [[package]]
 name = "torca-contacts"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-foundation",
- "torca-identity",
-]
+dependencies = ["torca-foundation", "torca-identity"]
 
 [[package]]
 name = "torca-conversations"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-contacts",
- "torca-foundation",
-]
+dependencies = ["torca-contacts", "torca-foundation"]
 
 [[package]]
 name = "torca-crypto"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-foundation",
-]
+dependencies = ["torca-foundation"]
 
 [[package]]
 name = "torca-foundation"
@@ -43,45 +37,44 @@ version = "0.1.0-alpha.0"
 [[package]]
 name = "torca-identity"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-foundation",
-]
+dependencies = ["torca-foundation"]
+
+[[package]]
+name = "torca-messaging"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-conversations", "torca-foundation"]
 
 [[package]]
 name = "torca-pairing"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-contacts",
- "torca-foundation",
- "torca-identity",
-]
+dependencies = ["torca-contacts", "torca-foundation", "torca-identity"]
+
+[[package]]
+name = "torca-projections"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-contacts", "torca-conversations", "torca-messaging"]
+
+[[package]]
+name = "torca-receipts"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation", "torca-messaging"]
 
 [[package]]
 name = "torca-relay"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-foundation",
- "torca-relay-protocol",
-]
+dependencies = ["torca-foundation", "torca-relay-protocol"]
 
 [[package]]
 name = "torca-relay-protocol"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-foundation",
-]
+dependencies = ["torca-foundation"]
 
 [[package]]
 name = "torca-storage-sqlite"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-foundation",
- "torca-identity",
-]
+dependencies = ["torca-foundation", "torca-identity", "torca-messaging"]
 
 [[package]]
 name = "torca-wire"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-foundation",
-]
+dependencies = ["torca-foundation"]

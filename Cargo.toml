@@ -11,6 +11,9 @@ members = [
     "crates/protocol/torca-relay-protocol",
     "services/relay",
     "crates/application/torca-client-engine",
+    "crates/domains/torca-messaging",
+    "crates/domains/torca-receipts",
+    "crates/application/torca-projections",
 ]
 resolver = "3"
 

@@ -1,5 +1,5 @@
 [package]
-name = "torca-storage-sqlite"
+name = "torca-receipts"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,7 @@ publish = false
 
 [dependencies]
 torca-foundation = { path = "../../foundation/torca-foundation" }
-torca-identity = { path = "../../domains/torca-identity" }
-torca-messaging = { path = "../../domains/torca-messaging" }
+torca-messaging = { path = "../torca-messaging" }
 
 [lints]
 workspace = true
