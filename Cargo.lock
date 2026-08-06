@@ -3,6 +3,33 @@
 version = 4
 
 [[package]]
+name = "torca-client-engine"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-contacts",
+ "torca-conversations",
+ "torca-foundation",
+ "torca-identity",
+ "torca-pairing",
+]
+
+[[package]]
+name = "torca-contacts"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+ "torca-identity",
+]
+
+[[package]]
+name = "torca-conversations"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-contacts",
+ "torca-foundation",
+]
+
+[[package]]
 name = "torca-crypto"
 version = "0.1.0-alpha.0"
 dependencies = [
@@ -15,6 +42,30 @@ version = "0.1.0-alpha.0"
 
 [[package]]
 name = "torca-identity"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+]
+
+[[package]]
+name = "torca-pairing"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-contacts",
+ "torca-foundation",
+ "torca-identity",
+]
+
+[[package]]
+name = "torca-relay"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+ "torca-relay-protocol",
+]
+
+[[package]]
+name = "torca-relay-protocol"
 version = "0.1.0-alpha.0"
 dependencies = [
  "torca-foundation",

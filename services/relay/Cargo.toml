@@ -1,0 +1,16 @@
+[package]
+name = "torca-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-foundation = { path = "../../crates/foundation/torca-foundation" }
+torca-relay-protocol = { path = "../../crates/protocol/torca-relay-protocol" }
+
+[lints]
+workspace = true

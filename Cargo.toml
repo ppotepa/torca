@@ -5,6 +5,12 @@ members = [
     "crates/domains/torca-identity",
     "crates/infrastructure/torca-storage-sqlite",
     "crates/infrastructure/torca-crypto",
+    "crates/domains/torca-contacts",
+    "crates/domains/torca-conversations",
+    "crates/domains/torca-pairing",
+    "crates/protocol/torca-relay-protocol",
+    "services/relay",
+    "crates/application/torca-client-engine",
 ]
 resolver = "3"
 
