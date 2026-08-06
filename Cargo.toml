@@ -2,6 +2,9 @@
 members = [
     "crates/foundation/torca-foundation",
     "crates/protocol/torca-wire",
+    "crates/domains/torca-identity",
+    "crates/infrastructure/torca-storage-sqlite",
+    "crates/infrastructure/torca-crypto",
 ]
 resolver = "3"
 

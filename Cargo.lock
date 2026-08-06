@@ -3,8 +3,30 @@
 version = 4
 
 [[package]]
+name = "torca-crypto"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+]
+
+[[package]]
 name = "torca-foundation"
 version = "0.1.0-alpha.0"
+
+[[package]]
+name = "torca-identity"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+]
+
+[[package]]
+name = "torca-storage-sqlite"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+ "torca-identity",
+]
 
 [[package]]
 name = "torca-wire"
