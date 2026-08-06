@@ -15,13 +15,15 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * Wraps Torca secret bytes with a non-exportable Android Keystore AES-GCM key.
  *
- * Wrapped blobs live under noBackupFilesDir and are bound to their canonical KeyId as AAD.
+ * Wrapped blobs live under noBackupFilesDir and are bound to namespace + canonical KeyId as AAD.
  */
-class AndroidKeystoreSecretStore(context: Context) {
-    private val root = File(context.noBackupFilesDir, "torca/protected-secrets")
+class AndroidKeystoreSecretStore(context: Context, private val namespace: String) {
+    private val root: File
     private val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
 
     init {
+        require(NAMESPACE.matches(namespace)) { "Invalid protected secret namespace" }
+        root = File(context.noBackupFilesDir, "torca/protected-secrets/$namespace")
         check(root.exists() || root.mkdirs()) { "Unable to create protected secret directory" }
     }
 
@@ -33,7 +35,7 @@ class AndroidKeystoreSecretStore(context: Context) {
 
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, masterKey())
-        cipher.updateAAD(keyId.toByteArray(StandardCharsets.US_ASCII))
+        cipher.updateAAD(aad(keyId))
         val ciphertext = cipher.doFinal(secret)
         val iv = cipher.iv
         require(iv.isNotEmpty() && iv.size <= UByte.MAX_VALUE.toInt()) {
@@ -82,7 +84,7 @@ class AndroidKeystoreSecretStore(context: Context) {
                 masterKey(),
                 GCMParameterSpec(GCM_TAG_BITS, iv),
             )
-            cipher.updateAAD(keyId.toByteArray(StandardCharsets.US_ASCII))
+            cipher.updateAAD(aad(keyId))
             return cipher.doFinal(ciphertext)
         } finally {
             encoded.fill(0)
@@ -133,6 +135,9 @@ class AndroidKeystoreSecretStore(context: Context) {
         return generator.generateKey()
     }
 
+    private fun aad(keyId: String): ByteArray =
+        "$namespace:$keyId".toByteArray(StandardCharsets.US_ASCII)
+
     private fun fileFor(keyId: String): File = File(root, "$keyId.keystore")
 
     private fun validateKeyId(keyId: String) {
@@ -146,47 +151,35 @@ class AndroidKeystoreSecretStore(context: Context) {
         const val GCM_TAG_BITS = 128
         const val FORMAT_VERSION: Byte = 1
         val KEY_ID = Regex("[0-9a-f]{32}")
+        val NAMESPACE = Regex("[a-z][a-z0-9-]{0,31}")
     }
 }
 
-/**
- * Minimal JNI surface used by the Rust production composition.
- *
- * Flutter never sees protected secret bytes. The bridge owns only application Context and delegates
- * encryption/decryption to AndroidKeystoreSecretStore.
- */
+/** Minimal JNI surface used by the Rust production composition. */
 object AndroidKeystoreBridge {
     private lateinit var applicationContext: Context
-    private lateinit var secrets: AndroidKeystoreSecretStore
+    private val stores = mutableMapOf<String, AndroidKeystoreSecretStore>()
 
     @JvmStatic
     @Synchronized
     fun initialize(context: Context) {
         if (::applicationContext.isInitialized) return
         applicationContext = context.applicationContext
-        secrets = AndroidKeystoreSecretStore(applicationContext)
     }
 
     @JvmStatic
     @Synchronized
-    fun load(keyId: String): ByteArray? {
-        check(::secrets.isInitialized) { "Android Keystore bridge is not initialized" }
-        return secrets.load(keyId)
+    fun load(namespace: String, keyId: String): ByteArray? = store(namespace).load(keyId)
+
+    @JvmStatic
+    @Synchronized
+    fun insert(namespace: String, keyId: String, secret: ByteArray) {
+        store(namespace).insert(keyId, secret)
     }
 
     @JvmStatic
     @Synchronized
-    fun insert(keyId: String, secret: ByteArray) {
-        check(::secrets.isInitialized) { "Android Keystore bridge is not initialized" }
-        secrets.insert(keyId, secret)
-    }
-
-    @JvmStatic
-    @Synchronized
-    fun delete(keyId: String): Boolean {
-        check(::secrets.isInitialized) { "Android Keystore bridge is not initialized" }
-        return secrets.delete(keyId)
-    }
+    fun delete(namespace: String, keyId: String): Boolean = store(namespace).delete(keyId)
 
     @JvmStatic
     @Synchronized
@@ -195,5 +188,12 @@ object AndroidKeystoreBridge {
         val directory = File(applicationContext.noBackupFilesDir, "torca/data")
         check(directory.exists() || directory.mkdirs()) { "Unable to create Torca data directory" }
         return File(directory, "torca.db").absolutePath
+    }
+
+    private fun store(namespace: String): AndroidKeystoreSecretStore {
+        check(::applicationContext.isInitialized) { "Android Keystore bridge is not initialized" }
+        return stores.getOrPut(namespace) {
+            AndroidKeystoreSecretStore(applicationContext, namespace)
+        }
     }
 }
