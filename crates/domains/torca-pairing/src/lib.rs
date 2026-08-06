@@ -20,6 +20,15 @@ impl PairingSessionId {
     pub const fn from_u128(value: u128) -> Self {
         Self(OpaqueId::from_u128(value))
     }
+    /// Returns the opaque representation.
+    pub const fn to_opaque(self) -> OpaqueId {
+        self.0
+    }
+}
+impl fmt::Display for PairingSessionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, formatter)
+    }
 }
 
 /// Short-lived pairing code.
@@ -131,6 +140,18 @@ impl PairingSession {
     pub const fn role(&self) -> PairingRole {
         self.role
     }
+    /// Returns the pairing expiry deadline.
+    pub const fn expires_at(&self) -> Timestamp {
+        self.expires_at
+    }
+    /// Returns whether this side explicitly approved the peer.
+    pub const fn local_approved(&self) -> bool {
+        self.local_approved
+    }
+    /// Returns whether remote approval has been observed.
+    pub const fn remote_approved(&self) -> bool {
+        self.remote_approved
+    }
     /// Records a peer proposal on the creator side.
     pub fn peer_joined(
         &mut self,
@@ -237,8 +258,8 @@ pub enum PairingError {
     NotFound,
 }
 impl fmt::Display for PairingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
     }
 }
 impl std::error::Error for PairingError {}
