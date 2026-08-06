@@ -16,6 +16,13 @@ crate-type = ["cdylib", "rlib"]
 torca-bridge = { path = "../torca-bridge" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 
+[target.'cfg(windows)'.dependencies]
+torca-crypto = { path = "../../infrastructure/torca-crypto" }
+torca-identity = { path = "../../domains/torca-identity" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+torca-platform-windows = { path = "../torca-platform-windows" }
+torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
+
 # This crate is the narrowly reviewed unsafe FFI boundary. It intentionally
 # does not inherit the workspace-wide `unsafe_code = forbid` lint.
 [lints.rust]
