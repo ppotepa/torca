@@ -1,13 +1,31 @@
 # Foundation libraries
 
-Foundation libraries contain stable, dependency-light primitives used by multiple domains.
+Foundation contains stable, dependency-light contracts shared by several Torca mini-domains. It must not become a generic utility package or own product workflows.
 
-## Current crate
+## Implemented package
 
-```text
-torca-foundation
-```
+`torca-foundation` currently provides:
 
-Batch 01 creates the buildable crate boundary without introducing shared product types prematurely. Batch 02 adds opaque identifiers, timestamps, command metadata, correlation identifiers and event envelopes.
+- `OpaqueId` as a dependency-free 128-bit identifier representation;
+- process identifiers: `CommandId`, `CorrelationId`, `CausationId` and `EventId`;
+- bounded millisecond UTC `Timestamp` values;
+- `CommandMetadata` and typed `CommandEnvelope<C>`;
+- `EventMetadata` and typed `DomainEventEnvelope<E>`;
+- safe error classification through `ErrorCode`, `ErrorCategory`, `RetryAdvice` and `ErrorDescriptor`;
+- runtime-neutral cooperative cancellation contracts.
 
-Foundation must not contain product workflows, repositories, global service locators or convenience wrappers for one consumer. A type belongs here only when its semantics are genuinely shared and stable.
+Domain-specific identifiers such as `MessageId`, `ContactId` or `ConversationId` remain owned by their domain crates and should be newtypes around `OpaqueId`.
+
+## Explicit exclusions
+
+Foundation does not contain:
+
+- repositories or database abstractions;
+- serialization or wire-format models;
+- cryptographic randomness or identifier generation;
+- async runtime types;
+- global service locators;
+- Flutter, FFI or platform contracts;
+- business state machines.
+
+Identifier generation will be supplied by an application or cryptographic adapter. This keeps deterministic construction and parsing available without coupling every domain to one randomness implementation.

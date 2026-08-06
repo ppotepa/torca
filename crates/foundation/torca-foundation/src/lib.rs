@@ -1,4 +1,22 @@
-//! Dependency-free shared foundations for Torca crates.
+//! Dependency-light shared contracts used across Torca domain and application crates.
 //!
-//! Batch 01 establishes the workspace boundary only. Concrete identifiers,
-//! timestamps, command metadata, and event envelopes are introduced in Batch 02.
+//! The crate deliberately contains no product workflow, storage, transport, cryptography,
+//! serialization or platform integration. Domain crates should define their own business IDs as
+//! newtypes around [`OpaqueId`] and use the shared command, event, time, cancellation and error
+//! contracts only where their semantics are genuinely cross-cutting.
+
+mod cancellation;
+mod command;
+mod error;
+mod event;
+mod id;
+mod time;
+
+pub use cancellation::{CancellationProbe, CancellationReason, Cancelled, NeverCancelled};
+pub use command::{CommandEnvelope, CommandMetadata};
+pub use error::{ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, RetryAdvice};
+pub use event::{DomainEventEnvelope, EventMetadata};
+pub use id::{
+    CausationId, CommandId, CorrelationId, EventId, OpaqueId, ParseOpaqueIdError,
+};
+pub use time::{Timestamp, TimestampError};
