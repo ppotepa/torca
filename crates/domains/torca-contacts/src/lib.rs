@@ -98,6 +98,17 @@ impl Contact {
             updated_at: at,
         }
     }
+    /// Restores a validated contact aggregate from persistence.
+    pub const fn restore(
+        id: ContactId,
+        remote_identity: PublicIdentity,
+        route: ContactRoute,
+        status: ContactStatus,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+    ) -> Self {
+        Self { id, remote_identity, route, status, created_at, updated_at }
+    }
     /// Returns the ID.
     pub const fn id(&self) -> ContactId {
         self.id
@@ -117,6 +128,10 @@ impl Contact {
     /// Returns creation time.
     pub const fn created_at(&self) -> Timestamp {
         self.created_at
+    }
+    /// Returns last mutation time.
+    pub const fn updated_at(&self) -> Timestamp {
+        self.updated_at
     }
     /// Blocks an active contact.
     pub fn block(&mut self, at: Timestamp) -> Result<(), ContactError> {
@@ -163,6 +178,8 @@ pub enum ContactError {
     InvalidTransition,
     AlreadyExists,
     NotFound,
+    /// Persistence dependency failed without exposing implementation details.
+    RepositoryFailure,
 }
 impl fmt::Display for ContactError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
