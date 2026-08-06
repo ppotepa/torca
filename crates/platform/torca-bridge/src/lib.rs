@@ -8,7 +8,7 @@ use torca_messaging::{MessageBody, MessageId};
 use torca_pairing::{PairingCode, PairingSessionId};
 
 /// Version of the cross-language contract.
-pub const CONTRACT_VERSION: u16 = 1;
+pub const CONTRACT_VERSION: u16 = 2;
 
 /// Primitive bridge commands suitable for generated language bindings.
 #[must_use]
@@ -33,9 +33,21 @@ pub struct BridgeResult {
 pub struct BridgeSnapshot {
     pub contract_version: u16,
     pub identity_name: Option<String>,
+    pub pairings: Vec<BridgePairing>,
     pub contacts: Vec<BridgeContact>,
     pub conversations: Vec<BridgeConversation>,
     pub messages: Vec<BridgeMessage>,
+}
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgePairing {
+    pub id: String,
+    pub code: String,
+    pub role: String,
+    pub state: String,
+    pub expires_at_ms: i64,
+    pub local_approved: bool,
+    pub remote_approved: bool,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -168,6 +180,19 @@ fn map_snapshot(snapshot: ClientSnapshot) -> BridgeSnapshot {
         identity_name: snapshot
             .identity
             .map(|identity| identity.profile().display_name().as_str().to_owned()),
+        pairings: snapshot
+            .pairings
+            .into_iter()
+            .map(|pairing| BridgePairing {
+                id: pairing.id().to_string(),
+                code: pairing.code().as_str().to_owned(),
+                role: format!("{:?}", pairing.role()).to_lowercase(),
+                state: format!("{:?}", pairing.state()).to_lowercase(),
+                expires_at_ms: pairing.expires_at().to_unix_millis(),
+                local_approved: pairing.local_approved(),
+                remote_approved: pairing.remote_approved(),
+            })
+            .collect(),
         contacts: snapshot
             .contacts
             .into_iter()

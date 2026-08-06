@@ -389,7 +389,7 @@ fn bridge_result_json(result: &BridgeResult) -> String {
 
 fn empty_snapshot_json() -> String {
     format!(
-        "{{\"contractVersion\":{CONTRACT_VERSION},\"identity\":null,\"contacts\":[],\"conversations\":[],\"messages\":[]}}"
+        "{{\"contractVersion\":{CONTRACT_VERSION},\"identity\":null,\"pairings\":[],\"contacts\":[],\"conversations\":[],\"messages\":[]}}"
     )
 }
 
@@ -405,6 +405,28 @@ fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         }
         None => output.push_str("null"),
     }
+
+    output.push_str(",\"pairings\":[");
+    for (index, pairing) in snapshot.pairings.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        output.push_str("{\"id\":\"");
+        push_json_string(&pairing.id, &mut output);
+        output.push_str("\",\"code\":\"");
+        push_json_string(&pairing.code, &mut output);
+        output.push_str("\",\"role\":\"");
+        push_json_string(&pairing.role, &mut output);
+        output.push_str("\",\"state\":\"");
+        push_json_string(&pairing.state, &mut output);
+        let _ = write!(
+            output,
+            "\",\"expiresAtMs\":{},\"localApproved\":{},\"remoteApproved\":{}",
+            pairing.expires_at_ms, pairing.local_approved, pairing.remote_approved
+        );
+        output.push('}');
+    }
+    output.push(']');
 
     output.push_str(",\"contacts\":[");
     for (index, contact) in snapshot.contacts.iter().enumerate() {
@@ -480,7 +502,8 @@ mod tests {
     #[test]
     fn empty_snapshot_json_is_parseable_shape_without_secret_material() {
         let json = empty_snapshot_json();
-        assert!(json.contains("\"contractVersion\":1"));
+        assert!(json.contains("\"contractVersion\":2"));
+        assert!(json.contains("\"pairings\":[]"));
         assert!(json.contains("\"contacts\":[]"));
         assert!(!json.contains("private_key"));
         assert!(!json.contains("secret="));

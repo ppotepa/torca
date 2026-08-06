@@ -255,6 +255,20 @@ class FfiEngineGateway implements EngineGateway {
 
     return AppSnapshotDto(
       identity: identity,
+      pairings: _list(map, 'pairings')
+          .map<PairingDto>((Object? value) {
+            final Map<String, Object?> item = _stringMap(value, 'pairing');
+            return PairingDto(
+              id: _string(item, 'id'),
+              code: _string(item, 'code'),
+              role: _string(item, 'role'),
+              state: _string(item, 'state'),
+              expiresAtMs: _int(item, 'expiresAtMs'),
+              localApproved: _bool(item, 'localApproved'),
+              remoteApproved: _bool(item, 'remoteApproved'),
+            );
+          })
+          .toList(growable: false),
       contacts: _list(map, 'contacts')
           .map<ContactDto>((Object? value) {
             final Map<String, Object?> item = _stringMap(value, 'contact');

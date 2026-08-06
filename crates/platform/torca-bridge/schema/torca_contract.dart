@@ -1,7 +1,7 @@
 // GENERATED FILE. DO NOT EDIT.
 // Source: crates/platform/torca-bridge/schema/torca_contract.dart
 
-const int torcaContractVersion = 1;
+const int torcaContractVersion = 2;
 
 class BridgeResultDto {
   const BridgeResultDto({required this.ok, required this.kind, this.error});
@@ -13,6 +13,25 @@ class BridgeResultDto {
 class IdentityDto {
   const IdentityDto({required this.displayName});
   final String displayName;
+}
+
+class PairingDto {
+  const PairingDto({
+    required this.id,
+    required this.code,
+    required this.role,
+    required this.state,
+    required this.expiresAtMs,
+    required this.localApproved,
+    required this.remoteApproved,
+  });
+  final String id;
+  final String code;
+  final String role;
+  final String state;
+  final int expiresAtMs;
+  final bool localApproved;
+  final bool remoteApproved;
 }
 
 class ContactDto {
@@ -55,11 +74,13 @@ class MessageDto {
 class AppSnapshotDto {
   const AppSnapshotDto({
     this.identity,
+    this.pairings = const [],
     this.contacts = const [],
     this.conversations = const [],
     this.messages = const [],
   });
   final IdentityDto? identity;
+  final List<PairingDto> pairings;
   final List<ContactDto> contacts;
   final List<ConversationDto> conversations;
   final List<MessageDto> messages;
