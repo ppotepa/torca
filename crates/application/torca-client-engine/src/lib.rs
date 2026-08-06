@@ -3,14 +3,15 @@
 use core::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+
 use torca_contacts::{Contact, ContactId, ContactRepository, InMemoryContactRepository};
 use torca_conversations::{
     ConversationId, ConversationRepository, DirectConversation, InMemoryConversationRepository,
 };
 use torca_foundation::{ErrorCode, Timestamp};
 use torca_identity::{
-    CreateIdentity, DeterministicKeyProvider, Identity, IdentityId, IdentityService,
-    InMemoryIdentityRepository, Profile,
+    CreateIdentity, DeterministicKeyProvider, Identity, IdentityId, IdentityKeyProvider,
+    IdentityRepository, IdentityService, InMemoryIdentityRepository, Profile,
 };
 use torca_messaging::{
     InMemoryMessageRepository, Message, MessageBody, MessageId, MessageRepository, ReplyReference,
@@ -20,6 +21,8 @@ use torca_pairing::{
     PeerProposal,
 };
 use torca_receipts::{InMemoryReceiptRepository, Receipt, ReceiptRepository};
+
+/// Command accepted by the single-writer client engine.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineCommand {
@@ -78,6 +81,8 @@ pub enum EngineCommand {
     },
     ApplyReceipt(Receipt),
 }
+
+/// Result returned after one engine command.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineResult {
@@ -89,6 +94,8 @@ pub enum EngineResult {
     MessageUpdated { message_id: MessageId },
     ReceiptApplied { message_id: MessageId, changed: bool },
 }
+
+/// Immutable application snapshot consumed by projections and presentation bridges.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientSnapshot {
@@ -98,6 +105,8 @@ pub struct ClientSnapshot {
     pub conversations: Vec<DirectConversation>,
     pub messages: Vec<Message>,
 }
+
+/// Redaction-safe application engine failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EngineError(pub String);
 impl fmt::Display for EngineError {
@@ -106,30 +115,84 @@ impl fmt::Display for EngineError {
     }
 }
 impl std::error::Error for EngineError {}
-pub struct ClientEngine {
-    identity: IdentityService<InMemoryIdentityRepository, DeterministicKeyProvider>,
-    pairings: InMemoryPairingRepository,
-    contacts: InMemoryContactRepository,
-    conversations: InMemoryConversationRepository,
-    messages: InMemoryMessageRepository,
-    receipts: InMemoryReceiptRepository,
+
+/// Client engine parameterized by inward-facing persistence and key-management ports.
+///
+/// The default type parameters intentionally preserve the lightweight in-memory composition for
+/// tests and explicit previews. Production composition injects SQLCipher repositories and a
+/// protected production identity key provider without changing engine workflow code.
+pub struct ClientEngine<
+    I = InMemoryIdentityRepository,
+    K = DeterministicKeyProvider,
+    P = InMemoryPairingRepository,
+    C = InMemoryContactRepository,
+    V = InMemoryConversationRepository,
+    M = InMemoryMessageRepository,
+    R = InMemoryReceiptRepository,
+> {
+    identity: IdentityService<I, K>,
+    pairings: P,
+    contacts: C,
+    conversations: V,
+    messages: M,
+    receipts: R,
 }
-impl Default for ClientEngine {
+
+impl Default
+    for ClientEngine<
+        InMemoryIdentityRepository,
+        DeterministicKeyProvider,
+        InMemoryPairingRepository,
+        InMemoryContactRepository,
+        InMemoryConversationRepository,
+        InMemoryMessageRepository,
+        InMemoryReceiptRepository,
+    >
+{
     fn default() -> Self {
-        Self {
-            identity: IdentityService::new(
-                InMemoryIdentityRepository::default(),
-                DeterministicKeyProvider::default(),
-            ),
-            pairings: InMemoryPairingRepository::default(),
-            contacts: InMemoryContactRepository::default(),
-            conversations: InMemoryConversationRepository::default(),
-            messages: InMemoryMessageRepository::default(),
-            receipts: InMemoryReceiptRepository::default(),
-        }
+        Self::new(
+            InMemoryIdentityRepository::default(),
+            DeterministicKeyProvider::default(),
+            InMemoryPairingRepository::default(),
+            InMemoryContactRepository::default(),
+            InMemoryConversationRepository::default(),
+            InMemoryMessageRepository::default(),
+            InMemoryReceiptRepository::default(),
+        )
     }
 }
-impl ClientEngine {
+
+impl<I, K, P, C, V, M, R> ClientEngine<I, K, P, C, V, M, R>
+where
+    I: IdentityRepository,
+    K: IdentityKeyProvider,
+    P: PairingRepository,
+    C: ContactRepository,
+    V: ConversationRepository,
+    M: MessageRepository,
+    R: ReceiptRepository,
+{
+    /// Creates an engine from explicit ports.
+    pub const fn new(
+        identity_repository: I,
+        key_provider: K,
+        pairings: P,
+        contacts: C,
+        conversations: V,
+        messages: M,
+        receipts: R,
+    ) -> Self {
+        Self {
+            identity: IdentityService::new(identity_repository, key_provider),
+            pairings,
+            contacts,
+            conversations,
+            messages,
+            receipts,
+        }
+    }
+
+    /// Executes one serialized application command.
     pub fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError> {
         match command {
             EngineCommand::CreateIdentity { identity_id, profile, at } => {
@@ -223,6 +286,8 @@ impl ClientEngine {
             }
         }
     }
+
+    /// Reads the current application snapshot through injected repositories.
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         Ok(ClientSnapshot {
             identity: self.identity.load().map_err(map_error)?,
@@ -232,12 +297,14 @@ impl ClientEngine {
             messages: self.messages.list().map_err(map_error)?,
         })
     }
+
     fn load_pairing(&self, id: PairingSessionId) -> Result<PairingSession, EngineError> {
         self.pairings
             .get(id)
             .map_err(map_error)?
             .ok_or_else(|| EngineError("pairing session not found".into()))
     }
+
     fn load_message(&self, id: MessageId) -> Result<Message, EngineError> {
         self.messages
             .get(id)
@@ -245,19 +312,51 @@ impl ClientEngine {
             .ok_or_else(|| EngineError("message not found".into()))
     }
 }
+
+/// Runtime interface hidden behind the single-writer actor.
+pub trait EngineRuntime: Send + 'static {
+    /// Executes one command.
+    fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError>;
+    /// Reads one snapshot.
+    fn snapshot(&self) -> Result<ClientSnapshot, EngineError>;
+}
+
+impl<I, K, P, C, V, M, R> EngineRuntime for ClientEngine<I, K, P, C, V, M, R>
+where
+    I: IdentityRepository + Send + 'static,
+    K: IdentityKeyProvider + Send + 'static,
+    P: PairingRepository + Send + 'static,
+    C: ContactRepository + Send + 'static,
+    V: ConversationRepository + Send + 'static,
+    M: MessageRepository + Send + 'static,
+    R: ReceiptRepository + Send + 'static,
+{
+    fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError> {
+        ClientEngine::dispatch(self, command)
+    }
+
+    fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
+        ClientEngine::snapshot(self)
+    }
+}
+
 fn map_error(error: impl fmt::Display) -> EngineError {
     EngineError(error.to_string())
 }
+
 enum ActorRequest {
     Dispatch(EngineCommand, Sender<Result<EngineResult, EngineError>>),
     Snapshot(Sender<Result<ClientSnapshot, EngineError>>),
     Shutdown,
 }
+
+/// Cloneable handle used by bridges/workers to communicate with the engine actor.
 #[derive(Clone)]
 pub struct EngineHandle {
     sender: Sender<ActorRequest>,
 }
 impl EngineHandle {
+    /// Dispatches a command through the engine actor.
     pub fn dispatch(&self, command: EngineCommand) -> Result<EngineResult, EngineError> {
         let (sender, receiver) = mpsc::channel();
         self.sender
@@ -265,6 +364,8 @@ impl EngineHandle {
             .map_err(|_| EngineError("engine actor stopped".into()))?;
         receiver.recv().map_err(|_| EngineError("engine response channel closed".into()))?
     }
+
+    /// Requests a current snapshot from the engine actor.
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         let (sender, receiver) = mpsc::channel();
         self.sender
@@ -273,12 +374,15 @@ impl EngineHandle {
         receiver.recv().map_err(|_| EngineError("engine response channel closed".into()))?
     }
 }
+
+/// Owner of the single engine thread.
 pub struct ClientEngineActor {
     sender: Sender<ActorRequest>,
     join: Option<JoinHandle<()>>,
 }
 impl ClientEngineActor {
-    pub fn spawn(mut engine: ClientEngine) -> (EngineHandle, Self) {
+    /// Starts an actor around any engine runtime satisfying the application contract.
+    pub fn spawn<E: EngineRuntime>(mut engine: E) -> (EngineHandle, Self) {
         let (sender, receiver): (Sender<ActorRequest>, Receiver<ActorRequest>) = mpsc::channel();
         let handle = EngineHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
@@ -296,6 +400,8 @@ impl ClientEngineActor {
         });
         (handle, Self { sender, join: Some(join) })
     }
+
+    /// Stops and joins the engine actor.
     pub fn shutdown(mut self) -> Result<(), EngineError> {
         self.sender
             .send(ActorRequest::Shutdown)
