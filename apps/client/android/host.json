@@ -1,0 +1,10 @@
+{
+  "nativeLibrary": "libtorca_bridge.so",
+  "methodChannel": "torca.engine.v1",
+  "contractVersion": 1,
+  "memoryGatewayAllowedInRelease": false,
+  "supportedAbis": ["arm64-v8a", "x86_64"],
+  "backgroundOwnership": "foreground_service",
+  "processRecreation": "restore_from_engine_storage",
+  "diagnosticExportRedacted": true
+}
