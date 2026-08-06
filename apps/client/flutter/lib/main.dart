@@ -2,8 +2,8 @@ import 'package:flutter/widgets.dart';
 
 import 'app.dart';
 import 'gateway/engine_gateway.dart';
+import 'gateway/ffi_engine_gateway.dart';
 import 'gateway/memory_engine_gateway.dart';
-import 'gateway/method_channel_engine_gateway.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,10 +17,22 @@ Future<void> main() async {
   if (useMemoryGateway) {
     gateway = MemoryEngineGateway();
   } else {
-    final MethodChannelEngineGateway nativeGateway =
-        MethodChannelEngineGateway();
-    await nativeGateway.initialize();
-    gateway = nativeGateway;
+    try {
+      final FfiEngineGateway nativeGateway = FfiEngineGateway.open();
+      final result = await nativeGateway.initialize();
+      gateway = result.ok
+          ? nativeGateway
+          : UnavailableEngineGateway(
+              result.error ?? 'native Torca engine failed to initialize',
+            );
+      if (!result.ok) {
+        await nativeGateway.dispose();
+      }
+    } on Object catch (error) {
+      gateway = UnavailableEngineGateway(
+        'native Torca engine is unavailable: $error',
+      );
+    }
   }
 
   runApp(TorcaApp(gateway: gateway));
