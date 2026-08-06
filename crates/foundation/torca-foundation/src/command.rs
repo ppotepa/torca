@@ -1,6 +1,7 @@
 use crate::{CausationId, CommandId, CorrelationId, Timestamp};
 
 /// Metadata required for idempotent command processing and diagnostic tracing.
+#[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CommandMetadata {
     command_id: CommandId,
@@ -15,7 +16,7 @@ impl CommandMetadata {
         Self {
             command_id,
             issued_at,
-            correlation_id: CorrelationId::from_opaque(command_id.as_opaque()),
+            correlation_id: CorrelationId::from_opaque(command_id.to_opaque()),
             causation_id: None,
         }
     }
@@ -57,6 +58,7 @@ impl CommandMetadata {
 }
 
 /// Typed application command together with its processing metadata.
+#[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandEnvelope<C> {
     metadata: CommandMetadata,
