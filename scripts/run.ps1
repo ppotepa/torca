@@ -7,6 +7,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ($Target -eq 'auto') {
+    $Target = if ($IsWindows) { 'windows' } else { 'android' }
+}
+
 if ($Target -eq 'android' -and -not $Device) {
     $deviceJson = (& flutter devices --machine 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0) {
