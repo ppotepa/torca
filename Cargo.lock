@@ -5,15 +5,7 @@ version = 4
 [[package]]
 name = "torca-client-engine"
 version = "0.1.0-alpha.0"
-dependencies = [
- "torca-contacts",
- "torca-conversations",
- "torca-foundation",
- "torca-identity",
- "torca-messaging",
- "torca-pairing",
- "torca-receipts",
-]
+dependencies = ["torca-contacts", "torca-conversations", "torca-foundation", "torca-identity", "torca-messaging", "torca-pairing", "torca-receipts"]
 
 [[package]]
 name = "torca-contacts"
@@ -50,6 +42,16 @@ version = "0.1.0-alpha.0"
 dependencies = ["torca-contacts", "torca-foundation", "torca-identity"]
 
 [[package]]
+name = "torca-peer"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation", "torca-peer-protocol"]
+
+[[package]]
+name = "torca-peer-protocol"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation", "torca-wire"]
+
+[[package]]
 name = "torca-projections"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-contacts", "torca-conversations", "torca-messaging"]
@@ -73,6 +75,10 @@ dependencies = ["torca-foundation"]
 name = "torca-storage-sqlite"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation", "torca-identity", "torca-messaging"]
+
+[[package]]
+name = "torca-transport-tor"
+version = "0.1.0-alpha.0"
 
 [[package]]
 name = "torca-wire"

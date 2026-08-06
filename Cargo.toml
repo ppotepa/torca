@@ -14,6 +14,9 @@ members = [
     "crates/domains/torca-messaging",
     "crates/domains/torca-receipts",
     "crates/application/torca-projections",
+    "crates/protocol/torca-peer-protocol",
+    "crates/infrastructure/torca-peer",
+    "crates/infrastructure/torca-transport-tor",
 ]
 resolver = "3"
 
