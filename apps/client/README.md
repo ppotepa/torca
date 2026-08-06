@@ -4,6 +4,17 @@
 
 Compose the shared Flutter presentation, generated bridge, Rust ClientEngine and platform adapters into Windows and Android applications.
 
+## Current layout
+
+```text
+apps/client/
+  flutter/              shared Flutter application baseline
+  android/              Android host integration, added in Batch 18
+  windows/              Windows host integration, added in Batch 17
+```
+
+The Flutter baseline is buildable and testable, but it intentionally contains no product workflow state. It exists to validate the workspace until generated bridge contracts and UI features are introduced.
+
 ## Owns
 
 - application startup and shutdown composition;
@@ -21,13 +32,12 @@ Compose the shared Flutter presentation, generated bridge, Rust ClientEngine and
 - wire protocol encoding;
 - retry state machines.
 
-## Planned internal layout
+## Validation
 
-```text
-apps/client/
-  flutter/              shared Flutter application
-  android/              Android host integration
-  windows/              Windows host integration
+Run the canonical root command:
+
+```powershell
+./scripts/validate.ps1
 ```
 
 ## 0.1 completion
