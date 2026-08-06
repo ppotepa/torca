@@ -1,6 +1,6 @@
 use core::fmt;
 
-use torca_client_engine::{ClientEngine, ClientEngineActor, EngineHandle};
+use torca_client_engine::{ClientEngineActor, EngineHandle};
 
 /// Redaction-safe native composition failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,14 +25,13 @@ pub(crate) fn spawn_production_engine(
 ) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
     use std::path::PathBuf;
 
-    use torca_crypto::{
-        CryptoProvider, ManagedIdentityKeys, ProtectedSecretStore, RustCryptoProvider,
-    };
+    use torca_client_engine::ClientEngine;
+    use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
     use torca_identity::KeyId;
     use torca_pairing::InMemoryPairingRepository;
     use torca_platform_windows::DpapiFileSecretStore;
     use torca_storage_sqlite::{
-        DatabaseKey, SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore,
+        SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore,
     };
 
     const DATABASE_KEY_HANDLE: KeyId = KeyId::from_u128(0x746f7263615f64625f6b6579);
@@ -76,59 +75,60 @@ pub(crate) fn spawn_production_engine(
         receipts,
     );
     Ok(ClientEngineActor::spawn(engine))
+}
 
-    fn load_or_create_database_key<S: ProtectedSecretStore, C: CryptoProvider>(
-        store: &mut S,
-        handle: KeyId,
-        mut crypto: C,
-    ) -> Result<DatabaseKey, NativeCompositionError> {
-        match store
-            .load(handle)
-            .map_err(|error| secret_error("load database key", &error))?
-        {
-            Some(mut bytes) => {
-                if bytes.len() != 32 {
-                    bytes.fill(0);
-                    return Err(NativeCompositionError::new(
-                        "protected database key has an invalid length",
-                    ));
-                }
-                let mut key = [0_u8; 32];
-                key.copy_from_slice(&bytes);
+#[cfg(windows)]
+fn load_or_create_database_key<S: torca_crypto::ProtectedSecretStore, C: torca_crypto::CryptoProvider>(
+    store: &mut S,
+    handle: torca_identity::KeyId,
+    mut crypto: C,
+) -> Result<torca_storage_sqlite::DatabaseKey, NativeCompositionError> {
+    match store
+        .load(handle)
+        .map_err(|error| secret_error("load database key", &error))?
+    {
+        Some(mut bytes) => {
+            if bytes.len() != 32 {
                 bytes.fill(0);
-                Ok(DatabaseKey::new(key))
+                return Err(NativeCompositionError::new(
+                    "protected database key has an invalid length",
+                ));
             }
-            None => {
-                let mut key = [0_u8; 32];
-                crypto
-                    .fill_random(&mut key)
-                    .map_err(|_| NativeCompositionError::new("database key generation failed"))?;
-                if let Err(error) = store.insert(handle, &key) {
-                    key.fill(0);
-                    return Err(secret_error("persist database key", &error));
-                }
-                Ok(DatabaseKey::new(key))
+            let mut key = [0_u8; 32];
+            key.copy_from_slice(&bytes);
+            bytes.fill(0);
+            Ok(torca_storage_sqlite::DatabaseKey::new(key))
+        }
+        None => {
+            let mut key = [0_u8; 32];
+            crypto
+                .fill_random(&mut key)
+                .map_err(|_| NativeCompositionError::new("database key generation failed"))?;
+            if let Err(error) = store.insert(handle, &key) {
+                key.fill(0);
+                return Err(secret_error("persist database key", &error));
             }
+            Ok(torca_storage_sqlite::DatabaseKey::new(key))
         }
     }
+}
 
-    fn io_error(operation: &str, error: &std::io::Error) -> NativeCompositionError {
-        NativeCompositionError::new(format!("{operation} failed ({:?})", error.kind()))
-    }
+#[cfg(windows)]
+fn io_error(operation: &str, error: &std::io::Error) -> NativeCompositionError {
+    NativeCompositionError::new(format!("{operation} failed ({:?})", error.kind()))
+}
 
-    fn secret_error(
-        operation: &str,
-        error: &torca_crypto::ProtectedSecretStoreError,
-    ) -> NativeCompositionError {
-        NativeCompositionError::new(format!("{operation} failed: {error}"))
-    }
+#[cfg(windows)]
+fn secret_error(
+    operation: &str,
+    error: &torca_crypto::ProtectedSecretStoreError,
+) -> NativeCompositionError {
+    NativeCompositionError::new(format!("{operation} failed: {error}"))
+}
 
-    fn storage_error(
-        operation: &str,
-        error: &impl fmt::Display,
-    ) -> NativeCompositionError {
-        NativeCompositionError::new(format!("{operation} failed: {error}"))
-    }
+#[cfg(windows)]
+fn storage_error(operation: &str, error: &impl fmt::Display) -> NativeCompositionError {
+    NativeCompositionError::new(format!("{operation} failed: {error}"))
 }
 
 #[cfg(not(windows))]
