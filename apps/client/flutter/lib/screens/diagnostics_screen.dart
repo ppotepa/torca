@@ -11,11 +11,11 @@ class DiagnosticsScreen extends StatelessWidget {
           children: const <Widget>[
             ListTile(
               title: Text('Runtime'),
-              subtitle: Text('Gateway connected'),
+              subtitle: Text('Shared Flutter/Rust client'),
             ),
             ListTile(
               title: Text('Tor'),
-              subtitle: Text('Not composed in memory preview'),
+              subtitle: Text('Production network composition pending'),
             ),
             ListTile(
               title: Text('Sensitive data'),
