@@ -148,3 +148,52 @@ class AndroidKeystoreSecretStore(context: Context) {
         val KEY_ID = Regex("[0-9a-f]{32}")
     }
 }
+
+/**
+ * Minimal JNI surface used by the Rust production composition.
+ *
+ * Flutter never sees protected secret bytes. The bridge owns only application Context and delegates
+ * encryption/decryption to AndroidKeystoreSecretStore.
+ */
+object AndroidKeystoreBridge {
+    private lateinit var applicationContext: Context
+    private lateinit var secrets: AndroidKeystoreSecretStore
+
+    @JvmStatic
+    @Synchronized
+    fun initialize(context: Context) {
+        if (::applicationContext.isInitialized) return
+        applicationContext = context.applicationContext
+        secrets = AndroidKeystoreSecretStore(applicationContext)
+    }
+
+    @JvmStatic
+    @Synchronized
+    fun load(keyId: String): ByteArray? {
+        check(::secrets.isInitialized) { "Android Keystore bridge is not initialized" }
+        return secrets.load(keyId)
+    }
+
+    @JvmStatic
+    @Synchronized
+    fun insert(keyId: String, secret: ByteArray) {
+        check(::secrets.isInitialized) { "Android Keystore bridge is not initialized" }
+        secrets.insert(keyId, secret)
+    }
+
+    @JvmStatic
+    @Synchronized
+    fun delete(keyId: String): Boolean {
+        check(::secrets.isInitialized) { "Android Keystore bridge is not initialized" }
+        return secrets.delete(keyId)
+    }
+
+    @JvmStatic
+    @Synchronized
+    fun databasePath(): String {
+        check(::applicationContext.isInitialized) { "Android Keystore bridge is not initialized" }
+        val directory = File(applicationContext.noBackupFilesDir, "torca/data")
+        check(directory.exists() || directory.mkdirs()) { "Unable to create Torca data directory" }
+        return File(directory, "torca.db").absolutePath
+    }
+}
