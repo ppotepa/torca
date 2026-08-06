@@ -1,0 +1,140 @@
+use core::fmt;
+
+use torca_client_engine::{ClientEngine, ClientEngineActor, EngineHandle};
+
+/// Redaction-safe native composition failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NativeCompositionError(String);
+
+impl NativeCompositionError {
+    fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl fmt::Display for NativeCompositionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NativeCompositionError {}
+
+#[cfg(windows)]
+pub(crate) fn spawn_production_engine(
+) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
+    use std::path::PathBuf;
+
+    use torca_crypto::{
+        CryptoProvider, ManagedIdentityKeys, ProtectedSecretStore, RustCryptoProvider,
+    };
+    use torca_identity::KeyId;
+    use torca_pairing::InMemoryPairingRepository;
+    use torca_platform_windows::DpapiFileSecretStore;
+    use torca_storage_sqlite::{
+        DatabaseKey, SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore,
+    };
+
+    const DATABASE_KEY_HANDLE: KeyId = KeyId::from_u128(0x746f7263615f64625f6b6579);
+
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| NativeCompositionError::new("Windows local application data is unavailable"))?;
+    let root = local_app_data.join("Torca").join("0.1");
+    let database_dir = root.join("data");
+    std::fs::create_dir_all(&database_dir)
+        .map_err(|error| io_error("create application data directory", &error))?;
+    let database_path = database_dir.join("torca.db");
+
+    let mut database_secret_store = DpapiFileSecretStore::new(root.join("secrets").join("database"))
+        .map_err(|error| secret_error("open database secret store", &error))?;
+    let database_key = load_or_create_database_key(
+        &mut database_secret_store,
+        DATABASE_KEY_HANDLE,
+        RustCryptoProvider,
+    )?;
+
+    let identity_repository = SqlCipherStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open identity repository", &error))?;
+    let relationships = SqlCipherStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open relationship repository", &error))?;
+    let messages = SqlCipherMessageStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open message repository", &error))?;
+    let receipts = SqlCipherReceiptStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open receipt repository", &error))?;
+
+    let identity_secret_store = DpapiFileSecretStore::new(root.join("secrets").join("identity"))
+        .map_err(|error| secret_error("open identity secret store", &error))?;
+    let identity_keys = ManagedIdentityKeys::new(RustCryptoProvider, identity_secret_store);
+
+    let engine = ClientEngine::new(
+        identity_repository,
+        identity_keys,
+        InMemoryPairingRepository::default(),
+        relationships,
+        messages,
+        receipts,
+    );
+    Ok(ClientEngineActor::spawn(engine))
+
+    fn load_or_create_database_key<S: ProtectedSecretStore, C: CryptoProvider>(
+        store: &mut S,
+        handle: KeyId,
+        mut crypto: C,
+    ) -> Result<DatabaseKey, NativeCompositionError> {
+        match store
+            .load(handle)
+            .map_err(|error| secret_error("load database key", &error))?
+        {
+            Some(mut bytes) => {
+                if bytes.len() != 32 {
+                    bytes.fill(0);
+                    return Err(NativeCompositionError::new(
+                        "protected database key has an invalid length",
+                    ));
+                }
+                let mut key = [0_u8; 32];
+                key.copy_from_slice(&bytes);
+                bytes.fill(0);
+                Ok(DatabaseKey::new(key))
+            }
+            None => {
+                let mut key = [0_u8; 32];
+                crypto
+                    .fill_random(&mut key)
+                    .map_err(|_| NativeCompositionError::new("database key generation failed"))?;
+                if let Err(error) = store.insert(handle, &key) {
+                    key.fill(0);
+                    return Err(secret_error("persist database key", &error));
+                }
+                Ok(DatabaseKey::new(key))
+            }
+        }
+    }
+
+    fn io_error(operation: &str, error: &std::io::Error) -> NativeCompositionError {
+        NativeCompositionError::new(format!("{operation} failed ({:?})", error.kind()))
+    }
+
+    fn secret_error(
+        operation: &str,
+        error: &torca_crypto::ProtectedSecretStoreError,
+    ) -> NativeCompositionError {
+        NativeCompositionError::new(format!("{operation} failed: {error}"))
+    }
+
+    fn storage_error(
+        operation: &str,
+        error: &impl fmt::Display,
+    ) -> NativeCompositionError {
+        NativeCompositionError::new(format!("{operation} failed: {error}"))
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn spawn_production_engine(
+) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
+    Err(NativeCompositionError::new(
+        "production native composition is not implemented for this platform",
+    ))
+}
