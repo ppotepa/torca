@@ -3,6 +3,11 @@
 version = 4
 
 [[package]]
+name = "torca-attachments"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation", "torca-messaging"]
+
+[[package]]
 name = "torca-bridge"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-client-engine", "torca-contacts", "torca-conversations", "torca-foundation", "torca-identity", "torca-messaging", "torca-pairing", "torca-receipts"]
@@ -33,6 +38,16 @@ version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation"]
 
 [[package]]
+name = "torca-diagnostics"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation"]
+
+[[package]]
+name = "torca-file-storage"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-attachments", "torca-crypto", "torca-foundation"]
+
+[[package]]
 name = "torca-foundation"
 version = "0.1.0-alpha.0"
 
@@ -40,6 +55,11 @@ version = "0.1.0-alpha.0"
 name = "torca-identity"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation"]
+
+[[package]]
+name = "torca-integration"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-attachments", "torca-client-engine", "torca-contacts", "torca-conversations", "torca-crypto", "torca-file-storage", "torca-foundation", "torca-identity", "torca-messaging", "torca-pairing", "torca-receipts"]
 
 [[package]]
 name = "torca-messaging"

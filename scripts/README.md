@@ -1,28 +1,11 @@
 # Development scripts
 
-This directory contains supported repository entrypoints for validation, build, local infrastructure, deployment and diagnostics.
+Supported entrypoints:
 
-## Available now
+- `./scripts/format.ps1` — format all Rust and Dart source.
+- `./scripts/validate.ps1` — release metadata, architecture boundaries, generated contract, Rust and Flutter validation.
+- `./scripts/check-release.ps1` — verify version/build/contract consistency.
+- `./scripts/check-architecture.ps1` — detect forbidden domain dependencies and raw SQL outside storage.
+- `./scripts/package.ps1 -Target windows|android|all` — validate, build release artifacts and write SHA-256 checksums.
 
-### `validate.ps1`
-
-Canonical repository-wide validation command:
-
-```powershell
-./scripts/validate.ps1
-```
-
-Optional layer-specific execution:
-
-```powershell
-./scripts/validate.ps1 -SkipFlutter
-./scripts/validate.ps1 -SkipRust
-```
-
-The full command validates Rust formatting, compilation, Clippy, Rust tests, Flutter dependency resolution, Dart formatting, Flutter analysis and Flutter tests. GitHub Actions invokes this same script.
-
-## Planned commands
-
-Later milestones will add thin orchestration entrypoints for dependency-boundary checks, generated contract verification, local relay and Tor startup, platform deployment, diagnostics and release consistency.
-
-Scripts must remain orchestration layers. Product behavior belongs in libraries and deployable applications.
+Product behavior remains in libraries and applications; scripts only orchestrate tools.

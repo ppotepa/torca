@@ -20,6 +20,10 @@ members = [
     "crates/platform/torca-bridge",
     "crates/platform/torca-platform",
     "tools/torca-contract-gen",
+    "crates/domains/torca-attachments",
+    "crates/infrastructure/torca-file-storage",
+    "crates/application/torca-diagnostics",
+    "tests/torca-integration",
 ]
 resolver = "3"
 

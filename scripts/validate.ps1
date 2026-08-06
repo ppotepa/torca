@@ -6,6 +6,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 function Invoke-Checked { param([Parameter(Mandatory = $true)][string]$Name, [Parameter(Mandatory = $true)][scriptblock]$Command) Write-Host "==> $Name"; & $Command; if ($LASTEXITCODE -ne 0) { throw "$Name failed with exit code $LASTEXITCODE." } }
 Push-Location $repoRoot
 try {
+    & (Join-Path $PSScriptRoot 'check-release.ps1')
+    & (Join-Path $PSScriptRoot 'check-architecture.ps1')
     if (-not $SkipRust) {
         Invoke-Checked 'Rust formatting' { cargo fmt --all -- --check }
         Invoke-Checked 'Generated contract' { cargo run -p torca-contract-gen --locked -- --check apps/client/flutter/lib/generated/torca_contract.dart }

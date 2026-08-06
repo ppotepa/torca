@@ -1,0 +1,17 @@
+[package]
+name = "torca-file-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-attachments = { path = "../../domains/torca-attachments" }
+torca-crypto = { path = "../torca-crypto" }
+
+[lints]
+workspace = true
