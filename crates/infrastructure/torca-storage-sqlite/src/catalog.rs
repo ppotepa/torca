@@ -71,6 +71,26 @@ pub mod messaging_sql {
         name: "message.select",
         sql: include_str!("../sql/queries/message_select_by_id.sql"),
     };
+    pub const INSERT_DOMAIN_MESSAGE: SqlStatement = SqlStatement {
+        name: "message.domain_insert",
+        sql: include_str!("../sql/commands/message_insert_domain.sql"),
+    };
+    pub const UPDATE_DOMAIN_MESSAGE: SqlStatement = SqlStatement {
+        name: "message.domain_update",
+        sql: include_str!("../sql/commands/message_update_domain.sql"),
+    };
+    pub const SELECT_DOMAIN_MESSAGE: SqlStatement = SqlStatement {
+        name: "message.domain_select",
+        sql: include_str!("../sql/queries/message_domain_select_by_id.sql"),
+    };
+    pub const SELECT_DOMAIN_FOR_CONVERSATION: SqlStatement = SqlStatement {
+        name: "message.domain_for_conversation",
+        sql: include_str!("../sql/queries/message_domain_for_conversation.sql"),
+    };
+    pub const LIST_DOMAIN_MESSAGES: SqlStatement = SqlStatement {
+        name: "message.domain_list",
+        sql: include_str!("../sql/queries/message_domain_list.sql"),
+    };
     pub const INSERT_OUTBOX: SqlStatement = SqlStatement {
         name: "outbox.insert",
         sql: include_str!("../sql/commands/outbox_insert.sql"),
