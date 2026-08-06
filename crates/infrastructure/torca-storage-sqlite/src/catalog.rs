@@ -21,6 +21,46 @@ pub mod identity_sql {
     };
 }
 
+pub mod contact_sql {
+    use super::SqlStatement;
+    pub const INSERT: SqlStatement = SqlStatement {
+        name: "contact.insert",
+        sql: include_str!("../sql/commands/contact_insert.sql"),
+    };
+    pub const UPDATE: SqlStatement = SqlStatement {
+        name: "contact.update",
+        sql: include_str!("../sql/commands/contact_update.sql"),
+    };
+    pub const SELECT_BY_ID: SqlStatement = SqlStatement {
+        name: "contact.select_by_id",
+        sql: include_str!("../sql/queries/contact_select_by_id.sql"),
+    };
+    pub const LIST: SqlStatement = SqlStatement {
+        name: "contact.list",
+        sql: include_str!("../sql/queries/contact_list.sql"),
+    };
+}
+
+pub mod conversation_sql {
+    use super::SqlStatement;
+    pub const INSERT: SqlStatement = SqlStatement {
+        name: "conversation.insert",
+        sql: include_str!("../sql/commands/conversation_insert.sql"),
+    };
+    pub const SELECT_BY_ID: SqlStatement = SqlStatement {
+        name: "conversation.select_by_id",
+        sql: include_str!("../sql/queries/conversation_select_by_id.sql"),
+    };
+    pub const SELECT_BY_CONTACT: SqlStatement = SqlStatement {
+        name: "conversation.select_by_contact",
+        sql: include_str!("../sql/queries/conversation_select_by_contact.sql"),
+    };
+    pub const LIST: SqlStatement = SqlStatement {
+        name: "conversation.list",
+        sql: include_str!("../sql/queries/conversation_list.sql"),
+    };
+}
+
 pub mod messaging_sql {
     use super::SqlStatement;
     pub const INSERT_MESSAGE: SqlStatement = SqlStatement {
