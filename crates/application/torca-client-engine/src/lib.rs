@@ -18,7 +18,7 @@ pub struct ClientEngine { identity: IdentityService<InMemoryIdentityRepository, 
 impl Default for ClientEngine { fn default() -> Self { Self { identity: IdentityService::new(InMemoryIdentityRepository::default(), DeterministicKeyProvider::default()), pairings: InMemoryPairingRepository::default(), contacts: InMemoryContactRepository::default(), conversations: InMemoryConversationRepository::default(), messages: InMemoryMessageRepository::default(), receipts: InMemoryReceiptRepository::default() } } }
 impl ClientEngine {
     pub fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError> { match command {
-        EngineCommand::CreateIdentity { identity_id, profile, at } => { self.identity.create(CreateIdentity { identity_id, profile, at }).map_err(map_error)?; Ok(EngineResult::IdentityCreated) }
+        EngineCommand::CreateIdentity { identity_id, profile, at } => { let (_identity, _event) = self.identity.create(CreateIdentity { identity_id, profile, at }).map_err(map_error)?; Ok(EngineResult::IdentityCreated) }
         EngineCommand::StartPairing { session_id, code, expires_at } => { self.pairings.insert(PairingSession::creator(session_id, code, expires_at)).map_err(map_error)?; Ok(EngineResult::PairingStarted) }
         EngineCommand::PeerJoined { session_id, proposal, at } => { let mut session = self.load_pairing(session_id)?; session.peer_joined(proposal, at).map_err(map_error)?; self.pairings.update(session).map_err(map_error)?; Ok(EngineResult::PairingUpdated) }
         EngineCommand::ApprovePairing { session_id, at } => { let mut session = self.load_pairing(session_id)?; session.approve_local(at).map_err(map_error)?; self.pairings.update(session).map_err(map_error)?; Ok(EngineResult::PairingUpdated) }
