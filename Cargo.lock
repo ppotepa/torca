@@ -108,7 +108,7 @@ dependencies = ["torca-foundation"]
 [[package]]
 name = "torca-storage-sqlite"
 version = "0.1.0-alpha.0"
-dependencies = ["torca-foundation", "torca-identity", "torca-messaging"]
+dependencies = ["torca-contacts", "torca-conversations", "torca-foundation", "torca-identity", "torca-messaging", "torca-receipts"]
 
 [[package]]
 name = "torca-transport-tor"
