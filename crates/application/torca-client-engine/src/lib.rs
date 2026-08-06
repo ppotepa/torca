@@ -4,9 +4,10 @@ use core::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use torca_contacts::{Contact, ContactId, ContactRepository, InMemoryContactRepository};
+use torca_contacts::{Contact, ContactError, ContactId, ContactRepository, InMemoryContactRepository};
 use torca_conversations::{
-    ConversationId, ConversationRepository, DirectConversation, InMemoryConversationRepository,
+    ConversationError, ConversationId, ConversationRepository, DirectConversation,
+    InMemoryConversationRepository,
 };
 use torca_foundation::{ErrorCode, Timestamp};
 use torca_identity::{
@@ -116,6 +117,79 @@ impl fmt::Display for EngineError {
 }
 impl std::error::Error for EngineError {}
 
+/// Combined relationship persistence boundary.
+///
+/// Contact and direct-conversation repositories intentionally share one owner so pairing
+/// completion can commit both aggregates atomically in production storage.
+pub trait RelationshipRepository: ContactRepository + ConversationRepository {
+    /// Persists a verified contact and its direct conversation as one unit.
+    fn insert_pairing_result(
+        &mut self,
+        contact: Contact,
+        conversation: DirectConversation,
+    ) -> Result<(), EngineError>;
+}
+
+/// In-memory relationship repository used by tests and explicit previews.
+#[derive(Clone, Debug, Default)]
+pub struct InMemoryRelationshipRepository {
+    contacts: InMemoryContactRepository,
+    conversations: InMemoryConversationRepository,
+}
+
+impl ContactRepository for InMemoryRelationshipRepository {
+    fn insert(&mut self, contact: Contact) -> Result<(), ContactError> {
+        self.contacts.insert(contact)
+    }
+    fn get(&self, id: ContactId) -> Result<Option<Contact>, ContactError> {
+        self.contacts.get(id)
+    }
+    fn update(&mut self, contact: Contact) -> Result<(), ContactError> {
+        self.contacts.update(contact)
+    }
+    fn list(&self) -> Result<Vec<Contact>, ContactError> {
+        self.contacts.list()
+    }
+}
+
+impl ConversationRepository for InMemoryRelationshipRepository {
+    fn insert(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
+        self.conversations.insert(conversation)
+    }
+    fn get(&self, id: ConversationId) -> Result<Option<DirectConversation>, ConversationError> {
+        self.conversations.get(id)
+    }
+    fn for_contact(
+        &self,
+        contact_id: ContactId,
+    ) -> Result<Option<DirectConversation>, ConversationError> {
+        self.conversations.for_contact(contact_id)
+    }
+    fn list(&self) -> Result<Vec<DirectConversation>, ConversationError> {
+        self.conversations.list()
+    }
+}
+
+impl RelationshipRepository for InMemoryRelationshipRepository {
+    fn insert_pairing_result(
+        &mut self,
+        contact: Contact,
+        conversation: DirectConversation,
+    ) -> Result<(), EngineError> {
+        if ContactRepository::get(self, contact.id()).map_err(map_error)?.is_some()
+            || ConversationRepository::get(self, conversation.id()).map_err(map_error)?.is_some()
+            || ConversationRepository::for_contact(self, contact.id())
+                .map_err(map_error)?
+                .is_some()
+        {
+            return Err(EngineError("contact or conversation already exists".into()));
+        }
+        self.contacts.insert(contact).map_err(map_error)?;
+        self.conversations.insert(conversation).map_err(map_error)?;
+        Ok(())
+    }
+}
+
 /// Client engine parameterized by inward-facing persistence and key-management ports.
 ///
 /// The default type parameters intentionally preserve the lightweight in-memory composition for
@@ -125,15 +199,13 @@ pub struct ClientEngine<
     I = InMemoryIdentityRepository,
     K = DeterministicKeyProvider,
     P = InMemoryPairingRepository,
-    C = InMemoryContactRepository,
-    V = InMemoryConversationRepository,
+    L = InMemoryRelationshipRepository,
     M = InMemoryMessageRepository,
     R = InMemoryReceiptRepository,
 > {
     identity: IdentityService<I, K>,
     pairings: P,
-    contacts: C,
-    conversations: V,
+    relationships: L,
     messages: M,
     receipts: R,
 }
@@ -143,8 +215,7 @@ impl Default
         InMemoryIdentityRepository,
         DeterministicKeyProvider,
         InMemoryPairingRepository,
-        InMemoryContactRepository,
-        InMemoryConversationRepository,
+        InMemoryRelationshipRepository,
         InMemoryMessageRepository,
         InMemoryReceiptRepository,
     >
@@ -154,21 +225,19 @@ impl Default
             InMemoryIdentityRepository::default(),
             DeterministicKeyProvider::default(),
             InMemoryPairingRepository::default(),
-            InMemoryContactRepository::default(),
-            InMemoryConversationRepository::default(),
+            InMemoryRelationshipRepository::default(),
             InMemoryMessageRepository::default(),
             InMemoryReceiptRepository::default(),
         )
     }
 }
 
-impl<I, K, P, C, V, M, R> ClientEngine<I, K, P, C, V, M, R>
+impl<I, K, P, L, M, R> ClientEngine<I, K, P, L, M, R>
 where
     I: IdentityRepository,
     K: IdentityKeyProvider,
     P: PairingRepository,
-    C: ContactRepository,
-    V: ConversationRepository,
+    L: RelationshipRepository,
     M: MessageRepository,
     R: ReceiptRepository,
 {
@@ -177,16 +246,14 @@ where
         identity_repository: I,
         key_provider: K,
         pairings: P,
-        contacts: C,
-        conversations: V,
+        relationships: L,
         messages: M,
         receipts: R,
     ) -> Self {
         Self {
             identity: IdentityService::new(identity_repository, key_provider),
             pairings,
-            contacts,
-            conversations,
+            relationships,
             messages,
             receipts,
         }
@@ -227,25 +294,31 @@ where
                 Ok(EngineResult::PairingUpdated)
             }
             EngineCommand::CompletePairing { session_id, contact_id, conversation_id, at } => {
-                if self.contacts.get(contact_id).map_err(map_error)?.is_some()
-                    || self.conversations.get(conversation_id).map_err(map_error)?.is_some()
-                    || self.conversations.for_contact(contact_id).map_err(map_error)?.is_some()
+                if ContactRepository::get(&self.relationships, contact_id)
+                    .map_err(map_error)?
+                    .is_some()
+                    || ConversationRepository::get(&self.relationships, conversation_id)
+                        .map_err(map_error)?
+                        .is_some()
+                    || ConversationRepository::for_contact(&self.relationships, contact_id)
+                        .map_err(map_error)?
+                        .is_some()
                 {
                     return Err(EngineError("contact or conversation already exists".into()));
                 }
                 let mut session = self.load_pairing(session_id)?;
                 let proposal = session.complete(at).map_err(map_error)?;
-                self.contacts
-                    .insert(Contact::new(contact_id, proposal.public_identity, proposal.route, at))
-                    .map_err(map_error)?;
-                self.conversations
-                    .insert(DirectConversation::new(conversation_id, contact_id, at))
-                    .map_err(map_error)?;
+                let contact = Contact::new(contact_id, proposal.public_identity, proposal.route, at);
+                let conversation = DirectConversation::new(conversation_id, contact_id, at);
+                self.relationships.insert_pairing_result(contact, conversation)?;
                 self.pairings.update(session).map_err(map_error)?;
                 Ok(EngineResult::PairingCompleted { contact_id, conversation_id })
             }
             EngineCommand::QueueMessage { message_id, conversation_id, body, reply_to, at } => {
-                if self.conversations.get(conversation_id).map_err(map_error)?.is_none() {
+                if ConversationRepository::get(&self.relationships, conversation_id)
+                    .map_err(map_error)?
+                    .is_none()
+                {
                     return Err(EngineError("conversation not found".into()));
                 }
                 self.messages
@@ -292,8 +365,8 @@ where
         Ok(ClientSnapshot {
             identity: self.identity.load().map_err(map_error)?,
             pairings: self.pairings.list().map_err(map_error)?,
-            contacts: self.contacts.list().map_err(map_error)?,
-            conversations: self.conversations.list().map_err(map_error)?,
+            contacts: ContactRepository::list(&self.relationships).map_err(map_error)?,
+            conversations: ConversationRepository::list(&self.relationships).map_err(map_error)?,
             messages: self.messages.list().map_err(map_error)?,
         })
     }
@@ -321,13 +394,12 @@ pub trait EngineRuntime: Send + 'static {
     fn snapshot(&self) -> Result<ClientSnapshot, EngineError>;
 }
 
-impl<I, K, P, C, V, M, R> EngineRuntime for ClientEngine<I, K, P, C, V, M, R>
+impl<I, K, P, L, M, R> EngineRuntime for ClientEngine<I, K, P, L, M, R>
 where
     I: IdentityRepository + Send + 'static,
     K: IdentityKeyProvider + Send + 'static,
     P: PairingRepository + Send + 'static,
-    C: ContactRepository + Send + 'static,
-    V: ConversationRepository + Send + 'static,
+    L: RelationshipRepository + Send + 'static,
     M: MessageRepository + Send + 'static,
     R: ReceiptRepository + Send + 'static,
 {
