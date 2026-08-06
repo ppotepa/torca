@@ -1,103 +1,75 @@
 # Contributing to Torca
 
-## Start-of-work protocol
+## Start of work
 
-Every developer or agent must begin by reading [`0.1_PROGRESS.md`](0.1_PROGRESS.md). It identifies the active milestone, current batch, completed work, blockers, validation evidence and the exact next action.
+Read [`0.1_PROGRESS.md`](0.1_PROGRESS.md) before changing the repository. It is the only live status/handoff document and records current implementation, validation evidence, release gates and the exact next action.
 
-Before changing the repository:
+All 0.1 work currently lands directly on `main`. Every commit must therefore leave the repository internally coherent; incomplete production behavior must remain explicit and must not be presented as validated.
 
-1. verify that the local or connector view matches the current `main` branch;
-2. confirm that the intended work belongs to the current batch;
-3. read the linked architecture, scope and ADR documents;
-4. avoid repeating work already marked complete;
-5. preserve any recorded validation and accepted behavior.
+## Developer workflow
 
-If repository state contradicts the progress document, investigate the mismatch and correct the document before beginning unrelated work.
+Developers use only three root workflows:
 
-## Branch policy
+```powershell
+./scripts/build.ps1
+./scripts/run.ps1
+./scripts/deploy.ps1
+```
 
-During the 0.1 build-out, all work lands directly on `main`. Do not create long-lived feature branches or maintain a parallel legacy branch in this repository.
+- `build` is the correctness/build gate. It owns formatting, code generation, release/architecture checks, dependency resolution, Rust check/Clippy/tests, Flutter analysis/tests and optional platform compilation.
+- `run` is the fast inner loop. It prepares the generated contract and shared native runtime, then launches Flutter with hot reload.
+- `deploy` performs a strict release build, packages artifacts and generates SHA-256 checksums.
 
-Because `main` is the only active branch:
+Do not add a new public script for formatting, validation, codegen, packaging, lock refresh or platform bootstrap. Add such behavior to `tools/build/Torca.Build.psm1` and expose it only through one of the three workflows.
 
-- every commit must leave the repository internally consistent;
-- incomplete implementation must be isolated behind an unused module or feature flag;
-- documentation must be updated in the same change that alters architecture or scope;
-- destructive rewrites must preserve the current milestone's accepted behavior;
-- generated files must be reproducible from committed sources.
+CI uses the same build path:
 
-## Work unit
+```powershell
+./scripts/build.ps1 -Target check -CI
+```
 
-A normal work unit should correspond to one roadmap or batch item and contain:
+## One-client rule
 
-1. the smallest coherent implementation;
-2. unit, contract or integration tests appropriate for the layer;
-3. relevant documentation changes;
-4. an update to [`0.1_PROGRESS.md`](0.1_PROGRESS.md);
-5. exact validation commands and results recorded in the handoff log;
-6. a concise commit message describing the result.
+Torca has one Flutter client source. Windows and Android are target platforms, not separate application implementations.
 
-A work unit is not complete when files merely exist. It is complete when the intended behavior works at the relevant layer, validation evidence is recorded, and the next action is unambiguous.
-
-## Progress document rules
-
-`0.1_PROGRESS.md` is the only live status checklist. Do not create another progress, TODO, status or handoff document.
-
-Every coherent implementation commit must update, where applicable:
-
-- the last-updated date;
-- current milestone and batch;
-- implemented and not-implemented summaries;
-- current work package checkboxes;
-- batch queue state;
-- milestone progress;
-- blockers and risks;
-- validation evidence;
-- the handoff log;
-- one exact next action.
-
-Do not mark an item complete without evidence. If validation cannot run for an environmental reason, record the exact limitation and leave the item incomplete unless its completion criteria do not require that validation.
+Responsive differences belong in the shared Flutter widget tree. OS-specific Kotlin/C++ is allowed only for true platform capabilities such as protected key storage, notifications, lifecycle integration and tray behavior. Product workflows and state machines remain in Rust.
 
 ## Dependency discipline
 
-Before adding a dependency between crates, verify that it follows [`docs/architecture/DEPENDENCY_RULES.md`](docs/architecture/DEPENDENCY_RULES.md). Infrastructure must not leak into domains. Flutter and native hosts must not become alternative implementations of application workflows.
+Before adding a Rust dependency, verify that it follows [`docs/architecture/DEPENDENCY_RULES.md`](docs/architecture/DEPENDENCY_RULES.md).
+
+- foundation stays dependency-light;
+- domains may depend on foundation and approved domain contracts;
+- application coordinates domains;
+- infrastructure implements inward-defined ports;
+- bridge/native/presentation sit outside application/domain code;
+- domains never depend on infrastructure, Flutter or FFI.
 
 ## Domain library rules
 
-A mini-domain library should expose a small public API and keep implementation modules private by default. It should own:
-
-- domain value objects and entities;
-- commands or operation inputs;
-- domain events;
-- invariants and state transitions;
-- domain-specific errors;
-- ports required to execute its use cases.
-
-It should not expose database connections, SQL rows, JSON wire payloads, FFI handles, Flutter models, sockets, or a global application context.
+A mini-domain owns value objects, entities, commands/inputs, events, invariants, state transitions, errors and ports required by its use cases. It must not expose database connections, SQL rows, FFI handles, Flutter models, sockets or a global application context.
 
 ## SQL rules
 
-All SQL must be stored in `.sql` files. Runtime SQL string construction is prohibited except for narrowly reviewed schema tooling. Parameters use SQLite positional placeholders (`?1`, `?2`, ...). Migrations, commands, and queries have separate roots.
+All business SQL lives in `.sql` files under the SQLCipher storage crate. Runtime SQL string construction is prohibited except narrowly reviewed connection/key bootstrap operations that cannot be parameterized normally.
 
-## Documentation rules
+Commands, queries and migrations have separate roots and use positional parameters (`?1`, `?2`, ...).
 
-- Architecture changes require an ADR when they alter a boundary, dependency direction, persistence rule, protocol rule, or deployment model.
-- Version-specific design and acceptance criteria belong under `docs/0.1`.
-- Long-lived design rules belong under `docs/architecture`.
-- Live execution status belongs only in `0.1_PROGRESS.md`.
-- README files explain ownership and navigation; they must not become untracked alternative roadmaps or progress lists.
+## Native boundary rules
 
-## Commit style
+- `torca-native` is the narrowly reviewed unsafe C ABI boundary.
+- ABI functions expose primitive arguments and bridge snapshots/results, not Rust domain layouts.
+- private key material never crosses into Dart.
+- native runtime failure is surfaced as an error; production never silently falls back to the memory gateway.
 
-Use short imperative messages with a clear area, for example:
+## Work unit
 
-```text
-docs: define messaging domain boundary
-storage: add transactional outbox schema
-pairing: validate invitation expiry
-bridge: generate typed command contract
-```
+A coherent work unit should contain:
 
-## Validation expectation
+1. the smallest complete implementation;
+2. appropriate unit/contract/integration tests;
+3. relevant documentation updates;
+4. an update to `0.1_PROGRESS.md` when status, architecture, defects or gates change;
+5. exact owner validation evidence when available.
 
-When code exists, the repository will provide one supported validation entrypoint. A change is not complete until that entrypoint succeeds or the failure is explicitly documented as an environmental limitation in `0.1_PROGRESS.md`.
+A file existing is not completion. A release gate closes only when its behavior is composed and validated at the relevant layer.
