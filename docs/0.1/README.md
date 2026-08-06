@@ -2,6 +2,12 @@
 
 Torca 0.1 is the first clean engineering baseline for the new repository. It is not a production release and does not claim complete anonymity or feature parity with mature messengers.
 
+## Start here
+
+The current implementation state is maintained in the repository root at [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md).
+
+That file is the operational entrypoint for every developer or agent. It records what is complete, what remains, the current batch, blockers, validation evidence and the exact next action.
+
 ## Goal
 
 Deliver a coherent private 1:1 messenger skeleton in which two client installations can create local identities, pair through an ephemeral relay, establish a contact, exchange encrypted text messages directly through Tor, persist state locally, recover from interruption, and render the same application state on Windows and Android.
@@ -14,8 +20,10 @@ Deliver a coherent private 1:1 messenger skeleton in which two client installati
 - [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — concrete dependency-aware sequence.
 - [`TRACEABILITY.md`](TRACEABILITY.md) — mapping from required capabilities to domains and milestones.
 - [`RISKS.md`](RISKS.md) — active technical and product risks.
-- [`STATUS.md`](STATUS.md) — live checklist.
+- [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md) — live progress, validation and handoff.
 - [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) — release completion rules.
+
+`STATUS.md` remains only as a compatibility pointer to the canonical root progress document and must not contain a separate checklist.
 
 ## Release posture
 
