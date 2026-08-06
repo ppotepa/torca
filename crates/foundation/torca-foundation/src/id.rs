@@ -2,7 +2,7 @@ use core::{fmt, str::FromStr};
 
 /// A dependency-free 128-bit identifier represented canonically as 32 hexadecimal characters.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct OpaqueId([u8; Self::BYTE_LEN]);
+pub struct OpaqueId([u8; 16]);
 
 impl OpaqueId {
     /// Number of bytes stored by an identifier.
@@ -53,7 +53,7 @@ impl fmt::Display for OpaqueId {
 
 impl fmt::Debug for OpaqueId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("OpaqueId").field(&self.to_string()).finish()
+        write!(formatter, "OpaqueId({self})")
     }
 }
 
@@ -187,7 +187,7 @@ macro_rules! identifier_type {
 
         impl fmt::Display for $name {
             fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(formatter)
+                fmt::Display::fmt(&self.0, formatter)
             }
         }
 

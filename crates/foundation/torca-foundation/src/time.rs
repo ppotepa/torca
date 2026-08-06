@@ -22,7 +22,7 @@ impl Timestamp {
     /// Returns [`TimestampError::OutOfRange`] when the value is before Unix epoch or after year 9999.
     pub const fn from_unix_millis(value: i64) -> Result<Self, TimestampError> {
         if value < Self::MIN_UNIX_MILLIS || value > Self::MAX_UNIX_MILLIS {
-            Err(TimestampError::OutOfRange(value))
+            Err(TimestampError::OutOfRange { value })
         } else {
             Ok(Self(value))
         }
@@ -57,7 +57,7 @@ impl Timestamp {
 
 impl fmt::Display for Timestamp {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
+        fmt::Display::fmt(&self.0, formatter)
     }
 }
 
@@ -79,13 +79,16 @@ impl From<Timestamp> for i64 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TimestampError {
     /// The supplied Unix millisecond value is outside the supported range.
-    OutOfRange(i64),
+    OutOfRange {
+        /// Rejected Unix millisecond value.
+        value: i64,
+    },
 }
 
 impl fmt::Display for TimestampError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OutOfRange(value) => write!(
+            Self::OutOfRange { value } => write!(
                 formatter,
                 "timestamp {value} is outside the supported range {}..={}",
                 Timestamp::MIN_UNIX_MILLIS,
@@ -107,7 +110,7 @@ mod tests {
     fn timestamp_rejects_values_outside_the_supported_range() {
         assert_eq!(
             Timestamp::from_unix_millis(-1),
-            Err(TimestampError::OutOfRange(-1))
+            Err(TimestampError::OutOfRange { value: -1 })
         );
         assert!(Timestamp::from_unix_millis(Timestamp::MAX_UNIX_MILLIS).is_ok());
     }
