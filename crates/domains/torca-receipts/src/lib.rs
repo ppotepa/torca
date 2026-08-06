@@ -8,8 +8,14 @@ use torca_messaging::{Message, MessageError, MessageId};
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ReceiptId(OpaqueId);
 impl ReceiptId {
+    pub const fn from_opaque(value: OpaqueId) -> Self {
+        Self(value)
+    }
     pub const fn from_u128(value: u128) -> Self {
         Self(OpaqueId::from_u128(value))
+    }
+    pub const fn to_opaque(self) -> OpaqueId {
+        self.0
     }
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -41,6 +47,8 @@ impl Receipt {
 pub enum ReceiptError {
     MessageMismatch,
     Message(MessageError),
+    /// Persistence dependency failed without exposing implementation details.
+    RepositoryFailure,
 }
 impl fmt::Display for ReceiptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
