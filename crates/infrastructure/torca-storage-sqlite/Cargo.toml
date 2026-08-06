@@ -9,6 +9,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+rusqlite = { version = "0.38", features = ["bundled-sqlcipher-vendored-openssl"] }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-messaging = { path = "../../domains/torca-messaging" }
