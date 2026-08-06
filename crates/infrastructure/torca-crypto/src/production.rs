@@ -2,9 +2,7 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use ed25519_dalek::{
-    Signature as DalekSignature, Signer, SigningKey, Verifier, VerifyingKey,
-};
+use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey, VerifyingKey};
 use rand_core::{OsRng, RngCore};
 
 use crate::{
@@ -34,11 +32,7 @@ impl CryptoProvider for RustCryptoProvider {
         Ok(SealingKey::new(key))
     }
 
-    fn sign(
-        &self,
-        secret: &SigningSecretKey,
-        message: &[u8],
-    ) -> Result<Signature, CryptoError> {
+    fn sign(&self, secret: &SigningSecretKey, message: &[u8]) -> Result<Signature, CryptoError> {
         let signing_key = SigningKey::from_bytes(secret.expose());
         Ok(Signature(signing_key.sign(message).to_bytes()))
     }
@@ -127,16 +121,14 @@ mod tests {
 
     #[test]
     fn matches_rfc8032_ed25519_empty_message_vector() {
-        let secret: [u8; 32] = decode_hex(
-            "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
-        )
-        .try_into()
-        .expect("secret length");
-        let expected_public: [u8; 32] = decode_hex(
-            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-        )
-        .try_into()
-        .expect("public length");
+        let secret: [u8; 32] =
+            decode_hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+                .try_into()
+                .expect("secret length");
+        let expected_public: [u8; 32] =
+            decode_hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                .try_into()
+                .expect("public length");
         let expected_signature: [u8; 64] = decode_hex(concat!(
             "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155",
             "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
@@ -156,16 +148,13 @@ mod tests {
 
     #[test]
     fn matches_xchacha20_poly1305_draft_vector() {
-        let key: [u8; 32] = decode_hex(
-            "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
-        )
-        .try_into()
-        .expect("key length");
-        let nonce: [u8; 24] = decode_hex(
-            "404142434445464748494a4b4c4d4e4f5051525354555657",
-        )
-        .try_into()
-        .expect("nonce length");
+        let key: [u8; 32] =
+            decode_hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
+                .try_into()
+                .expect("key length");
+        let nonce: [u8; 24] = decode_hex("404142434445464748494a4b4c4d4e4f5051525354555657")
+            .try_into()
+            .expect("nonce length");
         let aad = decode_hex("50515253c0c1c2c3c4c5c6c7");
         let plaintext = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
         let expected = decode_hex(concat!(
