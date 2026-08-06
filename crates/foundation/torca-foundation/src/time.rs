@@ -2,6 +2,7 @@ use core::fmt;
 use std::time::Duration;
 
 /// Millisecond-resolution UTC timestamp bounded to the range from Unix epoch through year 9999.
+#[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Timestamp(i64);
 
@@ -29,7 +30,7 @@ impl Timestamp {
     }
 
     /// Returns Unix milliseconds.
-    pub const fn as_unix_millis(self) -> i64 {
+    pub const fn to_unix_millis(self) -> i64 {
         self.0
     }
 
@@ -122,7 +123,7 @@ mod tests {
             .checked_add(Duration::from_millis(250))
             .expect("addition remains in range");
 
-        assert_eq!(end.as_unix_millis(), 1_250);
+        assert_eq!(end.to_unix_millis(), 1_250);
         assert_eq!(end.duration_since(start), Some(Duration::from_millis(250)));
         assert_eq!(Timestamp::UNIX_EPOCH.checked_sub(Duration::from_millis(1)), None);
     }

@@ -14,6 +14,7 @@ pub enum CancellationReason {
 }
 
 /// Error returned when cooperative cancellation has been observed.
+#[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Cancelled {
     reason: CancellationReason,
@@ -55,7 +56,10 @@ pub trait CancellationProbe: Send + Sync {
     ///
     /// Returns [`Cancelled`] with the current reason when cancellation is active.
     fn check(&self) -> Result<(), Cancelled> {
-        self.cancellation_reason().map_or(Ok(()), |reason| Err(Cancelled::new(reason)))
+        match self.cancellation_reason() {
+            Some(reason) => Err(Cancelled::new(reason)),
+            None => Ok(()),
+        }
     }
 }
 

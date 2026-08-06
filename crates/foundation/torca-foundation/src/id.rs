@@ -1,6 +1,7 @@
 use core::{fmt, str::FromStr};
 
 /// A dependency-free 128-bit identifier represented canonically as 32 hexadecimal characters.
+#[must_use]
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct OpaqueId([u8; 16]);
 
@@ -35,13 +36,13 @@ impl OpaqueId {
     }
 
     /// Returns the identifier as an unsigned 128-bit integer using big-endian byte order.
-    pub const fn as_u128(self) -> u128 {
+    pub const fn to_u128(self) -> u128 {
         u128::from_be_bytes(self.0)
     }
 
     /// Returns whether the identifier contains only zero bytes.
-    pub const fn is_nil(self) -> bool {
-        self.as_u128() == 0
+    pub const fn is_nil(&self) -> bool {
+        self.to_u128() == 0
     }
 }
 
@@ -143,6 +144,7 @@ impl std::error::Error for ParseOpaqueIdError {}
 macro_rules! identifier_type {
     ($name:ident, $description:literal) => {
         #[doc = $description]
+        #[must_use]
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(OpaqueId);
 
@@ -163,12 +165,12 @@ macro_rules! identifier_type {
             }
 
             /// Returns the shared opaque representation.
-            pub const fn as_opaque(self) -> OpaqueId {
+            pub const fn to_opaque(self) -> OpaqueId {
                 self.0
             }
 
             /// Returns whether the identifier contains only zero bytes.
-            pub const fn is_nil(self) -> bool {
+            pub const fn is_nil(&self) -> bool {
                 self.0.is_nil()
             }
         }
@@ -208,19 +210,19 @@ identifier_type!(EventId, "Unique identifier of an immutable domain event occurr
 
 impl From<CommandId> for CorrelationId {
     fn from(value: CommandId) -> Self {
-        Self::from_opaque(value.as_opaque())
+        Self::from_opaque(value.to_opaque())
     }
 }
 
 impl From<CommandId> for CausationId {
     fn from(value: CommandId) -> Self {
-        Self::from_opaque(value.as_opaque())
+        Self::from_opaque(value.to_opaque())
     }
 }
 
 impl From<EventId> for CausationId {
     fn from(value: EventId) -> Self {
-        Self::from_opaque(value.as_opaque())
+        Self::from_opaque(value.to_opaque())
     }
 }
 

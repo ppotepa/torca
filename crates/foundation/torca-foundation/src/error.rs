@@ -1,6 +1,7 @@
 use core::fmt;
 
 /// Stable, non-sensitive machine-readable error code.
+#[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ErrorCode(&'static str);
 
@@ -20,14 +21,14 @@ impl ErrorCode {
     }
 
     /// Returns the machine-readable code.
-    pub const fn as_str(self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         self.0
     }
 }
 
 impl fmt::Display for ErrorCode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, formatter)
+        formatter.write_str(self.0)
     }
 }
 
@@ -88,6 +89,7 @@ pub enum RetryAdvice {
 }
 
 /// Non-sensitive classification that can cross application and platform boundaries.
+#[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ErrorDescriptor {
     code: ErrorCode,
