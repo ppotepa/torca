@@ -52,6 +52,16 @@ impl DirectConversation {
     pub const fn new(id: ConversationId, contact_id: ContactId, at: Timestamp) -> Self {
         Self { id, contact_id, status: ConversationStatus::Active, created_at: at, updated_at: at }
     }
+    /// Restores a conversation aggregate from persistence.
+    pub const fn restore(
+        id: ConversationId,
+        contact_id: ContactId,
+        status: ConversationStatus,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+    ) -> Self {
+        Self { id, contact_id, status, created_at, updated_at }
+    }
     /// Returns the ID.
     pub const fn id(&self) -> ConversationId {
         self.id
@@ -64,6 +74,14 @@ impl DirectConversation {
     pub const fn status(&self) -> ConversationStatus {
         self.status
     }
+    /// Returns creation time.
+    pub const fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
+    /// Returns last mutation time.
+    pub const fn updated_at(&self) -> Timestamp {
+        self.updated_at
+    }
     /// Archives the conversation.
     pub fn archive(&mut self, at: Timestamp) -> Result<(), ConversationError> {
         if self.status == ConversationStatus::Archived {
@@ -74,7 +92,7 @@ impl DirectConversation {
         Ok(())
     }
     /// Restores the conversation.
-    pub fn restore(&mut self, at: Timestamp) -> Result<(), ConversationError> {
+    pub fn restore_active(&mut self, at: Timestamp) -> Result<(), ConversationError> {
         if self.status == ConversationStatus::Active {
             return Err(ConversationError::InvalidTransition);
         }
@@ -91,6 +109,8 @@ pub enum ConversationError {
     AlreadyExists,
     NotFound,
     ContactAlreadyHasConversation,
+    /// Persistence dependency failed without exposing implementation details.
+    RepositoryFailure,
 }
 impl fmt::Display for ConversationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
