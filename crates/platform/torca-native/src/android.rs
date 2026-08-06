@@ -30,34 +30,52 @@ pub unsafe extern "system" fn JNI_OnLoad(
 }
 
 /// Android Keystore-backed implementation of the common protected-secret port.
-pub(crate) struct AndroidProtectedSecretStore;
+pub(crate) struct AndroidProtectedSecretStore {
+    namespace: &'static str,
+}
+
+impl AndroidProtectedSecretStore {
+    pub(crate) const fn new(namespace: &'static str) -> Self {
+        Self { namespace }
+    }
+}
 
 impl ProtectedSecretStore for AndroidProtectedSecretStore {
     fn insert(&mut self, key_id: KeyId, secret: &[u8]) -> Result<(), ProtectedSecretStoreError> {
+        let namespace = self.namespace;
         with_env(|env| {
+            let namespace = env.new_string(namespace)?;
             let key = env.new_string(key_id.to_string())?;
             let secret_array = env.byte_array_from_slice(secret)?;
+            let namespace_object = JObject::from(namespace);
             let key_object = JObject::from(key);
             let secret_object = JObject::from(secret_array);
             env.call_static_method(
                 BRIDGE_CLASS,
                 "insert",
-                "(Ljava/lang/String;[B)V",
-                &[JValue::Object(&key_object), JValue::Object(&secret_object)],
+                "(Ljava/lang/String;Ljava/lang/String;[B)V",
+                &[
+                    JValue::Object(&namespace_object),
+                    JValue::Object(&key_object),
+                    JValue::Object(&secret_object),
+                ],
             )?;
             Ok(())
         })
     }
 
     fn load(&self, key_id: KeyId) -> Result<Option<Vec<u8>>, ProtectedSecretStoreError> {
+        let namespace = self.namespace;
         with_env(|env| {
+            let namespace = env.new_string(namespace)?;
             let key = env.new_string(key_id.to_string())?;
+            let namespace_object = JObject::from(namespace);
             let key_object = JObject::from(key);
             let value = env.call_static_method(
                 BRIDGE_CLASS,
                 "load",
-                "(Ljava/lang/String;)[B",
-                &[JValue::Object(&key_object)],
+                "(Ljava/lang/String;Ljava/lang/String;)[B",
+                &[JValue::Object(&namespace_object), JValue::Object(&key_object)],
             )?;
             let object = value.l()?;
             if object.is_null() {
@@ -69,14 +87,17 @@ impl ProtectedSecretStore for AndroidProtectedSecretStore {
     }
 
     fn delete(&mut self, key_id: KeyId) -> Result<bool, ProtectedSecretStoreError> {
+        let namespace = self.namespace;
         with_env(|env| {
+            let namespace = env.new_string(namespace)?;
             let key = env.new_string(key_id.to_string())?;
+            let namespace_object = JObject::from(namespace);
             let key_object = JObject::from(key);
             env.call_static_method(
                 BRIDGE_CLASS,
                 "delete",
-                "(Ljava/lang/String;)Z",
-                &[JValue::Object(&key_object)],
+                "(Ljava/lang/String;Ljava/lang/String;)Z",
+                &[JValue::Object(&namespace_object), JValue::Object(&key_object)],
             )?
             .z()
         })
