@@ -1,50 +1,48 @@
 # Torca architecture
 
-This document is the canonical high-level architecture entrypoint. Detailed rules live in [`docs/architecture`](docs/architecture/README.md), while release-specific decisions live under [`docs/0.1`](docs/0.1/README.md).
+Torca is a modular monolith built from focused Rust libraries and **one responsive Flutter client**. Deployment remains deliberately simple: one client application per device plus the optional ephemeral pairing relay.
 
-## Architectural style
-
-Torca is a **modular monolith** assembled from small Rust libraries and a shared Flutter client. A library boundary is introduced for every meaningful mini-domain or infrastructure capability, but deployment remains deliberately simple.
-
-The architecture follows ports and adapters:
+## Top-level composition
 
 ```text
-UI and platform hosts
-        |
-        v
-Typed bridge contract
-        |
-        v
-ClientEngine actor
-        |
-        v
-Application workflows and projections
-        |
-        v
-Domain libraries and declared ports
-        ^
-        |
-Storage, crypto, peer, Tor and rendezvous adapters
+                 one responsive Flutter client
+                           |
+                     FfiEngineGateway
+                           |
+             torca-native C ABI / cdylib
+                           |
+                       EngineBridge
+                           |
+               ClientEngine single writer
+                           |
+         application workflows / projections
+                           |
+                    mini-domain crates
+                           ^
+                           |
+       storage / crypto / peer / Tor / OS adapters
 ```
+
+Windows and Android are build targets, not alternative application implementations. UI behavior may adapt to screen width, input model and lifecycle, but there is only one set of screens, commands and application state.
 
 ## Deployable units
 
 Version 0.1 has two deployable units:
 
-1. **Torca client** — Windows and Android compositions sharing the Rust engine and Flutter UI.
-2. **Torca relay** — an untrusted, in-memory rendezvous broker used only during pairing.
+1. **Torca client** — the same Flutter/Rust client built for Windows or Android.
+2. **Torca relay** — an untrusted, in-memory rendezvous broker used only while contacts pair.
 
-The relay is not a message server, account server, presence server, user directory, backup service, or offline mailbox.
+The relay is not a message server, presence server, account server, directory, backup service or mailbox.
 
 ## Component groups
 
 ### Foundation
 
-Small stable value types and utilities that do not contain product workflows. Foundation code must remain dependency-light.
+Dependency-light identifiers, timestamps, command/event metadata and error primitives.
 
 ### Domains
 
-Each mini-domain owns its vocabulary and invariants:
+Focused mini-domains own vocabulary and invariants:
 
 - identity;
 - contacts;
@@ -52,65 +50,124 @@ Each mini-domain owns its vocabulary and invariants:
 - conversations;
 - messaging;
 - receipts;
-- attachments;
-- presence;
-- notifications.
+- attachments.
 
-A domain library may depend on foundation libraries and explicitly approved domain contracts. It must not depend on infrastructure or presentation packages.
+Domain crates may depend on foundation and explicitly approved domain contracts. They never depend on Flutter, FFI, SQLite implementations, sockets or Tor process APIs.
 
 ### Application
 
-Application libraries coordinate use cases across domains. The `ClientEngine` is a single-writer actor that serializes state-changing commands, schedules work, dispatches domain events, and publishes UI projections.
+Application code coordinates use cases across domains. `ClientEngine` is the single writer for mutable client state. Flutter must not implement a parallel workflow state machine.
 
 ### Infrastructure
 
-Infrastructure libraries implement ports declared by domains or application libraries. They own SQLite/SQLCipher access, cryptographic provider integration, peer sessions, Tor process integration, file storage, clocks, and operating-system adapters.
+Infrastructure implements inward-facing ports and owns SQLCipher, cryptographic providers, encrypted file storage, peer sessions and Tor integration.
 
 ### Protocol
 
-Protocol libraries define versioned wire representations. Domain objects are never serialized directly. Mapping between domain and wire types occurs in dedicated codecs.
+Protocol crates own explicitly versioned peer/relay/wire representations. Domain aggregates are never serialized directly.
 
 ### Platform
 
-Platform packages expose a generated, typed contract to Flutter and provide the minimal native bootstrap required by each operating system.
+`torca-bridge` maps application concepts to presentation-safe bridge DTOs.
+
+`torca-native` owns the narrow shared C ABI and the process-local Rust engine lifetime. It builds as `torca_bridge.dll` on Windows and `libtorca_bridge.so` on Android.
+
+OS-specific adapters remain only for capabilities that actually require an OS API, for example Windows DPAPI, Android Keystore, tray behavior, notifications and lifecycle ownership.
+
+## One-client UI rule
+
+Responsive behavior is expressed inside the shared Flutter widget tree:
+
+```text
+compact width
+    -> conversation list
+    -> routed ConversationScreen
+    -> ConversationPane
+
+wide width
+    -> conversation list | ConversationPane
+```
+
+`ConversationPane` is the same widget in both cases. No desktop/mobile feature fork is permitted for business behavior.
+
+## Native boundary rule
+
+Flutter sends typed bridge commands through `FfiEngineGateway`. The C ABI exposes narrow operations and presentation snapshots; it does not expose Rust domain object layouts.
+
+```text
+Dart command DTO
+   -> UTF-8 / primitive ABI arguments
+   -> EngineBridge command
+   -> ClientEngine
+   -> BridgeSnapshot
+   -> presentation-safe JSON buffer
+   -> Dart DTO
+```
+
+Memory gateway selection is explicit development/test behavior only. Native-runtime failure is an error state, never a silent fallback.
+
+## Storage rule
+
+All SQL lives under the SQLite/SQLCipher storage crate as `.sql` files. Runtime business SQL in Rust source is prohibited. Storage owns transactions, migrations and raw database connections.
+
+Outbound messages use a durable outbox. Inbound envelopes use deduplication. Recovery behavior must remain idempotent across process interruption.
+
+## Network rule
+
+Pairing may use the relay to exchange opaque short-lived rendezvous material. Once a contact is verified, normal messaging is peer-to-peer through Tor onion services. Peer sessions operate on encrypted protocol envelopes, not Flutter DTOs or domain objects.
+
+## Core dependency direction
+
+```text
+foundation
+   <- domains
+   <- application
+   <- bridge
+   <- native/client presentation
+
+infrastructure implements ports defined inward
+```
+
+Infrastructure does not leak into domains. Flutter and OS hosts do not become alternative application layers.
 
 ## Core rules
 
-1. Domain code contains no SQL, sockets, Flutter types, FFI types, or Tor process calls.
-2. UI sends commands and renders snapshots; it does not implement a second state machine.
-3. All state-changing client operations pass through the `ClientEngine` actor.
-4. Storage owns transactions and raw database connections.
-5. SQL lives in parameterized `.sql` files grouped as migrations, commands, and queries.
-6. Mutating commands carry stable `command_id` values and must be idempotent.
-7. Outbound delivery uses a durable outbox. Inbound delivery uses deduplication.
-8. Wire protocols are explicitly versioned and tolerant of unknown optional fields.
-9. Cross-domain effects are coordinated through application handlers, not hidden domain-to-domain calls.
-10. `main` must remain internally consistent after every commit.
+1. One Flutter client source for every supported platform.
+2. One Rust `ClientEngine` owner per running client process.
+3. All state-changing client operations pass through that engine.
+4. Domain code contains no SQL, sockets, Flutter or FFI types.
+5. SQL is external, parameterized and storage-owned.
+6. Private keys never cross into Flutter DTOs.
+7. Outbound delivery is durable and retryable; inbound delivery is deduplicated.
+8. Wire protocols are explicitly versioned.
+9. Cross-domain effects are coordinated by application code.
+10. Platform-specific code is limited to actual OS integration.
+11. `main` remains internally coherent after every commit.
 
 ## Primary flows
 
 ### Pairing
 
 ```text
-Create or join pairing session
-        -> rendezvous relay exchanges opaque pairing material
-        -> both users explicitly approve
-        -> identities and capabilities are verified
-        -> contact is created
-        -> direct conversation is created
-        -> peer endpoint is registered
+Flutter command
+    -> ClientEngine pairing workflow
+    -> ephemeral relay exchange
+    -> explicit approvals and verification
+    -> contact + direct conversation
+    -> direct peer endpoint registered
 ```
 
 ### Sending a message
 
 ```text
-UI command
+Flutter command
     -> ClientEngine
-    -> messaging domain validates and creates message
-    -> storage transaction persists message and outbox item
-    -> delivery worker encodes, encrypts and sends peer envelope
-    -> acknowledgement updates delivery state
-    -> projection update reaches UI
+    -> messaging domain
+    -> SQLCipher message + durable outbox transaction
+    -> encrypted peer envelope over Tor
+    -> protocol acknowledgement / receipt
+    -> projection snapshot
+    -> Flutter UI
 ```
 
 ### Receiving a message
@@ -118,16 +175,22 @@ UI command
 ```text
 Tor peer stream
     -> authenticated peer session
-    -> decrypt and decode protocol envelope
-    -> deduplicate
-    -> messaging domain accepts message
-    -> storage transaction persists message and receipt work
-    -> projection and notification handlers run
+    -> envelope verification/decryption
+    -> inbound deduplication
+    -> messaging domain/application handler
+    -> durable state
+    -> projection snapshot
+    -> Flutter UI
 ```
 
-## Source of truth
+## Developer operations
 
-- Long-lived architectural rules: [`docs/architecture`](docs/architecture/README.md)
-- Version 0.1 scope and sequence: [`docs/0.1`](docs/0.1/README.md)
-- Accepted decisions: [`docs/decisions`](docs/decisions/README.md)
-- Live delivery state: [`docs/0.1/STATUS.md`](docs/0.1/STATUS.md)
+Only three public scripts exist:
+
+```powershell
+./scripts/build.ps1
+./scripts/run.ps1
+./scripts/deploy.ps1
+```
+
+All formatting, code generation, validation, platform bootstrap, native compilation and packaging details live under `tools/build`.
