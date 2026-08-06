@@ -8,6 +8,7 @@ members = [
     "crates/domains/torca-contacts",
     "crates/domains/torca-conversations",
     "crates/domains/torca-pairing",
+    "crates/protocol/torca-pairing-protocol",
     "crates/protocol/torca-relay-protocol",
     "crates/infrastructure/torca-rendezvous-client",
     "services/relay",

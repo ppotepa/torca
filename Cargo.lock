@@ -72,6 +72,11 @@ version = "0.1.0-alpha.0"
 dependencies = ["torca-contacts", "torca-foundation", "torca-identity"]
 
 [[package]]
+name = "torca-pairing-protocol"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation"]
+
+[[package]]
 name = "torca-peer"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation", "torca-peer-protocol"]
