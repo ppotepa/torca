@@ -151,6 +151,42 @@ impl Message {
             attempts: Vec::new(),
         }
     }
+    /// Restores an aggregate from trusted persistence after validating attempt numbering.
+    pub fn from_persisted(
+        id: MessageId,
+        conversation_id: ConversationId,
+        body: MessageBody,
+        reply_to: Option<ReplyReference>,
+        direction: MessageDirection,
+        status: MessageStatus,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+        attempts: Vec<DeliveryAttempt>,
+    ) -> Result<Self, MessageError> {
+        for (index, attempt) in attempts.iter().enumerate() {
+            let expected = u32::try_from(index)
+                .map_err(|_| MessageError::InvalidPersistedState)?
+                .checked_add(1)
+                .ok_or(MessageError::InvalidPersistedState)?;
+            if attempt.number != expected {
+                return Err(MessageError::InvalidPersistedState);
+            }
+        }
+        if direction == MessageDirection::Inbound && !attempts.is_empty() {
+            return Err(MessageError::InvalidPersistedState);
+        }
+        Ok(Self {
+            id,
+            conversation_id,
+            body,
+            reply_to,
+            direction,
+            status,
+            created_at,
+            updated_at,
+            attempts,
+        })
+    }
     /// Returns the message identifier.
     pub const fn id(&self) -> MessageId {
         self.id
@@ -281,6 +317,10 @@ pub enum MessageError {
     AttemptsExhausted,
     AlreadyExists,
     NotFound,
+    /// Persisted aggregate is structurally invalid.
+    InvalidPersistedState,
+    /// Persistence dependency failed without exposing implementation details.
+    RepositoryFailure,
 }
 impl fmt::Display for MessageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
