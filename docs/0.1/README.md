@@ -34,6 +34,7 @@ Read [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md). It is the only live statu
 - [`PEER_SESSIONS.md`](PEER_SESSIONS.md)
 - [`TOR_ADAPTER.md`](TOR_ADAPTER.md)
 - [`BRIDGE_AND_UI.md`](BRIDGE_AND_UI.md)
+- [`NATIVE_CHANNEL.md`](NATIVE_CHANNEL.md)
 - [`PLATFORM_HOSTS.md`](PLATFORM_HOSTS.md)
 - [`ATTACHMENTS.md`](ATTACHMENTS.md)
 - [`DIAGNOSTICS.md`](DIAGNOSTICS.md)
