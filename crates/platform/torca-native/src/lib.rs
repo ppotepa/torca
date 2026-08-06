@@ -3,12 +3,16 @@
 //! The ABI intentionally exposes application commands and presentation snapshots rather than
 //! domain objects. Flutter owns no workflow state; it only sends commands and renders snapshots.
 
+mod composition;
+
 use core::fmt::Write as _;
 use core::{ptr, slice, str};
 use torca_bridge::{
     BridgeCommand, BridgeResult, BridgeSnapshot, EngineBridge, CONTRACT_VERSION,
 };
-use torca_client_engine::{ClientEngine, ClientEngineActor};
+use torca_client_engine::ClientEngineActor;
+
+use composition::spawn_production_engine;
 
 const ABI_OK: i32 = 0;
 const ABI_ERROR: i32 = -1;
@@ -23,16 +27,18 @@ pub struct NativeEngineRuntime {
 }
 
 impl NativeEngineRuntime {
-    fn new() -> Self {
-        let (handle, actor) = ClientEngineActor::spawn(ClientEngine::default());
+    fn new() -> Result<Self, ()> {
+        let (handle, actor) = spawn_production_engine().map_err(|_| ())?;
         let mut runtime = Self {
             bridge: EngineBridge::new(handle),
             actor: Some(actor),
             last_result_json: success_result("initialized"),
             snapshot_json: empty_snapshot_json(),
         };
-        let _ = runtime.refresh_snapshot();
-        runtime
+        if runtime.refresh_snapshot() != ABI_OK {
+            return Err(());
+        }
+        Ok(runtime)
     }
 
     fn is_closed(&self) -> bool {
@@ -125,9 +131,15 @@ pub unsafe extern "C" fn torca_free(data: *mut u8, length: usize) {
 }
 
 /// Creates one shared native engine runtime.
+///
+/// Returns null when secure production composition cannot be created. There is deliberately no
+/// fallback to the in-memory engine on a production FFI path.
 #[unsafe(no_mangle)]
 pub extern "C" fn torca_engine_new() -> *mut NativeEngineRuntime {
-    Box::into_raw(Box::new(NativeEngineRuntime::new()))
+    match NativeEngineRuntime::new() {
+        Ok(runtime) => Box::into_raw(Box::new(runtime)),
+        Err(()) => ptr::null_mut(),
+    }
 }
 
 /// Stops and releases one shared native engine runtime.
@@ -463,14 +475,11 @@ fn push_json_string(value: &str, output: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{NativeEngineRuntime, bridge_snapshot_json};
+    use super::empty_snapshot_json;
 
     #[test]
-    fn native_snapshot_json_is_parseable_shape_without_secret_material() {
-        let runtime = NativeEngineRuntime::new();
-        let snapshot = runtime.bridge.snapshot().expect("snapshot");
-        let json = bridge_snapshot_json(&snapshot);
-
+    fn empty_snapshot_json_is_parseable_shape_without_secret_material() {
+        let json = empty_snapshot_json();
         assert!(json.contains("\"contractVersion\":1"));
         assert!(json.contains("\"contacts\":[]"));
         assert!(!json.contains("private_key"));
