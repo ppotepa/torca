@@ -6,13 +6,15 @@ use torca_identity::{
     GeneratedSigningKey, IdentityKeyProvider, IdentityKeyProviderError, KeyAlgorithm, KeyId,
 };
 
-use crate::{CryptoError, CryptoProvider, PublicKey, Signature, SigningSecretKey};
+use crate::{CryptoError, CryptoProvider, Signature, SigningSecretKey};
 
 /// Redaction-safe protected-secret-store failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtectedSecretStoreError(pub String);
 impl fmt::Display for ProtectedSecretStoreError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { formatter.write_str(&self.0) }
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 impl std::error::Error for ProtectedSecretStoreError {}
 
@@ -37,11 +39,17 @@ pub struct ManagedIdentityKeys<C, S> {
 
 impl<C, S> ManagedIdentityKeys<C, S> {
     /// Creates the key manager.
-    pub const fn new(crypto: C, store: S) -> Self { Self { crypto, store } }
+    pub const fn new(crypto: C, store: S) -> Self {
+        Self { crypto, store }
+    }
     /// Returns the protected store for platform composition and diagnostics.
-    pub const fn store(&self) -> &S { &self.store }
+    pub const fn store(&self) -> &S {
+        &self.store
+    }
     /// Consumes the manager.
-    pub fn into_parts(self) -> (C, S) { (self.crypto, self.store) }
+    pub fn into_parts(self) -> (C, S) {
+        (self.crypto, self.store)
+    }
 }
 
 impl<C: CryptoProvider, S: ProtectedSecretStore> ManagedIdentityKeys<C, S> {
@@ -98,11 +106,21 @@ pub enum ManagedKeyError {
     Store(ProtectedSecretStoreError),
 }
 impl fmt::Display for ManagedKeyError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { write!(formatter, "{self:?}") }
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
 }
 impl std::error::Error for ManagedKeyError {}
-impl From<CryptoError> for ManagedKeyError { fn from(value: CryptoError) -> Self { Self::Crypto(value) } }
-impl From<ProtectedSecretStoreError> for ManagedKeyError { fn from(value: ProtectedSecretStoreError) -> Self { Self::Store(value) } }
+impl From<CryptoError> for ManagedKeyError {
+    fn from(value: CryptoError) -> Self {
+        Self::Crypto(value)
+    }
+}
+impl From<ProtectedSecretStoreError> for ManagedKeyError {
+    fn from(value: ProtectedSecretStoreError) -> Self {
+        Self::Store(value)
+    }
+}
 
 /// Deliberately unprotected in-memory store for tests only.
 #[derive(Clone, Debug, Default)]
@@ -112,7 +130,9 @@ pub struct InMemoryProtectedSecretStore {
 
 impl Drop for InMemoryProtectedSecretStore {
     fn drop(&mut self) {
-        for secret in self.secrets.values_mut() { secret.fill(0); }
+        for secret in self.secrets.values_mut() {
+            secret.fill(0);
+        }
     }
 }
 
@@ -142,8 +162,7 @@ mod tests {
     use torca_identity::IdentityKeyProvider;
 
     use crate::{
-        CryptoProvider, DeterministicTestCrypto, InMemoryProtectedSecretStore,
-        ManagedIdentityKeys,
+        CryptoProvider, DeterministicTestCrypto, InMemoryProtectedSecretStore, ManagedIdentityKeys,
     };
 
     #[test]
@@ -154,8 +173,6 @@ mod tests {
         let generated = keys.generate_signing_key().expect("generate");
         let signature = keys.sign(generated.key_id, b"message").expect("sign");
         let public: [u8; 32] = generated.public_key.try_into().expect("public key");
-        keys.crypto
-            .verify(&crate::PublicKey(public), b"message", &signature)
-            .expect("verify");
+        keys.crypto.verify(&crate::PublicKey(public), b"message", &signature).expect("verify");
     }
 }
