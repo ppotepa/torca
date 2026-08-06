@@ -1,61 +1,57 @@
-# Native engine method channel
+# Native client runtime ABI
 
-Flutter uses one versioned platform channel for Windows and Android:
+Torca uses one native runtime boundary for every Flutter target. The same Dart `FfiEngineGateway` loads the same Rust `torca-native` ABI on Windows and Android.
 
-```text
-torca.engine.v1
-```
+Platform-specific Kotlin/C++ must not implement a second command router or workflow state machine.
 
-The default application build uses `MethodChannelEngineGateway`. The in-memory engine is enabled only with:
+## Libraries
 
 ```text
---dart-define=TORCA_USE_MEMORY_GATEWAY=true
+Windows: torca_bridge.dll
+Android: libtorca_bridge.so
 ```
 
-A release build must not set that flag.
+The library owns one `ClientEngineActor` and one `EngineBridge` per application process.
 
-## Flutter to native methods
+## Contract version
 
-### `snapshot`
+`torca_contract_version()` returns the same version as the generated Flutter contract. A mismatch is a startup error; versions are never guessed.
 
-Arguments:
+## Lifetime
 
 ```text
-{ contractVersion: 1 }
+torca_engine_new
+    -> command / snapshot calls
+    -> torca_engine_close
+    -> torca_engine_destroy
 ```
 
-Returns an application snapshot map.
+The Flutter application owns the native handle and destroys it exactly once.
 
-### `execute`
+## Commands
 
-Arguments:
+The ABI exposes narrow command functions rather than generic JSON command dispatch:
+
+- `torca_engine_create_identity`
+- `torca_engine_start_pairing`
+- `torca_engine_queue_message`
+- `torca_engine_refresh_snapshot`
+
+UTF-8 command arguments use explicit pointer + byte-length pairs. Dart obtains temporary argument buffers through `torca_alloc` and releases them through `torca_free`.
+
+Command results and application snapshots are returned through native-owned UTF-8 JSON buffers using pointer/length getters. JSON is presentation-safe bridge data, not serialized domain aggregates.
+
+## Result shape
 
 ```text
 {
-  contractVersion: 1,
-  command: { type: ..., command fields... }
+  ok: bool,
+  kind: string,
+  error: string?
 }
 ```
 
-Supported command types:
-
-- `createIdentity` — `identityIdHex`, `displayName`, `atMs`;
-- `startPairing` — `sessionIdHex`, `code`, `expiresAtMs`;
-- `queueMessage` — `messageIdHex`, `conversationIdHex`, `body`, `atMs`.
-
-Returns:
-
-```text
-{ ok: bool, kind: string, error: string? }
-```
-
-## Native to Flutter callback
-
-### `snapshotChanged`
-
-The native host invokes this method with the complete current snapshot. Partial patches are prohibited in 0.1.
-
-## Snapshot map
+## Snapshot shape
 
 ```text
 {
@@ -79,19 +75,17 @@ The native host invokes this method with the complete current snapshot. Partial 
 }
 ```
 
-All identifiers are canonical 32-character lowercase hexadecimal values. Times are bounded Unix milliseconds. Unknown contract versions must be rejected rather than guessed.
+All identifiers remain canonical lowercase hexadecimal values and times remain bounded Unix milliseconds.
 
-## Host requirements
+## Security and ownership rules
 
-Each native runner must:
+1. Flutter owns no private key bytes, SQL connections, Tor sockets or workflow state.
+2. The ABI returns only bridge DTO data and redacted errors.
+3. Native result/snapshot pointers are borrowed and remain valid only until the next mutating native call.
+4. Platform-specific protected-key APIs remain behind Rust/platform composition boundaries.
+5. `MemoryEngineGateway` is test/development-only and must be selected explicitly.
+6. Failure to load the native library is surfaced to the user; production never silently falls back to memory state.
 
-1. create exactly one Rust engine owner;
-2. register the method channel before Flutter submits commands;
-3. serialize all engine mutations through `ClientEngine`;
-4. translate primitive channel maps to the generated bridge contract;
-5. push a full snapshot after successful state-changing commands;
-6. keep workflow state out of Kotlin, C++ and Dart;
-7. return redacted errors only;
-8. unregister callbacks during final engine shutdown.
+## Current 0.1 limitation
 
-GATE-003 closes only after both platform runners execute this contract against the real Rust engine library and the memory gateway is excluded from release artifacts.
+The shared ABI exists, but the current native constructor still starts `ClientEngine::default()`. Production SQLCipher repositories, RustCrypto and protected platform keys must be injected into the native composition before GATE-001/GATE-002/GATE-003 can be considered closed.
