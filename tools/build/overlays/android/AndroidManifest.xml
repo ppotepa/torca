@@ -10,7 +10,7 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false">
         <activity
-            android:name=".MainActivity"
+            android:name="com.torca.app.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:taskAffinity=""
