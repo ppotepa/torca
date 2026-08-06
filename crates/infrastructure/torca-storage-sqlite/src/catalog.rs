@@ -61,6 +61,18 @@ pub mod conversation_sql {
     };
 }
 
+pub mod receipt_sql {
+    use super::SqlStatement;
+    pub const INSERT: SqlStatement = SqlStatement {
+        name: "receipt.insert",
+        sql: include_str!("../sql/commands/receipt_insert.sql"),
+    };
+    pub const FOR_MESSAGE: SqlStatement = SqlStatement {
+        name: "receipt.for_message",
+        sql: include_str!("../sql/queries/receipt_for_message.sql"),
+    };
+}
+
 pub mod messaging_sql {
     use super::SqlStatement;
     pub const INSERT_MESSAGE: SqlStatement = SqlStatement {
