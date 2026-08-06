@@ -3,6 +3,7 @@ param([switch]$SkipRust, [switch]$SkipFlutter)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$dartSchema = Join-Path $repoRoot 'crates/platform/torca-bridge/schema/torca_contract.dart'
 
 function Invoke-Checked {
     param(
@@ -41,7 +42,7 @@ try {
         Push-Location (Join-Path $repoRoot 'apps/client/flutter')
         try {
             Invoke-Checked 'Flutter dependencies' { flutter pub get }
-            Invoke-Checked 'Dart formatting' { dart format --output=none --set-exit-if-changed lib test } '../../scripts/format.ps1 -SkipRust'
+            Invoke-Checked 'Dart formatting' { dart format --output=none --set-exit-if-changed lib test $dartSchema } '../../scripts/format.ps1 -SkipRust'
             Invoke-Checked 'Flutter analysis' { flutter analyze }
             Invoke-Checked 'Flutter tests' { flutter test }
         } finally {
