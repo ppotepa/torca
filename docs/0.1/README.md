@@ -9,8 +9,11 @@ Deliver a coherent private 1:1 messenger skeleton in which two client installati
 ## Planning documents
 
 - [`SCOPE.md`](SCOPE.md) — product boundary.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — exact 0.1 component composition and flows.
 - [`ROADMAP.md`](ROADMAP.md) — milestones and exit criteria.
 - [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — concrete dependency-aware sequence.
+- [`TRACEABILITY.md`](TRACEABILITY.md) — mapping from required capabilities to domains and milestones.
+- [`RISKS.md`](RISKS.md) — active technical and product risks.
 - [`STATUS.md`](STATUS.md) — live checklist.
 - [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) — release completion rules.
 
