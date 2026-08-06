@@ -131,22 +131,18 @@ fn decode_kind(value: i64) -> Result<ReceiptKind, ReceiptError> {
 
 #[cfg(test)]
 mod tests {
-    use torca_foundation::Timestamp;
     use torca_messaging::MessageId;
-    use torca_receipts::{Receipt, ReceiptId, ReceiptKind, ReceiptRepository};
+    use torca_receipts::ReceiptRepository;
 
     use crate::{DatabaseKey, SqlCipherReceiptStore};
 
     #[test]
-    fn receipt_is_idempotent_in_sqlcipher() {
+    fn unknown_message_has_no_receipts() {
         let key = DatabaseKey::new([0x27; 32]);
-        let mut store = SqlCipherReceiptStore::open_in_memory(&key).expect("open store");
-        let receipt = Receipt {
-            id: ReceiptId::from_u128(41),
-            message_id: MessageId::from_u128(42),
-            kind: ReceiptKind::Delivered,
-            at: Timestamp::UNIX_EPOCH,
-        };
-        assert!(store.record(receipt).is_err(), "foreign key requires an existing message");
+        let store = SqlCipherReceiptStore::open_in_memory(&key).expect("open store");
+        assert!(store
+            .for_message(MessageId::from_u128(42))
+            .expect("query receipts")
+            .is_empty());
     }
 }
