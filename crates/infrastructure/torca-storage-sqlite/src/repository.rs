@@ -2,6 +2,13 @@ use core::fmt;
 use std::path::Path;
 
 use rusqlite::{OptionalExtension, params};
+use torca_contacts::{
+    Contact, ContactError, ContactId, ContactRepository, ContactRoute, ContactStatus,
+};
+use torca_conversations::{
+    ConversationError, ConversationId, ConversationRepository, ConversationStatus,
+    DirectConversation,
+};
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{
     AvatarReference, Identity, IdentityId, IdentityKey, IdentityRepository,
@@ -9,7 +16,8 @@ use torca_identity::{
 };
 
 use crate::{
-    DatabaseKey, MigrationError, SqlCipherBackend, StorageBackendError, StorageKernel, identity_sql,
+    DatabaseKey, MigrationError, SqlCipherBackend, StorageBackendError, StorageKernel, contact_sql,
+    conversation_sql, identity_sql,
 };
 
 /// Failure while opening and migrating a concrete encrypted store.
@@ -155,6 +163,177 @@ impl IdentityRepository for SqlCipherStore {
     }
 }
 
+impl ContactRepository for SqlCipherStore {
+    fn insert(&mut self, contact: Contact) -> Result<(), ContactError> {
+        if self.get(contact.id())?.is_some() {
+            return Err(ContactError::AlreadyExists);
+        }
+        execute_contact(&self.backend, contact_sql::INSERT.sql, &contact)
+    }
+
+    fn get(&self, id: ContactId) -> Result<Option<Contact>, ContactError> {
+        let id_bytes = id.to_opaque().into_bytes();
+        let row = self
+            .backend
+            .connection()
+            .query_row(contact_sql::SELECT_BY_ID.sql, params![id_bytes.as_slice()], |row| {
+                Ok(ContactRow {
+                    contact_id: id_bytes.to_vec(),
+                    remote_identity_id: row.get(0)?,
+                    remote_key_id: row.get(1)?,
+                    remote_key_algorithm: row.get(2)?,
+                    remote_public_key: row.get(3)?,
+                    remote_key_generation: row.get(4)?,
+                    onion_address: row.get(5)?,
+                    capability_id: row.get(6)?,
+                    status: row.get(7)?,
+                    created_at_ms: row.get(8)?,
+                    updated_at_ms: row.get(9)?,
+                })
+            })
+            .optional()
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        row.map(ContactRow::into_contact).transpose()
+    }
+
+    fn update(&mut self, contact: Contact) -> Result<(), ContactError> {
+        if self.get(contact.id())?.is_none() {
+            return Err(ContactError::NotFound);
+        }
+        execute_contact(&self.backend, contact_sql::UPDATE.sql, &contact)
+    }
+
+    fn list(&self) -> Result<Vec<Contact>, ContactError> {
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(contact_sql::LIST.sql)
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(ContactRow {
+                    contact_id: row.get(0)?,
+                    remote_identity_id: row.get(1)?,
+                    remote_key_id: row.get(2)?,
+                    remote_key_algorithm: row.get(3)?,
+                    remote_public_key: row.get(4)?,
+                    remote_key_generation: row.get(5)?,
+                    onion_address: row.get(6)?,
+                    capability_id: row.get(7)?,
+                    status: row.get(8)?,
+                    created_at_ms: row.get(9)?,
+                    updated_at_ms: row.get(10)?,
+                })
+            })
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        rows.map(|row| {
+            row.map_err(|_| ContactError::RepositoryFailure)?
+                .into_contact()
+        })
+        .collect()
+    }
+}
+
+impl ConversationRepository for SqlCipherStore {
+    fn insert(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
+        if self.get(conversation.id())?.is_some() {
+            return Err(ConversationError::AlreadyExists);
+        }
+        if self.for_contact(conversation.contact_id())?.is_some() {
+            return Err(ConversationError::ContactAlreadyHasConversation);
+        }
+        let id = conversation.id().to_opaque().into_bytes();
+        let contact_id = conversation.contact_id().to_opaque().into_bytes();
+        self.backend
+            .connection()
+            .execute(
+                conversation_sql::INSERT.sql,
+                params![
+                    id.as_slice(),
+                    contact_id.as_slice(),
+                    encode_conversation_status(conversation.status()),
+                    conversation.created_at().to_unix_millis(),
+                    conversation.updated_at().to_unix_millis(),
+                ],
+            )
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        Ok(())
+    }
+
+    fn get(&self, id: ConversationId) -> Result<Option<DirectConversation>, ConversationError> {
+        let id_bytes = id.to_opaque().into_bytes();
+        let row = self
+            .backend
+            .connection()
+            .query_row(
+                conversation_sql::SELECT_BY_ID.sql,
+                params![id_bytes.as_slice()],
+                |row| {
+                    Ok(ConversationRow {
+                        conversation_id: id_bytes.to_vec(),
+                        contact_id: row.get(0)?,
+                        status: row.get(1)?,
+                        created_at_ms: row.get(2)?,
+                        updated_at_ms: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        row.map(ConversationRow::into_conversation).transpose()
+    }
+
+    fn for_contact(
+        &self,
+        contact_id: ContactId,
+    ) -> Result<Option<DirectConversation>, ConversationError> {
+        let contact_bytes = contact_id.to_opaque().into_bytes();
+        let row = self
+            .backend
+            .connection()
+            .query_row(
+                conversation_sql::SELECT_BY_CONTACT.sql,
+                params![contact_bytes.as_slice()],
+                |row| {
+                    Ok(ConversationRow {
+                        conversation_id: row.get(0)?,
+                        contact_id: contact_bytes.to_vec(),
+                        status: row.get(1)?,
+                        created_at_ms: row.get(2)?,
+                        updated_at_ms: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        row.map(ConversationRow::into_conversation).transpose()
+    }
+
+    fn list(&self) -> Result<Vec<DirectConversation>, ConversationError> {
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(conversation_sql::LIST.sql)
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(ConversationRow {
+                    conversation_id: row.get(0)?,
+                    contact_id: row.get(1)?,
+                    status: row.get(2)?,
+                    created_at_ms: row.get(3)?,
+                    updated_at_ms: row.get(4)?,
+                })
+            })
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        rows.map(|row| {
+            row.map_err(|_| ConversationError::RepositoryFailure)?
+                .into_conversation()
+        })
+        .collect()
+    }
+}
+
 struct IdentityRow {
     identity_id: Vec<u8>,
     key_id: Vec<u8>,
@@ -169,11 +348,14 @@ struct IdentityRow {
 
 impl IdentityRow {
     fn into_identity(self) -> Result<Identity, IdentityRepositoryError> {
-        let identity_id = IdentityId::from_opaque(OpaqueId::from_bytes(fixed_16(
+        let identity_id = IdentityId::from_opaque(OpaqueId::from_bytes(fixed_16_identity(
             self.identity_id,
             "identity_id",
         )?));
-        let key_id = KeyId::from_opaque(OpaqueId::from_bytes(fixed_16(self.key_id, "key_id")?));
+        let key_id = KeyId::from_opaque(OpaqueId::from_bytes(fixed_16_identity(
+            self.key_id,
+            "key_id",
+        )?));
         let algorithm = decode_algorithm(self.key_algorithm)?;
         let generation = u32::try_from(self.key_generation)
             .map_err(|_| data_error("key_generation is outside u32 range"))?;
@@ -201,8 +383,143 @@ impl IdentityRow {
     }
 }
 
-fn fixed_16(value: Vec<u8>, field: &str) -> Result<[u8; 16], IdentityRepositoryError> {
+struct ContactRow {
+    contact_id: Vec<u8>,
+    remote_identity_id: Vec<u8>,
+    remote_key_id: Vec<u8>,
+    remote_key_algorithm: i64,
+    remote_public_key: Vec<u8>,
+    remote_key_generation: i64,
+    onion_address: String,
+    capability_id: Vec<u8>,
+    status: i64,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+impl ContactRow {
+    fn into_contact(self) -> Result<Contact, ContactError> {
+        let contact_id = ContactId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(
+            self.contact_id,
+        )?));
+        let identity_id = IdentityId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(
+            self.remote_identity_id,
+        )?));
+        let key_id = KeyId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(
+            self.remote_key_id,
+        )?));
+        let algorithm = match self.remote_key_algorithm {
+            1 => KeyAlgorithm::Ed25519,
+            _ => return Err(ContactError::RepositoryFailure),
+        };
+        let generation = u32::try_from(self.remote_key_generation)
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        let key = IdentityKey::new(key_id, algorithm, self.remote_public_key)
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        let remote_identity = PublicIdentity::new(identity_id, key, generation);
+        let capability_id = OpaqueId::from_bytes(fixed_16_contact(self.capability_id)?);
+        let route = ContactRoute::new(self.onion_address, capability_id)
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        let status = match self.status {
+            0 => ContactStatus::Active,
+            1 => ContactStatus::Blocked,
+            2 => ContactStatus::Removed,
+            _ => return Err(ContactError::RepositoryFailure),
+        };
+        let created_at = Timestamp::from_unix_millis(self.created_at_ms)
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        Ok(Contact::restore(
+            contact_id,
+            remote_identity,
+            route,
+            status,
+            created_at,
+            updated_at,
+        ))
+    }
+}
+
+struct ConversationRow {
+    conversation_id: Vec<u8>,
+    contact_id: Vec<u8>,
+    status: i64,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+impl ConversationRow {
+    fn into_conversation(self) -> Result<DirectConversation, ConversationError> {
+        let id = ConversationId::from_opaque(OpaqueId::from_bytes(fixed_16_conversation(
+            self.conversation_id,
+        )?));
+        let contact_id = ContactId::from_opaque(OpaqueId::from_bytes(fixed_16_conversation(
+            self.contact_id,
+        )?));
+        let status = match self.status {
+            0 => ConversationStatus::Active,
+            1 => ConversationStatus::Archived,
+            _ => return Err(ConversationError::RepositoryFailure),
+        };
+        let created_at = Timestamp::from_unix_millis(self.created_at_ms)
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        Ok(DirectConversation::from_persisted(
+            id,
+            contact_id,
+            status,
+            created_at,
+            updated_at,
+        ))
+    }
+}
+
+fn execute_contact(
+    backend: &SqlCipherBackend,
+    sql: &str,
+    contact: &Contact,
+) -> Result<(), ContactError> {
+    let contact_id = contact.id().to_opaque().into_bytes();
+    let remote_identity_id = contact.remote_identity().identity_id().to_opaque().into_bytes();
+    let remote_key_id = contact.remote_identity().key().key_id().to_opaque().into_bytes();
+    let capability_id = contact.route().capability_id().into_bytes();
+    backend
+        .connection()
+        .execute(
+            sql,
+            params![
+                contact_id.as_slice(),
+                remote_identity_id.as_slice(),
+                remote_key_id.as_slice(),
+                encode_algorithm(contact.remote_identity().key().algorithm()),
+                contact.remote_identity().key().public_key(),
+                i64::from(contact.remote_identity().generation()),
+                contact.route().onion_address(),
+                capability_id.as_slice(),
+                encode_contact_status(contact.status()),
+                contact.created_at().to_unix_millis(),
+                contact.updated_at().to_unix_millis(),
+            ],
+        )
+        .map_err(|_| ContactError::RepositoryFailure)?;
+    Ok(())
+}
+
+fn fixed_16_identity(
+    value: Vec<u8>,
+    field: &str,
+) -> Result<[u8; 16], IdentityRepositoryError> {
     value.try_into().map_err(|_| data_error(&format!("{field} must contain 16 bytes")))
+}
+
+fn fixed_16_contact(value: Vec<u8>) -> Result<[u8; 16], ContactError> {
+    value.try_into().map_err(|_| ContactError::RepositoryFailure)
+}
+
+fn fixed_16_conversation(value: Vec<u8>) -> Result<[u8; 16], ConversationError> {
+    value.try_into().map_err(|_| ConversationError::RepositoryFailure)
 }
 
 const fn encode_algorithm(value: KeyAlgorithm) -> i64 {
@@ -215,6 +532,21 @@ fn decode_algorithm(value: i64) -> Result<KeyAlgorithm, IdentityRepositoryError>
     match value {
         1 => Ok(KeyAlgorithm::Ed25519),
         _ => Err(data_error("unsupported key algorithm in database")),
+    }
+}
+
+const fn encode_contact_status(value: ContactStatus) -> i64 {
+    match value {
+        ContactStatus::Active => 0,
+        ContactStatus::Blocked => 1,
+        ContactStatus::Removed => 2,
+    }
+}
+
+const fn encode_conversation_status(value: ConversationStatus) -> i64 {
+    match value {
+        ConversationStatus::Active => 0,
+        ConversationStatus::Archived => 1,
     }
 }
 
@@ -231,13 +563,23 @@ fn data_error(message: &str) -> IdentityRepositoryError {
 
 #[cfg(test)]
 mod tests {
-    use torca_foundation::Timestamp;
+    use torca_contacts::{Contact, ContactId, ContactRepository, ContactRoute};
+    use torca_conversations::{
+        ConversationId, ConversationRepository, DirectConversation,
+    };
+    use torca_foundation::{OpaqueId, Timestamp};
     use torca_identity::{
         Identity, IdentityId, IdentityKey, IdentityRepository, KeyAlgorithm, KeyId, Profile,
         ProfileName, PublicIdentity,
     };
 
     use crate::{DatabaseKey, SqlCipherStore};
+
+    fn remote_identity() -> PublicIdentity {
+        let key = IdentityKey::new(KeyId::from_u128(12), KeyAlgorithm::Ed25519, vec![9; 32])
+            .expect("key");
+        PublicIdentity::new(IdentityId::from_u128(11), key, 0)
+    }
 
     #[test]
     fn identity_round_trips_through_sqlcipher() {
@@ -251,5 +593,30 @@ mod tests {
 
         store.insert(&identity).expect("insert");
         assert_eq!(store.load().expect("load"), Some(identity));
+    }
+
+    #[test]
+    fn contact_and_conversation_round_trip_through_sqlcipher() {
+        let key = DatabaseKey::new([0x25; 32]);
+        let mut store = SqlCipherStore::open_in_memory(&key).expect("open store");
+        let contact = Contact::new(
+            ContactId::from_u128(21),
+            remote_identity(),
+            ContactRoute::new("peer.onion", OpaqueId::from_u128(22)).expect("route"),
+            Timestamp::UNIX_EPOCH,
+        );
+        store.insert(contact.clone()).expect("insert contact");
+        assert_eq!(ContactRepository::get(&store, contact.id()).expect("get contact"), Some(contact.clone()));
+
+        let conversation = DirectConversation::new(
+            ConversationId::from_u128(23),
+            contact.id(),
+            Timestamp::UNIX_EPOCH,
+        );
+        store.insert(conversation.clone()).expect("insert conversation");
+        assert_eq!(
+            ConversationRepository::get(&store, conversation.id()).expect("get conversation"),
+            Some(conversation)
+        );
     }
 }
