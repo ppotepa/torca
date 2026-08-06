@@ -1,38 +1,48 @@
 # Torca 0.1
 
-Torca 0.1 is the first clean engineering baseline for the new repository. It is not a production release and does not claim complete anonymity or feature parity with mature messengers.
+Torca 0.1 is the first clean engineering baseline for the new repository. It is not represented as audited or production-ready until the release checklist is evidenced.
 
 ## Start here
 
-Read [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md) before changing the repository. It is the only live implementation and handoff record.
+Read [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md). It is the only live status and handoff record.
 
-## Goal
-
-Deliver a coherent private 1:1 messenger skeleton in which two client installations can create local identities, pair through an ephemeral relay, establish a contact, exchange encrypted text messages directly through Tor, persist state locally, recover from interruption, and render the same application state on Windows and Android.
-
-## Planning documents
+## Core planning
 
 - [`SCOPE.md`](SCOPE.md) — product boundary.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — exact 0.1 component composition and flows.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — exact component composition.
 - [`ROADMAP.md`](ROADMAP.md) — milestones and exit criteria.
-- [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — concrete dependency-aware sequence.
-- [`TRACEABILITY.md`](TRACEABILITY.md) — mapping from required capabilities to domains and milestones.
-- [`RISKS.md`](RISKS.md) — active technical and product risks.
-- [`TOOLCHAIN.md`](TOOLCHAIN.md) — pinned development baseline.
-- [`FOUNDATION_CONTRACTS.md`](FOUNDATION_CONTRACTS.md) — identifiers, time, command/event, error and cancellation contracts.
-- [`WIRE_PROTOCOL.md`](WIRE_PROTOCOL.md) — generic versioned frame layout, limits, compatibility and decoder behavior.
-- [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) — release completion rules.
+- [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) — 20 ordered batches.
+- [`TRACEABILITY.md`](TRACEABILITY.md) — capability ownership.
+- [`RISKS.md`](RISKS.md) — active risks.
+- [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) — completion definition.
 
-`STATUS.md` is only a compatibility pointer. Current progress is maintained at the repository root.
+## Implemented technical baselines
 
-## Validation ownership
+- [`TOOLCHAIN.md`](TOOLCHAIN.md)
+- [`FOUNDATION_CONTRACTS.md`](FOUNDATION_CONTRACTS.md)
+- [`WIRE_PROTOCOL.md`](WIRE_PROTOCOL.md)
+- [`IDENTITY_DOMAIN.md`](IDENTITY_DOMAIN.md)
+- [`STORAGE_KERNEL.md`](STORAGE_KERNEL.md)
+- [`CRYPTO_CONTRACTS.md`](CRYPTO_CONTRACTS.md)
+- [`PAIRING_CONTACTS.md`](PAIRING_CONTACTS.md)
+- [`RENDEZVOUS_RELAY.md`](RENDEZVOUS_RELAY.md)
+- [`CLIENT_ENGINE_BASELINE.md`](CLIENT_ENGINE_BASELINE.md)
+- [`MESSAGING_RECEIPTS.md`](MESSAGING_RECEIPTS.md)
+- [`DURABLE_DELIVERY.md`](DURABLE_DELIVERY.md)
+- [`PEER_PROTOCOL.md`](PEER_PROTOCOL.md)
+- [`PEER_SESSIONS.md`](PEER_SESSIONS.md)
+- [`TOR_ADAPTER.md`](TOR_ADAPTER.md)
+- [`BRIDGE_AND_UI.md`](BRIDGE_AND_UI.md)
+- [`PLATFORM_HOSTS.md`](PLATFORM_HOSTS.md)
+- [`ATTACHMENTS.md`](ATTACHMENTS.md)
+- [`DIAGNOSTICS.md`](DIAGNOSTICS.md)
+- [`STABILIZATION_REVIEW.md`](STABILIZATION_REVIEW.md)
 
-Implementation agents record static review and add tests with each batch. The project owner executes the full local validation suite and supplies results for addition to `0.1_PROGRESS.md`. Pending local test evidence is recorded explicitly and is never represented as a passing result.
+## Validation and release
 
-## Release posture
+- [`TEST_MATRIX.md`](TEST_MATRIX.md) — automated and platform coverage.
+- [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) — unresolved integrations and exclusions.
+- [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) — required evidence before binaries are called a release.
+- [`../../docs/security/threat-model.md`](../security/threat-model.md) — security boundary.
 
-- APIs and storage formats may change within 0.1 development.
-- Security-sensitive formats must still be explicitly versioned.
-- Migration support is required after the first distributable 0.1 test build.
-- No feature is considered complete only because its UI exists.
-- The old repository may provide test vectors or implementation references, but code is imported only after boundary review.
+Implementation agents add tests and static review. The project owner runs the pinned local suite and supplies exact results for `0.1_PROGRESS.md`.

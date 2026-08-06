@@ -1,28 +1,18 @@
 # Torca roadmap
 
-The active engineering roadmap is versioned with the release it describes. Live implementation state is maintained separately in the root progress document.
+The active engineering target is Torca **0.1**.
 
-## Active plan
+## Implementation state
 
-Torca currently targets **0.1**:
+All 20 dependency-ordered source batches in [`docs/0.1/IMPLEMENTATION_ORDER.md`](docs/0.1/IMPLEMENTATION_ORDER.md) have committed code and documentation.
 
-- [0.1 live progress and handoff](0.1_PROGRESS.md)
-- [0.1 overview](docs/0.1/README.md)
-- [0.1 scope](docs/0.1/SCOPE.md)
-- [0.1 ordered roadmap](docs/0.1/ROADMAP.md)
-- [0.1 implementation order](docs/0.1/IMPLEMENTATION_ORDER.md)
-- [0.1 definition of done](docs/0.1/DEFINITION_OF_DONE.md)
+This means **source-roadmap coverage is 100%**. It does not mean release validation is complete. The remaining production integrations and owner-run checks are listed in:
 
-## How the documents differ
-
-- `docs/0.1/ROADMAP.md` defines milestone outcomes and exit criteria.
-- `docs/0.1/IMPLEMENTATION_ORDER.md` defines the preferred dependency-aware batch sequence.
-- `0.1_PROGRESS.md` records the current batch, completed work, blockers, validation evidence and exact next action.
-
-The root progress document is the operational starting point for every work session and must be updated with every coherent implementation change.
+- [`0.1_PROGRESS.md`](0.1_PROGRESS.md);
+- [`docs/0.1/KNOWN_LIMITATIONS.md`](docs/0.1/KNOWN_LIMITATIONS.md);
+- [`docs/0.1/RELEASE_CHECKLIST.md`](docs/0.1/RELEASE_CHECKLIST.md);
+- [`docs/0.1/TEST_MATRIX.md`](docs/0.1/TEST_MATRIX.md).
 
 ## Planning rule
 
-Only the active minor version receives detailed implementation planning. Future versions may be listed as ideas, but must not pull work away from the current acceptance criteria.
-
-Version `1.0` is the eventual production release. It is not yet a planning target and has no committed date or scope.
+No 1.0 scope is planned until the 0.1 release checklist is completed and its limitations are understood from real Windows, Android and Tor tests.
