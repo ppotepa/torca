@@ -10,8 +10,8 @@ void main() {
     MethodChannelEngineGateway.channelName,
   );
 
-  tearDown(() async {
-    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
   });
 
@@ -25,7 +25,7 @@ void main() {
       'messages': <Object?>[],
     };
 
-    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall call) async {
       calls.add(call);
       if (call.method == 'snapshot') {
