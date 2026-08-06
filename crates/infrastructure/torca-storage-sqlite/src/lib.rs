@@ -10,7 +10,9 @@ mod sqlcipher;
 mod storage;
 
 pub use backend::{MemoryStorageBackend, StorageBackend, StorageBackendError};
-pub use catalog::{SqlStatement, identity_sql, messaging_sql};
+pub use catalog::{
+    SqlStatement, contact_sql, conversation_sql, identity_sql, messaging_sql,
+};
 pub use durable::{
     DurableDeliveryError, DurableDeliveryStore, InMemoryDurableDeliveryStore, OutboxRecord,
     OutboxState,
