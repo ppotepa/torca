@@ -2,6 +2,8 @@
 
 This sequence is the default order for implementation batches. It is more granular than the milestone roadmap and is intended to prevent circular dependencies and premature platform work.
 
+The current active batch and exact handoff are always recorded in [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md).
+
 ## Batch 01 — Repository toolchain
 
 Create the Rust workspace, Flutter workspace, toolchain pins, formatting configuration, validation scripts and CI skeleton. The repository must build before domain code is added.
@@ -84,4 +86,6 @@ Complete failure injection, diagnostic export, packaging, threat-model review, m
 
 ## Batch completion rule
 
-A batch is complete only when its public contracts, implementation, tests, documentation and `STATUS.md` update land together on `main`.
+A batch is complete only when its public contracts, implementation, tests, documentation and root [`0.1_PROGRESS.md`](../../0.1_PROGRESS.md) update land together on `main`.
+
+The progress update must include exact validation commands and results, remaining work, blockers and one exact next action.
