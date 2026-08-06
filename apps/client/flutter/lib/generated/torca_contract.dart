@@ -71,3 +71,7 @@ class QueueMessageCommandDto extends BridgeCommandDto {
   final String body;
   final int atMs;
 }
+
+class RefreshSnapshotCommandDto extends BridgeCommandDto {
+  const RefreshSnapshotCommandDto();
+}
