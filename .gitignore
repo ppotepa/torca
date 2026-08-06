@@ -1,0 +1,45 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+
+# Android
+.gradle/
+local.properties
+**/key.properties
+**/*.jks
+**/*.keystore
+
+# Windows / IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Runtime data and secrets
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+.env
+.env.*
+!.env.example
+secrets/
+runtime/
+artifacts/
+
+# OS
+.DS_Store
+Thumbs.db
