@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/foundation/torca-foundation",
+    "crates/protocol/torca-wire",
 ]
 resolver = "3"
 

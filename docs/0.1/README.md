@@ -20,6 +20,7 @@ Deliver a coherent private 1:1 messenger skeleton in which two client installati
 - [`RISKS.md`](RISKS.md) — active technical and product risks.
 - [`TOOLCHAIN.md`](TOOLCHAIN.md) — pinned development baseline.
 - [`FOUNDATION_CONTRACTS.md`](FOUNDATION_CONTRACTS.md) — identifiers, time, command/event, error and cancellation contracts.
+- [`WIRE_PROTOCOL.md`](WIRE_PROTOCOL.md) — generic versioned frame layout, limits, compatibility and decoder behavior.
 - [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) — release completion rules.
 
 `STATUS.md` is only a compatibility pointer. Current progress is maintained at the repository root.

@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "torca-foundation"
 version = "0.1.0-alpha.0"
+
+[[package]]
+name = "torca-wire"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+]
