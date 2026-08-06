@@ -1,96 +1,18 @@
 # Torca 0.1 status
 
-This file is the live implementation checklist. Update it in the same commit that completes or invalidates an item.
+The canonical live status, progress checklist and developer/agent handoff are maintained in the repository root:
 
-Status legend: `[ ]` not started, `[-]` in progress, `[x]` complete, `[!]` blocked.
+## [`../../0.1_PROGRESS.md`](../../0.1_PROGRESS.md)
 
-## M0 — Foundation
+This file intentionally contains no separate checklist. Keeping two implementation status documents would allow them to diverge and make handoffs unreliable.
 
-- [x] Root project README.
-- [x] Canonical architecture entrypoint.
-- [x] Versioned 0.1 documentation structure.
-- [x] 0.1 scope and roadmap.
-- [x] Domain map and dependency rules.
-- [x] Initial architecture decision records.
-- [x] Planned component README structure.
-- [x] Main-only contribution policy.
+Use the root progress document to determine:
 
-## M1 — Workspace and contracts
+- what is implemented;
+- what is not implemented;
+- the current milestone and batch;
+- blockers and active risks;
+- validation evidence;
+- the exact next action.
 
-- [ ] Rust workspace.
-- [ ] Flutter workspace.
-- [ ] Toolchain pinning.
-- [ ] Foundation identifiers and timestamps.
-- [ ] Command metadata and idempotency contract.
-- [ ] Domain event envelope.
-- [ ] Wire envelope primitives.
-- [ ] Generated bridge contract pipeline.
-- [ ] Repository validation entrypoint.
-- [ ] CI boundary and build checks.
-
-## M2 — Identity, storage and crypto
-
-- [ ] Identity domain implementation.
-- [ ] Storage port contracts.
-- [ ] SQLite/SQLCipher adapter.
-- [ ] SQL directory and loader conventions.
-- [ ] Initial migrations.
-- [ ] Key provider abstraction.
-- [ ] Local profile persistence.
-- [ ] Restart and migration tests.
-
-## M3 — Pairing and contacts
-
-- [ ] Pairing domain implementation.
-- [ ] Contact domain implementation.
-- [ ] Conversation domain baseline.
-- [ ] Relay protocol.
-- [ ] In-memory relay service.
-- [ ] Two-engine pairing integration tests.
-
-## M4 — Messaging and receipts
-
-- [ ] Messaging domain implementation.
-- [ ] Receipt domain implementation.
-- [ ] Message persistence.
-- [ ] Transactional outbox.
-- [ ] Inbound deduplication.
-- [ ] Retry scheduler.
-- [ ] Conversation projections.
-- [ ] Transport-independent messaging tests.
-
-## M5 — Peer and Tor
-
-- [ ] Peer session implementation.
-- [ ] Capability handshake.
-- [ ] Peer protocol codec.
-- [ ] Tor process adapter.
-- [ ] Onion service lifecycle.
-- [ ] Reconnect and resend tests.
-
-## M6 — Flutter and platforms
-
-- [ ] Shared Flutter package.
-- [ ] Generated Rust/Flutter bridge.
-- [ ] Pairing screens.
-- [ ] Contact and conversation screens.
-- [ ] Windows host integration.
-- [ ] Android host integration.
-- [ ] Lifecycle and background recovery.
-
-## M7 — Attachments and diagnostics
-
-- [ ] Attachment domain and ports.
-- [ ] Encrypted image flow.
-- [ ] Structured redacted logs.
-- [ ] Health projection.
-- [ ] Diagnostic export.
-
-## M8 — Stabilization
-
-- [ ] End-to-end test matrix.
-- [ ] Threat-model review.
-- [ ] Packaging and release scripts.
-- [ ] Upgrade and recovery tests.
-- [ ] Release notes and known limitations.
-- [ ] 0.1 test artifacts.
+Version-specific scope and milestone definitions remain in this directory. Live execution state belongs only in `0.1_PROGRESS.md`.
