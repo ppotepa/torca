@@ -19,6 +19,7 @@ members = [
     "crates/infrastructure/torca-transport-tor",
     "crates/platform/torca-bridge",
     "crates/platform/torca-platform",
+    "crates/platform/torca-platform-windows",
     "tools/torca-contract-gen",
     "crates/domains/torca-attachments",
     "crates/infrastructure/torca-file-storage",
