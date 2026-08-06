@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 
 use torca_crypto::{ProtectedSecretStore, ProtectedSecretStoreError};
@@ -28,24 +28,15 @@ impl DpapiFileSecretStore {
     }
 
     fn temporary_path(&self, key_id: KeyId) -> PathBuf {
-        self.root.join(format!(
-            ".{key_id}.{}.tmp",
-            std::process::id()
-        ))
+        self.root.join(format!(".{key_id}.{}.tmp", std::process::id()))
     }
 }
 
 impl ProtectedSecretStore for DpapiFileSecretStore {
-    fn insert(
-        &mut self,
-        key_id: KeyId,
-        secret: &[u8],
-    ) -> Result<(), ProtectedSecretStoreError> {
+    fn insert(&mut self, key_id: KeyId, secret: &[u8]) -> Result<(), ProtectedSecretStoreError> {
         let target = self.path(key_id);
         if target.exists() {
-            return Err(ProtectedSecretStoreError(
-                "protected key handle already exists".into(),
-            ));
+            return Err(ProtectedSecretStoreError("protected key handle already exists".into()));
         }
 
         let protected = protect(secret)?;
@@ -87,8 +78,9 @@ impl ProtectedSecretStore for DpapiFileSecretStore {
             let zeroes = [0_u8; 4096];
             let mut remaining = length;
             while remaining > 0 {
-                let count = usize::try_from(remaining.min(zeroes.len() as u64))
-                    .map_err(|_| ProtectedSecretStoreError("protected file length is invalid".into()))?;
+                let count = usize::try_from(remaining.min(zeroes.len() as u64)).map_err(|_| {
+                    ProtectedSecretStoreError("protected file length is invalid".into())
+                })?;
                 file.write_all(&zeroes[..count]).map_err(io_error)?;
                 remaining -= count as u64;
             }
@@ -102,10 +94,7 @@ impl ProtectedSecretStore for DpapiFileSecretStore {
 fn protect(secret: &[u8]) -> Result<Vec<u8>, ProtectedSecretStoreError> {
     let length = u32::try_from(secret.len())
         .map_err(|_| ProtectedSecretStoreError("secret is too large for DPAPI".into()))?;
-    let input = CRYPT_INTEGER_BLOB {
-        cbData: length,
-        pbData: secret.as_ptr().cast_mut(),
-    };
+    let input = CRYPT_INTEGER_BLOB { cbData: length, pbData: secret.as_ptr().cast_mut() };
     let mut output = CRYPT_INTEGER_BLOB::default();
 
     // SAFETY: all pointers refer to live buffers for the duration of the call. Optional pointers
@@ -131,10 +120,7 @@ fn protect(secret: &[u8]) -> Result<Vec<u8>, ProtectedSecretStoreError> {
 fn unprotect(protected: &[u8]) -> Result<Vec<u8>, ProtectedSecretStoreError> {
     let length = u32::try_from(protected.len())
         .map_err(|_| ProtectedSecretStoreError("protected blob is too large for DPAPI".into()))?;
-    let input = CRYPT_INTEGER_BLOB {
-        cbData: length,
-        pbData: protected.as_ptr().cast_mut(),
-    };
+    let input = CRYPT_INTEGER_BLOB { cbData: length, pbData: protected.as_ptr().cast_mut() };
     let mut output = CRYPT_INTEGER_BLOB::default();
 
     // SAFETY: all pointers refer to live buffers for the call. No description is requested, and
@@ -163,10 +149,7 @@ struct DpapiOutput {
 
 impl DpapiOutput {
     const fn new(blob: CRYPT_INTEGER_BLOB) -> Self {
-        Self {
-            blob,
-            clear_on_drop: false,
-        }
+        Self { blob, clear_on_drop: false }
     }
 
     fn copy_bytes(mut self, clear_on_drop: bool) -> Result<Vec<u8>, ProtectedSecretStoreError> {
@@ -177,9 +160,7 @@ impl DpapiOutput {
             return Ok(Vec::new());
         }
         if self.blob.pbData.is_null() {
-            return Err(ProtectedSecretStoreError(
-                "DPAPI returned a null output buffer".into(),
-            ));
+            return Err(ProtectedSecretStoreError("DPAPI returned a null output buffer".into()));
         }
         // SAFETY: DPAPI returned a buffer of exactly cbData bytes that remains allocated until
         // this owner is dropped.
@@ -231,19 +212,13 @@ mod tests {
 
     #[test]
     fn current_user_dpapi_round_trips_and_deletes_secret() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos();
         let root = std::env::temp_dir().join(format!("torca-dpapi-{nonce}"));
         let key_id = KeyId::from_u128(1);
         let mut store = DpapiFileSecretStore::new(&root).expect("store");
 
         store.insert(key_id, b"protected-secret").expect("insert");
-        assert_eq!(
-            store.load(key_id).expect("load"),
-            Some(b"protected-secret".to_vec())
-        );
+        assert_eq!(store.load(key_id).expect("load"), Some(b"protected-secret".to_vec()));
         assert!(store.delete(key_id).expect("delete"));
         assert_eq!(store.load(key_id).expect("missing"), None);
         let _ = std::fs::remove_dir_all(root);
