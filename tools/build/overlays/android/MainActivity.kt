@@ -1,4 +1,4 @@
-package com.torca.torca_app
+package com.torca.app
 
 import io.flutter.embedding.android.FlutterActivity
 
