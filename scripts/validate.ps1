@@ -35,6 +35,9 @@ try {
     }
 
     if (-not $SkipFlutter) {
+        Write-Host '==> Flutter toolchain'
+        & (Join-Path $PSScriptRoot 'check-flutter-toolchain.ps1')
+
         Push-Location (Join-Path $repoRoot 'apps/client/flutter')
         try {
             Invoke-Checked 'Flutter dependencies' { flutter pub get }
