@@ -282,7 +282,7 @@ class MethodChannelEngineGateway implements EngineGateway {
       return;
     }
     _disposed = true;
-    await _channel.setMethodCallHandler(null);
+    _channel.setMethodCallHandler(null);
     _snapshots.dispose();
   }
 }
