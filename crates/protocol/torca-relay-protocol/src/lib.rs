@@ -11,14 +11,24 @@ pub const MAX_RELAY_BLOB_LEN: usize = 64 * 1024;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayProtocolVersion(pub u16);
 impl RelayProtocolVersion {
-    /// Initial protocol version.
-    pub const V1: Self = Self(1);
+    /// Capability-authenticated rendezvous protocol.
+    pub const V2: Self = Self(2);
 }
 
-/// Relay slot ID.
+/// Relay slot ID. It is an address, not an authorization secret.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RelaySlotId(pub OpaqueId);
+
+/// Opaque capability that authorizes destructive slot administration.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RelaySlotCapability(pub OpaqueId);
+
+/// Opaque per-side capability used for push/poll operations.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RelaySideToken(pub OpaqueId);
 
 /// Validated rendezvous code independent from the pairing domain model.
 #[must_use]
@@ -45,19 +55,29 @@ impl RelayCode {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayRequest {
-    /// Opens a short-lived slot.
-    Open { code: RelayCode, expires_at: Timestamp, creator_blob: Vec<u8> },
-    /// Joins a slot.
-    Join { code: RelayCode, joiner_blob: Vec<u8> },
-    /// Pushes an opaque blob from one side.
-    Push { slot_id: RelaySlotId, side: RelaySide, blob: Vec<u8> },
-    /// Polls queued blobs for one side.
-    Poll { slot_id: RelaySlotId, side: RelaySide },
-    /// Closes a slot.
-    Close { slot_id: RelaySlotId },
+    /// Opens a short-lived slot. All capabilities are generated client-side with a CSPRNG.
+    Open {
+        code: RelayCode,
+        expires_at: Timestamp,
+        creator_blob: Vec<u8>,
+        slot_capability: RelaySlotCapability,
+        creator_token: RelaySideToken,
+    },
+    /// Joins a slot and installs the joiner's client-generated side token.
+    Join {
+        code: RelayCode,
+        joiner_blob: Vec<u8>,
+        joiner_token: RelaySideToken,
+    },
+    /// Pushes an opaque blob to the opposite side. Side is inferred from the capability.
+    Push { slot_id: RelaySlotId, token: RelaySideToken, blob: Vec<u8> },
+    /// Polls queued blobs for the authenticated side.
+    Poll { slot_id: RelaySlotId, token: RelaySideToken },
+    /// Closes a slot using its separate administrative capability.
+    Close { slot_id: RelaySlotId, capability: RelaySlotCapability },
 }
 
-/// Side of the rendezvous slot.
+/// Side of the rendezvous slot after capability authentication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelaySide {
     Creator,
@@ -83,6 +103,7 @@ pub enum RelayProtocolError {
     SlotNotFound,
     SlotExpired,
     SlotAlreadyJoined,
+    Unauthorized,
     QueueFull,
     InvalidOperation,
 }
