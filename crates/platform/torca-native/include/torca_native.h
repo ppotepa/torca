@@ -8,6 +8,16 @@ extern "C" {
 typedef struct NativeEngineHandle NativeEngineHandle;
 uint16_t torca_contract_version(void); uint8_t *torca_alloc(size_t length); void torca_free(uint8_t *data,size_t length);
 NativeEngineHandle *torca_engine_new(void); void torca_engine_destroy(NativeEngineHandle *handle); int32_t torca_engine_close(NativeEngineHandle *handle); int32_t torca_process_shutdown(void);
+
+/* v11 intent ABI: Rust owns new entity IDs and command timestamps. */
+int32_t torca_engine_create_identity_intent(NativeEngineHandle*,const uint8_t*,size_t);
+int32_t torca_engine_create_pairing_intent(NativeEngineHandle*);
+int32_t torca_engine_join_pairing_intent(NativeEngineHandle*,const uint8_t*,size_t);
+int32_t torca_engine_queue_message_intent(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t,const uint8_t*,size_t);
+int32_t torca_engine_retry_message_intent(NativeEngineHandle*,const uint8_t*,size_t);
+int32_t torca_engine_queue_attachment_intent(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t,const uint8_t*,size_t,const uint8_t*,size_t,uint64_t);
+
+/* Existing entity-targeted ABI remains stable for commands that act on known IDs. */
 int32_t torca_engine_create_identity(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t,int64_t);
 int32_t torca_engine_create_pairing(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_join_pairing(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t); int32_t torca_engine_approve_pairing(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_reject_pairing(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_cancel_pairing(NativeEngineHandle*,const uint8_t*,size_t);
 int32_t torca_engine_rename_contact(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t); int32_t torca_engine_block_contact(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_unblock_contact(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_remove_contact(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_clear_conversation_history(NativeEngineHandle*,const uint8_t*,size_t);

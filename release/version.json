@@ -1,8 +1,8 @@
 {
   "product": "Torca",
-  "version": "0.1.0-alpha.0",
+  "version": "0.2.0-alpha.0",
   "build": 1,
   "channel": "alpha",
-  "contractVersion": 9,
+  "contractVersion": 11,
   "wireVersion": 1
 }
