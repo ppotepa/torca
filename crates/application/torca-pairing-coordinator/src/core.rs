@@ -28,6 +28,33 @@ pub struct PairingEphemeralKey {
     pub public_key: [u8; 32],
 }
 
+/// Pairwise secret derived only after the pairing transcript has been verified.
+///
+/// The value is redacted in diagnostics and zeroed on drop. It may only be exposed to a reviewed
+/// protected-storage adapter; domain, relay, bridge and Flutter layers never receive these bytes.
+#[must_use]
+#[derive(Eq, PartialEq)]
+pub struct PairingDerivedSecret([u8; 32]);
+impl PairingDerivedSecret {
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn expose_for_protected_storage(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+impl fmt::Debug for PairingDerivedSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PairingDerivedSecret([REDACTED])")
+    }
+}
+impl Drop for PairingDerivedSecret {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
+}
+
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncryptedPairingPayload {
@@ -59,6 +86,12 @@ pub trait PairingCryptoPort {
         associated_data: &[u8],
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, PairingCoordinatorError>;
+    fn derive_peer_secret(
+        &self,
+        local_key: PairingCryptoHandle,
+        remote_public_key: [u8; 32],
+        transcript_digest: [u8; 32],
+    ) -> Result<PairingDerivedSecret, PairingCoordinatorError>;
 }
 
 pub trait PairingRendezvousPort {
@@ -291,6 +324,24 @@ where
         let encrypted = self.encrypt_envelope(session_id, &session.key, remote, envelope)?;
         self.rendezvous
             .push(session.slot, session.token, encode_encrypted(&encrypted))
+    }
+
+    /// Derives the long-lived peer secret from the same contributory X25519 exchange but a
+    /// transcript-bound, purpose-separated KDF label.
+    pub fn derive_peer_secret(
+        &self,
+        session_id: PairingSessionId,
+        transcript_digest: [u8; 32],
+    ) -> Result<PairingDerivedSecret, PairingCoordinatorError> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(PairingCoordinatorError::SessionNotFound)?;
+        let remote = session
+            .remote_public_key
+            .ok_or(PairingCoordinatorError::InvalidBlob)?;
+        self.crypto
+            .derive_peer_secret(session.key.handle, remote, transcript_digest)
     }
 
     pub fn close(&mut self, session_id: PairingSessionId) -> Result<(), PairingCoordinatorError> {

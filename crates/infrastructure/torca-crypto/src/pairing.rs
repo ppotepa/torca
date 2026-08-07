@@ -6,13 +6,15 @@ use rand_core::OsRng;
 use sha2::Sha256;
 use torca_foundation::OpaqueId;
 use torca_pairing_coordinator::{
-    PairingCoordinatorError, PairingCryptoHandle, PairingCryptoPort, PairingEphemeralKey,
+    PairingCoordinatorError, PairingCryptoHandle, PairingCryptoPort, PairingDerivedSecret,
+    PairingEphemeralKey,
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, ReusableSecret};
 
 use crate::{Ciphertext, CryptoError, CryptoProvider, Nonce, RustCryptoProvider, SealingKey};
 
 const PAIRING_KDF_LABEL: &[u8] = b"TORCA-PAIRING-SEAL-V1";
+const PEER_SECRET_KDF_LABEL: &[u8] = b"TORCA-PEER-SECRET-V1";
 
 pub struct RustPairingCrypto {
     crypto: RustCryptoProvider,
@@ -55,7 +57,12 @@ impl RustPairingCrypto {
         associated_data: &[u8],
         plaintext: &[u8],
     ) -> Result<Vec<u8>, PairingKeyError> {
-        let key = self.derive_key(handle, remote_public_key, associated_data, PAIRING_KDF_LABEL)?;
+        let key = SealingKey::new(self.derive_material(
+            handle,
+            remote_public_key,
+            associated_data,
+            PAIRING_KDF_LABEL,
+        )?);
         self.crypto
             .seal(&key, Nonce(nonce), associated_data, plaintext)
             .map(|ciphertext| ciphertext.0)
@@ -70,19 +77,24 @@ impl RustPairingCrypto {
         associated_data: &[u8],
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, PairingKeyError> {
-        let key = self.derive_key(handle, remote_public_key, associated_data, PAIRING_KDF_LABEL)?;
+        let key = SealingKey::new(self.derive_material(
+            handle,
+            remote_public_key,
+            associated_data,
+            PAIRING_KDF_LABEL,
+        )?);
         self.crypto
             .open(&key, Nonce(nonce), associated_data, &Ciphertext(ciphertext.to_vec()))
             .map_err(PairingKeyError::Crypto)
     }
 
-    pub(crate) fn derive_key(
+    fn derive_material(
         &self,
         handle: PairingCryptoHandle,
         remote_public_key: [u8; 32],
         salt: &[u8],
         label: &[u8],
-    ) -> Result<SealingKey, PairingKeyError> {
+    ) -> Result<[u8; 32], PairingKeyError> {
         let secret = self.keys.get(&handle).ok_or(PairingKeyError::NotFound)?;
         let remote = X25519PublicKey::from(remote_public_key);
         let shared = secret.diffie_hellman(&remote);
@@ -102,7 +114,7 @@ impl RustPairingCrypto {
         let hkdf = Hkdf::<Sha256>::new(Some(salt), shared.as_bytes());
         let mut output = [0_u8; 32];
         hkdf.expand(&info, &mut output).map_err(|_| PairingKeyError::Kdf)?;
-        Ok(SealingKey::new(output))
+        Ok(output)
     }
 
     fn new_handle(&mut self) -> Result<PairingCryptoHandle, PairingKeyError> {
@@ -168,6 +180,22 @@ impl PairingCryptoPort for RustPairingCrypto {
             associated_data,
             ciphertext,
         )
+        .map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    fn derive_peer_secret(
+        &self,
+        local_key: PairingCryptoHandle,
+        remote_public_key: [u8; 32],
+        transcript_digest: [u8; 32],
+    ) -> Result<PairingDerivedSecret, PairingCoordinatorError> {
+        self.derive_material(
+            local_key,
+            remote_public_key,
+            &transcript_digest,
+            PEER_SECRET_KDF_LABEL,
+        )
+        .map(PairingDerivedSecret::new)
         .map_err(|_| PairingCoordinatorError::Crypto)
     }
 }
