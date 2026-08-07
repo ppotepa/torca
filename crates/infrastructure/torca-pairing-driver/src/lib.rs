@@ -11,7 +11,6 @@ use torca_pairing_coordinator::{
 use torca_runtime_host::{PairingDriver, PairingInvitationView, RuntimeDriverError};
 use torca_tor_driver::SharedTorEndpoint;
 
-/// Final RuntimeHost pairing adapter. It owns no pairing state of its own.
 pub struct RuntimePairingDriver<R, C, A, S> {
     runtime: PairingRuntime<R, C, A, S>,
     engine: EngineHandle,
@@ -103,7 +102,7 @@ where
             .map_err(|_| RuntimeDriverError::Pairing)?;
         Ok(PairingInvitationView {
             session_id: invitation.session_id,
-            code: invitation.code.as_str().to_owned(),
+            code: invitation.code,
             uri: invitation.uri,
             expires_at: invitation.expires_at,
         })
