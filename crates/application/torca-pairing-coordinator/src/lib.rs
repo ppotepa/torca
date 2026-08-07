@@ -19,7 +19,8 @@ pub use core::{
 };
 pub use credential::{PairingCredentialError, PairingPeerSecretStore};
 pub use final_runtime::{
-    LocalPairingContext, PairingInvitation, PairingPollReport, PairingRuntime, PairingRuntimeError,
+    LocalPairingContext, PairingCompletedContact, PairingInvitation, PairingPollReport,
+    PairingRuntime, PairingRuntimeError,
 };
 pub use invite_uri::{decode_invite_uri, encode_invite_uri};
 pub use policy::{PAIRING_INVITATION_TTL, invitation_expires_at};

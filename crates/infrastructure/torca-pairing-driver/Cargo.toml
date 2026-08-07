@@ -15,6 +15,7 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
 torca-runtime-host = { path = "../../application/torca-runtime-host" }
+torca-storage-sqlite = { path = "../torca-storage-sqlite" }
 torca-tor-driver = { path = "../torca-tor-driver" }
 
 [lints]
