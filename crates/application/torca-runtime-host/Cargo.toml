@@ -12,7 +12,9 @@ path = "src/final.rs"
 [dependencies]
 torca-client-engine = { path = "../torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
+torca-conversations = { path = "../../domains/torca-conversations" }
 torca-diagnostics = { path = "../torca-diagnostics" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-messaging = { path = "../../domains/torca-messaging" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-peer-link = { path = "../../infrastructure/torca-peer-link" }
