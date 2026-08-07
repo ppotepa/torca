@@ -10,6 +10,7 @@ import 'package:open_filex/open_filex.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../widgets/conversation_header.dart';
+import '../widgets/message_bubble.dart';
 import 'connection_details_screen.dart';
 
 const int _maxAttachmentBytes = 16 * 1024 * 1024;
@@ -47,10 +48,7 @@ class ConversationScreen extends StatelessWidget {
   void _openConnectionDetails(BuildContext context, String contactId) {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => ConnectionDetailsScreen(
-          gateway: gateway,
-          contactId: contactId,
-        ),
+        builder: (_) => ConnectionDetailsScreen(gateway: gateway, contactId: contactId),
       ),
     );
   }
@@ -104,9 +102,7 @@ class _ConversationPaneState extends State<ConversationPane> {
     super.dispose();
   }
 
-  void _snapshotChanged() {
-    unawaited(_markReadIfNeeded());
-  }
+  void _snapshotChanged() => unawaited(_markReadIfNeeded());
 
   Future<void> _markReadIfNeeded() async {
     if (_markingRead) return;
@@ -175,43 +171,38 @@ class _ConversationPaneState extends State<ConversationPane> {
                               .toList(growable: false);
                           final retryable =
                               message.direction == 'outbound' && message.status == 'failed';
-                          return ListTile(
+                          return MessageBubble(
+                            message: message,
                             onLongPress: () => _showMessageActions(message),
-                            title: Text(message.body),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                if (message.replyToMessageId != null) ...<Widget>[
-                                  const SizedBox(height: 4),
-                                  _ReplyQuote(
-                                    body: quoted?.body ?? 'Original message unavailable',
-                                    unavailable: quoted == null,
-                                  ),
-                                  const SizedBox(height: 4),
-                                ],
-                                Text(_messageStatusLabel(message.status)),
-                                if (retryable)
-                                  TextButton.icon(
+                            quotedBody: message.replyToMessageId == null
+                                ? null
+                                : quoted?.body ?? 'Original message unavailable',
+                            quotedUnavailable:
+                                message.replyToMessageId != null && quoted == null,
+                            footer: <Widget>[
+                              if (retryable)
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
                                     onPressed: () => _retryMessage(message),
                                     icon: const Icon(Icons.refresh),
                                     label: const Text('Retry now'),
                                   ),
-                                ...attachments.map(
-                                  (a) => _AttachmentProgress(
-                                    attachment: a,
-                                    onRetry: () => _attachmentCommand(
-                                      RetryAttachmentCommandDto(attachmentIdHex: a.id),
-                                    ),
-                                    onCancel: () => _attachmentCommand(
-                                      CancelAttachmentCommandDto(attachmentIdHex: a.id),
-                                    ),
-                                    onOpen: () => _openAttachment(a),
-                                    onSave: () => _saveAttachment(a),
-                                  ),
                                 ),
-                              ],
-                            ),
-                            trailing: Text(message.direction),
+                              ...attachments.map(
+                                (a) => _AttachmentProgress(
+                                  attachment: a,
+                                  onRetry: () => _attachmentCommand(
+                                    RetryAttachmentCommandDto(attachmentIdHex: a.id),
+                                  ),
+                                  onCancel: () => _attachmentCommand(
+                                    CancelAttachmentCommandDto(attachmentIdHex: a.id),
+                                  ),
+                                  onOpen: () => _openAttachment(a),
+                                  onSave: () => _saveAttachment(a),
+                                ),
+                              ),
+                            ],
                           );
                         },
                       ),
@@ -450,8 +441,7 @@ class _ConversationPaneState extends State<ConversationPane> {
 
   Future<void> _openAttachment(AttachmentDto a) async {
     final ext = _safeExtension(a.name);
-    final path =
-        '${Directory.systemTemp.path}${Platform.pathSeparator}torca-${a.id}$ext';
+    final path = '${Directory.systemTemp.path}${Platform.pathSeparator}torca-${a.id}$ext';
     final r = await widget.gateway.execute(
       ExportAttachmentCommandDto(attachmentIdHex: a.id, destinationPath: path),
     );
@@ -475,9 +465,7 @@ class _ConversationPaneState extends State<ConversationPane> {
 
   Future<void> _attachmentCommand(BridgeCommandDto c) async {
     final r = await widget.gateway.execute(c);
-    if (mounted && !r.ok) {
-      _showError(r.error ?? 'Attachment operation failed');
-    }
+    if (mounted && !r.ok) _showError(r.error ?? 'Attachment operation failed');
   }
 
   void _showError(String text) {
@@ -535,27 +523,6 @@ ContactDto? _contactFor(AppSnapshotDto snapshot, ConversationDto conversation) {
   return null;
 }
 
-class _ReplyQuote extends StatelessWidget {
-  const _ReplyQuote({required this.body, required this.unavailable});
-  final String body;
-  final bool unavailable;
-  @override
-  Widget build(BuildContext context) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          body,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: unavailable ? Theme.of(context).textTheme.bodySmall : null,
-        ),
-      );
-}
-
 class _ReplyComposerPreview extends StatelessWidget {
   const _ReplyComposerPreview({required this.message, required this.onCancel});
   final MessageDto message;
@@ -572,11 +539,7 @@ class _ReplyComposerPreview extends StatelessWidget {
             const Icon(Icons.reply, size: 18),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                message.body,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text(message.body, maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
             IconButton(
               tooltip: 'Cancel reply',
@@ -616,9 +579,7 @@ class _AttachmentProgress extends StatelessWidget {
             children: <Widget>[
               const Icon(Icons.insert_drive_file_outlined, size: 18),
               const SizedBox(width: 6),
-              Expanded(
-                child: Text(attachment.name, overflow: TextOverflow.ellipsis),
-              ),
+              Expanded(child: Text(attachment.name, overflow: TextOverflow.ellipsis)),
               Text(attachment.status),
             ],
           ),
