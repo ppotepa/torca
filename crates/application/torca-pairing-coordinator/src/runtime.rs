@@ -208,7 +208,6 @@ where
         Ok(())
     }
 
-    /// Cancels a local pairing attempt and propagates the terminal cancellation before cleanup.
     pub fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), PairingRuntimeError> {
         let session = self.session(session_id)?;
         if session.state() == PairingState::Cancelled {
@@ -224,6 +223,31 @@ where
             .map_err(|_| PairingRuntimeError::Engine)?;
         self.cleanup_terminal(session_id);
         Ok(())
+    }
+
+    /// Expires every non-terminal session whose Rust-owned deadline has elapsed.
+    pub fn maintenance(&mut self, now: Timestamp) -> Result<usize, PairingRuntimeError> {
+        let due: Vec<_> = self
+            .engine
+            .snapshot()
+            .map_err(|_| PairingRuntimeError::Engine)?
+            .pairings
+            .into_iter()
+            .filter(|session| {
+                !is_terminal(session.state()) && now >= session.expires_at()
+            })
+            .map(|session| session.id())
+            .collect();
+        for session_id in &due {
+            self.engine
+                .dispatch(EngineCommand::ExpirePairing {
+                    session_id: *session_id,
+                    at: now,
+                })
+                .map_err(|_| PairingRuntimeError::Engine)?;
+            self.cleanup_terminal(*session_id);
+        }
+        Ok(due.len())
     }
 
     pub fn poll(
@@ -400,6 +424,16 @@ where
             payload: PairingPayload::Offer(offer),
         })
     }
+}
+
+fn is_terminal(state: PairingState) -> bool {
+    matches!(
+        state,
+        PairingState::Rejected
+            | PairingState::Cancelled
+            | PairingState::Expired
+            | PairingState::Completed
+    )
 }
 
 fn peer_proposal(offer: &PairingOffer) -> Result<PeerProposal, PairingRuntimeError> {
