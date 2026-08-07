@@ -1,6 +1,6 @@
 # Torca 0.1 release handoff
 
-This handoff starts **after source implementation and static cleanup**. The remaining release work is owner/platform/end-to-end validation and release packaging evidence, not another architectural refactor.
+This handoff starts **after source implementation, dependency reconciliation and static cleanup**. The remaining release work is owner/platform/end-to-end validation and release packaging evidence, not another architectural refactor.
 
 ## Source state
 
@@ -22,6 +22,8 @@ Flutter
 ```
 
 SQLCipher migrations are **1–17**. Operational SQL is external and parameterized. Windows and Android use the same Flutter/Rust application code with platform-only lifecycle/key-store/notification hosts.
+
+The active bridge root is the canonical `crates/platform/torca-bridge/src/lib.rs`. The canonical Flutter native gateway is `apps/client/flutter/lib/gateway/ffi_engine_gateway.dart`; superseded version-suffixed roots were removed.
 
 ## Do not change before first validation
 
@@ -46,37 +48,52 @@ Before real run/deploy, provide:
 
 Production runtime intentionally does not discover arbitrary Tor installs through PATH or Tor Browser.
 
+## Dependency-lock checkpoint
+
+Rust `Cargo.lock` has been reconciled with the final local workspace graph. Final source changes only modify local `torca-*` dependency arrays; registry package pins are intentionally preserved. `BUG-040` restored the one checksum accidentally altered during manual reconciliation.
+
+The Flutter app currently has **no committed `pubspec.lock`**. It is not ignored. This environment cannot run the Flutter solver, so no transitive lock is fabricated. Before platform validation proceeds past dependency resolution:
+
+1. run `flutter pub get` from the clean Flutter app directory;
+2. inspect the newly generated `pubspec.lock` for unexpected package drift;
+3. commit the accepted `pubspec.lock` as a focused reproducibility change;
+4. reuse that lock for subsequent Windows/Android validation.
+
+The final source manifest intentionally declares only packages with current call-sites. In particular, `launch_at_startup` is not present because the current source does not use it.
+
 ## Windows validation order
 
 Run the normal Windows entrypoint from a clean checkout and validate:
 
-1. Rust/native compilation completes;
-2. Flutter dependency resolution/compilation completes;
-3. `torca_bridge.dll` loads;
-4. Bridge contract **v9** matches generated Dart source;
-5. SQLCipher migrations **1–17** apply;
-6. identity/database/peer protected stores initialize;
-7. packaged Tor starts and reaches Ready;
-8. onion endpoint appears;
-9. pairing code/QR and `torca://pair` cold start work;
-10. second `torca://pair` process hands the link to the existing instance before creating Engine/Tor;
-11. two-client pairing reaches Completed and persists signed display name;
-12. Safety Numbers match on both clients;
-13. direct text/Reply/Retry Now work;
-14. Delivered/Read work;
-15. Block prevents both outgoing reconnect and incoming authentication; Unblock restores communication;
-16. Clear History and Remove Contact perform complete local cleanup;
-17. attachment transfer survives interruption and verified Open/Save As works;
-18. close hides to tray, Show restores and second normal launch activates the first instance;
-19. local message notification click routes to the correct conversation;
-20. tray Quit calls explicit process shutdown and exits Tor/runtime;
-21. restart preserves identity, remaining contacts and history.
+1. `cargo metadata --locked` succeeds with the committed Rust lock;
+2. generate/inspect/commit the first Flutter `pubspec.lock` if it is still absent;
+3. Rust/native compilation completes;
+4. Flutter compilation completes using the accepted lock;
+5. `torca_bridge.dll` loads;
+6. Bridge contract **v9** matches generated Dart source;
+7. SQLCipher migrations **1–17** apply;
+8. identity/database/peer protected stores initialize;
+9. packaged Tor starts and reaches Ready;
+10. onion endpoint appears;
+11. pairing code/QR and `torca://pair` cold start work;
+12. second `torca://pair` process hands the link to the existing instance before creating Engine/Tor;
+13. two-client pairing reaches Completed and persists signed display name;
+14. Safety Numbers match on both clients;
+15. direct text/Reply/Retry Now work;
+16. Delivered/Read work;
+17. Block prevents both outgoing reconnect and incoming authentication; Unblock restores communication;
+18. Clear History and Remove Contact perform complete local cleanup;
+19. attachment transfer survives interruption and verified Open/Save As works;
+20. close hides to tray, Show restores and second normal launch activates the first instance;
+21. local message notification click routes to the correct conversation;
+22. tray Quit calls explicit process shutdown and exits Tor/runtime;
+23. restart preserves identity, remaining contacts and history.
 
 Record the first concrete failure only. Fix it as one focused `BUG-*` commit and rerun from the same checkpoint.
 
 ## Android validation order
 
-Use the normal Android build/deploy scripts, then validate:
+Use the accepted Flutter lock and the normal Android build/deploy scripts, then validate:
 
 1. native library loads and Bridge v9 snapshot decodes;
 2. Keystore database/identity/peer namespaces initialize;
@@ -107,6 +124,8 @@ Use clean clients A and B.
 9. Attempt to pair the same remote identity again while the contact exists; it must be rejected.
 10. Remove the contact explicitly and confirm a new pairing is then possible.
 11. Restart both clients and verify relationship persistence without relay state.
+
+The source audit for the v2 transition is complete: the protocol test constructor and active pairing runtime include `display_name`; the superseded v1 runtime constructor was physically removed.
 
 ## Messaging validation
 
@@ -157,13 +176,15 @@ Diagnostics may expose component/state/code/timestamps but must not contain:
 
 Validate diagnostics export and self-test during Tor failure, reconnect, pairing and delivery failure.
 
-## Dependency/lock validation
+## Static source facts to preserve
 
-Rust registry versions/checksums are not intentionally upgraded by the final source changes. The only expected `Cargo.lock` edits are local workspace dependency-array reconciliation for crates whose direct path dependencies changed.
-
-Flutter source uses the packages declared in `pubspec.yaml`, including `app_links`, `shared_preferences` and `open_filex`. `launch_at_startup` is not used by current source and should not appear only because it existed in an earlier plan.
-
-The implementation environment does not contain Flutter/Dart and the local shell cannot resolve GitHub, so owner validation must run the normal dependency resolver and inspect any generated `pubspec.lock`/`Cargo.lock` diff before accepting it. Do not silently accept unrelated registry/package drift.
+- Bridge schema and committed generated Dart contract are contract v9 and byte-identical.
+- Pairing Protocol is v2.
+- SQLCipher migration catalog is exactly 1–17.
+- Android service message projection is metadata-only and independent of Flutter Activity lifetime.
+- `ActiveRelationshipStore` gates PeerLink to active contacts only.
+- operational SQL must remain external to application/domain Rust source.
+- no version-suffixed Flutter FFI gateway source remains.
 
 ## Release gate closure
 
@@ -176,7 +197,7 @@ Close gates only with evidence:
 - **GATE-005** Windows lifecycle/notifications/deep links;
 - **GATE-006** Android lifecycle/notifications/deep links;
 - **GATE-007** relay/Tor/P2P/text/receipts/attachments E2E;
-- **GATE-008** release artifacts, signing, checksums and platform matrix.
+- **GATE-008** dependency-lock reproducibility and release artifacts/signing/checksums/platform matrix.
 
 ## Failure handling rule
 
