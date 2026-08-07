@@ -19,7 +19,9 @@ pub use key_management::{
     ProtectedSecretStoreError,
 };
 pub use pairing::{PairingKeyError, RustPairingCrypto};
-pub use peer_handshake::{Ed25519HandshakeVerifier, ManagedHandshakeSigner};
+pub use peer_handshake::{
+    Ed25519HandshakeVerifier, ManagedHandshakeSigner, OwnedHandshakeSigner,
+};
 pub use peer_secrets::{ManagedPeerSecrets, PeerSecretError};
 pub use ports::CryptoProvider;
 pub use production::RustCryptoProvider;
