@@ -1,0 +1,100 @@
+import 'package:flutter/material.dart';
+
+import '../generated/torca_contract.dart';
+import 'connection_indicator.dart';
+
+class ConversationSummaryTile extends StatelessWidget {
+  const ConversationSummaryTile({
+    required this.conversation,
+    required this.contact,
+    required this.selected,
+    required this.onTap,
+    required this.onContactInfo,
+    required this.onLongPress,
+    required this.onSecondaryTapDown,
+    super.key,
+  });
+
+  final ConversationDto conversation;
+  final ContactDto? contact;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback? onContactInfo;
+  final VoidCallback? onLongPress;
+  final GestureTapDownCallback? onSecondaryTapDown;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocked = contact?.status == 'blocked';
+    final message = conversation.lastMessageBody;
+    final prefix = conversation.lastMessageDirection == 'outbound' ? 'You: ' : '';
+    final subtitle = blocked
+        ? 'Blocked'
+        : message == null || message.isEmpty
+            ? 'No messages yet'
+            : '$prefix$message';
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapDown: onSecondaryTapDown,
+      child: ListTile(
+        selected: selected,
+        leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+        title: Row(
+          children: <Widget>[
+            Expanded(child: Text(contact?.displayName ?? 'Contact')),
+            if (conversation.lastActivityAtMs > 0)
+              Text(
+                _timeLabel(conversation.lastActivityAtMs),
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+          ],
+        ),
+        subtitle: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (conversation.unreadCount > 0) ...<Widget>[
+              const SizedBox(width: 8),
+              Badge(label: Text('${conversation.unreadCount}')),
+            ],
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ConnectionIndicator(
+              state: contact?.connectionState ?? 'disconnected',
+              blocked: blocked,
+            ),
+            if (contact != null)
+              IconButton(
+                tooltip: 'Contact details',
+                icon: const Icon(Icons.info_outline, size: 19),
+                onPressed: onContactInfo,
+              ),
+          ],
+        ),
+        onTap: onTap,
+        onLongPress: onLongPress,
+      ),
+    );
+  }
+
+  static String _timeLabel(int milliseconds) {
+    final value = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+    final now = DateTime.now();
+    if (value.year == now.year && value.month == now.month && value.day == now.day) {
+      return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+    }
+    if (value.year == now.year) {
+      return '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}';
+    }
+    return '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')}.${value.year}';
+  }
+}

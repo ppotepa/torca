@@ -19,64 +19,46 @@ typedef _AllocNative = ffi.Pointer<ffi.Uint8> Function(ffi.UintPtr);
 typedef _AllocDart = ffi.Pointer<ffi.Uint8> Function(int);
 typedef _FreeNative = ffi.Void Function(ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _FreeDart = void Function(ffi.Pointer<ffi.Uint8>, int);
-typedef _NoArgCommandNative = ffi.Int32 Function(_Handle);
-typedef _NoArgCommandDart = int Function(_Handle);
-typedef _IdNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
-typedef _IdDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
+typedef _NoArgNative = ffi.Int32 Function(_Handle);
+typedef _NoArgDart = int Function(_Handle);
+typedef _OneStringNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
+typedef _OneStringDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
 typedef _TwoStringsNative = ffi.Int32 Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
 );
 typedef _TwoStringsDart = int Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
 );
-typedef _QueueMessageIntentNative = ffi.Int32 Function(
+typedef _MessageIntentNative = ffi.Int32 Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
 );
-typedef _QueueMessageIntentDart = int Function(
+typedef _MessageIntentDart = int Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
 );
-typedef _QueueAttachmentIntentNative = ffi.Int32 Function(
+typedef _AttachmentIntentNative = ffi.Int32 Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
   ffi.Uint64,
 );
-typedef _QueueAttachmentIntentDart = int Function(
+typedef _AttachmentIntentDart = int Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
   int,
 );
 typedef _RefreshNative = ffi.Int32 Function(_Handle);
@@ -131,8 +113,8 @@ class FfiEngineGateway implements EngineGateway {
     if (_disposed) {
       return const BridgeResultDto(
         ok: false,
-        kind: 'error',
-        error: 'native engine gateway is disposed',
+        kind: 'error:runtime_unavailable',
+        error: 'The secure Torca runtime is currently unavailable.',
       );
     }
     if (command is RefreshSnapshotCommandDto) return _refreshSnapshot();
@@ -160,13 +142,13 @@ class FfiEngineGateway implements EngineGateway {
     } else if (command is ClearConversationHistoryCommandDto) {
       _withString(command.conversationIdHex, _bindings.clearConversationHistory);
     } else if (command is QueueMessageCommandDto) {
-      _queueMessageIntent(command);
+      _queueMessage(command);
     } else if (command is RetryMessageCommandDto) {
       _withString(command.messageIdHex, _bindings.retryMessageIntent);
     } else if (command is MarkConversationReadCommandDto) {
       _withString(command.conversationIdHex, _bindings.markConversationRead);
     } else if (command is QueueAttachmentCommandDto) {
-      _queueAttachmentIntent(command);
+      _queueAttachment(command);
     } else if (command is RetryAttachmentCommandDto) {
       _withString(command.attachmentIdHex, _bindings.retryAttachment);
     } else if (command is CancelAttachmentCommandDto) {
@@ -180,8 +162,8 @@ class FfiEngineGateway implements EngineGateway {
     } else {
       return const BridgeResultDto(
         ok: false,
-        kind: 'error',
-        error: 'unsupported bridge command',
+        kind: 'error:invalid_input',
+        error: 'The supplied value is not valid.',
       );
     }
 
@@ -190,7 +172,7 @@ class FfiEngineGateway implements EngineGateway {
     return result;
   }
 
-  void _queueMessageIntent(QueueMessageCommandDto command) {
+  void _queueMessage(QueueMessageCommandDto command) {
     final conversation = _NativeUtf8(_bindings, command.conversationIdHex);
     final body = _NativeUtf8(_bindings, command.body);
     final reply = _NativeUtf8(_bindings, command.replyToMessageId ?? '');
@@ -211,7 +193,7 @@ class FfiEngineGateway implements EngineGateway {
     }
   }
 
-  void _queueAttachmentIntent(QueueAttachmentCommandDto command) {
+  void _queueAttachment(QueueAttachmentCommandDto command) {
     final conversation = _NativeUtf8(_bindings, command.conversationIdHex);
     final path = _NativeUtf8(_bindings, command.sourcePath);
     final name = _NativeUtf8(_bindings, command.name);
@@ -237,7 +219,7 @@ class FfiEngineGateway implements EngineGateway {
     }
   }
 
-  void _withString(String value, _IdDart operation) {
+  void _withString(String value, _OneStringDart operation) {
     final native = _NativeUtf8(_bindings, value);
     try {
       operation(_handle, native.pointer, native.length);
@@ -277,7 +259,9 @@ class FfiEngineGateway implements EngineGateway {
     final status = _bindings.refreshSnapshot(_handle);
     if (status != 0) {
       final error = _decodeResult(_readResultJson());
-      return silent ? const BridgeResultDto(ok: false, kind: 'error') : error;
+      return silent
+          ? const BridgeResultDto(ok: false, kind: 'error:runtime_unavailable')
+          : error;
     }
     _snapshots.value = _decodeSnapshot(_readSnapshotJson());
     return const BridgeResultDto(ok: true, kind: 'snapshot');
@@ -302,8 +286,8 @@ class FfiEngineGateway implements EngineGateway {
     if (json.isEmpty) {
       return const BridgeResultDto(
         ok: false,
-        kind: 'error',
-        error: 'native runtime returned an empty result',
+        kind: 'error:runtime_unavailable',
+        error: 'The secure Torca runtime is currently unavailable.',
       );
     }
     final map = _map(jsonDecode(json), 'bridge result');
@@ -321,13 +305,12 @@ class FfiEngineGateway implements EngineGateway {
       throw FormatException('unsupported native contract version $version');
     }
     final identityValue = map['identity'];
-    final identity = identityValue == null
-        ? null
-        : IdentityDto(
-            displayName: _string(_map(identityValue, 'identity'), 'displayName'),
-          );
     return AppSnapshotDto(
-      identity: identity,
+      identity: identityValue == null
+          ? null
+          : IdentityDto(
+              displayName: _string(_map(identityValue, 'identity'), 'displayName'),
+            ),
       torState: _string(map, 'torState'),
       onionAddress: _optionalString(map, 'onionAddress'),
       pairings: _list(map, 'pairings').map((value) {
@@ -344,7 +327,7 @@ class FfiEngineGateway implements EngineGateway {
       }).toList(growable: false),
       contacts: _list(map, 'contacts').map((value) {
         final item = _map(value, 'contact');
-        final peerHealth = _map(item['peerHealth'], 'contact.peerHealth');
+        final health = _map(item['peerHealth'], 'contact.peerHealth');
         return ContactDto(
           id: _string(item, 'id'),
           displayName: _string(item, 'displayName'),
@@ -353,12 +336,12 @@ class FfiEngineGateway implements EngineGateway {
           connectionState: _string(item, 'connectionState'),
           safetyNumber: _optionalString(item, 'safetyNumber'),
           peerHealth: PeerHealthDto(
-            state: _string(peerHealth, 'state'),
-            quality: _string(peerHealth, 'quality'),
-            rttMs: _optionalInt(peerHealth, 'rttMs'),
-            lastSuccessAtMs: _optionalInt(peerHealth, 'lastSuccessAtMs'),
-            consecutiveFailures: _int(peerHealth, 'consecutiveFailures'),
-            reconnectAttempt: _int(peerHealth, 'reconnectAttempt'),
+            state: _string(health, 'state'),
+            quality: _string(health, 'quality'),
+            rttMs: _optionalInt(health, 'rttMs'),
+            lastSuccessAtMs: _optionalInt(health, 'lastSuccessAtMs'),
+            consecutiveFailures: _int(health, 'consecutiveFailures'),
+            reconnectAttempt: _int(health, 'reconnectAttempt'),
           ),
         );
       }).toList(growable: false),
@@ -368,6 +351,11 @@ class FfiEngineGateway implements EngineGateway {
           id: _string(item, 'id'),
           contactId: _string(item, 'contactId'),
           status: _string(item, 'status'),
+          unreadCount: _intOr(item, 'unreadCount', 0),
+          lastActivityAtMs: _intOr(item, 'lastActivityAtMs', 0),
+          lastMessageBody: _optionalString(item, 'lastMessageBody'),
+          lastMessageDirection: _optionalString(item, 'lastMessageDirection'),
+          lastMessageStatus: _optionalString(item, 'lastMessageStatus'),
         );
       }).toList(growable: false),
       messages: _list(map, 'messages').map((value) {
@@ -400,9 +388,7 @@ class FfiEngineGateway implements EngineGateway {
   }
 
   Map<String, Object?> _map(Object? value, String field) {
-    if (value is! Map<Object?, Object?>) {
-      throw FormatException('$field must be a map');
-    }
+    if (value is! Map<Object?, Object?>) throw FormatException('$field must be a map');
     return value.map((key, item) {
       if (key is! String) throw FormatException('$field contains a non-string key');
       return MapEntry<String, Object?>(key, item);
@@ -437,6 +423,11 @@ class FfiEngineGateway implements EngineGateway {
     final value = map[field];
     if (value is int) return value;
     throw FormatException('$field must be an int');
+  }
+
+  int _intOr(Map<String, Object?> map, String field, int fallback) {
+    final value = map[field];
+    return value is int ? value : fallback;
   }
 
   int? _optionalInt(Map<String, Object?> map, String field) {
@@ -479,23 +470,23 @@ class _NativeBindings {
         free = library.lookupFunction<_FreeNative, _FreeDart>('torca_free'),
         engineNew = library.lookupFunction<_EngineNewNative, _EngineNewDart>('torca_engine_new'),
         engineDestroy = library.lookupFunction<_EngineDestroyNative, _EngineDestroyDart>('torca_engine_destroy'),
-        createIdentityIntent = library.lookupFunction<_IdNative, _IdDart>('torca_engine_create_identity_intent'),
-        createPairingIntent = library.lookupFunction<_NoArgCommandNative, _NoArgCommandDart>('torca_engine_create_pairing_intent'),
-        joinPairingIntent = library.lookupFunction<_IdNative, _IdDart>('torca_engine_join_pairing_intent'),
-        approvePairing = library.lookupFunction<_IdNative, _IdDart>('torca_engine_approve_pairing'),
-        rejectPairing = library.lookupFunction<_IdNative, _IdDart>('torca_engine_reject_pairing'),
-        cancelPairing = library.lookupFunction<_IdNative, _IdDart>('torca_engine_cancel_pairing'),
+        createIdentityIntent = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_create_identity_intent'),
+        createPairingIntent = library.lookupFunction<_NoArgNative, _NoArgDart>('torca_engine_create_pairing_intent'),
+        joinPairingIntent = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_join_pairing_intent'),
+        approvePairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_approve_pairing'),
+        rejectPairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_reject_pairing'),
+        cancelPairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_cancel_pairing'),
         renameContact = library.lookupFunction<_TwoStringsNative, _TwoStringsDart>('torca_engine_rename_contact'),
-        blockContact = library.lookupFunction<_IdNative, _IdDart>('torca_engine_block_contact'),
-        unblockContact = library.lookupFunction<_IdNative, _IdDart>('torca_engine_unblock_contact'),
-        removeContact = library.lookupFunction<_IdNative, _IdDart>('torca_engine_remove_contact'),
-        clearConversationHistory = library.lookupFunction<_IdNative, _IdDart>('torca_engine_clear_conversation_history'),
-        queueMessageIntent = library.lookupFunction<_QueueMessageIntentNative, _QueueMessageIntentDart>('torca_engine_queue_message_intent'),
-        retryMessageIntent = library.lookupFunction<_IdNative, _IdDart>('torca_engine_retry_message_intent'),
-        markConversationRead = library.lookupFunction<_IdNative, _IdDart>('torca_engine_mark_conversation_read'),
-        queueAttachmentIntent = library.lookupFunction<_QueueAttachmentIntentNative, _QueueAttachmentIntentDart>('torca_engine_queue_attachment_intent'),
-        retryAttachment = library.lookupFunction<_IdNative, _IdDart>('torca_engine_retry_attachment'),
-        cancelAttachment = library.lookupFunction<_IdNative, _IdDart>('torca_engine_cancel_attachment'),
+        blockContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_block_contact'),
+        unblockContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_unblock_contact'),
+        removeContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_remove_contact'),
+        clearConversationHistory = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_clear_conversation_history'),
+        queueMessageIntent = library.lookupFunction<_MessageIntentNative, _MessageIntentDart>('torca_engine_queue_message_intent'),
+        retryMessageIntent = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_retry_message_intent'),
+        markConversationRead = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_mark_conversation_read'),
+        queueAttachmentIntent = library.lookupFunction<_AttachmentIntentNative, _AttachmentIntentDart>('torca_engine_queue_attachment_intent'),
+        retryAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_retry_attachment'),
+        cancelAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_cancel_attachment'),
         exportAttachment = library.lookupFunction<_TwoStringsNative, _TwoStringsDart>('torca_engine_export_attachment'),
         refreshSnapshot = library.lookupFunction<_RefreshNative, _RefreshDart>('torca_engine_refresh_snapshot'),
         refreshDiagnostics = library.lookupFunction<_RefreshNative, _RefreshDart>('torca_engine_refresh_diagnostics'),
@@ -511,23 +502,23 @@ class _NativeBindings {
   final _FreeDart free;
   final _EngineNewDart engineNew;
   final _EngineDestroyDart engineDestroy;
-  final _IdDart createIdentityIntent;
-  final _NoArgCommandDart createPairingIntent;
-  final _IdDart joinPairingIntent;
-  final _IdDart approvePairing;
-  final _IdDart rejectPairing;
-  final _IdDart cancelPairing;
+  final _OneStringDart createIdentityIntent;
+  final _NoArgDart createPairingIntent;
+  final _OneStringDart joinPairingIntent;
+  final _OneStringDart approvePairing;
+  final _OneStringDart rejectPairing;
+  final _OneStringDart cancelPairing;
   final _TwoStringsDart renameContact;
-  final _IdDart blockContact;
-  final _IdDart unblockContact;
-  final _IdDart removeContact;
-  final _IdDart clearConversationHistory;
-  final _QueueMessageIntentDart queueMessageIntent;
-  final _IdDart retryMessageIntent;
-  final _IdDart markConversationRead;
-  final _QueueAttachmentIntentDart queueAttachmentIntent;
-  final _IdDart retryAttachment;
-  final _IdDart cancelAttachment;
+  final _OneStringDart blockContact;
+  final _OneStringDart unblockContact;
+  final _OneStringDart removeContact;
+  final _OneStringDart clearConversationHistory;
+  final _MessageIntentDart queueMessageIntent;
+  final _OneStringDart retryMessageIntent;
+  final _OneStringDart markConversationRead;
+  final _AttachmentIntentDart queueAttachmentIntent;
+  final _OneStringDart retryAttachment;
+  final _OneStringDart cancelAttachment;
   final _TwoStringsDart exportAttachment;
   final _RefreshDart refreshSnapshot;
   final _RefreshDart refreshDiagnostics;

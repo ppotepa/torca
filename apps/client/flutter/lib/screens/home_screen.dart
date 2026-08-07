@@ -1,13 +1,12 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../settings/local_preferences.dart';
 import '../widgets/app_overflow_menu.dart';
-import '../widgets/connection_indicator.dart';
+import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_actions.dart';
+import '../widgets/conversation_summary_tile.dart';
 import '../widgets/tor_status_indicator.dart';
 import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
@@ -22,6 +21,7 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({required this.gateway, required this.preferences, super.key});
   final EngineGateway gateway;
   final LocalPreferences preferences;
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -48,57 +48,55 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           body: snapshot.identity == null
               ? _IdentitySetup(gateway: widget.gateway)
-              : LayoutBuilder(builder: (context, constraints) {
-                  void contactInfo(ContactDto contact) => _openContactDetails(contact);
-                  void conversationAction(
-                    ConversationDto conversation,
-                    ContactDto contact,
-                    ConversationAction action,
-                  ) =>
-                      _handleConversationAction(conversation, contact, action);
-                  if (constraints.maxWidth < _wideLayoutBreakpoint) {
-                    return _ConversationList(
-                      conversations: snapshot.conversations,
-                      contacts: snapshot.contacts,
-                      selectedConversationId: null,
-                      onContactInfo: contactInfo,
-                      onAction: conversationAction,
-                      onSelected: (conversation) => Navigator.of(context).push<void>(
-                        MaterialPageRoute(
-                          builder: (_) => ConversationScreen(
-                            gateway: widget.gateway,
-                            conversation: conversation,
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final conversations = snapshot.conversations;
+                    if (constraints.maxWidth < _wideLayoutBreakpoint) {
+                      return _ConversationList(
+                        conversations: conversations,
+                        contacts: snapshot.contacts,
+                        selectedConversationId: null,
+                        onContactInfo: _openContactDetails,
+                        onAction: _handleConversationAction,
+                        onSelected: (conversation) => Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (_) => ConversationScreen(
+                              gateway: widget.gateway,
+                              conversation: conversation,
+                            ),
                           ),
                         ),
-                      ),
+                      );
+                    }
+                    final selected = _selectedConversation(conversations);
+                    return Row(
+                      children: <Widget>[
+                        SizedBox(
+                          width: _conversationRailWidth,
+                          child: _ConversationList(
+                            conversations: conversations,
+                            contacts: snapshot.contacts,
+                            selectedConversationId: selected?.id,
+                            onContactInfo: _openContactDetails,
+                            onAction: _handleConversationAction,
+                            onSelected: (conversation) =>
+                                setState(() => _selectedConversationId = conversation.id),
+                          ),
+                        ),
+                        const VerticalDivider(width: 1),
+                        Expanded(
+                          child: selected == null
+                              ? const _ConversationPlaceholder()
+                              : ConversationPane(
+                                  key: ValueKey(selected.id),
+                                  gateway: widget.gateway,
+                                  conversation: selected,
+                                ),
+                        ),
+                      ],
                     );
-                  }
-                  final selected = _selectedConversation(snapshot.conversations);
-                  return Row(children: <Widget>[
-                    SizedBox(
-                      width: _conversationRailWidth,
-                      child: _ConversationList(
-                        conversations: snapshot.conversations,
-                        contacts: snapshot.contacts,
-                        selectedConversationId: selected?.id,
-                        onContactInfo: contactInfo,
-                        onAction: conversationAction,
-                        onSelected: (conversation) =>
-                            setState(() => _selectedConversationId = conversation.id),
-                      ),
-                    ),
-                    const VerticalDivider(width: 1),
-                    Expanded(
-                      child: selected == null
-                          ? const _ConversationPlaceholder()
-                          : ConversationPane(
-                              key: ValueKey(selected.id),
-                              gateway: widget.gateway,
-                              conversation: selected,
-                            ),
-                    ),
-                  ]);
-                }),
+                  },
+                ),
           floatingActionButton: snapshot.identity == null
               ? null
               : FloatingActionButton(
@@ -129,7 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
         showAboutDialog(
           context: context,
           applicationName: 'Torca',
-          applicationVersion: '0.1 alpha',
+          applicationVersion: '0.2 alpha',
           applicationLegalese: 'Private 1:1 messaging over Tor.',
         );
     }
@@ -245,7 +243,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final result = await widget.gateway.execute(command);
     if (mounted && !result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? fallbackError)),
+        SnackBar(content: Text(BridgeErrorPresenter.message(result, fallback: fallbackError))),
       );
     }
   }
@@ -281,6 +279,7 @@ class _ConversationList extends StatelessWidget {
     required this.onContactInfo,
     required this.onAction,
   });
+
   final List<ConversationDto> conversations;
   final List<ContactDto> contacts;
   final String? selectedConversationId;
@@ -303,30 +302,15 @@ class _ConversationList extends StatelessWidget {
       itemBuilder: (context, index) {
         final conversation = conversations[index];
         final contact = _contact(conversation.contactId);
-        final tile = ListTile(
+        return ConversationSummaryTile(
+          conversation: conversation,
+          contact: contact,
           selected: conversation.id == selectedConversationId,
-          leading: const CircleAvatar(child: Icon(Icons.person_outline)),
-          title: Text(contact?.displayName ?? 'Contact'),
-          subtitle: Text(contact?.status == 'blocked' ? 'Blocked' : conversation.status),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-            ConnectionIndicator(
-              state: contact?.connectionState ?? 'disconnected',
-              blocked: contact?.status == 'blocked',
-            ),
-            if (contact != null)
-              IconButton(
-                tooltip: 'Contact details',
-                icon: const Icon(Icons.info_outline, size: 19),
-                onPressed: () => onContactInfo(contact),
-              ),
-          ]),
           onTap: () => onSelected(conversation),
+          onContactInfo: contact == null ? null : () => onContactInfo(contact),
           onLongPress: contact == null
               ? null
               : () => _showActions(context, conversation, contact),
-        );
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
           onSecondaryTapDown: contact == null
               ? null
               : (details) => _showActions(
@@ -335,7 +319,6 @@ class _ConversationList extends StatelessWidget {
                     contact,
                     globalPosition: details.globalPosition,
                   ),
-          child: tile,
         );
       },
     );
@@ -373,6 +356,7 @@ class _ConversationList extends StatelessWidget {
 
 class _ConversationPlaceholder extends StatelessWidget {
   const _ConversationPlaceholder();
+
   @override
   Widget build(BuildContext context) => const Center(
         child: Column(
@@ -389,13 +373,13 @@ class _ConversationPlaceholder extends StatelessWidget {
 class _IdentitySetup extends StatefulWidget {
   const _IdentitySetup({required this.gateway});
   final EngineGateway gateway;
+
   @override
   State<_IdentitySetup> createState() => _IdentitySetupState();
 }
 
 class _IdentitySetupState extends State<_IdentitySetup> {
   final TextEditingController controller = TextEditingController();
-  final Random _random = Random.secure();
   String? _error;
   bool _submitting = false;
 
@@ -447,21 +431,18 @@ class _IdentitySetupState extends State<_IdentitySetup> {
       _submitting = true;
       _error = null;
     });
-    final result = await widget.gateway.execute(CreateIdentityCommandDto(
-      identityIdHex: _newId(),
-      displayName: displayName,
-      atMs: DateTime.now().millisecondsSinceEpoch,
-    ));
+    final result = await widget.gateway.execute(
+      CreateIdentityCommandDto(displayName: displayName),
+    );
     if (!mounted) return;
     setState(() {
       _submitting = false;
-      _error = result.ok ? null : result.error ?? 'Could not create local identity';
+      _error = result.ok
+          ? null
+          : BridgeErrorPresenter.message(
+              result,
+              fallback: 'Could not create local identity',
+            );
     });
-  }
-
-  String _newId() {
-    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    if (bytes.every((value) => value == 0)) bytes[15] = 1;
-    return bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
   }
 }
