@@ -1,0 +1,14 @@
+[package]
+name = "torca-attachment-sqlite"
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+rusqlite = "0.38"
+torca-attachments = { path = "../../domains/torca-attachments" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-messaging = { path = "../../domains/torca-messaging" }
+torca-storage-sqlite = { path = "../torca-storage-sqlite" }
