@@ -7,7 +7,7 @@ use torca_attachment_sqlite::SqlCipherAttachmentStore;
 use torca_attachment_transfer::AttachmentTransfer;
 use torca_client_engine::EngineHandle;
 use torca_communication_driver::TorcaCommunicationDriver;
-use torca_control_delivery::{ControlDeliveryWorker, ControlOutbox};
+use torca_control_delivery::ControlDeliveryWorker;
 use torca_crypto::{ManagedPeerSecrets, ProtectedSecretStore, RustCryptoProvider};
 use torca_delivery::DeliveryWorker;
 use torca_file_storage::FileBlobStore;
@@ -18,8 +18,8 @@ use torca_peer_protocol::HandshakeSigner;
 use torca_peer_shared::SharedPeerLink;
 use torca_read_state::SqlCipherReadState;
 use torca_storage_sqlite::{
-    DatabaseKey, SqlCipherDurableStore, SqlCipherInboundStore, SqlCipherMessageStore,
-    SqlCipherStore,
+    DatabaseKey, SqlCipherControlOutbox, SqlCipherDurableStore, SqlCipherInboundStore,
+    SqlCipherMessageStore, SqlCipherStore,
 };
 use torca_transport_tor::PeerListener;
 
@@ -111,7 +111,7 @@ where
         inputs.local_identity_id,
         ACK_TIMEOUT,
     );
-    let control_outbox = ControlOutbox::open(database_path, database_key)
+    let control_outbox = SqlCipherControlOutbox::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
     let control = SharedControlWorker::new(ControlDeliveryWorker::new(control_outbox, control_transport));
 
