@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'gateway/engine_gateway.dart';
+import 'generated/torca_contract.dart';
 import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
 import 'screens/deep_link_join_screen.dart';
