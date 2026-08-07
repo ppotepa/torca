@@ -4,9 +4,11 @@ use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_contacts::ContactRoute;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityKey, KeyAlgorithm, PublicIdentity};
-use torca_pairing::{PairingCode, PairingRole, PairingSession, PairingSessionId, PeerProposal};
+use torca_pairing::{
+    PairingCode, PairingRole, PairingSession, PairingSessionId, PairingState, PeerProposal,
+};
 use torca_pairing_protocol::{
-    PairingApproval, PairingEnvelope, PairingOffer, PairingPayload,
+    PairingApproval, PairingEnvelope, PairingOffer, PairingPayload, PairingRejection,
 };
 
 use crate::{
@@ -14,8 +16,6 @@ use crate::{
     PairingCryptoPort, PairingRendezvousPort, encode_invite_uri, invitation_expires_at,
 };
 
-/// Public local material used to construct an encrypted pairing offer. Private keys and
-/// capability bytes are deliberately absent; only the opaque capability identifier is shared.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalPairingContext {
@@ -38,6 +38,7 @@ pub struct PairingInvitation {
 pub struct PairingPollReport {
     pub offers_applied: usize,
     pub approvals_applied: usize,
+    pub rejections_applied: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,7 +69,6 @@ impl From<PairingApprovalError> for PairingRuntimeError {
     }
 }
 
-/// Single application owner connecting encrypted rendezvous events to the domain pairing state.
 pub struct PairingRuntime<R, C, A> {
     coordinator: PairingCoordinator<R, C>,
     engine: EngineHandle,
@@ -154,9 +154,6 @@ where
         Ok(())
     }
 
-    /// Sends an identity-key-signed approval bound to the canonical creator/joiner transcript.
-    /// Repeating this call is safe: Ed25519 signing is deterministic and the domain transition is
-    /// only applied once, while re-pushing the same semantic approval can recover a lost response.
     pub fn approve(
         &mut self,
         session_id: PairingSessionId,
@@ -189,6 +186,24 @@ where
                 .dispatch(EngineCommand::ApprovePairing { session_id, at: now })
                 .map_err(|_| PairingRuntimeError::Engine)?;
         }
+        Ok(())
+    }
+
+    /// Rejects the inspected peer and propagates the terminal decision before local cleanup.
+    pub fn reject(&mut self, session_id: PairingSessionId) -> Result<(), PairingRuntimeError> {
+        let session = self.session(session_id)?;
+        if session.state() == PairingState::Rejected {
+            return Ok(());
+        }
+        let envelope = PairingEnvelope {
+            pairing_id: session_id.to_opaque(),
+            payload: PairingPayload::Rejection(PairingRejection),
+        };
+        self.coordinator.push(session_id, &envelope)?;
+        self.engine
+            .dispatch(EngineCommand::RejectPairing { session_id })
+            .map_err(|_| PairingRuntimeError::Engine)?;
+        self.cleanup_terminal(session_id);
         Ok(())
     }
 
@@ -247,7 +262,18 @@ where
                         report.approvals_applied += 1;
                     }
                 }
-                PairingPayload::Completion(_) => {
+                PairingPayload::Rejection(_) => {
+                    let session = self.session(session_id)?;
+                    if session.state() != PairingState::Rejected {
+                        self.engine
+                            .dispatch(EngineCommand::RejectPairing { session_id })
+                            .map_err(|_| PairingRuntimeError::Engine)?;
+                        report.rejections_applied += 1;
+                    }
+                    self.cleanup_terminal(session_id);
+                    break;
+                }
+                PairingPayload::Completion(_) | PairingPayload::Cancellation(_) => {
                     return Err(PairingRuntimeError::UnexpectedPayload);
                 }
             }
@@ -266,6 +292,10 @@ where
 
     pub fn into_parts(self) -> (PairingCoordinator<R, C>, EngineHandle, A) {
         (self.coordinator, self.engine, self.approval)
+    }
+
+    fn cleanup_terminal(&mut self, session_id: PairingSessionId) {
+        let _ = self.close_transport(session_id);
     }
 
     fn session(&self, session_id: PairingSessionId) -> Result<PairingSession, PairingRuntimeError> {
