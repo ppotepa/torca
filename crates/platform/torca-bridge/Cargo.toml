@@ -8,6 +8,9 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[lib]
+path = "src/final.rs"
+
 [dependencies]
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
@@ -17,6 +20,7 @@ torca-conversations = { path = "../../domains/torca-conversations" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-receipts = { path = "../../domains/torca-receipts" }
+torca-runtime-host = { path = "../../application/torca-runtime-host" }
 
 [lints]
 workspace = true
