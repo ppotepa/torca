@@ -8,7 +8,9 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityId, Profile, ProfileName};
 use torca_messaging::{MessageBody, MessageId};
 use torca_pairing::{PairingCode, PairingSessionId};
-use torca_runtime_host::{HostTorState, NetworkSnapshot, RuntimeHostHandle};
+use torca_runtime_host::{
+    AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle,
+};
 
 pub const CONTRACT_VERSION: u16 = 4;
 
@@ -23,6 +25,17 @@ pub enum BridgeCommand {
     CancelPairing { session_id_hex: String },
     QueueMessage { message_id_hex: String, conversation_id_hex: String, body: String, at_ms: i64 },
     MarkConversationRead { conversation_id_hex: String },
+    QueueAttachment {
+        attachment_id_hex: String,
+        message_id_hex: String,
+        conversation_id_hex: String,
+        source_path: String,
+        name: String,
+        media_type: String,
+        size: u64,
+    },
+    RetryAttachment { attachment_id_hex: String },
+    CancelAttachment { attachment_id_hex: String },
     RefreshSnapshot,
 }
 #[must_use]
@@ -39,6 +52,7 @@ pub struct BridgeSnapshot {
     pub contacts: Vec<BridgeContact>,
     pub conversations: Vec<BridgeConversation>,
     pub messages: Vec<BridgeMessage>,
+    pub attachments: Vec<BridgeAttachment>,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,9 +74,18 @@ pub struct BridgeMessage {
     pub id: String, pub conversation_id: String, pub body: String,
     pub direction: String, pub status: String,
 }
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeAttachment {
+    pub id: String,
+    pub message_id: String,
+    pub name: String,
+    pub media_type: String,
+    pub size: u64,
+    pub status: String,
+    pub offset: u64,
+}
 
-/// Bridge is available before identity exists. Network-only commands are rejected until native
-/// production composition attaches the process-owned RuntimeHost after identity creation/loading.
 pub struct EngineBridge {
     engine: EngineHandle,
     runtime: Option<RuntimeHostHandle>,
@@ -100,8 +123,7 @@ impl EngineBridge {
                 .and_then(|id| self.runtime()?.cancel_pairing(id).map_err(string_error))
                 .map(|_| "pairing_cancelled"),
             BridgeCommand::QueueMessage { message_id_hex, conversation_id_hex, body, at_ms } => {
-                let runtime = self.runtime();
-                runtime.and_then(|runtime| {
+                self.runtime().and_then(|runtime| {
                     parse_id(&message_id_hex)
                         .and_then(|message_id| parse_id(&conversation_id_hex).map(|c| (message_id, c)))
                         .and_then(|(message_id, conversation_id)| MessageBody::new(body).map_err(string_error)
@@ -117,6 +139,32 @@ impl EngineBridge {
             BridgeCommand::MarkConversationRead { conversation_id_hex } => parse_id(&conversation_id_hex)
                 .and_then(|id| self.runtime()?.mark_conversation_read(id).map_err(string_error))
                 .map(|_| "conversation_read"),
+            BridgeCommand::QueueAttachment {
+                attachment_id_hex, message_id_hex, conversation_id_hex, source_path,
+                name, media_type, size,
+            } => {
+                let request = parse_id(&attachment_id_hex).and_then(|attachment_id| {
+                    parse_id(&message_id_hex).and_then(|message_id| {
+                        parse_id(&conversation_id_hex).map(|conversation_id| AttachmentSendRequest {
+                            attachment_id,
+                            message_id,
+                            conversation_id,
+                            source_path,
+                            name,
+                            media_type,
+                            size,
+                        })
+                    })
+                });
+                request.and_then(|request| self.runtime()?.queue_attachment(request).map_err(string_error))
+                    .map(|_| "attachment_queued")
+            }
+            BridgeCommand::RetryAttachment { attachment_id_hex } => parse_id(&attachment_id_hex)
+                .and_then(|id| self.runtime()?.retry_attachment(id).map_err(string_error))
+                .map(|_| "attachment_retried"),
+            BridgeCommand::CancelAttachment { attachment_id_hex } => parse_id(&attachment_id_hex)
+                .and_then(|id| self.runtime()?.cancel_attachment(id).map_err(string_error))
+                .map(|_| "attachment_cancelled"),
             BridgeCommand::RefreshSnapshot => self.snapshot().map(|_| "snapshot").map_err(string_error),
         };
         match result {
@@ -127,16 +175,17 @@ impl EngineBridge {
 
     pub fn snapshot(&self) -> Result<BridgeSnapshot, EngineError> {
         let app = self.engine.snapshot()?;
-        let network = match &self.runtime {
-            Some(runtime) => runtime.network_snapshot()
-                .map_err(|_| EngineError("network snapshot unavailable".into()))?,
-            None => NetworkSnapshot {
-                tor: HostTorState::Stopped,
-                onion_address: None,
-                peers: BTreeMap::new(),
-            },
+        let (network, attachments) = match &self.runtime {
+            Some(runtime) => (
+                runtime.network_snapshot().map_err(|_| EngineError("network snapshot unavailable".into()))?,
+                runtime.attachment_snapshot().map_err(|_| EngineError("attachment snapshot unavailable".into()))?,
+            ),
+            None => (
+                NetworkSnapshot { tor: HostTorState::Stopped, onion_address: None, peers: BTreeMap::new() },
+                Vec::new(),
+            ),
         };
-        Ok(map_snapshot(app, network))
+        Ok(map_snapshot(app, network, attachments))
     }
 
     pub fn diagnostics_json(&self) -> Result<String, EngineError> {
@@ -169,7 +218,11 @@ fn result_kind(value: &EngineResult) -> &'static str {
         EngineResult::ReceiptApplied { .. } => "receipt_applied",
     }
 }
-fn map_snapshot(snapshot: ClientSnapshot, network: NetworkSnapshot) -> BridgeSnapshot {
+fn map_snapshot(
+    snapshot: ClientSnapshot,
+    network: NetworkSnapshot,
+    attachments: Vec<AttachmentView>,
+) -> BridgeSnapshot {
     BridgeSnapshot {
         contract_version: CONTRACT_VERSION,
         identity_name: snapshot.identity.map(|i| i.profile().display_name().as_str().to_owned()),
@@ -192,6 +245,10 @@ fn map_snapshot(snapshot: ClientSnapshot, network: NetworkSnapshot) -> BridgeSna
         messages: snapshot.messages.into_iter().map(|m| BridgeMessage {
             id: m.id().to_string(), conversation_id: m.conversation_id().to_string(), body: m.body().as_str().to_owned(),
             direction: format!("{:?}", m.direction()).to_lowercase(), status: format!("{:?}", m.status()).to_lowercase(),
+        }).collect(),
+        attachments: attachments.into_iter().map(|a| BridgeAttachment {
+            id: a.id.to_string(), message_id: a.message_id.to_string(), name: a.name,
+            media_type: a.media_type, size: a.size, status: a.status, offset: a.offset,
         }).collect(),
     }
 }
