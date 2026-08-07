@@ -10,11 +10,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  app_links: ^7.2.1
   file_picker: ^11.0.2
   local_notifier: ^0.1.6
   mobile_scanner: ^7.4.0
   open_filex: ^4.7.0
   qr_flutter: ^4.1.0
+  shared_preferences: ^2.5.5
   tray_manager: ^0.5.3
   window_manager: ^0.5.2
 
