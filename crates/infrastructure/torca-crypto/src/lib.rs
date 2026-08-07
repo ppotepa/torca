@@ -8,6 +8,7 @@ mod key_management;
 mod pairing;
 mod pairing_approval;
 mod peer_handshake;
+mod peer_secrets;
 mod ports;
 mod production;
 mod test_support;
@@ -19,6 +20,7 @@ pub use key_management::{
 };
 pub use pairing::{PairingKeyError, RustPairingCrypto};
 pub use peer_handshake::{Ed25519HandshakeVerifier, ManagedHandshakeSigner};
+pub use peer_secrets::ManagedPeerSecrets;
 pub use ports::CryptoProvider;
 pub use production::RustCryptoProvider;
 pub use test_support::DeterministicTestCrypto;
