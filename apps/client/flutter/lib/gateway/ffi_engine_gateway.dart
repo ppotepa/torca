@@ -450,6 +450,7 @@ class FfiEngineGateway implements EngineGateway {
       }).toList(growable: false),
       contacts: _list(map, 'contacts').map((value) {
         final item = _map(value, 'contact');
+        final peerHealth = _map(item['peerHealth'], 'contact.peerHealth');
         return ContactDto(
           id: _string(item, 'id'),
           displayName: _string(item, 'displayName'),
@@ -457,6 +458,14 @@ class FfiEngineGateway implements EngineGateway {
           status: _string(item, 'status'),
           connectionState: _string(item, 'connectionState'),
           safetyNumber: _optionalString(item, 'safetyNumber'),
+          peerHealth: PeerHealthDto(
+            state: _string(peerHealth, 'state'),
+            quality: _string(peerHealth, 'quality'),
+            rttMs: _optionalInt(peerHealth, 'rttMs'),
+            lastSuccessAtMs: _optionalInt(peerHealth, 'lastSuccessAtMs'),
+            consecutiveFailures: _int(peerHealth, 'consecutiveFailures'),
+            reconnectAttempt: _int(peerHealth, 'reconnectAttempt'),
+          ),
         );
       }).toList(growable: false),
       conversations: _list(map, 'conversations').map((value) {
@@ -534,6 +543,12 @@ class FfiEngineGateway implements EngineGateway {
     final value = map[field];
     if (value is int) return value;
     throw FormatException('$field must be an int');
+  }
+
+  int? _optionalInt(Map<String, Object?> map, String field) {
+    final value = map[field];
+    if (value == null || value is int) return value as int?;
+    throw FormatException('$field must be an int or null');
   }
 
   @override

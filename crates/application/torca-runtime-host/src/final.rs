@@ -23,13 +23,37 @@ const RUNTIME_TICK: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HostTorState { Stopped, Starting, Ready, Degraded, Failed }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerHealthQuality { Unknown, Excellent, Good, Fair, Poor }
+
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PeerHealthSnapshot {
+    pub state: PeerConnectionState,
+    pub quality: PeerHealthQuality,
+    pub rtt_ms: Option<u64>,
+    pub last_success_at: Option<Timestamp>,
+    pub consecutive_failures: u32,
+    pub reconnect_attempt: u32,
+}
+impl PeerHealthSnapshot {
+    pub const fn from_connection_state(state: PeerConnectionState) -> Self {
+        Self { state, quality: PeerHealthQuality::Unknown, rtt_ms: None, last_success_at: None, consecutive_failures: 0, reconnect_attempt: 0 }
+    }
+}
+
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingInvitationView { pub session_id: PairingSessionId, pub code: PairingCode, pub uri: String, pub expires_at: Timestamp }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NetworkSnapshot {
-    pub tor: HostTorState, pub onion_address: Option<String>, pub peers: BTreeMap<ContactId, PeerConnectionState>, pub contact_names: BTreeMap<ContactId, String>,
+    pub tor: HostTorState,
+    pub onion_address: Option<String>,
+    pub peers: BTreeMap<ContactId, PeerConnectionState>,
+    pub peer_health: BTreeMap<ContactId, PeerHealthSnapshot>,
+    pub contact_names: BTreeMap<ContactId, String>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeDriverError { Pairing, Communication, Tor, Engine }
@@ -49,6 +73,7 @@ pub trait CommunicationDriver: Send + 'static {
     fn recover(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn maintenance(&mut self, contacts: &[ContactId], now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState;
+    fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot { PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id)) }
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError>;
     fn rename_contact(&mut self, contact_id: ContactId, display_name: String, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn block_contact(&mut self, contact_id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError>;
@@ -143,7 +168,16 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(comman
         RuntimeCommand::RetryAttachment(id, r) => { let _ = r.send(communication.retry_attachment(id, now)); } RuntimeCommand::CancelAttachment(id, r) => { let _ = r.send(communication.cancel_attachment(id, now)); }
         RuntimeCommand::ExportAttachment(id, destination, r) => { let _ = r.send(communication.export_attachment(id, destination)); }
         RuntimeCommand::AttachmentSnapshot(r) => { let _ = r.send(communication.attachment_snapshot()); }
-        RuntimeCommand::NetworkSnapshot(r) => { let result = (|| { let snapshot = engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?; let peers = snapshot.contacts.iter().map(|c| (c.id(), communication.connection_state(c.id()))).collect(); let contact_names = communication.contact_names()?; Ok(NetworkSnapshot { tor: tor.state(), onion_address: tor.onion_address(), peers, contact_names }) })(); let _ = r.send(result); }
+        RuntimeCommand::NetworkSnapshot(r) => {
+            let result = (|| {
+                let snapshot = engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+                let peers = snapshot.contacts.iter().map(|c| (c.id(), communication.connection_state(c.id()))).collect();
+                let peer_health = snapshot.contacts.iter().map(|c| (c.id(), communication.peer_health(c.id()))).collect();
+                let contact_names = communication.contact_names()?;
+                Ok(NetworkSnapshot { tor: tor.state(), onion_address: tor.onion_address(), peers, peer_health, contact_names })
+            })();
+            let _ = r.send(result);
+        }
         RuntimeCommand::Diagnostics(r) => { let _ = r.send(diagnostics.export_json()); } RuntimeCommand::Wake => {} RuntimeCommand::Shutdown(_) => unreachable!(),
     }
 }

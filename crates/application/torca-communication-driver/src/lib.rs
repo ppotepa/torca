@@ -12,6 +12,7 @@ use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::Message;
 use torca_peer_link::{InboundPeerEnvelope, PeerConnectionState};
+pub use torca_runtime_host::{PeerHealthQuality, PeerHealthSnapshot};
 use torca_runtime_host::{
     AttachmentSendRequest, AttachmentView, CommunicationDriver, RuntimeDriverError,
 };
@@ -25,39 +26,6 @@ const INBOUND_BATCH: usize = 64;
 const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
 const ATTACHMENT_BATCH: usize = 2;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PeerHealthQuality {
-    Unknown,
-    Excellent,
-    Good,
-    Fair,
-    Poor,
-}
-
-#[must_use]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PeerHealthSnapshot {
-    pub state: PeerConnectionState,
-    pub quality: PeerHealthQuality,
-    pub rtt_ms: Option<u64>,
-    pub last_success_at: Option<Timestamp>,
-    pub consecutive_failures: u32,
-    pub reconnect_attempt: u32,
-}
-
-impl PeerHealthSnapshot {
-    pub const fn from_connection_state(state: PeerConnectionState) -> Self {
-        Self {
-            state,
-            quality: PeerHealthQuality::Unknown,
-            rtt_ms: None,
-            last_success_at: None,
-            consecutive_failures: 0,
-            reconnect_attempt: 0,
-        }
-    }
-}
 
 pub fn classify_peer_health(
     rtt_ms: Option<u64>,
@@ -280,6 +248,9 @@ impl CommunicationDriver for TorcaCommunicationDriver {
     }
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
         self.peer.connection_state(contact_id)
+    }
+    fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
+        self.peer.peer_health(contact_id)
     }
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError> {
         self.relationships.contact_names().map_err(map_runtime)

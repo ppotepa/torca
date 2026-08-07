@@ -50,6 +50,7 @@ class MemoryEngineGateway implements EngineGateway {
         return ContactDto(
           id: contact.id, displayName: name, onionAddress: contact.onionAddress,
           status: contact.status, connectionState: contact.connectionState, safetyNumber: contact.safetyNumber,
+          peerHealth: contact.peerHealth,
         );
       }).toList(growable: false);
       if (!found) return const BridgeResultDto(ok: false, kind: 'error', error: 'contact not found');
@@ -67,10 +68,14 @@ class MemoryEngineGateway implements EngineGateway {
         found = true;
         if (contact.status != expected) return contact;
         valid = true;
+        final connectionState = next == 'blocked' ? 'disconnected' : contact.connectionState;
         return ContactDto(
           id: contact.id, displayName: contact.displayName, onionAddress: contact.onionAddress,
-          status: next, connectionState: next == 'blocked' ? 'disconnected' : contact.connectionState,
+          status: next, connectionState: connectionState,
           safetyNumber: contact.safetyNumber,
+          peerHealth: next == 'blocked'
+              ? PeerHealthDto(state: connectionState, quality: 'unknown')
+              : contact.peerHealth,
         );
       }).toList(growable: false);
       if (!found || !valid) return const BridgeResultDto(ok: false, kind: 'error', error: 'invalid contact transition');

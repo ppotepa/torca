@@ -12,9 +12,11 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityId, Profile, ProfileName, PublicIdentity};
 use torca_messaging::{MessageBody, MessageId, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId};
-use torca_runtime_host::{AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle};
+use torca_runtime_host::{
+    AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle,
+};
 
-pub const CONTRACT_VERSION: u16 = 9;
+pub const CONTRACT_VERSION: u16 = 10;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,7 +35,9 @@ pub enum BridgeCommand {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)] pub struct BridgePairing { pub id: String, pub code: String, pub role: String, pub state: String, pub expires_at_ms: i64, pub local_approved: bool, pub remote_approved: bool }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)] pub struct BridgeContact { pub id: String, pub display_name: String, pub onion_address: String, pub status: String, pub connection_state: String, pub safety_number: String }
+#[derive(Clone, Debug, Eq, PartialEq)] pub struct BridgePeerHealth { pub state: String, pub quality: String, pub rtt_ms: Option<u64>, pub last_success_at_ms: Option<i64>, pub consecutive_failures: u32, pub reconnect_attempt: u32 }
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)] pub struct BridgeContact { pub id: String, pub display_name: String, pub onion_address: String, pub status: String, pub connection_state: String, pub safety_number: String, pub peer_health: BridgePeerHealth }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)] pub struct BridgeConversation { pub id: String, pub contact_id: String, pub status: String }
 #[must_use]
@@ -79,7 +83,7 @@ impl EngineBridge {
     }
     pub fn snapshot(&self) -> Result<BridgeSnapshot, EngineError> {
         let app=self.engine.snapshot()?;
-        let (network,attachments)=match &self.runtime { Some(runtime)=>(runtime.network_snapshot().map_err(|_|EngineError("network snapshot unavailable".into()))?, runtime.attachment_snapshot().map_err(|_|EngineError("attachment snapshot unavailable".into()))?), None=>(NetworkSnapshot { tor:HostTorState::Stopped,onion_address:None,peers:BTreeMap::new(),contact_names:BTreeMap::new() },Vec::new()) };
+        let (network,attachments)=match &self.runtime { Some(runtime)=>(runtime.network_snapshot().map_err(|_|EngineError("network snapshot unavailable".into()))?, runtime.attachment_snapshot().map_err(|_|EngineError("attachment snapshot unavailable".into()))?), None=>(NetworkSnapshot { tor:HostTorState::Stopped,onion_address:None,peers:BTreeMap::new(),peer_health:BTreeMap::new(),contact_names:BTreeMap::new() },Vec::new()) };
         Ok(map_snapshot(app,network,attachments))
     }
     pub fn diagnostics_json(&self)->Result<String,EngineError>{match &self.runtime{Some(r)=>r.diagnostics_json().map_err(|_|EngineError("diagnostics unavailable".into())),None=>Ok("{\"events\":[]}".into())}}
@@ -92,7 +96,7 @@ fn map_snapshot(snapshot:ClientSnapshot,network:NetworkSnapshot,attachments:Vec<
     let local_public=snapshot.identity.as_ref().map(|i|i.public().clone()); let identity_name=snapshot.identity.as_ref().map(|i|i.profile().display_name().as_str().to_owned());
     BridgeSnapshot{contract_version:CONTRACT_VERSION,identity_name,tor_state:format!("{:?}",network.tor).to_lowercase(),onion_address:network.onion_address,
         pairings:snapshot.pairings.into_iter().map(|p|BridgePairing{id:p.id().to_string(),code:p.code().as_str().to_owned(),role:format!("{:?}",p.role()).to_lowercase(),state:format!("{:?}",p.state()).to_lowercase(),expires_at_ms:p.expires_at().to_unix_millis(),local_approved:p.local_approved(),remote_approved:p.remote_approved()}).collect(),
-        contacts:snapshot.contacts.into_iter().map(|c|{let connection_state=network.peers.get(&c.id()).map_or_else(||"disconnected".to_owned(),|s|format!("{s:?}").to_lowercase());let safety_number=local_public.as_ref().map_or_else(String::new,|l|safety_number(l,c.remote_identity()));let display_name=network.contact_names.get(&c.id()).cloned().unwrap_or_else(||fallback_contact_name(c.id()));BridgeContact{id:c.id().to_string(),display_name,onion_address:c.route().onion_address().to_owned(),status:format!("{:?}",c.status()).to_lowercase(),connection_state,safety_number}}).collect(),
+        contacts:snapshot.contacts.into_iter().map(|c|{let connection_state=network.peers.get(&c.id()).map_or_else(||"disconnected".to_owned(),|s|format!("{s:?}").to_lowercase());let peer_health=network.peer_health.get(&c.id()).map_or_else(||BridgePeerHealth{state:connection_state.clone(),quality:"unknown".into(),rtt_ms:None,last_success_at_ms:None,consecutive_failures:0,reconnect_attempt:0},|health|BridgePeerHealth{state:format!("{:?}",health.state).to_lowercase(),quality:format!("{:?}",health.quality).to_lowercase(),rtt_ms:health.rtt_ms,last_success_at_ms:health.last_success_at.map(|at|at.to_unix_millis()),consecutive_failures:health.consecutive_failures,reconnect_attempt:health.reconnect_attempt});let connection_state=peer_health.state.clone();let safety_number=local_public.as_ref().map_or_else(String::new,|l|safety_number(l,c.remote_identity()));let display_name=network.contact_names.get(&c.id()).cloned().unwrap_or_else(||fallback_contact_name(c.id()));BridgeContact{id:c.id().to_string(),display_name,onion_address:c.route().onion_address().to_owned(),status:format!("{:?}",c.status()).to_lowercase(),connection_state,safety_number,peer_health}}).collect(),
         conversations:snapshot.conversations.into_iter().map(|c|BridgeConversation{id:c.id().to_string(),contact_id:c.contact_id().to_string(),status:format!("{:?}",c.status()).to_lowercase()}).collect(),
         messages:snapshot.messages.into_iter().map(|m|BridgeMessage{id:m.id().to_string(),conversation_id:m.conversation_id().to_string(),body:m.body().as_str().to_owned(),direction:format!("{:?}",m.direction()).to_lowercase(),status:format!("{:?}",m.status()).to_lowercase(),reply_to_message_id:m.reply_to().map(|r|r.message_id.to_string()),created_at_ms:m.created_at().to_unix_millis(),updated_at_ms:m.updated_at().to_unix_millis(),attempt_count:u32::try_from(m.attempts().len()).unwrap_or(u32::MAX)}).collect(),
         attachments:attachments.into_iter().map(|a|BridgeAttachment{id:a.id.to_string(),message_id:a.message_id.to_string(),name:a.name,media_type:a.media_type,size:a.size,status:a.status,offset:a.offset}).collect()}

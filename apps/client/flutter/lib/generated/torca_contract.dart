@@ -1,10 +1,11 @@
 // GENERATED FILE. DO NOT EDIT.
 // Source: crates/platform/torca-bridge/schema/torca_contract.dart
-const int torcaContractVersion = 9;
+const int torcaContractVersion = 10;
 class BridgeResultDto{const BridgeResultDto({required this.ok,required this.kind,this.error});final bool ok;final String kind;final String? error;}
 class IdentityDto{const IdentityDto({required this.displayName});final String displayName;}
 class PairingDto{const PairingDto({required this.id,required this.code,required this.role,required this.state,required this.expiresAtMs,required this.localApproved,required this.remoteApproved});final String id,code,role,state;final int expiresAtMs;final bool localApproved,remoteApproved;}
-class ContactDto{const ContactDto({required this.id,this.displayName='Contact',required this.onionAddress,required this.status,required this.connectionState,this.safetyNumber});final String id,displayName,onionAddress,status,connectionState;final String? safetyNumber;}
+class PeerHealthDto{const PeerHealthDto({this.state='disconnected',this.quality='unknown',this.rttMs,this.lastSuccessAtMs,this.consecutiveFailures=0,this.reconnectAttempt=0});final String state,quality;final int? rttMs,lastSuccessAtMs;final int consecutiveFailures,reconnectAttempt;}
+class ContactDto{const ContactDto({required this.id,this.displayName='Contact',required this.onionAddress,required this.status,required this.connectionState,this.safetyNumber,this.peerHealth=const PeerHealthDto()});final String id,displayName,onionAddress,status,connectionState;final String? safetyNumber;final PeerHealthDto peerHealth;}
 class ConversationDto{const ConversationDto({required this.id,required this.contactId,required this.status});final String id,contactId,status;}
 class MessageDto{const MessageDto({required this.id,required this.conversationId,required this.body,required this.direction,required this.status,this.replyToMessageId,this.createdAtMs=0,this.updatedAtMs=0,this.attemptCount=0});final String id,conversationId,body,direction,status;final String? replyToMessageId;final int createdAtMs,updatedAtMs,attemptCount;}
 class AttachmentDto{const AttachmentDto({required this.id,required this.messageId,required this.name,required this.mediaType,required this.size,required this.status,required this.offset});final String id,messageId,name,mediaType,status;final int size,offset;}
