@@ -8,11 +8,9 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub const fn migrations() -> &'static [Migration] {
-    &MIGRATIONS
-}
+pub const fn migrations() -> &'static [Migration] { &MIGRATIONS }
 
-const MIGRATIONS: [Migration; 13] = [
+const MIGRATIONS: [Migration; 14] = [
     Migration { version: 1, name: "foundation", sql: include_str!("../sql/migrations/0001_foundation.sql") },
     Migration { version: 2, name: "identity", sql: include_str!("../sql/migrations/0002_identity.sql") },
     Migration { version: 3, name: "messaging", sql: include_str!("../sql/migrations/0003_messaging.sql") },
@@ -26,6 +24,7 @@ const MIGRATIONS: [Migration; 13] = [
     Migration { version: 11, name: "control_outbox", sql: include_str!("../sql/migrations/0011_control_outbox.sql") },
     Migration { version: 12, name: "attachments", sql: include_str!("../sql/migrations/0012_attachments.sql") },
     Migration { version: 13, name: "delivery_attempt_sync", sql: include_str!("../sql/migrations/0013_delivery_attempt_sync.sql") },
+    Migration { version: 14, name: "failed_message_dead_letters_outbox", sql: include_str!("../sql/migrations/0014_failed_message_dead_letters_outbox.sql") },
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,34 +34,23 @@ pub enum MigrationError {
     Backend(StorageBackendError),
 }
 impl fmt::Display for MigrationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{self:?}")
-    }
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { write!(formatter, "{self:?}") }
 }
 impl std::error::Error for MigrationError {}
-impl From<StorageBackendError> for MigrationError {
-    fn from(value: StorageBackendError) -> Self {
-        Self::Backend(value)
-    }
-}
+impl From<StorageBackendError> for MigrationError { fn from(value: StorageBackendError) -> Self { Self::Backend(value) } }
 
 pub struct MigrationRunner;
 impl MigrationRunner {
     pub fn migrate<B: StorageBackend>(backend: &mut B) -> Result<u32, MigrationError> {
         let latest = MIGRATIONS.last().map_or(0, |migration| migration.version);
         for pair in MIGRATIONS.windows(2) {
-            if pair[0].version >= pair[1].version {
-                return Err(MigrationError::InvalidOrder);
-            }
+            if pair[0].version >= pair[1].version { return Err(MigrationError::InvalidOrder); }
         }
         let current = backend.schema_version()?;
-        if current > latest {
-            return Err(MigrationError::DatabaseTooNew { database: current, supported: latest });
-        }
+        if current > latest { return Err(MigrationError::DatabaseTooNew { database: current, supported: latest }); }
         for migration in MIGRATIONS.iter().filter(|migration| migration.version > current) {
             backend.begin()?;
-            if let Err(error) = backend
-                .execute_batch(migration.sql)
+            if let Err(error) = backend.execute_batch(migration.sql)
                 .and_then(|()| backend.set_schema_version(migration.version))
                 .and_then(|()| backend.commit())
             {
