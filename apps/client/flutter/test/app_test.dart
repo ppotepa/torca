@@ -13,7 +13,7 @@ void main() {
     expect(find.text('Torca'), findsOneWidget);
   });
 
-  testWidgets('wide layout exposes the pairing entrypoint', (
+  testWidgets('wide layout exposes the bridge v4 pairing flow', (
     WidgetTester tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 800);
@@ -30,12 +30,11 @@ void main() {
 
     await tester.tap(find.byTooltip('Pair contact'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'ABC123');
-    await tester.tap(find.widgetWithText(FilledButton, 'Join invitation'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create invitation'));
     await tester.pumpAndSettle();
 
     expect(find.text('Pairing sessions'), findsOneWidget);
-    expect(find.text('ABC123'), findsOneWidget);
+    expect(find.text('TORCA1'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
     expect(find.byType(Scaffold), findsOneWidget);
   });
