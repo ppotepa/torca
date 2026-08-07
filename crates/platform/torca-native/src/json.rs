@@ -21,7 +21,7 @@ pub(crate) fn bridge_result_json(result: &BridgeResult) -> String {
     output
 }
 pub(crate) fn empty_snapshot_json() -> String {
-    format!("{{\"contractVersion\":{CONTRACT_VERSION},\"identity\":null,\"torState\":\"stopped\",\"onionAddress\":null,\"pairings\":[],\"contacts\":[],\"conversations\":[],\"messages\":[]}}")
+    format!("{{\"contractVersion\":{CONTRACT_VERSION},\"identity\":null,\"torState\":\"stopped\",\"onionAddress\":null,\"pairings\":[],\"contacts\":[],\"conversations\":[],\"messages\":[],\"attachments\":[]}}")
 }
 pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
     let mut output = String::new();
@@ -83,6 +83,21 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         output.push_str("\",\"direction\":\""); push_json_string(&message.direction, &mut output);
         output.push_str("\",\"status\":\""); push_json_string(&message.status, &mut output);
         output.push_str("\"}");
+    }
+    output.push_str("],\"attachments\":[");
+    for (index, attachment) in snapshot.attachments.iter().enumerate() {
+        if index != 0 { output.push(','); }
+        output.push_str("{\"id\":\""); push_json_string(&attachment.id, &mut output);
+        output.push_str("\",\"messageId\":\""); push_json_string(&attachment.message_id, &mut output);
+        output.push_str("\",\"name\":\""); push_json_string(&attachment.name, &mut output);
+        output.push_str("\",\"mediaType\":\""); push_json_string(&attachment.media_type, &mut output);
+        let _ = write!(
+            output,
+            "\",\"size\":{},\"status\":\"",
+            attachment.size,
+        );
+        push_json_string(&attachment.status, &mut output);
+        let _ = write!(output, "\",\"offset\":{}}}", attachment.offset);
     }
     output.push_str("]}");
     output
