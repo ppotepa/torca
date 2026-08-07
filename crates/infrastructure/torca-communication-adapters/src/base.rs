@@ -1,0 +1,648 @@
+//! Concrete adapters that compose SQLCipher durable work with one authenticated shared PeerLink.
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use torca_attachment_transfer::AttachmentTransfer;
+use torca_client_engine::{EngineCommand, EngineHandle};
+use torca_communication_driver::{
+    AttachmentRuntime, CommunicationError, ControlDeliveryRuntime, InboundMessagingRuntime,
+    PeerLinkRuntime, ReadStateRuntime, TextDeliveryRuntime, ATTACHMENT_MESSAGE_KIND,
+    RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND,
+};
+use torca_contacts::{
+    Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
+};
+use torca_control_delivery::{
+    ControlAck, ControlDeliveryError, ControlDeliveryWorker, ControlJob, ControlKind,
+    ControlTransport, ControlTransportError,
+};
+use torca_conversations::{ConversationRepository, DirectConversation};
+use torca_crypto::{
+    Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, ProtectedSecretStore,
+};
+use torca_delivery::{
+    ApplicationPayload, ApplicationPayloadCodec, DeliveryAck, DeliveryReceiptKind,
+    DeliveryTransport, DeliveryTransportError, DeliveryWorker, DurableDeliveryStore,
+    InboundMessageStore, ReceiptPayload, TextPayload,
+};
+use torca_foundation::{OpaqueId, Timestamp};
+use torca_messaging::{Message, MessageBody, MessageId, MessageRepository, ReplyReference};
+use torca_peer_link::{InboundPeerEnvelope, LinkAck, PeerConnectionState, PeerLinkError};
+use torca_peer_protocol::{AckStatus, HandshakeSigner};
+use torca_peer_shared::SharedPeerLink;
+use torca_read_state::SqlCipherReadState;
+use torca_receipts::{Receipt, ReceiptId, ReceiptKind};
+
+const NONCE_BYTES: usize = 24;
+const PEER_AAD_LABEL: &[u8] = b"TORCA-PEER-DATA-V1";
+const STALE_CLAIM_AGE: Duration = Duration::from_secs(120);
+
+/// Process-shared protected peer-secret manager. It serializes cryptographic operations without
+/// exposing pairwise key bytes to delivery or UI layers.
+pub struct SharedPeerCrypto<C, P> {
+    inner: Arc<Mutex<ManagedPeerSecrets<C, P>>>,
+}
+impl<C, P> Clone for SharedPeerCrypto<C, P> {
+    fn clone(&self) -> Self {
+        Self { inner: Arc::clone(&self.inner) }
+    }
+}
+impl<C, P> SharedPeerCrypto<C, P> {
+    pub fn new(secrets: ManagedPeerSecrets<C, P>) -> Self {
+        Self { inner: Arc::new(Mutex::new(secrets)) }
+    }
+}
+
+pub struct PeerLinkAdapter<S, K> {
+    link: SharedPeerLink<S, K>,
+}
+impl<S, K> PeerLinkAdapter<S, K> {
+    pub const fn new(link: SharedPeerLink<S, K>) -> Self {
+        Self { link }
+    }
+}
+impl<S, K> PeerLinkRuntime for PeerLinkAdapter<S, K>
+where
+    S: ContactRepository + PeerCredentialRepository + Send + 'static,
+    K: HandshakeSigner + Send + 'static,
+{
+    fn maintenance(
+        &mut self,
+        contacts: &[ContactId],
+        now: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.link
+            .maintenance(contacts, now)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::Peer)
+    }
+
+    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
+        self.link.connection_state(contact_id)
+    }
+
+    fn take_inbound(&mut self) -> Result<Option<InboundPeerEnvelope>, CommunicationError> {
+        self.link.take_inbound().map_err(|_| CommunicationError::Peer)
+    }
+
+    fn reject(&mut self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError> {
+        self.link
+            .send_ack(envelope.contact_id, envelope.envelope_id, AckStatus::Rejected)
+            .map_err(|_| CommunicationError::Peer)
+    }
+
+    fn shutdown(&mut self) {
+        self.link.shutdown();
+    }
+}
+
+pub struct TextWorkerAdapter<S, T> {
+    worker: DeliveryWorker<S, T>,
+}
+impl<S, T> TextWorkerAdapter<S, T> {
+    pub const fn new(worker: DeliveryWorker<S, T>) -> Self {
+        Self { worker }
+    }
+}
+impl<S, T> TextDeliveryRuntime for TextWorkerAdapter<S, T>
+where
+    S: DurableDeliveryStore + Send + 'static,
+    T: DeliveryTransport + Send + 'static,
+{
+    fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
+        let before = now.checked_sub(STALE_CLAIM_AGE).unwrap_or(Timestamp::UNIX_EPOCH);
+        self.worker
+            .recover_stale_claims(before)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::Text)
+    }
+
+    fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
+        self.worker
+            .run_once(now, limit)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::Text)
+    }
+}
+
+/// Shared durable control worker so inbound Delivered receipt creation and periodic sender
+/// maintenance operate on the same outbox owner.
+pub struct SharedControlWorker<T> {
+    inner: Arc<Mutex<ControlDeliveryWorker<T>>>,
+}
+impl<T> Clone for SharedControlWorker<T> {
+    fn clone(&self) -> Self {
+        Self { inner: Arc::clone(&self.inner) }
+    }
+}
+impl<T> SharedControlWorker<T> {
+    pub fn new(worker: ControlDeliveryWorker<T>) -> Self {
+        Self { inner: Arc::new(Mutex::new(worker)) }
+    }
+}
+impl<T: ControlTransport + Send + 'static> SharedControlWorker<T> {
+    pub fn ensure_receipt(
+        &self,
+        contact_id: ContactId,
+        receipt: ReceiptPayload,
+        at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        let payload = ApplicationPayloadCodec::encode(&ApplicationPayload::Receipt(receipt))
+            .map_err(|_| CommunicationError::Control)?;
+        let result = self
+            .inner
+            .lock()
+            .map_err(|_| CommunicationError::Control)?
+            .queue(
+                receipt.receipt_id,
+                contact_id.to_opaque(),
+                ControlKind::Receipt,
+                &payload,
+                at,
+            );
+        match result {
+            Ok(()) | Err(ControlDeliveryError::Duplicate) => Ok(()),
+            Err(_) => Err(CommunicationError::Control),
+        }
+    }
+}
+impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedControlWorker<T> {
+    fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
+        let before = now.checked_sub(STALE_CLAIM_AGE).unwrap_or(Timestamp::UNIX_EPOCH);
+        self.inner
+            .lock()
+            .map_err(|_| CommunicationError::Control)?
+            .recover_stale(before)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::Control)
+    }
+
+    fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
+        self.inner
+            .lock()
+            .map_err(|_| CommunicationError::Control)?
+            .run_once(now, limit)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::Control)
+    }
+}
+
+pub struct ReadStateAdapter {
+    read_state: SqlCipherReadState,
+}
+impl ReadStateAdapter {
+    pub const fn new(read_state: SqlCipherReadState) -> Self {
+        Self { read_state }
+    }
+}
+impl ReadStateRuntime for ReadStateAdapter {
+    fn mark_conversation_read(
+        &mut self,
+        conversation_id: OpaqueId,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.read_state
+            .mark_conversation_read(conversation_id, now)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::ReadState)
+    }
+}
+
+pub struct AttachmentAdapter<R, M, S, K, C, P> {
+    transfer: AttachmentTransfer<R, M, S, K, C, P>,
+}
+impl<R, M, S, K, C, P> AttachmentAdapter<R, M, S, K, C, P> {
+    pub const fn new(transfer: AttachmentTransfer<R, M, S, K, C, P>) -> Self {
+        Self { transfer }
+    }
+}
+impl<R, M, S, K, C, P> AttachmentRuntime for AttachmentAdapter<R, M, S, K, C, P>
+where
+    R: ContactRepository + ConversationRepository + PeerCredentialRepository + Send + 'static,
+    M: MessageRepository + Send + 'static,
+    S: ContactRepository + PeerCredentialRepository + Send + 'static,
+    K: HandshakeSigner + Send + 'static,
+    C: CryptoProvider + Send + 'static,
+    P: ProtectedSecretStore + Send + 'static,
+{
+    fn process_inbound(
+        &mut self,
+        envelope: InboundPeerEnvelope,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.transfer
+            .process_inbound(envelope, now)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::Attachment)
+    }
+
+    fn maintenance_outgoing(
+        &mut self,
+        messages: &[Message],
+        now: Timestamp,
+        limit: usize,
+    ) -> Result<(), CommunicationError> {
+        self.transfer
+            .maintenance_outgoing(messages, now, limit)
+            .map(|_| ())
+            .map_err(|_| CommunicationError::Attachment)
+    }
+
+    fn shutdown(&mut self) {}
+}
+
+pub struct TextPeerTransport<R, S, K, C, P> {
+    relationships: R,
+    link: SharedPeerLink<S, K>,
+    crypto: SharedPeerCrypto<C, P>,
+    local_identity_id: OpaqueId,
+    ack_timeout: Duration,
+}
+impl<R, S, K, C, P> TextPeerTransport<R, S, K, C, P> {
+    pub const fn new(
+        relationships: R,
+        link: SharedPeerLink<S, K>,
+        crypto: SharedPeerCrypto<C, P>,
+        local_identity_id: OpaqueId,
+        ack_timeout: Duration,
+    ) -> Self {
+        Self { relationships, link, crypto, local_identity_id, ack_timeout }
+    }
+}
+impl<R, S, K, C, P> DeliveryTransport for TextPeerTransport<R, S, K, C, P>
+where
+    R: ContactRepository + ConversationRepository + PeerCredentialRepository,
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+    C: CryptoProvider,
+    P: ProtectedSecretStore,
+{
+    fn send(&mut self, message: &Message) -> Result<DeliveryAck, DeliveryTransportError> {
+        self.send_message(message)
+            .map_err(|error| DeliveryTransportError(format!("{error}")))
+    }
+}
+impl<R, S, K, C, P> TextPeerTransport<R, S, K, C, P>
+where
+    R: ContactRepository + ConversationRepository + PeerCredentialRepository,
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+    C: CryptoProvider,
+    P: ProtectedSecretStore,
+{
+    fn send_message(&mut self, message: &Message) -> Result<DeliveryAck, CommunicationError> {
+        let conversation = ConversationRepository::get(&self.relationships, message.conversation_id())
+            .map_err(|_| CommunicationError::Text)?
+            .ok_or(CommunicationError::Text)?;
+        let contact = load_contact(&self.relationships, conversation.contact_id())?;
+        let credential = load_credential(&self.relationships, contact.id())?;
+        let plaintext = ApplicationPayloadCodec::encode(&ApplicationPayload::Text(TextPayload {
+            message_id: message.id().to_opaque(),
+            conversation_id: message.conversation_id().to_opaque(),
+            contact_id: contact.id().to_opaque(),
+            body: message.body().as_str().to_owned(),
+            reply_to: message.reply_to().map(|reply| reply.message_id.to_opaque()),
+            sent_at: message.created_at(),
+        }))
+        .map_err(|_| CommunicationError::Text)?;
+        let encrypted = seal(
+            &self.crypto,
+            credential.secret_handle(),
+            message.id().to_opaque(),
+            TEXT_MESSAGE_KIND,
+            self.local_identity_id,
+            contact.remote_identity().identity_id().to_opaque(),
+            &plaintext,
+        )?;
+        self.link
+            .send_and_wait_ack(
+                contact.id(),
+                message.id().to_opaque(),
+                TEXT_MESSAGE_KIND,
+                encrypted,
+                self.ack_timeout,
+            )
+            .map(map_ack)
+            .map_err(|_| CommunicationError::Peer)
+    }
+}
+
+pub struct ReceiptPeerTransport<R, S, K, C, P> {
+    relationships: R,
+    link: SharedPeerLink<S, K>,
+    crypto: SharedPeerCrypto<C, P>,
+    local_identity_id: OpaqueId,
+    ack_timeout: Duration,
+}
+impl<R, S, K, C, P> ReceiptPeerTransport<R, S, K, C, P> {
+    pub const fn new(
+        relationships: R,
+        link: SharedPeerLink<S, K>,
+        crypto: SharedPeerCrypto<C, P>,
+        local_identity_id: OpaqueId,
+        ack_timeout: Duration,
+    ) -> Self {
+        Self { relationships, link, crypto, local_identity_id, ack_timeout }
+    }
+}
+impl<R, S, K, C, P> ControlTransport for ReceiptPeerTransport<R, S, K, C, P>
+where
+    R: ContactRepository + PeerCredentialRepository,
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+    C: CryptoProvider,
+    P: ProtectedSecretStore,
+{
+    fn send_control(&mut self, job: &ControlJob) -> Result<ControlAck, ControlTransportError> {
+        if job.kind != ControlKind::Receipt {
+            return Err(ControlTransportError);
+        }
+        let contact_id = ContactId::from_opaque(job.contact_id);
+        let contact = load_contact(&self.relationships, contact_id).map_err(|_| ControlTransportError)?;
+        let credential = load_credential(&self.relationships, contact_id)
+            .map_err(|_| ControlTransportError)?;
+        let encrypted = seal(
+            &self.crypto,
+            credential.secret_handle(),
+            job.job_id,
+            RECEIPT_MESSAGE_KIND,
+            self.local_identity_id,
+            contact.remote_identity().identity_id().to_opaque(),
+            &job.payload,
+        )
+        .map_err(|_| ControlTransportError)?;
+        self.link
+            .send_and_wait_ack(
+                contact_id,
+                job.job_id,
+                RECEIPT_MESSAGE_KIND,
+                encrypted,
+                self.ack_timeout,
+            )
+            .map(|ack| match ack {
+                LinkAck::Accepted => ControlAck::Accepted,
+                LinkAck::Duplicate => ControlAck::Duplicate,
+            })
+            .map_err(|_| ControlTransportError)
+    }
+}
+
+/// Explicit text/receipt inbound handler. It consumes only envelopes selected by the central
+/// communication dispatcher; attachment frames can never be stolen by this handler.
+pub struct InboundTextReceiptAdapter<R, S, K, C, P, I, T> {
+    relationships: R,
+    link: SharedPeerLink<S, K>,
+    crypto: SharedPeerCrypto<C, P>,
+    inbound: I,
+    control: SharedControlWorker<T>,
+    engine: EngineHandle,
+    local_identity_id: OpaqueId,
+}
+impl<R, S, K, C, P, I, T> InboundTextReceiptAdapter<R, S, K, C, P, I, T> {
+    pub const fn new(
+        relationships: R,
+        link: SharedPeerLink<S, K>,
+        crypto: SharedPeerCrypto<C, P>,
+        inbound: I,
+        control: SharedControlWorker<T>,
+        engine: EngineHandle,
+        local_identity_id: OpaqueId,
+    ) -> Self {
+        Self { relationships, link, crypto, inbound, control, engine, local_identity_id }
+    }
+}
+impl<R, S, K, C, P, I, T> InboundMessagingRuntime
+    for InboundTextReceiptAdapter<R, S, K, C, P, I, T>
+where
+    R: ContactRepository + ConversationRepository + PeerCredentialRepository + Send + 'static,
+    S: ContactRepository + PeerCredentialRepository + Send + 'static,
+    K: HandshakeSigner + Send + 'static,
+    C: CryptoProvider + Send + 'static,
+    P: ProtectedSecretStore + Send + 'static,
+    I: InboundMessageStore + Send + 'static,
+    T: ControlTransport + Send + 'static,
+{
+    fn process(
+        &mut self,
+        envelope: InboundPeerEnvelope,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        let contact = load_contact(&self.relationships, envelope.contact_id)?;
+        let credential = load_credential(&self.relationships, contact.id())?;
+        let plaintext = open(
+            &self.crypto,
+            credential.secret_handle(),
+            envelope.envelope_id,
+            envelope.message_kind,
+            self.local_identity_id,
+            contact.remote_identity().identity_id().to_opaque(),
+            &envelope.ciphertext,
+        )?;
+        let payload = ApplicationPayloadCodec::decode(&plaintext)
+            .map_err(|_| CommunicationError::Inbound)?;
+        match (envelope.message_kind, payload) {
+            (TEXT_MESSAGE_KIND, ApplicationPayload::Text(text)) => {
+                if text.message_id != envelope.envelope_id {
+                    return self.reject(&envelope);
+                }
+                let conversation = ConversationRepository::for_contact(&self.relationships, contact.id())
+                    .map_err(|_| CommunicationError::Inbound)?
+                    .ok_or(CommunicationError::Inbound)?;
+                let message = inbound_message(&conversation, text)?;
+                let inserted = self
+                    .inbound
+                    .persist_inbound(envelope.envelope_id, message)
+                    .map_err(|_| CommunicationError::Inbound)?;
+                let receipt = ReceiptPayload {
+                    receipt_id: derived_receipt_id(envelope.envelope_id, 0xD1),
+                    message_id: envelope.envelope_id,
+                    contact_id: contact.id().to_opaque(),
+                    kind: DeliveryReceiptKind::Delivered,
+                    at: now,
+                };
+                self.control.ensure_receipt(contact.id(), receipt, now)?;
+                self.link
+                    .send_ack(
+                        contact.id(),
+                        envelope.envelope_id,
+                        if inserted { AckStatus::Accepted } else { AckStatus::Duplicate },
+                    )
+                    .map_err(|_| CommunicationError::Peer)?;
+                Ok(())
+            }
+            (RECEIPT_MESSAGE_KIND, ApplicationPayload::Receipt(receipt)) => {
+                if receipt.receipt_id != envelope.envelope_id {
+                    return self.reject(&envelope);
+                }
+                self.engine
+                    .dispatch(EngineCommand::ApplyReceipt(Receipt {
+                        id: ReceiptId::from_opaque(receipt.receipt_id),
+                        message_id: MessageId::from_opaque(receipt.message_id),
+                        kind: match receipt.kind {
+                            DeliveryReceiptKind::Delivered => ReceiptKind::Delivered,
+                            DeliveryReceiptKind::Read => ReceiptKind::Read,
+                        },
+                        at: receipt.at,
+                    }))
+                    .map_err(|_| CommunicationError::Engine)?;
+                self.link
+                    .send_ack(contact.id(), envelope.envelope_id, AckStatus::Accepted)
+                    .map_err(|_| CommunicationError::Peer)
+            }
+            _ => self.reject(&envelope),
+        }
+    }
+}
+impl<R, S, K, C, P, I, T> InboundTextReceiptAdapter<R, S, K, C, P, I, T>
+where
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+{
+    fn reject(&self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError> {
+        let _ = self
+            .link
+            .send_ack(envelope.contact_id, envelope.envelope_id, AckStatus::Rejected);
+        Err(CommunicationError::Inbound)
+    }
+}
+
+fn inbound_message(
+    conversation: &DirectConversation,
+    payload: TextPayload,
+) -> Result<Message, CommunicationError> {
+    let body = MessageBody::new(payload.body).map_err(|_| CommunicationError::Inbound)?;
+    let reply_to = payload.reply_to.map(|id| ReplyReference {
+        message_id: MessageId::from_opaque(id),
+    });
+    Ok(Message::inbound(
+        MessageId::from_opaque(payload.message_id),
+        conversation.id(),
+        body,
+        reply_to,
+        payload.sent_at,
+    ))
+}
+
+fn load_contact<R: ContactRepository>(
+    repository: &R,
+    contact_id: ContactId,
+) -> Result<Contact, CommunicationError> {
+    repository
+        .get(contact_id)
+        .map_err(|_| CommunicationError::Peer)?
+        .ok_or(CommunicationError::Peer)
+}
+
+fn load_credential<R: PeerCredentialRepository>(
+    repository: &R,
+    contact_id: ContactId,
+) -> Result<PeerCredential, CommunicationError> {
+    repository
+        .credential_for_contact(contact_id)
+        .map_err(|_| CommunicationError::Peer)?
+        .ok_or(CommunicationError::Peer)
+}
+
+fn seal<C, P>(
+    crypto: &SharedPeerCrypto<C, P>,
+    handle: OpaqueId,
+    envelope_id: OpaqueId,
+    message_kind: u16,
+    local_identity: OpaqueId,
+    remote_identity: OpaqueId,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, CommunicationError>
+where
+    C: CryptoProvider,
+    P: ProtectedSecretStore,
+{
+    let mut secrets = crypto.inner.lock().map_err(|_| CommunicationError::Peer)?;
+    let nonce = secrets.peer_nonce().map_err(|_| CommunicationError::Peer)?;
+    let ciphertext = secrets
+        .seal_peer_payload(
+            handle,
+            nonce,
+            &peer_aad(envelope_id, message_kind, local_identity, remote_identity),
+            plaintext,
+        )
+        .map_err(|_| CommunicationError::Peer)?;
+    let mut output = Vec::with_capacity(NONCE_BYTES + ciphertext.0.len());
+    output.extend_from_slice(&nonce.0);
+    output.extend_from_slice(&ciphertext.0);
+    Ok(output)
+}
+
+fn open<C, P>(
+    crypto: &SharedPeerCrypto<C, P>,
+    handle: OpaqueId,
+    envelope_id: OpaqueId,
+    message_kind: u16,
+    local_identity: OpaqueId,
+    remote_identity: OpaqueId,
+    stored: &[u8],
+) -> Result<Vec<u8>, CommunicationError>
+where
+    C: CryptoProvider,
+    P: ProtectedSecretStore,
+{
+    if stored.len() <= NONCE_BYTES {
+        return Err(CommunicationError::Inbound);
+    }
+    let nonce = Nonce(
+        stored[..NONCE_BYTES]
+            .try_into()
+            .map_err(|_| CommunicationError::Inbound)?,
+    );
+    let ciphertext = Ciphertext(stored[NONCE_BYTES..].to_vec());
+    crypto
+        .inner
+        .lock()
+        .map_err(|_| CommunicationError::Inbound)?
+        .open_peer_payload(
+            handle,
+            nonce,
+            &peer_aad(envelope_id, message_kind, local_identity, remote_identity),
+            &ciphertext,
+        )
+        .map_err(|_| CommunicationError::Inbound)
+}
+
+fn peer_aad(
+    envelope_id: OpaqueId,
+    message_kind: u16,
+    local_identity: OpaqueId,
+    remote_identity: OpaqueId,
+) -> Vec<u8> {
+    let (first, second) = if local_identity <= remote_identity {
+        (local_identity, remote_identity)
+    } else {
+        (remote_identity, local_identity)
+    };
+    let mut aad = Vec::with_capacity(PEER_AAD_LABEL.len() + 50);
+    aad.extend_from_slice(PEER_AAD_LABEL);
+    aad.extend_from_slice(envelope_id.as_bytes());
+    aad.extend_from_slice(&message_kind.to_be_bytes());
+    aad.extend_from_slice(first.as_bytes());
+    aad.extend_from_slice(second.as_bytes());
+    aad
+}
+
+fn map_ack(ack: LinkAck) -> DeliveryAck {
+    match ack {
+        LinkAck::Accepted => DeliveryAck::Accepted,
+        LinkAck::Duplicate => DeliveryAck::Duplicate,
+    }
+}
+
+fn derived_receipt_id(message_id: OpaqueId, tag: u8) -> OpaqueId {
+    let mut bytes = message_id.into_bytes();
+    bytes[15] ^= tag;
+    let value = OpaqueId::from_bytes(bytes);
+    if value.is_nil() { OpaqueId::from_u128(u128::from(tag) + 1) } else { value }
+}
+
+#[allow(dead_code)]
+fn _map_peer(_: PeerLinkError) -> CommunicationError {
+    CommunicationError::Peer
+}

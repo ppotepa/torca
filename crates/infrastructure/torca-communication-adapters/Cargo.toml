@@ -6,9 +6,6 @@ rust-version = "1.97.1"
 license = "AGPL-3.0-or-later"
 publish = false
 
-[lib]
-path = "src/final.rs"
-
 [dependencies]
 sha2 = "0.10"
 torca-attachment-sqlite = { path = "../torca-attachment-sqlite" }

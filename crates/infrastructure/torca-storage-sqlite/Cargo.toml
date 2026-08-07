@@ -8,9 +8,6 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
-[lib]
-path = "src/final.rs"
-
 [dependencies]
 rusqlite = { version = "0.38", features = ["bundled-sqlcipher-vendored-openssl"] }
 torca-client-engine = { path = "../../application/torca-client-engine" }
