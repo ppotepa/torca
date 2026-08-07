@@ -3,6 +3,8 @@
 //! This crate owns connection recovery and relay request/response validation. It deliberately does
 //! not own pairing state transitions or long-term message delivery.
 
+mod tcp;
+
 use core::fmt;
 use std::time::Duration;
 
@@ -10,6 +12,8 @@ use torca_relay_protocol::{
     RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken,
     RelaySlotCapability, RelaySlotId,
 };
+
+pub use tcp::TcpRelayTransport;
 
 /// Redaction-safe class of relay transport failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
