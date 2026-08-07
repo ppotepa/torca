@@ -5,6 +5,7 @@
 //! The deterministic algorithm and in-memory secret store remain test-only.
 
 mod key_management;
+mod pairing;
 mod peer_handshake;
 mod ports;
 mod production;
@@ -15,6 +16,7 @@ pub use key_management::{
     InMemoryProtectedSecretStore, ManagedIdentityKeys, ManagedKeyError, ProtectedSecretStore,
     ProtectedSecretStoreError,
 };
+pub use pairing::{PairingKeyError, RustPairingCrypto};
 pub use peer_handshake::{Ed25519HandshakeVerifier, ManagedHandshakeSigner};
 pub use ports::CryptoProvider;
 pub use production::RustCryptoProvider;

@@ -35,7 +35,7 @@ dependencies = ["torca-contacts", "torca-foundation"]
 [[package]]
 name = "torca-crypto"
 version = "0.1.0-alpha.0"
-dependencies = ["torca-foundation", "torca-peer-protocol"]
+dependencies = ["torca-foundation", "torca-pairing-coordinator", "torca-peer-protocol"]
 
 [[package]]
 name = "torca-delivery"
