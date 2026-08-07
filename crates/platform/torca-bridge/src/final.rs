@@ -1,12 +1,14 @@
 //! Stable typed boundary between Flutter and the process-owned Rust runtime.
 
+use std::collections::BTreeMap;
+
 use torca_client_engine::{ClientSnapshot, EngineCommand, EngineError, EngineHandle, EngineResult};
 use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityId, Profile, ProfileName};
 use torca_messaging::{MessageBody, MessageId};
 use torca_pairing::{PairingCode, PairingSessionId};
-use torca_runtime_host::{NetworkSnapshot, RuntimeHostHandle};
+use torca_runtime_host::{HostTorState, NetworkSnapshot, RuntimeHostHandle};
 
 pub const CONTRACT_VERSION: u16 = 4;
 
@@ -59,9 +61,16 @@ pub struct BridgeMessage {
     pub direction: String, pub status: String,
 }
 
-pub struct EngineBridge { engine: EngineHandle, runtime: RuntimeHostHandle }
+/// Bridge is available before identity exists. Network-only commands are rejected until native
+/// production composition attaches the process-owned RuntimeHost after identity creation/loading.
+pub struct EngineBridge {
+    engine: EngineHandle,
+    runtime: Option<RuntimeHostHandle>,
+}
 impl EngineBridge {
-    pub const fn new(engine: EngineHandle, runtime: RuntimeHostHandle) -> Self { Self { engine, runtime } }
+    pub const fn new(engine: EngineHandle) -> Self { Self { engine, runtime: None } }
+    pub fn attach_runtime(&mut self, runtime: RuntimeHostHandle) { self.runtime = Some(runtime); }
+    pub const fn has_runtime(&self) -> bool { self.runtime.is_some() }
 
     pub fn execute(&self, command: BridgeCommand) -> BridgeResult {
         let result: Result<&'static str, String> = match command {
@@ -75,35 +84,38 @@ impl EngineBridge {
                     .map(|value| result_kind(&value))
             }
             BridgeCommand::CreatePairing { session_id_hex } => parse_pairing_id(&session_id_hex)
-                .and_then(|id| self.runtime.create_pairing(id).map_err(string_error))
+                .and_then(|id| self.runtime()?.create_pairing(id).map_err(string_error))
                 .map(|_| "pairing_started"),
             BridgeCommand::JoinPairing { session_id_hex, code } => parse_pairing_id(&session_id_hex)
                 .and_then(|id| PairingCode::new(code).map_err(string_error).map(|code| (id, code)))
-                .and_then(|(id, code)| self.runtime.join_pairing(id, code).map_err(string_error))
+                .and_then(|(id, code)| self.runtime()?.join_pairing(id, code).map_err(string_error))
                 .map(|_| "pairing_joined"),
             BridgeCommand::ApprovePairing { session_id_hex } => parse_pairing_id(&session_id_hex)
-                .and_then(|id| self.runtime.approve_pairing(id).map_err(string_error))
+                .and_then(|id| self.runtime()?.approve_pairing(id).map_err(string_error))
                 .map(|_| "pairing_updated"),
             BridgeCommand::RejectPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
-                .and_then(|id| self.runtime.reject_pairing(id).map_err(string_error))
+                .and_then(|id| self.runtime()?.reject_pairing(id).map_err(string_error))
                 .map(|_| "pairing_rejected"),
             BridgeCommand::CancelPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
-                .and_then(|id| self.runtime.cancel_pairing(id).map_err(string_error))
+                .and_then(|id| self.runtime()?.cancel_pairing(id).map_err(string_error))
                 .map(|_| "pairing_cancelled"),
             BridgeCommand::QueueMessage { message_id_hex, conversation_id_hex, body, at_ms } => {
-                parse_id(&message_id_hex)
-                    .and_then(|message_id| parse_id(&conversation_id_hex).map(|c| (message_id, c)))
-                    .and_then(|(message_id, conversation_id)| MessageBody::new(body).map_err(string_error)
-                        .map(|body| (message_id, conversation_id, body)))
-                    .and_then(|(message_id, conversation_id, body)| timestamp(at_ms).map(|at| EngineCommand::QueueMessage {
-                        message_id: MessageId::from_opaque(message_id),
-                        conversation_id: ConversationId::from_opaque(conversation_id), body, reply_to: None, at,
-                    }))
-                    .and_then(|command| self.engine.dispatch(command).map_err(string_error))
-                    .map(|value| { self.runtime.wake_delivery(); result_kind(&value) })
+                let runtime = self.runtime();
+                runtime.and_then(|runtime| {
+                    parse_id(&message_id_hex)
+                        .and_then(|message_id| parse_id(&conversation_id_hex).map(|c| (message_id, c)))
+                        .and_then(|(message_id, conversation_id)| MessageBody::new(body).map_err(string_error)
+                            .map(|body| (message_id, conversation_id, body)))
+                        .and_then(|(message_id, conversation_id, body)| timestamp(at_ms).map(|at| EngineCommand::QueueMessage {
+                            message_id: MessageId::from_opaque(message_id),
+                            conversation_id: ConversationId::from_opaque(conversation_id), body, reply_to: None, at,
+                        }))
+                        .and_then(|command| self.engine.dispatch(command).map_err(string_error))
+                        .map(|value| { runtime.wake_delivery(); result_kind(&value) })
+                })
             }
             BridgeCommand::MarkConversationRead { conversation_id_hex } => parse_id(&conversation_id_hex)
-                .and_then(|id| self.runtime.mark_conversation_read(id).map_err(string_error))
+                .and_then(|id| self.runtime()?.mark_conversation_read(id).map_err(string_error))
                 .map(|_| "conversation_read"),
             BridgeCommand::RefreshSnapshot => self.snapshot().map(|_| "snapshot").map_err(string_error),
         };
@@ -115,13 +127,27 @@ impl EngineBridge {
 
     pub fn snapshot(&self) -> Result<BridgeSnapshot, EngineError> {
         let app = self.engine.snapshot()?;
-        let network = self.runtime.network_snapshot()
-            .map_err(|_| EngineError("network snapshot unavailable".into()))?;
+        let network = match &self.runtime {
+            Some(runtime) => runtime.network_snapshot()
+                .map_err(|_| EngineError("network snapshot unavailable".into()))?,
+            None => NetworkSnapshot {
+                tor: HostTorState::Stopped,
+                onion_address: None,
+                peers: BTreeMap::new(),
+            },
+        };
         Ok(map_snapshot(app, network))
     }
 
     pub fn diagnostics_json(&self) -> Result<String, EngineError> {
-        self.runtime.diagnostics_json().map_err(|_| EngineError("diagnostics unavailable".into()))
+        match &self.runtime {
+            Some(runtime) => runtime.diagnostics_json().map_err(|_| EngineError("diagnostics unavailable".into())),
+            None => Ok("{\"events\":[]}".into()),
+        }
+    }
+
+    fn runtime(&self) -> Result<&RuntimeHostHandle, String> {
+        self.runtime.as_ref().ok_or_else(|| "secure network runtime is not ready".into())
     }
 }
 
