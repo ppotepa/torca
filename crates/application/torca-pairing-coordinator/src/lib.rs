@@ -10,27 +10,22 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_pairing_protocol::PairingEnvelope;
 
-/// Opaque crypto-provider handle for one ephemeral rendezvous key pair.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PairingCryptoHandle(pub OpaqueId);
 
-/// Slot address returned by the rendezvous service.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PairingSlotId(pub OpaqueId);
 
-/// Client-generated administrative capability for a rendezvous slot.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PairingSlotCapability(pub OpaqueId);
 
-/// Client-generated capability for one side of a rendezvous slot.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PairingSideToken(pub OpaqueId);
 
-/// Ephemeral key material exposed by a crypto adapter without private bytes.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingEphemeralKey {
@@ -38,7 +33,6 @@ pub struct PairingEphemeralKey {
     pub public_key: [u8; 32],
 }
 
-/// Encrypted relay payload. The relay sees only these opaque bytes.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncryptedPairingPayload {
@@ -47,9 +41,12 @@ pub struct EncryptedPairingPayload {
     pub ciphertext: Vec<u8>,
 }
 
-/// Semantic crypto operations needed by pairing orchestration.
 pub trait PairingCryptoPort {
     fn generate_ephemeral_key(&mut self) -> Result<PairingEphemeralKey, PairingCoordinatorError>;
+    fn release_ephemeral_key(
+        &mut self,
+        handle: PairingCryptoHandle,
+    ) -> Result<(), PairingCoordinatorError>;
     fn fill_random(&mut self, output: &mut [u8]) -> Result<(), PairingCoordinatorError>;
     fn seal_for_peer(
         &self,
@@ -69,8 +66,6 @@ pub trait PairingCryptoPort {
     ) -> Result<Vec<u8>, PairingCoordinatorError>;
 }
 
-/// Ephemeral rendezvous transport. Implementations may use WebSocket/Tor but must not persist
-/// contacts, messages or user identity data.
 pub trait PairingRendezvousPort {
     fn open(
         &mut self,
@@ -104,7 +99,6 @@ pub trait PairingRendezvousPort {
     ) -> Result<(), PairingCoordinatorError>;
 }
 
-/// Redaction-safe pairing orchestration error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PairingCoordinatorError {
     SessionAlreadyExists,
@@ -138,7 +132,6 @@ struct TransportSession {
     remote_public_key: Option<[u8; 32]>,
 }
 
-/// Coordinator for ephemeral rendezvous/crypto state keyed by the domain pairing session ID.
 pub struct PairingCoordinator<R, C> {
     rendezvous: R,
     crypto: C,
@@ -154,7 +147,6 @@ where
         Self { rendezvous, crypto, sessions: BTreeMap::new() }
     }
 
-    /// Opens a creator slot. The relay receives only the ephemeral public rendezvous key.
     pub fn open_creator(
         &mut self,
         session_id: PairingSessionId,
@@ -165,11 +157,21 @@ where
             return Err(PairingCoordinatorError::SessionAlreadyExists);
         }
         let key = self.crypto.generate_ephemeral_key()?;
-        let capability = PairingSlotCapability(self.random_id()?);
-        let token = PairingSideToken(self.random_id()?);
-        let slot = self
-            .rendezvous
-            .open(code, expires_at, key.public_key.to_vec(), capability, token)?;
+        let setup = (|| {
+            let capability = PairingSlotCapability(self.random_id()?);
+            let token = PairingSideToken(self.random_id()?);
+            let slot = self
+                .rendezvous
+                .open(code, expires_at, key.public_key.to_vec(), capability, token)?;
+            Ok::<_, PairingCoordinatorError>((slot, capability, token))
+        })();
+        let (slot, capability, token) = match setup {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = self.crypto.release_ephemeral_key(key.handle);
+                return Err(error);
+            }
+        };
         self.sessions.insert(
             session_id,
             TransportSession {
@@ -184,10 +186,6 @@ where
         Ok(slot)
     }
 
-    /// Joins a creator slot and returns the decrypted creator-independent handshake key.
-    ///
-    /// `local_offer` is encrypted before it crosses the relay. The creator public key is the
-    /// creator blob returned by rendezvous and therefore never treated as secret material.
     pub fn join(
         &mut self,
         session_id: PairingSessionId,
@@ -201,21 +199,28 @@ where
             .validate_pairing_id(session_id.to_opaque())
             .map_err(|_| PairingCoordinatorError::Protocol)?;
         let key = self.crypto.generate_ephemeral_key()?;
-        let token = PairingSideToken(self.random_id()?);
-
-        // First join installs our token and public key. The returned creator blob is its ephemeral
-        // public key. The actual encrypted offer is then pushed with transcript-bound AAD.
-        let (slot, creator_blob) = self.rendezvous.join(code, key.public_key.to_vec(), token)?;
-        let creator_public_key: [u8; 32] = creator_blob
-            .try_into()
-            .map_err(|_| PairingCoordinatorError::InvalidBlob)?;
-        let encrypted = self.encrypt_envelope(
-            session_id,
-            &key,
-            creator_public_key,
-            local_offer,
-        )?;
-        self.rendezvous.push(slot, token, encode_encrypted(&encrypted))?;
+        let setup = (|| {
+            let token = PairingSideToken(self.random_id()?);
+            let (slot, creator_blob) = self.rendezvous.join(code, key.public_key.to_vec(), token)?;
+            let creator_public_key: [u8; 32] = creator_blob
+                .try_into()
+                .map_err(|_| PairingCoordinatorError::InvalidBlob)?;
+            let encrypted = self.encrypt_envelope(
+                session_id,
+                &key,
+                creator_public_key,
+                local_offer,
+            )?;
+            self.rendezvous.push(slot, token, encode_encrypted(&encrypted))?;
+            Ok::<_, PairingCoordinatorError>((slot, token, creator_public_key))
+        })();
+        let (slot, token, creator_public_key) = match setup {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = self.crypto.release_ephemeral_key(key.handle);
+                return Err(error);
+            }
+        };
         self.sessions.insert(
             session_id,
             TransportSession {
@@ -230,7 +235,6 @@ where
         Ok(slot)
     }
 
-    /// Polls and decrypts every currently queued pairing envelope for the session.
     pub fn poll(
         &mut self,
         session_id: PairingSessionId,
@@ -273,7 +277,6 @@ where
         Ok(envelopes)
     }
 
-    /// Encrypts and pushes one protocol envelope to the authenticated opposite side.
     pub fn push(
         &mut self,
         session_id: PairingSessionId,
@@ -295,19 +298,22 @@ where
             .push(session.slot, session.token, encode_encrypted(&encrypted))
     }
 
-    /// Closes creator-owned rendezvous state and always drops local ephemeral handles.
     pub fn close(&mut self, session_id: PairingSessionId) -> Result<(), PairingCoordinatorError> {
         let session = self
             .sessions
             .remove(&session_id)
             .ok_or(PairingCoordinatorError::SessionNotFound)?;
-        if session.role == LocalRole::Creator {
-            let capability = session
-                .slot_capability
-                .ok_or(PairingCoordinatorError::InvalidRole)?;
-            self.rendezvous.close(session.slot, capability)?;
-        }
-        Ok(())
+        let relay_result = if session.role == LocalRole::Creator {
+            match session.slot_capability {
+                Some(capability) => self.rendezvous.close(session.slot, capability),
+                None => Err(PairingCoordinatorError::InvalidRole),
+            }
+        } else {
+            Ok(())
+        };
+        let release_result = self.crypto.release_ephemeral_key(session.key.handle);
+        relay_result?;
+        release_result
     }
 
     pub fn into_parts(self) -> (R, C) {
@@ -339,9 +345,15 @@ where
     }
 
     fn random_id(&mut self) -> Result<OpaqueId, PairingCoordinatorError> {
-        let mut bytes = [0_u8; 16];
-        self.crypto.fill_random(&mut bytes)?;
-        Ok(OpaqueId::from_bytes(bytes))
+        for _ in 0..8 {
+            let mut bytes = [0_u8; 16];
+            self.crypto.fill_random(&mut bytes)?;
+            let id = OpaqueId::from_bytes(bytes);
+            if !id.is_nil() {
+                return Ok(id);
+            }
+        }
+        Err(PairingCoordinatorError::Crypto)
     }
 }
 
