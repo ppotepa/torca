@@ -6,23 +6,18 @@ use std::collections::BTreeMap;
 use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
 use torca_messaging::MessageId;
 
-/// Maximum attachment size accepted by Torca 0.1: 16 MiB.
 pub const MAX_ATTACHMENT_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Stable attachment identifier.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AttachmentId(OpaqueId);
 impl AttachmentId {
-    /// Creates an identifier from an opaque value.
     pub const fn from_opaque(value: OpaqueId) -> Self {
         Self(value)
     }
-    /// Creates a deterministic identifier.
     pub const fn from_u128(value: u128) -> Self {
         Self(OpaqueId::from_u128(value))
     }
-    /// Returns the opaque value.
     pub const fn to_opaque(self) -> OpaqueId {
         self.0
     }
@@ -33,14 +28,11 @@ impl fmt::Display for AttachmentId {
     }
 }
 
-/// Validated user-facing file name without path information.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttachmentName(String);
 impl AttachmentName {
-    /// Maximum UTF-8 byte length.
     pub const MAX_BYTES: usize = 255;
-    /// Validates a file name.
     pub fn new(value: impl Into<String>) -> Result<Self, AttachmentError> {
         let value = value.into();
         if value.is_empty() {
@@ -57,20 +49,16 @@ impl AttachmentName {
         }
         Ok(Self(value))
     }
-    /// Returns the file name.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// Validated MIME media type.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaType(String);
 impl MediaType {
-    /// Maximum byte length.
     pub const MAX_BYTES: usize = 127;
-    /// Validates a basic `type/subtype` media type.
     pub fn new(value: impl Into<String>) -> Result<Self, AttachmentError> {
         let value = value.into().to_ascii_lowercase();
         let mut parts = value.split('/');
@@ -82,7 +70,6 @@ impl MediaType {
         }
         Ok(Self(value))
     }
-    /// Returns the media type.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -94,7 +81,6 @@ fn valid_token(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'+' | b'.'))
 }
 
-/// Attachment lifecycle state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttachmentStatus {
     Prepared,
@@ -106,7 +92,6 @@ pub enum AttachmentStatus {
     Cancelled,
 }
 
-/// One recorded transfer attempt.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AttachmentAttempt {
@@ -115,7 +100,6 @@ pub struct AttachmentAttempt {
     pub error_code: Option<ErrorCode>,
 }
 
-/// Attachment aggregate linked to a message.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Attachment {
@@ -130,7 +114,6 @@ pub struct Attachment {
     attempts: Vec<AttachmentAttempt>,
 }
 impl Attachment {
-    /// Creates prepared attachment metadata.
     pub fn prepare(
         id: AttachmentId,
         message_id: MessageId,
@@ -139,12 +122,7 @@ impl Attachment {
         size: u64,
         at: Timestamp,
     ) -> Result<Self, AttachmentError> {
-        if size == 0 {
-            return Err(AttachmentError::EmptyContent);
-        }
-        if size > MAX_ATTACHMENT_BYTES {
-            return Err(AttachmentError::ContentTooLarge { actual: size });
-        }
+        validate_size(size)?;
         Ok(Self {
             id,
             message_id,
@@ -157,54 +135,91 @@ impl Attachment {
             attempts: Vec::new(),
         })
     }
-    /// Returns the identifier.
+
+    pub fn from_persisted(
+        id: AttachmentId,
+        message_id: MessageId,
+        name: AttachmentName,
+        media_type: MediaType,
+        size: u64,
+        status: AttachmentStatus,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+        attempts: Vec<AttachmentAttempt>,
+    ) -> Result<Self, AttachmentError> {
+        validate_size(size)?;
+        for (index, attempt) in attempts.iter().enumerate() {
+            let expected = u32::try_from(index)
+                .map_err(|_| AttachmentError::InvalidPersistedState)?
+                .checked_add(1)
+                .ok_or(AttachmentError::InvalidPersistedState)?;
+            if attempt.number != expected {
+                return Err(AttachmentError::InvalidPersistedState);
+            }
+        }
+        Ok(Self {
+            id,
+            message_id,
+            name,
+            media_type,
+            size,
+            status,
+            created_at,
+            updated_at,
+            attempts,
+        })
+    }
+
     pub const fn id(&self) -> AttachmentId {
         self.id
     }
-    /// Returns owning message.
     pub const fn message_id(&self) -> MessageId {
         self.message_id
     }
-    /// Returns the file name.
     pub const fn name(&self) -> &AttachmentName {
         &self.name
     }
-    /// Returns the media type.
     pub const fn media_type(&self) -> &MediaType {
         &self.media_type
     }
-    /// Returns the expected plaintext size.
     pub const fn size(&self) -> u64 {
         self.size
     }
-    /// Returns lifecycle state.
     pub const fn status(&self) -> AttachmentStatus {
         self.status
     }
-    /// Starts encryption.
+    pub const fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
+    pub const fn updated_at(&self) -> Timestamp {
+        self.updated_at
+    }
+    pub fn attempts(&self) -> &[AttachmentAttempt] {
+        &self.attempts
+    }
+
     pub fn begin_encryption(&mut self, at: Timestamp) -> Result<(), AttachmentError> {
         self.transition(AttachmentStatus::Prepared, AttachmentStatus::Encrypting, at)
     }
-    /// Marks encrypted content as queued.
     pub fn mark_queued(&mut self, at: Timestamp) -> Result<(), AttachmentError> {
         self.transition(AttachmentStatus::Encrypting, AttachmentStatus::Queued, at)
     }
-    /// Starts or retries transfer.
     pub fn begin_transfer(&mut self, at: Timestamp) -> Result<u32, AttachmentError> {
         if !matches!(self.status, AttachmentStatus::Queued | AttachmentStatus::Failed) {
             return Err(AttachmentError::InvalidTransition);
         }
-        let number = u32::try_from(self.attempts.len()).unwrap_or(u32::MAX).saturating_add(1);
+        let number = u32::try_from(self.attempts.len())
+            .map_err(|_| AttachmentError::AttemptsExhausted)?
+            .checked_add(1)
+            .ok_or(AttachmentError::AttemptsExhausted)?;
         self.attempts.push(AttachmentAttempt { number, at, error_code: None });
         self.status = AttachmentStatus::Transferring;
         self.updated_at = at;
         Ok(number)
     }
-    /// Marks content available after authenticated storage or transfer.
     pub fn mark_available(&mut self, at: Timestamp) -> Result<(), AttachmentError> {
         self.transition(AttachmentStatus::Transferring, AttachmentStatus::Available, at)
     }
-    /// Records transfer failure.
     pub fn mark_failed(
         &mut self,
         at: Timestamp,
@@ -220,7 +235,6 @@ impl Attachment {
         self.updated_at = at;
         Ok(())
     }
-    /// Cancels before availability.
     pub fn cancel(&mut self, at: Timestamp) -> Result<(), AttachmentError> {
         if matches!(self.status, AttachmentStatus::Available | AttachmentStatus::Cancelled) {
             return Err(AttachmentError::InvalidTransition);
@@ -244,7 +258,16 @@ impl Attachment {
     }
 }
 
-/// Attachment domain failure.
+fn validate_size(size: u64) -> Result<(), AttachmentError> {
+    if size == 0 {
+        return Err(AttachmentError::EmptyContent);
+    }
+    if size > MAX_ATTACHMENT_BYTES {
+        return Err(AttachmentError::ContentTooLarge { actual: size });
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AttachmentError {
     EmptyName,
@@ -254,8 +277,11 @@ pub enum AttachmentError {
     EmptyContent,
     ContentTooLarge { actual: u64 },
     InvalidTransition,
+    AttemptsExhausted,
+    InvalidPersistedState,
     AlreadyExists,
     NotFound,
+    RepositoryFailure,
 }
 impl fmt::Display for AttachmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -264,19 +290,13 @@ impl fmt::Display for AttachmentError {
 }
 impl std::error::Error for AttachmentError {}
 
-/// Attachment repository port.
 pub trait AttachmentRepository {
-    /// Inserts metadata.
     fn insert(&mut self, attachment: Attachment) -> Result<(), AttachmentError>;
-    /// Loads metadata.
     fn get(&self, id: AttachmentId) -> Result<Option<Attachment>, AttachmentError>;
-    /// Updates metadata.
     fn update(&mut self, attachment: Attachment) -> Result<(), AttachmentError>;
-    /// Lists attachments of a message.
     fn for_message(&self, message_id: MessageId) -> Result<Vec<Attachment>, AttachmentError>;
 }
 
-/// In-memory attachment repository.
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryAttachmentRepository {
     attachments: BTreeMap<AttachmentId, Attachment>,
