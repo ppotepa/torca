@@ -5,6 +5,7 @@ mod composition;
 mod ffi;
 mod json;
 mod native_runtime;
+mod notification_json;
 mod process_runtime;
 mod process_shutdown_ffi;
 mod relationship_ffi;
