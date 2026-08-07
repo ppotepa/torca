@@ -303,13 +303,20 @@ struct MessageRow {
 
 impl MessageRow {
     fn into_message(self, id: MessageId) -> Result<Message, DurableDeliveryError> {
-        if self.direction != encode_direction(MessageDirection::Outbound)
-            || self.status != encode_status(MessageStatus::Queued)
-        {
+        if self.direction != encode_direction(MessageDirection::Outbound) {
             return Err(DurableDeliveryError::Storage(
-                "outbox references a non-queued outbound message".into(),
+                "outbox references a non-outbound message".into(),
             ));
         }
+        let status = match self.status {
+            value if value == encode_status(MessageStatus::Queued) => MessageStatus::Queued,
+            value if value == encode_status(MessageStatus::Sending) => MessageStatus::Sending,
+            _ => {
+                return Err(DurableDeliveryError::Storage(
+                    "claimed outbox references a non-sendable message".into(),
+                ));
+            }
+        };
         let conversation_id = ConversationId::from_opaque(OpaqueId::from_bytes(fixed_16(
             self.conversation_id,
             "conversation_id",
@@ -326,10 +333,18 @@ impl MessageRow {
             .transpose()?;
         let created_at = timestamp(self.created_at_ms, "created_at")?;
         let updated_at = timestamp(self.updated_at_ms, "updated_at")?;
-        if created_at != updated_at {
-            return Err(DurableDeliveryError::Storage("queued message timestamps diverged".into()));
-        }
-        Ok(Message::outbound(id, conversation_id, body, reply_to, created_at))
+        Message::from_persisted(
+            id,
+            conversation_id,
+            body,
+            reply_to,
+            MessageDirection::Outbound,
+            status,
+            created_at,
+            updated_at,
+            Vec::new(),
+        )
+        .map_err(|_| DurableDeliveryError::Storage("stored message state is invalid".into()))
     }
 }
 
