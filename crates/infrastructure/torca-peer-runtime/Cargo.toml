@@ -1,0 +1,23 @@
+[package]
+name = "torca-peer-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+path = "src/runtime_v2.rs"
+
+[dependencies]
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-crypto = { path = "../torca-crypto" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-peer = { path = "../torca-peer" }
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
+torca-transport-tor = { path = "../torca-transport-tor" }
+
+[lints]
+workspace = true
