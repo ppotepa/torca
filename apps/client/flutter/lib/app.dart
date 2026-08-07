@@ -6,36 +6,32 @@ import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
 import 'screens/deep_link_join_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/pairing_screen.dart';
 import 'settings/local_preferences.dart';
 import 'theme/app_theme.dart';
 
 class TorcaApp extends StatefulWidget {
-  const TorcaApp({
-    required this.gateway,
-    required this.navigation,
-    required this.preferences,
-    super.key,
-  });
-
+  const TorcaApp({required this.gateway, required this.navigation, required this.preferences, super.key});
   final EngineGateway gateway;
   final AppNavigationController navigation;
   final LocalPreferences preferences;
-
-  @override
-  State<TorcaApp> createState() => _TorcaAppState();
+  @override State<TorcaApp> createState() => _TorcaAppState();
 }
 
 class _TorcaAppState extends State<TorcaApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  int _handledPairingRequest = 0;
 
   @override
   void initState() {
     super.initState();
     widget.navigation.conversationRequest.addListener(_conversationRequested);
     widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
+    widget.navigation.newPairingRequest.addListener(_newPairingRequested);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _conversationRequested();
       _pairingRequested();
+      _newPairingRequested();
     });
   }
 
@@ -45,14 +41,18 @@ class _TorcaAppState extends State<TorcaApp> {
     if (oldWidget.navigation == widget.navigation) return;
     oldWidget.navigation.conversationRequest.removeListener(_conversationRequested);
     oldWidget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
+    oldWidget.navigation.newPairingRequest.removeListener(_newPairingRequested);
     widget.navigation.conversationRequest.addListener(_conversationRequested);
     widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
+    widget.navigation.newPairingRequest.addListener(_newPairingRequested);
+    _handledPairingRequest = widget.navigation.newPairingRequest.value;
   }
 
   @override
   void dispose() {
     widget.navigation.conversationRequest.removeListener(_conversationRequested);
     widget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
+    widget.navigation.newPairingRequest.removeListener(_newPairingRequested);
     super.dispose();
   }
 
@@ -60,39 +60,32 @@ class _TorcaAppState extends State<TorcaApp> {
     final id = widget.navigation.conversationRequest.value;
     if (id == null) return;
     final navigator = _navigatorKey.currentState;
-    if (navigator == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _conversationRequested());
-      return;
-    }
+    if (navigator == null) { WidgetsBinding.instance.addPostFrameCallback((_) => _conversationRequested()); return; }
     widget.navigation.clearConversationRequest();
     ConversationDto? conversation;
     for (final candidate in widget.gateway.snapshots.value.conversations) {
-      if (candidate.id == id) {
-        conversation = candidate;
-        break;
-      }
+      if (candidate.id == id) { conversation = candidate; break; }
     }
     if (conversation == null) return;
-    navigator.push<void>(MaterialPageRoute(
-      builder: (_) => ConversationScreen(
-        gateway: widget.gateway,
-        conversation: conversation!,
-      ),
-    ));
+    navigator.push<void>(MaterialPageRoute(builder: (_) => ConversationScreen(gateway: widget.gateway, conversation: conversation!)));
   }
 
   void _pairingRequested() {
     final code = widget.navigation.pairingCodeRequest.value;
     if (code == null) return;
     final navigator = _navigatorKey.currentState;
-    if (navigator == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _pairingRequested());
-      return;
-    }
+    if (navigator == null) { WidgetsBinding.instance.addPostFrameCallback((_) => _pairingRequested()); return; }
     widget.navigation.clearPairingRequest();
-    navigator.push<void>(MaterialPageRoute(
-      builder: (_) => DeepLinkJoinScreen(gateway: widget.gateway, code: code),
-    ));
+    navigator.push<void>(MaterialPageRoute(builder: (_) => DeepLinkJoinScreen(gateway: widget.gateway, code: code)));
+  }
+
+  void _newPairingRequested() {
+    final request = widget.navigation.newPairingRequest.value;
+    if (request == _handledPairingRequest) return;
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) { WidgetsBinding.instance.addPostFrameCallback((_) => _newPairingRequested()); return; }
+    _handledPairingRequest = request;
+    navigator.push<void>(MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)));
   }
 
   @override
@@ -105,10 +98,7 @@ class _TorcaAppState extends State<TorcaApp> {
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
           themeMode: AppTheme.materialMode(widget.preferences.themeMode),
-          home: HomeScreen(
-            gateway: widget.gateway,
-            preferences: widget.preferences,
-          ),
+          home: HomeScreen(gateway: widget.gateway, preferences: widget.preferences),
         ),
       );
 }
