@@ -69,6 +69,8 @@ pub(crate) fn spawn_production_host(
                 .map_err(|_| NativeCompositionError::new("open peer secret store failed"))?,
             attachment_secret_store: DpapiFileSecretStore::new(&peer_dir)
                 .map_err(|_| NativeCompositionError::new("open attachment peer secret store failed"))?,
+            relationship_secret_store: DpapiFileSecretStore::new(&peer_dir)
+                .map_err(|_| NativeCompositionError::new("open relationship peer secret store failed"))?,
             listener,
             socks_address: tor_config.process.socks_address,
             local_identity_id: identity_id,
@@ -123,6 +125,7 @@ pub(crate) fn spawn_production_host(
             signer,
             peer_secret_store: AndroidProtectedSecretStore::new("peer"),
             attachment_secret_store: AndroidProtectedSecretStore::new("peer"),
+            relationship_secret_store: AndroidProtectedSecretStore::new("peer"),
             listener,
             socks_address: tor_config.process.socks_address,
             local_identity_id: identity_id,

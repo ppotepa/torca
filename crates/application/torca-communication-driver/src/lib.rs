@@ -1,9 +1,11 @@
 //! One communication supervisor over the process-owned authenticated peer link.
 
 use core::fmt;
+use std::collections::BTreeMap;
 
 use torca_client_engine::EngineHandle;
 use torca_contacts::ContactId;
+use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::Message;
 use torca_peer_link::{InboundPeerEnvelope, PeerConnectionState};
@@ -27,6 +29,7 @@ pub enum CommunicationError {
     Inbound,
     Attachment,
     ReadState,
+    Relationship,
     Engine,
 }
 impl fmt::Display for CommunicationError {
@@ -72,6 +75,15 @@ pub trait ReadStateRuntime: Send {
     fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
 }
 
+pub trait RelationshipAdminRuntime: Send {
+    fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, CommunicationError>;
+    fn rename_contact(&mut self, contact_id: ContactId, display_name: String, now: Timestamp) -> Result<(), CommunicationError>;
+    fn block_contact(&mut self, contact_id: ContactId, now: Timestamp) -> Result<(), CommunicationError>;
+    fn unblock_contact(&mut self, contact_id: ContactId, now: Timestamp) -> Result<(), CommunicationError>;
+    fn clear_history(&mut self, conversation_id: ConversationId) -> Result<(), CommunicationError>;
+    fn remove_contact(&mut self, contact_id: ContactId) -> Result<(), CommunicationError>;
+}
+
 pub struct TorcaCommunicationDriver {
     engine: EngineHandle,
     peer: Box<dyn PeerLinkRuntime>,
@@ -80,6 +92,7 @@ pub struct TorcaCommunicationDriver {
     inbound: Box<dyn InboundMessagingRuntime>,
     attachments: Box<dyn AttachmentRuntime>,
     read_state: Box<dyn ReadStateRuntime>,
+    relationships: Box<dyn RelationshipAdminRuntime>,
 }
 
 impl TorcaCommunicationDriver {
@@ -92,8 +105,9 @@ impl TorcaCommunicationDriver {
         inbound: Box<dyn InboundMessagingRuntime>,
         attachments: Box<dyn AttachmentRuntime>,
         read_state: Box<dyn ReadStateRuntime>,
+        relationships: Box<dyn RelationshipAdminRuntime>,
     ) -> Self {
-        Self { engine, peer, text, control, inbound, attachments, read_state }
+        Self { engine, peer, text, control, inbound, attachments, read_state, relationships }
     }
 
     fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
@@ -130,6 +144,34 @@ impl CommunicationDriver for TorcaCommunicationDriver {
 
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
         self.peer.connection_state(contact_id)
+    }
+
+    fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError> {
+        self.relationships.contact_names().map_err(map_runtime)
+    }
+
+    fn rename_contact(&mut self, contact_id: ContactId, display_name: String, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.rename_contact(contact_id, display_name, now).map_err(map_runtime)
+    }
+
+    fn block_contact(&mut self, contact_id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.block_contact(contact_id, now).map_err(map_runtime)?;
+        self.peer.shutdown();
+        Ok(())
+    }
+
+    fn unblock_contact(&mut self, contact_id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.unblock_contact(contact_id, now).map_err(map_runtime)
+    }
+
+    fn clear_conversation_history(&mut self, conversation_id: ConversationId) -> Result<(), RuntimeDriverError> {
+        self.relationships.clear_history(conversation_id).map_err(map_runtime)
+    }
+
+    fn remove_contact(&mut self, contact_id: ContactId) -> Result<(), RuntimeDriverError> {
+        self.relationships.remove_contact(contact_id).map_err(map_runtime)?;
+        self.peer.shutdown();
+        Ok(())
     }
 
     fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {

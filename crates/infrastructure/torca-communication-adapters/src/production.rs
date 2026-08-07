@@ -19,14 +19,14 @@ use torca_peer_shared::SharedPeerLink;
 use torca_read_state::SqlCipherReadState;
 use torca_storage_sqlite::{
     DatabaseKey, SqlCipherControlOutbox, SqlCipherDurableStore, SqlCipherInboundStore,
-    SqlCipherMessageStore, SqlCipherStore,
+    SqlCipherMessageStore, SqlCipherRelationshipAdmin, SqlCipherStore,
 };
 use torca_transport_tor::PeerListener;
 
 use crate::{
     AttachmentControlAdapter, InboundTextReceiptAdapter, PeerLinkAdapter, ReadStateAdapter,
-    ReceiptPeerTransport, SharedControlWorker, SharedPeerCrypto, TextPeerTransport,
-    TextWorkerAdapter,
+    ReceiptPeerTransport, RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto,
+    TextPeerTransport, TextWorkerAdapter,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -42,28 +42,30 @@ impl fmt::Display for CommunicationBuildError {
 }
 impl std::error::Error for CommunicationBuildError {}
 
-pub struct ProductionCommunicationInputs<K, P, AP> {
+pub struct ProductionCommunicationInputs<K, P, AP, RP> {
     pub signer: K,
     pub peer_secret_store: P,
     pub attachment_secret_store: AP,
+    pub relationship_secret_store: RP,
     pub listener: PeerListener,
     pub socks_address: SocketAddr,
     pub local_identity_id: OpaqueId,
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn build_production_communication<K, P, AP>(
+pub fn build_production_communication<K, P, AP, RP>(
     engine: EngineHandle,
     database_path: &Path,
     database_key: &DatabaseKey,
     cache_root: &Path,
     staging_root: &Path,
-    inputs: ProductionCommunicationInputs<K, P, AP>,
+    inputs: ProductionCommunicationInputs<K, P, AP, RP>,
 ) -> Result<TorcaCommunicationDriver, CommunicationBuildError>
 where
     K: HandshakeSigner + Send + 'static,
     P: ProtectedSecretStore + Send + 'static,
     AP: ProtectedSecretStore + Send + 'static,
+    RP: ProtectedSecretStore + Send + 'static,
 {
     let peer_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
@@ -155,6 +157,17 @@ where
     let read_state = SqlCipherReadState::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
 
+    let relationship_store = SqlCipherRelationshipAdmin::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let relationship_cache = FileBlobStore::open(cache_root)
+        .map_err(|_| CommunicationBuildError::Cache)?;
+    let relationships = RelationshipAdminAdapter::new(
+        relationship_store,
+        inputs.relationship_secret_store,
+        relationship_cache,
+        staging_root.to_path_buf(),
+    );
+
     Ok(TorcaCommunicationDriver::new(
         engine,
         Box::new(PeerLinkAdapter::new(link)),
@@ -163,5 +176,6 @@ where
         Box::new(inbound),
         Box::new(attachments),
         Box::new(ReadStateAdapter::new(read_state)),
+        Box::new(relationships),
     ))
 }

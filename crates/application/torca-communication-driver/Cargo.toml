@@ -11,6 +11,7 @@ torca-attachment-transfer = { path = "../../infrastructure/torca-attachment-tran
 torca-client-engine = { path = "../torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-control-delivery = { path = "../torca-control-delivery" }
+torca-conversations = { path = "../../domains/torca-conversations" }
 torca-delivery = { path = "../torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-messaging = { path = "../../domains/torca-messaging" }

@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::{EngineCommand, EngineHandle};
-use torca_contacts::ContactId;
+use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationId;
 use torca_diagnostics::{Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState};
 use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
@@ -37,6 +37,7 @@ pub struct NetworkSnapshot {
     pub tor: HostTorState,
     pub onion_address: Option<String>,
     pub peers: BTreeMap<ContactId, PeerConnectionState>,
+    pub contact_names: BTreeMap<ContactId, String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +61,12 @@ pub trait CommunicationDriver: Send + 'static {
     fn recover(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn maintenance(&mut self, contacts: &[ContactId], now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState;
+    fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError>;
+    fn rename_contact(&mut self, contact_id: ContactId, display_name: String, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn block_contact(&mut self, contact_id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn unblock_contact(&mut self, contact_id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn clear_conversation_history(&mut self, conversation_id: ConversationId) -> Result<(), RuntimeDriverError>;
+    fn remove_contact(&mut self, contact_id: ContactId) -> Result<(), RuntimeDriverError>;
     fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn prepare_attachment(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn retry_attachment(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
@@ -81,6 +88,11 @@ enum RuntimeCommand {
     ApprovePairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
     RejectPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
     CancelPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
+    RenameContact(ContactId, String, Sender<Result<(), RuntimeDriverError>>),
+    BlockContact(ContactId, Sender<Result<(), RuntimeDriverError>>),
+    UnblockContact(ContactId, Sender<Result<(), RuntimeDriverError>>),
+    RemoveContact(ContactId, Sender<Result<(), RuntimeDriverError>>),
+    ClearConversationHistory(ConversationId, Sender<Result<(), RuntimeDriverError>>),
     MarkConversationRead(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>),
     RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
@@ -100,6 +112,11 @@ impl RuntimeHostHandle {
     pub fn approve_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::ApprovePairing(id, r)) }
     pub fn reject_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RejectPairing(id, r)) }
     pub fn cancel_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::CancelPairing(id, r)) }
+    pub fn rename_contact(&self, id: ContactId, name: String) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RenameContact(id, name, r)) }
+    pub fn block_contact(&self, id: ContactId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::BlockContact(id, r)) }
+    pub fn unblock_contact(&self, id: ContactId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::UnblockContact(id, r)) }
+    pub fn remove_contact(&self, id: ContactId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RemoveContact(id, r)) }
+    pub fn clear_conversation_history(&self, id: ConversationId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::ClearConversationHistory(id, r)) }
     pub fn mark_conversation_read(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, r)) }
     pub fn queue_attachment(&self, request_value: AttachmentSendRequest) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::QueueAttachment(request_value, r)) }
     pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RetryAttachment(id, r)) }
@@ -151,7 +168,10 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(receiver: Re
         let _ = tor.maintenance(now);
         let _ = pairing.maintenance(now);
         if let Ok(snapshot) = engine.snapshot() {
-            let contacts: Vec<_> = snapshot.contacts.iter().map(|c| c.id()).collect();
+            let contacts: Vec<_> = snapshot.contacts.iter()
+                .filter(|contact| contact.status() == ContactStatus::Active)
+                .map(|contact| contact.id())
+                .collect();
             let _ = communication.maintenance(&contacts, now);
             record(diagnostics, sequence, now, Component::Tor, map_health(tor.state()), "TOR_STATE");
             record(diagnostics, sequence, now, Component::Peer, HealthState::Ready, "PEER_TICK");
@@ -167,6 +187,11 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(comman
         RuntimeCommand::ApprovePairing(id, r) => { let _ = r.send(pairing.approve(id, now)); }
         RuntimeCommand::RejectPairing(id, r) => { let _ = r.send(pairing.reject(id)); }
         RuntimeCommand::CancelPairing(id, r) => { let _ = r.send(pairing.cancel(id)); }
+        RuntimeCommand::RenameContact(id, name, r) => { let _ = r.send(communication.rename_contact(id, name, now)); }
+        RuntimeCommand::BlockContact(id, r) => { let _ = r.send(communication.block_contact(id, now)); }
+        RuntimeCommand::UnblockContact(id, r) => { let _ = r.send(communication.unblock_contact(id, now)); }
+        RuntimeCommand::RemoveContact(id, r) => { let _ = r.send(communication.remove_contact(id)); }
+        RuntimeCommand::ClearConversationHistory(id, r) => { let _ = r.send(communication.clear_conversation_history(id)); }
         RuntimeCommand::MarkConversationRead(id, r) => { let _ = r.send(communication.mark_conversation_read(id, now)); }
         RuntimeCommand::QueueAttachment(request_value, r) => {
             let message_id = MessageId::from_opaque(request_value.message_id);
@@ -197,10 +222,14 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(comman
         RuntimeCommand::CancelAttachment(id, r) => { let _ = r.send(communication.cancel_attachment(id, now)); }
         RuntimeCommand::AttachmentSnapshot(r) => { let _ = r.send(communication.attachment_snapshot()); }
         RuntimeCommand::NetworkSnapshot(r) => {
-            let result = engine.snapshot().map_err(|_| RuntimeDriverError::Engine).map(|snapshot| {
-                let peers = snapshot.contacts.into_iter().map(|contact| (contact.id(), communication.connection_state(contact.id()))).collect();
-                NetworkSnapshot { tor: tor.state(), onion_address: tor.onion_address(), peers }
-            });
+            let result = (|| {
+                let snapshot = engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+                let peers = snapshot.contacts.iter()
+                    .map(|contact| (contact.id(), communication.connection_state(contact.id())))
+                    .collect();
+                let contact_names = communication.contact_names()?;
+                Ok(NetworkSnapshot { tor: tor.state(), onion_address: tor.onion_address(), peers, contact_names })
+            })();
             let _ = r.send(result);
         }
         RuntimeCommand::Diagnostics(r) => { let _ = r.send(diagnostics.export_json()); }
