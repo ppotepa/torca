@@ -8,9 +8,6 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
-[lib]
-path = "src/final.rs"
-
 [dependencies]
 sha2 = "0.10"
 torca-attachments = { path = "../../domains/torca-attachments" }
