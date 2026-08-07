@@ -24,9 +24,10 @@ use torca_storage_sqlite::{
 use torca_transport_tor::PeerListener;
 
 use crate::{
-    AttachmentControlAdapter, AttachmentExportAdapter, InboundTextReceiptAdapter, PeerLinkAdapter,
-    ReadStateAdapter, ReceiptPeerTransport, RelationshipAdminAdapter, SharedControlWorker,
-    SharedPeerCrypto, TextPeerTransport, TextWorkerAdapter,
+    ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
+    InboundTextReceiptAdapter, PeerLinkAdapter, ReadStateAdapter, ReceiptPeerTransport,
+    RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto, TextPeerTransport,
+    TextWorkerAdapter,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -67,9 +68,20 @@ where
     EP: ProtectedSecretStore + Send + 'static,
     RP: ProtectedSecretStore + Send + 'static,
 {
-    let peer_relationships = SqlCipherStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let link = SharedPeerLink::new(PeerLink::new(inputs.listener, peer_relationships, inputs.signer, inputs.local_identity_id, inputs.socks_address, CONNECT_TIMEOUT));
-    let shared_crypto = SharedPeerCrypto::new(ManagedPeerSecrets::new(RustCryptoProvider, inputs.peer_secret_store));
+    let peer_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let link = SharedPeerLink::new(PeerLink::new(
+        inputs.listener,
+        ActiveRelationshipStore::new(peer_relationships),
+        inputs.signer,
+        inputs.local_identity_id,
+        inputs.socks_address,
+        CONNECT_TIMEOUT,
+    ));
+    let shared_crypto = SharedPeerCrypto::new(ManagedPeerSecrets::new(
+        RustCryptoProvider,
+        inputs.peer_secret_store,
+    ));
 
     let text_relationships = SqlCipherStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
     let text_transport = TextPeerTransport::new(text_relationships, link.clone(), shared_crypto.clone(), inputs.local_identity_id, ACK_TIMEOUT);
