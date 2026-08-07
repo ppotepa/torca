@@ -6,6 +6,7 @@
 
 mod key_management;
 mod pairing;
+mod pairing_approval;
 mod peer_handshake;
 mod ports;
 mod production;
