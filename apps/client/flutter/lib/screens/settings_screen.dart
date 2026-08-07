@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../settings/local_preferences.dart';
@@ -48,6 +50,22 @@ class SettingsScreen extends StatelessWidget {
                   onChanged: preferences.setNotificationsEnabled,
                 ),
               ),
+              if (Platform.isWindows) ...<Widget>[
+                const SizedBox(height: 24),
+                Text('Desktop', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Card(
+                  child: SwitchListTile(
+                    secondary: const Icon(Icons.move_to_inbox_outlined),
+                    title: const Text('Close to tray'),
+                    subtitle: const Text(
+                      'Keep Torca running when the main window is closed. Disable this to quit Torca when closing the window.',
+                    ),
+                    value: preferences.closeToTrayEnabled,
+                    onChanged: preferences.setCloseToTrayEnabled,
+                  ),
+                ),
+              ],
             ],
           ),
         ),

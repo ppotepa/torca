@@ -11,16 +11,20 @@ class LocalPreferences extends ChangeNotifier {
 
   static const _themeModeKey = 'appearance.theme_mode';
   static const _notificationsKey = 'notifications.enabled';
+  static const _closeToTrayKey = 'desktop.close_to_tray';
 
   AppThemeMode _themeMode = AppThemeMode.system;
   bool _notificationsEnabled = true;
+  bool _closeToTrayEnabled = true;
 
   AppThemeMode get themeMode => _themeMode;
   bool get notificationsEnabled => _notificationsEnabled;
+  bool get closeToTrayEnabled => _closeToTrayEnabled;
 
   Future<void> load() async {
     _themeMode = AppThemeMode.parse(await _store.getString(_themeModeKey));
     _notificationsEnabled = await _store.getBool(_notificationsKey) ?? true;
+    _closeToTrayEnabled = await _store.getBool(_closeToTrayKey) ?? true;
     notifyListeners();
   }
 
@@ -36,5 +40,12 @@ class LocalPreferences extends ChangeNotifier {
     _notificationsEnabled = value;
     notifyListeners();
     await _store.setBool(_notificationsKey, value);
+  }
+
+  Future<void> setCloseToTrayEnabled(bool value) async {
+    if (_closeToTrayEnabled == value) return;
+    _closeToTrayEnabled = value;
+    notifyListeners();
+    await _store.setBool(_closeToTrayKey, value);
   }
 }

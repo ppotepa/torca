@@ -49,7 +49,9 @@ class DesktopLifecycle with WindowListener, TrayListener {
     await trayManager.destroy();
   }
 
-  void _preferencesChanged() { if (!_quitting) unawaited(_updateTrayMenu()); }
+  void _preferencesChanged() {
+    if (!_quitting) unawaited(_updateTrayMenu());
+  }
 
   void _snapshotChanged() {
     if (!Platform.isWindows || _quitting) return;
@@ -71,21 +73,27 @@ class DesktopLifecycle with WindowListener, TrayListener {
     if (!Platform.isWindows || _quitting) return;
     final snapshot = gateway.snapshots.value;
     final readyPeers = snapshot.contacts.where((contact) => contact.peerHealth.state == 'ready').length;
-    await trayManager.setContextMenu(Menu(items: <MenuItem>[
-      MenuItem(key: 'show', label: 'Show Torca'),
-      MenuItem(key: 'tor-status', label: 'Tor: ${_torLabel(snapshot.torState)}'),
-      MenuItem(key: 'peer-status', label: 'Peers: $readyPeers connected'),
-      MenuItem.separator(),
-      MenuItem(key: 'pair', label: 'New pairing'),
-      MenuItem.separator(),
-      MenuItem(key: 'quit', label: 'Quit'),
-    ]));
+    await trayManager.setContextMenu(
+      Menu(
+        items: <MenuItem>[
+          MenuItem(key: 'show', label: 'Show Torca'),
+          MenuItem(key: 'tor-status', label: 'Tor: ${_torLabel(snapshot.torState)}'),
+          MenuItem(key: 'peer-status', label: 'Peers: $readyPeers connected'),
+          MenuItem.separator(),
+          MenuItem(key: 'pair', label: 'New pairing'),
+          MenuItem.separator(),
+          MenuItem(key: 'quit', label: 'Quit'),
+        ],
+      ),
+    );
   }
 
   Future<void> _notify() async {
     if (!preferences.notificationsEnabled || await windowManager.isFocused()) return;
     final notification = LocalNotification(title: 'Torca', body: 'New private message');
-    notification.onClick = () { unawaited(_showWindow()); };
+    notification.onClick = () {
+      unawaited(_showWindow());
+    };
     await notification.show();
   }
 
@@ -105,7 +113,9 @@ class DesktopLifecycle with WindowListener, TrayListener {
     _quitting = true;
     gateway.snapshots.removeListener(_snapshotChanged);
     preferences.removeListener(_preferencesChanged);
-    try { await shutdownProcessRuntime(); } finally {
+    try {
+      await shutdownProcessRuntime();
+    } finally {
       await gateway.dispose();
       await trayManager.destroy();
       await windowManager.setPreventClose(false);
@@ -121,15 +131,35 @@ class DesktopLifecycle with WindowListener, TrayListener {
         _ => state,
       };
 
-  @override void onWindowClose() { if (!_quitting) unawaited(windowManager.hide()); }
-  @override void onTrayIconMouseDown() { unawaited(_showWindow()); }
-  @override void onTrayIconRightMouseDown() { unawaited(trayManager.popUpContextMenu()); }
+  @override
+  void onWindowClose() {
+    if (_quitting) return;
+    if (preferences.closeToTrayEnabled) {
+      unawaited(windowManager.hide());
+    } else {
+      unawaited(_quit());
+    }
+  }
+
+  @override
+  void onTrayIconMouseDown() {
+    unawaited(_showWindow());
+  }
+
+  @override
+  void onTrayIconRightMouseDown() {
+    unawaited(trayManager.popUpContextMenu());
+  }
+
   @override
   void onTrayMenuItemClick(MenuItem menuItem) {
     switch (menuItem.key) {
-      case 'show': unawaited(_showWindow());
-      case 'pair': unawaited(_newPairing());
-      case 'quit': unawaited(_quit());
+      case 'show':
+        unawaited(_showWindow());
+      case 'pair':
+        unawaited(_newPairing());
+      case 'quit':
+        unawaited(_quit());
     }
   }
 }
