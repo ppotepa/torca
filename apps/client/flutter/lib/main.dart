@@ -6,9 +6,15 @@ import 'app.dart';
 import 'gateway/engine_gateway.dart';
 import 'gateway/ffi_engine_gateway.dart';
 import 'gateway/memory_engine_gateway.dart';
+import 'navigation/app_navigation_controller.dart';
+import 'platform/android_notification_router.dart';
+import 'platform/deep_link_router.dart';
 import 'platform/desktop_lifecycle.dart';
 
 DesktopLifecycle? _desktopLifecycle;
+DeepLinkRouter? _deepLinkRouter;
+AndroidNotificationRouter? _androidNotificationRouter;
+AppNavigationController? _navigation;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,12 +28,29 @@ Future<void> main() async {
       ? MemoryEngineGateway()
       : await _openNativeGateway();
 
+  final navigation = AppNavigationController();
+  _navigation = navigation;
+  _deepLinkRouter = DeepLinkRouter(navigation);
+  try {
+    await _deepLinkRouter!.initialize();
+  } on Object {
+    // Deep links are an optional entry path; failure must not prevent secure runtime startup.
+  }
+  if (Platform.isAndroid) {
+    _androidNotificationRouter = AndroidNotificationRouter(navigation);
+    try {
+      await _androidNotificationRouter!.initialize();
+    } on Object {
+      // Notification routing is local UI integration; messaging remains owned by RuntimeHost.
+    }
+  }
+
   if (Platform.isWindows) {
     _desktopLifecycle = DesktopLifecycle(gateway);
     await _desktopLifecycle!.initialize();
   }
 
-  runApp(TorcaApp(gateway: gateway));
+  runApp(TorcaApp(gateway: gateway, navigation: navigation));
 }
 
 Future<EngineGateway> _openNativeGateway() async {
