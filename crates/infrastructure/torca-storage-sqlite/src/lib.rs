@@ -14,7 +14,8 @@ mod storage;
 
 pub use backend::{MemoryStorageBackend, StorageBackend, StorageBackendError};
 pub use catalog::{
-    SqlStatement, contact_sql, conversation_sql, identity_sql, messaging_sql, receipt_sql,
+    SqlStatement, contact_sql, conversation_sql, identity_sql, messaging_sql,
+    peer_credential_sql, receipt_sql,
 };
 pub use durable::{
     DurableDeliveryError, DurableDeliveryStore, InMemoryDurableDeliveryStore, OutboxRecord,

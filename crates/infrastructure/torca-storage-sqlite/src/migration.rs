@@ -1,18 +1,16 @@
 use crate::{StorageBackend, StorageBackendError};
 use core::fmt;
 
-/// One monotonic embedded schema migration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Migration {
     pub version: u32,
     pub name: &'static str,
     pub sql: &'static str,
 }
-/// Canonical migration list.
 pub const fn migrations() -> &'static [Migration] {
     &MIGRATIONS
 }
-const MIGRATIONS: [Migration; 8] = [
+const MIGRATIONS: [Migration; 9] = [
     Migration {
         version: 1,
         name: "foundation",
@@ -53,8 +51,12 @@ const MIGRATIONS: [Migration; 8] = [
         name: "delivery_message_state_lifecycle",
         sql: include_str!("../sql/migrations/0008_delivery_message_state_lifecycle.sql"),
     },
+    Migration {
+        version: 9,
+        name: "peer_credentials",
+        sql: include_str!("../sql/migrations/0009_peer_credentials.sql"),
+    },
 ];
-/// Migration failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MigrationError {
     InvalidOrder,
@@ -72,10 +74,8 @@ impl From<StorageBackendError> for MigrationError {
         Self::Backend(value)
     }
 }
-/// Applies migrations transactionally and in order.
 pub struct MigrationRunner;
 impl MigrationRunner {
-    /// Migrates to latest version.
     pub fn migrate<B: StorageBackend>(backend: &mut B) -> Result<u32, MigrationError> {
         let latest = MIGRATIONS.last().map_or(0, |migration| migration.version);
         for pair in MIGRATIONS.windows(2) {

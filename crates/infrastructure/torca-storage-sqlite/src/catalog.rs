@@ -41,6 +41,18 @@ pub mod contact_sql {
     };
 }
 
+pub mod peer_credential_sql {
+    use super::SqlStatement;
+    pub const INSERT: SqlStatement = SqlStatement {
+        name: "peer_credential.insert",
+        sql: include_str!("../sql/commands/peer_credential_insert.sql"),
+    };
+    pub const SELECT_BY_CONTACT: SqlStatement = SqlStatement {
+        name: "peer_credential.select_by_contact",
+        sql: include_str!("../sql/queries/peer_credential_select_by_contact.sql"),
+    };
+}
+
 pub mod conversation_sql {
     use super::SqlStatement;
     pub const INSERT: SqlStatement = SqlStatement {
