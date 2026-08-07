@@ -4,6 +4,8 @@
 mod backend;
 #[path = "catalog.rs"]
 mod catalog;
+#[path = "control_outbox.rs"]
+mod control_outbox;
 #[path = "durable.rs"]
 mod durable;
 #[path = "durable_sqlcipher.rs"]
@@ -28,6 +30,7 @@ pub use catalog::{
     SqlStatement, contact_sql, conversation_sql, identity_sql, messaging_sql,
     peer_credential_sql, receipt_sql,
 };
+pub use control_outbox::SqlCipherControlOutbox;
 pub use durable::{
     DurableDeliveryError, DurableDeliveryStore, InMemoryDurableDeliveryStore, OutboxRecord,
     OutboxState,
