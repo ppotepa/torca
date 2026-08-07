@@ -10,7 +10,7 @@ pub struct Migration {
 pub const fn migrations() -> &'static [Migration] {
     &MIGRATIONS
 }
-const MIGRATIONS: [Migration; 9] = [
+const MIGRATIONS: [Migration; 10] = [
     Migration {
         version: 1,
         name: "foundation",
@@ -55,6 +55,11 @@ const MIGRATIONS: [Migration; 9] = [
         version: 9,
         name: "peer_credentials",
         sql: include_str!("../sql/migrations/0009_peer_credentials.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "receipt_message_lifecycle",
+        sql: include_str!("../sql/migrations/0010_receipt_message_lifecycle.sql"),
     },
 ];
 #[derive(Clone, Debug, Eq, PartialEq)]
