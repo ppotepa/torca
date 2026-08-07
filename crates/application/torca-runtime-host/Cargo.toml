@@ -10,6 +10,7 @@ publish = false
 path = "src/final.rs"
 
 [dependencies]
+torca-attachments = { path = "../../domains/torca-attachments" }
 torca-client-engine = { path = "../torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }

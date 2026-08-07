@@ -10,6 +10,7 @@ publish = false
 path = "src/final.rs"
 
 [dependencies]
+sha2 = "0.10"
 torca-attachment-sqlite = { path = "../torca-attachment-sqlite" }
 torca-attachment-transfer = { path = "../torca-attachment-transfer" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
