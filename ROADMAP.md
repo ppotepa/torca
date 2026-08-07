@@ -1,6 +1,6 @@
 # Torca roadmap
 
-The active engineering target is Torca **0.1**.
+The active engineering target is Torca **0.1** validation, followed by planning for **0.2**.
 
 ## Core implementation state
 
@@ -15,12 +15,12 @@ This means the original **core source-roadmap coverage is 100%**. It does not me
 
 ## 0.1 UI productization track
 
-A focused shared-client product/UI pass is active after core source completion. Its dependency order and design constraints are defined in [`docs/0.1/UI_IMPLEMENTATION_ORDER.md`](docs/0.1/UI_IMPLEMENTATION_ORDER.md).
+The shared-client product/UI source pass defined in [`docs/0.1/UI_IMPLEMENTATION_ORDER.md`](docs/0.1/UI_IMPLEMENTATION_ORDER.md) is source-complete through UI-15. The final source audit is recorded in [`docs/0.1/UI_FINAL_AUDIT.md`](docs/0.1/UI_FINAL_AUDIT.md).
 
-The UI track does not reopen the architecture: Flutter remains one responsive presentation client and Rust/runtime remains the owner of messaging, pairing, Tor, peer state, persistence, cryptography and background workflows.
+The UI track did not reopen the architecture: Flutter remains one responsive presentation client and Rust/runtime remains the owner of messaging, pairing, Tor, peer state, persistence, cryptography and background workflows.
 
-The exact active UI batch and validation state are always recorded in [`0.1_PROGRESS.md`](0.1_PROGRESS.md).
+Platform and end-to-end validation remain release gates and are always recorded in [`0.1_PROGRESS.md`](0.1_PROGRESS.md).
 
-## Planning rule
+## 0.2 planning rule
 
-No 1.0 scope is planned until the 0.1 release checklist is completed and its limitations are understood from real Windows, Android and Tor tests.
+0.2 should be planned as a concrete improvement over the validated 0.1 baseline. Source candidates may be collected before validation is complete, but no 0.2 item should silently redefine an unresolved 0.1 release gate.
