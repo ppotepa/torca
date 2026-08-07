@@ -15,6 +15,7 @@ path = "src/final.rs"
 rusqlite = { version = "0.38", features = ["bundled-sqlcipher-vendored-openssl"] }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
+torca-control-delivery = { path = "../../application/torca-control-delivery" }
 torca-conversations = { path = "../../domains/torca-conversations" }
 torca-delivery = { path = "../../application/torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
