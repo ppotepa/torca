@@ -14,13 +14,37 @@ pub unsafe extern "C" fn torca_engine_rename_contact(
     display_name_length: usize,
 ) -> i32 {
     with_runtime_mut(handle, |runtime| {
-        let contact_id = match unsafe { utf8_argument(contact_id, contact_id_length) } {
-            Ok(value) => value, Err(error) => return runtime.reject_argument(error),
+        let contact_id_hex = match unsafe { utf8_argument(contact_id, contact_id_length) } {
+            Ok(value) => value,
+            Err(error) => return runtime.reject_argument(error),
         };
         let display_name = match unsafe { utf8_argument(display_name, display_name_length) } {
-            Ok(value) => value, Err(error) => return runtime.reject_argument(error),
+            Ok(value) => value,
+            Err(error) => return runtime.reject_argument(error),
         };
-        runtime.execute(BridgeCommand::RenameContact { contact_id_hex: contact_id, display_name })
+        runtime.execute(BridgeCommand::RenameContact { contact_id_hex, display_name })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn torca_engine_verify_contact(
+    handle: *mut NativeEngineHandle,
+    contact_id: *const u8,
+    contact_id_length: usize,
+) -> i32 {
+    id_command(handle, contact_id, contact_id_length, |contact_id_hex| {
+        BridgeCommand::VerifyContact { contact_id_hex }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn torca_engine_reset_contact_verification(
+    handle: *mut NativeEngineHandle,
+    contact_id: *const u8,
+    contact_id_length: usize,
+) -> i32 {
+    id_command(handle, contact_id, contact_id_length, |contact_id_hex| {
+        BridgeCommand::ResetContactVerification { contact_id_hex }
     })
 }
 
@@ -30,47 +54,45 @@ pub unsafe extern "C" fn torca_engine_block_contact(
     contact_id: *const u8,
     contact_id_length: usize,
 ) -> i32 {
-    unsafe { id_command(handle, contact_id, contact_id_length, |contact_id_hex| BridgeCommand::BlockContact { contact_id_hex }) }
+    id_command(handle, contact_id, contact_id_length, |contact_id_hex| BridgeCommand::BlockContact { contact_id_hex })
 }
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn torca_engine_unblock_contact(
     handle: *mut NativeEngineHandle,
     contact_id: *const u8,
     contact_id_length: usize,
 ) -> i32 {
-    unsafe { id_command(handle, contact_id, contact_id_length, |contact_id_hex| BridgeCommand::UnblockContact { contact_id_hex }) }
+    id_command(handle, contact_id, contact_id_length, |contact_id_hex| BridgeCommand::UnblockContact { contact_id_hex })
 }
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn torca_engine_remove_contact(
     handle: *mut NativeEngineHandle,
     contact_id: *const u8,
     contact_id_length: usize,
 ) -> i32 {
-    unsafe { id_command(handle, contact_id, contact_id_length, |contact_id_hex| BridgeCommand::RemoveContact { contact_id_hex }) }
+    id_command(handle, contact_id, contact_id_length, |contact_id_hex| BridgeCommand::RemoveContact { contact_id_hex })
 }
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn torca_engine_clear_conversation_history(
     handle: *mut NativeEngineHandle,
     conversation_id: *const u8,
     conversation_id_length: usize,
 ) -> i32 {
-    unsafe { id_command(handle, conversation_id, conversation_id_length, |conversation_id_hex| BridgeCommand::ClearConversationHistory { conversation_id_hex }) }
+    id_command(handle, conversation_id, conversation_id_length, |conversation_id_hex| BridgeCommand::ClearConversationHistory { conversation_id_hex })
 }
 
 unsafe fn id_command(
     handle: *mut NativeEngineHandle,
-    data: *const u8,
-    length: usize,
-    make: impl FnOnce(String) -> BridgeCommand,
+    id: *const u8,
+    id_length: usize,
+    command: impl FnOnce(String) -> BridgeCommand,
 ) -> i32 {
     with_runtime_mut(handle, |runtime| {
-        let value = match unsafe { utf8_argument(data, length) } {
-            Ok(value) => value, Err(error) => return runtime.reject_argument(error),
+        let value = match unsafe { utf8_argument(id, id_length) } {
+            Ok(value) => value,
+            Err(error) => return runtime.reject_argument(error),
         };
-        runtime.execute(make(value))
+        runtime.execute(command(value))
     })
 }
 

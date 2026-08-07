@@ -23,44 +23,12 @@ typedef _NoArgNative = ffi.Int32 Function(_Handle);
 typedef _NoArgDart = int Function(_Handle);
 typedef _OneStringNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _OneStringDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
-typedef _TwoStringsNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-);
-typedef _TwoStringsDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-);
-typedef _MessageIntentNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-);
-typedef _MessageIntentDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-);
-typedef _AttachmentIntentNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Uint64,
-);
-typedef _AttachmentIntentDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  int,
-);
+typedef _TwoStringsNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
+typedef _TwoStringsDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int);
+typedef _MessageIntentNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
+typedef _MessageIntentDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int);
+typedef _AttachmentIntentNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Uint64);
+typedef _AttachmentIntentDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int, int);
 typedef _RefreshNative = ffi.Int32 Function(_Handle);
 typedef _RefreshDart = int Function(_Handle);
 typedef _PointerNative = ffi.Pointer<ffi.Uint8> Function(_Handle);
@@ -79,14 +47,10 @@ class FfiEngineGateway implements EngineGateway {
     final bindings = _NativeBindings(library ?? ffi.DynamicLibrary.open(_libraryName()));
     final version = bindings.contractVersion();
     if (version != torcaContractVersion) {
-      throw StateError(
-        'native Torca contract $version does not match Flutter contract $torcaContractVersion',
-      );
+      throw StateError('native Torca contract $version does not match Flutter contract $torcaContractVersion');
     }
     final handle = bindings.engineNew();
-    if (handle == ffi.nullptr) {
-      throw StateError('native Torca process handle could not be acquired');
-    }
+    if (handle == ffi.nullptr) throw StateError('native Torca process handle could not be acquired');
     return FfiEngineGateway._(bindings, handle);
   }
 
@@ -111,11 +75,7 @@ class FfiEngineGateway implements EngineGateway {
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     if (_disposed) {
-      return const BridgeResultDto(
-        ok: false,
-        kind: 'error:runtime_unavailable',
-        error: 'The secure Torca runtime is currently unavailable.',
-      );
+      return const BridgeResultDto(ok: false, kind: 'error:runtime_unavailable', error: 'The secure Torca runtime is currently unavailable.');
     }
     if (command is RefreshSnapshotCommandDto) return _refreshSnapshot();
 
@@ -133,6 +93,10 @@ class FfiEngineGateway implements EngineGateway {
       _withString(command.sessionIdHex, _bindings.cancelPairing);
     } else if (command is RenameContactCommandDto) {
       _withTwoStrings(command.contactIdHex, command.displayName, _bindings.renameContact);
+    } else if (command is VerifyContactCommandDto) {
+      _withString(command.contactIdHex, _bindings.verifyContact);
+    } else if (command is ResetContactVerificationCommandDto) {
+      _withString(command.contactIdHex, _bindings.resetContactVerification);
     } else if (command is BlockContactCommandDto) {
       _withString(command.contactIdHex, _bindings.blockContact);
     } else if (command is UnblockContactCommandDto) {
@@ -154,17 +118,9 @@ class FfiEngineGateway implements EngineGateway {
     } else if (command is CancelAttachmentCommandDto) {
       _withString(command.attachmentIdHex, _bindings.cancelAttachment);
     } else if (command is ExportAttachmentCommandDto) {
-      _withTwoStrings(
-        command.attachmentIdHex,
-        command.destinationPath,
-        _bindings.exportAttachment,
-      );
+      _withTwoStrings(command.attachmentIdHex, command.destinationPath, _bindings.exportAttachment);
     } else {
-      return const BridgeResultDto(
-        ok: false,
-        kind: 'error:invalid_input',
-        error: 'The supplied value is not valid.',
-      );
+      return const BridgeResultDto(ok: false, kind: 'error:invalid_input', error: 'The supplied value is not valid.');
     }
 
     final result = _decodeResult(_readResultJson());
@@ -177,19 +133,9 @@ class FfiEngineGateway implements EngineGateway {
     final body = _NativeUtf8(_bindings, command.body);
     final reply = _NativeUtf8(_bindings, command.replyToMessageId ?? '');
     try {
-      _bindings.queueMessageIntent(
-        _handle,
-        conversation.pointer,
-        conversation.length,
-        body.pointer,
-        body.length,
-        reply.pointer,
-        reply.length,
-      );
+      _bindings.queueMessageIntent(_handle, conversation.pointer, conversation.length, body.pointer, body.length, reply.pointer, reply.length);
     } finally {
-      conversation.dispose();
-      body.dispose();
-      reply.dispose();
+      conversation.dispose(); body.dispose(); reply.dispose();
     }
   }
 
@@ -199,250 +145,108 @@ class FfiEngineGateway implements EngineGateway {
     final name = _NativeUtf8(_bindings, command.name);
     final mediaType = _NativeUtf8(_bindings, command.mediaType);
     try {
-      _bindings.queueAttachmentIntent(
-        _handle,
-        conversation.pointer,
-        conversation.length,
-        path.pointer,
-        path.length,
-        name.pointer,
-        name.length,
-        mediaType.pointer,
-        mediaType.length,
-        command.size,
-      );
+      _bindings.queueAttachmentIntent(_handle, conversation.pointer, conversation.length, path.pointer, path.length, name.pointer, name.length, mediaType.pointer, mediaType.length, command.size);
     } finally {
-      conversation.dispose();
-      path.dispose();
-      name.dispose();
-      mediaType.dispose();
+      conversation.dispose(); path.dispose(); name.dispose(); mediaType.dispose();
     }
   }
 
   void _withString(String value, _OneStringDart operation) {
     final native = _NativeUtf8(_bindings, value);
-    try {
-      operation(_handle, native.pointer, native.length);
-    } finally {
-      native.dispose();
-    }
+    try { operation(_handle, native.pointer, native.length); } finally { native.dispose(); }
   }
 
   void _withTwoStrings(String first, String second, _TwoStringsDart operation) {
     final firstValue = _NativeUtf8(_bindings, first);
     final secondValue = _NativeUtf8(_bindings, second);
-    try {
-      operation(
-        _handle,
-        firstValue.pointer,
-        firstValue.length,
-        secondValue.pointer,
-        secondValue.length,
-      );
-    } finally {
-      firstValue.dispose();
-      secondValue.dispose();
-    }
+    try { operation(_handle, firstValue.pointer, firstValue.length, secondValue.pointer, secondValue.length); }
+    finally { firstValue.dispose(); secondValue.dispose(); }
   }
 
   @override
   Future<String> diagnosticsJson() async {
     if (_disposed) return '{"events":[]}';
     if (_bindings.refreshDiagnostics(_handle) != 0) return '{"events":[]}';
-    return _readNativeString(
-      _bindings.diagnosticsPointer(_handle),
-      _bindings.diagnosticsLength(_handle),
-    );
+    return _readNativeString(_bindings.diagnosticsPointer(_handle), _bindings.diagnosticsLength(_handle));
   }
 
   Future<BridgeResultDto> _refreshSnapshot({bool silent = false}) async {
     final status = _bindings.refreshSnapshot(_handle);
     if (status != 0) {
       final error = _decodeResult(_readResultJson());
-      return silent
-          ? const BridgeResultDto(ok: false, kind: 'error:runtime_unavailable')
-          : error;
+      return silent ? const BridgeResultDto(ok: false, kind: 'error:runtime_unavailable') : error;
     }
     _snapshots.value = _decodeSnapshot(_readSnapshotJson());
     return const BridgeResultDto(ok: true, kind: 'snapshot');
   }
 
-  String _readResultJson() => _readNativeString(
-        _bindings.resultPointer(_handle),
-        _bindings.resultLength(_handle),
-      );
-
-  String _readSnapshotJson() => _readNativeString(
-        _bindings.snapshotPointer(_handle),
-        _bindings.snapshotLength(_handle),
-      );
-
+  String _readResultJson() => _readNativeString(_bindings.resultPointer(_handle), _bindings.resultLength(_handle));
+  String _readSnapshotJson() => _readNativeString(_bindings.snapshotPointer(_handle), _bindings.snapshotLength(_handle));
   String _readNativeString(ffi.Pointer<ffi.Uint8> pointer, int length) {
     if (pointer == ffi.nullptr || length == 0) return '';
     return utf8.decode(pointer.asTypedList(length), allowMalformed: false);
   }
 
   BridgeResultDto _decodeResult(String json) {
-    if (json.isEmpty) {
-      return const BridgeResultDto(
-        ok: false,
-        kind: 'error:runtime_unavailable',
-        error: 'The secure Torca runtime is currently unavailable.',
-      );
-    }
+    if (json.isEmpty) return const BridgeResultDto(ok: false, kind: 'error:runtime_unavailable', error: 'The secure Torca runtime is currently unavailable.');
     final map = _map(jsonDecode(json), 'bridge result');
-    return BridgeResultDto(
-      ok: _bool(map, 'ok'),
-      kind: _string(map, 'kind'),
-      error: _optionalString(map, 'error'),
-    );
+    return BridgeResultDto(ok: _bool(map, 'ok'), kind: _string(map, 'kind'), error: _optionalString(map, 'error'));
   }
 
   AppSnapshotDto _decodeSnapshot(String json) {
     final map = _map(jsonDecode(json), 'app snapshot');
     final version = _int(map, 'contractVersion');
-    if (version != torcaContractVersion) {
-      throw FormatException('unsupported native contract version $version');
-    }
+    if (version != torcaContractVersion) throw FormatException('unsupported native contract version $version');
     final identityValue = map['identity'];
     return AppSnapshotDto(
-      identity: identityValue == null
-          ? null
-          : IdentityDto(
-              displayName: _string(_map(identityValue, 'identity'), 'displayName'),
-            ),
+      identity: identityValue == null ? null : IdentityDto(displayName: _string(_map(identityValue, 'identity'), 'displayName')),
       torState: _string(map, 'torState'),
       onionAddress: _optionalString(map, 'onionAddress'),
       pairings: _list(map, 'pairings').map((value) {
         final item = _map(value, 'pairing');
-        return PairingDto(
-          id: _string(item, 'id'),
-          code: _string(item, 'code'),
-          role: _string(item, 'role'),
-          state: _string(item, 'state'),
-          expiresAtMs: _int(item, 'expiresAtMs'),
-          localApproved: _bool(item, 'localApproved'),
-          remoteApproved: _bool(item, 'remoteApproved'),
-        );
+        return PairingDto(id: _string(item, 'id'), code: _string(item, 'code'), role: _string(item, 'role'), state: _string(item, 'state'), expiresAtMs: _int(item, 'expiresAtMs'), localApproved: _bool(item, 'localApproved'), remoteApproved: _bool(item, 'remoteApproved'));
       }).toList(growable: false),
       contacts: _list(map, 'contacts').map((value) {
         final item = _map(value, 'contact');
         final health = _map(item['peerHealth'], 'contact.peerHealth');
         return ContactDto(
-          id: _string(item, 'id'),
-          displayName: _string(item, 'displayName'),
-          onionAddress: _string(item, 'onionAddress'),
-          status: _string(item, 'status'),
-          connectionState: _string(item, 'connectionState'),
-          safetyNumber: _optionalString(item, 'safetyNumber'),
-          peerHealth: PeerHealthDto(
-            state: _string(health, 'state'),
-            quality: _string(health, 'quality'),
-            rttMs: _optionalInt(health, 'rttMs'),
-            lastSuccessAtMs: _optionalInt(health, 'lastSuccessAtMs'),
-            consecutiveFailures: _int(health, 'consecutiveFailures'),
-            reconnectAttempt: _int(health, 'reconnectAttempt'),
-          ),
+          id: _string(item, 'id'), displayName: _string(item, 'displayName'), onionAddress: _string(item, 'onionAddress'), status: _string(item, 'status'), connectionState: _string(item, 'connectionState'), safetyNumber: _optionalString(item, 'safetyNumber'),
+          peerHealth: PeerHealthDto(state: _string(health, 'state'), quality: _string(health, 'quality'), rttMs: _optionalInt(health, 'rttMs'), lastSuccessAtMs: _optionalInt(health, 'lastSuccessAtMs'), consecutiveFailures: _int(health, 'consecutiveFailures'), reconnectAttempt: _int(health, 'reconnectAttempt')),
+          verificationStatus: _stringOr(item, 'verificationStatus', 'unverified'), verifiedAtMs: _optionalInt(item, 'verifiedAtMs'),
         );
       }).toList(growable: false),
       conversations: _list(map, 'conversations').map((value) {
         final item = _map(value, 'conversation');
-        return ConversationDto(
-          id: _string(item, 'id'),
-          contactId: _string(item, 'contactId'),
-          status: _string(item, 'status'),
-          unreadCount: _intOr(item, 'unreadCount', 0),
-          lastActivityAtMs: _intOr(item, 'lastActivityAtMs', 0),
-          lastMessageBody: _optionalString(item, 'lastMessageBody'),
-          lastMessageDirection: _optionalString(item, 'lastMessageDirection'),
-          lastMessageStatus: _optionalString(item, 'lastMessageStatus'),
-        );
+        return ConversationDto(id: _string(item, 'id'), contactId: _string(item, 'contactId'), status: _string(item, 'status'), unreadCount: _intOr(item, 'unreadCount', 0), lastActivityAtMs: _intOr(item, 'lastActivityAtMs', 0), lastMessageBody: _optionalString(item, 'lastMessageBody'), lastMessageDirection: _optionalString(item, 'lastMessageDirection'), lastMessageStatus: _optionalString(item, 'lastMessageStatus'));
       }).toList(growable: false),
       messages: _list(map, 'messages').map((value) {
         final item = _map(value, 'message');
-        return MessageDto(
-          id: _string(item, 'id'),
-          conversationId: _string(item, 'conversationId'),
-          body: _string(item, 'body'),
-          direction: _string(item, 'direction'),
-          status: _string(item, 'status'),
-          replyToMessageId: _optionalString(item, 'replyToMessageId'),
-          createdAtMs: _int(item, 'createdAtMs'),
-          updatedAtMs: _int(item, 'updatedAtMs'),
-          attemptCount: _int(item, 'attemptCount'),
-        );
+        return MessageDto(id: _string(item, 'id'), conversationId: _string(item, 'conversationId'), body: _string(item, 'body'), direction: _string(item, 'direction'), status: _string(item, 'status'), replyToMessageId: _optionalString(item, 'replyToMessageId'), createdAtMs: _int(item, 'createdAtMs'), updatedAtMs: _int(item, 'updatedAtMs'), attemptCount: _int(item, 'attemptCount'));
       }).toList(growable: false),
       attachments: _list(map, 'attachments').map((value) {
         final item = _map(value, 'attachment');
-        return AttachmentDto(
-          id: _string(item, 'id'),
-          messageId: _string(item, 'messageId'),
-          name: _string(item, 'name'),
-          mediaType: _string(item, 'mediaType'),
-          size: _int(item, 'size'),
-          status: _string(item, 'status'),
-          offset: _int(item, 'offset'),
-        );
+        return AttachmentDto(id: _string(item, 'id'), messageId: _string(item, 'messageId'), name: _string(item, 'name'), mediaType: _string(item, 'mediaType'), size: _int(item, 'size'), status: _string(item, 'status'), offset: _int(item, 'offset'));
       }).toList(growable: false),
     );
   }
 
   Map<String, Object?> _map(Object? value, String field) {
     if (value is! Map<Object?, Object?>) throw FormatException('$field must be a map');
-    return value.map((key, item) {
-      if (key is! String) throw FormatException('$field contains a non-string key');
-      return MapEntry<String, Object?>(key, item);
-    });
+    return value.map((key, item) { if (key is! String) throw FormatException('$field contains a non-string key'); return MapEntry<String, Object?>(key, item); });
   }
-
-  List<Object?> _list(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is List<Object?>) return value;
-    throw FormatException('$field must be a list');
-  }
-
-  String _string(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is String) return value;
-    throw FormatException('$field must be a string');
-  }
-
-  String? _optionalString(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value == null || value is String) return value as String?;
-    throw FormatException('$field must be a string or null');
-  }
-
-  bool _bool(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is bool) return value;
-    throw FormatException('$field must be a bool');
-  }
-
-  int _int(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is int) return value;
-    throw FormatException('$field must be an int');
-  }
-
-  int _intOr(Map<String, Object?> map, String field, int fallback) {
-    final value = map[field];
-    return value is int ? value : fallback;
-  }
-
-  int? _optionalInt(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value == null || value is int) return value as int?;
-    throw FormatException('$field must be an int or null');
-  }
+  List<Object?> _list(Map<String, Object?> map, String field) { final value = map[field]; if (value is List<Object?>) return value; throw FormatException('$field must be a list'); }
+  String _string(Map<String, Object?> map, String field) { final value = map[field]; if (value is String) return value; throw FormatException('$field must be a string'); }
+  String _stringOr(Map<String, Object?> map, String field, String fallback) { final value = map[field]; return value is String ? value : fallback; }
+  String? _optionalString(Map<String, Object?> map, String field) { final value = map[field]; if (value == null || value is String) return value as String?; throw FormatException('$field must be a string or null'); }
+  bool _bool(Map<String, Object?> map, String field) { final value = map[field]; if (value is bool) return value; throw FormatException('$field must be a bool'); }
+  int _int(Map<String, Object?> map, String field) { final value = map[field]; if (value is int) return value; throw FormatException('$field must be an int'); }
+  int _intOr(Map<String, Object?> map, String field, int fallback) { final value = map[field]; return value is int ? value : fallback; }
+  int? _optionalInt(Map<String, Object?> map, String field) { final value = map[field]; if (value == null || value is int) return value as int?; throw FormatException('$field must be an int or null'); }
 
   @override
   Future<void> dispose() async {
     if (_disposed) return;
-    _disposed = true;
-    _poller.cancel();
-    _bindings.engineDestroy(_handle);
-    _snapshots.dispose();
+    _disposed = true; _poller.cancel(); _bindings.engineDestroy(_handle); _snapshots.dispose();
   }
 }
 
@@ -454,11 +258,9 @@ class _NativeUtf8 {
       pointer.asTypedList(_bytes.length).setAll(0, _bytes);
     }
   }
-
   final _NativeBindings _bindings;
   final List<int> _bytes;
   late final ffi.Pointer<ffi.Uint8> pointer;
-
   int get length => _bytes.length;
   void dispose() => _bindings.free(pointer, _bytes.length);
 }
@@ -477,6 +279,8 @@ class _NativeBindings {
         rejectPairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_reject_pairing'),
         cancelPairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_cancel_pairing'),
         renameContact = library.lookupFunction<_TwoStringsNative, _TwoStringsDart>('torca_engine_rename_contact'),
+        verifyContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_verify_contact'),
+        resetContactVerification = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_reset_contact_verification'),
         blockContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_block_contact'),
         unblockContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_unblock_contact'),
         removeContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_remove_contact'),
@@ -498,34 +302,13 @@ class _NativeBindings {
         diagnosticsLength = library.lookupFunction<_LengthNative, _LengthDart>('torca_engine_diagnostics_len');
 
   final _ContractVersionDart contractVersion;
-  final _AllocDart alloc;
-  final _FreeDart free;
-  final _EngineNewDart engineNew;
-  final _EngineDestroyDart engineDestroy;
-  final _OneStringDart createIdentityIntent;
-  final _NoArgDart createPairingIntent;
-  final _OneStringDart joinPairingIntent;
-  final _OneStringDart approvePairing;
-  final _OneStringDart rejectPairing;
-  final _OneStringDart cancelPairing;
-  final _TwoStringsDart renameContact;
-  final _OneStringDart blockContact;
-  final _OneStringDart unblockContact;
-  final _OneStringDart removeContact;
-  final _OneStringDart clearConversationHistory;
-  final _MessageIntentDart queueMessageIntent;
-  final _OneStringDart retryMessageIntent;
-  final _OneStringDart markConversationRead;
-  final _AttachmentIntentDart queueAttachmentIntent;
-  final _OneStringDart retryAttachment;
-  final _OneStringDart cancelAttachment;
-  final _TwoStringsDart exportAttachment;
-  final _RefreshDart refreshSnapshot;
-  final _RefreshDart refreshDiagnostics;
-  final _PointerDart resultPointer;
-  final _LengthDart resultLength;
-  final _PointerDart snapshotPointer;
-  final _LengthDart snapshotLength;
-  final _PointerDart diagnosticsPointer;
-  final _LengthDart diagnosticsLength;
+  final _AllocDart alloc; final _FreeDart free; final _EngineNewDart engineNew; final _EngineDestroyDart engineDestroy;
+  final _OneStringDart createIdentityIntent; final _NoArgDart createPairingIntent; final _OneStringDart joinPairingIntent;
+  final _OneStringDart approvePairing; final _OneStringDart rejectPairing; final _OneStringDart cancelPairing;
+  final _TwoStringsDart renameContact; final _OneStringDart verifyContact; final _OneStringDart resetContactVerification;
+  final _OneStringDart blockContact; final _OneStringDart unblockContact; final _OneStringDart removeContact; final _OneStringDart clearConversationHistory;
+  final _MessageIntentDart queueMessageIntent; final _OneStringDart retryMessageIntent; final _OneStringDart markConversationRead;
+  final _AttachmentIntentDart queueAttachmentIntent; final _OneStringDart retryAttachment; final _OneStringDart cancelAttachment; final _TwoStringsDart exportAttachment;
+  final _RefreshDart refreshSnapshot; final _RefreshDart refreshDiagnostics;
+  final _PointerDart resultPointer; final _LengthDart resultLength; final _PointerDart snapshotPointer; final _LengthDart snapshotLength; final _PointerDart diagnosticsPointer; final _LengthDart diagnosticsLength;
 }

@@ -10,7 +10,7 @@ pub struct Migration {
 
 pub const fn migrations() -> &'static [Migration] { &MIGRATIONS }
 
-const MIGRATIONS: [Migration; 17] = [
+const MIGRATIONS: [Migration; 18] = [
     Migration { version: 1, name: "foundation", sql: include_str!("../sql/migrations/0001_foundation.sql") },
     Migration { version: 2, name: "identity", sql: include_str!("../sql/migrations/0002_identity.sql") },
     Migration { version: 3, name: "messaging", sql: include_str!("../sql/migrations/0003_messaging.sql") },
@@ -28,6 +28,7 @@ const MIGRATIONS: [Migration; 17] = [
     Migration { version: 15, name: "retry_message_requeues_outbox", sql: include_str!("../sql/migrations/0015_retry_message_requeues_outbox.sql") },
     Migration { version: 16, name: "contact_metadata", sql: include_str!("../sql/migrations/0016_contact_metadata.sql") },
     Migration { version: 17, name: "unique_remote_identity", sql: include_str!("../sql/migrations/0017_unique_remote_identity.sql") },
+    Migration { version: 18, name: "contact_verification", sql: include_str!("../sql/migrations/0018_contact_verification.sql") },
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,9 +37,7 @@ pub enum MigrationError {
     DatabaseTooNew { database: u32, supported: u32 },
     Backend(StorageBackendError),
 }
-impl fmt::Display for MigrationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { write!(formatter, "{self:?}") }
-}
+impl fmt::Display for MigrationError { fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { write!(formatter, "{self:?}") } }
 impl std::error::Error for MigrationError {}
 impl From<StorageBackendError> for MigrationError { fn from(value: StorageBackendError) -> Self { Self::Backend(value) } }
 

@@ -17,6 +17,9 @@ const ATTACHMENTS_FOR_CONVERSATION_SQL: &str = include_str!("../sql/queries/atta
 const DELETE_CONTROL_SQL: &str = include_str!("../sql/commands/contact_control_delete.sql");
 const DELETE_MESSAGES_SQL: &str = include_str!("../sql/commands/conversation_messages_delete.sql");
 const DELETE_CONTACT_SQL: &str = include_str!("../sql/commands/contact_delete.sql");
+const VERIFY_CONTACT_SQL: &str = include_str!("../sql/commands/contact_verification_upsert.sql");
+const RESET_VERIFICATION_SQL: &str = include_str!("../sql/commands/contact_verification_delete.sql");
+const LIST_VERIFICATIONS_SQL: &str = include_str!("../sql/queries/contact_verification_list.sql");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelationshipAdminError {
@@ -64,6 +67,52 @@ impl SqlCipherRelationshipAdmin {
             if let Some(name) = name { values.insert(id, name); }
         }
         Ok(values)
+    }
+
+    pub fn contact_verifications(
+        &self,
+    ) -> Result<BTreeMap<ContactId, (bool, Option<Timestamp>)>, RelationshipAdminError> {
+        let mut statement = self.backend.connection().prepare(LIST_VERIFICATIONS_SQL)
+            .map_err(|_| RelationshipAdminError::Storage)?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<i64>>(2)?))
+        }).map_err(|_| RelationshipAdminError::Storage)?;
+        let mut values = BTreeMap::new();
+        for row in rows {
+            let (id, verified, verified_at_ms) = row.map_err(|_| RelationshipAdminError::Storage)?;
+            let id = ContactId::from_opaque(OpaqueId::from_bytes(fixed16(id)?));
+            let verified_at = verified_at_ms
+                .map(Timestamp::from_unix_millis)
+                .transpose()
+                .map_err(|_| RelationshipAdminError::Storage)?;
+            values.insert(id, (verified != 0, verified_at));
+        }
+        Ok(values)
+    }
+
+    pub fn verify_contact(
+        &mut self,
+        contact_id: ContactId,
+        at: Timestamp,
+    ) -> Result<(), RelationshipAdminError> {
+        let id = contact_id.to_opaque().into_bytes();
+        let changed = self.backend.connection().execute(
+            VERIFY_CONTACT_SQL,
+            params![id.as_slice(), at.to_unix_millis()],
+        ).map_err(|_| RelationshipAdminError::Storage)?;
+        if changed == 1 { Ok(()) } else { Err(RelationshipAdminError::NotFound) }
+    }
+
+    pub fn reset_contact_verification(
+        &mut self,
+        contact_id: ContactId,
+    ) -> Result<(), RelationshipAdminError> {
+        let id = contact_id.to_opaque().into_bytes();
+        self.backend.connection().execute(
+            RESET_VERIFICATION_SQL,
+            params![id.as_slice()],
+        ).map_err(|_| RelationshipAdminError::Storage)?;
+        Ok(())
     }
 
     pub fn rename_contact(
