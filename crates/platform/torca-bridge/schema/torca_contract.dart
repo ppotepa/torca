@@ -69,6 +69,25 @@ class MessageDto {
   final String status;
 }
 
+class AttachmentDto {
+  const AttachmentDto({
+    required this.id,
+    required this.messageId,
+    required this.name,
+    required this.mediaType,
+    required this.size,
+    required this.status,
+    required this.offset,
+  });
+  final String id;
+  final String messageId;
+  final String name;
+  final String mediaType;
+  final int size;
+  final String status;
+  final int offset;
+}
+
 class AppSnapshotDto {
   const AppSnapshotDto({
     this.identity,
@@ -78,6 +97,7 @@ class AppSnapshotDto {
     this.contacts = const [],
     this.conversations = const [],
     this.messages = const [],
+    this.attachments = const [],
   });
   final IdentityDto? identity;
   final String torState;
@@ -86,11 +106,10 @@ class AppSnapshotDto {
   final List<ContactDto> contacts;
   final List<ConversationDto> conversations;
   final List<MessageDto> messages;
+  final List<AttachmentDto> attachments;
 }
 
-sealed class BridgeCommandDto {
-  const BridgeCommandDto();
-}
+sealed class BridgeCommandDto { const BridgeCommandDto(); }
 
 class CreateIdentityCommandDto extends BridgeCommandDto {
   const CreateIdentityCommandDto({required this.identityIdHex, required this.displayName, required this.atMs});
@@ -98,33 +117,27 @@ class CreateIdentityCommandDto extends BridgeCommandDto {
   final String displayName;
   final int atMs;
 }
-
 class CreatePairingCommandDto extends BridgeCommandDto {
   const CreatePairingCommandDto({required this.sessionIdHex});
   final String sessionIdHex;
 }
-
 class JoinPairingCommandDto extends BridgeCommandDto {
   const JoinPairingCommandDto({required this.sessionIdHex, required this.code});
   final String sessionIdHex;
   final String code;
 }
-
 class ApprovePairingCommandDto extends BridgeCommandDto {
   const ApprovePairingCommandDto({required this.sessionIdHex});
   final String sessionIdHex;
 }
-
 class RejectPairingCommandDto extends BridgeCommandDto {
   const RejectPairingCommandDto({required this.sessionIdHex});
   final String sessionIdHex;
 }
-
 class CancelPairingCommandDto extends BridgeCommandDto {
   const CancelPairingCommandDto({required this.sessionIdHex});
   final String sessionIdHex;
 }
-
 class QueueMessageCommandDto extends BridgeCommandDto {
   const QueueMessageCommandDto({
     required this.messageIdHex,
@@ -137,12 +150,36 @@ class QueueMessageCommandDto extends BridgeCommandDto {
   final String body;
   final int atMs;
 }
-
 class MarkConversationReadCommandDto extends BridgeCommandDto {
   const MarkConversationReadCommandDto({required this.conversationIdHex});
   final String conversationIdHex;
 }
-
+class QueueAttachmentCommandDto extends BridgeCommandDto {
+  const QueueAttachmentCommandDto({
+    required this.attachmentIdHex,
+    required this.messageIdHex,
+    required this.conversationIdHex,
+    required this.sourcePath,
+    required this.name,
+    required this.mediaType,
+    required this.size,
+  });
+  final String attachmentIdHex;
+  final String messageIdHex;
+  final String conversationIdHex;
+  final String sourcePath;
+  final String name;
+  final String mediaType;
+  final int size;
+}
+class RetryAttachmentCommandDto extends BridgeCommandDto {
+  const RetryAttachmentCommandDto({required this.attachmentIdHex});
+  final String attachmentIdHex;
+}
+class CancelAttachmentCommandDto extends BridgeCommandDto {
+  const CancelAttachmentCommandDto({required this.attachmentIdHex});
+  final String attachmentIdHex;
+}
 class RefreshSnapshotCommandDto extends BridgeCommandDto {
   const RefreshSnapshotCommandDto();
 }
