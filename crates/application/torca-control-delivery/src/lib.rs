@@ -1,22 +1,9 @@
-//! Durable control delivery for receipts and attachment-control frames.
+//! Durable control delivery worker. Persistence is supplied by an infrastructure adapter.
 
 use core::fmt;
-use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::{OptionalExtension, params};
 use torca_foundation::{OpaqueId, Timestamp};
-use torca_storage_sqlite::{
-    DatabaseKey, MigrationError, SqlCipherBackend, StorageBackendError, StorageKernel,
-};
-
-const INSERT_SQL: &str = include_str!("../sql/control_insert.sql");
-const CLAIM_SQL: &str = include_str!("../sql/control_claim_due.sql");
-const RESCHEDULE_SQL: &str = include_str!("../sql/control_reschedule.sql");
-const COMPLETE_SQL: &str = include_str!("../sql/control_complete.sql");
-const DEAD_LETTER_SQL: &str = include_str!("../sql/control_dead_letter.sql");
-const RECOVER_STALE_SQL: &str = include_str!("../sql/control_recover_stale.sql");
-const EXISTS_SQL: &str = include_str!("../sql/control_exists.sql");
 
 pub const MAX_CONTROL_PAYLOAD: usize = 64 * 1024;
 const MAX_ATTEMPTS: u32 = 8;
@@ -29,11 +16,11 @@ pub enum ControlKind {
     Attachment = 2,
 }
 impl ControlKind {
-    fn from_i64(value: i64) -> Result<Self, ControlDeliveryError> {
+    pub const fn from_storage(value: i64) -> Option<Self> {
         match value {
-            1 => Ok(Self::Receipt),
-            2 => Ok(Self::Attachment),
-            _ => Err(ControlDeliveryError::InvalidStoredJob),
+            1 => Some(Self::Receipt),
+            2 => Some(Self::Attachment),
+            _ => None,
         }
     }
 }
@@ -66,163 +53,23 @@ impl fmt::Display for ControlDeliveryError {
 }
 impl std::error::Error for ControlDeliveryError {}
 
-pub struct ControlOutbox {
-    backend: SqlCipherBackend,
-}
-impl ControlOutbox {
-    pub fn open(path: impl AsRef<Path>, key: &DatabaseKey) -> Result<Self, ControlDeliveryError> {
-        let backend = SqlCipherBackend::open(path, key).map_err(map_backend)?;
-        Self::bootstrap(backend)
-    }
-
-    pub fn open_in_memory(key: &DatabaseKey) -> Result<Self, ControlDeliveryError> {
-        let backend = SqlCipherBackend::open_in_memory(key).map_err(map_backend)?;
-        Self::bootstrap(backend)
-    }
-
-    fn bootstrap(backend: SqlCipherBackend) -> Result<Self, ControlDeliveryError> {
-        let mut kernel = StorageKernel::new(backend);
-        kernel.bootstrap().map_err(map_migration)?;
-        Ok(Self { backend: kernel.into_backend() })
-    }
-
-    pub fn queue(
+/// Durable control-outbox persistence port. SQLCipher belongs to infrastructure, not this crate.
+pub trait ControlOutboxStore: Send {
+    fn queue(
         &mut self,
         job_id: OpaqueId,
         contact_id: OpaqueId,
         kind: ControlKind,
         payload: &[u8],
         next_attempt_at: Timestamp,
-    ) -> Result<(), ControlDeliveryError> {
-        if payload.len() > MAX_CONTROL_PAYLOAD {
-            return Err(ControlDeliveryError::PayloadTooLarge);
-        }
-        let job = job_id.into_bytes();
-        let contact = contact_id.into_bytes();
-        self.backend
-            .connection()
-            .execute(
-                INSERT_SQL,
-                params![
-                    job.as_slice(),
-                    contact.as_slice(),
-                    kind as i64,
-                    payload,
-                    next_attempt_at.to_unix_millis(),
-                ],
-            )
-            .map_err(|error| {
-                if error.sqlite_error_code() == Some(rusqlite::ErrorCode::ConstraintViolation) {
-                    ControlDeliveryError::Duplicate
-                } else {
-                    ControlDeliveryError::Backend
-                }
-            })?;
-        Ok(())
-    }
-
-    pub fn recover_stale(&mut self, claimed_before: Timestamp) -> Result<usize, ControlDeliveryError> {
-        self.backend
-            .connection()
-            .execute(RECOVER_STALE_SQL, params![claimed_before.to_unix_millis()])
-            .map_err(|_| ControlDeliveryError::Backend)
-    }
-
-    fn claim_due(
-        &mut self,
-        now: Timestamp,
-        limit: usize,
-    ) -> Result<Vec<ControlJob>, ControlDeliveryError> {
-        let limit = i64::try_from(limit).map_err(|_| ControlDeliveryError::InvalidState)?;
-        let mut statement = self
-            .backend
-            .connection()
-            .prepare(CLAIM_SQL)
-            .map_err(|_| ControlDeliveryError::Backend)?;
-        let rows = statement
-            .query_map(params![now.to_unix_millis(), limit], |row| {
-                Ok((
-                    row.get::<_, Vec<u8>>(0)?,
-                    row.get::<_, Vec<u8>>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, Vec<u8>>(3)?,
-                    row.get::<_, i64>(4)?,
-                ))
-            })
-            .map_err(|_| ControlDeliveryError::Backend)?;
-        let mut result = Vec::new();
-        for row in rows {
-            let (job, contact, kind, payload, attempts) =
-                row.map_err(|_| ControlDeliveryError::Backend)?;
-            if payload.len() > MAX_CONTROL_PAYLOAD {
-                return Err(ControlDeliveryError::InvalidStoredJob);
-            }
-            result.push(ControlJob {
-                job_id: OpaqueId::from_bytes(fixed16(job)?),
-                contact_id: OpaqueId::from_bytes(fixed16(contact)?),
-                kind: ControlKind::from_i64(kind)?,
-                payload,
-                attempts: u32::try_from(attempts)
-                    .map_err(|_| ControlDeliveryError::InvalidStoredJob)?,
-            });
-        }
-        Ok(result)
-    }
-
-    fn reschedule(
-        &mut self,
-        job_id: OpaqueId,
-        next_attempt_at: Timestamp,
-    ) -> Result<(), ControlDeliveryError> {
-        self.transition(
-            RESCHEDULE_SQL,
-            job_id,
-            Some(next_attempt_at.to_unix_millis()),
-        )
-    }
-
-    fn complete(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError> {
-        self.transition(COMPLETE_SQL, job_id, None)
-    }
-
-    fn dead_letter(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError> {
-        self.transition(DEAD_LETTER_SQL, job_id, None)
-    }
-
-    fn transition(
-        &mut self,
-        sql: &str,
-        job_id: OpaqueId,
-        time: Option<i64>,
-    ) -> Result<(), ControlDeliveryError> {
-        let id = job_id.into_bytes();
-        let changed = match time {
-            Some(value) => self
-                .backend
-                .connection()
-                .execute(sql, params![id.as_slice(), value]),
-            None => self.backend.connection().execute(sql, params![id.as_slice()]),
-        }
-        .map_err(|_| ControlDeliveryError::Backend)?;
-        if changed == 1 {
-            return Ok(());
-        }
-        let exists = self
-            .backend
-            .connection()
-            .query_row(EXISTS_SQL, params![id.as_slice()], |_| Ok(()))
-            .optional()
-            .map_err(|_| ControlDeliveryError::Backend)?
-            .is_some();
-        if exists {
-            Err(ControlDeliveryError::InvalidState)
-        } else {
-            Err(ControlDeliveryError::NotFound)
-        }
-    }
+    ) -> Result<(), ControlDeliveryError>;
+    fn recover_stale(&mut self, claimed_before: Timestamp) -> Result<usize, ControlDeliveryError>;
+    fn claim_due(&mut self, now: Timestamp, limit: usize) -> Result<Vec<ControlJob>, ControlDeliveryError>;
+    fn reschedule(&mut self, job_id: OpaqueId, next_attempt_at: Timestamp) -> Result<(), ControlDeliveryError>;
+    fn complete(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError>;
+    fn dead_letter(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError>;
 }
 
-/// ACK result for one control frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlAck {
     Accepted,
@@ -252,12 +99,15 @@ pub struct ControlBatchReport {
 }
 
 pub struct ControlDeliveryWorker<T> {
-    outbox: ControlOutbox,
+    outbox: Box<dyn ControlOutboxStore>,
     transport: T,
 }
 impl<T: ControlTransport> ControlDeliveryWorker<T> {
-    pub const fn new(outbox: ControlOutbox, transport: T) -> Self {
-        Self { outbox, transport }
+    pub fn new<S>(outbox: S, transport: T) -> Self
+    where
+        S: ControlOutboxStore + 'static,
+    {
+        Self { outbox: Box::new(outbox), transport }
     }
 
     pub fn recover_stale(&mut self, before: Timestamp) -> Result<usize, ControlDeliveryError> {
@@ -300,12 +150,13 @@ impl<T: ControlTransport> ControlDeliveryWorker<T> {
         payload: &[u8],
         next_attempt_at: Timestamp,
     ) -> Result<(), ControlDeliveryError> {
+        if payload.len() > MAX_CONTROL_PAYLOAD {
+            return Err(ControlDeliveryError::PayloadTooLarge);
+        }
         self.outbox.queue(job_id, contact_id, kind, payload, next_attempt_at)
     }
 
-    pub fn into_parts(self) -> (ControlOutbox, T) {
-        (self.outbox, self.transport)
-    }
+    pub fn into_transport(self) -> T { self.transport }
 }
 
 fn retry_delay(attempts: u32) -> Duration {
@@ -314,14 +165,4 @@ fn retry_delay(attempts: u32) -> Duration {
         .checked_mul(1_u32 << exponent)
         .unwrap_or(MAX_DELAY)
         .min(MAX_DELAY)
-}
-
-fn fixed16(value: Vec<u8>) -> Result<[u8; 16], ControlDeliveryError> {
-    value.try_into().map_err(|_| ControlDeliveryError::InvalidStoredJob)
-}
-fn map_backend(_: StorageBackendError) -> ControlDeliveryError {
-    ControlDeliveryError::Backend
-}
-fn map_migration(_: MigrationError) -> ControlDeliveryError {
-    ControlDeliveryError::Migration
 }
