@@ -16,6 +16,8 @@ mod inbound_sqlcipher;
 mod message_repository;
 #[path = "migration_v3.rs"]
 mod migration;
+#[path = "read_state.rs"]
+mod read_state;
 #[path = "receipt_repository.rs"]
 mod receipt_repository;
 #[path = "repository.rs"]
@@ -39,6 +41,7 @@ pub use durable_sqlcipher::{SqlCipherDurableStore, SqlCipherDurableStoreOpenErro
 pub use inbound_sqlcipher::{SqlCipherInboundStore, SqlCipherInboundStoreOpenError};
 pub use message_repository::{SqlCipherMessageStore, SqlCipherMessageStoreOpenError};
 pub use migration::{Migration, MigrationError, MigrationRunner, migrations};
+pub use read_state::{ReadStateError, SqlCipherReadState};
 pub use receipt_repository::{SqlCipherReceiptStore, SqlCipherReceiptStoreOpenError};
 pub use repository::{SqlCipherStore, SqlCipherStoreOpenError};
 pub use sqlcipher::{DatabaseKey, SqlCipherBackend};
