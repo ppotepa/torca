@@ -16,6 +16,7 @@ const RESCHEDULE_SQL: &str = include_str!("../sql/control_reschedule.sql");
 const COMPLETE_SQL: &str = include_str!("../sql/control_complete.sql");
 const DEAD_LETTER_SQL: &str = include_str!("../sql/control_dead_letter.sql");
 const RECOVER_STALE_SQL: &str = include_str!("../sql/control_recover_stale.sql");
+const EXISTS_SQL: &str = include_str!("../sql/control_exists.sql");
 
 pub const MAX_CONTROL_PAYLOAD: usize = 64 * 1024;
 const MAX_ATTEMPTS: u32 = 8;
@@ -209,11 +210,7 @@ impl ControlOutbox {
         let exists = self
             .backend
             .connection()
-            .query_row(
-                "SELECT 1 FROM control_outbox WHERE job_id = ?1",
-                params![id.as_slice()],
-                |_| Ok(()),
-            )
+            .query_row(EXISTS_SQL, params![id.as_slice()], |_| Ok(()))
             .optional()
             .map_err(|_| ControlDeliveryError::Backend)?
             .is_some();

@@ -25,7 +25,7 @@ function Get-TorcaTarget {
     if ($Target -ne 'auto') {
         return $Target
     }
-    if ($IsWindows) {
+    if ($env:OS -eq 'Windows_NT') {
         return 'windows'
     }
     return 'check'
@@ -144,7 +144,7 @@ function Assert-TorcaFlutterToolchain {
 function Ensure-TorcaCargoLock {
     param([switch]$CI)
 
-    & cargo metadata --locked --no-deps *> $null
+    & cargo metadata --format-version 1 --locked --no-deps *> $null
     if ($LASTEXITCODE -eq 0) {
         return
     }
@@ -155,7 +155,7 @@ function Ensure-TorcaCargoLock {
         Write-Host 'Cargo.lock is stale; refreshing it automatically.' -ForegroundColor Yellow
     }
     Invoke-TorcaExternal 'Cargo lockfile refresh' { cargo generate-lockfile }
-    Invoke-TorcaExternal 'Cargo locked metadata' { cargo metadata --locked --no-deps | Out-Null }
+    Invoke-TorcaExternal 'Cargo locked metadata' { cargo metadata --format-version 1 --locked --no-deps | Out-Null }
 }
 
 function Invoke-TorcaFormatAndCodegen {
@@ -273,7 +273,7 @@ function Build-TorcaNative {
     )
 
     if ($Target -eq 'windows') {
-        if (-not $IsWindows) {
+        if ($env:OS -ne 'Windows_NT') {
             throw 'Windows client builds require a Windows host.'
         }
         if ($Configuration -eq 'release') {

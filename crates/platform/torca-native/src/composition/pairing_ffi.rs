@@ -27,11 +27,7 @@ pub unsafe extern "C" fn torca_engine_join_pairing(
         Ok(value) => value,
         Err(error) => return runtime.reject_argument(error),
     };
-    runtime.execute(BridgeCommand::JoinPairing {
-        session_id_hex: session_id,
-        code,
-        expires_at_ms,
-    })
+    runtime.execute(BridgeCommand::JoinPairing { session_id_hex: session_id, code, expires_at_ms })
 }
 
 /// Explicitly approves a verified pairing peer.
@@ -67,7 +63,7 @@ pub unsafe extern "C" fn torca_engine_reject_pairing(
     session_id: *const u8,
     session_id_length: usize,
 ) -> i32 {
-    pairing_terminal(handle, session_id, session_id_length, true)
+    unsafe { pairing_terminal(handle, session_id, session_id_length, true) }
 }
 
 /// Cancels a local pairing workflow.
@@ -81,7 +77,7 @@ pub unsafe extern "C" fn torca_engine_cancel_pairing(
     session_id: *const u8,
     session_id_length: usize,
 ) -> i32 {
-    pairing_terminal(handle, session_id, session_id_length, false)
+    unsafe { pairing_terminal(handle, session_id, session_id_length, false) }
 }
 
 unsafe fn pairing_terminal(

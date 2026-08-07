@@ -15,7 +15,11 @@ class MemoryEngineGateway implements EngineGateway {
     final AppSnapshotDto current = _snapshots.value;
     if (command is CreateIdentityCommandDto) {
       if (current.identity != null) {
-        return const BridgeResultDto(ok: false, kind: 'error', error: 'identity already exists');
+        return const BridgeResultDto(
+          ok: false,
+          kind: 'error',
+          error: 'identity already exists',
+        );
       }
       _snapshots.value = AppSnapshotDto(
         identity: IdentityDto(displayName: command.displayName),
@@ -30,16 +34,20 @@ class MemoryEngineGateway implements EngineGateway {
     if (command is StartPairingCommandDto || command is JoinPairingCommandDto) {
       final bool joining = command is JoinPairingCommandDto;
       final String sessionId = joining
-          ? (command as JoinPairingCommandDto).sessionIdHex
+          ? command.sessionIdHex
           : (command as StartPairingCommandDto).sessionIdHex;
       final String code = joining
-          ? (command as JoinPairingCommandDto).code
+          ? command.code
           : (command as StartPairingCommandDto).code;
       final int expiresAtMs = joining
-          ? (command as JoinPairingCommandDto).expiresAtMs
+          ? command.expiresAtMs
           : (command as StartPairingCommandDto).expiresAtMs;
       if (current.pairings.any((PairingDto item) => item.id == sessionId)) {
-        return const BridgeResultDto(ok: false, kind: 'error', error: 'pairing already exists');
+        return const BridgeResultDto(
+          ok: false,
+          kind: 'error',
+          error: 'pairing already exists',
+        );
       }
       final PairingDto pairing = PairingDto(
         id: sessionId,
@@ -50,8 +58,14 @@ class MemoryEngineGateway implements EngineGateway {
         localApproved: false,
         remoteApproved: false,
       );
-      _snapshots.value = _copy(current, pairings: <PairingDto>[...current.pairings, pairing]);
-      return BridgeResultDto(ok: true, kind: joining ? 'pairing_joined' : 'pairing_started');
+      _snapshots.value = _copy(
+        current,
+        pairings: <PairingDto>[...current.pairings, pairing],
+      );
+      return BridgeResultDto(
+        ok: true,
+        kind: joining ? 'pairing_joined' : 'pairing_started',
+      );
     }
 
     if (command is ApprovePairingCommandDto) {
@@ -72,10 +86,20 @@ class MemoryEngineGateway implements EngineGateway {
     }
 
     if (command is RejectPairingCommandDto) {
-      return _terminalPairing(current, command.sessionIdHex, 'rejected', 'pairing_rejected');
+      return _terminalPairing(
+        current,
+        command.sessionIdHex,
+        'rejected',
+        'pairing_rejected',
+      );
     }
     if (command is CancelPairingCommandDto) {
-      return _terminalPairing(current, command.sessionIdHex, 'cancelled', 'pairing_cancelled');
+      return _terminalPairing(
+        current,
+        command.sessionIdHex,
+        'cancelled',
+        'pairing_cancelled',
+      );
     }
 
     if (command is QueueMessageCommandDto) {
@@ -125,13 +149,19 @@ class MemoryEngineGateway implements EngineGateway {
     String kind,
   ) {
     bool found = false;
-    final List<PairingDto> pairings = current.pairings.map((PairingDto pairing) {
-      if (pairing.id != id) return pairing;
-      found = true;
-      return update(pairing);
-    }).toList(growable: false);
+    final List<PairingDto> pairings = current.pairings
+        .map((PairingDto pairing) {
+          if (pairing.id != id) return pairing;
+          found = true;
+          return update(pairing);
+        })
+        .toList(growable: false);
     if (!found) {
-      return const BridgeResultDto(ok: false, kind: 'error', error: 'pairing session not found');
+      return const BridgeResultDto(
+        ok: false,
+        kind: 'error',
+        error: 'pairing session not found',
+      );
     }
     _snapshots.value = _copy(current, pairings: pairings);
     return BridgeResultDto(ok: true, kind: kind);

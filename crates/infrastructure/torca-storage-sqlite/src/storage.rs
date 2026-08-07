@@ -25,11 +25,14 @@ impl<B: StorageBackend> StorageKernel<B> {
 }
 #[cfg(test)]
 mod tests {
-    use crate::{MemoryStorageBackend, StorageKernel};
+    use crate::{MemoryStorageBackend, StorageKernel, migrations};
     #[test]
     fn bootstrap_applies_pragmas_and_ordered_migrations() {
         let mut kernel = StorageKernel::new(MemoryStorageBackend::default());
-        assert_eq!(kernel.bootstrap().expect("bootstrap succeeds"), 3);
-        assert_eq!(kernel.backend().applied_batches().len(), 4);
+        assert_eq!(
+            kernel.bootstrap().expect("bootstrap succeeds"),
+            migrations().last().expect("migration registry is non-empty").version
+        );
+        assert_eq!(kernel.backend().applied_batches().len(), migrations().len() + 1);
     }
 }

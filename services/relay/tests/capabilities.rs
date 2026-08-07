@@ -1,8 +1,7 @@
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_relay::RelayBroker;
 use torca_relay_protocol::{
-    RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken,
-    RelaySlotCapability,
+    RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken, RelaySlotCapability,
 };
 
 #[test]
@@ -34,15 +33,8 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
         other => panic!("unexpected response: {other:?}"),
     };
 
-    relay
-        .handle(
-            RelayRequest::Join {
-                code,
-                joiner_blob: vec![4, 5, 6],
-                joiner_token: joiner,
-            },
-            now,
-        )
+    let _ = relay
+        .handle(RelayRequest::Join { code, joiner_blob: vec![4, 5, 6], joiner_token: joiner }, now)
         .expect("join");
 
     assert_eq!(
@@ -50,13 +42,7 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
         Err(RelayProtocolError::Unauthorized)
     );
     assert_eq!(
-        relay.handle(
-            RelayRequest::Close {
-                slot_id,
-                capability: wrong_capability,
-            },
-            now,
-        ),
+        relay.handle(RelayRequest::Close { slot_id, capability: wrong_capability }, now,),
         Err(RelayProtocolError::Unauthorized)
     );
     assert!(matches!(

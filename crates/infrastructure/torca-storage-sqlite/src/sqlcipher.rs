@@ -167,7 +167,7 @@ pub(crate) fn map_sqlite_error(error: rusqlite::Error) -> StorageBackendError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{DatabaseKey, SqlCipherBackend, StorageKernel};
+    use crate::{DatabaseKey, SqlCipherBackend, StorageKernel, migrations};
 
     #[test]
     fn bundled_sqlcipher_bootstraps_the_embedded_schema() {
@@ -176,6 +176,9 @@ mod tests {
         assert!(!backend.cipher_version().is_empty());
 
         let mut kernel = StorageKernel::new(backend);
-        assert_eq!(kernel.bootstrap().expect("migrate"), 3);
+        assert_eq!(
+            kernel.bootstrap().expect("migrate"),
+            migrations().last().expect("migration registry is non-empty").version
+        );
     }
 }

@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($Target -eq 'auto') {
-    $Target = if ($IsWindows) { 'windows' } else { 'android' }
+    $Target = if ($env:OS -eq 'Windows_NT') { 'windows' } else { 'android' }
 }
 
 if ($Target -eq 'android' -and -not $Device) {

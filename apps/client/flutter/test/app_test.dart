@@ -5,38 +5,40 @@ import 'package:torca_app/gateway/engine_gateway.dart';
 import 'package:torca_app/gateway/memory_engine_gateway.dart';
 
 void main() {
-  testWidgets(
-    'identity setup is the initial recoverable route',
-    (WidgetTester tester) async {
-      await tester.pumpWidget(TorcaApp(gateway: MemoryEngineGateway()));
-      expect(find.text('Create local identity'), findsWidgets);
-      expect(find.text('Torca'), findsOneWidget);
-    },
-  );
+  testWidgets('identity setup is the initial recoverable route', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(TorcaApp(gateway: MemoryEngineGateway()));
+    expect(find.text('Create local identity'), findsWidgets);
+    expect(find.text('Torca'), findsOneWidget);
+  });
 
-  testWidgets(
-    'wide layout reuses the conversation pane instead of a desktop implementation',
-    (WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1200, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('wide layout exposes the pairing entrypoint', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(TorcaApp(gateway: MemoryEngineGateway()));
-      await tester.enterText(find.byType(TextField), 'Alice');
-      await tester.tap(find.widgetWithText(FilledButton, 'Create local identity'));
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(TorcaApp(gateway: MemoryEngineGateway()));
+    await tester.enterText(find.byType(TextField), 'Alice');
+    await tester.tap(
+      find.widgetWithText(FilledButton, 'Create local identity'),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Pair contact'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Start pairing'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Pair contact'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'ABC123');
+    await tester.tap(find.widgetWithText(FilledButton, 'Join invitation'));
+    await tester.pumpAndSettle();
 
-      expect(find.text('No messages yet'), findsOneWidget);
-      expect(find.byIcon(Icons.person_outline), findsOneWidget);
-      expect(find.byType(Scaffold), findsOneWidget);
-    },
-  );
+    expect(find.text('Pairing sessions'), findsOneWidget);
+    expect(find.text('ABC123'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.byType(Scaffold), findsOneWidget);
+  });
 
   testWidgets(
     'native startup failure is surfaced instead of silently using memory state',
@@ -46,7 +48,9 @@ void main() {
         TorcaApp(gateway: UnavailableEngineGateway(failure)),
       );
       await tester.enterText(find.byType(TextField), 'Alice');
-      await tester.tap(find.widgetWithText(FilledButton, 'Create local identity'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Create local identity'),
+      );
       await tester.pump();
 
       expect(find.text(failure), findsOneWidget);

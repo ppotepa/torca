@@ -108,26 +108,17 @@ where
         let code = self.coordinator.generate_pairing_code()?;
         let expires_at = invitation_expires_at(now)?;
         let local_offer = self.local_offer(session_id, local)?;
-        self.coordinator.open_creator(session_id, &code, expires_at)?;
+        let _ = self.coordinator.open_creator(session_id, &code, expires_at)?;
         if self
             .engine
-            .dispatch(EngineCommand::StartPairing {
-                session_id,
-                code: code.clone(),
-                expires_at,
-            })
+            .dispatch(EngineCommand::StartPairing { session_id, code: code.clone(), expires_at })
             .is_err()
         {
             let _ = self.coordinator.close(session_id);
             return Err(PairingRuntimeError::Engine);
         }
         self.local_offers.insert(session_id, local_offer);
-        Ok(PairingInvitation {
-            session_id,
-            uri: encode_invite_uri(&code),
-            code,
-            expires_at,
-        })
+        Ok(PairingInvitation { session_id, uri: encode_invite_uri(&code), code, expires_at })
     }
 
     pub fn join_invitation(
@@ -139,14 +130,10 @@ where
     ) -> Result<(), PairingRuntimeError> {
         let expires_at = invitation_expires_at(now)?;
         let local_offer = self.local_offer(session_id, local)?;
-        self.coordinator.join(session_id, &code, &local_offer)?;
+        let _ = self.coordinator.join(session_id, &code, &local_offer)?;
         if self
             .engine
-            .dispatch(EngineCommand::JoinPairing {
-                session_id,
-                code,
-                expires_at,
-            })
+            .dispatch(EngineCommand::JoinPairing { session_id, code, expires_at })
             .is_err()
         {
             let _ = self.coordinator.close(session_id);
@@ -170,21 +157,16 @@ where
             .map_err(|_| PairingRuntimeError::Engine)?
             .identity
             .ok_or(PairingRuntimeError::IdentityMissing)?;
-        let proof = self.approval.sign_approval(
-            identity.public().key().key_id(),
-            session_id,
-            digest,
-        )?;
+        let proof =
+            self.approval.sign_approval(identity.public().key().key_id(), session_id, digest)?;
         let envelope = PairingEnvelope {
             pairing_id: session_id.to_opaque(),
-            payload: PairingPayload::Approval(PairingApproval {
-                transcript_digest: digest,
-                proof,
-            }),
+            payload: PairingPayload::Approval(PairingApproval { transcript_digest: digest, proof }),
         };
         self.coordinator.push(session_id, &envelope)?;
         if !session.local_approved() {
-            self.engine
+            let _ = self
+                .engine
                 .dispatch(EngineCommand::ApprovePairing { session_id, at: now })
                 .map_err(|_| PairingRuntimeError::Engine)?;
         }
@@ -201,7 +183,8 @@ where
             payload: PairingPayload::Rejection(PairingRejection),
         };
         self.coordinator.push(session_id, &envelope)?;
-        self.engine
+        let _ = self
+            .engine
             .dispatch(EngineCommand::RejectPairing { session_id })
             .map_err(|_| PairingRuntimeError::Engine)?;
         self.cleanup_terminal(session_id);
@@ -218,7 +201,8 @@ where
             payload: PairingPayload::Cancellation(PairingCancellation),
         };
         self.coordinator.push(session_id, &envelope)?;
-        self.engine
+        let _ = self
+            .engine
             .dispatch(EngineCommand::CancelPairing { session_id })
             .map_err(|_| PairingRuntimeError::Engine)?;
         self.cleanup_terminal(session_id);
@@ -233,17 +217,13 @@ where
             .map_err(|_| PairingRuntimeError::Engine)?
             .pairings
             .into_iter()
-            .filter(|session| {
-                !is_terminal(session.state()) && now >= session.expires_at()
-            })
+            .filter(|session| !is_terminal(session.state()) && now >= session.expires_at())
             .map(|session| session.id())
             .collect();
         for session_id in &due {
-            self.engine
-                .dispatch(EngineCommand::ExpirePairing {
-                    session_id: *session_id,
-                    at: now,
-                })
+            let _ = self
+                .engine
+                .dispatch(EngineCommand::ExpirePairing { session_id: *session_id, at: now })
                 .map_err(|_| PairingRuntimeError::Engine)?;
             self.cleanup_terminal(*session_id);
         }
@@ -268,7 +248,8 @@ where
                         return Err(PairingRuntimeError::InvalidOffer);
                     }
                     let proposal = peer_proposal(offer)?;
-                    self.engine
+                    let _ = self
+                        .engine
                         .dispatch(EngineCommand::PeerJoined { session_id, proposal, at: now })
                         .map_err(|_| PairingRuntimeError::Engine)?;
                     self.remote_offers.insert(session_id, envelope);
@@ -299,7 +280,8 @@ where
                     )?;
                     let session = self.session(session_id)?;
                     if !session.remote_approved() {
-                        self.engine
+                        let _ = self
+                            .engine
                             .dispatch(EngineCommand::RemoteApproved { session_id, at: now })
                             .map_err(|_| PairingRuntimeError::Engine)?;
                         report.approvals_applied += 1;
@@ -308,7 +290,8 @@ where
                 PairingPayload::Rejection(_) => {
                     let session = self.session(session_id)?;
                     if session.state() != PairingState::Rejected {
-                        self.engine
+                        let _ = self
+                            .engine
                             .dispatch(EngineCommand::RejectPairing { session_id })
                             .map_err(|_| PairingRuntimeError::Engine)?;
                         report.rejections_applied += 1;
@@ -319,7 +302,8 @@ where
                 PairingPayload::Cancellation(_) => {
                     let session = self.session(session_id)?;
                     if session.state() != PairingState::Cancelled {
-                        self.engine
+                        let _ = self
+                            .engine
                             .dispatch(EngineCommand::CancelPairing { session_id })
                             .map_err(|_| PairingRuntimeError::Engine)?;
                         report.cancellations_applied += 1;
@@ -367,11 +351,8 @@ where
         session_id: PairingSessionId,
         role: PairingRole,
     ) -> Result<(PairingEnvelope, PairingEnvelope), PairingRuntimeError> {
-        let local = self
-            .local_offers
-            .get(&session_id)
-            .cloned()
-            .ok_or(PairingRuntimeError::InvalidOffer)?;
+        let local =
+            self.local_offers.get(&session_id).cloned().ok_or(PairingRuntimeError::InvalidOffer)?;
         let remote = self
             .remote_offers
             .get(&session_id)
@@ -387,10 +368,8 @@ where
         &self,
         session_id: PairingSessionId,
     ) -> Result<PublicIdentity, PairingRuntimeError> {
-        let envelope = self
-            .remote_offers
-            .get(&session_id)
-            .ok_or(PairingRuntimeError::InvalidOffer)?;
+        let envelope =
+            self.remote_offers.get(&session_id).ok_or(PairingRuntimeError::InvalidOffer)?;
         match &envelope.payload {
             PairingPayload::Offer(offer) => Ok(peer_proposal(offer)?.public_identity),
             _ => Err(PairingRuntimeError::InvalidOffer),

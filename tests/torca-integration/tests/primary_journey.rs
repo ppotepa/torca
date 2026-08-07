@@ -5,35 +5,27 @@ use torca_attachments::{
     MediaType,
 };
 use torca_client_engine::{ClientEngine, EngineCommand, EngineResult};
+use torca_contacts::ContactRoute;
 use torca_contacts::{ContactId, PeerCredential};
 use torca_conversations::ConversationId;
-use torca_crypto::{
-    CryptoProvider, DeterministicTestCrypto, Nonce, SealingKey, SigningSecretKey,
-};
-use torca_file_storage::{BlobStore, EncryptedAttachmentStore, MemoryBlobStore};
+use torca_crypto::{CryptoProvider, DeterministicTestCrypto, Nonce, SealingKey, SigningSecretKey};
+use torca_file_storage::{EncryptedAttachmentStore, MemoryBlobStore};
 use torca_foundation::{CommandId, ErrorCode, OpaqueId, Timestamp};
 use torca_identity::{IdentityId, Profile, ProfileName};
+use torca_identity::{IdentityKey, KeyAlgorithm, KeyId, PublicIdentity};
 use torca_messaging::{MessageBody, MessageId, RetryPolicy};
 use torca_pairing::{PairingCode, PairingSessionId, PeerProposal};
 use torca_receipts::{Receipt, ReceiptId, ReceiptKind};
-use torca_storage_sqlite::{
-    DurableDeliveryStore, InMemoryDurableDeliveryStore, StorageKernel,
-};
+use torca_storage_sqlite::{DurableDeliveryStore, InMemoryDurableDeliveryStore, StorageKernel};
 use torca_storage_sqlite::{MemoryStorageBackend, migrations};
-use torca_contacts::ContactRoute;
-use torca_identity::{IdentityKey, KeyAlgorithm, KeyId, PublicIdentity};
 
 fn ts(ms: i64) -> Timestamp {
     Timestamp::from_unix_millis(ms).expect("test timestamp is in range")
 }
 
 fn peer() -> PeerProposal {
-    let key = IdentityKey::new(
-        KeyId::from_u128(40),
-        KeyAlgorithm::Ed25519,
-        vec![7_u8; 32],
-    )
-    .expect("peer key is valid");
+    let key = IdentityKey::new(KeyId::from_u128(40), KeyAlgorithm::Ed25519, vec![7_u8; 32])
+        .expect("peer key is valid");
     let public_identity = PublicIdentity::new(IdentityId::from_u128(41), key, 0);
     let route = ContactRoute::new("peerexample.onion", OpaqueId::from_u128(42))
         .expect("peer route is valid");
@@ -41,12 +33,8 @@ fn peer() -> PeerProposal {
 }
 
 fn credential(contact_id: ContactId) -> PeerCredential {
-    PeerCredential::new(
-        contact_id,
-        OpaqueId::from_u128(70),
-        OpaqueId::from_u128(71),
-    )
-    .expect("credential is valid")
+    PeerCredential::new(contact_id, OpaqueId::from_u128(70), OpaqueId::from_u128(71))
+        .expect("credential is valid")
 }
 
 #[test]
@@ -56,46 +44,32 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     let profile = Profile::new(ProfileName::new("Orca").expect("profile name is valid"), None);
     assert_eq!(
         engine
-            .dispatch(EngineCommand::CreateIdentity {
-                identity_id,
-                profile,
-                at: ts(1),
-            })
+            .dispatch(EngineCommand::CreateIdentity { identity_id, profile, at: ts(1) })
             .expect("identity command succeeds"),
         EngineResult::IdentityCreated
     );
 
     let pairing_id = PairingSessionId::from_u128(2);
-    engine
+    let _ = engine
         .dispatch(EngineCommand::StartPairing {
             session_id: pairing_id,
             code: PairingCode::new("ORCA42").expect("pairing code is valid"),
             expires_at: ts(10_000),
         })
         .expect("pairing starts");
-    engine
-        .dispatch(EngineCommand::PeerJoined {
-            session_id: pairing_id,
-            proposal: peer(),
-            at: ts(2),
-        })
+    let _ = engine
+        .dispatch(EngineCommand::PeerJoined { session_id: pairing_id, proposal: peer(), at: ts(2) })
         .expect("peer joins");
-    engine
-        .dispatch(EngineCommand::ApprovePairing {
-            session_id: pairing_id,
-            at: ts(3),
-        })
+    let _ = engine
+        .dispatch(EngineCommand::ApprovePairing { session_id: pairing_id, at: ts(3) })
         .expect("local approval succeeds");
-    engine
-        .dispatch(EngineCommand::RemoteApproved {
-            session_id: pairing_id,
-            at: ts(4),
-        })
+    let _ = engine
+        .dispatch(EngineCommand::RemoteApproved { session_id: pairing_id, at: ts(4) })
         .expect("remote approval succeeds");
 
     let contact_id = ContactId::from_u128(3);
     let conversation_id = ConversationId::from_u128(4);
-    engine
+    let _ = engine
         .dispatch(EngineCommand::CompletePairing {
             session_id: pairing_id,
             contact_id,
@@ -106,7 +80,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
         .expect("pairing completes");
 
     let message_id = MessageId::from_u128(5);
-    engine
+    let _ = engine
         .dispatch(EngineCommand::QueueMessage {
             message_id,
             conversation_id,
@@ -115,13 +89,13 @@ fn primary_journey_is_deterministic_across_bounded_components() {
             at: ts(6),
         })
         .expect("message is queued");
-    engine
+    let _ = engine
         .dispatch(EngineCommand::BeginMessageSend { message_id, at: ts(7) })
         .expect("send begins");
-    engine
+    let _ = engine
         .dispatch(EngineCommand::MarkMessageSent { message_id, at: ts(8) })
         .expect("message is sent");
-    engine
+    let _ = engine
         .dispatch(EngineCommand::ApplyReceipt(Receipt {
             id: ReceiptId::from_u128(6),
             message_id,
@@ -129,7 +103,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
             at: ts(9),
         }))
         .expect("delivered receipt applies");
-    engine
+    let _ = engine
         .dispatch(EngineCommand::ApplyReceipt(Receipt {
             id: ReceiptId::from_u128(7),
             message_id,
@@ -164,9 +138,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     let next = ts(20)
         .checked_add(policy.delay_after(1).expect("first retry is allowed"))
         .expect("retry timestamp remains in range");
-    durable
-        .reschedule(MessageId::from_u128(10), 1, next)
-        .expect("reschedule succeeds");
+    durable.reschedule(MessageId::from_u128(10), 1, next).expect("reschedule succeeds");
     assert_eq!(durable.recover_stale_claims(next).expect("recovery succeeds"), 0);
     assert!(durable.record_inbound(OpaqueId::from_u128(12)).expect("dedup insert succeeds"));
     assert!(!durable.record_inbound(OpaqueId::from_u128(12)).expect("dedup replay succeeds"));
@@ -185,16 +157,11 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     attachment.begin_encryption(ts(31)).expect("encryption starts");
     attachment.mark_queued(ts(32)).expect("attachment queues");
     let _ = attachment.begin_transfer(ts(33)).expect("transfer starts");
-    attachment
-        .mark_failed(ts(34), ErrorCode::new("NETWORK").expect("error code is valid"))
-        .expect("failure records");
+    attachment.mark_failed(ts(34), ErrorCode::new("network")).expect("failure records");
     let _ = attachment.begin_transfer(ts(35)).expect("retry starts");
     attachment.mark_available(ts(36)).expect("attachment completes");
     attachments.insert(attachment.clone()).expect("attachment persists");
-    assert_eq!(
-        attachments.get(attachment_id).expect("attachment load succeeds"),
-        Some(attachment)
-    );
+    assert_eq!(attachments.get(attachment_id).expect("attachment load succeeds"), Some(attachment));
 
     let mut encrypted = EncryptedAttachmentStore::new(
         DeterministicTestCrypto::default(),
@@ -205,9 +172,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
         .store(attachment_id, &key, b"attachment-v1", b"hello")
         .expect("encrypted attachment stores");
     assert_eq!(
-        encrypted
-            .load(attachment_id, &key, b"attachment-v1")
-            .expect("encrypted attachment loads"),
+        encrypted.load(attachment_id, &key, b"attachment-v1").expect("encrypted attachment loads"),
         b"hello"
     );
 
@@ -216,13 +181,10 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     let signature = crypto.sign(&secret, b"handshake").expect("signing succeeds");
     crypto.verify(&public, b"handshake", &signature).expect("verification succeeds");
     let _ = SigningSecretKey::new([1; 32]);
-    let ciphertext = crypto
-        .seal(&key, Nonce([1; 24]), b"aad", b"payload")
-        .expect("sealing succeeds");
+    let ciphertext =
+        crypto.seal(&key, Nonce([1; 24]), b"aad", b"payload").expect("sealing succeeds");
     assert_eq!(
-        crypto
-            .open(&key, Nonce([1; 24]), b"aad", &ciphertext)
-            .expect("opening succeeds"),
+        crypto.open(&key, Nonce([1; 24]), b"aad", &ciphertext).expect("opening succeeds"),
         b"payload"
     );
 

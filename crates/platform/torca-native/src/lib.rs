@@ -7,9 +7,7 @@ mod composition;
 
 use core::fmt::Write as _;
 use core::{ptr, slice, str};
-use torca_bridge::{
-    BridgeCommand, BridgeResult, BridgeSnapshot, EngineBridge, CONTRACT_VERSION,
-};
+use torca_bridge::{BridgeCommand, BridgeResult, BridgeSnapshot, CONTRACT_VERSION, EngineBridge};
 use torca_client_engine::ClientEngineActor;
 
 use composition::spawn_production_engine;
@@ -183,7 +181,11 @@ pub unsafe extern "C" fn torca_engine_create_identity(
         Ok(value) => value,
         Err(error) => return runtime.reject_argument(error),
     };
-    runtime.execute(BridgeCommand::CreateIdentity { identity_id_hex: identity_id, display_name, at_ms })
+    runtime.execute(BridgeCommand::CreateIdentity {
+        identity_id_hex: identity_id,
+        display_name,
+        at_ms,
+    })
 }
 
 /// Starts a pairing session through the Rust application engine.
@@ -211,11 +213,7 @@ pub unsafe extern "C" fn torca_engine_start_pairing(
         Ok(value) => value,
         Err(error) => return runtime.reject_argument(error),
     };
-    runtime.execute(BridgeCommand::StartPairing {
-        session_id_hex: session_id,
-        code,
-        expires_at_ms,
-    })
+    runtime.execute(BridgeCommand::StartPairing { session_id_hex: session_id, code, expires_at_ms })
 }
 
 /// Queues one outbound text message through the Rust application engine.
@@ -278,9 +276,7 @@ pub unsafe extern "C" fn torca_engine_refresh_snapshot(handle: *mut NativeEngine
 ///
 /// `handle` must be a live engine pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn torca_engine_result_ptr(
-    handle: *const NativeEngineRuntime,
-) -> *const u8 {
+pub unsafe extern "C" fn torca_engine_result_ptr(handle: *const NativeEngineRuntime) -> *const u8 {
     let Some(runtime) = (unsafe { handle.as_ref() }) else {
         return ptr::null();
     };
@@ -352,9 +348,7 @@ unsafe fn utf8_argument(data: *const u8, length: usize) -> Result<String, &'stat
         return Err("native argument pointer is null");
     }
     let bytes = unsafe { slice::from_raw_parts(data, length) };
-    str::from_utf8(bytes)
-        .map(str::to_owned)
-        .map_err(|_| "native argument is not valid UTF-8")
+    str::from_utf8(bytes).map(str::to_owned).map_err(|_| "native argument is not valid UTF-8")
 }
 
 fn success_result(kind: &str) -> String {
@@ -502,7 +496,7 @@ mod tests {
     #[test]
     fn empty_snapshot_json_is_parseable_shape_without_secret_material() {
         let json = empty_snapshot_json();
-        assert!(json.contains("\"contractVersion\":2"));
+        assert!(json.contains("\"contractVersion\":3"));
         assert!(json.contains("\"pairings\":[]"));
         assert!(json.contains("\"contacts\":[]"));
         assert!(!json.contains("private_key"));
