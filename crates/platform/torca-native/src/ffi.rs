@@ -3,9 +3,7 @@ use core::{ptr, slice, str};
 use torca_bridge::{BridgeCommand, CONTRACT_VERSION};
 
 use crate::native_runtime::{ABI_ERROR, NativeEngineRuntime};
-use crate::process_runtime::{
-    NativeEngineHandle, acquire_process_runtime, shutdown_process_runtime,
-};
+use crate::process_runtime::{NativeEngineHandle, acquire_process_runtime};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn torca_contract_version() -> u16 { CONTRACT_VERSION }
@@ -281,11 +279,9 @@ pub unsafe extern "C" fn torca_engine_diagnostics_len(handle: *const NativeEngin
     with_runtime(handle, |runtime| runtime.diagnostics_json.len()).unwrap_or(0)
 }
 
-/// Explicit process shutdown. Destroying/releasing an individual FFI handle does not stop Torca.
+/// Compatibility close: releases no process-owned resources. Destroying the FFI handle is enough.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn torca_engine_close(_handle: *mut NativeEngineHandle) -> i32 {
-    shutdown_process_runtime()
-}
+pub unsafe extern "C" fn torca_engine_close(_handle: *mut NativeEngineHandle) -> i32 { 0 }
 
 fn with_runtime_mut(
     handle: *mut NativeEngineHandle,
