@@ -8,7 +8,8 @@ use torca_pairing::{
     PairingCode, PairingRole, PairingSession, PairingSessionId, PairingState, PeerProposal,
 };
 use torca_pairing_protocol::{
-    PairingApproval, PairingEnvelope, PairingOffer, PairingPayload, PairingRejection,
+    PairingApproval, PairingCancellation, PairingEnvelope, PairingOffer, PairingPayload,
+    PairingRejection,
 };
 
 use crate::{
@@ -39,6 +40,7 @@ pub struct PairingPollReport {
     pub offers_applied: usize,
     pub approvals_applied: usize,
     pub rejections_applied: usize,
+    pub cancellations_applied: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,7 +191,6 @@ where
         Ok(())
     }
 
-    /// Rejects the inspected peer and propagates the terminal decision before local cleanup.
     pub fn reject(&mut self, session_id: PairingSessionId) -> Result<(), PairingRuntimeError> {
         let session = self.session(session_id)?;
         if session.state() == PairingState::Rejected {
@@ -202,6 +203,24 @@ where
         self.coordinator.push(session_id, &envelope)?;
         self.engine
             .dispatch(EngineCommand::RejectPairing { session_id })
+            .map_err(|_| PairingRuntimeError::Engine)?;
+        self.cleanup_terminal(session_id);
+        Ok(())
+    }
+
+    /// Cancels a local pairing attempt and propagates the terminal cancellation before cleanup.
+    pub fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), PairingRuntimeError> {
+        let session = self.session(session_id)?;
+        if session.state() == PairingState::Cancelled {
+            return Ok(());
+        }
+        let envelope = PairingEnvelope {
+            pairing_id: session_id.to_opaque(),
+            payload: PairingPayload::Cancellation(PairingCancellation),
+        };
+        self.coordinator.push(session_id, &envelope)?;
+        self.engine
+            .dispatch(EngineCommand::CancelPairing { session_id })
             .map_err(|_| PairingRuntimeError::Engine)?;
         self.cleanup_terminal(session_id);
         Ok(())
@@ -273,7 +292,18 @@ where
                     self.cleanup_terminal(session_id);
                     break;
                 }
-                PairingPayload::Completion(_) | PairingPayload::Cancellation(_) => {
+                PairingPayload::Cancellation(_) => {
+                    let session = self.session(session_id)?;
+                    if session.state() != PairingState::Cancelled {
+                        self.engine
+                            .dispatch(EngineCommand::CancelPairing { session_id })
+                            .map_err(|_| PairingRuntimeError::Engine)?;
+                        report.cancellations_applied += 1;
+                    }
+                    self.cleanup_terminal(session_id);
+                    break;
+                }
+                PairingPayload::Completion(_) => {
                     return Err(PairingRuntimeError::UnexpectedPayload);
                 }
             }
