@@ -24,6 +24,11 @@ class TorcaStrings {
   String get languageSystem => _pl ? 'Język systemowy' : 'System language';
   String get languageEnglish => _pl ? 'Angielski' : 'English';
   String get languagePolish => _pl ? 'Polski' : 'Polish';
+  String get privacy => _pl ? 'Prywatność' : 'Privacy';
+  String get sendReadReceipts => _pl ? 'Wysyłaj potwierdzenia odczytu' : 'Send read receipts';
+  String get sendReadReceiptsDescription => _pl
+      ? 'Oznaczaj wiadomości lokalnie jako przeczytane, ale pozwól kontaktom zobaczyć stan Read tylko wtedy, gdy ta opcja jest włączona.'
+      : 'Messages are marked read locally, but contacts see the Read state only when this option is enabled.';
   String get notifications => _pl ? 'Powiadomienia' : 'Notifications';
   String get enableNotifications => _pl ? 'Włącz powiadomienia' : 'Enable notifications';
   String get notificationPrivacy => _pl

@@ -8,6 +8,7 @@ import 'package:open_filex/open_filex.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../settings/preferences_scope.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_header.dart';
@@ -70,7 +71,8 @@ class ConversationPane extends StatefulWidget {
   State<ConversationPane> createState() => _ConversationPaneState();
 }
 
-class _ConversationPaneState extends State<ConversationPane> {
+class _ConversationPaneState extends State<ConversationPane>
+    with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final OperationTracker _operations = OperationTracker();
@@ -84,13 +86,15 @@ class _ConversationPaneState extends State<ConversationPane> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _operations.addListener(_operationChanged);
     _scrollController.addListener(_scrollChanged);
     widget.gateway.snapshots.addListener(_snapshotChanged);
     _captureConversationState(widget.conversation.id);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_markReadIfNeeded());
+      if (!mounted) return;
       _scrollToBottom(jump: true);
+      unawaited(_markReadIfNeeded());
     });
   }
 
@@ -107,13 +111,25 @@ class _ConversationPaneState extends State<ConversationPane> {
       _replyingTo = null;
       _showJumpToLatest = false;
       _captureConversationState(widget.conversation.id);
-      unawaited(_markReadIfNeeded());
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(jump: true));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollToBottom(jump: true);
+        unawaited(_markReadIfNeeded());
+      });
     }
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_markReadIfNeeded());
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.gateway.snapshots.removeListener(_snapshotChanged);
     _scrollController.removeListener(_scrollChanged);
     _operations.removeListener(_operationChanged);
@@ -137,12 +153,12 @@ class _ConversationPaneState extends State<ConversationPane> {
   }
 
   void _scrollChanged() {
-    if (!_showJumpToLatest || !_nearBottom()) return;
-    setState(() => _showJumpToLatest = false);
+    if (!_nearBottom()) return;
+    unawaited(_markReadIfNeeded());
+    if (_showJumpToLatest) setState(() => _showJumpToLatest = false);
   }
 
   void _snapshotChanged() {
-    unawaited(_markReadIfNeeded());
     final count = _messagesFor(
       widget.gateway.snapshots.value,
       widget.conversation.id,
@@ -187,7 +203,9 @@ class _ConversationPaneState extends State<ConversationPane> {
   }
 
   Future<void> _markReadIfNeeded() async {
-    if (_markingRead) return;
+    if (_markingRead || !mounted) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    if (ModalRoute.of(context)?.isCurrent != true || !_nearBottom()) return;
     final hasDelivered = widget.gateway.snapshots.value.messages.any(
       (message) =>
           message.conversationId == widget.conversation.id &&
@@ -195,10 +213,15 @@ class _ConversationPaneState extends State<ConversationPane> {
           message.status == 'delivered',
     );
     if (!hasDelivered) return;
+    final sendReceipt =
+        PreferencesScope.maybeOf(context)?.readReceiptsEnabled ?? true;
     _markingRead = true;
     try {
       await widget.gateway.execute(
-        MarkConversationReadCommandDto(conversationIdHex: widget.conversation.id),
+        MarkConversationReadCommandDto(
+          conversationIdHex: widget.conversation.id,
+          sendReceipt: sendReceipt,
+        ),
       );
     } finally {
       _markingRead = false;

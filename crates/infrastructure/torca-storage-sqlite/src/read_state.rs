@@ -26,10 +26,24 @@ impl SqlCipherReadState {
         Ok(Self { backend: kernel.into_backend() })
     }
 
-    pub fn mark_conversation_read(&mut self, conversation_id: OpaqueId, at: Timestamp) -> Result<usize, ReadStateError> {
+    pub fn mark_conversation_read(
+        &mut self,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<usize, ReadStateError> {
+        self.mark_conversation_read_with_policy(conversation_id, at, true)
+    }
+
+    pub fn mark_conversation_read_with_policy(
+        &mut self,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+        send_receipt: bool,
+    ) -> Result<usize, ReadStateError> {
         let conversation = conversation_id.into_bytes();
         let candidates = {
-            let mut statement = self.backend.connection().prepare(READ_CANDIDATES_SQL).map_err(|_| ReadStateError::Storage)?;
+            let mut statement = self.backend.connection().prepare(READ_CANDIDATES_SQL)
+                .map_err(|_| ReadStateError::Storage)?;
             let rows = statement.query_map(params![conversation.as_slice()], |row| {
                 Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?))
             }).map_err(|_| ReadStateError::Storage)?;
@@ -42,29 +56,49 @@ impl SqlCipherReadState {
             for (contact, message) in candidates {
                 let contact_id = OpaqueId::from_bytes(fixed16(contact)?);
                 let message_id = OpaqueId::from_bytes(fixed16(message)?);
-                let receipt_id = derived_receipt_id(message_id);
-                let payload = ApplicationPayloadCodec::encode(&ApplicationPayload::Receipt(ReceiptPayload {
-                    receipt_id, message_id, contact_id, kind: DeliveryReceiptKind::Read, at,
-                })).map_err(|_| ReadStateError::Protocol)?;
                 let message_bytes = message_id.into_bytes();
                 let updated = self.backend.connection().execute(
                     MARK_READ_SQL,
                     params![message_bytes.as_slice(), at.to_unix_millis()],
                 ).map_err(|_| ReadStateError::Storage)?;
                 if updated == 0 { continue; }
-                let receipt_bytes = receipt_id.into_bytes();
-                let contact_bytes = contact_id.into_bytes();
-                self.backend.connection().execute(
-                    INSERT_RECEIPT_SQL,
-                    params![receipt_bytes.as_slice(), contact_bytes.as_slice(), payload, at.to_unix_millis()],
-                ).map_err(|_| ReadStateError::Storage)?;
+
+                if send_receipt {
+                    let receipt_id = derived_receipt_id(message_id);
+                    let payload = ApplicationPayloadCodec::encode(&ApplicationPayload::Receipt(
+                        ReceiptPayload {
+                            receipt_id,
+                            message_id,
+                            contact_id,
+                            kind: DeliveryReceiptKind::Read,
+                            at,
+                        },
+                    )).map_err(|_| ReadStateError::Protocol)?;
+                    let receipt_bytes = receipt_id.into_bytes();
+                    let contact_bytes = contact_id.into_bytes();
+                    self.backend.connection().execute(
+                        INSERT_RECEIPT_SQL,
+                        params![
+                            receipt_bytes.as_slice(),
+                            contact_bytes.as_slice(),
+                            payload,
+                            at.to_unix_millis(),
+                        ],
+                    ).map_err(|_| ReadStateError::Storage)?;
+                }
                 changed += 1;
             }
             Ok::<usize, ReadStateError>(changed)
         })();
         match result {
-            Ok(changed) => { self.backend.commit().map_err(|_| ReadStateError::Storage)?; Ok(changed) }
-            Err(error) => { let _ = self.backend.rollback(); Err(error) }
+            Ok(changed) => {
+                self.backend.commit().map_err(|_| ReadStateError::Storage)?;
+                Ok(changed)
+            }
+            Err(error) => {
+                let _ = self.backend.rollback();
+                Err(error)
+            }
         }
     }
 }

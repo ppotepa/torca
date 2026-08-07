@@ -13,22 +13,26 @@ class LocalPreferences extends ChangeNotifier {
   static const _themeModeKey = 'appearance.theme_mode';
   static const _localeModeKey = 'appearance.locale_mode';
   static const _notificationsKey = 'notifications.enabled';
+  static const _readReceiptsKey = 'privacy.read_receipts';
   static const _closeToTrayKey = 'desktop.close_to_tray';
 
   AppThemeMode _themeMode = AppThemeMode.system;
   AppLocaleMode _localeMode = AppLocaleMode.system;
   bool _notificationsEnabled = true;
+  bool _readReceiptsEnabled = true;
   bool _closeToTrayEnabled = true;
 
   AppThemeMode get themeMode => _themeMode;
   AppLocaleMode get localeMode => _localeMode;
   bool get notificationsEnabled => _notificationsEnabled;
+  bool get readReceiptsEnabled => _readReceiptsEnabled;
   bool get closeToTrayEnabled => _closeToTrayEnabled;
 
   Future<void> load() async {
     _themeMode = AppThemeMode.parse(await _store.getString(_themeModeKey));
     _localeMode = parseAppLocaleMode(await _store.getString(_localeModeKey));
     _notificationsEnabled = await _store.getBool(_notificationsKey) ?? true;
+    _readReceiptsEnabled = await _store.getBool(_readReceiptsKey) ?? true;
     _closeToTrayEnabled = await _store.getBool(_closeToTrayKey) ?? true;
     notifyListeners();
   }
@@ -52,6 +56,13 @@ class LocalPreferences extends ChangeNotifier {
     _notificationsEnabled = value;
     notifyListeners();
     await _store.setBool(_notificationsKey, value);
+  }
+
+  Future<void> setReadReceiptsEnabled(bool value) async {
+    if (_readReceiptsEnabled == value) return;
+    _readReceiptsEnabled = value;
+    notifyListeners();
+    await _store.setBool(_readReceiptsKey, value);
   }
 
   Future<void> setCloseToTrayEnabled(bool value) async {

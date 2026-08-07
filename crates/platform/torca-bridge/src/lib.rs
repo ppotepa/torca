@@ -43,6 +43,7 @@ pub enum BridgeCommand {
     },
     RetryMessage { message_id_hex: String, at_ms: i64 },
     MarkConversationRead { conversation_id_hex: String },
+    MarkConversationReadWithPolicy { conversation_id_hex: String, send_receipt: bool },
     QueueAttachment {
         attachment_id_hex: String,
         message_id_hex: String,
@@ -137,7 +138,12 @@ impl EngineBridge {
                 let message_id = MessageId::from_opaque(parse_id(&message_id_hex)?); let at = timestamp(at_ms)?;
                 self.engine.dispatch(EngineCommand::RetryMessage { message_id, at }).map_err(string_error).map(|value| { runtime.wake_delivery(); result_kind(&value) })
             }),
-            BridgeCommand::MarkConversationRead { conversation_id_hex } => parse_id(&conversation_id_hex).and_then(|id| self.runtime()?.mark_conversation_read(id).map_err(string_error)).map(|_| "conversation_read"),
+            BridgeCommand::MarkConversationRead { conversation_id_hex } => parse_id(&conversation_id_hex)
+                .and_then(|id| self.runtime()?.mark_conversation_read(id).map_err(string_error))
+                .map(|_| "conversation_read"),
+            BridgeCommand::MarkConversationReadWithPolicy { conversation_id_hex, send_receipt } => parse_id(&conversation_id_hex)
+                .and_then(|id| self.runtime()?.mark_conversation_read_with_policy(id, send_receipt).map_err(string_error))
+                .map(|_| "conversation_read"),
             BridgeCommand::QueueAttachment { attachment_id_hex, message_id_hex, conversation_id_hex, source_path, name, media_type, size } => parse_attachment_request(attachment_id_hex, message_id_hex, conversation_id_hex, source_path, name, media_type, size).and_then(|request| self.runtime()?.queue_attachment(request).map_err(string_error)).map(|_| "attachment_queued"),
             BridgeCommand::RetryAttachment { attachment_id_hex } => parse_id(&attachment_id_hex).and_then(|id| self.runtime()?.retry_attachment(id).map_err(string_error)).map(|_| "attachment_retried"),
             BridgeCommand::CancelAttachment { attachment_id_hex } => parse_id(&attachment_id_hex).and_then(|id| self.runtime()?.cancel_attachment(id).map_err(string_error)).map(|_| "attachment_cancelled"),

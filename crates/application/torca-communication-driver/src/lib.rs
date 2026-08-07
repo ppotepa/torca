@@ -84,7 +84,20 @@ pub trait AttachmentExportRuntime: Send {
     fn export_attachment(&mut self, attachment_id: AttachmentId, destination: PathBuf) -> Result<(), CommunicationError>;
 }
 pub trait ReadStateRuntime: Send {
-    fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
+    fn mark_conversation_read(
+        &mut self,
+        conversation_id: OpaqueId,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError>;
+
+    fn mark_conversation_read_with_policy(
+        &mut self,
+        conversation_id: OpaqueId,
+        now: Timestamp,
+        _send_receipt: bool,
+    ) -> Result<(), CommunicationError> {
+        self.mark_conversation_read(conversation_id, now)
+    }
 }
 pub trait RelationshipAdminRuntime: Send {
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, CommunicationError>;
@@ -174,7 +187,19 @@ impl CommunicationDriver for TorcaCommunicationDriver {
         self.peer.shutdown();
         Ok(())
     }
-    fn mark_conversation_read(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> { self.read_state.mark_conversation_read(id, now).map_err(map_runtime) }
+    fn mark_conversation_read(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.read_state.mark_conversation_read(id, now).map_err(map_runtime)
+    }
+    fn mark_conversation_read_with_policy(
+        &mut self,
+        id: OpaqueId,
+        now: Timestamp,
+        send_receipt: bool,
+    ) -> Result<(), RuntimeDriverError> {
+        self.read_state
+            .mark_conversation_read_with_policy(id, now, send_receipt)
+            .map_err(map_runtime)
+    }
     fn prepare_attachment(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), RuntimeDriverError> { self.attachments.prepare_outgoing(request, now).map_err(map_runtime) }
     fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> { self.attachments.retry(id, now).map_err(map_runtime) }
     fn cancel_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> { self.attachments.cancel(id, now).map_err(map_runtime) }

@@ -23,6 +23,18 @@ typedef _NoArgNative = ffi.Int32 Function(_Handle);
 typedef _NoArgDart = int Function(_Handle);
 typedef _OneStringNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _OneStringDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
+typedef _ReadIntentNative = ffi.Int32 Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.UintPtr,
+  ffi.Uint8,
+);
+typedef _ReadIntentDart = int Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+);
 typedef _TwoStringsNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _TwoStringsDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int);
 typedef _MessageIntentNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
@@ -110,7 +122,7 @@ class FfiEngineGateway implements EngineGateway {
     } else if (command is RetryMessageCommandDto) {
       _withString(command.messageIdHex, _bindings.retryMessageIntent);
     } else if (command is MarkConversationReadCommandDto) {
-      _withString(command.conversationIdHex, _bindings.markConversationRead);
+      _markConversationRead(command);
     } else if (command is QueueAttachmentCommandDto) {
       _queueAttachment(command);
     } else if (command is RetryAttachmentCommandDto) {
@@ -136,6 +148,20 @@ class FfiEngineGateway implements EngineGateway {
       _bindings.queueMessageIntent(_handle, conversation.pointer, conversation.length, body.pointer, body.length, reply.pointer, reply.length);
     } finally {
       conversation.dispose(); body.dispose(); reply.dispose();
+    }
+  }
+
+  void _markConversationRead(MarkConversationReadCommandDto command) {
+    final conversation = _NativeUtf8(_bindings, command.conversationIdHex);
+    try {
+      _bindings.markConversationReadIntent(
+        _handle,
+        conversation.pointer,
+        conversation.length,
+        command.sendReceipt ? 1 : 0,
+      );
+    } finally {
+      conversation.dispose();
     }
   }
 
@@ -287,7 +313,7 @@ class _NativeBindings {
         clearConversationHistory = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_clear_conversation_history'),
         queueMessageIntent = library.lookupFunction<_MessageIntentNative, _MessageIntentDart>('torca_engine_queue_message_intent'),
         retryMessageIntent = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_retry_message_intent'),
-        markConversationRead = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_mark_conversation_read'),
+        markConversationReadIntent = library.lookupFunction<_ReadIntentNative, _ReadIntentDart>('torca_engine_mark_conversation_read_intent'),
         queueAttachmentIntent = library.lookupFunction<_AttachmentIntentNative, _AttachmentIntentDart>('torca_engine_queue_attachment_intent'),
         retryAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_retry_attachment'),
         cancelAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_cancel_attachment'),
@@ -307,7 +333,7 @@ class _NativeBindings {
   final _OneStringDart approvePairing; final _OneStringDart rejectPairing; final _OneStringDart cancelPairing;
   final _TwoStringsDart renameContact; final _OneStringDart verifyContact; final _OneStringDart resetContactVerification;
   final _OneStringDart blockContact; final _OneStringDart unblockContact; final _OneStringDart removeContact; final _OneStringDart clearConversationHistory;
-  final _MessageIntentDart queueMessageIntent; final _OneStringDart retryMessageIntent; final _OneStringDart markConversationRead;
+  final _MessageIntentDart queueMessageIntent; final _OneStringDart retryMessageIntent; final _ReadIntentDart markConversationReadIntent;
   final _AttachmentIntentDart queueAttachmentIntent; final _OneStringDart retryAttachment; final _OneStringDart cancelAttachment; final _TwoStringsDart exportAttachment;
   final _RefreshDart refreshSnapshot; final _RefreshDart refreshDiagnostics;
   final _PointerDart resultPointer; final _LengthDart resultLength; final _PointerDart snapshotPointer; final _LengthDart snapshotLength; final _PointerDart diagnosticsPointer; final _LengthDart diagnosticsLength;

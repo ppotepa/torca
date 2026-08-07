@@ -14,6 +14,9 @@ pub use attachment_export::AttachmentExportAdapter;
 mod peer_health;
 pub use peer_health::HealthPeerLinkAdapter;
 
+mod privacy_read_state;
+pub use privacy_read_state::PrivacyReadStateAdapter;
+
 mod relationship_admin;
 pub use relationship_admin::RelationshipAdminAdapter;
 

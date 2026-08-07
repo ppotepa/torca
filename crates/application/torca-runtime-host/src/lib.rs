@@ -89,6 +89,14 @@ pub trait CommunicationDriver: Send + 'static {
     fn clear_conversation_history(&mut self, conversation_id: ConversationId) -> Result<(), RuntimeDriverError>;
     fn remove_contact(&mut self, contact_id: ContactId) -> Result<(), RuntimeDriverError>;
     fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn mark_conversation_read_with_policy(
+        &mut self,
+        conversation_id: OpaqueId,
+        now: Timestamp,
+        _send_receipt: bool,
+    ) -> Result<(), RuntimeDriverError> {
+        self.mark_conversation_read(conversation_id, now)
+    }
     fn prepare_attachment(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn retry_attachment(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn cancel_attachment(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
@@ -109,7 +117,7 @@ enum RuntimeCommand {
     ApprovePairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>), RejectPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>), CancelPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
     VerifyContact(ContactId, Sender<Result<(), RuntimeDriverError>>), ResetContactVerification(ContactId, Sender<Result<(), RuntimeDriverError>>),
     RenameContact(ContactId, String, Sender<Result<(), RuntimeDriverError>>), BlockContact(ContactId, Sender<Result<(), RuntimeDriverError>>), UnblockContact(ContactId, Sender<Result<(), RuntimeDriverError>>), RemoveContact(ContactId, Sender<Result<(), RuntimeDriverError>>), ClearConversationHistory(ConversationId, Sender<Result<(), RuntimeDriverError>>),
-    MarkConversationRead(OpaqueId, Sender<Result<(), RuntimeDriverError>>), QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>), RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>), CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>), ExportAttachment(AttachmentId, PathBuf, Sender<Result<(), RuntimeDriverError>>),
+    MarkConversationRead(OpaqueId, bool, Sender<Result<(), RuntimeDriverError>>), QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>), RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>), CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>), ExportAttachment(AttachmentId, PathBuf, Sender<Result<(), RuntimeDriverError>>),
     AttachmentSnapshot(Sender<Result<Vec<AttachmentView>, RuntimeDriverError>>), NetworkSnapshot(Sender<Result<NetworkSnapshot, RuntimeDriverError>>), Diagnostics(Sender<String>), Wake, Shutdown(Sender<()>),
 }
 
@@ -128,7 +136,10 @@ impl RuntimeHostHandle {
     pub fn unblock_contact(&self, id: ContactId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::UnblockContact(id, r)) }
     pub fn remove_contact(&self, id: ContactId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RemoveContact(id, r)) }
     pub fn clear_conversation_history(&self, id: ConversationId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::ClearConversationHistory(id, r)) }
-    pub fn mark_conversation_read(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, r)) }
+    pub fn mark_conversation_read(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
+        self.mark_conversation_read_with_policy(id, true)
+    }
+    pub fn mark_conversation_read_with_policy(&self, id: OpaqueId, send_receipt: bool) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, send_receipt, r)) }
     pub fn queue_attachment(&self, value: AttachmentSendRequest) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::QueueAttachment(value, r)) }
     pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RetryAttachment(id, r)) }
     pub fn cancel_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::CancelAttachment(id, r)) }
@@ -196,7 +207,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(comman
         RuntimeCommand::CreatePairing(id, r) => { let _ = r.send(pairing.create(id, now)); } RuntimeCommand::JoinPairing(id, code, r) => { let _ = r.send(pairing.join(id, code, now)); } RuntimeCommand::ApprovePairing(id, r) => { let _ = r.send(pairing.approve(id, now)); } RuntimeCommand::RejectPairing(id, r) => { let _ = r.send(pairing.reject(id)); } RuntimeCommand::CancelPairing(id, r) => { let _ = r.send(pairing.cancel(id)); }
         RuntimeCommand::VerifyContact(id, r) => { let _ = r.send(communication.verify_contact(id, now)); } RuntimeCommand::ResetContactVerification(id, r) => { let _ = r.send(communication.reset_contact_verification(id)); }
         RuntimeCommand::RenameContact(id, name, r) => { let _ = r.send(communication.rename_contact(id, name, now)); } RuntimeCommand::BlockContact(id, r) => { let _ = r.send(communication.block_contact(id, now)); } RuntimeCommand::UnblockContact(id, r) => { let _ = r.send(communication.unblock_contact(id, now)); } RuntimeCommand::RemoveContact(id, r) => { let _ = r.send(communication.remove_contact(id)); } RuntimeCommand::ClearConversationHistory(id, r) => { let _ = r.send(communication.clear_conversation_history(id)); }
-        RuntimeCommand::MarkConversationRead(id, r) => { let _ = r.send(communication.mark_conversation_read(id, now)); }
+        RuntimeCommand::MarkConversationRead(id, send_receipt, r) => { let _ = r.send(communication.mark_conversation_read_with_policy(id, now, send_receipt)); }
         RuntimeCommand::QueueAttachment(request_value, r) => {
             let message_id = MessageId::from_opaque(request_value.message_id); let body = MessageBody::new(format!("Attachment: {}", request_value.name)).map_err(|_| RuntimeDriverError::Communication);
             let result = body.and_then(|body| {

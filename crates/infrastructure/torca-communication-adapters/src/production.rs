@@ -25,9 +25,9 @@ use torca_transport_tor::PeerListener;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
-    HealthPeerLinkAdapter, InboundTextReceiptAdapter, ReadStateAdapter, ReceiptPeerTransport,
-    RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto, TextPeerTransport,
-    TextWorkerAdapter,
+    HealthPeerLinkAdapter, InboundTextReceiptAdapter, PrivacyReadStateAdapter,
+    ReceiptPeerTransport, RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto,
+    TextPeerTransport, TextWorkerAdapter,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -207,7 +207,7 @@ where
         Box::new(inbound),
         Box::new(attachments),
         Box::new(attachment_export),
-        Box::new(ReadStateAdapter::new(read_state)),
+        Box::new(PrivacyReadStateAdapter::new(read_state)),
         Box::new(relationships),
     ))
 }

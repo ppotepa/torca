@@ -62,6 +62,18 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 24),
+              Text(strings.privacy, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Card(
+                child: SwitchListTile(
+                  secondary: const Icon(Icons.visibility_outlined),
+                  title: Text(strings.sendReadReceipts),
+                  subtitle: Text(strings.sendReadReceiptsDescription),
+                  value: preferences.readReceiptsEnabled,
+                  onChanged: preferences.setReadReceiptsEnabled,
+                ),
+              ),
+              const SizedBox(height: 24),
               Text(strings.notifications, style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               Card(
