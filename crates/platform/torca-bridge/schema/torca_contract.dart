@@ -1,7 +1,7 @@
 // GENERATED FILE. DO NOT EDIT.
 // Source: crates/platform/torca-bridge/schema/torca_contract.dart
 const int torcaContractVersion = 11;
-class BridgeResultDto{const BridgeResultDto({required this.ok,required this.kind,this.error});final bool ok;final String kind;final String? error;}
+class BridgeResultDto{const BridgeResultDto({required this.ok,required this.kind,this.error});final bool ok;final String kind;final String? error;String? get errorCode=>kind.startsWith('error:')?kind.substring(6):null;}
 class IdentityDto{const IdentityDto({required this.displayName});final String displayName;}
 class PairingDto{const PairingDto({required this.id,required this.code,required this.role,required this.state,required this.expiresAtMs,required this.localApproved,required this.remoteApproved});final String id,code,role,state;final int expiresAtMs;final bool localApproved,remoteApproved;}
 class PeerHealthDto{const PeerHealthDto({this.state='disconnected',this.quality='unknown',this.rttMs,this.lastSuccessAtMs,this.consecutiveFailures=0,this.reconnectAttempt=0});final String state,quality;final int? rttMs,lastSuccessAtMs;final int consecutiveFailures,reconnectAttempt;}
