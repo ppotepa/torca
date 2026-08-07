@@ -23,7 +23,6 @@ use torca_pairing::{
 };
 use torca_receipts::{InMemoryReceiptRepository, Receipt, ReceiptRepository};
 
-/// Command accepted by the single-writer client engine.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineCommand {
@@ -56,6 +55,11 @@ pub enum EngineCommand {
     },
     CancelPairing {
         session_id: PairingSessionId,
+    },
+    /// Internal maintenance command; presentation code never chooses the expiry deadline.
+    ExpirePairing {
+        session_id: PairingSessionId,
+        at: Timestamp,
     },
     RemoteApproved {
         session_id: PairingSessionId,
@@ -94,7 +98,6 @@ pub enum EngineCommand {
     ApplyReceipt(Receipt),
 }
 
-/// Result returned after one engine command.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineResult {
@@ -110,7 +113,6 @@ pub enum EngineResult {
     ReceiptApplied { message_id: MessageId, changed: bool },
 }
 
-/// Immutable application snapshot consumed by projections and presentation bridges.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientSnapshot {
@@ -121,7 +123,6 @@ pub struct ClientSnapshot {
     pub messages: Vec<Message>,
 }
 
-/// Redaction-safe application engine failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EngineError(pub String);
 impl fmt::Display for EngineError {
@@ -131,12 +132,7 @@ impl fmt::Display for EngineError {
 }
 impl std::error::Error for EngineError {}
 
-/// Combined relationship persistence boundary.
-///
-/// Contact and direct-conversation repositories intentionally share one owner so pairing
-/// completion can commit both aggregates atomically in production storage.
 pub trait RelationshipRepository: ContactRepository + ConversationRepository {
-    /// Persists a verified contact and its direct conversation as one unit.
     fn insert_pairing_result(
         &mut self,
         contact: Contact,
@@ -144,7 +140,6 @@ pub trait RelationshipRepository: ContactRepository + ConversationRepository {
     ) -> Result<(), EngineError>;
 }
 
-/// In-memory relationship repository used by tests and explicit previews.
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryRelationshipRepository {
     contacts: InMemoryContactRepository,
@@ -204,11 +199,6 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
     }
 }
 
-/// Client engine parameterized by inward-facing persistence and key-management ports.
-///
-/// The default type parameters intentionally preserve the lightweight in-memory composition for
-/// tests and explicit previews. Production composition injects SQLCipher repositories and a
-/// protected production identity key provider without changing engine workflow code.
 pub struct ClientEngine<
     I = InMemoryIdentityRepository,
     K = DeterministicKeyProvider,
@@ -255,7 +245,6 @@ where
     M: MessageRepository,
     R: ReceiptRepository,
 {
-    /// Creates an engine from explicit ports.
     pub const fn new(
         identity_repository: I,
         key_provider: K,
@@ -273,7 +262,6 @@ where
         }
     }
 
-    /// Executes one serialized application command.
     pub fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError> {
         match command {
             EngineCommand::CreateIdentity { identity_id, profile, at } => {
@@ -318,6 +306,14 @@ where
                 session.cancel().map_err(map_error)?;
                 self.pairings.update(session).map_err(map_error)?;
                 Ok(EngineResult::PairingCancelled)
+            }
+            EngineCommand::ExpirePairing { session_id, at } => {
+                let mut session = self.load_pairing(session_id)?;
+                if !session.expire(at) {
+                    return Err(EngineError("pairing session is not due to expire".into()));
+                }
+                self.pairings.update(session).map_err(map_error)?;
+                Ok(EngineResult::PairingUpdated)
             }
             EngineCommand::RemoteApproved { session_id, at } => {
                 let mut session = self.load_pairing(session_id)?;
@@ -392,7 +388,6 @@ where
         }
     }
 
-    /// Reads the current application snapshot through injected repositories.
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         Ok(ClientSnapshot {
             identity: self.identity.load().map_err(map_error)?,
@@ -418,11 +413,8 @@ where
     }
 }
 
-/// Runtime interface hidden behind the single-writer actor.
 pub trait EngineRuntime: Send + 'static {
-    /// Executes one command.
     fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError>;
-    /// Reads one snapshot.
     fn snapshot(&self) -> Result<ClientSnapshot, EngineError>;
 }
 
@@ -454,13 +446,11 @@ enum ActorRequest {
     Shutdown,
 }
 
-/// Cloneable handle used by bridges/workers to communicate with the engine actor.
 #[derive(Clone)]
 pub struct EngineHandle {
     sender: Sender<ActorRequest>,
 }
 impl EngineHandle {
-    /// Dispatches a command through the engine actor.
     pub fn dispatch(&self, command: EngineCommand) -> Result<EngineResult, EngineError> {
         let (sender, receiver) = mpsc::channel();
         self.sender
@@ -469,7 +459,6 @@ impl EngineHandle {
         receiver.recv().map_err(|_| EngineError("engine response channel closed".into()))?
     }
 
-    /// Requests a current snapshot from the engine actor.
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         let (sender, receiver) = mpsc::channel();
         self.sender
@@ -479,13 +468,11 @@ impl EngineHandle {
     }
 }
 
-/// Owner of the single engine thread.
 pub struct ClientEngineActor {
     sender: Sender<ActorRequest>,
     join: Option<JoinHandle<()>>,
 }
 impl ClientEngineActor {
-    /// Starts an actor around any engine runtime satisfying the application contract.
     pub fn spawn<E: EngineRuntime>(mut engine: E) -> (EngineHandle, Self) {
         let (sender, receiver): (Sender<ActorRequest>, Receiver<ActorRequest>) = mpsc::channel();
         let handle = EngineHandle { sender: sender.clone() };
@@ -505,7 +492,6 @@ impl ClientEngineActor {
         (handle, Self { sender, join: Some(join) })
     }
 
-    /// Stops and joins the engine actor.
     pub fn shutdown(mut self) -> Result<(), EngineError> {
         self.sender
             .send(ActorRequest::Shutdown)
