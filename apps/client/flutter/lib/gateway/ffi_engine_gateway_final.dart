@@ -19,6 +19,8 @@ typedef _FreeNative = ffi.Void Function(ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _FreeDart = void Function(ffi.Pointer<ffi.Uint8>, int);
 typedef _IdNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _IdDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
+typedef _TwoStringsNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
+typedef _TwoStringsDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Uint8>, int);
 typedef _RetryMessageNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Int64);
 typedef _RetryMessageDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, int);
 typedef _QueueMessageReplyNative = ffi.Int32 Function(
@@ -72,7 +74,7 @@ class FfiEngineGateway implements EngineGateway {
   static FfiEngineGateway open({ffi.DynamicLibrary? library}) {
     final lib = library ?? ffi.DynamicLibrary.open(_libraryName());
     final wrapped = base.FfiEngineGateway.open(library: lib);
-    final bindings = _AttachmentBindings(lib);
+    final bindings = _FinalBindings(lib);
     final handle = bindings.engineNew();
     if (handle == ffi.nullptr) throw StateError('native Torca process handle could not be acquired');
     return FfiEngineGateway._(wrapped, bindings, handle);
@@ -86,7 +88,7 @@ class FfiEngineGateway implements EngineGateway {
   }
 
   final base.FfiEngineGateway _base;
-  final _AttachmentBindings _bindings;
+  final _FinalBindings _bindings;
   final _Handle _handle;
   final ValueNotifier<AppSnapshotDto> _snapshots = ValueNotifier(const AppSnapshotDto());
   bool _disposed = false;
@@ -103,11 +105,16 @@ class FfiEngineGateway implements EngineGateway {
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     if (_disposed) return const BridgeResultDto(ok: false, kind: 'error', error: 'native engine gateway is disposed');
+    if (command is RenameContactCommandDto) return _renameContact(command);
+    if (command is BlockContactCommandDto) return _idCommand(command.contactIdHex, _bindings.blockContact);
+    if (command is UnblockContactCommandDto) return _idCommand(command.contactIdHex, _bindings.unblockContact);
+    if (command is RemoveContactCommandDto) return _idCommand(command.contactIdHex, _bindings.removeContact);
+    if (command is ClearConversationHistoryCommandDto) return _idCommand(command.conversationIdHex, _bindings.clearConversationHistory);
     if (command is QueueMessageCommandDto && command.replyToMessageId != null) return _queueMessageReply(command);
     if (command is RetryMessageCommandDto) return _retryMessage(command);
     if (command is QueueAttachmentCommandDto) return _queueAttachment(command);
-    if (command is RetryAttachmentCommandDto) return _idAttachment(command.attachmentIdHex, _bindings.retryAttachment);
-    if (command is CancelAttachmentCommandDto) return _idAttachment(command.attachmentIdHex, _bindings.cancelAttachment);
+    if (command is RetryAttachmentCommandDto) return _idCommand(command.attachmentIdHex, _bindings.retryAttachment);
+    if (command is CancelAttachmentCommandDto) return _idCommand(command.attachmentIdHex, _bindings.cancelAttachment);
     final result = await _base.execute(command);
     if (result.ok) _refreshFullSnapshot();
     return result;
@@ -116,13 +123,19 @@ class FfiEngineGateway implements EngineGateway {
   @override
   Future<String> diagnosticsJson() => _base.diagnosticsJson();
 
+  Future<BridgeResultDto> _renameContact(RenameContactCommandDto command) async {
+    final id = _Utf8(_bindings, command.contactIdHex);
+    final name = _Utf8(_bindings, command.displayName);
+    try { _bindings.renameContact(_handle, id.pointer, id.length, name.pointer, name.length); }
+    finally { id.dispose(); name.dispose(); }
+    return _readAndRefresh();
+  }
+
   Future<BridgeResultDto> _retryMessage(RetryMessageCommandDto command) async {
     final message = _Utf8(_bindings, command.messageIdHex);
     try { _bindings.retryMessage(_handle, message.pointer, message.length, command.atMs); }
     finally { message.dispose(); }
-    final result = _result();
-    if (result.ok) _refreshFullSnapshot();
-    return result;
+    return _readAndRefresh();
   }
 
   Future<BridgeResultDto> _queueMessageReply(QueueMessageCommandDto command) async {
@@ -141,12 +154,8 @@ class FfiEngineGateway implements EngineGateway {
         reply.pointer, reply.length,
         command.atMs,
       );
-    } finally {
-      message.dispose(); conversation.dispose(); body.dispose(); reply.dispose();
-    }
-    final result = _result();
-    if (result.ok) _refreshFullSnapshot();
-    return result;
+    } finally { message.dispose(); conversation.dispose(); body.dispose(); reply.dispose(); }
+    return _readAndRefresh();
   }
 
   Future<BridgeResultDto> _queueAttachment(QueueAttachmentCommandDto command) async {
@@ -167,17 +176,17 @@ class FfiEngineGateway implements EngineGateway {
         media.pointer, media.length,
         command.size,
       );
-    } finally {
-      attachment.dispose(); message.dispose(); conversation.dispose(); path.dispose(); name.dispose(); media.dispose();
-    }
-    final result = _result();
-    if (result.ok) _refreshFullSnapshot();
-    return result;
+    } finally { attachment.dispose(); message.dispose(); conversation.dispose(); path.dispose(); name.dispose(); media.dispose(); }
+    return _readAndRefresh();
   }
 
-  Future<BridgeResultDto> _idAttachment(String id, _IdDart call) async {
+  Future<BridgeResultDto> _idCommand(String id, _IdDart call) async {
     final value = _Utf8(_bindings, id);
     try { call(_handle, value.pointer, value.length); } finally { value.dispose(); }
+    return _readAndRefresh();
+  }
+
+  Future<BridgeResultDto> _readAndRefresh() async {
     final result = _result();
     if (result.ok) _refreshFullSnapshot();
     return result;
@@ -218,6 +227,7 @@ class FfiEngineGateway implements EngineGateway {
         final item = _map(value);
         return ContactDto(
           id: item['id'] as String,
+          displayName: item['displayName'] as String,
           onionAddress: item['onionAddress'] as String,
           status: item['status'] as String,
           connectionState: item['connectionState'] as String,
@@ -270,19 +280,24 @@ class _Utf8 {
     pointer = bindings.alloc(bytes.length);
     if (bytes.isNotEmpty) pointer.asTypedList(bytes.length).setAll(0, bytes);
   }
-  final _AttachmentBindings bindings;
+  final _FinalBindings bindings;
   final List<int> bytes;
   late final ffi.Pointer<ffi.Uint8> pointer;
   int get length => bytes.length;
   void dispose() => bindings.free(pointer, bytes.length);
 }
 
-class _AttachmentBindings {
-  _AttachmentBindings(ffi.DynamicLibrary library)
+class _FinalBindings {
+  _FinalBindings(ffi.DynamicLibrary library)
       : engineNew = library.lookupFunction<_EngineNewNative, _EngineNewDart>('torca_engine_new'),
         engineDestroy = library.lookupFunction<_EngineDestroyNative, _EngineDestroyDart>('torca_engine_destroy'),
         alloc = library.lookupFunction<_AllocNative, _AllocDart>('torca_alloc'),
         free = library.lookupFunction<_FreeNative, _FreeDart>('torca_free'),
+        renameContact = library.lookupFunction<_TwoStringsNative, _TwoStringsDart>('torca_engine_rename_contact'),
+        blockContact = library.lookupFunction<_IdNative, _IdDart>('torca_engine_block_contact'),
+        unblockContact = library.lookupFunction<_IdNative, _IdDart>('torca_engine_unblock_contact'),
+        removeContact = library.lookupFunction<_IdNative, _IdDart>('torca_engine_remove_contact'),
+        clearConversationHistory = library.lookupFunction<_IdNative, _IdDart>('torca_engine_clear_conversation_history'),
         retryMessage = library.lookupFunction<_RetryMessageNative, _RetryMessageDart>('torca_engine_retry_message'),
         queueMessageReply = library.lookupFunction<_QueueMessageReplyNative, _QueueMessageReplyDart>('torca_engine_queue_message_reply'),
         queueAttachment = library.lookupFunction<_QueueAttachmentNative, _QueueAttachmentDart>('torca_engine_queue_attachment'),
@@ -297,6 +312,11 @@ class _AttachmentBindings {
   final _EngineDestroyDart engineDestroy;
   final _AllocDart alloc;
   final _FreeDart free;
+  final _TwoStringsDart renameContact;
+  final _IdDart blockContact;
+  final _IdDart unblockContact;
+  final _IdDart removeContact;
+  final _IdDart clearConversationHistory;
   final _RetryMessageDart retryMessage;
   final _QueueMessageReplyDart queueMessageReply;
   final _QueueAttachmentDart queueAttachment;

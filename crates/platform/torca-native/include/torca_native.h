@@ -29,30 +29,17 @@ int32_t torca_engine_create_identity(
     size_t display_name_length,
     int64_t at_ms);
 
-int32_t torca_engine_create_pairing(
-    NativeEngineHandle *handle,
-    const uint8_t *session_id,
-    size_t session_id_length);
+int32_t torca_engine_create_pairing(NativeEngineHandle *handle, const uint8_t *session_id, size_t session_id_length);
+int32_t torca_engine_join_pairing(NativeEngineHandle *handle, const uint8_t *session_id, size_t session_id_length, const uint8_t *code, size_t code_length);
+int32_t torca_engine_approve_pairing(NativeEngineHandle *handle, const uint8_t *session_id, size_t session_id_length);
+int32_t torca_engine_reject_pairing(NativeEngineHandle *handle, const uint8_t *session_id, size_t session_id_length);
+int32_t torca_engine_cancel_pairing(NativeEngineHandle *handle, const uint8_t *session_id, size_t session_id_length);
 
-int32_t torca_engine_join_pairing(
-    NativeEngineHandle *handle,
-    const uint8_t *session_id,
-    size_t session_id_length,
-    const uint8_t *code,
-    size_t code_length);
-
-int32_t torca_engine_approve_pairing(
-    NativeEngineHandle *handle,
-    const uint8_t *session_id,
-    size_t session_id_length);
-int32_t torca_engine_reject_pairing(
-    NativeEngineHandle *handle,
-    const uint8_t *session_id,
-    size_t session_id_length);
-int32_t torca_engine_cancel_pairing(
-    NativeEngineHandle *handle,
-    const uint8_t *session_id,
-    size_t session_id_length);
+int32_t torca_engine_rename_contact(NativeEngineHandle *handle, const uint8_t *contact_id, size_t contact_id_length, const uint8_t *display_name, size_t display_name_length);
+int32_t torca_engine_block_contact(NativeEngineHandle *handle, const uint8_t *contact_id, size_t contact_id_length);
+int32_t torca_engine_unblock_contact(NativeEngineHandle *handle, const uint8_t *contact_id, size_t contact_id_length);
+int32_t torca_engine_remove_contact(NativeEngineHandle *handle, const uint8_t *contact_id, size_t contact_id_length);
+int32_t torca_engine_clear_conversation_history(NativeEngineHandle *handle, const uint8_t *conversation_id, size_t conversation_id_length);
 
 int32_t torca_engine_queue_message(
     NativeEngineHandle *handle,
@@ -76,16 +63,8 @@ int32_t torca_engine_queue_message_reply(
     size_t reply_to_message_id_length,
     int64_t at_ms);
 
-int32_t torca_engine_retry_message(
-    NativeEngineHandle *handle,
-    const uint8_t *message_id,
-    size_t message_id_length,
-    int64_t at_ms);
-
-int32_t torca_engine_mark_conversation_read(
-    NativeEngineHandle *handle,
-    const uint8_t *conversation_id,
-    size_t conversation_id_length);
+int32_t torca_engine_retry_message(NativeEngineHandle *handle, const uint8_t *message_id, size_t message_id_length, int64_t at_ms);
+int32_t torca_engine_mark_conversation_read(NativeEngineHandle *handle, const uint8_t *conversation_id, size_t conversation_id_length);
 
 int32_t torca_engine_queue_attachment(
     NativeEngineHandle *handle,
@@ -102,14 +81,8 @@ int32_t torca_engine_queue_attachment(
     const uint8_t *media_type,
     size_t media_type_length,
     uint64_t size);
-int32_t torca_engine_retry_attachment(
-    NativeEngineHandle *handle,
-    const uint8_t *attachment_id,
-    size_t attachment_id_length);
-int32_t torca_engine_cancel_attachment(
-    NativeEngineHandle *handle,
-    const uint8_t *attachment_id,
-    size_t attachment_id_length);
+int32_t torca_engine_retry_attachment(NativeEngineHandle *handle, const uint8_t *attachment_id, size_t attachment_id_length);
+int32_t torca_engine_cancel_attachment(NativeEngineHandle *handle, const uint8_t *attachment_id, size_t attachment_id_length);
 
 int32_t torca_engine_refresh_snapshot(NativeEngineHandle *handle);
 int32_t torca_engine_refresh_diagnostics(NativeEngineHandle *handle);

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 use torca_client_engine::{ClientSnapshot, EngineCommand, EngineError, EngineHandle, EngineResult};
+use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityId, Profile, ProfileName, PublicIdentity};
@@ -13,7 +14,7 @@ use torca_runtime_host::{
     AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle,
 };
 
-pub const CONTRACT_VERSION: u16 = 7;
+pub const CONTRACT_VERSION: u16 = 8;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,6 +25,11 @@ pub enum BridgeCommand {
     ApprovePairing { session_id_hex: String },
     RejectPairing { session_id_hex: String },
     CancelPairing { session_id_hex: String },
+    RenameContact { contact_id_hex: String, display_name: String },
+    BlockContact { contact_id_hex: String },
+    UnblockContact { contact_id_hex: String },
+    RemoveContact { contact_id_hex: String },
+    ClearConversationHistory { conversation_id_hex: String },
     QueueMessage {
         message_id_hex: String,
         conversation_id_hex: String,
@@ -72,6 +78,7 @@ pub struct BridgePairing {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgeContact {
     pub id: String,
+    pub display_name: String,
     pub onion_address: String,
     pub status: String,
     pub connection_state: String,
@@ -138,6 +145,21 @@ impl EngineBridge {
             BridgeCommand::CancelPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
                 .and_then(|id| self.runtime()?.cancel_pairing(id).map_err(string_error))
                 .map(|_| "pairing_cancelled"),
+            BridgeCommand::RenameContact { contact_id_hex, display_name } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| self.runtime()?.rename_contact(id, display_name).map_err(string_error))
+                .map(|_| "contact_renamed"),
+            BridgeCommand::BlockContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| self.runtime()?.block_contact(id).map_err(string_error))
+                .map(|_| "contact_blocked"),
+            BridgeCommand::UnblockContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| self.runtime()?.unblock_contact(id).map_err(string_error))
+                .map(|_| "contact_unblocked"),
+            BridgeCommand::RemoveContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| self.runtime()?.remove_contact(id).map_err(string_error))
+                .map(|_| "contact_removed"),
+            BridgeCommand::ClearConversationHistory { conversation_id_hex } => parse_conversation_id(&conversation_id_hex)
+                .and_then(|id| self.runtime()?.clear_conversation_history(id).map_err(string_error))
+                .map(|_| "conversation_history_cleared"),
             BridgeCommand::QueueMessage {
                 message_id_hex,
                 conversation_id_hex,
@@ -221,7 +243,12 @@ impl EngineBridge {
                 runtime.attachment_snapshot().map_err(|_| EngineError("attachment snapshot unavailable".into()))?,
             ),
             None => (
-                NetworkSnapshot { tor: HostTorState::Stopped, onion_address: None, peers: BTreeMap::new() },
+                NetworkSnapshot {
+                    tor: HostTorState::Stopped,
+                    onion_address: None,
+                    peers: BTreeMap::new(),
+                    contact_names: BTreeMap::new(),
+                },
                 Vec::new(),
             ),
         };
@@ -241,6 +268,8 @@ impl EngineBridge {
 }
 
 fn parse_pairing_id(value: &str) -> Result<PairingSessionId, String> { parse_id(value).map(PairingSessionId::from_opaque) }
+fn parse_contact_id(value: &str) -> Result<ContactId, String> { parse_id(value).map(ContactId::from_opaque) }
+fn parse_conversation_id(value: &str) -> Result<ConversationId, String> { parse_id(value).map(ConversationId::from_opaque) }
 fn parse_id(value: &str) -> Result<OpaqueId, String> { value.parse::<OpaqueId>().map_err(string_error) }
 fn timestamp(value: i64) -> Result<Timestamp, String> { Timestamp::from_unix_millis(value).map_err(string_error) }
 fn string_error(error: impl core::fmt::Display) -> String { error.to_string() }
@@ -264,9 +293,7 @@ fn map_snapshot(
     attachments: Vec<AttachmentView>,
 ) -> BridgeSnapshot {
     let local_public = snapshot.identity.as_ref().map(|identity| identity.public().clone());
-    let identity_name = snapshot
-        .identity
-        .as_ref()
+    let identity_name = snapshot.identity.as_ref()
         .map(|identity| identity.profile().display_name().as_str().to_owned());
     BridgeSnapshot {
         contract_version: CONTRACT_VERSION,
@@ -281,15 +308,15 @@ fn map_snapshot(
         contacts: snapshot.contacts.into_iter().map(|c| {
             let connection_state = network.peers.get(&c.id())
                 .map_or_else(|| "disconnected".to_owned(), |s| format!("{s:?}").to_lowercase());
-            let safety_number = local_public
-                .as_ref()
+            let safety_number = local_public.as_ref()
                 .map_or_else(String::new, |local| safety_number(local, c.remote_identity()));
+            let display_name = network.contact_names.get(&c.id()).cloned()
+                .unwrap_or_else(|| fallback_contact_name(c.id()));
             BridgeContact {
-                id: c.id().to_string(),
+                id: c.id().to_string(), display_name,
                 onion_address: c.route().onion_address().to_owned(),
                 status: format!("{:?}", c.status()).to_lowercase(),
-                connection_state,
-                safety_number,
+                connection_state, safety_number,
             }
         }).collect(),
         conversations: snapshot.conversations.into_iter().map(|c| BridgeConversation {
@@ -307,6 +334,12 @@ fn map_snapshot(
     }
 }
 
+fn fallback_contact_name(id: ContactId) -> String {
+    let value = id.to_string();
+    let short = value.get(..8).unwrap_or(&value);
+    format!("Contact {short}")
+}
+
 fn safety_number(local: &PublicIdentity, remote: &PublicIdentity) -> String {
     let (first, second) = if local.identity_id().to_opaque() <= remote.identity_id().to_opaque() {
         (local, remote)
@@ -318,11 +351,9 @@ fn safety_number(local: &PublicIdentity, remote: &PublicIdentity) -> String {
     update_identity_hash(&mut hash, first);
     update_identity_hash(&mut hash, second);
     let digest = hash.finalize();
-    digest
-        .chunks(4)
+    digest.chunks(4)
         .map(|chunk| chunk.iter().map(|byte| format!("{byte:02X}")).collect::<String>())
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect::<Vec<_>>().join(" ")
 }
 
 fn update_identity_hash(hash: &mut Sha256, identity: &PublicIdentity) {

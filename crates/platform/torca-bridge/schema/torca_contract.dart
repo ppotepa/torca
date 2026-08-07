@@ -1,7 +1,7 @@
 // GENERATED FILE. DO NOT EDIT.
 // Source: crates/platform/torca-bridge/schema/torca_contract.dart
 
-const int torcaContractVersion = 7;
+const int torcaContractVersion = 8;
 
 class BridgeResultDto {
   const BridgeResultDto({required this.ok, required this.kind, this.error});
@@ -27,8 +27,9 @@ class PairingDto {
 }
 
 class ContactDto {
-  const ContactDto({required this.id, required this.onionAddress, required this.status, required this.connectionState, this.safetyNumber});
+  const ContactDto({required this.id, required this.displayName, required this.onionAddress, required this.status, required this.connectionState, this.safetyNumber});
   final String id;
+  final String displayName;
   final String onionAddress;
   final String status;
   final String connectionState;
@@ -82,6 +83,11 @@ class JoinPairingCommandDto extends BridgeCommandDto { const JoinPairingCommandD
 class ApprovePairingCommandDto extends BridgeCommandDto { const ApprovePairingCommandDto({required this.sessionIdHex}); final String sessionIdHex; }
 class RejectPairingCommandDto extends BridgeCommandDto { const RejectPairingCommandDto({required this.sessionIdHex}); final String sessionIdHex; }
 class CancelPairingCommandDto extends BridgeCommandDto { const CancelPairingCommandDto({required this.sessionIdHex}); final String sessionIdHex; }
+class RenameContactCommandDto extends BridgeCommandDto { const RenameContactCommandDto({required this.contactIdHex, required this.displayName}); final String contactIdHex; final String displayName; }
+class BlockContactCommandDto extends BridgeCommandDto { const BlockContactCommandDto({required this.contactIdHex}); final String contactIdHex; }
+class UnblockContactCommandDto extends BridgeCommandDto { const UnblockContactCommandDto({required this.contactIdHex}); final String contactIdHex; }
+class RemoveContactCommandDto extends BridgeCommandDto { const RemoveContactCommandDto({required this.contactIdHex}); final String contactIdHex; }
+class ClearConversationHistoryCommandDto extends BridgeCommandDto { const ClearConversationHistoryCommandDto({required this.conversationIdHex}); final String conversationIdHex; }
 class QueueMessageCommandDto extends BridgeCommandDto {
   const QueueMessageCommandDto({required this.messageIdHex, required this.conversationIdHex, required this.body, required this.atMs, this.replyToMessageId});
   final String messageIdHex; final String conversationIdHex; final String body; final int atMs; final String? replyToMessageId;

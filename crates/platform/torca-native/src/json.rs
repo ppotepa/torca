@@ -51,16 +51,13 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         output.push_str("\",\"code\":\""); push_json_string(&pairing.code, &mut output);
         output.push_str("\",\"role\":\""); push_json_string(&pairing.role, &mut output);
         output.push_str("\",\"state\":\""); push_json_string(&pairing.state, &mut output);
-        let _ = write!(
-            output,
-            "\",\"expiresAtMs\":{},\"localApproved\":{},\"remoteApproved\":{}}}",
-            pairing.expires_at_ms, pairing.local_approved, pairing.remote_approved,
-        );
+        let _ = write!(output, "\",\"expiresAtMs\":{},\"localApproved\":{},\"remoteApproved\":{}}}", pairing.expires_at_ms, pairing.local_approved, pairing.remote_approved);
     }
     output.push_str("],\"contacts\":[");
     for (index, contact) in snapshot.contacts.iter().enumerate() {
         if index != 0 { output.push(','); }
         output.push_str("{\"id\":\""); push_json_string(&contact.id, &mut output);
+        output.push_str("\",\"displayName\":\""); push_json_string(&contact.display_name, &mut output);
         output.push_str("\",\"onionAddress\":\""); push_json_string(&contact.onion_address, &mut output);
         output.push_str("\",\"status\":\""); push_json_string(&contact.status, &mut output);
         output.push_str("\",\"connectionState\":\""); push_json_string(&contact.connection_state, &mut output);
@@ -97,11 +94,7 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         output.push_str("\",\"messageId\":\""); push_json_string(&attachment.message_id, &mut output);
         output.push_str("\",\"name\":\""); push_json_string(&attachment.name, &mut output);
         output.push_str("\",\"mediaType\":\""); push_json_string(&attachment.media_type, &mut output);
-        let _ = write!(
-            output,
-            "\",\"size\":{},\"status\":\"",
-            attachment.size,
-        );
+        let _ = write!(output, "\",\"size\":{},\"status\":\"", attachment.size);
         push_json_string(&attachment.status, &mut output);
         let _ = write!(output, "\",\"offset\":{}}}", attachment.offset);
     }
@@ -117,9 +110,7 @@ fn push_json_string(value: &str, output: &mut String) {
             '\n' => output.push_str("\\n"),
             '\r' => output.push_str("\\r"),
             '\t' => output.push_str("\\t"),
-            character if character.is_control() => {
-                let _ = write!(output, "\\u{:04x}", character as u32);
-            }
+            character if character.is_control() => { let _ = write!(output, "\\u{:04x}", character as u32); }
             character => output.push(character),
         }
     }

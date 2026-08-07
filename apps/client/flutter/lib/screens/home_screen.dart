@@ -54,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ? _IdentitySetup(gateway: widget.gateway)
           : LayoutBuilder(builder: (context, constraints) {
               void contactInfo(ContactDto contact) => Navigator.of(context).push<void>(
-                    MaterialPageRoute(builder: (_) => ContactDetailsScreen(contact: contact)),
+                    MaterialPageRoute(builder: (_) => ContactDetailsScreen(gateway: widget.gateway, contact: contact)),
                   );
               if (constraints.maxWidth < _wideLayoutBreakpoint) {
                 return _ConversationList(
@@ -166,10 +166,10 @@ class _ConversationList extends StatelessWidget {
         return ListTile(
           selected: conversation.id == selectedConversationId,
           leading: const CircleAvatar(child: Icon(Icons.person_outline)),
-          title: Text('Contact ${_shortId(conversation.contactId)}'),
-          subtitle: Text(conversation.status),
+          title: Text(contact?.displayName ?? 'Contact'),
+          subtitle: Text(contact?.status == 'blocked' ? 'Blocked' : conversation.status),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-            _ConnectionIndicator(state: connection),
+            _ConnectionIndicator(state: connection, blocked: contact?.status == 'blocked'),
             if (contact != null)
               IconButton(
                 tooltip: 'Contact details',
@@ -192,10 +192,14 @@ class _ConversationList extends StatelessWidget {
 }
 
 class _ConnectionIndicator extends StatelessWidget {
-  const _ConnectionIndicator({required this.state});
+  const _ConnectionIndicator({required this.state, required this.blocked});
   final String state;
+  final bool blocked;
   @override
   Widget build(BuildContext context) {
+    if (blocked) {
+      return const Tooltip(message: 'Blocked', child: Icon(Icons.block, size: 18));
+    }
     final ready = state == 'ready';
     final connecting = state == 'connecting' || state == 'handshaking' || state == 'reconnecting';
     return Tooltip(
@@ -259,15 +263,10 @@ class _IdentitySetupState extends State<_IdentitySetup> {
     if (displayName.isEmpty) { setState(() => _error = 'Display name is required'); return; }
     setState(() { _submitting = true; _error = null; });
     final result = await widget.gateway.execute(CreateIdentityCommandDto(
-      identityIdHex: _newId(),
-      displayName: displayName,
-      atMs: DateTime.now().millisecondsSinceEpoch,
+      identityIdHex: _newId(), displayName: displayName, atMs: DateTime.now().millisecondsSinceEpoch,
     ));
     if (!mounted) return;
-    setState(() {
-      _submitting = false;
-      _error = result.ok ? null : result.error ?? 'Could not create local identity';
-    });
+    setState(() { _submitting = false; _error = result.ok ? null : result.error ?? 'Could not create local identity'; });
   }
 
   String _newId() {
@@ -276,5 +275,3 @@ class _IdentitySetupState extends State<_IdentitySetup> {
     return bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
   }
 }
-
-String _shortId(String value) => value.length <= 8 ? value : value.substring(0, 8);
