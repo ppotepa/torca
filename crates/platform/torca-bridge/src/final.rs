@@ -12,7 +12,7 @@ use torca_runtime_host::{
     AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle,
 };
 
-pub const CONTRACT_VERSION: u16 = 5;
+pub const CONTRACT_VERSION: u16 = 6;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,6 +30,7 @@ pub enum BridgeCommand {
         reply_to_message_id_hex: Option<String>,
         at_ms: i64,
     },
+    RetryMessage { message_id_hex: String, at_ms: i64 },
     MarkConversationRead { conversation_id_hex: String },
     QueueAttachment {
         attachment_id_hex: String,
@@ -158,6 +159,15 @@ impl EngineBridge {
                             at,
                         })
                     })
+                    .and_then(|command| self.engine.dispatch(command).map_err(string_error))
+                    .map(|value| { runtime.wake_delivery(); result_kind(&value) })
+            }),
+            BridgeCommand::RetryMessage { message_id_hex, at_ms } => self.runtime().and_then(|runtime| {
+                parse_id(&message_id_hex)
+                    .and_then(|message_id| timestamp(at_ms).map(|at| EngineCommand::RetryMessage {
+                        message_id: MessageId::from_opaque(message_id),
+                        at,
+                    }))
                     .and_then(|command| self.engine.dispatch(command).map_err(string_error))
                     .map(|value| { runtime.wake_delivery(); result_kind(&value) })
             }),
