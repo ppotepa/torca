@@ -57,12 +57,17 @@ class MemoryEngineGateway implements EngineGateway {
       return _terminalPairing(current, command.sessionIdHex, 'cancelled', 'pairing_cancelled');
     }
     if (command is QueueMessageCommandDto) {
+      if (command.replyToMessageId != null &&
+          !current.messages.any((message) => message.id == command.replyToMessageId)) {
+        return const BridgeResultDto(ok: false, kind: 'error', error: 'reply message not found');
+      }
       final message = MessageDto(
         id: command.messageIdHex,
         conversationId: command.conversationIdHex,
         body: command.body,
         direction: 'outbound',
         status: 'queued',
+        replyToMessageId: command.replyToMessageId,
       );
       _snapshots.value = _copy(current, messages: <MessageDto>[...current.messages, message]);
       return const BridgeResultDto(ok: true, kind: 'message_queued');
@@ -79,6 +84,7 @@ class MemoryEngineGateway implements EngineGateway {
           body: message.body,
           direction: message.direction,
           status: 'read',
+          replyToMessageId: message.replyToMessageId,
         );
       }).toList(growable: false);
       _snapshots.value = _copy(current, messages: messages);
@@ -135,6 +141,7 @@ class MemoryEngineGateway implements EngineGateway {
     contacts: current.contacts,
     conversations: current.conversations,
     messages: messages ?? current.messages,
+    attachments: current.attachments,
   );
 
   @override

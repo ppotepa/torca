@@ -64,6 +64,18 @@ int32_t torca_engine_queue_message(
     size_t body_length,
     int64_t at_ms);
 
+int32_t torca_engine_queue_message_reply(
+    NativeEngineHandle *handle,
+    const uint8_t *message_id,
+    size_t message_id_length,
+    const uint8_t *conversation_id,
+    size_t conversation_id_length,
+    const uint8_t *body,
+    size_t body_length,
+    const uint8_t *reply_to_message_id,
+    size_t reply_to_message_id_length,
+    int64_t at_ms);
+
 int32_t torca_engine_mark_conversation_read(
     NativeEngineHandle *handle,
     const uint8_t *conversation_id,

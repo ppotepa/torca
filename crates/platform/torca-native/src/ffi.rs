@@ -146,6 +146,66 @@ pub unsafe extern "C" fn torca_engine_queue_message(
     body_length: usize,
     at_ms: i64,
 ) -> i32 {
+    unsafe {
+        queue_message_command(
+            handle,
+            message_id,
+            message_id_length,
+            conversation_id,
+            conversation_id_length,
+            body,
+            body_length,
+            ptr::null(),
+            0,
+            at_ms,
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn torca_engine_queue_message_reply(
+    handle: *mut NativeEngineHandle,
+    message_id: *const u8,
+    message_id_length: usize,
+    conversation_id: *const u8,
+    conversation_id_length: usize,
+    body: *const u8,
+    body_length: usize,
+    reply_to_message_id: *const u8,
+    reply_to_message_id_length: usize,
+    at_ms: i64,
+) -> i32 {
+    if reply_to_message_id_length == 0 {
+        return with_runtime_mut(handle, |runtime| runtime.reject_argument("reply message id is empty"));
+    }
+    unsafe {
+        queue_message_command(
+            handle,
+            message_id,
+            message_id_length,
+            conversation_id,
+            conversation_id_length,
+            body,
+            body_length,
+            reply_to_message_id,
+            reply_to_message_id_length,
+            at_ms,
+        )
+    }
+}
+
+unsafe fn queue_message_command(
+    handle: *mut NativeEngineHandle,
+    message_id: *const u8,
+    message_id_length: usize,
+    conversation_id: *const u8,
+    conversation_id_length: usize,
+    body: *const u8,
+    body_length: usize,
+    reply_to_message_id: *const u8,
+    reply_to_message_id_length: usize,
+    at_ms: i64,
+) -> i32 {
     with_runtime_mut(handle, |runtime| {
         let message_id = match unsafe { utf8_argument(message_id, message_id_length) } {
             Ok(value) => value, Err(error) => return runtime.reject_argument(error),
@@ -156,8 +216,19 @@ pub unsafe extern "C" fn torca_engine_queue_message(
         let body = match unsafe { utf8_argument(body, body_length) } {
             Ok(value) => value, Err(error) => return runtime.reject_argument(error),
         };
+        let reply_to_message_id_hex = if reply_to_message_id_length == 0 {
+            None
+        } else {
+            match unsafe { utf8_argument(reply_to_message_id, reply_to_message_id_length) } {
+                Ok(value) => Some(value), Err(error) => return runtime.reject_argument(error),
+            }
+        };
         runtime.execute(BridgeCommand::QueueMessage {
-            message_id_hex: message_id, conversation_id_hex: conversation_id, body, at_ms,
+            message_id_hex: message_id,
+            conversation_id_hex: conversation_id,
+            body,
+            reply_to_message_id_hex,
+            at_ms,
         })
     })
 }

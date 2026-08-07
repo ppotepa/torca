@@ -82,7 +82,12 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         output.push_str("\",\"body\":\""); push_json_string(&message.body, &mut output);
         output.push_str("\",\"direction\":\""); push_json_string(&message.direction, &mut output);
         output.push_str("\",\"status\":\""); push_json_string(&message.status, &mut output);
-        output.push_str("\"}");
+        output.push_str("\",\"replyToMessageId\":");
+        match &message.reply_to_message_id {
+            Some(value) => { output.push('"'); push_json_string(value, &mut output); output.push('"'); }
+            None => output.push_str("null"),
+        }
+        output.push('}');
     }
     output.push_str("],\"attachments\":[");
     for (index, attachment) in snapshot.attachments.iter().enumerate() {

@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -34,6 +35,7 @@ class _ConversationPaneState extends State<ConversationPane> {
   final Random _random = Random.secure();
   bool _markingRead = false;
   bool _pickingAttachment = false;
+  MessageDto? _replyingTo;
 
   @override
   void initState() {
@@ -50,6 +52,7 @@ class _ConversationPaneState extends State<ConversationPane> {
       widget.gateway.snapshots.addListener(_snapshotChanged);
     }
     if (oldWidget.conversation.id != widget.conversation.id) {
+      _replyingTo = null;
       unawaited(_markReadIfNeeded());
     }
   }
@@ -87,24 +90,44 @@ class _ConversationPaneState extends State<ConversationPane> {
       final messages = snapshot.messages
           .where((message) => message.conversationId == widget.conversation.id)
           .toList(growable: false);
+      final messageById = <String, MessageDto>{for (final message in messages) message.id: message};
+      final reply = _replyingTo;
       return Column(
         children: <Widget>[
           Expanded(
             child: messages.isEmpty
-                ? const Center(child: Text('No messages yet'))
+                ? const Center(child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      'No messages yet. Messages are sent directly through Tor.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ))
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     itemCount: messages.length,
                     itemBuilder: (context, index) {
                       final message = messages[index];
+                      final quoted = message.replyToMessageId == null
+                          ? null
+                          : messageById[message.replyToMessageId];
                       final attachments = snapshot.attachments
                           .where((attachment) => attachment.messageId == message.id)
                           .toList(growable: false);
                       return ListTile(
+                        onLongPress: () => _showMessageActions(message),
                         title: Text(message.body),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
+                            if (message.replyToMessageId != null) ...<Widget>[
+                              const SizedBox(height: 4),
+                              _ReplyQuote(
+                                body: quoted?.body ?? 'Original message unavailable',
+                                unavailable: quoted == null,
+                              ),
+                              const SizedBox(height: 4),
+                            ],
                             Text(message.status),
                             ...attachments.map((attachment) => _AttachmentProgress(
                               attachment: attachment,
@@ -127,27 +150,42 @@ class _ConversationPaneState extends State<ConversationPane> {
             top: false,
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(children: <Widget>[
-                IconButton(
-                  tooltip: 'Attach file',
-                  onPressed: _pickingAttachment ? null : _pickAttachment,
-                  icon: _pickingAttachment
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.attach_file),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    minLines: 1,
-                    maxLines: 5,
-                    textInputAction: TextInputAction.newline,
-                    decoration: const InputDecoration(labelText: 'Message', border: OutlineInputBorder()),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(tooltip: 'Send message', icon: const Icon(Icons.send), onPressed: _sendMessage),
-              ]),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (reply != null) ...<Widget>[
+                    _ReplyComposerPreview(
+                      message: reply,
+                      onCancel: () => setState(() => _replyingTo = null),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Row(children: <Widget>[
+                    IconButton(
+                      tooltip: 'Attach file',
+                      onPressed: _pickingAttachment ? null : _pickAttachment,
+                      icon: _pickingAttachment
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.attach_file),
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: TextField(
+                        controller: _controller,
+                        minLines: 1,
+                        maxLines: 5,
+                        textInputAction: TextInputAction.newline,
+                        decoration: InputDecoration(
+                          labelText: reply == null ? 'Message' : 'Reply',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(tooltip: 'Send message', icon: const Icon(Icons.send), onPressed: _sendMessage),
+                  ]),
+                ],
+              ),
             ),
           ),
         ],
@@ -155,20 +193,52 @@ class _ConversationPaneState extends State<ConversationPane> {
     },
   );
 
+  Future<void> _showMessageActions(MessageDto message) async {
+    final action = await showModalBottomSheet<_MessageAction>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(children: <Widget>[
+          ListTile(
+            leading: const Icon(Icons.reply),
+            title: const Text('Reply'),
+            onTap: () => Navigator.of(context).pop(_MessageAction.reply),
+          ),
+          ListTile(
+            leading: const Icon(Icons.copy_outlined),
+            title: const Text('Copy'),
+            onTap: () => Navigator.of(context).pop(_MessageAction.copy),
+          ),
+        ]),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == _MessageAction.reply) {
+      setState(() => _replyingTo = message);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: message.body));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message copied')));
+    }
+  }
+
   Future<void> _sendMessage() async {
     final body = _controller.text.trim();
     if (body.isEmpty) return;
+    final replyId = _replyingTo?.id;
     final result = await widget.gateway.execute(
       QueueMessageCommandDto(
         messageIdHex: _newId(),
         conversationIdHex: widget.conversation.id,
         body: body,
+        replyToMessageId: replyId,
         atMs: DateTime.now().millisecondsSinceEpoch,
       ),
     );
     if (!mounted) return;
     if (result.ok) {
       _controller.clear();
+      setState(() => _replyingTo = null);
     } else {
       _showError(result.error ?? 'Could not queue message');
     }
@@ -239,6 +309,56 @@ class _ConversationPaneState extends State<ConversationPane> {
     if (bytes.every((value) => value == 0)) bytes[15] = 1;
     return bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
   }
+}
+
+enum _MessageAction { reply, copy }
+
+class _ReplyQuote extends StatelessWidget {
+  const _ReplyQuote({required this.body, required this.unavailable});
+  final String body;
+  final bool unavailable;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Text(
+      body,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: unavailable ? Theme.of(context).textTheme.bodySmall : null,
+    ),
+  );
+}
+
+class _ReplyComposerPreview extends StatelessWidget {
+  const _ReplyComposerPreview({required this.message, required this.onCancel});
+  final MessageDto message;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(children: <Widget>[
+      const Icon(Icons.reply, size: 18),
+      const SizedBox(width: 8),
+      Expanded(child: Text(message.body, maxLines: 2, overflow: TextOverflow.ellipsis)),
+      IconButton(
+        tooltip: 'Cancel reply',
+        visualDensity: VisualDensity.compact,
+        onPressed: onCancel,
+        icon: const Icon(Icons.close),
+      ),
+    ]),
+  );
 }
 
 class _AttachmentProgress extends StatelessWidget {

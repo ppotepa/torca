@@ -1,7 +1,7 @@
 // GENERATED FILE. DO NOT EDIT.
 // Source: crates/platform/torca-bridge/schema/torca_contract.dart
 
-const int torcaContractVersion = 4;
+const int torcaContractVersion = 5;
 
 class BridgeResultDto {
   const BridgeResultDto({required this.ok, required this.kind, this.error});
@@ -61,12 +61,14 @@ class MessageDto {
     required this.body,
     required this.direction,
     required this.status,
+    this.replyToMessageId,
   });
   final String id;
   final String conversationId;
   final String body;
   final String direction;
   final String status;
+  final String? replyToMessageId;
 }
 
 class AttachmentDto {
@@ -144,11 +146,13 @@ class QueueMessageCommandDto extends BridgeCommandDto {
     required this.conversationIdHex,
     required this.body,
     required this.atMs,
+    this.replyToMessageId,
   });
   final String messageIdHex;
   final String conversationIdHex;
   final String body;
   final int atMs;
+  final String? replyToMessageId;
 }
 class MarkConversationReadCommandDto extends BridgeCommandDto {
   const MarkConversationReadCommandDto({required this.conversationIdHex});

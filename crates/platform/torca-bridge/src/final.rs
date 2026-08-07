@@ -6,13 +6,13 @@ use torca_client_engine::{ClientSnapshot, EngineCommand, EngineError, EngineHand
 use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityId, Profile, ProfileName};
-use torca_messaging::{MessageBody, MessageId};
+use torca_messaging::{MessageBody, MessageId, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_runtime_host::{
     AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle,
 };
 
-pub const CONTRACT_VERSION: u16 = 4;
+pub const CONTRACT_VERSION: u16 = 5;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,7 +23,13 @@ pub enum BridgeCommand {
     ApprovePairing { session_id_hex: String },
     RejectPairing { session_id_hex: String },
     CancelPairing { session_id_hex: String },
-    QueueMessage { message_id_hex: String, conversation_id_hex: String, body: String, at_ms: i64 },
+    QueueMessage {
+        message_id_hex: String,
+        conversation_id_hex: String,
+        body: String,
+        reply_to_message_id_hex: Option<String>,
+        at_ms: i64,
+    },
     MarkConversationRead { conversation_id_hex: String },
     QueueAttachment {
         attachment_id_hex: String,
@@ -71,8 +77,12 @@ pub struct BridgeConversation { pub id: String, pub contact_id: String, pub stat
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgeMessage {
-    pub id: String, pub conversation_id: String, pub body: String,
-    pub direction: String, pub status: String,
+    pub id: String,
+    pub conversation_id: String,
+    pub body: String,
+    pub direction: String,
+    pub status: String,
+    pub reply_to_message_id: Option<String>,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,20 +132,35 @@ impl EngineBridge {
             BridgeCommand::CancelPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
                 .and_then(|id| self.runtime()?.cancel_pairing(id).map_err(string_error))
                 .map(|_| "pairing_cancelled"),
-            BridgeCommand::QueueMessage { message_id_hex, conversation_id_hex, body, at_ms } => {
-                self.runtime().and_then(|runtime| {
-                    parse_id(&message_id_hex)
-                        .and_then(|message_id| parse_id(&conversation_id_hex).map(|c| (message_id, c)))
-                        .and_then(|(message_id, conversation_id)| MessageBody::new(body).map_err(string_error)
-                            .map(|body| (message_id, conversation_id, body)))
-                        .and_then(|(message_id, conversation_id, body)| timestamp(at_ms).map(|at| EngineCommand::QueueMessage {
+            BridgeCommand::QueueMessage {
+                message_id_hex,
+                conversation_id_hex,
+                body,
+                reply_to_message_id_hex,
+                at_ms,
+            } => self.runtime().and_then(|runtime| {
+                parse_id(&message_id_hex)
+                    .and_then(|message_id| parse_id(&conversation_id_hex).map(|c| (message_id, c)))
+                    .and_then(|(message_id, conversation_id)| MessageBody::new(body).map_err(string_error)
+                        .map(|body| (message_id, conversation_id, body)))
+                    .and_then(|(message_id, conversation_id, body)| {
+                        let reply_to = match reply_to_message_id_hex {
+                            Some(value) => parse_id(&value).map(|id| Some(ReplyReference {
+                                message_id: MessageId::from_opaque(id),
+                            })),
+                            None => Ok(None),
+                        }?;
+                        timestamp(at_ms).map(|at| EngineCommand::QueueMessage {
                             message_id: MessageId::from_opaque(message_id),
-                            conversation_id: ConversationId::from_opaque(conversation_id), body, reply_to: None, at,
-                        }))
-                        .and_then(|command| self.engine.dispatch(command).map_err(string_error))
-                        .map(|value| { runtime.wake_delivery(); result_kind(&value) })
-                })
-            }
+                            conversation_id: ConversationId::from_opaque(conversation_id),
+                            body,
+                            reply_to,
+                            at,
+                        })
+                    })
+                    .and_then(|command| self.engine.dispatch(command).map_err(string_error))
+                    .map(|value| { runtime.wake_delivery(); result_kind(&value) })
+            }),
             BridgeCommand::MarkConversationRead { conversation_id_hex } => parse_id(&conversation_id_hex)
                 .and_then(|id| self.runtime()?.mark_conversation_read(id).map_err(string_error))
                 .map(|_| "conversation_read"),
@@ -245,6 +270,7 @@ fn map_snapshot(
         messages: snapshot.messages.into_iter().map(|m| BridgeMessage {
             id: m.id().to_string(), conversation_id: m.conversation_id().to_string(), body: m.body().as_str().to_owned(),
             direction: format!("{:?}", m.direction()).to_lowercase(), status: format!("{:?}", m.status()).to_lowercase(),
+            reply_to_message_id: m.reply_to().map(|reply| reply.message_id.to_string()),
         }).collect(),
         attachments: attachments.into_iter().map(|a| BridgeAttachment {
             id: a.id.to_string(), message_id: a.message_id.to_string(), name: a.name,

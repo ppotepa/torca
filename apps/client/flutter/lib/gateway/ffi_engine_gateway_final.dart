@@ -19,6 +19,22 @@ typedef _FreeNative = ffi.Void Function(ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _FreeDart = void Function(ffi.Pointer<ffi.Uint8>, int);
 typedef _IdNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _IdDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
+typedef _QueueMessageReplyNative = ffi.Int32 Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Int64,
+);
+typedef _QueueMessageReplyDart = int Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
+  int,
+);
 typedef _QueueAttachmentNative = ffi.Int32 Function(
   _Handle,
   ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
@@ -87,6 +103,9 @@ class FfiEngineGateway implements EngineGateway {
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     if (_disposed) return const BridgeResultDto(ok: false, kind: 'error', error: 'native engine gateway is disposed');
+    if (command is QueueMessageCommandDto && command.replyToMessageId != null) {
+      return _queueMessageReply(command);
+    }
     if (command is QueueAttachmentCommandDto) return _queueAttachment(command);
     if (command is RetryAttachmentCommandDto) return _idAttachment(command.attachmentIdHex, _bindings.retryAttachment);
     if (command is CancelAttachmentCommandDto) return _idAttachment(command.attachmentIdHex, _bindings.cancelAttachment);
@@ -97,6 +116,35 @@ class FfiEngineGateway implements EngineGateway {
 
   @override
   Future<String> diagnosticsJson() => _base.diagnosticsJson();
+
+  Future<BridgeResultDto> _queueMessageReply(QueueMessageCommandDto command) async {
+    final replyId = command.replyToMessageId;
+    if (replyId == null || replyId.isEmpty) {
+      return const BridgeResultDto(ok: false, kind: 'error', error: 'reply message id is required');
+    }
+    final message = _Utf8(_bindings, command.messageIdHex);
+    final conversation = _Utf8(_bindings, command.conversationIdHex);
+    final body = _Utf8(_bindings, command.body);
+    final reply = _Utf8(_bindings, replyId);
+    try {
+      _bindings.queueMessageReply(
+        _handle,
+        message.pointer, message.length,
+        conversation.pointer, conversation.length,
+        body.pointer, body.length,
+        reply.pointer, reply.length,
+        command.atMs,
+      );
+    } finally {
+      message.dispose();
+      conversation.dispose();
+      body.dispose();
+      reply.dispose();
+    }
+    final result = _result();
+    if (result.ok) _refreshFullSnapshot();
+    return result;
+  }
 
   Future<BridgeResultDto> _queueAttachment(QueueAttachmentCommandDto command) async {
     final attachment = _Utf8(_bindings, command.attachmentIdHex);
@@ -186,6 +234,7 @@ class FfiEngineGateway implements EngineGateway {
         return MessageDto(
           id: item['id'] as String, conversationId: item['conversationId'] as String,
           body: item['body'] as String, direction: item['direction'] as String, status: item['status'] as String,
+          replyToMessageId: item['replyToMessageId'] as String?,
         );
       }).toList(growable: false),
       attachments: _items(map['attachments']).map((value) {
@@ -235,6 +284,7 @@ class _AttachmentBindings {
         engineDestroy = library.lookupFunction<_EngineDestroyNative, _EngineDestroyDart>('torca_engine_destroy'),
         alloc = library.lookupFunction<_AllocNative, _AllocDart>('torca_alloc'),
         free = library.lookupFunction<_FreeNative, _FreeDart>('torca_free'),
+        queueMessageReply = library.lookupFunction<_QueueMessageReplyNative, _QueueMessageReplyDart>('torca_engine_queue_message_reply'),
         queueAttachment = library.lookupFunction<_QueueAttachmentNative, _QueueAttachmentDart>('torca_engine_queue_attachment'),
         retryAttachment = library.lookupFunction<_IdNative, _IdDart>('torca_engine_retry_attachment'),
         cancelAttachment = library.lookupFunction<_IdNative, _IdDart>('torca_engine_cancel_attachment'),
@@ -247,6 +297,7 @@ class _AttachmentBindings {
   final _EngineDestroyDart engineDestroy;
   final _AllocDart alloc;
   final _FreeDart free;
+  final _QueueMessageReplyDart queueMessageReply;
   final _QueueAttachmentDart queueAttachment;
   final _IdDart retryAttachment;
   final _IdDart cancelAttachment;
