@@ -19,16 +19,8 @@ typedef _FreeNative = ffi.Void Function(ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _FreeDart = void Function(ffi.Pointer<ffi.Uint8>, int);
 typedef _IdNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _IdDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
-typedef _RetryMessageNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Int64,
-);
-typedef _RetryMessageDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  int,
-);
+typedef _RetryMessageNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr, ffi.Int64);
+typedef _RetryMessageDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, int);
 typedef _QueueMessageReplyNative = ffi.Int32 Function(
   _Handle,
   ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
@@ -82,9 +74,7 @@ class FfiEngineGateway implements EngineGateway {
     final wrapped = base.FfiEngineGateway.open(library: lib);
     final bindings = _AttachmentBindings(lib);
     final handle = bindings.engineNew();
-    if (handle == ffi.nullptr) {
-      throw StateError('native Torca process handle could not be acquired');
-    }
+    if (handle == ffi.nullptr) throw StateError('native Torca process handle could not be acquired');
     return FfiEngineGateway._(wrapped, bindings, handle);
   }
 
@@ -113,9 +103,7 @@ class FfiEngineGateway implements EngineGateway {
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     if (_disposed) return const BridgeResultDto(ok: false, kind: 'error', error: 'native engine gateway is disposed');
-    if (command is QueueMessageCommandDto && command.replyToMessageId != null) {
-      return _queueMessageReply(command);
-    }
+    if (command is QueueMessageCommandDto && command.replyToMessageId != null) return _queueMessageReply(command);
     if (command is RetryMessageCommandDto) return _retryMessage(command);
     if (command is QueueAttachmentCommandDto) return _queueAttachment(command);
     if (command is RetryAttachmentCommandDto) return _idAttachment(command.attachmentIdHex, _bindings.retryAttachment);
@@ -130,11 +118,8 @@ class FfiEngineGateway implements EngineGateway {
 
   Future<BridgeResultDto> _retryMessage(RetryMessageCommandDto command) async {
     final message = _Utf8(_bindings, command.messageIdHex);
-    try {
-      _bindings.retryMessage(_handle, message.pointer, message.length, command.atMs);
-    } finally {
-      message.dispose();
-    }
+    try { _bindings.retryMessage(_handle, message.pointer, message.length, command.atMs); }
+    finally { message.dispose(); }
     final result = _result();
     if (result.ok) _refreshFullSnapshot();
     return result;
@@ -142,9 +127,7 @@ class FfiEngineGateway implements EngineGateway {
 
   Future<BridgeResultDto> _queueMessageReply(QueueMessageCommandDto command) async {
     final replyId = command.replyToMessageId;
-    if (replyId == null || replyId.isEmpty) {
-      return const BridgeResultDto(ok: false, kind: 'error', error: 'reply message id is required');
-    }
+    if (replyId == null || replyId.isEmpty) return const BridgeResultDto(ok: false, kind: 'error', error: 'reply message id is required');
     final message = _Utf8(_bindings, command.messageIdHex);
     final conversation = _Utf8(_bindings, command.conversationIdHex);
     final body = _Utf8(_bindings, command.body);
@@ -159,10 +142,7 @@ class FfiEngineGateway implements EngineGateway {
         command.atMs,
       );
     } finally {
-      message.dispose();
-      conversation.dispose();
-      body.dispose();
-      reply.dispose();
+      message.dispose(); conversation.dispose(); body.dispose(); reply.dispose();
     }
     final result = _result();
     if (result.ok) _refreshFullSnapshot();
@@ -188,8 +168,7 @@ class FfiEngineGateway implements EngineGateway {
         command.size,
       );
     } finally {
-      attachment.dispose(); message.dispose(); conversation.dispose();
-      path.dispose(); name.dispose(); media.dispose();
+      attachment.dispose(); message.dispose(); conversation.dispose(); path.dispose(); name.dispose(); media.dispose();
     }
     final result = _result();
     if (result.ok) _refreshFullSnapshot();
@@ -204,9 +183,7 @@ class FfiEngineGateway implements EngineGateway {
     return result;
   }
 
-  void _baseChanged() {
-    if (!_disposed) _refreshFullSnapshot();
-  }
+  void _baseChanged() { if (!_disposed) _refreshFullSnapshot(); }
 
   void _refreshFullSnapshot() {
     if (_bindings.refreshSnapshot(_handle) != 0) return;
@@ -218,11 +195,7 @@ class FfiEngineGateway implements EngineGateway {
   BridgeResultDto _result() {
     final raw = _read(_bindings.resultPointer(_handle), _bindings.resultLength(_handle));
     final map = _map(jsonDecode(raw));
-    return BridgeResultDto(
-      ok: map['ok'] == true,
-      kind: map['kind'] as String? ?? 'error',
-      error: map['error'] as String?,
-    );
+    return BridgeResultDto(ok: map['ok'] == true, kind: map['kind'] as String? ?? 'error', error: map['error'] as String?);
   }
 
   AppSnapshotDto _decodeSnapshot(String raw) {
@@ -244,8 +217,11 @@ class FfiEngineGateway implements EngineGateway {
       contacts: _items(map['contacts']).map((value) {
         final item = _map(value);
         return ContactDto(
-          id: item['id'] as String, onionAddress: item['onionAddress'] as String,
-          status: item['status'] as String, connectionState: item['connectionState'] as String,
+          id: item['id'] as String,
+          onionAddress: item['onionAddress'] as String,
+          status: item['status'] as String,
+          connectionState: item['connectionState'] as String,
+          safetyNumber: item['safetyNumber'] as String?,
         );
       }).toList(growable: false),
       conversations: _items(map['conversations']).map((value) {
