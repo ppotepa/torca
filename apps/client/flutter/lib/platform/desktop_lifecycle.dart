@@ -61,15 +61,15 @@ class DesktopLifecycle with WindowListener, TrayListener {
     final snapshot = gateway.snapshots.value;
     for (final message in snapshot.messages) {
       if (message.direction != 'inbound' || !_knownInbound.add(message.id)) continue;
-      unawaited(_notify(message));
+      unawaited(_notify());
     }
   }
 
-  Future<void> _notify(MessageDto message) async {
+  Future<void> _notify() async {
     if (await windowManager.isFocused()) return;
     final notification = LocalNotification(
       title: 'Torca',
-      body: message.body.isEmpty ? 'New message' : message.body,
+      body: 'New private message',
     );
     notification.onClick = () { unawaited(_showWindow()); };
     await notification.show();
