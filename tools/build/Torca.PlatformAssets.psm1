@@ -85,7 +85,18 @@ function Prepare-TorcaAndroidAssets {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
     Ensure-TorcaPlatformScaffold -RepoRoot $RepoRoot -Platform android
     $flutterRoot = Join-Path $RepoRoot 'apps/client/flutter'
-    $jni = Join-Path $flutterRoot 'android/app/src/main/jniLibs'
+    $androidMain = Join-Path $flutterRoot 'android/app/src/main'
+    $overlay = Join-Path $RepoRoot 'tools/build/overlays/android'
+    $appPackage = Join-Path $androidMain 'kotlin/com/torca/app'
+    $hostPackage = Join-Path $androidMain 'kotlin/com/torca/host'
+    New-Item -ItemType Directory -Force -Path $appPackage | Out-Null
+    New-Item -ItemType Directory -Force -Path $hostPackage | Out-Null
+    Copy-Item (Join-Path $overlay 'MainActivity.kt') (Join-Path $appPackage 'MainActivity.kt') -Force
+    Copy-Item (Join-Path $overlay 'AndroidKeystoreSecretStore.kt') (Join-Path $hostPackage 'AndroidKeystoreSecretStore.kt') -Force
+    Copy-Item (Join-Path $overlay 'TorcaForegroundService.kt') (Join-Path $hostPackage 'TorcaForegroundService.kt') -Force
+    Copy-Item (Join-Path $overlay 'AndroidManifest.xml') (Join-Path $androidMain 'AndroidManifest.xml') -Force
+
+    $jni = Join-Path $androidMain 'jniLibs'
     foreach ($abi in @('arm64-v8a','x86_64')) {
         $source = Join-Path $RepoRoot "vendor/tor/android/$abi/libtor.so"
         if (-not (Test-Path $source)) { throw "Packaged Android Tor is missing: $source" }
@@ -93,7 +104,7 @@ function Prepare-TorcaAndroidAssets {
         New-Item -ItemType Directory -Force -Path $target | Out-Null
         Copy-Item $source (Join-Path $target 'libtor.so') -Force
     }
-    $assets = Join-Path $flutterRoot 'android/app/src/main/assets/torca'
+    $assets = Join-Path $androidMain 'assets/torca'
     New-Item -ItemType Directory -Force -Path $assets | Out-Null
     Set-Content -Path (Join-Path $assets 'relay_endpoint.txt') -Value (Get-TorcaRelayEndpoint -RepoRoot $RepoRoot) -NoNewline -Encoding ascii
 }
