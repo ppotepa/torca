@@ -6,12 +6,19 @@ import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
 import 'screens/deep_link_join_screen.dart';
 import 'screens/home_screen.dart';
+import 'settings/local_preferences.dart';
 
 class TorcaApp extends StatefulWidget {
-  const TorcaApp({required this.gateway, required this.navigation, super.key});
+  const TorcaApp({
+    required this.gateway,
+    required this.navigation,
+    required this.preferences,
+    super.key,
+  });
 
   final EngineGateway gateway;
   final AppNavigationController navigation;
+  final LocalPreferences preferences;
 
   @override
   State<TorcaApp> createState() => _TorcaAppState();
@@ -66,7 +73,10 @@ class _TorcaAppState extends State<TorcaApp> {
     }
     if (conversation == null) return;
     navigator.push<void>(MaterialPageRoute(
-      builder: (_) => ConversationScreen(gateway: widget.gateway, conversation: conversation!),
+      builder: (_) => ConversationScreen(
+        gateway: widget.gateway,
+        conversation: conversation!,
+      ),
     ));
   }
 
@@ -85,14 +95,17 @@ class _TorcaAppState extends State<TorcaApp> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        navigatorKey: _navigatorKey,
-        title: 'Torca',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorSchemeSeed: Colors.blueGrey,
-          useMaterial3: true,
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: widget.preferences,
+        builder: (context, _) => MaterialApp(
+          navigatorKey: _navigatorKey,
+          title: 'Torca',
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            colorSchemeSeed: Colors.blueGrey,
+            useMaterial3: true,
+          ),
+          home: HomeScreen(gateway: widget.gateway),
         ),
-        home: HomeScreen(gateway: widget.gateway),
       );
 }

@@ -10,11 +10,13 @@ import 'navigation/app_navigation_controller.dart';
 import 'platform/android_notification_router.dart';
 import 'platform/deep_link_router.dart';
 import 'platform/desktop_lifecycle.dart';
+import 'settings/local_preferences.dart';
 
 DesktopLifecycle? _desktopLifecycle;
 DeepLinkRouter? _deepLinkRouter;
 AndroidNotificationRouter? _androidNotificationRouter;
 AppNavigationController? _navigation;
+LocalPreferences? _preferences;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +25,10 @@ Future<void> main() async {
     'TORCA_USE_MEMORY_GATEWAY',
     defaultValue: false,
   );
+
+  final preferences = LocalPreferences();
+  await preferences.load();
+  _preferences = preferences;
 
   final EngineGateway gateway = useMemoryGateway
       ? MemoryEngineGateway()
@@ -50,7 +56,11 @@ Future<void> main() async {
     await _desktopLifecycle!.initialize();
   }
 
-  runApp(TorcaApp(gateway: gateway, navigation: navigation));
+  runApp(TorcaApp(
+    gateway: gateway,
+    navigation: navigation,
+    preferences: preferences,
+  ));
 }
 
 Future<EngineGateway> _openNativeGateway() async {
