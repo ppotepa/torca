@@ -5,9 +5,13 @@
 
 #[cfg(windows)]
 mod dpapi;
+#[cfg(windows)]
+mod tor;
 
 #[cfg(windows)]
 pub use dpapi::DpapiFileSecretStore;
+#[cfg(windows)]
+pub use tor::discover_packaged_tor;
 
 /// Marker available on non-Windows build hosts so the workspace remains cross-platform checkable.
 #[cfg(not(windows))]
