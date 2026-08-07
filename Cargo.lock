@@ -38,6 +38,11 @@ version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation"]
 
 [[package]]
+name = "torca-delivery"
+version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation", "torca-messaging"]
+
+[[package]]
 name = "torca-diagnostics"
 version = "0.1.0-alpha.0"
 dependencies = ["torca-foundation"]
@@ -118,7 +123,7 @@ dependencies = ["torca-foundation", "torca-relay-protocol"]
 [[package]]
 name = "torca-storage-sqlite"
 version = "0.1.0-alpha.0"
-dependencies = ["torca-client-engine", "torca-contacts", "torca-conversations", "torca-foundation", "torca-identity", "torca-messaging", "torca-receipts"]
+dependencies = ["torca-client-engine", "torca-contacts", "torca-conversations", "torca-delivery", "torca-foundation", "torca-identity", "torca-messaging", "torca-receipts"]
 
 [[package]]
 name = "torca-transport-tor"

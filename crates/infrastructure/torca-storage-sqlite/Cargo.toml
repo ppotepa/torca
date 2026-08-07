@@ -13,6 +13,7 @@ rusqlite = { version = "0.38", features = ["bundled-sqlcipher-vendored-openssl"]
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }
+torca-delivery = { path = "../../application/torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-messaging = { path = "../../domains/torca-messaging" }

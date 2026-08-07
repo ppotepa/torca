@@ -13,6 +13,7 @@ members = [
     "crates/infrastructure/torca-rendezvous-client",
     "services/relay",
     "crates/application/torca-client-engine",
+    "crates/application/torca-delivery",
     "crates/domains/torca-messaging",
     "crates/domains/torca-receipts",
     "crates/application/torca-projections",
