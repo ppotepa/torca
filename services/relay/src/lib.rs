@@ -10,8 +10,12 @@ use torca_relay_protocol::{
     RelaySlotCapability, RelaySlotId, validate_blob,
 };
 
-pub use server::{RelayServer, RelayServerConfig, RelayServerError};
+pub use server::{
+    DEFAULT_MAX_CONNECTIONS, RelayServer, RelayServerConfig, RelayServerError,
+};
 
+/// Default maximum number of simultaneously active ephemeral pairing slots.
+pub const DEFAULT_MAX_ACTIVE_SLOTS: usize = 4096;
 const MAX_QUEUED_BLOBS_PER_SIDE: usize = 32;
 
 #[derive(Clone, Debug)]
@@ -43,14 +47,20 @@ impl Slot {
 pub struct RelayBroker {
     slots: BTreeMap<RelayCode, Slot>,
     next_id: u128,
+    max_slots: usize,
 }
 impl Default for RelayBroker {
     fn default() -> Self {
-        Self { slots: BTreeMap::new(), next_id: 1 }
+        Self::with_max_slots(DEFAULT_MAX_ACTIVE_SLOTS)
     }
 }
 
 impl RelayBroker {
+    /// Creates a bounded broker. A zero capacity is normalized to one slot.
+    pub fn with_max_slots(max_slots: usize) -> Self {
+        Self { slots: BTreeMap::new(), next_id: 1, max_slots: max_slots.max(1) }
+    }
+
     /// Applies one request at a trusted clock value.
     pub fn handle(
         &mut self,
@@ -72,6 +82,9 @@ impl RelayBroker {
                 }
                 if self.slots.contains_key(&code) {
                     return Err(RelayProtocolError::InvalidOperation);
+                }
+                if self.slots.len() >= self.max_slots {
+                    return Err(RelayProtocolError::QueueFull);
                 }
                 let id = RelaySlotId(OpaqueId::from_u128(self.next_id));
                 self.next_id =
@@ -155,6 +168,11 @@ impl RelayBroker {
     /// Returns active slot count for health reporting.
     pub fn active_slots(&self) -> usize {
         self.slots.len()
+    }
+
+    /// Returns configured active-slot capacity.
+    pub const fn max_slots(&self) -> usize {
+        self.max_slots
     }
 
     fn find_mut(&mut self, id: RelaySlotId) -> Result<&mut Slot, RelayProtocolError> {

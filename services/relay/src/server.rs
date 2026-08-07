@@ -1,6 +1,7 @@
 use core::fmt;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,23 +9,36 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_foundation::Timestamp;
 use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayResponse};
 
-use crate::RelayBroker;
+use crate::{DEFAULT_MAX_ACTIVE_SLOTS, RelayBroker};
 
-/// Minimal network configuration for the ephemeral relay process.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 1024;
+
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayServerConfig {
     pub bind: SocketAddr,
     pub io_timeout: Duration,
+    pub max_connections: usize,
+    pub max_slots: usize,
 }
 
 impl RelayServerConfig {
     pub const fn new(bind: SocketAddr, io_timeout: Duration) -> Self {
-        Self { bind, io_timeout }
+        Self {
+            bind,
+            io_timeout,
+            max_connections: DEFAULT_MAX_CONNECTIONS,
+            max_slots: DEFAULT_MAX_ACTIVE_SLOTS,
+        }
+    }
+
+    pub fn with_limits(mut self, max_connections: usize, max_slots: usize) -> Self {
+        self.max_connections = max_connections.max(1);
+        self.max_slots = max_slots.max(1);
+        self
     }
 }
 
-/// Redaction-safe relay server failure.
 #[derive(Debug)]
 pub enum RelayServerError {
     Io(std::io::ErrorKind),
@@ -39,44 +53,73 @@ impl fmt::Display for RelayServerError {
 }
 impl std::error::Error for RelayServerError {}
 
-/// Blocking TCP relay host. Each connection is independent; all product state remains in the
-/// bounded in-memory [`RelayBroker`].
 pub struct RelayServer {
     listener: TcpListener,
     broker: Arc<Mutex<RelayBroker>>,
     io_timeout: Duration,
+    max_connections: usize,
+    active_connections: Arc<AtomicUsize>,
 }
 
 impl RelayServer {
-    /// Binds a relay server. No persistent storage is opened.
     pub fn bind(config: RelayServerConfig) -> Result<Self, RelayServerError> {
         let listener = TcpListener::bind(config.bind).map_err(io_error)?;
         Ok(Self {
             listener,
-            broker: Arc::new(Mutex::new(RelayBroker::default())),
+            broker: Arc::new(Mutex::new(RelayBroker::with_max_slots(config.max_slots))),
             io_timeout: config.io_timeout,
+            max_connections: config.max_connections.max(1),
+            active_connections: Arc::new(AtomicUsize::new(0)),
         })
     }
 
-    /// Accepts connections until the process is terminated.
     pub fn run(self) -> Result<(), RelayServerError> {
         for connection in self.listener.incoming() {
             let stream = connection.map_err(io_error)?;
+            if !try_acquire_connection(&self.active_connections, self.max_connections) {
+                drop(stream);
+                continue;
+            }
             let broker = Arc::clone(&self.broker);
+            let active = Arc::clone(&self.active_connections);
             let timeout = self.io_timeout;
-            let _ = thread::Builder::new()
+            let spawn = thread::Builder::new()
                 .name("torca-relay-client".into())
                 .spawn(move || {
+                    let _permit = ConnectionPermit { active };
                     let _ = serve_connection(stream, broker, timeout);
                 });
+            if spawn.is_err() {
+                self.active_connections.fetch_sub(1, Ordering::AcqRel);
+            }
         }
         Ok(())
     }
 
-    /// Returns the shared broker for health probes embedded in the same process.
     pub fn broker(&self) -> Arc<Mutex<RelayBroker>> {
         Arc::clone(&self.broker)
     }
+
+    pub fn active_connections(&self) -> usize {
+        self.active_connections.load(Ordering::Acquire)
+    }
+}
+
+struct ConnectionPermit {
+    active: Arc<AtomicUsize>,
+}
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn try_acquire_connection(active: &AtomicUsize, maximum: usize) -> bool {
+    active
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            (current < maximum).then_some(current + 1)
+        })
+        .is_ok()
 }
 
 fn serve_connection(
@@ -127,7 +170,7 @@ fn read_frame(stream: &mut TcpStream) -> Result<Option<Vec<u8>>, RelayServerErro
     Ok(Some(frame))
 }
 
-fn system_timestamp() -> Result<Timestamp, RelayServerError> {
+pub(crate) fn system_timestamp() -> Result<Timestamp, RelayServerError> {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| RelayServerError::Clock)?;
     let millis = i64::try_from(elapsed.as_millis()).map_err(|_| RelayServerError::Clock)?;
     Timestamp::from_unix_millis(millis).map_err(|_| RelayServerError::Clock)
