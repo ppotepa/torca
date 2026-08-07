@@ -10,6 +10,7 @@ import 'package:open_filex/open_filex.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../widgets/conversation_header.dart';
+import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
 import 'connection_details_screen.dart';
 
@@ -174,6 +175,10 @@ class _ConversationPaneState extends State<ConversationPane> {
                           return MessageBubble(
                             message: message,
                             onLongPress: () => _showMessageActions(message),
+                            onSecondaryTapDown: (details) => _showMessageActions(
+                              message,
+                              globalPosition: details.globalPosition,
+                            ),
                             quotedBody: message.replyToMessageId == null
                                 ? null
                                 : quoted?.body ?? 'Original message unavailable',
@@ -285,45 +290,30 @@ class _ConversationPaneState extends State<ConversationPane> {
     if (mounted && !r.ok) _showError(r.error ?? 'Could not retry message');
   }
 
-  Future<void> _showMessageActions(MessageDto m) async {
-    final action = await showModalBottomSheet<_MessageAction>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.reply),
-              title: const Text('Reply'),
-              onTap: () => Navigator.of(context).pop(_MessageAction.reply),
-            ),
-            ListTile(
-              leading: const Icon(Icons.copy_outlined),
-              title: const Text('Copy'),
-              onTap: () => Navigator.of(context).pop(_MessageAction.copy),
-            ),
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('Message details'),
-              onTap: () => Navigator.of(context).pop(_MessageAction.details),
-            ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _showMessageActions(
+    MessageDto message, {
+    Offset? globalPosition,
+  }) async {
+    final action = globalPosition == null
+        ? await MessageActionMenu.showTouch(context)
+        : await MessageActionMenu.showDesktop(context, globalPosition);
     if (!mounted || action == null) return;
-    if (action == _MessageAction.reply) {
-      setState(() => _replyingTo = m);
-      return;
-    }
-    if (action == _MessageAction.details) {
-      await _showMessageDetails(m);
-      return;
-    }
-    await Clipboard.setData(ClipboardData(text: m.body));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Message copied')),
-      );
+    await _applyMessageAction(message, action);
+  }
+
+  Future<void> _applyMessageAction(MessageDto message, MessageAction action) async {
+    switch (action) {
+      case MessageAction.reply:
+        setState(() => _replyingTo = message);
+      case MessageAction.copy:
+        await Clipboard.setData(ClipboardData(text: message.body));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Message copied')),
+          );
+        }
+      case MessageAction.details:
+        await _showMessageDetails(message);
     }
   }
 
@@ -385,10 +375,7 @@ class _ConversationPaneState extends State<ConversationPane> {
   Future<void> _pickAttachment() async {
     setState(() => _pickingAttachment = true);
     try {
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: false,
-        withData: false,
-      );
+      final result = await FilePicker.platform.pickFiles(allowMultiple: false, withData: false);
       if (result == null || result.files.isEmpty || !mounted) return;
       final file = result.files.single;
       final path = file.path;
@@ -411,19 +398,14 @@ class _ConversationPaneState extends State<ConversationPane> {
           size: file.size,
         ),
       );
-      if (mounted && !response.ok) {
-        _showError(response.error ?? 'Could not queue attachment');
-      }
+      if (mounted && !response.ok) _showError(response.error ?? 'Could not queue attachment');
     } finally {
       if (mounted) setState(() => _pickingAttachment = false);
     }
   }
 
   Future<void> _saveAttachment(AttachmentDto a) async {
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save attachment',
-      fileName: a.name,
-    );
+    final path = await FilePicker.platform.saveFile(dialogTitle: 'Save attachment', fileName: a.name);
     if (path == null || !mounted) return;
     final r = await widget.gateway.execute(
       ExportAttachmentCommandDto(attachmentIdHex: a.id, destinationPath: path),
@@ -514,8 +496,6 @@ class _ConversationPaneState extends State<ConversationPane> {
       };
 }
 
-enum _MessageAction { reply, copy, details }
-
 ContactDto? _contactFor(AppSnapshotDto snapshot, ConversationDto conversation) {
   for (final contact in snapshot.contacts) {
     if (contact.id == conversation.contactId) return contact;
@@ -538,9 +518,7 @@ class _ReplyComposerPreview extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.reply, size: 18),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(message.body, maxLines: 2, overflow: TextOverflow.ellipsis),
-            ),
+            Expanded(child: Text(message.body, maxLines: 2, overflow: TextOverflow.ellipsis)),
             IconButton(
               tooltip: 'Cancel reply',
               visualDensity: VisualDensity.compact,

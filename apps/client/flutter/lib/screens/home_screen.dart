@@ -7,6 +7,7 @@ import '../generated/torca_contract.dart';
 import '../settings/local_preferences.dart';
 import '../widgets/app_overflow_menu.dart';
 import '../widgets/connection_indicator.dart';
+import '../widgets/conversation_actions.dart';
 import '../widgets/tor_status_indicator.dart';
 import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
@@ -48,20 +49,20 @@ class _HomeScreenState extends State<HomeScreen> {
           body: snapshot.identity == null
               ? _IdentitySetup(gateway: widget.gateway)
               : LayoutBuilder(builder: (context, constraints) {
-                  void contactInfo(ContactDto contact) => Navigator.of(context).push<void>(
-                        MaterialPageRoute(
-                          builder: (_) => ContactDetailsScreen(
-                            gateway: widget.gateway,
-                            contact: contact,
-                          ),
-                        ),
-                      );
+                  void contactInfo(ContactDto contact) => _openContactDetails(contact);
+                  void conversationAction(
+                    ConversationDto conversation,
+                    ContactDto contact,
+                    ConversationAction action,
+                  ) =>
+                      _handleConversationAction(conversation, contact, action);
                   if (constraints.maxWidth < _wideLayoutBreakpoint) {
                     return _ConversationList(
                       conversations: snapshot.conversations,
                       contacts: snapshot.contacts,
                       selectedConversationId: null,
                       onContactInfo: contactInfo,
+                      onAction: conversationAction,
                       onSelected: (conversation) => Navigator.of(context).push<void>(
                         MaterialPageRoute(
                           builder: (_) => ConversationScreen(
@@ -81,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         contacts: snapshot.contacts,
                         selectedConversationId: selected?.id,
                         onContactInfo: contactInfo,
+                        onAction: conversationAction,
                         onSelected: (conversation) =>
                             setState(() => _selectedConversationId = conversation.id),
                       ),
@@ -133,6 +135,127 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _handleConversationAction(
+    ConversationDto conversation,
+    ContactDto contact,
+    ConversationAction action,
+  ) async {
+    switch (action) {
+      case ConversationAction.open:
+        return;
+      case ConversationAction.contactDetails:
+        _openContactDetails(contact);
+      case ConversationAction.rename:
+        await _renameContact(contact);
+      case ConversationAction.clearHistory:
+        if (!await _confirm(
+          'Clear conversation history?',
+          'Messages, receipts, pending delivery work and local encrypted attachment files for this conversation will be deleted.',
+          'Clear history',
+        )) return;
+        await _execute(
+          ClearConversationHistoryCommandDto(conversationIdHex: conversation.id),
+          'Could not clear conversation history',
+        );
+      case ConversationAction.blockToggle:
+        if (contact.status == 'blocked') {
+          await _execute(
+            UnblockContactCommandDto(contactIdHex: contact.id),
+            'Could not unblock contact',
+          );
+        } else {
+          if (!await _confirm(
+            'Block ${contact.displayName}?',
+            'The current peer connection will be closed and Torca will not reconnect until you unblock this contact.',
+            'Block',
+          )) return;
+          await _execute(
+            BlockContactCommandDto(contactIdHex: contact.id),
+            'Could not block contact',
+          );
+        }
+      case ConversationAction.remove:
+        if (!await _confirm(
+          'Remove ${contact.displayName}?',
+          'This removes the contact, local conversation history, pending work and protected peer credential. This cannot be undone.',
+          'Remove',
+        )) return;
+        await _execute(
+          RemoveContactCommandDto(contactIdHex: contact.id),
+          'Could not remove contact',
+        );
+    }
+  }
+
+  Future<void> _renameContact(ContactDto contact) async {
+    final controller = TextEditingController(text: contact.displayName);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename contact'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 64,
+          decoration: const InputDecoration(labelText: 'Local name'),
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final normalized = name?.trim();
+    if (normalized == null || normalized.isEmpty || !mounted) return;
+    await _execute(
+      RenameContactCommandDto(contactIdHex: contact.id, displayName: normalized),
+      'Could not rename contact',
+    );
+  }
+
+  Future<bool> _confirm(String title, String message, String action) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(action),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<void> _execute(BridgeCommandDto command, String fallbackError) async {
+    final result = await widget.gateway.execute(command);
+    if (mounted && !result.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? fallbackError)),
+      );
+    }
+  }
+
+  void _openContactDetails(ContactDto contact) => Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => ContactDetailsScreen(gateway: widget.gateway, contact: contact),
+        ),
+      );
+
   void _openPairing() => Navigator.of(context).push<void>(
         MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)),
       );
@@ -156,12 +279,14 @@ class _ConversationList extends StatelessWidget {
     required this.selectedConversationId,
     required this.onSelected,
     required this.onContactInfo,
+    required this.onAction,
   });
   final List<ConversationDto> conversations;
   final List<ContactDto> contacts;
   final String? selectedConversationId;
   final ValueChanged<ConversationDto> onSelected;
   final ValueChanged<ContactDto> onContactInfo;
+  final void Function(ConversationDto, ContactDto, ConversationAction) onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -178,7 +303,7 @@ class _ConversationList extends StatelessWidget {
       itemBuilder: (context, index) {
         final conversation = conversations[index];
         final contact = _contact(conversation.contactId);
-        return ListTile(
+        final tile = ListTile(
           selected: conversation.id == selectedConversationId,
           leading: const CircleAvatar(child: Icon(Icons.person_outline)),
           title: Text(contact?.displayName ?? 'Contact'),
@@ -196,9 +321,46 @@ class _ConversationList extends StatelessWidget {
               ),
           ]),
           onTap: () => onSelected(conversation),
+          onLongPress: contact == null
+              ? null
+              : () => _showActions(context, conversation, contact),
+        );
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onSecondaryTapDown: contact == null
+              ? null
+              : (details) => _showActions(
+                    context,
+                    conversation,
+                    contact,
+                    globalPosition: details.globalPosition,
+                  ),
+          child: tile,
         );
       },
     );
+  }
+
+  Future<void> _showActions(
+    BuildContext context,
+    ConversationDto conversation,
+    ContactDto contact, {
+    Offset? globalPosition,
+  }) async {
+    final blocked = contact.status == 'blocked';
+    final action = globalPosition == null
+        ? await ConversationActionMenu.showTouch(context, blocked: blocked)
+        : await ConversationActionMenu.showDesktop(
+            context,
+            globalPosition,
+            blocked: blocked,
+          );
+    if (action == null || !context.mounted) return;
+    if (action == ConversationAction.open) {
+      onSelected(conversation);
+      return;
+    }
+    onAction(conversation, contact, action);
   }
 
   ContactDto? _contact(String id) {

@@ -10,6 +10,7 @@ class MessageBubble extends StatelessWidget {
   const MessageBubble({
     required this.message,
     required this.onLongPress,
+    this.onSecondaryTapDown,
     this.quotedBody,
     this.quotedUnavailable = false,
     this.footer = const <Widget>[],
@@ -18,6 +19,7 @@ class MessageBubble extends StatelessWidget {
 
   final MessageDto message;
   final VoidCallback onLongPress;
+  final GestureTapDownCallback? onSecondaryTapDown;
   final String? quotedBody;
   final bool quotedUnavailable;
   final List<Widget> footer;
@@ -41,9 +43,7 @@ class MessageBubble extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) => ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: constraints.maxWidth < 560
-                ? constraints.maxWidth * 0.84
-                : 520,
+            maxWidth: constraints.maxWidth < 560 ? constraints.maxWidth * 0.84 : 520,
           ),
           child: Padding(
             padding: EdgeInsets.fromLTRB(
@@ -54,44 +54,42 @@ class MessageBubble extends StatelessWidget {
             ),
             child: Semantics(
               label: outbound ? 'Outgoing message' : 'Incoming message',
-              child: InkWell(
-                borderRadius: radius,
-                onLongPress: onLongPress,
-                child: Ink(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 10, 7),
-                  decoration: BoxDecoration(
-                    color: background,
-                    borderRadius: radius,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      if (quotedBody != null) ...<Widget>[
-                        ReplyQuote(
-                          body: quotedBody!,
-                          unavailable: quotedUnavailable,
-                        ),
-                        const SizedBox(height: 7),
-                      ],
-                      SelectableText(message.body),
-                      if (footer.isNotEmpty) ...<Widget>[
-                        const SizedBox(height: 6),
-                        ...footer,
-                      ],
-                      const SizedBox(height: 5),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: <Widget>[
-                          MessageTimestamp(milliseconds: message.createdAtMs),
-                          if (outbound) ...<Widget>[
-                            const SizedBox(width: 5),
-                            MessageStatusIndicator(status: message.status),
-                          ],
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onSecondaryTapDown: onSecondaryTapDown,
+                child: InkWell(
+                  borderRadius: radius,
+                  onLongPress: onLongPress,
+                  child: Ink(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 10, 7),
+                    decoration: BoxDecoration(color: background, borderRadius: radius),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        if (quotedBody != null) ...<Widget>[
+                          ReplyQuote(body: quotedBody!, unavailable: quotedUnavailable),
+                          const SizedBox(height: 7),
                         ],
-                      ),
-                    ],
+                        SelectableText(message.body),
+                        if (footer.isNotEmpty) ...<Widget>[
+                          const SizedBox(height: 6),
+                          ...footer,
+                        ],
+                        const SizedBox(height: 5),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: <Widget>[
+                            MessageTimestamp(milliseconds: message.createdAtMs),
+                            if (outbound) ...<Widget>[
+                              const SizedBox(width: 5),
+                              MessageStatusIndicator(status: message.status),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
