@@ -12,7 +12,7 @@ pub struct Migration {
 pub const fn migrations() -> &'static [Migration] {
     &MIGRATIONS
 }
-const MIGRATIONS: [Migration; 7] = [
+const MIGRATIONS: [Migration; 8] = [
     Migration {
         version: 1,
         name: "foundation",
@@ -47,6 +47,11 @@ const MIGRATIONS: [Migration; 7] = [
         version: 7,
         name: "stale_delivery_requeue",
         sql: include_str!("../sql/migrations/0007_stale_delivery_requeue.sql"),
+    },
+    Migration {
+        version: 8,
+        name: "delivery_message_state_lifecycle",
+        sql: include_str!("../sql/migrations/0008_delivery_message_state_lifecycle.sql"),
     },
 ];
 /// Migration failure.
