@@ -2,17 +2,18 @@
 
 use std::collections::BTreeMap;
 
+use sha2::{Digest, Sha256};
 use torca_client_engine::{ClientSnapshot, EngineCommand, EngineError, EngineHandle, EngineResult};
 use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
-use torca_identity::{IdentityId, Profile, ProfileName};
+use torca_identity::{IdentityId, Profile, ProfileName, PublicIdentity};
 use torca_messaging::{MessageBody, MessageId, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_runtime_host::{
     AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle,
 };
 
-pub const CONTRACT_VERSION: u16 = 6;
+pub const CONTRACT_VERSION: u16 = 7;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,7 +71,11 @@ pub struct BridgePairing {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgeContact {
-    pub id: String, pub onion_address: String, pub status: String, pub connection_state: String,
+    pub id: String,
+    pub onion_address: String,
+    pub status: String,
+    pub connection_state: String,
+    pub safety_number: String,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -258,9 +263,14 @@ fn map_snapshot(
     network: NetworkSnapshot,
     attachments: Vec<AttachmentView>,
 ) -> BridgeSnapshot {
+    let local_public = snapshot.identity.as_ref().map(|identity| identity.public().clone());
+    let identity_name = snapshot
+        .identity
+        .as_ref()
+        .map(|identity| identity.profile().display_name().as_str().to_owned());
     BridgeSnapshot {
         contract_version: CONTRACT_VERSION,
-        identity_name: snapshot.identity.map(|i| i.profile().display_name().as_str().to_owned()),
+        identity_name,
         tor_state: format!("{:?}", network.tor).to_lowercase(),
         onion_address: network.onion_address,
         pairings: snapshot.pairings.into_iter().map(|p| BridgePairing {
@@ -271,8 +281,16 @@ fn map_snapshot(
         contacts: snapshot.contacts.into_iter().map(|c| {
             let connection_state = network.peers.get(&c.id())
                 .map_or_else(|| "disconnected".to_owned(), |s| format!("{s:?}").to_lowercase());
-            BridgeContact { id: c.id().to_string(), onion_address: c.route().onion_address().to_owned(),
-                status: format!("{:?}", c.status()).to_lowercase(), connection_state }
+            let safety_number = local_public
+                .as_ref()
+                .map_or_else(String::new, |local| safety_number(local, c.remote_identity()));
+            BridgeContact {
+                id: c.id().to_string(),
+                onion_address: c.route().onion_address().to_owned(),
+                status: format!("{:?}", c.status()).to_lowercase(),
+                connection_state,
+                safety_number,
+            }
         }).collect(),
         conversations: snapshot.conversations.into_iter().map(|c| BridgeConversation {
             id: c.id().to_string(), contact_id: c.contact_id().to_string(), status: format!("{:?}", c.status()).to_lowercase(),
@@ -288,4 +306,31 @@ fn map_snapshot(
         }).collect(),
     }
 }
+
+fn safety_number(local: &PublicIdentity, remote: &PublicIdentity) -> String {
+    let (first, second) = if local.identity_id().to_opaque() <= remote.identity_id().to_opaque() {
+        (local, remote)
+    } else {
+        (remote, local)
+    };
+    let mut hash = Sha256::new();
+    hash.update(b"TORCA-SAFETY-NUMBER-V1");
+    update_identity_hash(&mut hash, first);
+    update_identity_hash(&mut hash, second);
+    let digest = hash.finalize();
+    digest
+        .chunks(4)
+        .map(|chunk| chunk.iter().map(|byte| format!("{byte:02X}")).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn update_identity_hash(hash: &mut Sha256, identity: &PublicIdentity) {
+    hash.update(identity.identity_id().to_opaque().as_bytes());
+    let public_key = identity.key().public_key();
+    let length = u32::try_from(public_key.len()).unwrap_or(u32::MAX);
+    hash.update(length.to_be_bytes());
+    hash.update(public_key);
+}
+
 pub fn dart_contract_source() -> &'static str { include_str!("../schema/torca_contract.dart") }
