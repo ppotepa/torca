@@ -6,6 +6,7 @@ mod durable;
 mod durable_sqlcipher;
 mod inbound_sqlcipher;
 mod message_repository;
+#[path = "migration_v2.rs"]
 mod migration;
 mod receipt_repository;
 mod repository;
