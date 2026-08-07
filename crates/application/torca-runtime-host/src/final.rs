@@ -12,7 +12,7 @@ use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_diagnostics::{Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState};
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
 use torca_messaging::{MessageBody, MessageId};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_peer_link::PeerConnectionState;
@@ -95,39 +95,17 @@ enum RuntimeCommand {
 #[derive(Clone)]
 pub struct RuntimeHostHandle { sender: Sender<RuntimeCommand> }
 impl RuntimeHostHandle {
-    pub fn create_pairing(&self, id: PairingSessionId) -> Result<PairingInvitationView, RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::CreatePairing(id, r))
-    }
-    pub fn join_pairing(&self, id: PairingSessionId, code: PairingCode) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, r))
-    }
-    pub fn approve_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::ApprovePairing(id, r))
-    }
-    pub fn reject_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::RejectPairing(id, r))
-    }
-    pub fn cancel_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::CancelPairing(id, r))
-    }
-    pub fn mark_conversation_read(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, r))
-    }
-    pub fn queue_attachment(&self, request_value: AttachmentSendRequest) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::QueueAttachment(request_value, r))
-    }
-    pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::RetryAttachment(id, r))
-    }
-    pub fn cancel_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
-        request(&self.sender, |r| RuntimeCommand::CancelAttachment(id, r))
-    }
-    pub fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
-        request(&self.sender, RuntimeCommand::AttachmentSnapshot)
-    }
-    pub fn network_snapshot(&self) -> Result<NetworkSnapshot, RuntimeDriverError> {
-        request(&self.sender, RuntimeCommand::NetworkSnapshot)
-    }
+    pub fn create_pairing(&self, id: PairingSessionId) -> Result<PairingInvitationView, RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::CreatePairing(id, r)) }
+    pub fn join_pairing(&self, id: PairingSessionId, code: PairingCode) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, r)) }
+    pub fn approve_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::ApprovePairing(id, r)) }
+    pub fn reject_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RejectPairing(id, r)) }
+    pub fn cancel_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::CancelPairing(id, r)) }
+    pub fn mark_conversation_read(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, r)) }
+    pub fn queue_attachment(&self, request_value: AttachmentSendRequest) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::QueueAttachment(request_value, r)) }
+    pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::RetryAttachment(id, r)) }
+    pub fn cancel_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> { request(&self.sender, |r| RuntimeCommand::CancelAttachment(id, r)) }
+    pub fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> { request(&self.sender, RuntimeCommand::AttachmentSnapshot) }
+    pub fn network_snapshot(&self) -> Result<NetworkSnapshot, RuntimeDriverError> { request(&self.sender, RuntimeCommand::NetworkSnapshot) }
     pub fn diagnostics_json(&self) -> Result<String, RuntimeDriverError> {
         let (tx, rx) = mpsc::channel();
         self.sender.send(RuntimeCommand::Diagnostics(tx)).map_err(|_| RuntimeDriverError::Communication)?;
@@ -138,12 +116,7 @@ impl RuntimeHostHandle {
 
 pub struct RuntimeHostOwner { sender: Sender<RuntimeCommand>, join: Option<JoinHandle<()>> }
 impl RuntimeHostOwner {
-    pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
-        engine: EngineHandle,
-        mut pairing: P,
-        mut communication: C,
-        mut tor: T,
-    ) -> (RuntimeHostHandle, Self) {
+    pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(engine: EngineHandle, mut pairing: P, mut communication: C, mut tor: T) -> (RuntimeHostHandle, Self) {
         let (sender, receiver) = mpsc::channel();
         let handle = RuntimeHostHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
@@ -157,7 +130,6 @@ impl RuntimeHostOwner {
         });
         (handle, Self { sender, join: Some(join) })
     }
-
     pub fn shutdown(mut self) -> Result<(), RuntimeDriverError> {
         let (tx, rx) = mpsc::channel();
         self.sender.send(RuntimeCommand::Shutdown(tx)).map_err(|_| RuntimeDriverError::Communication)?;
@@ -167,18 +139,11 @@ impl RuntimeHostOwner {
     }
 }
 
-fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
-    receiver: Receiver<RuntimeCommand>, engine: &EngineHandle, pairing: &mut P,
-    communication: &mut C, tor: &mut T, diagnostics: &mut DiagnosticBuffer,
-    sequence: &mut u128,
-) {
+fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(receiver: Receiver<RuntimeCommand>, engine: &EngineHandle, pairing: &mut P, communication: &mut C, tor: &mut T, diagnostics: &mut DiagnosticBuffer, sequence: &mut u128) {
     loop {
         match receiver.recv_timeout(RUNTIME_TICK) {
             Ok(RuntimeCommand::Shutdown(response)) => { let _ = response.send(()); break; }
-            Ok(command) => {
-                let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
-                handle_command(command, engine, pairing, communication, tor, diagnostics, now);
-            }
+            Ok(command) => { let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH); handle_command(command, engine, pairing, communication, tor, diagnostics, now); }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -195,10 +160,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     }
 }
 
-fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
-    command: RuntimeCommand, engine: &EngineHandle, pairing: &mut P,
-    communication: &mut C, tor: &T, diagnostics: &mut DiagnosticBuffer, now: Timestamp,
-) {
+fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(command: RuntimeCommand, engine: &EngineHandle, pairing: &mut P, communication: &mut C, tor: &T, diagnostics: &mut DiagnosticBuffer, now: Timestamp) {
     match command {
         RuntimeCommand::CreatePairing(id, r) => { let _ = r.send(pairing.create(id, now)); }
         RuntimeCommand::JoinPairing(id, code, r) => { let _ = r.send(pairing.join(id, code, now)); }
@@ -207,17 +169,27 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::CancelPairing(id, r) => { let _ = r.send(pairing.cancel(id)); }
         RuntimeCommand::MarkConversationRead(id, r) => { let _ = r.send(communication.mark_conversation_read(id, now)); }
         RuntimeCommand::QueueAttachment(request_value, r) => {
-            let body = MessageBody::new(format!("Attachment: {}", request_value.name))
-                .map_err(|_| RuntimeDriverError::Communication);
+            let message_id = MessageId::from_opaque(request_value.message_id);
+            let body = MessageBody::new(format!("Attachment: {}", request_value.name)).map_err(|_| RuntimeDriverError::Communication);
             let result = body.and_then(|body| {
                 engine.dispatch(EngineCommand::QueueMessage {
-                    message_id: MessageId::from_opaque(request_value.message_id),
+                    message_id,
                     conversation_id: ConversationId::from_opaque(request_value.conversation_id),
                     body,
                     reply_to: None,
                     at: now,
                 }).map_err(|_| RuntimeDriverError::Engine)?;
-                communication.prepare_attachment(&request_value, now)
+                match communication.prepare_attachment(&request_value, now) {
+                    Ok(()) => Ok(()),
+                    Err(preparation_error) => {
+                        let failure_code = ErrorCode::new("ATTACHMENT_PREPARE").map_err(|_| RuntimeDriverError::Engine)?;
+                        engine.dispatch(EngineCommand::BeginMessageSend { message_id, at: now })
+                            .map_err(|_| RuntimeDriverError::Engine)?;
+                        engine.dispatch(EngineCommand::MarkMessageFailed { message_id, at: now, error_code: failure_code })
+                            .map_err(|_| RuntimeDriverError::Engine)?;
+                        Err(preparation_error)
+                    }
+                }
             });
             let _ = r.send(result);
         }
@@ -226,9 +198,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::AttachmentSnapshot(r) => { let _ = r.send(communication.attachment_snapshot()); }
         RuntimeCommand::NetworkSnapshot(r) => {
             let result = engine.snapshot().map_err(|_| RuntimeDriverError::Engine).map(|snapshot| {
-                let peers = snapshot.contacts.into_iter()
-                    .map(|contact| (contact.id(), communication.connection_state(contact.id())))
-                    .collect();
+                let peers = snapshot.contacts.into_iter().map(|contact| (contact.id(), communication.connection_state(contact.id()))).collect();
                 NetworkSnapshot { tor: tor.state(), onion_address: tor.onion_address(), peers }
             });
             let _ = r.send(result);
@@ -239,10 +209,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     }
 }
 
-fn request<T>(
-    sender: &Sender<RuntimeCommand>,
-    make: impl FnOnce(Sender<Result<T, RuntimeDriverError>>) -> RuntimeCommand,
-) -> Result<T, RuntimeDriverError> {
+fn request<T>(sender: &Sender<RuntimeCommand>, make: impl FnOnce(Sender<Result<T, RuntimeDriverError>>) -> RuntimeCommand) -> Result<T, RuntimeDriverError> {
     let (tx, rx) = mpsc::channel();
     sender.send(make(tx)).map_err(|_| RuntimeDriverError::Communication)?;
     rx.recv().map_err(|_| RuntimeDriverError::Communication)?
@@ -252,15 +219,10 @@ fn current_timestamp() -> Result<Timestamp, RuntimeDriverError> {
     let millis = i64::try_from(duration.as_millis()).map_err(|_| RuntimeDriverError::Engine)?;
     Timestamp::from_unix_millis(millis).map_err(|_| RuntimeDriverError::Engine)
 }
-fn record(
-    buffer: &mut DiagnosticBuffer, sequence: &mut u128, at: Timestamp,
-    component: Component, state: HealthState, code: &str,
-) {
+fn record(buffer: &mut DiagnosticBuffer, sequence: &mut u128, at: Timestamp, component: Component, state: HealthState, code: &str) {
     let event_id = OpaqueId::from_u128(*sequence);
     *sequence = sequence.saturating_add(1);
-    if let Ok(code) = DiagnosticCode::new(code) {
-        buffer.record(DiagnosticEvent { event_id, at, component, state, code, detail: None });
-    }
+    if let Ok(code) = DiagnosticCode::new(code) { buffer.record(DiagnosticEvent { event_id, at, component, state, code, detail: None }); }
 }
 const fn map_health(state: HostTorState) -> HealthState {
     match state {
