@@ -10,7 +10,7 @@ pub struct Migration {
 
 pub const fn migrations() -> &'static [Migration] { &MIGRATIONS }
 
-const MIGRATIONS: [Migration; 14] = [
+const MIGRATIONS: [Migration; 15] = [
     Migration { version: 1, name: "foundation", sql: include_str!("../sql/migrations/0001_foundation.sql") },
     Migration { version: 2, name: "identity", sql: include_str!("../sql/migrations/0002_identity.sql") },
     Migration { version: 3, name: "messaging", sql: include_str!("../sql/migrations/0003_messaging.sql") },
@@ -25,6 +25,7 @@ const MIGRATIONS: [Migration; 14] = [
     Migration { version: 12, name: "attachments", sql: include_str!("../sql/migrations/0012_attachments.sql") },
     Migration { version: 13, name: "delivery_attempt_sync", sql: include_str!("../sql/migrations/0013_delivery_attempt_sync.sql") },
     Migration { version: 14, name: "failed_message_dead_letters_outbox", sql: include_str!("../sql/migrations/0014_failed_message_dead_letters_outbox.sql") },
+    Migration { version: 15, name: "retry_message_requeues_outbox", sql: include_str!("../sql/migrations/0015_retry_message_requeues_outbox.sql") },
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
