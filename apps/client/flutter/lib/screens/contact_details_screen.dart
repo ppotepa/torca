@@ -24,6 +24,10 @@ class ContactDetailsScreen extends StatelessWidget {
           body: const Center(child: Text('This contact has been removed.')),
         );
       }
+      ConversationDto? conversation;
+      for (final item in snapshot.conversations) {
+        if (item.contactId == current.id) { conversation = item; break; }
+      }
       final value = current;
       final safetyNumber = value.safetyNumber;
       final blocked = value.status == 'blocked';
@@ -63,6 +67,14 @@ class ContactDetailsScreen extends StatelessWidget {
               icon: Icon(blocked ? Icons.check_circle_outline : Icons.block),
               label: Text(blocked ? 'Unblock contact' : 'Block contact'),
             ),
+            if (conversation != null) ...<Widget>[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => _clearHistory(context, conversation!),
+                icon: const Icon(Icons.delete_sweep_outlined),
+                label: const Text('Clear conversation history'),
+              ),
+            ],
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: () => _remove(context, value),
@@ -120,6 +132,24 @@ class ContactDetailsScreen extends StatelessWidget {
   Future<void> _unblock(BuildContext context, ContactDto value) async {
     final result = await gateway.execute(UnblockContactCommandDto(contactIdHex: value.id));
     if (context.mounted && !result.ok) _error(context, result.error ?? 'Could not unblock contact');
+  }
+
+  Future<void> _clearHistory(BuildContext context, ConversationDto conversation) async {
+    final confirmed = await _confirm(
+      context,
+      'Clear conversation history?',
+      'Messages, receipts, pending delivery work and local encrypted attachment files for this conversation will be deleted. The contact and peer credential remain.',
+      'Clear history',
+    );
+    if (!confirmed || !context.mounted) return;
+    final result = await gateway.execute(ClearConversationHistoryCommandDto(conversationIdHex: conversation.id));
+    if (context.mounted) {
+      if (result.ok) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Conversation history cleared')));
+      } else {
+        _error(context, result.error ?? 'Could not clear conversation history');
+      }
+    }
   }
 
   Future<void> _remove(BuildContext context, ContactDto value) async {
