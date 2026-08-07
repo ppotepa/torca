@@ -1,5 +1,6 @@
 package com.torca.host
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,24 +11,24 @@ import android.os.Build
 import android.os.IBinder
 import com.torca.app.MainActivity
 
-/**
- * Process-level owner that keeps the Rust Torca runtime alive independently from FlutterActivity.
- * The Rust runtime itself owns Tor, peer sessions, delivery and persistence recovery.
- */
+/** Process-level owner for the Rust Torca runtime independent from FlutterActivity recreation. */
 class TorcaForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         AndroidKeystoreBridge.initialize(applicationContext)
         createChannel()
-        val notification = android.app.Notification.Builder(
-            this,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) CHANNEL_ID else null,
-        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        val notification = builder
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle("Torca")
             .setContentText("Private messaging over Tor is active")
             .setOngoing(true)
-            .setCategory(android.app.Notification.CATEGORY_SERVICE)
+            .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(
                 PendingIntent.getActivity(
                     this,
@@ -41,28 +42,19 @@ class TorcaForegroundService : Service() {
             .build()
 
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
-            )
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-
-        check(NativeRuntimeBridge.nativeEnsureRuntime()) {
-            "Unable to initialize Torca process runtime"
-        }
+        check(NativeRuntimeBridge.nativeEnsureRuntime()) { "Unable to initialize Torca process runtime" }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(
                 CHANNEL_ID,
                 "Torca background messaging",
@@ -80,12 +72,8 @@ class TorcaForegroundService : Service() {
     }
 }
 
-/** JNI bridge to the process-scoped Rust runtime registry. */
 object NativeRuntimeBridge {
-    init {
-        System.loadLibrary("torca_bridge")
-    }
-
+    init { System.loadLibrary("torca_bridge") }
     @JvmStatic external fun nativeEnsureRuntime(): Boolean
     @JvmStatic external fun nativeShutdownRuntime()
 }
