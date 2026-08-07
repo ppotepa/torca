@@ -9,24 +9,36 @@ class ContactDetailsScreen extends StatelessWidget {
   final ContactDto contact;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Contact details')),
-        body: ListView(
-          padding: const EdgeInsets.all(24),
-          children: <Widget>[
-            const CircleAvatar(radius: 36, child: Icon(Icons.person_outline, size: 36)),
-            const SizedBox(height: 20),
-            _DetailTile(label: 'Contact ID', value: contact.id, copyable: true),
-            _DetailTile(label: 'Connection', value: _connectionLabel(contact.connectionState)),
-            _DetailTile(label: 'Relationship', value: contact.status),
-            _DetailTile(label: 'Onion address', value: contact.onionAddress, copyable: true),
-            const SizedBox(height: 16),
-            const Text(
-              'Direct messages are authenticated against the peer identity and are sent peer-to-peer through Tor.',
+  Widget build(BuildContext context) {
+    final safetyNumber = contact.safetyNumber;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Contact details')),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: <Widget>[
+          const CircleAvatar(radius: 36, child: Icon(Icons.person_outline, size: 36)),
+          const SizedBox(height: 20),
+          _DetailTile(label: 'Contact ID', value: contact.id, copyable: true),
+          _DetailTile(label: 'Connection', value: _connectionLabel(contact.connectionState)),
+          _DetailTile(label: 'Relationship', value: contact.status),
+          _DetailTile(label: 'Onion address', value: contact.onionAddress, copyable: true),
+          if (safetyNumber != null && safetyNumber.isNotEmpty) ...<Widget>[
+            _DetailTile(label: 'Safety number', value: safetyNumber, copyable: true),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: Text(
+                'Compare this value with your contact over another trusted channel. Both devices calculate the same value from their verified public identity keys.',
+              ),
             ),
           ],
-        ),
-      );
+          const SizedBox(height: 8),
+          const Text(
+            'Direct messages are authenticated against the peer identity and are sent peer-to-peer through Tor.',
+          ),
+        ],
+      ),
+    );
+  }
 
   String _connectionLabel(String state) => switch (state) {
         'ready' => 'Direct P2P over Tor',
