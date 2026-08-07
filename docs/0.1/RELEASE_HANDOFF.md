@@ -1,27 +1,27 @@
 # Torca 0.1 release handoff
 
-This handoff starts **after source implementation and final cleanup**. The remaining work is owner/platform validation and release packaging evidence, not another architectural refactor.
+This handoff starts **after source implementation and static cleanup**. The remaining release work is owner/platform/end-to-end validation and release packaging evidence, not another architectural refactor.
 
 ## Source state
 
-The 0.1 source architecture is complete around:
-
 ```text
 Flutter
- -> Bridge v4
- -> torca-native process runtime
+ -> canonical FFI gateway
+ -> Bridge/C ABI v9
+ -> process-owned NativeEngineRuntime
  -> RuntimeHost
-    -> PairingDriver
+    -> PairingDriver / Pairing Protocol v2
     -> OwnedTorDriver
     -> TorcaCommunicationDriver
-       -> SharedPeerLink
+       -> ActiveRelationshipStore / SharedPeerLink
        -> durable text/control delivery
        -> inbound exactly-once
        -> read receipts
-       -> attachment transfer
+       -> relationship administration
+       -> attachment transfer + verified export
 ```
 
-Superseded peer/native/bridge implementations have been removed. SQLCipher migrations are 1–14. Operational SQL is external/parameterized. Windows and Android use the same Flutter/Rust application code with platform-only lifecycle/key-store hosts.
+SQLCipher migrations are **1–17**. Operational SQL is external and parameterized. Windows and Android use the same Flutter/Rust application code with platform-only lifecycle/key-store/notification hosts.
 
 ## Do not change before first validation
 
@@ -31,151 +31,152 @@ Do not perform speculative refactors before observing the first real failure. In
 - move pairing/crypto state into Flutter;
 - add plaintext/private-key fallbacks;
 - bypass SQLCipher/protected secret storage;
-- restore the removed peer-runtime/peer-delivery crates;
+- restore removed superseded runtime/gateway files;
 - introduce platform-specific business screens;
-- embed operational SQL in Rust source.
+- embed operational SQL in Rust source;
+- turn the rendezvous relay into a message mailbox.
 
 ## Required release inputs
 
-Before real run/deploy, provide the release inputs expected by the build tooling:
+Before real run/deploy, provide:
 
 1. packaged Tor runtime for the target platform;
-2. configured Tor relay onion endpoint;
-3. platform signing material when producing distributable release artifacts.
+2. configured relay onion endpoint;
+3. platform signing material for distributable artifacts.
 
-Production runtime intentionally does not discover arbitrary Tor installations through PATH or Tor Browser.
+Production runtime intentionally does not discover arbitrary Tor installs through PATH or Tor Browser.
 
 ## Windows validation order
 
-Run:
-
-```powershell
-./scripts/run.ps1 -Target windows
-```
-
-Validate in this order:
+Run the normal Windows entrypoint from a clean checkout and validate:
 
 1. Rust/native compilation completes;
-2. Flutter compilation completes;
+2. Flutter dependency resolution/compilation completes;
 3. `torca_bridge.dll` loads;
-4. contract v4 matches generated Dart contract;
-5. first snapshot loads;
-6. identity/database protected stores initialize;
-7. packaged Tor starts;
-8. Tor state reaches Ready and onion endpoint appears;
-9. app close hides to tray rather than exiting;
-10. tray Show restores the window;
-11. second process launch activates the first instance;
-12. tray Quit calls process shutdown and exits Tor/runtime;
-13. restart preserves identity, contacts and history.
+4. Bridge contract **v9** matches generated Dart source;
+5. SQLCipher migrations **1–17** apply;
+6. identity/database/peer protected stores initialize;
+7. packaged Tor starts and reaches Ready;
+8. onion endpoint appears;
+9. pairing code/QR and `torca://pair` cold start work;
+10. second `torca://pair` process hands the link to the existing instance before creating Engine/Tor;
+11. two-client pairing reaches Completed and persists signed display name;
+12. Safety Numbers match on both clients;
+13. direct text/Reply/Retry Now work;
+14. Delivered/Read work;
+15. Block prevents both outgoing reconnect and incoming authentication; Unblock restores communication;
+16. Clear History and Remove Contact perform complete local cleanup;
+17. attachment transfer survives interruption and verified Open/Save As works;
+18. close hides to tray, Show restores and second normal launch activates the first instance;
+19. local message notification click routes to the correct conversation;
+20. tray Quit calls explicit process shutdown and exits Tor/runtime;
+21. restart preserves identity, remaining contacts and history.
 
-Record only the first concrete failure. Fix it as one `BUG-*` commit and rerun from the same checkpoint.
+Record the first concrete failure only. Fix it as one focused `BUG-*` commit and rerun from the same checkpoint.
 
 ## Android validation order
 
-Use the normal build/deploy scripts for the Android target, then validate:
+Use the normal Android build/deploy scripts, then validate:
 
-1. native library loads;
-2. contract v4 snapshot loads;
-3. Android Keystore namespaces for database/identity/peer secrets initialize;
-4. foreground service starts with `remoteMessaging`;
+1. native library loads and Bridge v9 snapshot decodes;
+2. Keystore database/identity/peer namespaces initialize;
+3. migrations 1–17 apply;
+4. foreground service starts using `remoteMessaging` and owns the process RuntimeHost;
 5. packaged Tor starts and reaches Ready;
 6. Activity recreation does not destroy RuntimeHost/Tor;
 7. background/foreground does not lose pending delivery state;
-8. true process kill followed by restart recovers SQLCipher/outbox state;
-9. service shutdown stops the process runtime intentionally.
+8. background inbound message creates a **separate** Private messages notification in addition to the ongoing foreground-service notification;
+9. the private-message notification contains metadata only, not message plaintext;
+10. tapping the notification returns to the existing `singleTask` Activity and opens the correct conversation;
+11. `torca://pair` VIEW/BROWSABLE flow works on cold and running app paths;
+12. process kill followed by restart recovers SQLCipher/outbox state;
+13. intentional service/process shutdown stops RuntimeHost/Tor.
 
-## Two-client pairing validation
+## Pairing Protocol v2 validation
 
-Use two clean clients A and B.
+Use clean clients A and B.
 
-1. A creates invitation.
-2. Confirm code/QR comes from Rust and has a short TTL.
-3. B joins using code or QR.
-4. Both clients display the verified peer proposal state.
-5. Both explicitly Approve.
-6. Verify pairing reaches Completed on both sides.
-7. Verify relay pairing state is cleaned up.
-8. Restart both clients.
-9. Verify Contact + Conversation remain and no re-pairing is required.
+1. A creates an invitation.
+2. Confirm code/TTL originate in Rust.
+3. B joins by code/QR/deep link.
+4. Both receive encrypted `PairingOffer` v2.
+5. Verify display name, public identity, route and capability are covered by the signed transcript.
+6. Both explicitly approve.
+7. Completion creates one Contact + Conversation + PeerCredential per client.
+8. The signed peer display name appears as the initial contact name.
+9. Attempt to pair the same remote identity again while the contact exists; it must be rejected.
+10. Remove the contact explicitly and confirm a new pairing is then possible.
+11. Restart both clients and verify relationship persistence without relay state.
 
-Expected security invariants:
-
-- relay never receives long-term private keys;
-- PairingOffer/Approval/Completion payloads are encrypted/validated;
-- pairwise peer secret is referenced by protected handle, not stored in SQL or Flutter;
-- remote capability must be validated during authenticated peer handshake.
-
-## Text messaging validation
+## Messaging validation
 
 1. Send A -> B.
-2. Verify B gets exactly one inbound message.
-3. Verify A reaches Sent/Delivered.
-4. Open B conversation and verify A reaches Read.
-5. Disconnect Tor/network during a send.
-6. Verify message remains durable and retry occurs after reconnect.
-7. Force ACK loss/replay and confirm B does not persist a second copy.
-8. Confirm Duplicate ACK completes the sender durable job.
-9. Restart sender while an outbox row is claimed; verify stale claim recovery.
+2. Verify exactly one inbound message.
+3. Verify Sent/Delivered.
+4. Open B conversation and verify Read.
+5. Send Reply and verify quoted reference survives transport/restart.
+6. Interrupt Tor/network during send.
+7. Verify durable retry after reconnect.
+8. Exhaust delivery to Failed and use Retry Now; confirm the same durable outbox is requeued.
+9. Force ACK loss/replay; B must not persist a duplicate.
+10. Confirm Duplicate ACK completes sender work.
+11. Restart sender while a claim is stale and verify recovery.
+
+## Relationship validation
+
+- Rename Contact changes local metadata only.
+- Block closes current peer sessions and prevents new outgoing/incoming sessions.
+- Unblock allows normal authenticated reconnect.
+- Clear History removes local messages, control work, attachment metadata/cache/staging but retains the relationship credential.
+- Remove Contact removes relationship/history/credential metadata and deletes the protected pairwise-secret handle.
 
 ## Attachment validation
 
 1. Select a small file.
-2. Confirm UI shows persistent progress.
-3. Interrupt network during transfer.
-4. Restart one or both clients.
-5. Resume transfer from durable offset.
-6. Confirm one final verified file and correct SHA-256 completion behavior.
+2. Confirm persistent progress.
+3. Interrupt transfer.
+4. Restart one/both clients.
+5. Resume from durable offset.
+6. Confirm SHA-256 completion behavior.
 7. Test Retry and Cancel.
-8. Test preparation failure (missing/unreadable source path) and confirm the associated outbound message becomes Failed and its text outbox row is dead-lettered.
+8. Test preparation failure and confirm message Failed + text outbox dead-letter.
+9. Test Open: Rust verifies/decrypts into a controlled temporary export before platform open.
+10. Test Save As: Rust writes a verified plaintext destination atomically.
+11. Confirm encrypted cache paths are never exposed to Flutter.
+12. Confirm stale temporary exports are removed by startup maintenance.
 
 ## Diagnostics validation
 
 Diagnostics may expose component/state/code/timestamps but must not contain:
 
-- plaintext message bodies beyond explicit UI projections;
+- private keys;
 - database keys;
-- identity private keys;
 - pairwise peer secret bytes;
-- pairing capability/token values.
+- capability/token values;
+- Android service message plaintext.
 
-Test diagnostics during Tor failure, reconnect, pairing and delivery failure.
+Validate diagnostics export and self-test during Tor failure, reconnect, pairing and delivery failure.
 
-## Persistence validation
+## Dependency/lock validation
 
-Validate SQLCipher with real process restarts:
+Rust registry versions/checksums are not intentionally upgraded by the final source changes. The only expected `Cargo.lock` edits are local workspace dependency-array reconciliation for crates whose direct path dependencies changed.
 
-- correct key opens database;
-- wrong key fails;
-- migrations 1–14 apply in order;
-- contacts/conversations/messages/receipts/attachments survive restart;
-- control outbox survives restart;
-- stale text/control claims recover;
-- attachment progress survives restart.
+Flutter source uses the packages declared in `pubspec.yaml`, including `app_links`, `shared_preferences` and `open_filex`. `launch_at_startup` is not used by current source and should not appear only because it existed in an earlier plan.
 
-## Cargo.lock note
-
-The workspace path-package graph was reconciled manually because the execution environment could not reach the registry and the one-shot GitHub Actions runner was blocked before startup by the repository account billing state. Existing registry package versions/checksums were preserved and verified after `BUG-037`.
-
-When normal network/runner access is available, run:
-
-```powershell
-cargo generate-lockfile
-```
-
-or the equivalent build/check workflow and inspect any resulting lockfile diff before accepting it. Do not silently accept registry version/checksum drift.
+The implementation environment does not contain Flutter/Dart and the local shell cannot resolve GitHub, so owner validation must run the normal dependency resolver and inspect any generated `pubspec.lock`/`Cargo.lock` diff before accepting it. Do not silently accept unrelated registry/package drift.
 
 ## Release gate closure
 
 Close gates only with evidence:
 
 - **GATE-001** protected crypto/key lifecycle;
-- **GATE-002** SQLCipher persistence/recovery;
-- **GATE-003** Bridge/C ABI v4 runtime;
-- **GATE-004** Windows lifecycle;
-- **GATE-005** Android lifecycle;
-- **GATE-006** relay/Tor/P2P/text/receipts/attachments E2E;
-- **GATE-007** release artifacts, signing, checksums and platform matrix.
+- **GATE-002** SQLCipher migrations/recovery;
+- **GATE-003** Bridge/C ABI v9 runtime;
+- **GATE-004** Pairing Protocol v2 and trust replacement policy;
+- **GATE-005** Windows lifecycle/notifications/deep links;
+- **GATE-006** Android lifecycle/notifications/deep links;
+- **GATE-007** relay/Tor/P2P/text/receipts/attachments E2E;
+- **GATE-008** release artifacts, signing, checksums and platform matrix.
 
 ## Failure handling rule
 
@@ -188,20 +189,19 @@ For every validation failure:
 5. rerun the same validation checkpoint;
 6. update `0.1_PROGRESS.md` only after the result is known.
 
-Do not batch unrelated fixes into one commit.
-
 ## Release-ready definition
 
 Torca 0.1 is release-ready only when both platform hosts and the full two-client scenario pass:
 
 ```text
-pair -> approve -> persist relationship
+pair v2 -> approve -> persist signed relationship
  -> restart
- -> direct Tor text
+ -> direct Tor text/reply
  -> interruption/retry/dedup
  -> Delivered/Read
- -> attachment interruption/resume
- -> lifecycle/background/tray behavior
+ -> block/unblock/cleanup
+ -> attachment interruption/resume/export
+ -> Android background notifications / Windows tray/deep link
  -> clean intentional shutdown
 ```
 
