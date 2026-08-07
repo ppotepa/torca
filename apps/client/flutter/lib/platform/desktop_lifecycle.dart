@@ -102,8 +102,12 @@ class DesktopLifecycle with WindowListener, TrayListener {
   @override
   void onTrayMenuItemClick(MenuItem menuItem) {
     switch (menuItem.key) {
-      case 'show': unawaited(_showWindow());
-      case 'quit': unawaited(_quit());
+      case 'show':
+        unawaited(_showWindow());
+        break;
+      case 'quit':
+        unawaited(_quit());
+        break;
     }
   }
 }
