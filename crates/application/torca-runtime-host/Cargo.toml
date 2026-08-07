@@ -6,6 +6,9 @@ rust-version = "1.97.1"
 license = "AGPL-3.0-or-later"
 publish = false
 
+[lib]
+path = "src/final.rs"
+
 [dependencies]
 torca-client-engine = { path = "../torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
