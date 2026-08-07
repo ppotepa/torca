@@ -3,7 +3,9 @@
 //! This crate owns connection recovery and relay request/response validation. It deliberately does
 //! not own pairing state transitions or long-term message delivery.
 
+mod stream;
 mod tcp;
+mod tor;
 
 use core::fmt;
 use std::time::Duration;
@@ -14,6 +16,7 @@ use torca_relay_protocol::{
 };
 
 pub use tcp::TcpRelayTransport;
+pub use tor::TorRelayTransport;
 
 /// Redaction-safe class of relay transport failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
