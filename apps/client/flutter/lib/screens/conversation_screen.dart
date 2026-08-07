@@ -16,8 +16,6 @@ import '../widgets/message_bubble.dart';
 import '../widgets/operation_tracker.dart';
 import 'connection_details_screen.dart';
 
-const int _maxAttachmentBytes = 16 * 1024 * 1024;
-
 class ConversationScreen extends StatelessWidget {
   const ConversationScreen({required this.gateway, required this.conversation, super.key});
   final EngineGateway gateway;
@@ -366,8 +364,8 @@ class _ConversationPaneState extends State<ConversationPane> {
                       Row(
                         children: <Widget>[
                           IconButton(
-                            tooltip: 'Attach file',
-                            onPressed: pickingAttachment ? null : _pickAttachment,
+                            tooltip: 'Attach files',
+                            onPressed: pickingAttachment ? null : _pickAttachments,
                             icon: pickingAttachment
                                 ? const SizedBox(
                                     width: 20,
@@ -538,31 +536,47 @@ class _ConversationPaneState extends State<ConversationPane> {
     });
   }
 
-  Future<void> _pickAttachment() async {
+  Future<void> _pickAttachments() async {
     await _operations.run('attachment:pick', () async {
-      final result = await FilePicker.platform.pickFiles(allowMultiple: false, withData: false);
-      if (result == null || result.files.isEmpty || !mounted) return;
-      final file = result.files.single;
-      final path = file.path;
-      if (path == null || path.isEmpty) {
-        _showError('The selected file is not available as a local file');
-        return;
-      }
-      if (file.size <= 0 || file.size > _maxAttachmentBytes) {
-        _showError('Attachments must be between 1 byte and 16 MiB');
-        return;
-      }
-      final response = await widget.gateway.execute(
-        QueueAttachmentCommandDto(
-          conversationIdHex: widget.conversation.id,
-          sourcePath: path,
-          name: file.name,
-          mediaType: _mediaType(file.extension),
-          size: file.size,
-        ),
+      final picked = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withData: false,
       );
-      if (mounted && !response.ok) {
-        _showError(BridgeErrorPresenter.message(response, fallback: 'Could not queue attachment'));
+      if (picked == null || picked.files.isEmpty || !mounted) return;
+      final maxBytes = capabilitiesFor(widget.gateway).maxAttachmentBytes;
+      var queued = 0;
+      for (final file in picked.files) {
+        final path = file.path;
+        if (path == null || path.isEmpty) {
+          _showError('${file.name}: local file path is unavailable');
+          continue;
+        }
+        if (file.size <= 0 || file.size > maxBytes) {
+          _showError('${file.name}: maximum attachment size is ${formatBytes(maxBytes)}');
+          continue;
+        }
+        final response = await widget.gateway.execute(
+          QueueAttachmentCommandDto(
+            conversationIdHex: widget.conversation.id,
+            sourcePath: path,
+            name: file.name,
+            mediaType: _mediaType(file.extension),
+            size: file.size,
+          ),
+        );
+        if (!mounted) return;
+        if (!response.ok) {
+          _showError(
+            '${file.name}: ${BridgeErrorPresenter.message(response, fallback: 'Could not queue attachment')}',
+          );
+          continue;
+        }
+        queued++;
+      }
+      if (mounted && queued > 1) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$queued attachments queued')),
+        );
       }
     });
   }

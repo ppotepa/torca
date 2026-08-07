@@ -9,6 +9,13 @@ use torca_crypto::{CryptoProvider, RustCryptoProvider};
 use crate::native_runtime::{ABI_ERROR, NativeEngineRuntime};
 use crate::process_runtime::NativeEngineHandle;
 
+pub const MAX_ATTACHMENT_BYTES: u64 = 16 * 1024 * 1024;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn torca_max_attachment_bytes() -> u64 {
+    MAX_ATTACHMENT_BYTES
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn torca_engine_create_identity_intent(
     handle: *mut NativeEngineHandle,
@@ -146,6 +153,9 @@ pub unsafe extern "C" fn torca_engine_queue_attachment_intent(
     size: u64,
 ) -> i32 {
     with_runtime_mut(handle, |runtime| {
+        if size == 0 || size > MAX_ATTACHMENT_BYTES {
+            return runtime.reject_argument("attachment size is invalid");
+        }
         let conversation_id_hex = match unsafe { utf8_argument(conversation_id, conversation_id_length) } {
             Ok(value) => value,
             Err(error) => return runtime.reject_argument(error),
