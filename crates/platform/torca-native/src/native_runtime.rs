@@ -4,6 +4,7 @@ use torca_runtime_host::RuntimeHostOwner;
 
 use crate::composition::spawn_production_engine;
 use crate::json::{bridge_result_json, bridge_snapshot_json, empty_snapshot_json, error_result, success_result};
+use crate::notification_json::notification_snapshot_json;
 use crate::runtime_composition::spawn_production_host;
 
 pub(crate) const ABI_OK: i32 = 0;
@@ -69,6 +70,11 @@ impl NativeEngineRuntime {
             Ok(snapshot) => { self.snapshot_json = bridge_snapshot_json(&snapshot); ABI_OK }
             Err(error) => { self.last_result_json = error_result(&error.to_string()); ABI_ERROR }
         }
+    }
+
+    pub(crate) fn notification_snapshot_json(&self) -> Result<String, ()> {
+        if self.is_closed() { return Err(()); }
+        self.bridge.snapshot().map(|snapshot| notification_snapshot_json(&snapshot)).map_err(|_| ())
     }
 
     pub(crate) fn refresh_diagnostics(&mut self) -> i32 {
