@@ -1,0 +1,13 @@
+[package]
+name = "torca-peer-shared"
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-peer-link = { path = "../torca-peer-link" }
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
