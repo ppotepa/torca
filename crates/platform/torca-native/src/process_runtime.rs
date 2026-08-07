@@ -56,6 +56,33 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeEnsureRunti
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeNotificationSnapshotJson(
+    env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+) -> jni::sys::jstring {
+    let Ok(mut env) = (unsafe { jni::JNIEnv::from_raw(env) }) else {
+        return core::ptr::null_mut();
+    };
+    let Ok(handle) = acquire_process_runtime() else {
+        return core::ptr::null_mut();
+    };
+    let snapshot = {
+        let Ok(runtime) = handle.runtime.lock() else {
+            return core::ptr::null_mut();
+        };
+        let Ok(snapshot) = runtime.notification_snapshot_json() else {
+            return core::ptr::null_mut();
+        };
+        snapshot
+    };
+    match env.new_string(snapshot) {
+        Ok(value) => value.into_raw(),
+        Err(_) => core::ptr::null_mut(),
+    }
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeShutdownRuntime(
     _env: *mut jni::sys::JNIEnv,
     _class: jni::sys::jclass,
