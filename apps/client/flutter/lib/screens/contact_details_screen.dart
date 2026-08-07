@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../widgets/connection_state_presenter.dart';
+import '../widgets/peer_health_indicator.dart';
+import 'connection_details_screen.dart';
 
 class ContactDetailsScreen extends StatelessWidget {
   const ContactDetailsScreen({required this.gateway, required this.contact, super.key});
@@ -39,7 +41,7 @@ class ContactDetailsScreen extends StatelessWidget {
           final safetyNumber = value.safetyNumber;
           final blocked = value.status == 'blocked';
           final connection = ConnectionStatePresenter.peer(
-            state: value.connectionState,
+            state: value.peerHealth.state,
             blocked: blocked,
           );
           return Scaffold(
@@ -55,13 +57,29 @@ class ContactDetailsScreen extends StatelessWidget {
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 Center(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _rename(context, value),
-                    icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Rename contact'),
-                  ),
+                  child: blocked
+                      ? const Text('Blocked')
+                      : PeerHealthIndicator(health: value.peerHealth),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    OutlinedButton.icon(
+                      onPressed: () => _rename(context, value),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Rename contact'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => _openConnectionDetails(context, value.id),
+                      icon: const Icon(Icons.network_check_outlined),
+                      label: const Text('Connection details'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 _DetailTile(label: 'Contact ID', value: value.id, copyable: true),
@@ -106,6 +124,17 @@ class ContactDetailsScreen extends StatelessWidget {
           );
         },
       );
+
+  void _openConnectionDetails(BuildContext context, String contactId) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ConnectionDetailsScreen(
+          gateway: gateway,
+          contactId: contactId,
+        ),
+      ),
+    );
+  }
 
   Future<void> _rename(BuildContext context, ContactDto value) async {
     final controller = TextEditingController(text: value.displayName);
