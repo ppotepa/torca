@@ -1,7 +1,7 @@
 // GENERATED FILE. DO NOT EDIT.
 // Source: crates/platform/torca-bridge/schema/torca_contract.dart
 
-const int torcaContractVersion = 3;
+const int torcaContractVersion = 4;
 
 class BridgeResultDto {
   const BridgeResultDto({required this.ok, required this.kind, this.error});
@@ -35,10 +35,16 @@ class PairingDto {
 }
 
 class ContactDto {
-  const ContactDto({required this.id, required this.onionAddress, required this.status});
+  const ContactDto({
+    required this.id,
+    required this.onionAddress,
+    required this.status,
+    required this.connectionState,
+  });
   final String id;
   final String onionAddress;
   final String status;
+  final String connectionState;
 }
 
 class ConversationDto {
@@ -66,12 +72,16 @@ class MessageDto {
 class AppSnapshotDto {
   const AppSnapshotDto({
     this.identity,
+    this.torState = 'stopped',
+    this.onionAddress,
     this.pairings = const [],
     this.contacts = const [],
     this.conversations = const [],
     this.messages = const [],
   });
   final IdentityDto? identity;
+  final String torState;
+  final String? onionAddress;
   final List<PairingDto> pairings;
   final List<ContactDto> contacts;
   final List<ConversationDto> conversations;
@@ -89,24 +99,20 @@ class CreateIdentityCommandDto extends BridgeCommandDto {
   final int atMs;
 }
 
-class StartPairingCommandDto extends BridgeCommandDto {
-  const StartPairingCommandDto({required this.sessionIdHex, required this.code, required this.expiresAtMs});
+class CreatePairingCommandDto extends BridgeCommandDto {
+  const CreatePairingCommandDto({required this.sessionIdHex});
   final String sessionIdHex;
-  final String code;
-  final int expiresAtMs;
 }
 
 class JoinPairingCommandDto extends BridgeCommandDto {
-  const JoinPairingCommandDto({required this.sessionIdHex, required this.code, required this.expiresAtMs});
+  const JoinPairingCommandDto({required this.sessionIdHex, required this.code});
   final String sessionIdHex;
   final String code;
-  final int expiresAtMs;
 }
 
 class ApprovePairingCommandDto extends BridgeCommandDto {
-  const ApprovePairingCommandDto({required this.sessionIdHex, required this.atMs});
+  const ApprovePairingCommandDto({required this.sessionIdHex});
   final String sessionIdHex;
-  final int atMs;
 }
 
 class RejectPairingCommandDto extends BridgeCommandDto {
@@ -130,6 +136,11 @@ class QueueMessageCommandDto extends BridgeCommandDto {
   final String conversationIdHex;
   final String body;
   final int atMs;
+}
+
+class MarkConversationReadCommandDto extends BridgeCommandDto {
+  const MarkConversationReadCommandDto({required this.conversationIdHex});
+  final String conversationIdHex;
 }
 
 class RefreshSnapshotCommandDto extends BridgeCommandDto {
