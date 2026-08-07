@@ -1,0 +1,15 @@
+[package]
+name = "torca-runtime-host"
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+torca-client-engine = { path = "../torca-client-engine" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-diagnostics = { path = "../torca-diagnostics" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+torca-peer-link = { path = "../../infrastructure/torca-peer-link" }
