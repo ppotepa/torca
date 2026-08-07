@@ -13,6 +13,7 @@ path = "src/final.rs"
 
 [dependencies]
 sha2 = "0.10"
+torca-attachments = { path = "../../domains/torca-attachments" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-identity = { path = "../../domains/torca-identity" }
