@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import 'process_runtime_control.dart';
 
 class DesktopLifecycle with WindowListener, TrayListener {
   DesktopLifecycle(this.gateway);
@@ -84,10 +85,14 @@ class DesktopLifecycle with WindowListener, TrayListener {
     if (_quitting) return;
     _quitting = true;
     gateway.snapshots.removeListener(_snapshotChanged);
-    await gateway.dispose();
-    await trayManager.destroy();
-    await windowManager.setPreventClose(false);
-    await windowManager.destroy();
+    try {
+      await shutdownProcessRuntime();
+    } finally {
+      await gateway.dispose();
+      await trayManager.destroy();
+      await windowManager.setPreventClose(false);
+      await windowManager.destroy();
+    }
   }
 
   @override
