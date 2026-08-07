@@ -13,13 +13,6 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * Keystore-backed protected secret store used only by the Rust JNI bridge.
- *
- * Secret payloads are encrypted with a non-exportable Android Keystore AES key and persisted under
- * noBackupFilesDir. Database, identity and peer secrets use separate file namespaces and AAD even
- * though they share one hardware/OS-backed wrapping key.
- */
 class AndroidKeystoreSecretStore(
     context: Context,
     private val namespace: String,
@@ -62,15 +55,11 @@ class AndroidKeystoreSecretStore(
     fun load(keyId: String): ByteArray? {
         validateKeyId(keyId)
         val target = file(keyId)
-        if (!target.exists()) {
-            return null
-        }
+        if (!target.exists()) return null
         val encoded = target.readBytes()
         try {
             val buffer = ByteBuffer.wrap(encoded)
-            if (buffer.remaining() < 4) {
-                error("protected secret is malformed")
-            }
+            if (buffer.remaining() < 4) error("protected secret is malformed")
             val nonceLength = buffer.int
             if (nonceLength !in 12..32 || buffer.remaining() <= nonceLength) {
                 error("protected secret is malformed")
@@ -97,20 +86,14 @@ class AndroidKeystoreSecretStore(
     fun delete(keyId: String): Boolean {
         validateKeyId(keyId)
         val target = file(keyId)
-        if (!target.exists()) {
-            return false
-        }
+        if (!target.exists()) return false
         val length = target.length().coerceAtMost(MAX_OVERWRITE_BYTES.toLong()).toInt()
-        if (length > 0) {
-            runCatching { target.writeBytes(ByteArray(length)) }
-        }
+        if (length > 0) runCatching { target.writeBytes(ByteArray(length)) }
         return target.delete()
     }
 
     private fun ensureMasterKey() {
-        if (keyStore.containsAlias(MASTER_KEY_ALIAS)) {
-            return
-        }
+        if (keyStore.containsAlias(MASTER_KEY_ALIAS)) return
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
@@ -127,15 +110,11 @@ class AndroidKeystoreSecretStore(
 
     private fun masterKey(): SecretKey =
         (keyStore.getEntry(MASTER_KEY_ALIAS, null) as KeyStore.SecretKeyEntry).secretKey
-
     private fun file(keyId: String) = File(root, "$keyId.secret")
-
     private fun aad(keyId: String) = "$namespace:$keyId".toByteArray(Charsets.UTF_8)
-
     private fun validateKeyId(keyId: String) {
         require(keyId.matches(Regex("[0-9a-f]{32}"))) { "invalid protected secret handle" }
     }
-
     private fun writeAtomic(target: File, bytes: ByteArray) {
         val temporary = File(root, ".${target.name}.tmp")
         temporary.outputStream().use { output ->
@@ -143,17 +122,9 @@ class AndroidKeystoreSecretStore(
             output.fd.sync()
         }
         try {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.ATOMIC_MOVE,
-            )
+            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
         } catch (_: Exception) {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-            )
+            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
     }
 
@@ -167,14 +138,17 @@ class AndroidKeystoreSecretStore(
 
 /** Narrow static JNI target. Product workflow remains in Rust. */
 object AndroidKeystoreBridge {
+    private lateinit var applicationContext: Context
     private lateinit var databaseSecrets: AndroidKeystoreSecretStore
     private lateinit var identitySecrets: AndroidKeystoreSecretStore
     private lateinit var peerSecrets: AndroidKeystoreSecretStore
     private lateinit var databaseFile: File
+    private lateinit var runtimeRoot: File
 
     @JvmStatic
     fun initialize(context: Context) {
         val appContext = context.applicationContext
+        applicationContext = appContext
         databaseSecrets = AndroidKeystoreSecretStore(appContext, "database")
         identitySecrets = AndroidKeystoreSecretStore(appContext, "identity")
         peerSecrets = AndroidKeystoreSecretStore(appContext, "peer")
@@ -183,21 +157,39 @@ object AndroidKeystoreBridge {
             error("could not create Torca data directory")
         }
         databaseFile = File(dataDirectory, "torca.db")
+        runtimeRoot = File(appContext.noBackupFilesDir, "torca/0.1")
+        if (!runtimeRoot.exists() && !runtimeRoot.mkdirs()) {
+            error("could not create Torca runtime directory")
+        }
     }
 
     @JvmStatic
     fun insert(namespace: String, keyId: String, secret: ByteArray) {
         store(namespace).insert(keyId, secret)
     }
-
     @JvmStatic
     fun load(namespace: String, keyId: String): ByteArray? = store(namespace).load(keyId)
-
     @JvmStatic
     fun delete(namespace: String, keyId: String): Boolean = store(namespace).delete(keyId)
-
     @JvmStatic
     fun databasePath(): String = databaseFile.absolutePath
+    @JvmStatic
+    fun runtimeRootPath(): String = runtimeRoot.absolutePath
+
+    /** Executable PIE Tor binary packaged in the APK native library directory. */
+    @JvmStatic
+    fun torExecutablePath(): String {
+        val path = File(applicationContext.applicationInfo.nativeLibraryDir, "libtor.so")
+        check(path.isFile) { "packaged Tor executable is missing" }
+        return path.absolutePath
+    }
+
+    /** Build tooling writes a single validated `host.onion:port` asset; no endpoint is hardcoded. */
+    @JvmStatic
+    fun relayEndpoint(): String =
+        applicationContext.assets.open("torca/relay_endpoint.txt")
+            .bufferedReader(Charsets.US_ASCII)
+            .use { it.readText().trim() }
 
     private fun store(namespace: String): AndroidKeystoreSecretStore = when (namespace) {
         "database" -> databaseSecrets
