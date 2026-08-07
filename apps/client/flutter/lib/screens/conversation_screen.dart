@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -10,9 +9,11 @@ import 'package:open_filex/open_filex.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../widgets/attachment_tile.dart';
+import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_header.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/operation_tracker.dart';
 import 'connection_details_screen.dart';
 
 const int _maxAttachmentBytes = 16 * 1024 * 1024;
@@ -72,14 +73,14 @@ class ConversationPane extends StatefulWidget {
 
 class _ConversationPaneState extends State<ConversationPane> {
   final TextEditingController _controller = TextEditingController();
-  final Random _random = Random.secure();
+  final OperationTracker _operations = OperationTracker();
   bool _markingRead = false;
-  bool _pickingAttachment = false;
   MessageDto? _replyingTo;
 
   @override
   void initState() {
     super.initState();
+    _operations.addListener(_operationChanged);
     widget.gateway.snapshots.addListener(_snapshotChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_markReadIfNeeded()));
   }
@@ -100,8 +101,14 @@ class _ConversationPaneState extends State<ConversationPane> {
   @override
   void dispose() {
     widget.gateway.snapshots.removeListener(_snapshotChanged);
+    _operations.removeListener(_operationChanged);
+    _operations.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  void _operationChanged() {
+    if (mounted) setState(() {});
   }
 
   void _snapshotChanged() => unawaited(_markReadIfNeeded());
@@ -109,10 +116,10 @@ class _ConversationPaneState extends State<ConversationPane> {
   Future<void> _markReadIfNeeded() async {
     if (_markingRead) return;
     final hasDelivered = widget.gateway.snapshots.value.messages.any(
-      (m) =>
-          m.conversationId == widget.conversation.id &&
-          m.direction == 'inbound' &&
-          m.status == 'delivered',
+      (message) =>
+          message.conversationId == widget.conversation.id &&
+          message.direction == 'inbound' &&
+          message.status == 'delivered',
     );
     if (!hasDelivered) return;
     _markingRead = true;
@@ -130,11 +137,14 @@ class _ConversationPaneState extends State<ConversationPane> {
         valueListenable: widget.gateway.snapshots,
         builder: (context, snapshot, _) {
           final messages = snapshot.messages
-              .where((m) => m.conversationId == widget.conversation.id)
+              .where((message) => message.conversationId == widget.conversation.id)
               .toList(growable: false);
-          final byId = <String, MessageDto>{for (final m in messages) m.id: m};
+          final byId = <String, MessageDto>{for (final message in messages) message.id: message};
           final reply = _replyingTo;
           final contact = _contactFor(snapshot, widget.conversation);
+          final sending = _operations.isActive('message:send');
+          final pickingAttachment = _operations.isActive('attachment:pick');
+
           return Column(
             children: <Widget>[
               if (widget.showHeader) ...<Widget>[
@@ -169,10 +179,11 @@ class _ConversationPaneState extends State<ConversationPane> {
                               ? null
                               : byId[message.replyToMessageId];
                           final attachments = snapshot.attachments
-                              .where((a) => a.messageId == message.id)
+                              .where((attachment) => attachment.messageId == message.id)
                               .toList(growable: false);
                           final retryable =
                               message.direction == 'outbound' && message.status == 'failed';
+                          final retryBusy = _operations.isActive('message:${message.id}:retry');
                           return MessageBubble(
                             message: message,
                             onLongPress: () => _showMessageActions(message),
@@ -190,24 +201,38 @@ class _ConversationPaneState extends State<ConversationPane> {
                                 Align(
                                   alignment: Alignment.centerLeft,
                                   child: TextButton.icon(
-                                    onPressed: () => _retryMessage(message),
-                                    icon: const Icon(Icons.refresh),
-                                    label: const Text('Retry now'),
+                                    onPressed: retryBusy ? null : () => _retryMessage(message),
+                                    icon: retryBusy
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          )
+                                        : const Icon(Icons.refresh),
+                                    label: Text(retryBusy ? 'Retrying…' : 'Retry now'),
                                   ),
                                 ),
-                              ...attachments.map(
-                                (a) => AttachmentTile(
-                                  attachment: a,
+                              ...attachments.map((attachment) {
+                                final attachmentBusy = _operations.anyWithPrefix(
+                                  'attachment:${attachment.id}:',
+                                );
+                                return AttachmentTile(
+                                  attachment: attachment,
+                                  operationBusy: attachmentBusy,
                                   onRetry: () => _attachmentCommand(
-                                    RetryAttachmentCommandDto(attachmentIdHex: a.id),
+                                    attachment.id,
+                                    'retry',
+                                    RetryAttachmentCommandDto(attachmentIdHex: attachment.id),
                                   ),
                                   onCancel: () => _attachmentCommand(
-                                    CancelAttachmentCommandDto(attachmentIdHex: a.id),
+                                    attachment.id,
+                                    'cancel',
+                                    CancelAttachmentCommandDto(attachmentIdHex: attachment.id),
                                   ),
-                                  onOpen: () => _openAttachment(a),
-                                  onSave: () => _saveAttachment(a),
-                                ),
-                              ),
+                                  onOpen: () => _openAttachment(attachment),
+                                  onSave: () => _saveAttachment(attachment),
+                                );
+                              }),
                             ],
                           );
                         },
@@ -232,8 +257,8 @@ class _ConversationPaneState extends State<ConversationPane> {
                         children: <Widget>[
                           IconButton(
                             tooltip: 'Attach file',
-                            onPressed: _pickingAttachment ? null : _pickAttachment,
-                            icon: _pickingAttachment
+                            onPressed: pickingAttachment ? null : _pickAttachment,
+                            icon: pickingAttachment
                                 ? const SizedBox(
                                     width: 20,
                                     height: 20,
@@ -245,6 +270,7 @@ class _ConversationPaneState extends State<ConversationPane> {
                           Expanded(
                             child: TextField(
                               controller: _controller,
+                              enabled: !sending,
                               minLines: 1,
                               maxLines: 5,
                               textInputAction: TextInputAction.newline,
@@ -255,9 +281,15 @@ class _ConversationPaneState extends State<ConversationPane> {
                           ),
                           const SizedBox(width: 8),
                           IconButton.filled(
-                            tooltip: 'Send message',
-                            icon: const Icon(Icons.send),
-                            onPressed: _sendMessage,
+                            tooltip: sending ? 'Sending message' : 'Send message',
+                            onPressed: sending ? null : _sendMessage,
+                            icon: sending
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.send),
                           ),
                         ],
                       ),
@@ -281,14 +313,15 @@ class _ConversationPaneState extends State<ConversationPane> {
     );
   }
 
-  Future<void> _retryMessage(MessageDto m) async {
-    final r = await widget.gateway.execute(
-      RetryMessageCommandDto(
-        messageIdHex: m.id,
-        atMs: DateTime.now().millisecondsSinceEpoch,
-      ),
-    );
-    if (mounted && !r.ok) _showError(r.error ?? 'Could not retry message');
+  Future<void> _retryMessage(MessageDto message) async {
+    await _operations.run('message:${message.id}:retry', () async {
+      final result = await widget.gateway.execute(
+        RetryMessageCommandDto(messageIdHex: message.id),
+      );
+      if (mounted && !result.ok) {
+        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not retry message'));
+      }
+    });
   }
 
   Future<void> _showMessageActions(
@@ -318,7 +351,7 @@ class _ConversationPaneState extends State<ConversationPane> {
     }
   }
 
-  Future<void> _showMessageDetails(MessageDto m) => showDialog<void>(
+  Future<void> _showMessageDetails(MessageDto message) => showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Message details'),
@@ -326,12 +359,12 @@ class _ConversationPaneState extends State<ConversationPane> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _detail('ID', m.id),
-              _detail('Direction', m.direction),
-              _detail('Status', _messageStatusLabel(m.status)),
-              _detail('Queued / received', _date(m.createdAtMs)),
-              _detail('Last update', _date(m.updatedAtMs)),
-              _detail('Send attempts', '${m.attemptCount}'),
+              _detail('ID', message.id),
+              _detail('Direction', message.direction),
+              _detail('Status', _messageStatusLabel(message.status)),
+              _detail('Queued / received', _date(message.createdAtMs)),
+              _detail('Last update', _date(message.updatedAtMs)),
+              _detail('Send attempts', '${message.attemptCount}'),
             ],
           ),
           actions: <Widget>[
@@ -355,27 +388,27 @@ class _ConversationPaneState extends State<ConversationPane> {
   Future<void> _sendMessage() async {
     final body = _controller.text.trim();
     if (body.isEmpty) return;
-    final r = await widget.gateway.execute(
-      QueueMessageCommandDto(
-        messageIdHex: _newId(),
-        conversationIdHex: widget.conversation.id,
-        body: body,
-        replyToMessageId: _replyingTo?.id,
-        atMs: DateTime.now().millisecondsSinceEpoch,
-      ),
-    );
-    if (!mounted) return;
-    if (r.ok) {
-      _controller.clear();
-      setState(() => _replyingTo = null);
-    } else {
-      _showError(r.error ?? 'Could not queue message');
-    }
+    final replyTo = _replyingTo?.id;
+    await _operations.run('message:send', () async {
+      final result = await widget.gateway.execute(
+        QueueMessageCommandDto(
+          conversationIdHex: widget.conversation.id,
+          body: body,
+          replyToMessageId: replyTo,
+        ),
+      );
+      if (!mounted) return;
+      if (result.ok) {
+        _controller.clear();
+        setState(() => _replyingTo = null);
+      } else {
+        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not queue message'));
+      }
+    });
   }
 
   Future<void> _pickAttachment() async {
-    setState(() => _pickingAttachment = true);
-    try {
+    await _operations.run('attachment:pick', () async {
       final result = await FilePicker.platform.pickFiles(allowMultiple: false, withData: false);
       if (result == null || result.files.isEmpty || !mounted) return;
       final file = result.files.single;
@@ -390,8 +423,6 @@ class _ConversationPaneState extends State<ConversationPane> {
       }
       final response = await widget.gateway.execute(
         QueueAttachmentCommandDto(
-          attachmentIdHex: _newId(),
-          messageIdHex: _newId(),
           conversationIdHex: widget.conversation.id,
           sourcePath: path,
           name: file.name,
@@ -399,42 +430,55 @@ class _ConversationPaneState extends State<ConversationPane> {
           size: file.size,
         ),
       );
-      if (mounted && !response.ok) _showError(response.error ?? 'Could not queue attachment');
-    } finally {
-      if (mounted) setState(() => _pickingAttachment = false);
-    }
+      if (mounted && !response.ok) {
+        _showError(BridgeErrorPresenter.message(response, fallback: 'Could not queue attachment'));
+      }
+    });
   }
 
-  Future<void> _saveAttachment(AttachmentDto a) async {
-    final path = await FilePicker.platform.saveFile(dialogTitle: 'Save attachment', fileName: a.name);
-    if (path == null || !mounted) return;
-    final r = await widget.gateway.execute(
-      ExportAttachmentCommandDto(attachmentIdHex: a.id, destinationPath: path),
-    );
-    if (mounted) {
-      if (r.ok) {
+  Future<void> _saveAttachment(AttachmentDto attachment) async {
+    await _operations.run('attachment:${attachment.id}:save', () async {
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save attachment',
+        fileName: attachment.name,
+      );
+      if (path == null || !mounted) return;
+      final result = await widget.gateway.execute(
+        ExportAttachmentCommandDto(
+          attachmentIdHex: attachment.id,
+          destinationPath: path,
+        ),
+      );
+      if (!mounted) return;
+      if (result.ok) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Attachment saved')),
         );
       } else {
-        _showError(r.error ?? 'Could not save attachment');
+        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not save attachment'));
       }
-    }
+    });
   }
 
-  Future<void> _openAttachment(AttachmentDto a) async {
-    final ext = _safeExtension(a.name);
-    final path = '${Directory.systemTemp.path}${Platform.pathSeparator}torca-${a.id}$ext';
-    final r = await widget.gateway.execute(
-      ExportAttachmentCommandDto(attachmentIdHex: a.id, destinationPath: path),
-    );
-    if (!mounted) return;
-    if (!r.ok) {
-      _showError(r.error ?? 'Could not open attachment');
-      return;
-    }
-    final opened = await OpenFilex.open(path);
-    if (mounted && opened.type != ResultType.done) _showError(opened.message);
+  Future<void> _openAttachment(AttachmentDto attachment) async {
+    await _operations.run('attachment:${attachment.id}:open', () async {
+      final ext = _safeExtension(attachment.name);
+      final path =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}torca-${attachment.id}$ext';
+      final result = await widget.gateway.execute(
+        ExportAttachmentCommandDto(
+          attachmentIdHex: attachment.id,
+          destinationPath: path,
+        ),
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not open attachment'));
+        return;
+      }
+      final opened = await OpenFilex.open(path);
+      if (mounted && opened.type != ResultType.done) _showError(opened.message);
+    });
   }
 
   String _safeExtension(String name) {
@@ -446,17 +490,25 @@ class _ConversationPaneState extends State<ConversationPane> {
         : '';
   }
 
-  Future<void> _attachmentCommand(BridgeCommandDto c) async {
-    final r = await widget.gateway.execute(c);
-    if (mounted && !r.ok) _showError(r.error ?? 'Attachment operation failed');
+  Future<void> _attachmentCommand(
+    String attachmentId,
+    String action,
+    BridgeCommandDto command,
+  ) async {
+    await _operations.run('attachment:$attachmentId:$action', () async {
+      final result = await widget.gateway.execute(command);
+      if (mounted && !result.ok) {
+        _showError(BridgeErrorPresenter.message(result, fallback: 'Attachment operation failed'));
+      }
+    });
   }
 
   void _showError(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  String _mediaType(String? e) {
-    switch ((e ?? '').toLowerCase()) {
+  String _mediaType(String? extension) {
+    switch ((extension ?? '').toLowerCase()) {
       case 'jpg':
       case 'jpeg':
         return 'image/jpeg';
@@ -479,13 +531,7 @@ class _ConversationPaneState extends State<ConversationPane> {
     }
   }
 
-  String _newId() {
-    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    if (bytes.every((v) => v == 0)) bytes[15] = 1;
-    return bytes.map((v) => v.toRadixString(16).padLeft(2, '0')).join();
-  }
-
-  String _messageStatusLabel(String s) => switch (s) {
+  String _messageStatusLabel(String status) => switch (status) {
         'queued' => 'Queued — waiting for a direct peer connection',
         'sending' => 'Sending…',
         'sent' => 'Sent',
@@ -493,7 +539,7 @@ class _ConversationPaneState extends State<ConversationPane> {
         'read' => 'Read',
         'failed' => 'Delivery failed',
         'cancelled' => 'Cancelled',
-        _ => s,
+        _ => status,
       };
 }
 
@@ -508,6 +554,7 @@ class _ReplyComposerPreview extends StatelessWidget {
   const _ReplyComposerPreview({required this.message, required this.onCancel});
   final MessageDto message;
   final VoidCallback onCancel;
+
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
@@ -519,7 +566,13 @@ class _ReplyComposerPreview extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.reply, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text(message.body, maxLines: 2, overflow: TextOverflow.ellipsis)),
+            Expanded(
+              child: Text(
+                message.body,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             IconButton(
               tooltip: 'Cancel reply',
               visualDensity: VisualDensity.compact,

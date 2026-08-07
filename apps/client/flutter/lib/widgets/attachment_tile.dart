@@ -9,6 +9,7 @@ class AttachmentTile extends StatelessWidget {
     required this.onCancel,
     required this.onOpen,
     required this.onSave,
+    this.operationBusy = false,
     super.key,
   });
 
@@ -17,6 +18,7 @@ class AttachmentTile extends StatelessWidget {
   final VoidCallback onCancel;
   final VoidCallback onOpen;
   final VoidCallback onSave;
+  final bool operationBusy;
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +62,15 @@ class AttachmentTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (operationBusy)
+                const Padding(
+                  padding: EdgeInsets.only(left: 8),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
             ],
           ),
           if (!cancelled) ...<Widget>[
@@ -79,25 +90,25 @@ class AttachmentTile extends StatelessWidget {
             children: <Widget>[
               if (available)
                 TextButton.icon(
-                  onPressed: onOpen,
+                  onPressed: operationBusy ? null : onOpen,
                   icon: const Icon(Icons.open_in_new),
                   label: const Text('Open'),
                 ),
               if (available)
                 TextButton.icon(
-                  onPressed: onSave,
+                  onPressed: operationBusy ? null : onSave,
                   icon: const Icon(Icons.save_alt),
                   label: const Text('Save as'),
                 ),
               if (failed)
                 TextButton.icon(
-                  onPressed: onRetry,
+                  onPressed: operationBusy ? null : onRetry,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Retry'),
                 ),
               if (!terminal)
                 TextButton.icon(
-                  onPressed: onCancel,
+                  onPressed: operationBusy ? null : onCancel,
                   icon: const Icon(Icons.close),
                   label: const Text('Cancel'),
                 ),
