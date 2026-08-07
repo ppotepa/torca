@@ -23,6 +23,7 @@ pub enum PairingPayloadKind {
     Approval = 2,
     Completion = 3,
     Rejection = 4,
+    Cancellation = 5,
 }
 
 #[must_use]
@@ -77,10 +78,14 @@ pub struct PairingCompletion {
     pub transcript_digest: [u8; 32],
 }
 
-/// Explicit remote rejection. It intentionally carries no user-entered reason or metadata.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PairingRejection;
+
+/// Explicit cancellation by one side, distinct from rejecting the peer after inspection.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PairingCancellation;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,6 +94,7 @@ pub enum PairingPayload {
     Approval(PairingApproval),
     Completion(PairingCompletion),
     Rejection(PairingRejection),
+    Cancellation(PairingCancellation),
 }
 
 #[must_use]
@@ -105,6 +111,7 @@ impl PairingEnvelope {
             PairingPayload::Approval(_) => PairingPayloadKind::Approval,
             PairingPayload::Completion(_) => PairingPayloadKind::Completion,
             PairingPayload::Rejection(_) => PairingPayloadKind::Rejection,
+            PairingPayload::Cancellation(_) => PairingPayloadKind::Cancellation,
         }
     }
 
@@ -120,7 +127,9 @@ impl PairingEnvelope {
         match &self.payload {
             PairingPayload::Offer(offer) => offer.validate()?,
             PairingPayload::Approval(approval) => approval.validate()?,
-            PairingPayload::Completion(_) | PairingPayload::Rejection(_) => {}
+            PairingPayload::Completion(_)
+            | PairingPayload::Rejection(_)
+            | PairingPayload::Cancellation(_) => {}
         }
 
         let mut output = Vec::with_capacity(256);
@@ -135,7 +144,7 @@ impl PairingEnvelope {
             PairingPayload::Completion(completion) => {
                 output.extend_from_slice(&completion.transcript_digest);
             }
-            PairingPayload::Rejection(_) => {}
+            PairingPayload::Rejection(_) | PairingPayload::Cancellation(_) => {}
         }
 
         if output.len() > MAX_PAIRING_PAYLOAD_LEN {
@@ -165,6 +174,7 @@ impl PairingEnvelope {
                 transcript_digest: cursor.array_32()?,
             }),
             4 => PairingPayload::Rejection(PairingRejection),
+            5 => PairingPayload::Cancellation(PairingCancellation),
             _ => return Err(PairingProtocolError::UnknownPayloadKind(kind)),
         };
         if !cursor.is_empty() {
@@ -174,7 +184,9 @@ impl PairingEnvelope {
         match &envelope.payload {
             PairingPayload::Offer(offer) => offer.validate()?,
             PairingPayload::Approval(approval) => approval.validate()?,
-            PairingPayload::Completion(_) | PairingPayload::Rejection(_) => {}
+            PairingPayload::Completion(_)
+            | PairingPayload::Rejection(_)
+            | PairingPayload::Cancellation(_) => {}
         }
         Ok(envelope)
     }
