@@ -1,0 +1,21 @@
+[package]
+name = "torca-pairing-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-client-engine = { path = "../../application/torca-client-engine" }
+torca-crypto = { path = "../torca-crypto" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
+torca-runtime-host = { path = "../../application/torca-runtime-host" }
+torca-tor-driver = { path = "../torca-tor-driver" }
+
+[lints]
+workspace = true
