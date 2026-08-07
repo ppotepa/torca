@@ -2,6 +2,9 @@
 mod adapters;
 pub use adapters::*;
 
+mod active_relationships;
+pub use active_relationships::ActiveRelationshipStore;
+
 mod attachment_controls;
 pub use attachment_controls::AttachmentControlAdapter;
 
