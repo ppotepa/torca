@@ -159,7 +159,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
 
     fn exchange(&mut self, request: RelayRequest) -> Result<RelayResponse, RendezvousClientError> {
         match self.transport.exchange(&request, self.timeout) {
-            Ok(response) => Ok(response),
+            Ok(response) => checked_response(response),
             Err(error) if error.request_was_sent => {
                 let _ = self.transport.reconnect();
                 Err(RendezvousClientError::OutcomeUnknown(error.kind))
@@ -168,15 +168,23 @@ impl<T: RelayTransport> RendezvousClient<T> {
                 self.transport
                     .reconnect()
                     .map_err(RendezvousClientError::Transport)?;
-                self.transport.exchange(&request, self.timeout).map_err(|error| {
+                let response = self.transport.exchange(&request, self.timeout).map_err(|error| {
                     if error.request_was_sent {
                         RendezvousClientError::OutcomeUnknown(error.kind)
                     } else {
                         RendezvousClientError::Transport(first_error)
                     }
-                })
+                })?;
+                checked_response(response)
             }
         }
+    }
+}
+
+fn checked_response(response: RelayResponse) -> Result<RelayResponse, RendezvousClientError> {
+    match response {
+        RelayResponse::Error(error) => Err(RendezvousClientError::Protocol(error)),
+        response => Ok(response),
     }
 }
 
