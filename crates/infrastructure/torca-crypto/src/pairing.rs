@@ -5,17 +5,15 @@ use hkdf::Hkdf;
 use rand_core::OsRng;
 use sha2::Sha256;
 use torca_foundation::OpaqueId;
-use torca_pairing_coordinator::{PairingCryptoHandle, PairingEphemeralKey};
+use torca_pairing_coordinator::{
+    PairingCoordinatorError, PairingCryptoHandle, PairingCryptoPort, PairingEphemeralKey,
+};
 use x25519_dalek::{PublicKey as X25519PublicKey, ReusableSecret};
 
 use crate::{Ciphertext, CryptoError, CryptoProvider, Nonce, RustCryptoProvider, SealingKey};
 
 const PAIRING_KDF_LABEL: &[u8] = b"TORCA-PAIRING-SEAL-V1";
 
-/// Production in-memory owner of short-lived X25519 pairing keys.
-///
-/// `ReusableSecret` is intentionally non-serializable. Entries live only for the current process
-/// pairing run and are removed explicitly by the pairing coordinator.
 pub struct RustPairingCrypto {
     crypto: RustCryptoProvider,
     keys: BTreeMap<PairingCryptoHandle, ReusableSecret>,
@@ -118,6 +116,59 @@ impl RustPairingCrypto {
             }
         }
         Err(PairingKeyError::IdentifierUnavailable)
+    }
+}
+
+impl PairingCryptoPort for RustPairingCrypto {
+    fn generate_ephemeral_key(&mut self) -> Result<PairingEphemeralKey, PairingCoordinatorError> {
+        self.generate_key().map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    fn release_ephemeral_key(
+        &mut self,
+        handle: PairingCryptoHandle,
+    ) -> Result<(), PairingCoordinatorError> {
+        self.release_key(handle).map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    fn fill_random(&mut self, output: &mut [u8]) -> Result<(), PairingCoordinatorError> {
+        RustPairingCrypto::fill_random(self, output).map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    fn seal_for_peer(
+        &self,
+        local_key: PairingCryptoHandle,
+        remote_public_key: [u8; 32],
+        nonce: [u8; 24],
+        associated_data: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, PairingCoordinatorError> {
+        self.seal_pairing(
+            local_key,
+            remote_public_key,
+            nonce,
+            associated_data,
+            plaintext,
+        )
+        .map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    fn open_from_peer(
+        &self,
+        local_key: PairingCryptoHandle,
+        remote_public_key: [u8; 32],
+        nonce: [u8; 24],
+        associated_data: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, PairingCoordinatorError> {
+        self.open_pairing(
+            local_key,
+            remote_public_key,
+            nonce,
+            associated_data,
+            ciphertext,
+        )
+        .map_err(|_| PairingCoordinatorError::Crypto)
     }
 }
 
