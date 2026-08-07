@@ -1,8 +1,4 @@
 //! One communication supervisor over the process-owned authenticated peer link.
-//!
-//! This layer is deliberately transport-agnostic. Concrete adapters wrap PeerLink, SQLCipher
-//! delivery workers, encrypted attachment transfer and read-state storage. Exactly one dispatcher
-//! consumes inbound peer envelopes and routes them by message kind.
 
 use core::fmt;
 
@@ -11,7 +7,9 @@ use torca_contacts::ContactId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::Message;
 use torca_peer_link::{InboundPeerEnvelope, PeerConnectionState};
-use torca_runtime_host::{CommunicationDriver, RuntimeDriverError};
+use torca_runtime_host::{
+    AttachmentSendRequest, AttachmentView, CommunicationDriver, RuntimeDriverError,
+};
 
 pub const TEXT_MESSAGE_KIND: u16 = 1;
 pub const RECEIPT_MESSAGE_KIND: u16 = 2;
@@ -39,11 +37,7 @@ impl fmt::Display for CommunicationError {
 impl std::error::Error for CommunicationError {}
 
 pub trait PeerLinkRuntime: Send {
-    fn maintenance(
-        &mut self,
-        contacts: &[ContactId],
-        now: Timestamp,
-    ) -> Result<(), CommunicationError>;
+    fn maintenance(&mut self, contacts: &[ContactId], now: Timestamp) -> Result<(), CommunicationError>;
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState;
     fn take_inbound(&mut self) -> Result<Option<InboundPeerEnvelope>, CommunicationError>;
     fn reject(&mut self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError>;
@@ -61,37 +55,23 @@ pub trait ControlDeliveryRuntime: Send {
 }
 
 pub trait InboundMessagingRuntime: Send {
-    fn process(
-        &mut self,
-        envelope: InboundPeerEnvelope,
-        now: Timestamp,
-    ) -> Result<(), CommunicationError>;
+    fn process(&mut self, envelope: InboundPeerEnvelope, now: Timestamp) -> Result<(), CommunicationError>;
 }
 
 pub trait AttachmentRuntime: Send {
-    fn process_inbound(
-        &mut self,
-        envelope: InboundPeerEnvelope,
-        now: Timestamp,
-    ) -> Result<(), CommunicationError>;
-    fn maintenance_outgoing(
-        &mut self,
-        messages: &[Message],
-        now: Timestamp,
-        limit: usize,
-    ) -> Result<(), CommunicationError>;
+    fn prepare_outgoing(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), CommunicationError>;
+    fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
+    fn cancel(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
+    fn snapshot(&self, messages: &[Message]) -> Result<Vec<AttachmentView>, CommunicationError>;
+    fn process_inbound(&mut self, envelope: InboundPeerEnvelope, now: Timestamp) -> Result<(), CommunicationError>;
+    fn maintenance_outgoing(&mut self, messages: &[Message], now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
     fn shutdown(&mut self);
 }
 
 pub trait ReadStateRuntime: Send {
-    fn mark_conversation_read(
-        &mut self,
-        conversation_id: OpaqueId,
-        now: Timestamp,
-    ) -> Result<(), CommunicationError>;
+    fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
 }
 
-/// Final application communication driver. The `RuntimeHost` owns exactly one instance.
 pub struct TorcaCommunicationDriver {
     engine: EngineHandle,
     peer: Box<dyn PeerLinkRuntime>,
@@ -118,19 +98,11 @@ impl TorcaCommunicationDriver {
 
     fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         for _ in 0..INBOUND_BATCH {
-            let Some(envelope) = self.peer.take_inbound()? else {
-                break;
-            };
+            let Some(envelope) = self.peer.take_inbound()? else { break; };
             match envelope.message_kind {
-                TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND => {
-                    self.inbound.process(envelope, now)?;
-                }
-                ATTACHMENT_MESSAGE_KIND => {
-                    self.attachments.process_inbound(envelope, now)?;
-                }
-                _ => {
-                    self.peer.reject(&envelope)?;
-                }
+                TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND => self.inbound.process(envelope, now)?,
+                ATTACHMENT_MESSAGE_KIND => self.attachments.process_inbound(envelope, now)?,
+                _ => self.peer.reject(&envelope)?,
             }
         }
         Ok(())
@@ -144,17 +116,11 @@ impl CommunicationDriver for TorcaCommunicationDriver {
         Ok(())
     }
 
-    fn maintenance(
-        &mut self,
-        contacts: &[ContactId],
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
+    fn maintenance(&mut self, contacts: &[ContactId], now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.peer.maintenance(contacts, now).map_err(map_runtime)?;
         self.drain_inbound(now).map_err(map_runtime)?;
         self.text.maintenance(now, TEXT_BATCH).map_err(map_runtime)?;
-        self.control
-            .maintenance(now, CONTROL_BATCH)
-            .map_err(map_runtime)?;
+        self.control.maintenance(now, CONTROL_BATCH).map_err(map_runtime)?;
         let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         self.attachments
             .maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH)
@@ -166,14 +132,25 @@ impl CommunicationDriver for TorcaCommunicationDriver {
         self.peer.connection_state(contact_id)
     }
 
-    fn mark_conversation_read(
-        &mut self,
-        conversation_id: OpaqueId,
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
-        self.read_state
-            .mark_conversation_read(conversation_id, now)
-            .map_err(map_runtime)
+    fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.read_state.mark_conversation_read(conversation_id, now).map_err(map_runtime)
+    }
+
+    fn prepare_attachment(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.attachments.prepare_outgoing(request, now).map_err(map_runtime)
+    }
+
+    fn retry_attachment(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.attachments.retry(attachment_id, now).map_err(map_runtime)
+    }
+
+    fn cancel_attachment(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.attachments.cancel(attachment_id, now).map_err(map_runtime)
+    }
+
+    fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
+        let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+        self.attachments.snapshot(&snapshot.messages).map_err(map_runtime)
     }
 
     fn shutdown(&mut self) {
@@ -182,6 +159,4 @@ impl CommunicationDriver for TorcaCommunicationDriver {
     }
 }
 
-fn map_runtime(_: CommunicationError) -> RuntimeDriverError {
-    RuntimeDriverError::Communication
-}
+fn map_runtime(_: CommunicationError) -> RuntimeDriverError { RuntimeDriverError::Communication }
