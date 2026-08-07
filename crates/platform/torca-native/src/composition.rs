@@ -2,6 +2,8 @@ use core::fmt;
 
 use torca_client_engine::{ClientEngineActor, EngineHandle};
 
+mod pairing_ffi;
+
 #[cfg(target_os = "android")]
 #[path = "android.rs"]
 mod android;
