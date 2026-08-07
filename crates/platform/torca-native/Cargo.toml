@@ -10,28 +10,31 @@ publish = false
 
 [lib]
 name = "torca_bridge"
+path = "src/runtime.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 torca-bridge = { path = "../torca-bridge" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
-
-[target.'cfg(windows)'.dependencies]
+torca-communication-adapters = { path = "../../infrastructure/torca-communication-adapters" }
 torca-crypto = { path = "../../infrastructure/torca-crypto" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing = { path = "../../domains/torca-pairing" }
-torca-platform-windows = { path = "../torca-platform-windows" }
+torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
+torca-pairing-driver = { path = "../../infrastructure/torca-pairing-driver" }
+torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
+torca-runtime-host = { path = "../../application/torca-runtime-host" }
 torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
+torca-tor-driver = { path = "../../infrastructure/torca-tor-driver" }
+torca-transport-tor = { path = "../../infrastructure/torca-transport-tor" }
+
+[target.'cfg(windows)'.dependencies]
+torca-platform-windows = { path = "../torca-platform-windows" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21.1"
-torca-crypto = { path = "../../infrastructure/torca-crypto" }
-torca-identity = { path = "../../domains/torca-identity" }
-torca-pairing = { path = "../../domains/torca-pairing" }
-torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
 
-# This crate is the narrowly reviewed unsafe FFI boundary. It intentionally
-# does not inherit the workspace-wide `unsafe_code = forbid` lint.
 [lints.rust]
 missing_docs = "warn"
 unsafe_op_in_unsafe_fn = "deny"
