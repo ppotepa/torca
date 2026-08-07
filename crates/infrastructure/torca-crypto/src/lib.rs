@@ -5,6 +5,7 @@
 //! The deterministic algorithm and in-memory secret store remain test-only.
 
 mod key_management;
+mod peer_handshake;
 mod ports;
 mod production;
 mod test_support;
@@ -14,6 +15,7 @@ pub use key_management::{
     InMemoryProtectedSecretStore, ManagedIdentityKeys, ManagedKeyError, ProtectedSecretStore,
     ProtectedSecretStoreError,
 };
+pub use peer_handshake::{Ed25519HandshakeVerifier, ManagedHandshakeSigner};
 pub use ports::CryptoProvider;
 pub use production::RustCryptoProvider;
 pub use test_support::DeterministicTestCrypto;
