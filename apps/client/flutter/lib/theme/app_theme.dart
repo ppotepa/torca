@@ -25,6 +25,9 @@ abstract final class AppTheme {
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: scheme.surface,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.standard,
+      focusColor: scheme.primary.withValues(alpha: 0.18),
       appBarTheme: AppBarTheme(
         centerTitle: false,
         backgroundColor: scheme.surface,
@@ -37,6 +40,9 @@ abstract final class AppTheme {
       ),
       inputDecorationTheme: const InputDecorationTheme(
         border: OutlineInputBorder(),
+      ),
+      tooltipTheme: const TooltipThemeData(
+        waitDuration: Duration(milliseconds: 450),
       ),
       extensions: <ThemeExtension<dynamic>>[
         AppSemanticColors.fromScheme(scheme),

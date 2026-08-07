@@ -1,21 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'gateway/engine_gateway.dart';
 import 'generated/torca_contract.dart';
 import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
 import 'screens/deep_link_join_screen.dart';
+import 'screens/diagnostics_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/pairing_screen.dart';
+import 'screens/settings_screen.dart';
 import 'settings/local_preferences.dart';
 import 'theme/app_theme.dart';
 
 class TorcaApp extends StatefulWidget {
-  const TorcaApp({required this.gateway, required this.navigation, required this.preferences, super.key});
+  const TorcaApp({
+    required this.gateway,
+    required this.navigation,
+    required this.preferences,
+    super.key,
+  });
+
   final EngineGateway gateway;
   final AppNavigationController navigation;
   final LocalPreferences preferences;
-  @override State<TorcaApp> createState() => _TorcaAppState();
+
+  @override
+  State<TorcaApp> createState() => _TorcaAppState();
 }
 
 class _TorcaAppState extends State<TorcaApp> {
@@ -60,32 +71,78 @@ class _TorcaAppState extends State<TorcaApp> {
     final id = widget.navigation.conversationRequest.value;
     if (id == null) return;
     final navigator = _navigatorKey.currentState;
-    if (navigator == null) { WidgetsBinding.instance.addPostFrameCallback((_) => _conversationRequested()); return; }
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _conversationRequested());
+      return;
+    }
     widget.navigation.clearConversationRequest();
     ConversationDto? conversation;
     for (final candidate in widget.gateway.snapshots.value.conversations) {
-      if (candidate.id == id) { conversation = candidate; break; }
+      if (candidate.id == id) {
+        conversation = candidate;
+        break;
+      }
     }
     if (conversation == null) return;
-    navigator.push<void>(MaterialPageRoute(builder: (_) => ConversationScreen(gateway: widget.gateway, conversation: conversation!)));
+    navigator.push<void>(
+      MaterialPageRoute(
+        builder: (_) => ConversationScreen(
+          gateway: widget.gateway,
+          conversation: conversation!,
+        ),
+      ),
+    );
   }
 
   void _pairingRequested() {
     final code = widget.navigation.pairingCodeRequest.value;
     if (code == null) return;
     final navigator = _navigatorKey.currentState;
-    if (navigator == null) { WidgetsBinding.instance.addPostFrameCallback((_) => _pairingRequested()); return; }
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pairingRequested());
+      return;
+    }
     widget.navigation.clearPairingRequest();
-    navigator.push<void>(MaterialPageRoute(builder: (_) => DeepLinkJoinScreen(gateway: widget.gateway, code: code)));
+    navigator.push<void>(
+      MaterialPageRoute(
+        builder: (_) => DeepLinkJoinScreen(gateway: widget.gateway, code: code),
+      ),
+    );
   }
 
   void _newPairingRequested() {
     final request = widget.navigation.newPairingRequest.value;
     if (request == _handledPairingRequest) return;
     final navigator = _navigatorKey.currentState;
-    if (navigator == null) { WidgetsBinding.instance.addPostFrameCallback((_) => _newPairingRequested()); return; }
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _newPairingRequested());
+      return;
+    }
     _handledPairingRequest = request;
-    navigator.push<void>(MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)));
+    _openPairing();
+  }
+
+  void _openPairing() {
+    _navigatorKey.currentState?.push<void>(
+      MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)),
+    );
+  }
+
+  void _openSettings() {
+    _navigatorKey.currentState?.push<void>(
+      MaterialPageRoute(builder: (_) => SettingsScreen(preferences: widget.preferences)),
+    );
+  }
+
+  void _openDiagnostics() {
+    _navigatorKey.currentState?.push<void>(
+      MaterialPageRoute(builder: (_) => DiagnosticsScreen(gateway: widget.gateway)),
+    );
+  }
+
+  void _dismissTopRoute() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator != null && navigator.canPop()) navigator.pop();
   }
 
   @override
@@ -98,7 +155,70 @@ class _TorcaAppState extends State<TorcaApp> {
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
           themeMode: AppTheme.materialMode(widget.preferences.themeMode),
-          home: HomeScreen(gateway: widget.gateway, preferences: widget.preferences),
+          builder: (context, child) => Shortcuts(
+            shortcuts: const <ShortcutActivator, Intent>{
+              SingleActivator(LogicalKeyboardKey.keyN, control: true): _NewPairingIntent(),
+              SingleActivator(LogicalKeyboardKey.comma, control: true): _SettingsIntent(),
+              SingleActivator(
+                LogicalKeyboardKey.keyD,
+                control: true,
+                shift: true,
+              ): _DiagnosticsIntent(),
+              SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
+            },
+            child: Actions(
+              actions: <Type, Action<Intent>>{
+                _NewPairingIntent: CallbackAction<_NewPairingIntent>(
+                  onInvoke: (_) {
+                    _openPairing();
+                    return null;
+                  },
+                ),
+                _SettingsIntent: CallbackAction<_SettingsIntent>(
+                  onInvoke: (_) {
+                    _openSettings();
+                    return null;
+                  },
+                ),
+                _DiagnosticsIntent: CallbackAction<_DiagnosticsIntent>(
+                  onInvoke: (_) {
+                    _openDiagnostics();
+                    return null;
+                  },
+                ),
+                _DismissIntent: CallbackAction<_DismissIntent>(
+                  onInvoke: (_) {
+                    _dismissTopRoute();
+                    return null;
+                  },
+                ),
+              },
+              child: FocusTraversalGroup(
+                policy: ReadingOrderTraversalPolicy(),
+                child: child ?? const SizedBox.shrink(),
+              ),
+            ),
+          ),
+          home: HomeScreen(
+            gateway: widget.gateway,
+            preferences: widget.preferences,
+          ),
         ),
       );
+}
+
+class _NewPairingIntent extends Intent {
+  const _NewPairingIntent();
+}
+
+class _SettingsIntent extends Intent {
+  const _SettingsIntent();
+}
+
+class _DiagnosticsIntent extends Intent {
+  const _DiagnosticsIntent();
+}
+
+class _DismissIntent extends Intent {
+  const _DismissIntent();
 }

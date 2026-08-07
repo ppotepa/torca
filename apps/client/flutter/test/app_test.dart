@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/app.dart';
 import 'package:torca_app/gateway/engine_gateway.dart';
@@ -33,6 +34,24 @@ void main() {
     expect(find.text('Appearance'), findsOneWidget);
     expect(find.text('Notifications'), findsOneWidget);
     expect(find.text('Enable notifications'), findsOneWidget);
+  });
+
+  testWidgets('desktop settings shortcut opens and Escape dismisses the route', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_app(MemoryEngineGateway()));
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Appearance'), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create local identity'), findsWidgets);
   });
 
   testWidgets('wide layout exposes the current pairing flow', (
