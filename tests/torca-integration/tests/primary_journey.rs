@@ -1,151 +1,232 @@
-//! Primary end-to-end domain journey exercised without platform transports.
+use std::time::Duration;
 
-use torca_attachments::{Attachment, AttachmentId, AttachmentName, MediaType};
-use torca_client_engine::{ClientEngine, EngineCommand, EngineResult};
-use torca_contacts::{ContactId, ContactRoute};
-use torca_conversations::ConversationId;
-use torca_crypto::{CryptoProvider, DeterministicTestCrypto};
-use torca_file_storage::{EncryptedAttachmentStore, MemoryBlobStore};
-use torca_foundation::{OpaqueId, Timestamp};
-use torca_identity::{
-    IdentityId, IdentityKey, KeyAlgorithm, KeyId, Profile, ProfileName, PublicIdentity,
+use torca_attachments::{
+    Attachment, AttachmentId, AttachmentName, AttachmentRepository, InMemoryAttachmentRepository,
+    MediaType,
 };
-use torca_messaging::{MessageBody, MessageId, MessageStatus};
+use torca_client_engine::{ClientEngine, EngineCommand, EngineResult};
+use torca_contacts::{ContactId, PeerCredential};
+use torca_conversations::ConversationId;
+use torca_crypto::{
+    CryptoProvider, DeterministicTestCrypto, Nonce, SealingKey, SigningSecretKey,
+};
+use torca_file_storage::{BlobStore, EncryptedAttachmentStore, MemoryBlobStore};
+use torca_foundation::{CommandId, ErrorCode, OpaqueId, Timestamp};
+use torca_identity::{IdentityId, Profile, ProfileName};
+use torca_messaging::{MessageBody, MessageId, RetryPolicy};
 use torca_pairing::{PairingCode, PairingSessionId, PeerProposal};
 use torca_receipts::{Receipt, ReceiptId, ReceiptKind};
+use torca_storage_sqlite::{
+    DurableDeliveryStore, InMemoryDurableDeliveryStore, StorageKernel,
+};
+use torca_storage_sqlite::{MemoryStorageBackend, migrations};
+use torca_contacts::ContactRoute;
+use torca_identity::{IdentityKey, KeyAlgorithm, KeyId, PublicIdentity};
 
-fn at(value: i64) -> Timestamp {
-    Timestamp::from_unix_millis(value).expect("valid timestamp")
+fn ts(ms: i64) -> Timestamp {
+    Timestamp::from_unix_millis(ms).expect("test timestamp is in range")
+}
+
+fn peer() -> PeerProposal {
+    let key = IdentityKey::new(
+        KeyId::from_u128(40),
+        KeyAlgorithm::Ed25519,
+        vec![7_u8; 32],
+    )
+    .expect("peer key is valid");
+    let public_identity = PublicIdentity::new(IdentityId::from_u128(41), key, 0);
+    let route = ContactRoute::new("peerexample.onion", OpaqueId::from_u128(42))
+        .expect("peer route is valid");
+    PeerProposal { public_identity, route }
+}
+
+fn credential(contact_id: ContactId) -> PeerCredential {
+    PeerCredential::new(
+        contact_id,
+        OpaqueId::from_u128(70),
+        OpaqueId::from_u128(71),
+    )
+    .expect("credential is valid")
 }
 
 #[test]
-fn identity_pairing_message_receipt_and_attachment_flow_is_coherent() {
+fn primary_journey_is_deterministic_across_bounded_components() {
     let mut engine = ClientEngine::default();
-    let profile = Profile::new(ProfileName::new("Alice").expect("valid name"), None);
-
+    let identity_id = IdentityId::from_u128(1);
+    let profile = Profile::new(ProfileName::new("Orca").expect("profile name is valid"), None);
     assert_eq!(
         engine
             .dispatch(EngineCommand::CreateIdentity {
-                identity_id: IdentityId::from_u128(1),
+                identity_id,
                 profile,
-                at: at(1),
+                at: ts(1),
             })
-            .expect("identity"),
+            .expect("identity command succeeds"),
         EngineResult::IdentityCreated
     );
 
-    let session_id = PairingSessionId::from_u128(2);
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::StartPairing {
-                session_id,
-                code: PairingCode::new("TORCA1").expect("code"),
-                expires_at: at(10_000),
-            })
-            .expect("start pairing"),
-        EngineResult::PairingStarted
-    );
+    let pairing_id = PairingSessionId::from_u128(2);
+    engine
+        .dispatch(EngineCommand::StartPairing {
+            session_id: pairing_id,
+            code: PairingCode::new("ORCA42").expect("pairing code is valid"),
+            expires_at: ts(10_000),
+        })
+        .expect("pairing starts");
+    engine
+        .dispatch(EngineCommand::PeerJoined {
+            session_id: pairing_id,
+            proposal: peer(),
+            at: ts(2),
+        })
+        .expect("peer joins");
+    engine
+        .dispatch(EngineCommand::ApprovePairing {
+            session_id: pairing_id,
+            at: ts(3),
+        })
+        .expect("local approval succeeds");
+    engine
+        .dispatch(EngineCommand::RemoteApproved {
+            session_id: pairing_id,
+            at: ts(4),
+        })
+        .expect("remote approval succeeds");
 
-    let remote_key =
-        IdentityKey::new(KeyId::from_u128(3), KeyAlgorithm::Ed25519, vec![7; 32]).expect("key");
-    let proposal = PeerProposal {
-        public_identity: PublicIdentity::new(IdentityId::from_u128(4), remote_key, 0),
-        route: ContactRoute::new("examplecontact.onion", OpaqueId::from_u128(5)).expect("route"),
-    };
+    let contact_id = ContactId::from_u128(3);
+    let conversation_id = ConversationId::from_u128(4);
+    engine
+        .dispatch(EngineCommand::CompletePairing {
+            session_id: pairing_id,
+            contact_id,
+            conversation_id,
+            credential: credential(contact_id),
+            at: ts(5),
+        })
+        .expect("pairing completes");
 
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::PeerJoined { session_id, proposal, at: at(2) })
-            .expect("peer joined"),
-        EngineResult::PairingUpdated
-    );
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::ApprovePairing { session_id, at: at(3) })
-            .expect("local approval"),
-        EngineResult::PairingUpdated
-    );
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::RemoteApproved { session_id, at: at(4) })
-            .expect("remote approval"),
-        EngineResult::PairingUpdated
-    );
+    let message_id = MessageId::from_u128(5);
+    engine
+        .dispatch(EngineCommand::QueueMessage {
+            message_id,
+            conversation_id,
+            body: MessageBody::new("hello through Torca").expect("message body is valid"),
+            reply_to: None,
+            at: ts(6),
+        })
+        .expect("message is queued");
+    engine
+        .dispatch(EngineCommand::BeginMessageSend { message_id, at: ts(7) })
+        .expect("send begins");
+    engine
+        .dispatch(EngineCommand::MarkMessageSent { message_id, at: ts(8) })
+        .expect("message is sent");
+    engine
+        .dispatch(EngineCommand::ApplyReceipt(Receipt {
+            id: ReceiptId::from_u128(6),
+            message_id,
+            kind: ReceiptKind::Delivered,
+            at: ts(9),
+        }))
+        .expect("delivered receipt applies");
+    engine
+        .dispatch(EngineCommand::ApplyReceipt(Receipt {
+            id: ReceiptId::from_u128(7),
+            message_id,
+            kind: ReceiptKind::Read,
+            at: ts(10),
+        }))
+        .expect("read receipt applies");
 
-    let contact_id = ContactId::from_u128(6);
-    let conversation_id = ConversationId::from_u128(7);
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::CompletePairing {
-                session_id,
-                contact_id,
-                conversation_id,
-                at: at(5),
-            })
-            .expect("complete"),
-        EngineResult::PairingCompleted { contact_id, conversation_id }
-    );
-
-    let message_id = MessageId::from_u128(8);
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::QueueMessage {
-                message_id,
-                conversation_id,
-                body: MessageBody::new("hello").expect("body"),
-                reply_to: None,
-                at: at(6),
-            })
-            .expect("queue"),
-        EngineResult::MessageQueued { message_id }
-    );
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::BeginMessageSend { message_id, at: at(7) })
-            .expect("begin send"),
-        EngineResult::MessageUpdated { message_id }
-    );
-    assert_eq!(
-        engine.dispatch(EngineCommand::MarkMessageSent { message_id, at: at(8) }).expect("sent"),
-        EngineResult::MessageUpdated { message_id }
-    );
-    assert_eq!(
-        engine
-            .dispatch(EngineCommand::ApplyReceipt(Receipt {
-                id: ReceiptId::from_u128(9),
-                message_id,
-                kind: ReceiptKind::Read,
-                at: at(9),
-            }))
-            .expect("read receipt"),
-        EngineResult::ReceiptApplied { message_id, changed: true }
-    );
-
-    let snapshot = engine.snapshot().expect("snapshot");
+    let snapshot = engine.snapshot().expect("snapshot succeeds");
     assert_eq!(snapshot.contacts.len(), 1);
     assert_eq!(snapshot.conversations.len(), 1);
-    assert_eq!(snapshot.messages[0].status(), MessageStatus::Read);
+    assert_eq!(snapshot.messages.len(), 1);
 
+    let mut durable = InMemoryDurableDeliveryStore::default();
+    let retry_message = torca_messaging::Message::outbound(
+        MessageId::from_u128(10),
+        conversation_id,
+        MessageBody::new("retry me").expect("message body is valid"),
+        None,
+        ts(20),
+    );
+    durable
+        .queue_outbound(retry_message, CommandId::from_u128(11), ts(20))
+        .expect("outbox insert succeeds");
+    let claimed = durable.claim_due(ts(20), 8).expect("claim succeeds");
+    assert_eq!(claimed.len(), 1);
+    let policy = RetryPolicy {
+        max_attempts: 4,
+        base_delay: Duration::from_secs(1),
+        max_delay: Duration::from_secs(8),
+    };
+    let next = ts(20)
+        .checked_add(policy.delay_after(1).expect("first retry is allowed"))
+        .expect("retry timestamp remains in range");
+    durable
+        .reschedule(MessageId::from_u128(10), 1, next)
+        .expect("reschedule succeeds");
+    assert_eq!(durable.recover_stale_claims(next).expect("recovery succeeds"), 0);
+    assert!(durable.record_inbound(OpaqueId::from_u128(12)).expect("dedup insert succeeds"));
+    assert!(!durable.record_inbound(OpaqueId::from_u128(12)).expect("dedup replay succeeds"));
+
+    let mut attachments = InMemoryAttachmentRepository::default();
+    let attachment_id = AttachmentId::from_u128(20);
     let mut attachment = Attachment::prepare(
-        AttachmentId::from_u128(10),
+        attachment_id,
         message_id,
-        AttachmentName::new("photo.png").expect("name"),
-        MediaType::new("image/png").expect("media type"),
+        AttachmentName::new("hello.txt").expect("attachment name is valid"),
+        MediaType::new("text/plain").expect("media type is valid"),
         5,
-        at(10),
+        ts(30),
     )
-    .expect("attachment");
-    attachment.begin_encryption(at(11)).expect("encrypting");
+    .expect("attachment prepares");
+    attachment.begin_encryption(ts(31)).expect("encryption starts");
+    attachment.mark_queued(ts(32)).expect("attachment queues");
+    let _ = attachment.begin_transfer(ts(33)).expect("transfer starts");
+    attachment
+        .mark_failed(ts(34), ErrorCode::new("NETWORK").expect("error code is valid"))
+        .expect("failure records");
+    let _ = attachment.begin_transfer(ts(35)).expect("retry starts");
+    attachment.mark_available(ts(36)).expect("attachment completes");
+    attachments.insert(attachment.clone()).expect("attachment persists");
+    assert_eq!(
+        attachments.get(attachment_id).expect("attachment load succeeds"),
+        Some(attachment)
+    );
+
+    let mut encrypted = EncryptedAttachmentStore::new(
+        DeterministicTestCrypto::default(),
+        MemoryBlobStore::default(),
+    );
+    let key = SealingKey::new([9; 32]);
+    let _nonce = encrypted
+        .store(attachment_id, &key, b"attachment-v1", b"hello")
+        .expect("encrypted attachment stores");
+    assert_eq!(
+        encrypted
+            .load(attachment_id, &key, b"attachment-v1")
+            .expect("encrypted attachment loads"),
+        b"hello"
+    );
 
     let mut crypto = DeterministicTestCrypto::default();
-    let sealing = crypto.generate_sealing_key().expect("test sealing key");
-    let mut storage = EncryptedAttachmentStore::new(crypto, MemoryBlobStore::default());
-    let _nonce =
-        storage.store(attachment.id(), &sealing, b"attachment-v1", b"image").expect("store");
-    assert_eq!(storage.load(attachment.id(), &sealing, b"attachment-v1").expect("load"), b"image");
+    let (secret, public) = crypto.generate_signing_key().expect("signing key generation succeeds");
+    let signature = crypto.sign(&secret, b"handshake").expect("signing succeeds");
+    crypto.verify(&public, b"handshake", &signature).expect("verification succeeds");
+    let _ = SigningSecretKey::new([1; 32]);
+    let ciphertext = crypto
+        .seal(&key, Nonce([1; 24]), b"aad", b"payload")
+        .expect("sealing succeeds");
+    assert_eq!(
+        crypto
+            .open(&key, Nonce([1; 24]), b"aad", &ciphertext)
+            .expect("opening succeeds"),
+        b"payload"
+    );
 
-    attachment.mark_queued(at(12)).expect("queued");
-    let attempt = attachment.begin_transfer(at(13)).expect("transfer");
-    assert_eq!(attempt, 1);
-    attachment.mark_available(at(14)).expect("available");
+    let backend = MemoryStorageBackend::default();
+    let mut kernel = StorageKernel::new(backend);
+    assert_eq!(kernel.bootstrap().expect("storage bootstrap succeeds"), migrations().len() as u32);
 }

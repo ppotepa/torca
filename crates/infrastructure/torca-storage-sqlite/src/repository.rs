@@ -5,6 +5,7 @@ use rusqlite::{OptionalExtension, params};
 use torca_client_engine::{EngineError, RelationshipRepository};
 use torca_contacts::{
     Contact, ContactError, ContactId, ContactRepository, ContactRoute, ContactStatus,
+    PeerCredential, PeerCredentialRepository,
 };
 use torca_conversations::{
     ConversationError, ConversationId, ConversationRepository, ConversationStatus,
@@ -18,15 +19,12 @@ use torca_identity::{
 
 use crate::{
     DatabaseKey, MigrationError, SqlCipherBackend, StorageBackend, StorageBackendError,
-    StorageKernel, contact_sql, conversation_sql, identity_sql,
+    StorageKernel, contact_sql, conversation_sql, identity_sql, peer_credential_sql,
 };
 
-/// Failure while opening and migrating a concrete encrypted store.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SqlCipherStoreOpenError {
-    /// SQLCipher connection or key verification failed.
     Backend(StorageBackendError),
-    /// Embedded schema migration failed.
     Migration(MigrationError),
 }
 
@@ -35,28 +33,23 @@ impl fmt::Display for SqlCipherStoreOpenError {
         write!(formatter, "{self:?}")
     }
 }
-
 impl std::error::Error for SqlCipherStoreOpenError {}
-
 impl From<StorageBackendError> for SqlCipherStoreOpenError {
     fn from(value: StorageBackendError) -> Self {
         Self::Backend(value)
     }
 }
-
 impl From<MigrationError> for SqlCipherStoreOpenError {
     fn from(value: MigrationError) -> Self {
         Self::Migration(value)
     }
 }
 
-/// Concrete SQLCipher store implementing domain-owned repository ports.
 pub struct SqlCipherStore {
     backend: SqlCipherBackend,
 }
 
 impl SqlCipherStore {
-    /// Opens, keys and migrates an encrypted store.
     pub fn open(
         path: impl AsRef<Path>,
         key: &DatabaseKey,
@@ -65,7 +58,6 @@ impl SqlCipherStore {
         Self::bootstrap(backend)
     }
 
-    /// Opens and migrates an encrypted in-memory store for integration tests.
     pub fn open_in_memory(key: &DatabaseKey) -> Result<Self, SqlCipherStoreOpenError> {
         let backend = SqlCipherBackend::open_in_memory(key)?;
         Self::bootstrap(backend)
@@ -77,7 +69,6 @@ impl SqlCipherStore {
         Ok(Self { backend: kernel.into_backend() })
     }
 
-    /// Returns the active SQLCipher version.
     pub fn cipher_version(&self) -> &str {
         self.backend.cipher_version()
     }
@@ -90,7 +81,6 @@ impl IdentityRepository for SqlCipherStore {
             .connection()
             .prepare(identity_sql::SELECT.sql)
             .map_err(repository_error)?;
-
         let row = statement
             .query_row([], |row| {
                 Ok(IdentityRow {
@@ -107,7 +97,6 @@ impl IdentityRepository for SqlCipherStore {
             })
             .optional()
             .map_err(repository_error)?;
-
         row.map(IdentityRow::into_identity).transpose()
     }
 
@@ -115,7 +104,6 @@ impl IdentityRepository for SqlCipherStore {
         let identity_id = identity.public().identity_id().to_opaque().into_bytes();
         let key_id = identity.public().key().key_id().to_opaque().into_bytes();
         let avatar = identity.profile().avatar().map(AvatarReference::as_str);
-
         self.backend
             .connection()
             .execute(
@@ -228,10 +216,46 @@ impl ContactRepository for SqlCipherStore {
             })
             .map_err(|_| ContactError::RepositoryFailure)?;
         rows.map(|row| {
-            row.map_err(|_| ContactError::RepositoryFailure)?
-                .into_contact()
+            row.map_err(|_| ContactError::RepositoryFailure)?.into_contact()
         })
         .collect()
+    }
+}
+
+impl PeerCredentialRepository for SqlCipherStore {
+    fn insert_credential(&mut self, credential: PeerCredential) -> Result<(), ContactError> {
+        if PeerCredentialRepository::credential_for_contact(self, credential.contact_id())?
+            .is_some()
+        {
+            return Err(ContactError::AlreadyExists);
+        }
+        insert_peer_credential(&self.backend, credential)
+    }
+
+    fn credential_for_contact(
+        &self,
+        contact_id: ContactId,
+    ) -> Result<Option<PeerCredential>, ContactError> {
+        let contact = contact_id.to_opaque().into_bytes();
+        let row = self
+            .backend
+            .connection()
+            .query_row(
+                peer_credential_sql::SELECT_BY_CONTACT.sql,
+                params![contact.as_slice()],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()
+            .map_err(|_| ContactError::RepositoryFailure)?;
+        row.map(|(local_capability, secret_handle)| {
+            PeerCredential::new(
+                contact_id,
+                OpaqueId::from_bytes(fixed_16_contact(local_capability)?),
+                OpaqueId::from_bytes(fixed_16_contact(secret_handle)?),
+            )
+            .map_err(|_| ContactError::RepositoryFailure)
+        })
+        .transpose()
     }
 }
 
@@ -313,8 +337,7 @@ impl ConversationRepository for SqlCipherStore {
             })
             .map_err(|_| ConversationError::RepositoryFailure)?;
         rows.map(|row| {
-            row.map_err(|_| ConversationError::RepositoryFailure)?
-                .into_conversation()
+            row.map_err(|_| ConversationError::RepositoryFailure)?.into_conversation()
         })
         .collect()
     }
@@ -325,8 +348,9 @@ impl RelationshipRepository for SqlCipherStore {
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
+        credential: PeerCredential,
     ) -> Result<(), EngineError> {
-        if contact.id() != conversation.contact_id() {
+        if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
             return Err(EngineError("pairing relationship identifiers do not match".into()));
         }
         if ContactRepository::get(self, contact.id()).map_err(relationship_error)?.is_some()
@@ -336,8 +360,13 @@ impl RelationshipRepository for SqlCipherStore {
             || ConversationRepository::for_contact(self, contact.id())
                 .map_err(relationship_error)?
                 .is_some()
+            || PeerCredentialRepository::credential_for_contact(self, contact.id())
+                .map_err(relationship_error)?
+                .is_some()
         {
-            return Err(EngineError("contact or conversation already exists".into()));
+            return Err(EngineError(
+                "contact, conversation or credential already exists".into(),
+            ));
         }
 
         self.backend.begin().map_err(|_| relationship_failure())?;
@@ -345,14 +374,12 @@ impl RelationshipRepository for SqlCipherStore {
             execute_contact(&self.backend, contact_sql::INSERT.sql, &contact)
                 .map_err(relationship_error)?;
             insert_conversation(&self.backend, &conversation).map_err(relationship_error)?;
+            insert_peer_credential(&self.backend, credential).map_err(relationship_error)?;
             Ok::<(), EngineError>(())
         })();
 
         match result {
-            Ok(()) => self
-                .backend
-                .commit()
-                .map_err(|_| relationship_failure()),
+            Ok(()) => self.backend.commit().map_err(|_| relationship_failure()),
             Err(error) => {
                 let _ = self.backend.rollback();
                 Err(error)
@@ -401,7 +428,6 @@ impl IdentityRow {
             .map_err(|error| data_error(&format!("invalid created_at: {error}")))?;
         let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
             .map_err(|error| data_error(&format!("invalid updated_at: {error}")))?;
-
         let mut identity = Identity::new(public, profile.clone(), created_at);
         if updated_at != created_at {
             identity.update_profile(profile, updated_at);
@@ -556,6 +582,27 @@ fn insert_conversation(
     Ok(())
 }
 
+fn insert_peer_credential(
+    backend: &SqlCipherBackend,
+    credential: PeerCredential,
+) -> Result<(), ContactError> {
+    let contact_id = credential.contact_id().to_opaque().into_bytes();
+    let local_capability = credential.local_capability_id().into_bytes();
+    let secret_handle = credential.secret_handle().into_bytes();
+    backend
+        .connection()
+        .execute(
+            peer_credential_sql::INSERT.sql,
+            params![
+                contact_id.as_slice(),
+                local_capability.as_slice(),
+                secret_handle.as_slice(),
+            ],
+        )
+        .map_err(|_| ContactError::RepositoryFailure)?;
+    Ok(())
+}
+
 fn fixed_16_identity(
     value: Vec<u8>,
     field: &str,
@@ -622,7 +669,10 @@ fn data_error(message: &str) -> IdentityRepositoryError {
 #[cfg(test)]
 mod tests {
     use torca_client_engine::RelationshipRepository;
-    use torca_contacts::{Contact, ContactId, ContactRepository, ContactRoute};
+    use torca_contacts::{
+        Contact, ContactId, ContactRepository, ContactRoute, PeerCredential,
+        PeerCredentialRepository,
+    };
     use torca_conversations::{ConversationId, ConversationRepository, DirectConversation};
     use torca_foundation::{OpaqueId, Timestamp};
     use torca_identity::{
@@ -647,13 +697,12 @@ mod tests {
             IdentityKey::new(KeyId::from_u128(2), KeyAlgorithm::Ed25519, vec![7; 32]).expect("key");
         let public = PublicIdentity::new(IdentityId::from_u128(1), public_key, 0);
         let identity = Identity::new(public, profile, Timestamp::UNIX_EPOCH);
-
         IdentityRepository::insert(&mut store, &identity).expect("insert");
         assert_eq!(IdentityRepository::load(&store).expect("load"), Some(identity));
     }
 
     #[test]
-    fn contact_and_conversation_round_trip_through_sqlcipher() {
+    fn contact_conversation_and_credential_round_trip_through_sqlcipher() {
         let key = DatabaseKey::new([0x25; 32]);
         let mut store = SqlCipherStore::open_in_memory(&key).expect("open store");
         let contact = Contact::new(
@@ -667,8 +716,14 @@ mod tests {
             contact.id(),
             Timestamp::UNIX_EPOCH,
         );
+        let credential = PeerCredential::new(
+            contact.id(),
+            OpaqueId::from_u128(24),
+            OpaqueId::from_u128(25),
+        )
+        .expect("credential");
         store
-            .insert_pairing_result(contact.clone(), conversation.clone())
+            .insert_pairing_result(contact.clone(), conversation.clone(), credential)
             .expect("insert relationship");
         assert_eq!(
             ContactRepository::get(&store, contact.id()).expect("get contact"),
@@ -677,6 +732,11 @@ mod tests {
         assert_eq!(
             ConversationRepository::get(&store, conversation.id()).expect("get conversation"),
             Some(conversation)
+        );
+        assert_eq!(
+            PeerCredentialRepository::credential_for_contact(&store, credential.contact_id())
+                .expect("get credential"),
+            Some(credential)
         );
     }
 }

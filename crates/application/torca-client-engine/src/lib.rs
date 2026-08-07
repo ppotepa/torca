@@ -4,7 +4,10 @@ use core::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use torca_contacts::{Contact, ContactError, ContactId, ContactRepository, InMemoryContactRepository};
+use torca_contacts::{
+    Contact, ContactError, ContactId, ContactRepository, InMemoryContactRepository,
+    InMemoryPeerCredentialRepository, PeerCredential, PeerCredentialRepository,
+};
 use torca_conversations::{
     ConversationError, ConversationId, ConversationRepository, DirectConversation,
     InMemoryConversationRepository,
@@ -56,7 +59,6 @@ pub enum EngineCommand {
     CancelPairing {
         session_id: PairingSessionId,
     },
-    /// Internal maintenance command; presentation code never chooses the expiry deadline.
     ExpirePairing {
         session_id: PairingSessionId,
         at: Timestamp,
@@ -69,6 +71,7 @@ pub enum EngineCommand {
         session_id: PairingSessionId,
         contact_id: ContactId,
         conversation_id: ConversationId,
+        credential: PeerCredential,
         at: Timestamp,
     },
     QueueMessage {
@@ -132,11 +135,16 @@ impl fmt::Display for EngineError {
 }
 impl std::error::Error for EngineError {}
 
-pub trait RelationshipRepository: ContactRepository + ConversationRepository {
+/// Atomic verified-relationship persistence boundary. A usable contact must always have its direct
+/// conversation and non-secret peer credential metadata committed in the same transaction.
+pub trait RelationshipRepository:
+    ContactRepository + ConversationRepository + PeerCredentialRepository
+{
     fn insert_pairing_result(
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
+        credential: PeerCredential,
     ) -> Result<(), EngineError>;
 }
 
@@ -144,6 +152,7 @@ pub trait RelationshipRepository: ContactRepository + ConversationRepository {
 pub struct InMemoryRelationshipRepository {
     contacts: InMemoryContactRepository,
     conversations: InMemoryConversationRepository,
+    credentials: InMemoryPeerCredentialRepository,
 }
 
 impl ContactRepository for InMemoryRelationshipRepository {
@@ -179,22 +188,52 @@ impl ConversationRepository for InMemoryRelationshipRepository {
     }
 }
 
+impl PeerCredentialRepository for InMemoryRelationshipRepository {
+    fn insert_credential(&mut self, credential: PeerCredential) -> Result<(), ContactError> {
+        self.credentials.insert_credential(credential)
+    }
+
+    fn credential_for_contact(
+        &self,
+        contact_id: ContactId,
+    ) -> Result<Option<PeerCredential>, ContactError> {
+        self.credentials.credential_for_contact(contact_id)
+    }
+}
+
 impl RelationshipRepository for InMemoryRelationshipRepository {
     fn insert_pairing_result(
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
+        credential: PeerCredential,
     ) -> Result<(), EngineError> {
+        if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
+            return Err(EngineError("pairing relationship identifiers do not match".into()));
+        }
         if ContactRepository::get(self, contact.id()).map_err(map_error)?.is_some()
             || ConversationRepository::get(self, conversation.id()).map_err(map_error)?.is_some()
             || ConversationRepository::for_contact(self, contact.id())
                 .map_err(map_error)?
                 .is_some()
+            || PeerCredentialRepository::credential_for_contact(self, contact.id())
+                .map_err(map_error)?
+                .is_some()
         {
-            return Err(EngineError("contact or conversation already exists".into()));
+            return Err(EngineError("contact, conversation or credential already exists".into()));
         }
-        self.contacts.insert(contact).map_err(map_error)?;
-        self.conversations.insert(conversation).map_err(map_error)?;
+
+        // Stage into clones so even the reference implementation preserves all-or-nothing
+        // semantics if a future in-memory repository adds validation after the prechecks.
+        let mut contacts = self.contacts.clone();
+        let mut conversations = self.conversations.clone();
+        let mut credentials = self.credentials.clone();
+        contacts.insert(contact).map_err(map_error)?;
+        conversations.insert(conversation).map_err(map_error)?;
+        credentials.insert_credential(credential).map_err(map_error)?;
+        self.contacts = contacts;
+        self.conversations = conversations;
+        self.credentials = credentials;
         Ok(())
     }
 }
@@ -321,7 +360,16 @@ where
                 self.pairings.update(session).map_err(map_error)?;
                 Ok(EngineResult::PairingUpdated)
             }
-            EngineCommand::CompletePairing { session_id, contact_id, conversation_id, at } => {
+            EngineCommand::CompletePairing {
+                session_id,
+                contact_id,
+                conversation_id,
+                credential,
+                at,
+            } => {
+                if credential.contact_id() != contact_id {
+                    return Err(EngineError("peer credential contact does not match pairing".into()));
+                }
                 if ContactRepository::get(&self.relationships, contact_id)
                     .map_err(map_error)?
                     .is_some()
@@ -331,14 +379,20 @@ where
                     || ConversationRepository::for_contact(&self.relationships, contact_id)
                         .map_err(map_error)?
                         .is_some()
+                    || PeerCredentialRepository::credential_for_contact(&self.relationships, contact_id)
+                        .map_err(map_error)?
+                        .is_some()
                 {
-                    return Err(EngineError("contact or conversation already exists".into()));
+                    return Err(EngineError(
+                        "contact, conversation or peer credential already exists".into(),
+                    ));
                 }
                 let mut session = self.load_pairing(session_id)?;
                 let proposal = session.complete(at).map_err(map_error)?;
                 let contact = Contact::new(contact_id, proposal.public_identity, proposal.route, at);
                 let conversation = DirectConversation::new(conversation_id, contact_id, at);
-                self.relationships.insert_pairing_result(contact, conversation)?;
+                self.relationships
+                    .insert_pairing_result(contact, conversation, credential)?;
                 self.pairings.update(session).map_err(map_error)?;
                 Ok(EngineResult::PairingCompleted { contact_id, conversation_id })
             }
