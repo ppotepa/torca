@@ -13,7 +13,8 @@ use torca_identity::{IdentityId, Profile, ProfileName, PublicIdentity};
 use torca_messaging::{MessageBody, MessageId, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_runtime_host::{
-    AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeHostHandle,
+    AttachmentSendRequest, AttachmentView, HostTorState, NetworkSnapshot, RuntimeDriverError,
+    RuntimeHostHandle,
 };
 
 pub const CONTRACT_VERSION: u16 = 11;
@@ -116,18 +117,33 @@ impl EngineBridge {
                 .and_then(|id| ProfileName::new(display_name).map_err(string_error).map(|name| (id, name)))
                 .and_then(|(id, name)| timestamp(at_ms).map(|at| EngineCommand::CreateIdentity { identity_id: IdentityId::from_opaque(id), profile: Profile::new(name, None), at }))
                 .and_then(|command| self.engine.dispatch(command).map_err(string_error)).map(|value| result_kind(&value)),
-            BridgeCommand::CreatePairing { session_id_hex } => parse_pairing_id(&session_id_hex).and_then(|id| self.runtime()?.create_pairing(id).map_err(string_error)).map(|_| "pairing_started"),
-            BridgeCommand::JoinPairing { session_id_hex, code } => parse_pairing_id(&session_id_hex).and_then(|id| PairingCode::new(code).map_err(string_error).map(|code| (id, code))).and_then(|(id, code)| self.runtime()?.join_pairing(id, code).map_err(string_error)).map(|_| "pairing_joined"),
-            BridgeCommand::ApprovePairing { session_id_hex } => parse_pairing_id(&session_id_hex).and_then(|id| self.runtime()?.approve_pairing(id).map_err(string_error)).map(|_| "pairing_updated"),
-            BridgeCommand::RejectPairing { session_id_hex } => parse_pairing_id(&session_id_hex).and_then(|id| self.runtime()?.reject_pairing(id).map_err(string_error)).map(|_| "pairing_rejected"),
-            BridgeCommand::CancelPairing { session_id_hex } => parse_pairing_id(&session_id_hex).and_then(|id| self.runtime()?.cancel_pairing(id).map_err(string_error)).map(|_| "pairing_cancelled"),
-            BridgeCommand::RenameContact { contact_id_hex, display_name } => parse_contact_id(&contact_id_hex).and_then(|id| self.runtime()?.rename_contact(id, display_name).map_err(string_error)).map(|_| "contact_renamed"),
-            BridgeCommand::VerifyContact { contact_id_hex } => parse_contact_id(&contact_id_hex).and_then(|id| self.runtime()?.verify_contact(id).map_err(string_error)).map(|_| "contact_verified"),
-            BridgeCommand::ResetContactVerification { contact_id_hex } => parse_contact_id(&contact_id_hex).and_then(|id| self.runtime()?.reset_contact_verification(id).map_err(string_error)).map(|_| "contact_verification_reset"),
-            BridgeCommand::BlockContact { contact_id_hex } => parse_contact_id(&contact_id_hex).and_then(|id| self.runtime()?.block_contact(id).map_err(string_error)).map(|_| "contact_blocked"),
-            BridgeCommand::UnblockContact { contact_id_hex } => parse_contact_id(&contact_id_hex).and_then(|id| self.runtime()?.unblock_contact(id).map_err(string_error)).map(|_| "contact_unblocked"),
-            BridgeCommand::RemoveContact { contact_id_hex } => parse_contact_id(&contact_id_hex).and_then(|id| self.runtime()?.remove_contact(id).map_err(string_error)).map(|_| "contact_removed"),
-            BridgeCommand::ClearConversationHistory { conversation_id_hex } => parse_conversation_id(&conversation_id_hex).and_then(|id| self.runtime()?.clear_conversation_history(id).map_err(string_error)).map(|_| "conversation_history_cleared"),
+            BridgeCommand::CreatePairing { session_id_hex } => parse_pairing_id(&session_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.create_pairing(id)))
+                .map(|_| "pairing_started"),
+            BridgeCommand::JoinPairing { session_id_hex, code } => parse_pairing_id(&session_id_hex)
+                .and_then(|id| PairingCode::new(code).map_err(string_error).map(|code| (id, code)))
+                .and_then(|(id, code)| runtime_command(self.runtime()?.join_pairing(id, code)))
+                .map(|_| "pairing_joined"),
+            BridgeCommand::ApprovePairing { session_id_hex } => parse_pairing_id(&session_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.approve_pairing(id))).map(|_| "pairing_updated"),
+            BridgeCommand::RejectPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.reject_pairing(id))).map(|_| "pairing_rejected"),
+            BridgeCommand::CancelPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.cancel_pairing(id))).map(|_| "pairing_cancelled"),
+            BridgeCommand::RenameContact { contact_id_hex, display_name } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.rename_contact(id, display_name))).map(|_| "contact_renamed"),
+            BridgeCommand::VerifyContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.verify_contact(id))).map(|_| "contact_verified"),
+            BridgeCommand::ResetContactVerification { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.reset_contact_verification(id))).map(|_| "contact_verification_reset"),
+            BridgeCommand::BlockContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.block_contact(id))).map(|_| "contact_blocked"),
+            BridgeCommand::UnblockContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.unblock_contact(id))).map(|_| "contact_unblocked"),
+            BridgeCommand::RemoveContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.remove_contact(id))).map(|_| "contact_removed"),
+            BridgeCommand::ClearConversationHistory { conversation_id_hex } => parse_conversation_id(&conversation_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.clear_conversation_history(id))).map(|_| "conversation_history_cleared"),
             BridgeCommand::QueueMessage { message_id_hex, conversation_id_hex, body, reply_to_message_id_hex, at_ms } => self.runtime().and_then(|runtime| {
                 let message_id = parse_id(&message_id_hex)?; let conversation_id = parse_id(&conversation_id_hex)?; let body = MessageBody::new(body).map_err(string_error)?;
                 let reply_to = match reply_to_message_id_hex { Some(value) => Some(ReplyReference { message_id: MessageId::from_opaque(parse_id(&value)?) }), None => None };
@@ -139,15 +155,18 @@ impl EngineBridge {
                 self.engine.dispatch(EngineCommand::RetryMessage { message_id, at }).map_err(string_error).map(|value| { runtime.wake_delivery(); result_kind(&value) })
             }),
             BridgeCommand::MarkConversationRead { conversation_id_hex } => parse_id(&conversation_id_hex)
-                .and_then(|id| self.runtime()?.mark_conversation_read(id).map_err(string_error))
-                .map(|_| "conversation_read"),
+                .and_then(|id| runtime_command(self.runtime()?.mark_conversation_read(id))).map(|_| "conversation_read"),
             BridgeCommand::MarkConversationReadWithPolicy { conversation_id_hex, send_receipt } => parse_id(&conversation_id_hex)
-                .and_then(|id| self.runtime()?.mark_conversation_read_with_policy(id, send_receipt).map_err(string_error))
-                .map(|_| "conversation_read"),
-            BridgeCommand::QueueAttachment { attachment_id_hex, message_id_hex, conversation_id_hex, source_path, name, media_type, size } => parse_attachment_request(attachment_id_hex, message_id_hex, conversation_id_hex, source_path, name, media_type, size).and_then(|request| self.runtime()?.queue_attachment(request).map_err(string_error)).map(|_| "attachment_queued"),
-            BridgeCommand::RetryAttachment { attachment_id_hex } => parse_id(&attachment_id_hex).and_then(|id| self.runtime()?.retry_attachment(id).map_err(string_error)).map(|_| "attachment_retried"),
-            BridgeCommand::CancelAttachment { attachment_id_hex } => parse_id(&attachment_id_hex).and_then(|id| self.runtime()?.cancel_attachment(id).map_err(string_error)).map(|_| "attachment_cancelled"),
-            BridgeCommand::ExportAttachment { attachment_id_hex, destination_path } => parse_id(&attachment_id_hex).and_then(|id| self.runtime()?.export_attachment(AttachmentId::from_opaque(id), PathBuf::from(destination_path)).map_err(string_error)).map(|_| "attachment_exported"),
+                .and_then(|id| runtime_command(self.runtime()?.mark_conversation_read_with_policy(id, send_receipt))).map(|_| "conversation_read"),
+            BridgeCommand::QueueAttachment { attachment_id_hex, message_id_hex, conversation_id_hex, source_path, name, media_type, size } => parse_attachment_request(attachment_id_hex, message_id_hex, conversation_id_hex, source_path, name, media_type, size)
+                .and_then(|request| runtime_command(self.runtime()?.queue_attachment(request))).map(|_| "attachment_queued"),
+            BridgeCommand::RetryAttachment { attachment_id_hex } => parse_id(&attachment_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.retry_attachment(id))).map(|_| "attachment_retried"),
+            BridgeCommand::CancelAttachment { attachment_id_hex } => parse_id(&attachment_id_hex)
+                .and_then(|id| runtime_command(self.runtime()?.cancel_attachment(id))).map(|_| "attachment_cancelled"),
+            BridgeCommand::ExportAttachment { attachment_id_hex, destination_path } => parse_id(&attachment_id_hex)
+                .and_then(|id| self.runtime()?.export_attachment(AttachmentId::from_opaque(id), PathBuf::from(destination_path)).map_err(string_error))
+                .map(|_| "attachment_exported"),
             BridgeCommand::RefreshSnapshot => self.snapshot().map(|_| "snapshot").map_err(string_error),
         };
         match result { Ok(kind) => BridgeResult { ok: true, kind: kind.into(), error: None }, Err(error) => BridgeResult { ok: false, kind: "error".into(), error: Some(error) } }
@@ -171,6 +190,12 @@ impl EngineBridge {
     fn runtime(&self) -> Result<&RuntimeHostHandle, String> { self.runtime.as_ref().ok_or_else(|| "secure network runtime is not ready".into()) }
 }
 
+fn runtime_command<T>(result: Result<T, RuntimeDriverError>) -> Result<(), String> {
+    match result {
+        Ok(_) | Err(RuntimeDriverError::Pending) => Ok(()),
+        Err(error) => Err(string_error(error)),
+    }
+}
 fn parse_attachment_request(attachment_id_hex: String, message_id_hex: String, conversation_id_hex: String, source_path: String, name: String, media_type: String, size: u64) -> Result<AttachmentSendRequest, String> {
     Ok(AttachmentSendRequest { attachment_id: parse_id(&attachment_id_hex)?, message_id: parse_id(&message_id_hex)?, conversation_id: parse_id(&conversation_id_hex)?, source_path, name, media_type, size })
 }
