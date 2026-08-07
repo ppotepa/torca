@@ -37,6 +37,11 @@ pub enum EngineCommand {
         code: PairingCode,
         expires_at: Timestamp,
     },
+    JoinPairing {
+        session_id: PairingSessionId,
+        code: PairingCode,
+        expires_at: Timestamp,
+    },
     PeerJoined {
         session_id: PairingSessionId,
         proposal: PeerProposal,
@@ -45,6 +50,12 @@ pub enum EngineCommand {
     ApprovePairing {
         session_id: PairingSessionId,
         at: Timestamp,
+    },
+    RejectPairing {
+        session_id: PairingSessionId,
+    },
+    CancelPairing {
+        session_id: PairingSessionId,
     },
     RemoteApproved {
         session_id: PairingSessionId,
@@ -89,7 +100,10 @@ pub enum EngineCommand {
 pub enum EngineResult {
     IdentityCreated,
     PairingStarted,
+    PairingJoined,
     PairingUpdated,
+    PairingRejected,
+    PairingCancelled,
     PairingCompleted { contact_id: ContactId, conversation_id: ConversationId },
     MessageQueued { message_id: MessageId },
     MessageUpdated { message_id: MessageId },
@@ -275,6 +289,12 @@ where
                     .map_err(map_error)?;
                 Ok(EngineResult::PairingStarted)
             }
+            EngineCommand::JoinPairing { session_id, code, expires_at } => {
+                self.pairings
+                    .insert(PairingSession::joining(session_id, code, expires_at))
+                    .map_err(map_error)?;
+                Ok(EngineResult::PairingJoined)
+            }
             EngineCommand::PeerJoined { session_id, proposal, at } => {
                 let mut session = self.load_pairing(session_id)?;
                 session.peer_joined(proposal, at).map_err(map_error)?;
@@ -286,6 +306,18 @@ where
                 session.approve_local(at).map_err(map_error)?;
                 self.pairings.update(session).map_err(map_error)?;
                 Ok(EngineResult::PairingUpdated)
+            }
+            EngineCommand::RejectPairing { session_id } => {
+                let mut session = self.load_pairing(session_id)?;
+                session.reject().map_err(map_error)?;
+                self.pairings.update(session).map_err(map_error)?;
+                Ok(EngineResult::PairingRejected)
+            }
+            EngineCommand::CancelPairing { session_id } => {
+                let mut session = self.load_pairing(session_id)?;
+                session.cancel().map_err(map_error)?;
+                self.pairings.update(session).map_err(map_error)?;
+                Ok(EngineResult::PairingCancelled)
             }
             EngineCommand::RemoteApproved { session_id, at } => {
                 let mut session = self.load_pairing(session_id)?;
