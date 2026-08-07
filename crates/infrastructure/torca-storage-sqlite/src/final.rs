@@ -20,6 +20,8 @@ mod migration;
 mod read_state;
 #[path = "receipt_repository.rs"]
 mod receipt_repository;
+#[path = "relationship_admin.rs"]
+mod relationship_admin;
 #[path = "repository.rs"]
 mod repository;
 #[path = "sqlcipher.rs"]
@@ -43,6 +45,9 @@ pub use message_repository::{SqlCipherMessageStore, SqlCipherMessageStoreOpenErr
 pub use migration::{Migration, MigrationError, MigrationRunner, migrations};
 pub use read_state::{ReadStateError, SqlCipherReadState};
 pub use receipt_repository::{SqlCipherReceiptStore, SqlCipherReceiptStoreOpenError};
+pub use relationship_admin::{
+    RelationshipAdminError, RelationshipCleanup, SqlCipherRelationshipAdmin,
+};
 pub use repository::{SqlCipherStore, SqlCipherStoreOpenError};
 pub use sqlcipher::{DatabaseKey, SqlCipherBackend};
 pub use storage::StorageKernel;
