@@ -12,6 +12,7 @@ publish = false
 path = "src/final.rs"
 
 [dependencies]
+sha2 = "0.10"
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-identity = { path = "../../domains/torca-identity" }
