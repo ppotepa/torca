@@ -44,6 +44,33 @@ pub struct HandshakeHello {
     pub nonce: [u8; 32],
     pub proof: Vec<u8>,
 }
+impl HandshakeHello {
+    /// Builds and signs the canonical initiator hello without exposing signing-key bytes.
+    pub fn signed<S: HandshakeSigner>(
+        session_id: OpaqueId,
+        identity_id: OpaqueId,
+        capability_id: OpaqueId,
+        issued_at: Timestamp,
+        nonce: [u8; 32],
+        signer: &S,
+    ) -> Result<Self, HandshakeBuildError> {
+        let mut hello = Self {
+            session_id,
+            identity_id,
+            capability_id,
+            issued_at,
+            nonce,
+            proof: Vec::new(),
+        };
+        let proof = signer.sign(&canonical_hello_bytes(&hello))?;
+        if proof.len() > MAX_PROOF_LEN {
+            return Err(HandshakeBuildError::ProofTooLarge);
+        }
+        hello.proof = proof;
+        Ok(hello)
+    }
+}
+
 /// Authenticated acknowledgement echoing the initiator challenge.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,22 +79,66 @@ pub struct HandshakeAck {
     pub nonce: [u8; 32],
     pub proof: Vec<u8>,
 }
+impl HandshakeAck {
+    /// Builds and signs a canonical responder acknowledgement.
+    pub fn signed<S: HandshakeSigner>(
+        session_id: OpaqueId,
+        nonce: [u8; 32],
+        signer: &S,
+    ) -> Result<Self, HandshakeBuildError> {
+        let mut ack = Self { session_id, nonce, proof: Vec::new() };
+        let proof = signer.sign(&canonical_ack_bytes(&ack))?;
+        if proof.len() > MAX_PROOF_LEN {
+            return Err(HandshakeBuildError::ProofTooLarge);
+        }
+        ack.proof = proof;
+        Ok(ack)
+    }
+}
+
+/// Signing boundary used by canonical handshake builders.
+pub trait HandshakeSigner {
+    /// Signs canonical handshake bytes while retaining private key material behind the adapter.
+    fn sign(&self, canonical: &[u8]) -> Result<Vec<u8>, HandshakeSigningError>;
+}
+
+/// Redaction-safe signing adapter failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HandshakeSigningError(pub String);
+impl fmt::Display for HandshakeSigningError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+impl std::error::Error for HandshakeSigningError {}
+
+/// Failure to construct a locally authenticated handshake frame.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HandshakeBuildError {
+    Signing(HandshakeSigningError),
+    ProofTooLarge,
+}
+impl fmt::Display for HandshakeBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+impl std::error::Error for HandshakeBuildError {}
+impl From<HandshakeSigningError> for HandshakeBuildError {
+    fn from(value: HandshakeSigningError) -> Self {
+        Self::Signing(value)
+    }
+}
 
 /// Peer protocol payload.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PeerMessage {
-    /// Starts authentication.
     Hello(HandshakeHello),
-    /// Confirms authentication.
     HelloAck(HandshakeAck),
-    /// Carries encrypted application data.
     Data { envelope_id: OpaqueId, message_kind: u16, ciphertext: Vec<u8> },
-    /// Protocol acceptance acknowledgement.
     Ack { envelope_id: OpaqueId, status: AckStatus },
-    /// Liveness probe.
     Ping(u64),
-    /// Liveness response.
     Pong(u64),
 }
 
