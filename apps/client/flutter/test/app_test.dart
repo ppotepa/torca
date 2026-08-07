@@ -21,6 +21,20 @@ void main() {
     expect(find.text('Torca'), findsOneWidget);
   });
 
+  testWidgets('settings are reachable from the shared app menu', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_app(MemoryEngineGateway()));
+    await tester.tap(find.byTooltip('Application menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Notifications'), findsOneWidget);
+    expect(find.text('Enable notifications'), findsOneWidget);
+  });
+
   testWidgets('wide layout exposes the current pairing flow', (
     WidgetTester tester,
   ) async {
@@ -31,9 +45,7 @@ void main() {
 
     await tester.pumpWidget(_app(MemoryEngineGateway()));
     await tester.enterText(find.byType(TextField), 'Alice');
-    await tester.tap(
-      find.widgetWithText(FilledButton, 'Create local identity'),
-    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create local identity'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Pair contact'));
@@ -53,9 +65,7 @@ void main() {
       const String failure = 'native runtime missing';
       await tester.pumpWidget(_app(UnavailableEngineGateway(failure)));
       await tester.enterText(find.byType(TextField), 'Alice');
-      await tester.tap(
-        find.widgetWithText(FilledButton, 'Create local identity'),
-      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Create local identity'));
       await tester.pump();
 
       expect(find.text(failure), findsOneWidget);

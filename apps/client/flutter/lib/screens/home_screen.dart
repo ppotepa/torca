@@ -4,17 +4,27 @@ import 'package:flutter/material.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../settings/local_preferences.dart';
+import '../widgets/app_overflow_menu.dart';
 import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
 import 'diagnostics_screen.dart';
 import 'pairing_screen.dart';
+import 'settings_screen.dart';
 
 const double _wideLayoutBreakpoint = 900;
 const double _conversationRailWidth = 360;
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({required this.gateway, super.key});
+  const HomeScreen({
+    required this.gateway,
+    required this.preferences,
+    super.key,
+  });
+
   final EngineGateway gateway;
+  final LocalPreferences preferences;
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -24,87 +34,115 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
-    valueListenable: widget.gateway.snapshots,
-    builder: (context, snapshot, _) => Scaffold(
-      appBar: AppBar(
-        title: Text(snapshot.identity?.displayName ?? 'Torca'),
-        actions: <Widget>[
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: _TorStatus(state: snapshot.torState),
-          ),
-          if (snapshot.identity != null)
-            IconButton(
-              tooltip: 'Your Torca identity',
-              icon: const Icon(Icons.shield_outlined),
-              onPressed: () => Navigator.of(context).push<void>(
-                MaterialPageRoute(builder: (_) => IdentityDetailsScreen(snapshot: snapshot)),
+        valueListenable: widget.gateway.snapshots,
+        builder: (context, snapshot, _) => Scaffold(
+          appBar: AppBar(
+            title: Text(snapshot.identity?.displayName ?? 'Torca'),
+            actions: <Widget>[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: _TorStatus(state: snapshot.torState),
               ),
-            ),
-          IconButton(
-            tooltip: 'Diagnostics',
-            icon: const Icon(Icons.monitor_heart_outlined),
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute(builder: (_) => DiagnosticsScreen(gateway: widget.gateway)),
-            ),
+              AppOverflowMenu(
+                hasIdentity: snapshot.identity != null,
+                onSelected: (action) => _handleAppAction(action, snapshot),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: snapshot.identity == null
-          ? _IdentitySetup(gateway: widget.gateway)
-          : LayoutBuilder(builder: (context, constraints) {
-              void contactInfo(ContactDto contact) => Navigator.of(context).push<void>(
-                    MaterialPageRoute(builder: (_) => ContactDetailsScreen(gateway: widget.gateway, contact: contact)),
-                  );
-              if (constraints.maxWidth < _wideLayoutBreakpoint) {
-                return _ConversationList(
-                  conversations: snapshot.conversations,
-                  contacts: snapshot.contacts,
-                  selectedConversationId: null,
-                  onContactInfo: contactInfo,
-                  onSelected: (conversation) => Navigator.of(context).push<void>(
-                    MaterialPageRoute(builder: (_) => ConversationScreen(
-                      gateway: widget.gateway,
-                      conversation: conversation,
-                    )),
-                  ),
-                );
-              }
-              final selected = _selectedConversation(snapshot.conversations);
-              return Row(children: <Widget>[
-                SizedBox(
-                  width: _conversationRailWidth,
-                  child: _ConversationList(
-                    conversations: snapshot.conversations,
-                    contacts: snapshot.contacts,
-                    selectedConversationId: selected?.id,
-                    onContactInfo: contactInfo,
-                    onSelected: (conversation) => setState(() => _selectedConversationId = conversation.id),
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: selected == null
-                      ? const _ConversationPlaceholder()
-                      : ConversationPane(
-                          key: ValueKey(selected.id),
-                          gateway: widget.gateway,
-                          conversation: selected,
+          body: snapshot.identity == null
+              ? _IdentitySetup(gateway: widget.gateway)
+              : LayoutBuilder(builder: (context, constraints) {
+                  void contactInfo(ContactDto contact) =>
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          builder: (_) => ContactDetailsScreen(
+                            gateway: widget.gateway,
+                            contact: contact,
+                          ),
                         ),
+                      );
+                  if (constraints.maxWidth < _wideLayoutBreakpoint) {
+                    return _ConversationList(
+                      conversations: snapshot.conversations,
+                      contacts: snapshot.contacts,
+                      selectedConversationId: null,
+                      onContactInfo: contactInfo,
+                      onSelected: (conversation) => Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          builder: (_) => ConversationScreen(
+                            gateway: widget.gateway,
+                            conversation: conversation,
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+                  final selected = _selectedConversation(snapshot.conversations);
+                  return Row(children: <Widget>[
+                    SizedBox(
+                      width: _conversationRailWidth,
+                      child: _ConversationList(
+                        conversations: snapshot.conversations,
+                        contacts: snapshot.contacts,
+                        selectedConversationId: selected?.id,
+                        onContactInfo: contactInfo,
+                        onSelected: (conversation) =>
+                            setState(() => _selectedConversationId = conversation.id),
+                      ),
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(
+                      child: selected == null
+                          ? const _ConversationPlaceholder()
+                          : ConversationPane(
+                              key: ValueKey(selected.id),
+                              gateway: widget.gateway,
+                              conversation: selected,
+                            ),
+                    ),
+                  ]);
+                }),
+          floatingActionButton: snapshot.identity == null
+              ? null
+              : FloatingActionButton(
+                  tooltip: 'Pair contact',
+                  onPressed: _openPairing,
+                  child: const Icon(Icons.person_add_alt_1),
                 ),
-              ]);
-            }),
-      floatingActionButton: snapshot.identity == null
-          ? null
-          : FloatingActionButton(
-              tooltip: 'Pair contact',
-              onPressed: () => Navigator.of(context).push<void>(
-                MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)),
-              ),
-              child: const Icon(Icons.person_add_alt_1),
-            ),
-    ),
-  );
+        ),
+      );
+
+  void _handleAppAction(AppOverflowAction action, AppSnapshotDto snapshot) {
+    switch (action) {
+      case AppOverflowAction.pairing:
+        _openPairing();
+      case AppOverflowAction.identity:
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(builder: (_) => IdentityDetailsScreen(snapshot: snapshot)),
+        );
+      case AppOverflowAction.diagnostics:
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(builder: (_) => DiagnosticsScreen(gateway: widget.gateway)),
+        );
+      case AppOverflowAction.settings:
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => SettingsScreen(preferences: widget.preferences),
+          ),
+        );
+      case AppOverflowAction.about:
+        showAboutDialog(
+          context: context,
+          applicationName: 'Torca',
+          applicationVersion: '0.1 alpha',
+          applicationLegalese: 'Private 1:1 messaging over Tor.',
+        );
+    }
+  }
+
+  void _openPairing() => Navigator.of(context).push<void>(
+        MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)),
+      );
 
   ConversationDto? _selectedConversation(List<ConversationDto> conversations) {
     if (conversations.isEmpty) return null;
@@ -152,10 +190,12 @@ class _ConversationList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (conversations.isEmpty) {
-      return const Center(child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Text('Pair a contact to start a conversation.'),
-      ));
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('Pair a contact to start a conversation.'),
+        ),
+      );
     }
     return ListView.builder(
       itemCount: conversations.length,
@@ -169,7 +209,10 @@ class _ConversationList extends StatelessWidget {
           title: Text(contact?.displayName ?? 'Contact'),
           subtitle: Text(contact?.status == 'blocked' ? 'Blocked' : conversation.status),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-            _ConnectionIndicator(state: connection, blocked: contact?.status == 'blocked'),
+            _ConnectionIndicator(
+              state: connection,
+              blocked: contact?.status == 'blocked',
+            ),
             if (contact != null)
               IconButton(
                 tooltip: 'Contact details',
@@ -201,11 +244,20 @@ class _ConnectionIndicator extends StatelessWidget {
       return const Tooltip(message: 'Blocked', child: Icon(Icons.block, size: 18));
     }
     final ready = state == 'ready';
-    final connecting = state == 'connecting' || state == 'handshaking' || state == 'reconnecting';
+    final connecting = state == 'connecting' ||
+        state == 'handshaking' ||
+        state == 'reconnecting';
     return Tooltip(
       message: ready ? 'Direct P2P over Tor' : state,
       child: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-        Icon(ready ? Icons.hub : connecting ? Icons.sync : Icons.cloud_off_outlined, size: 18),
+        Icon(
+          ready
+              ? Icons.hub
+              : connecting
+                  ? Icons.sync
+                  : Icons.cloud_off_outlined,
+          size: 18,
+        ),
         const SizedBox(width: 5),
         Text(ready ? 'P2P' : connecting ? '…' : 'offline'),
       ]),
@@ -216,10 +268,16 @@ class _ConnectionIndicator extends StatelessWidget {
 class _ConversationPlaceholder extends StatelessWidget {
   const _ConversationPlaceholder();
   @override
-  Widget build(BuildContext context) => const Center(child: Column(
-    mainAxisSize: MainAxisSize.min,
-    children: <Widget>[Icon(Icons.forum_outlined, size: 48), SizedBox(height: 12), Text('Select a conversation')],
-  ));
+  Widget build(BuildContext context) => const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(Icons.forum_outlined, size: 48),
+            SizedBox(height: 12),
+            Text('Select a conversation'),
+          ],
+        ),
+      );
 }
 
 class _IdentitySetup extends StatefulWidget {
@@ -236,37 +294,66 @@ class _IdentitySetupState extends State<_IdentitySetup> {
   bool _submitting = false;
 
   @override
-  void dispose() { controller.dispose(); super.dispose(); }
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
 
   @override
-  Widget build(BuildContext context) => Center(child: SingleChildScrollView(
-    padding: const EdgeInsets.all(24),
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 420),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: <Widget>[
-        Text('Create local identity', style: Theme.of(context).textTheme.headlineSmall, textAlign: TextAlign.center),
-        const SizedBox(height: 20),
-        TextField(
-          controller: controller,
-          enabled: !_submitting,
-          decoration: InputDecoration(labelText: 'Display name', errorText: _error, border: const OutlineInputBorder()),
-          onSubmitted: _submitting ? null : (_) => _createIdentity(),
+  Widget build(BuildContext context) => Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text(
+                  'Create local identity',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: controller,
+                  enabled: !_submitting,
+                  decoration: InputDecoration(
+                    labelText: 'Display name',
+                    errorText: _error,
+                  ),
+                  onSubmitted: _submitting ? null : (_) => _createIdentity(),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _submitting ? null : _createIdentity,
+                  child: Text(_submitting ? 'Creating…' : 'Create local identity'),
+                ),
+              ],
+            ),
+          ),
         ),
-        const SizedBox(height: 12),
-        FilledButton(onPressed: _submitting ? null : _createIdentity, child: Text(_submitting ? 'Creating…' : 'Create local identity')),
-      ]),
-    ),
-  ));
+      );
 
   Future<void> _createIdentity() async {
     final displayName = controller.text.trim();
-    if (displayName.isEmpty) { setState(() => _error = 'Display name is required'); return; }
-    setState(() { _submitting = true; _error = null; });
+    if (displayName.isEmpty) {
+      setState(() => _error = 'Display name is required');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
     final result = await widget.gateway.execute(CreateIdentityCommandDto(
-      identityIdHex: _newId(), displayName: displayName, atMs: DateTime.now().millisecondsSinceEpoch,
+      identityIdHex: _newId(),
+      displayName: displayName,
+      atMs: DateTime.now().millisecondsSinceEpoch,
     ));
     if (!mounted) return;
-    setState(() { _submitting = false; _error = result.ok ? null : result.error ?? 'Could not create local identity'; });
+    setState(() {
+      _submitting = false;
+      _error = result.ok ? null : result.error ?? 'Could not create local identity';
+    });
   }
 
   String _newId() {

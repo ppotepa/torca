@@ -105,7 +105,10 @@ class _TorcaAppState extends State<TorcaApp> {
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
           themeMode: AppTheme.materialMode(widget.preferences.themeMode),
-          home: HomeScreen(gateway: widget.gateway),
+          home: HomeScreen(
+            gateway: widget.gateway,
+            preferences: widget.preferences,
+          ),
         ),
       );
 }
