@@ -1,10 +1,10 @@
-//! Durable outbound-delivery orchestration independent from any concrete transport or database.
+//! Durable outbound and inbound delivery orchestration independent from concrete transports or databases.
 
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use torca_foundation::{CommandId, OpaqueId, Timestamp};
-use torca_messaging::{Message, MessageId, RetryPolicy};
+use torca_messaging::{Message, MessageDirection, MessageId, MessageStatus, RetryPolicy};
 
 /// Durable outbox lifecycle state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,7 +42,7 @@ impl fmt::Display for DurableDeliveryError {
 }
 impl std::error::Error for DurableDeliveryError {}
 
-/// Transactional outbox and inbound-dedup persistence port.
+/// Transactional outbound outbox and lightweight envelope-dedup persistence port.
 pub trait DurableDeliveryStore {
     fn queue_outbound(
         &mut self,
@@ -70,11 +70,22 @@ pub trait DurableDeliveryStore {
     fn record_inbound(&mut self, envelope_id: OpaqueId) -> Result<bool, DurableDeliveryError>;
 }
 
+/// Atomic inbound persistence port. Implementations must commit deduplication and the inbound
+/// message together; returning `false` means the envelope was already committed previously.
+pub trait InboundMessageStore {
+    fn persist_inbound(
+        &mut self,
+        envelope_id: OpaqueId,
+        message: Message,
+    ) -> Result<bool, DurableDeliveryError>;
+}
+
 /// In-memory reference implementation used only by tests and explicit previews.
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryDurableDeliveryStore {
     outbox: BTreeMap<MessageId, OutboxRecord>,
     inbound: BTreeSet<OpaqueId>,
+    inbound_messages: BTreeMap<MessageId, Message>,
 }
 impl DurableDeliveryStore for InMemoryDurableDeliveryStore {
     fn queue_outbound(
@@ -183,6 +194,28 @@ impl DurableDeliveryStore for InMemoryDurableDeliveryStore {
         Ok(self.inbound.insert(envelope_id))
     }
 }
+impl InboundMessageStore for InMemoryDurableDeliveryStore {
+    fn persist_inbound(
+        &mut self,
+        envelope_id: OpaqueId,
+        message: Message,
+    ) -> Result<bool, DurableDeliveryError> {
+        if message.direction() != MessageDirection::Inbound
+            || message.status() != MessageStatus::Delivered
+        {
+            return Err(DurableDeliveryError::InvalidState);
+        }
+        if self.inbound.contains(&envelope_id) {
+            return Ok(false);
+        }
+        if self.inbound_messages.contains_key(&message.id()) {
+            return Err(DurableDeliveryError::DuplicateMessage);
+        }
+        self.inbound.insert(envelope_id);
+        self.inbound_messages.insert(message.id(), message);
+        Ok(true)
+    }
+}
 
 /// Protocol acknowledgement accepted by the durable worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -204,6 +237,15 @@ impl std::error::Error for DeliveryTransportError {}
 /// One authenticated transport capable of waiting for the peer protocol ACK of a message.
 pub trait DeliveryTransport {
     fn send(&mut self, message: &Message) -> Result<DeliveryAck, DeliveryTransportError>;
+}
+
+/// Protocol ACK sink for inbound envelopes.
+pub trait InboundAcknowledger {
+    fn acknowledge(
+        &mut self,
+        envelope_id: OpaqueId,
+        ack: DeliveryAck,
+    ) -> Result<(), DeliveryTransportError>;
 }
 
 /// Summary of one bounded delivery pass.
@@ -301,5 +343,57 @@ where
     /// Consumes the worker and returns its owned adapters.
     pub fn into_parts(self) -> (S, T) {
         (self.store, self.transport)
+    }
+}
+
+/// Applies inbound deduplication and persistence before acknowledging the peer.
+pub struct InboundDeliveryHandler<S, A> {
+    store: S,
+    acknowledger: A,
+}
+
+impl<S, A> InboundDeliveryHandler<S, A>
+where
+    S: InboundMessageStore,
+    A: InboundAcknowledger,
+{
+    pub const fn new(store: S, acknowledger: A) -> Self {
+        Self { store, acknowledger }
+    }
+
+    /// Commits an inbound message exactly once, then sends Accepted or Duplicate.
+    ///
+    /// If ACK transmission fails after commit, redelivery remains safe: the next call observes the
+    /// durable dedup marker and replies Duplicate without inserting a second message.
+    pub fn handle(
+        &mut self,
+        envelope_id: OpaqueId,
+        message: Message,
+    ) -> Result<DeliveryAck, InboundDeliveryError> {
+        let inserted = self.store.persist_inbound(envelope_id, message)?;
+        let ack = if inserted { DeliveryAck::Accepted } else { DeliveryAck::Duplicate };
+        self.acknowledger.acknowledge(envelope_id, ack).map_err(InboundDeliveryError::Ack)?;
+        Ok(ack)
+    }
+
+    pub fn into_parts(self) -> (S, A) {
+        (self.store, self.acknowledger)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InboundDeliveryError {
+    Store(DurableDeliveryError),
+    Ack(DeliveryTransportError),
+}
+impl fmt::Display for InboundDeliveryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+impl std::error::Error for InboundDeliveryError {}
+impl From<DurableDeliveryError> for InboundDeliveryError {
+    fn from(value: DurableDeliveryError) -> Self {
+        Self::Store(value)
     }
 }
