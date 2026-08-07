@@ -6,26 +6,20 @@ import 'engine_gateway.dart';
 class MemoryEngineGateway implements EngineGateway {
   final ValueNotifier<AppSnapshotDto> _snapshots =
       ValueNotifier<AppSnapshotDto>(const AppSnapshotDto());
-  int _sequence = 1;
 
   @override
   ValueListenable<AppSnapshotDto> get snapshots => _snapshots;
-
-  String _id() => (_sequence++).toRadixString(16).padLeft(32, '0');
 
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     final AppSnapshotDto current = _snapshots.value;
     if (command is CreateIdentityCommandDto) {
       if (current.identity != null) {
-        return const BridgeResultDto(
-          ok: false,
-          kind: 'error',
-          error: 'identity already exists',
-        );
+        return const BridgeResultDto(ok: false, kind: 'error', error: 'identity already exists');
       }
       _snapshots.value = AppSnapshotDto(
         identity: IdentityDto(displayName: command.displayName),
+        pairings: current.pairings,
         contacts: current.contacts,
         conversations: current.conversations,
         messages: current.messages,
@@ -33,29 +27,55 @@ class MemoryEngineGateway implements EngineGateway {
       return const BridgeResultDto(ok: true, kind: 'identity_created');
     }
 
-    if (command is StartPairingCommandDto) {
-      final String contactId = _id();
-      final String conversationId = _id();
-      final ContactDto contact = ContactDto(
-        id: contactId,
-        onionAddress: '${command.code.toLowerCase()}.example.onion',
-        status: 'active',
+    if (command is StartPairingCommandDto || command is JoinPairingCommandDto) {
+      final bool joining = command is JoinPairingCommandDto;
+      final String sessionId = joining
+          ? (command as JoinPairingCommandDto).sessionIdHex
+          : (command as StartPairingCommandDto).sessionIdHex;
+      final String code = joining
+          ? (command as JoinPairingCommandDto).code
+          : (command as StartPairingCommandDto).code;
+      final int expiresAtMs = joining
+          ? (command as JoinPairingCommandDto).expiresAtMs
+          : (command as StartPairingCommandDto).expiresAtMs;
+      if (current.pairings.any((PairingDto item) => item.id == sessionId)) {
+        return const BridgeResultDto(ok: false, kind: 'error', error: 'pairing already exists');
+      }
+      final PairingDto pairing = PairingDto(
+        id: sessionId,
+        code: code,
+        role: joining ? 'joiner' : 'creator',
+        state: 'open',
+        expiresAtMs: expiresAtMs,
+        localApproved: false,
+        remoteApproved: false,
       );
-      final ConversationDto conversation = ConversationDto(
-        id: conversationId,
-        contactId: contactId,
-        status: 'active',
+      _snapshots.value = _copy(current, pairings: <PairingDto>[...current.pairings, pairing]);
+      return BridgeResultDto(ok: true, kind: joining ? 'pairing_joined' : 'pairing_started');
+    }
+
+    if (command is ApprovePairingCommandDto) {
+      return _updatePairing(
+        current,
+        command.sessionIdHex,
+        (PairingDto pairing) => PairingDto(
+          id: pairing.id,
+          code: pairing.code,
+          role: pairing.role,
+          state: 'approved',
+          expiresAtMs: pairing.expiresAtMs,
+          localApproved: true,
+          remoteApproved: pairing.remoteApproved,
+        ),
+        'pairing_updated',
       );
-      _snapshots.value = AppSnapshotDto(
-        identity: current.identity,
-        contacts: <ContactDto>[...current.contacts, contact],
-        conversations: <ConversationDto>[
-          ...current.conversations,
-          conversation,
-        ],
-        messages: current.messages,
-      );
-      return const BridgeResultDto(ok: true, kind: 'pairing_completed');
+    }
+
+    if (command is RejectPairingCommandDto) {
+      return _terminalPairing(current, command.sessionIdHex, 'rejected', 'pairing_rejected');
+    }
+    if (command is CancelPairingCommandDto) {
+      return _terminalPairing(current, command.sessionIdHex, 'cancelled', 'pairing_cancelled');
     }
 
     if (command is QueueMessageCommandDto) {
@@ -66,16 +86,69 @@ class MemoryEngineGateway implements EngineGateway {
         direction: 'outbound',
         status: 'queued',
       );
-      _snapshots.value = AppSnapshotDto(
-        identity: current.identity,
-        contacts: current.contacts,
-        conversations: current.conversations,
+      _snapshots.value = _copy(
+        current,
         messages: <MessageDto>[...current.messages, message],
       );
       return const BridgeResultDto(ok: true, kind: 'message_queued');
     }
 
     return const BridgeResultDto(ok: true, kind: 'snapshot');
+  }
+
+  BridgeResultDto _terminalPairing(
+    AppSnapshotDto current,
+    String id,
+    String state,
+    String kind,
+  ) {
+    return _updatePairing(
+      current,
+      id,
+      (PairingDto pairing) => PairingDto(
+        id: pairing.id,
+        code: pairing.code,
+        role: pairing.role,
+        state: state,
+        expiresAtMs: pairing.expiresAtMs,
+        localApproved: pairing.localApproved,
+        remoteApproved: pairing.remoteApproved,
+      ),
+      kind,
+    );
+  }
+
+  BridgeResultDto _updatePairing(
+    AppSnapshotDto current,
+    String id,
+    PairingDto Function(PairingDto) update,
+    String kind,
+  ) {
+    bool found = false;
+    final List<PairingDto> pairings = current.pairings.map((PairingDto pairing) {
+      if (pairing.id != id) return pairing;
+      found = true;
+      return update(pairing);
+    }).toList(growable: false);
+    if (!found) {
+      return const BridgeResultDto(ok: false, kind: 'error', error: 'pairing session not found');
+    }
+    _snapshots.value = _copy(current, pairings: pairings);
+    return BridgeResultDto(ok: true, kind: kind);
+  }
+
+  AppSnapshotDto _copy(
+    AppSnapshotDto current, {
+    List<PairingDto>? pairings,
+    List<MessageDto>? messages,
+  }) {
+    return AppSnapshotDto(
+      identity: current.identity,
+      pairings: pairings ?? current.pairings,
+      contacts: current.contacts,
+      conversations: current.conversations,
+      messages: messages ?? current.messages,
+    );
   }
 
   @override
