@@ -7,6 +7,7 @@ import 'screens/conversation_screen.dart';
 import 'screens/deep_link_join_screen.dart';
 import 'screens/home_screen.dart';
 import 'settings/local_preferences.dart';
+import 'theme/app_theme.dart';
 
 class TorcaApp extends StatefulWidget {
   const TorcaApp({
@@ -101,10 +102,9 @@ class _TorcaAppState extends State<TorcaApp> {
           navigatorKey: _navigatorKey,
           title: 'Torca',
           debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            colorSchemeSeed: Colors.blueGrey,
-            useMaterial3: true,
-          ),
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: AppTheme.materialMode(widget.preferences.themeMode),
           home: HomeScreen(gateway: widget.gateway),
         ),
       );
