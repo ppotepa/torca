@@ -123,7 +123,7 @@ dependencies = ["torca-foundation"]
 [[package]]
 name = "torca-rendezvous-client"
 version = "0.1.0-alpha.0"
-dependencies = ["torca-foundation", "torca-relay-protocol", "torca-transport-tor"]
+dependencies = ["torca-foundation", "torca-pairing", "torca-pairing-coordinator", "torca-relay-protocol", "torca-transport-tor"]
 
 [[package]]
 name = "torca-storage-sqlite"

@@ -3,6 +3,7 @@
 //! This crate owns connection recovery and relay request/response validation. It deliberately does
 //! not own pairing state transitions or long-term message delivery.
 
+mod pairing;
 mod stream;
 mod tcp;
 mod tor;
@@ -18,7 +19,6 @@ use torca_relay_protocol::{
 pub use tcp::TcpRelayTransport;
 pub use tor::TorRelayTransport;
 
-/// Redaction-safe class of relay transport failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelayTransportFailureKind {
     Unavailable,
@@ -27,7 +27,6 @@ pub enum RelayTransportFailureKind {
     InvalidResponse,
 }
 
-/// Transport failure together with whether the request may already have reached the relay.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayTransportError {
     pub kind: RelayTransportFailureKind,
@@ -40,7 +39,6 @@ impl fmt::Display for RelayTransportError {
 }
 impl std::error::Error for RelayTransportError {}
 
-/// Synchronous request/response transport used by the rendezvous client.
 pub trait RelayTransport {
     fn reconnect(&mut self) -> Result<(), RelayTransportError>;
     fn exchange(
@@ -50,7 +48,6 @@ pub trait RelayTransport {
     ) -> Result<RelayResponse, RelayTransportError>;
 }
 
-/// Rendezvous client failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RendezvousClientError {
     Protocol(RelayProtocolError),
@@ -70,7 +67,6 @@ impl From<RelayProtocolError> for RendezvousClientError {
     }
 }
 
-/// Connection-recovering client for one configured ephemeral relay.
 pub struct RendezvousClient<T> {
     transport: T,
     timeout: Duration,
@@ -88,7 +84,6 @@ impl<T> RendezvousClient<T> {
 }
 
 impl<T: RelayTransport> RendezvousClient<T> {
-    /// Opens a slot using client-generated, non-guessable capabilities.
     pub fn open(
         &mut self,
         code: RelayCode,
@@ -110,7 +105,6 @@ impl<T: RelayTransport> RendezvousClient<T> {
         }
     }
 
-    /// Joins a slot and installs the caller-generated joiner side token.
     pub fn join(
         &mut self,
         code: RelayCode,
@@ -124,7 +118,6 @@ impl<T: RelayTransport> RendezvousClient<T> {
         }
     }
 
-    /// Publishes one opaque pairing blob after side-capability authentication.
     pub fn push(
         &mut self,
         slot_id: RelaySlotId,
@@ -138,7 +131,6 @@ impl<T: RelayTransport> RendezvousClient<T> {
         }
     }
 
-    /// Receives queued pairing blobs for one authenticated side.
     pub fn poll(
         &mut self,
         slot_id: RelaySlotId,
@@ -151,7 +143,6 @@ impl<T: RelayTransport> RendezvousClient<T> {
         }
     }
 
-    /// Closes a slot with the separate administrative capability.
     pub fn close(
         &mut self,
         slot_id: RelaySlotId,
