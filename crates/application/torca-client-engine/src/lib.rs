@@ -135,8 +135,6 @@ impl fmt::Display for EngineError {
 }
 impl std::error::Error for EngineError {}
 
-/// Atomic verified-relationship persistence boundary. A usable contact must always have its direct
-/// conversation and non-secret peer credential metadata committed in the same transaction.
 pub trait RelationshipRepository:
     ContactRepository + ConversationRepository + PeerCredentialRepository
 {
@@ -222,9 +220,6 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
         {
             return Err(EngineError("contact, conversation or credential already exists".into()));
         }
-
-        // Stage into clones so even the reference implementation preserves all-or-nothing
-        // semantics if a future in-memory repository adds validation after the prechecks.
         let mut contacts = self.contacts.clone();
         let mut conversations = self.conversations.clone();
         let mut credentials = self.credentials.clone();
@@ -393,7 +388,10 @@ where
                 let conversation = DirectConversation::new(conversation_id, contact_id, at);
                 self.relationships
                     .insert_pairing_result(contact, conversation, credential)?;
-                self.pairings.update(session).map_err(map_error)?;
+                // Pairing sessions are intentionally ephemeral. Once the verified relationship and
+                // credential metadata are durable, failure to mirror Completed into the in-memory
+                // session must not make callers roll back/delete the protected peer secret.
+                let _ = self.pairings.update(session);
                 Ok(EngineResult::PairingCompleted { contact_id, conversation_id })
             }
             EngineCommand::QueueMessage { message_id, conversation_id, body, reply_to, at } => {
