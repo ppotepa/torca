@@ -1,0 +1,751 @@
+//! Final authenticated Tor peer-link owner for Torca 0.1.
+//!
+//! One instance owns accepted/outgoing sockets, authenticated sessions, reconnect timing and a
+//! bounded queue of encrypted inbound application envelopes. Durable message retry remains outside
+//! this crate; this layer never stores plaintext messages or a second outbox.
+
+use core::fmt;
+use std::collections::{BTreeMap, VecDeque};
+use std::net::SocketAddr;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use torca_contacts::{
+    Contact, ContactError, ContactId, ContactRepository, PeerCredentialRepository,
+};
+use torca_crypto::{CryptoProvider, Ed25519HandshakeVerifier, RustCryptoProvider};
+use torca_foundation::{OpaqueId, Timestamp};
+use torca_peer::{PeerSession, PeerSessionError, PeerSessionState, PeerTransport};
+use torca_peer_protocol::{
+    AckStatus, HandshakePolicy, HandshakeSigner, PeerCodec, PeerMessage, build_handshake_ack,
+    build_handshake_hello,
+};
+use torca_transport_tor::{
+    IncomingPeerTransport, PeerListener, Socks5Connector, TorError, TorPeerTransport,
+    TOR_PEER_VIRTUAL_PORT,
+};
+
+const MAX_CLOCK_SKEW_MS: i64 = 2 * 60 * 1000;
+const MAX_PENDING_INCOMING: usize = 64;
+const MAX_INBOUND_EVENTS: usize = 256;
+const RECONNECT_BASE_MS: u64 = 1_000;
+const RECONNECT_MAX_MS: u64 = 60_000;
+const POLL_SLEEP: Duration = Duration::from_millis(10);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerConnectionState {
+    Disconnected,
+    Connecting,
+    Handshaking,
+    Ready,
+    Reconnecting,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LinkAck {
+    Accepted,
+    Duplicate,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InboundPeerEnvelope {
+    pub contact_id: ContactId,
+    pub envelope_id: OpaqueId,
+    pub message_kind: u16,
+    pub ciphertext: Vec<u8>,
+}
+
+#[must_use]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PeerLinkReport {
+    pub accepted: usize,
+    pub authenticated: usize,
+    pub rejected: usize,
+    pub became_ready: usize,
+    pub disconnected: usize,
+    pub reconnect_started: usize,
+    pub inbound_queued: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PeerLinkError {
+    Listener,
+    Repository,
+    Protocol,
+    Unauthorized,
+    DuplicateConnection,
+    Randomness,
+    ContactNotFound,
+    NotReady,
+    AckTimeout,
+    AckRejected,
+    InboundQueueFull,
+    Clock,
+}
+impl fmt::Display for PeerLinkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+impl std::error::Error for PeerLinkError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ReconnectEntry {
+    failures: u32,
+    next_attempt_at: Timestamp,
+    in_progress: bool,
+}
+
+type IncomingSession = PeerSession<IncomingPeerTransport, Ed25519HandshakeVerifier>;
+type OutgoingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
+
+pub struct PeerLink<S, K> {
+    listener: PeerListener,
+    relationships: S,
+    signer: K,
+    local_identity_id: OpaqueId,
+    socks_address: SocketAddr,
+    connect_timeout: Duration,
+    random: RustCryptoProvider,
+    pending: Vec<IncomingPeerTransport>,
+    incoming: BTreeMap<ContactId, IncomingSession>,
+    outgoing: BTreeMap<ContactId, OutgoingSession>,
+    reconnect: BTreeMap<ContactId, ReconnectEntry>,
+    inbound: VecDeque<InboundPeerEnvelope>,
+}
+
+impl<S, K> PeerLink<S, K>
+where
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+{
+    pub const fn new(
+        listener: PeerListener,
+        relationships: S,
+        signer: K,
+        local_identity_id: OpaqueId,
+        socks_address: SocketAddr,
+        connect_timeout: Duration,
+    ) -> Self {
+        Self {
+            listener,
+            relationships,
+            signer,
+            local_identity_id,
+            socks_address,
+            connect_timeout,
+            random: RustCryptoProvider,
+            pending: Vec::new(),
+            incoming: BTreeMap::new(),
+            outgoing: BTreeMap::new(),
+            reconnect: BTreeMap::new(),
+            inbound: VecDeque::new(),
+        }
+    }
+
+    pub fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
+        if let Some(session) = self.outgoing.get(&contact_id) {
+            return map_state(session.state());
+        }
+        if let Some(session) = self.incoming.get(&contact_id) {
+            return map_state(session.state());
+        }
+        PeerConnectionState::Disconnected
+    }
+
+    pub fn is_ready(&self, contact_id: ContactId) -> bool {
+        self.connection_state(contact_id) == PeerConnectionState::Ready
+    }
+
+    /// Ensures at most one connect/handshake is active for the contact. This method never blocks
+    /// waiting for Tor or the handshake; callers can observe readiness through `maintenance`.
+    pub fn ensure_connected(
+        &mut self,
+        contact_id: ContactId,
+        now: Timestamp,
+    ) -> Result<bool, PeerLinkError> {
+        if matches!(
+            self.connection_state(contact_id),
+            PeerConnectionState::Connecting
+                | PeerConnectionState::Handshaking
+                | PeerConnectionState::Ready
+        ) {
+            return Ok(false);
+        }
+        self.remove_non_ready(contact_id);
+        self.connect_outgoing(contact_id, now)?;
+        Ok(true)
+    }
+
+    /// Advances accept/authentication, all active sessions and due reconnect attempts once.
+    pub fn maintenance(
+        &mut self,
+        contacts: &[ContactId],
+        now: Timestamp,
+    ) -> Result<PeerLinkReport, PeerLinkError> {
+        let mut report = PeerLinkReport::default();
+        self.accept_pending(&mut report)?;
+        self.authenticate_pending(now, &mut report)?;
+        self.poll_sessions(now, &mut report)?;
+        self.plan_disconnected(contacts, now)?;
+        self.run_due_reconnects(now, &mut report)?;
+        Ok(report)
+    }
+
+    /// Sends one encrypted application envelope and waits for the matching protocol ACK. Incoming
+    /// data observed while waiting is queued for the normal inbound handler and is never ACKed here.
+    pub fn send_and_wait_ack(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        message_kind: u16,
+        ciphertext: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<LinkAck, PeerLinkError> {
+        if !self.is_ready(contact_id) {
+            let now = system_timestamp()?;
+            let _ = self.ensure_connected(contact_id, now);
+            return Err(PeerLinkError::NotReady);
+        }
+        self.send_data(contact_id, envelope_id, message_kind, ciphertext)?;
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or(PeerLinkError::AckTimeout)?;
+        loop {
+            let now = system_timestamp()?;
+            match self.poll_contact(contact_id, now) {
+                Ok(Some(PeerMessage::Ack { envelope_id: received, status }))
+                    if received == envelope_id =>
+                {
+                    return match status {
+                        AckStatus::Accepted => Ok(LinkAck::Accepted),
+                        AckStatus::Duplicate => Ok(LinkAck::Duplicate),
+                        AckStatus::Rejected => Err(PeerLinkError::AckRejected),
+                    };
+                }
+                Ok(Some(PeerMessage::Data {
+                    envelope_id,
+                    message_kind,
+                    ciphertext,
+                })) => {
+                    self.queue_inbound(InboundPeerEnvelope {
+                        contact_id,
+                        envelope_id,
+                        message_kind,
+                        ciphertext,
+                    })?;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.schedule_reconnect(contact_id, now)?;
+                    return Err(error);
+                }
+            }
+            if Instant::now() >= deadline {
+                self.mark_disconnected(contact_id);
+                self.schedule_reconnect(contact_id, now)?;
+                return Err(PeerLinkError::AckTimeout);
+            }
+            thread::sleep(POLL_SLEEP);
+        }
+    }
+
+    pub fn send_ack(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        status: AckStatus,
+    ) -> Result<(), PeerLinkError> {
+        if let Some(session) = self.outgoing.get_mut(&contact_id) {
+            if session.state() == PeerSessionState::Ready {
+                return session.send_ack(envelope_id, status).map_err(map_session);
+            }
+        }
+        if let Some(session) = self.incoming.get_mut(&contact_id) {
+            if session.state() == PeerSessionState::Ready {
+                return session.send_ack(envelope_id, status).map_err(map_session);
+            }
+        }
+        Err(PeerLinkError::NotReady)
+    }
+
+    pub fn take_inbound(&mut self) -> Option<InboundPeerEnvelope> {
+        self.inbound.pop_front()
+    }
+
+    pub fn shutdown(&mut self) {
+        for mut transport in self.pending.drain(..) {
+            let _ = transport.close();
+        }
+        for (_, mut session) in std::mem::take(&mut self.incoming) {
+            let _ = session.close();
+        }
+        for (_, mut session) in std::mem::take(&mut self.outgoing) {
+            let _ = session.close();
+        }
+        self.reconnect.clear();
+        self.inbound.clear();
+    }
+
+    pub fn into_parts(self) -> (PeerListener, S, K) {
+        (self.listener, self.relationships, self.signer)
+    }
+
+    fn accept_pending(&mut self, report: &mut PeerLinkReport) -> Result<(), PeerLinkError> {
+        while self.pending.len() < MAX_PENDING_INCOMING {
+            match self.listener.try_accept_transport().map_err(map_tor)? {
+                Some(transport) => {
+                    self.pending.push(transport);
+                    report.accepted += 1;
+                }
+                None => break,
+            }
+        }
+        if self.pending.len() >= MAX_PENDING_INCOMING
+            && self.listener.try_accept_transport().map_err(map_tor)?.is_some()
+        {
+            report.rejected += 1;
+        }
+        Ok(())
+    }
+
+    fn authenticate_pending(
+        &mut self,
+        now: Timestamp,
+        report: &mut PeerLinkReport,
+    ) -> Result<(), PeerLinkError> {
+        let mut index = 0;
+        while index < self.pending.len() {
+            match self.try_authenticate(index, now) {
+                Ok(AuthOutcome::Waiting) => index += 1,
+                Ok(AuthOutcome::Authenticated(contact_id)) => {
+                    self.reconnect.remove(&contact_id);
+                    report.authenticated += 1;
+                }
+                Err(_) => {
+                    let mut rejected = self.pending.swap_remove(index);
+                    let _ = rejected.close();
+                    report.rejected += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn try_authenticate(
+        &mut self,
+        index: usize,
+        now: Timestamp,
+    ) -> Result<AuthOutcome, PeerLinkError> {
+        let payload = match self.pending[index].try_receive() {
+            Ok(Some(payload)) => payload,
+            Ok(None) => return Ok(AuthOutcome::Waiting),
+            Err(_) => return Err(PeerLinkError::Protocol),
+        };
+        let hello = match PeerCodec::decode(&payload).map_err(|_| PeerLinkError::Protocol)? {
+            PeerMessage::Hello(hello) => hello,
+            _ => return Err(PeerLinkError::Protocol),
+        };
+        let contact = self.contact_for_identity(hello.identity_id)?;
+        let credential = self
+            .relationships
+            .credential_for_contact(contact.id())
+            .map_err(map_contact)?
+            .ok_or(PeerLinkError::Unauthorized)?;
+        if hello.capability_id != credential.local_capability_id() {
+            return Err(PeerLinkError::Unauthorized);
+        }
+        if self.incoming.contains_key(&contact.id()) {
+            return Err(PeerLinkError::DuplicateConnection);
+        }
+        if self.outgoing.contains_key(&contact.id()) {
+            if self.prefer_outgoing(&contact) {
+                return Err(PeerLinkError::DuplicateConnection);
+            }
+            if let Some(mut outgoing) = self.outgoing.remove(&contact.id()) {
+                let _ = outgoing.close();
+            }
+        }
+
+        let verifier = verifier_for(&contact)?;
+        let policy = HandshakePolicy {
+            expected_identity: contact.remote_identity().identity_id().to_opaque(),
+            expected_capability: credential.local_capability_id(),
+            max_clock_skew_ms: MAX_CLOCK_SKEW_MS,
+        };
+        let transport = self.pending.swap_remove(index);
+        let mut session = PeerSession::new(transport, verifier, policy);
+        session.receive(&payload, now).map_err(map_session)?;
+        let ack = build_handshake_ack(hello.session_id, hello.nonce, &self.signer)
+            .map_err(|_| PeerLinkError::Protocol)?;
+        session.send_handshake_ack(ack).map_err(map_session)?;
+        let contact_id = contact.id();
+        self.incoming.insert(contact_id, session);
+        Ok(AuthOutcome::Authenticated(contact_id))
+    }
+
+    fn connect_outgoing(
+        &mut self,
+        contact_id: ContactId,
+        now: Timestamp,
+    ) -> Result<(), PeerLinkError> {
+        if self.outgoing.contains_key(&contact_id) || self.incoming.contains_key(&contact_id) {
+            return Err(PeerLinkError::DuplicateConnection);
+        }
+        let contact = self
+            .relationships
+            .get(contact_id)
+            .map_err(map_contact)?
+            .ok_or(PeerLinkError::ContactNotFound)?;
+        let verifier = verifier_for(&contact)?;
+        let policy = HandshakePolicy {
+            expected_identity: contact.remote_identity().identity_id().to_opaque(),
+            expected_capability: contact.route().capability_id(),
+            max_clock_skew_ms: MAX_CLOCK_SKEW_MS,
+        };
+        let connector = Socks5Connector::new(self.socks_address, self.connect_timeout);
+        let transport = TorPeerTransport::new(
+            connector,
+            contact.route().onion_address(),
+            TOR_PEER_VIRTUAL_PORT,
+        );
+        let mut session = PeerSession::new(transport, verifier, policy);
+        let session_id = self.random_id()?;
+        let nonce = self.random_32()?;
+        let hello = build_handshake_hello(
+            session_id,
+            self.local_identity_id,
+            contact.route().capability_id(),
+            now,
+            nonce,
+            &self.signer,
+        )
+        .map_err(|_| PeerLinkError::Protocol)?;
+        session.connect(hello).map_err(map_session)?;
+        self.outgoing.insert(contact_id, session);
+        Ok(())
+    }
+
+    fn poll_sessions(
+        &mut self,
+        now: Timestamp,
+        report: &mut PeerLinkReport,
+    ) -> Result<(), PeerLinkError> {
+        let outgoing_ids: Vec<_> = self.outgoing.keys().copied().collect();
+        for contact_id in outgoing_ids {
+            let was_ready = self
+                .outgoing
+                .get(&contact_id)
+                .is_some_and(|session| session.state() == PeerSessionState::Ready);
+            match self.poll_contact(contact_id, now) {
+                Ok(Some(PeerMessage::Data {
+                    envelope_id,
+                    message_kind,
+                    ciphertext,
+                })) => {
+                    self.queue_inbound(InboundPeerEnvelope {
+                        contact_id,
+                        envelope_id,
+                        message_kind,
+                        ciphertext,
+                    })?;
+                    report.inbound_queued += 1;
+                }
+                Ok(_) => {
+                    if !was_ready && self.is_ready(contact_id) {
+                        self.reconnect.remove(&contact_id);
+                        report.became_ready += 1;
+                    }
+                }
+                Err(_) => {
+                    self.schedule_reconnect(contact_id, now)?;
+                    report.disconnected += 1;
+                }
+            }
+        }
+
+        let incoming_ids: Vec<_> = self.incoming.keys().copied().collect();
+        for contact_id in incoming_ids {
+            match self.poll_contact(contact_id, now) {
+                Ok(Some(PeerMessage::Data {
+                    envelope_id,
+                    message_kind,
+                    ciphertext,
+                })) => {
+                    self.queue_inbound(InboundPeerEnvelope {
+                        contact_id,
+                        envelope_id,
+                        message_kind,
+                        ciphertext,
+                    })?;
+                    report.inbound_queued += 1;
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    self.mark_disconnected(contact_id);
+                    if self
+                        .relationships
+                        .get(contact_id)
+                        .map_err(map_contact)?
+                        .is_some_and(|contact| self.prefer_outgoing(&contact))
+                    {
+                        self.schedule_reconnect(contact_id, now)?;
+                    }
+                    report.disconnected += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn poll_contact(
+        &mut self,
+        contact_id: ContactId,
+        now: Timestamp,
+    ) -> Result<Option<PeerMessage>, PeerLinkError> {
+        if let Some(session) = self.outgoing.get_mut(&contact_id) {
+            return session.poll(now).map_err(map_session);
+        }
+        if let Some(session) = self.incoming.get_mut(&contact_id) {
+            return session.poll(now).map_err(map_session);
+        }
+        Ok(None)
+    }
+
+    fn send_data(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        message_kind: u16,
+        ciphertext: Vec<u8>,
+    ) -> Result<(), PeerLinkError> {
+        if let Some(session) = self.outgoing.get_mut(&contact_id) {
+            if session.state() == PeerSessionState::Ready {
+                return session
+                    .send_data(envelope_id, message_kind, ciphertext)
+                    .map_err(map_session);
+            }
+        }
+        if let Some(session) = self.incoming.get_mut(&contact_id) {
+            if session.state() == PeerSessionState::Ready {
+                return session
+                    .send_data(envelope_id, message_kind, ciphertext)
+                    .map_err(map_session);
+            }
+        }
+        Err(PeerLinkError::NotReady)
+    }
+
+    fn queue_inbound(&mut self, envelope: InboundPeerEnvelope) -> Result<(), PeerLinkError> {
+        if self.inbound.len() >= MAX_INBOUND_EVENTS {
+            return Err(PeerLinkError::InboundQueueFull);
+        }
+        self.inbound.push_back(envelope);
+        Ok(())
+    }
+
+    fn plan_disconnected(
+        &mut self,
+        contacts: &[ContactId],
+        now: Timestamp,
+    ) -> Result<(), PeerLinkError> {
+        for &contact_id in contacts {
+            match self.connection_state(contact_id) {
+                PeerConnectionState::Ready => {
+                    self.reconnect.remove(&contact_id);
+                }
+                PeerConnectionState::Disconnected
+                | PeerConnectionState::Reconnecting
+                | PeerConnectionState::Failed => {
+                    if !self.reconnect.contains_key(&contact_id) {
+                        self.schedule_reconnect(contact_id, now)?;
+                    }
+                }
+                PeerConnectionState::Connecting | PeerConnectionState::Handshaking => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn run_due_reconnects(
+        &mut self,
+        now: Timestamp,
+        report: &mut PeerLinkReport,
+    ) -> Result<(), PeerLinkError> {
+        let due: Vec<_> = self
+            .reconnect
+            .iter()
+            .filter_map(|(contact_id, entry)| {
+                (!entry.in_progress && entry.next_attempt_at <= now).then_some(*contact_id)
+            })
+            .collect();
+        for contact_id in due {
+            if self.is_ready(contact_id) {
+                self.reconnect.remove(&contact_id);
+                continue;
+            }
+            self.remove_non_ready(contact_id);
+            match self.connect_outgoing(contact_id, now) {
+                Ok(()) => {
+                    if let Some(entry) = self.reconnect.get_mut(&contact_id) {
+                        entry.in_progress = true;
+                    }
+                    report.reconnect_started += 1;
+                }
+                Err(_) => self.schedule_reconnect(contact_id, now)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn schedule_reconnect(
+        &mut self,
+        contact_id: ContactId,
+        now: Timestamp,
+    ) -> Result<(), PeerLinkError> {
+        if self.is_ready(contact_id) {
+            self.reconnect.remove(&contact_id);
+            return Ok(());
+        }
+        let failures = self
+            .reconnect
+            .get(&contact_id)
+            .map_or(1, |entry| entry.failures.saturating_add(1));
+        let delay = self.reconnect_delay(failures)?;
+        let next_attempt_at = now.checked_add(delay).ok_or(PeerLinkError::Clock)?;
+        self.reconnect.insert(
+            contact_id,
+            ReconnectEntry { failures, next_attempt_at, in_progress: false },
+        );
+        Ok(())
+    }
+
+    fn reconnect_delay(&mut self, failures: u32) -> Result<Duration, PeerLinkError> {
+        let exponent = failures.saturating_sub(1).min(16);
+        let base = RECONNECT_BASE_MS
+            .saturating_mul(1_u64 << exponent)
+            .min(RECONNECT_MAX_MS);
+        let jitter_room = (base / 4).min(RECONNECT_MAX_MS.saturating_sub(base));
+        let jitter = if jitter_room == 0 {
+            0
+        } else {
+            let mut random = [0_u8; 8];
+            self.random
+                .fill_random(&mut random)
+                .map_err(|_| PeerLinkError::Randomness)?;
+            u64::from_le_bytes(random) % (jitter_room + 1)
+        };
+        Ok(Duration::from_millis(base + jitter))
+    }
+
+    fn remove_non_ready(&mut self, contact_id: ContactId) {
+        if self
+            .outgoing
+            .get(&contact_id)
+            .is_some_and(|session| session.state() != PeerSessionState::Ready)
+        {
+            if let Some(mut session) = self.outgoing.remove(&contact_id) {
+                let _ = session.close();
+            }
+        }
+        if self
+            .incoming
+            .get(&contact_id)
+            .is_some_and(|session| session.state() != PeerSessionState::Ready)
+        {
+            if let Some(mut session) = self.incoming.remove(&contact_id) {
+                let _ = session.close();
+            }
+        }
+    }
+
+    fn mark_disconnected(&mut self, contact_id: ContactId) {
+        if let Some(session) = self.outgoing.get_mut(&contact_id) {
+            session.disconnected();
+        }
+        if let Some(session) = self.incoming.get_mut(&contact_id) {
+            session.disconnected();
+        }
+    }
+
+    fn contact_for_identity(&self, identity_id: OpaqueId) -> Result<Contact, PeerLinkError> {
+        self.relationships
+            .list()
+            .map_err(map_contact)?
+            .into_iter()
+            .find(|contact| contact.remote_identity().identity_id().to_opaque() == identity_id)
+            .ok_or(PeerLinkError::Unauthorized)
+    }
+
+    fn prefer_outgoing(&self, contact: &Contact) -> bool {
+        self.local_identity_id < contact.remote_identity().identity_id().to_opaque()
+    }
+
+    fn random_id(&mut self) -> Result<OpaqueId, PeerLinkError> {
+        for _ in 0..8 {
+            let mut bytes = [0_u8; 16];
+            self.random
+                .fill_random(&mut bytes)
+                .map_err(|_| PeerLinkError::Randomness)?;
+            let id = OpaqueId::from_bytes(bytes);
+            if !id.is_nil() {
+                return Ok(id);
+            }
+        }
+        Err(PeerLinkError::Randomness)
+    }
+
+    fn random_32(&mut self) -> Result<[u8; 32], PeerLinkError> {
+        let mut bytes = [0_u8; 32];
+        self.random
+            .fill_random(&mut bytes)
+            .map_err(|_| PeerLinkError::Randomness)?;
+        Ok(bytes)
+    }
+}
+
+enum AuthOutcome {
+    Waiting,
+    Authenticated(ContactId),
+}
+
+fn map_state(state: PeerSessionState) -> PeerConnectionState {
+    match state {
+        PeerSessionState::Disconnected => PeerConnectionState::Disconnected,
+        PeerSessionState::Connecting => PeerConnectionState::Connecting,
+        PeerSessionState::Handshaking => PeerConnectionState::Handshaking,
+        PeerSessionState::Ready => PeerConnectionState::Ready,
+        PeerSessionState::Reconnecting => PeerConnectionState::Reconnecting,
+        PeerSessionState::Closed | PeerSessionState::Failed => PeerConnectionState::Failed,
+    }
+}
+
+fn verifier_for(contact: &Contact) -> Result<Ed25519HandshakeVerifier, PeerLinkError> {
+    let public: [u8; 32] = contact
+        .remote_identity()
+        .key()
+        .public_key()
+        .try_into()
+        .map_err(|_| PeerLinkError::Unauthorized)?;
+    Ok(Ed25519HandshakeVerifier::from_bytes(public))
+}
+
+fn map_contact(_: ContactError) -> PeerLinkError {
+    PeerLinkError::Repository
+}
+fn map_session(_: PeerSessionError) -> PeerLinkError {
+    PeerLinkError::Protocol
+}
+fn map_tor(_: TorError) -> PeerLinkError {
+    PeerLinkError::Listener
+}
+
+fn system_timestamp() -> Result<Timestamp, PeerLinkError> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| PeerLinkError::Clock)?;
+    let millis = i64::try_from(duration.as_millis()).map_err(|_| PeerLinkError::Clock)?;
+    Timestamp::from_unix_millis(millis).map_err(|_| PeerLinkError::Clock)
+}
