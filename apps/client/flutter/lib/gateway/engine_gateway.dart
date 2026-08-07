@@ -6,13 +6,16 @@ abstract interface class EngineGateway {
   ValueListenable<AppSnapshotDto> get snapshots;
   Future<BridgeResultDto> execute(BridgeCommandDto command);
   Future<String> diagnosticsJson();
-  /// Explicitly stops the process-owned Rust runtime. Normal view/Activity disposal must not call it.
-  Future<void> shutdown();
   /// Releases only this presentation handle.
   Future<void> dispose();
 }
 
-class UnavailableEngineGateway implements EngineGateway {
+/// Optional host capability used only for an explicit application-level Quit.
+abstract interface class ProcessRuntimeControl {
+  Future<void> shutdown();
+}
+
+class UnavailableEngineGateway implements EngineGateway, ProcessRuntimeControl {
   UnavailableEngineGateway(this.reason);
 
   final String reason;
