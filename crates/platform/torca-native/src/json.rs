@@ -64,6 +64,7 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         output.push_str("\",\"onionAddress\":\""); push_json_string(&contact.onion_address, &mut output);
         output.push_str("\",\"status\":\""); push_json_string(&contact.status, &mut output);
         output.push_str("\",\"connectionState\":\""); push_json_string(&contact.connection_state, &mut output);
+        output.push_str("\",\"safetyNumber\":\""); push_json_string(&contact.safety_number, &mut output);
         output.push_str("\"}");
     }
     output.push_str("],\"conversations\":[");
