@@ -3,6 +3,6 @@
   "version": "0.1.0-alpha.0",
   "build": 1,
   "channel": "alpha",
-  "contractVersion": 6,
+  "contractVersion": 7,
   "wireVersion": 1
 }
