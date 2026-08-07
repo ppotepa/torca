@@ -9,6 +9,7 @@ import 'package:open_filex/open_filex.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../widgets/attachment_tile.dart';
 import '../widgets/conversation_header.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
@@ -195,7 +196,7 @@ class _ConversationPaneState extends State<ConversationPane> {
                                   ),
                                 ),
                               ...attachments.map(
-                                (a) => _AttachmentProgress(
+                                (a) => AttachmentTile(
                                   attachment: a,
                                   onRetry: () => _attachmentCommand(
                                     RetryAttachmentCommandDto(attachmentIdHex: a.id),
@@ -528,72 +529,4 @@ class _ReplyComposerPreview extends StatelessWidget {
           ],
         ),
       );
-}
-
-class _AttachmentProgress extends StatelessWidget {
-  const _AttachmentProgress({
-    required this.attachment,
-    required this.onRetry,
-    required this.onCancel,
-    required this.onOpen,
-    required this.onSave,
-  });
-  final AttachmentDto attachment;
-  final VoidCallback onRetry, onCancel, onOpen, onSave;
-
-  @override
-  Widget build(BuildContext context) {
-    final total = attachment.size <= 0 ? 1 : attachment.size;
-    final progress = (attachment.offset / total).clamp(0.0, 1.0);
-    final failed = attachment.status == 'failed';
-    final available = attachment.status == 'available';
-    final terminal = available || attachment.status == 'cancelled';
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              const Icon(Icons.insert_drive_file_outlined, size: 18),
-              const SizedBox(width: 6),
-              Expanded(child: Text(attachment.name, overflow: TextOverflow.ellipsis)),
-              Text(attachment.status),
-            ],
-          ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(value: available ? 1 : progress),
-          Wrap(
-            spacing: 8,
-            children: <Widget>[
-              if (available)
-                TextButton.icon(
-                  onPressed: onOpen,
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Open'),
-                ),
-              if (available)
-                TextButton.icon(
-                  onPressed: onSave,
-                  icon: const Icon(Icons.save_alt),
-                  label: const Text('Save as'),
-                ),
-              if (failed)
-                TextButton.icon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Retry'),
-                ),
-              if (!terminal)
-                TextButton.icon(
-                  onPressed: onCancel,
-                  icon: const Icon(Icons.close),
-                  label: const Text('Cancel'),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 }
