@@ -4,10 +4,10 @@ use torca_pairing_coordinator::{
     PairingCredentialError, PairingDerivedSecret, PairingPeerSecretStore,
 };
 
-use crate::{CryptoProvider, ProtectedSecretStore};
+use crate::{Ciphertext, CryptoProvider, Nonce, ProtectedSecretStore, SealingKey};
 
-/// Protected pairwise-secret manager. It stores only under opaque random handles and never returns
-/// secret bytes to callers after provisioning.
+/// Protected pairwise-secret manager. Secret bytes are loaded only for the duration of one
+/// authenticated-encryption operation and are zeroed before returning.
 pub struct ManagedPeerSecrets<C, S> {
     crypto: C,
     store: S,
@@ -52,6 +52,65 @@ where
 impl<C, S> ManagedPeerSecrets<C, S>
 where
     C: CryptoProvider,
+    S: ProtectedSecretStore,
+{
+    /// Generates an AEAD nonce without exposing the protected key.
+    pub fn peer_nonce(&mut self) -> Result<Nonce, PeerSecretError> {
+        let mut bytes = [0_u8; 24];
+        self.crypto
+            .fill_random(&mut bytes)
+            .map_err(|_| PeerSecretError::Crypto)?;
+        Ok(Nonce(bytes))
+    }
+
+    /// Authenticates and encrypts one peer payload using the secret referenced by `handle`.
+    pub fn seal_peer_payload(
+        &self,
+        handle: OpaqueId,
+        nonce: Nonce,
+        associated_data: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Ciphertext, PeerSecretError> {
+        let key = self.load_key(handle)?;
+        self.crypto
+            .seal(&key, nonce, associated_data, plaintext)
+            .map_err(|_| PeerSecretError::Crypto)
+    }
+
+    /// Authenticates and decrypts one peer payload using the secret referenced by `handle`.
+    pub fn open_peer_payload(
+        &self,
+        handle: OpaqueId,
+        nonce: Nonce,
+        associated_data: &[u8],
+        ciphertext: &Ciphertext,
+    ) -> Result<Vec<u8>, PeerSecretError> {
+        let key = self.load_key(handle)?;
+        self.crypto
+            .open(&key, nonce, associated_data, ciphertext)
+            .map_err(|_| PeerSecretError::Authentication)
+    }
+
+    fn load_key(&self, handle: OpaqueId) -> Result<SealingKey, PeerSecretError> {
+        let mut stored = self
+            .store
+            .load(KeyId::from_opaque(handle))
+            .map_err(|_| PeerSecretError::Storage)?
+            .ok_or(PeerSecretError::NotFound)?;
+        if stored.len() != 32 {
+            stored.fill(0);
+            return Err(PeerSecretError::InvalidStoredSecret);
+        }
+        let mut bytes = [0_u8; 32];
+        bytes.copy_from_slice(&stored);
+        stored.fill(0);
+        Ok(SealingKey::new(bytes))
+    }
+}
+
+impl<C, S> ManagedPeerSecrets<C, S>
+where
+    C: CryptoProvider,
 {
     fn new_handle(&mut self) -> Result<OpaqueId, PairingCredentialError> {
         for _ in 0..8 {
@@ -67,3 +126,18 @@ where
         Err(PairingCredentialError::RandomIdentifierUnavailable)
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerSecretError {
+    NotFound,
+    InvalidStoredSecret,
+    Storage,
+    Crypto,
+    Authentication,
+}
+impl core::fmt::Display for PeerSecretError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+impl std::error::Error for PeerSecretError {}
