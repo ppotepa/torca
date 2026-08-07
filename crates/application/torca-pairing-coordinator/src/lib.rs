@@ -5,6 +5,7 @@
 
 mod approval;
 mod core;
+mod credential;
 mod invitation;
 mod invite_uri;
 mod policy;
@@ -16,6 +17,7 @@ pub use core::{
     PairingCryptoPort, PairingDerivedSecret, PairingEphemeralKey, PairingRendezvousPort,
     PairingSideToken, PairingSlotCapability, PairingSlotId,
 };
+pub use credential::{PairingCredentialError, PairingPeerSecretStore};
 pub use invite_uri::{decode_invite_uri, encode_invite_uri};
 pub use policy::{PAIRING_INVITATION_TTL, invitation_expires_at};
 pub use runtime::{
