@@ -1,13 +1,12 @@
 [package]
 name = "torca-runtime-host"
-version = "0.1.0-alpha.0"
-edition = "2024"
-rust-version = "1.97.1"
-license = "AGPL-3.0-or-later"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 publish = false
-
-[lib]
-path = "src/final.rs"
 
 [dependencies]
 torca-attachments = { path = "../../domains/torca-attachments" }
@@ -19,3 +18,6 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-peer-link = { path = "../../infrastructure/torca-peer-link" }
+
+[lints]
+workspace = true
