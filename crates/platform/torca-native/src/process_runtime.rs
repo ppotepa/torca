@@ -26,7 +26,20 @@ pub(crate) fn ensure_process_runtime() -> bool {
     acquire_process_runtime().is_ok()
 }
 
+/// Called by the historical handle-level `torca_engine_close` ABI.
+/// Android presentation handles are disposable while the foreground service remains the runtime owner.
 pub(crate) fn shutdown_process_runtime() -> i32 {
+    #[cfg(target_os = "android")]
+    {
+        ABI_OK
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        force_shutdown_process_runtime()
+    }
+}
+
+fn force_shutdown_process_runtime() -> i32 {
     let registry = PROCESS_RUNTIME.get_or_init(|| Mutex::new(None));
     let runtime = match registry.lock() {
         Ok(mut guard) => guard.take(),
@@ -54,5 +67,5 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeShutdownRun
     _env: *mut jni::sys::JNIEnv,
     _class: jni::sys::jclass,
 ) {
-    let _ = shutdown_process_runtime();
+    let _ = force_shutdown_process_runtime();
 }
