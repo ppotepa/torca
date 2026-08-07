@@ -1,0 +1,22 @@
+[package]
+name = "torca-attachment-transfer"
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+sha2 = "0.10.8"
+torca-attachment-protocol = { path = "../../protocol/torca-attachment-protocol" }
+torca-attachment-sqlite = { path = "../torca-attachment-sqlite" }
+torca-attachments = { path = "../../domains/torca-attachments" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-conversations = { path = "../../domains/torca-conversations" }
+torca-crypto = { path = "../torca-crypto" }
+torca-file-storage = { path = "../torca-file-storage" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-messaging = { path = "../../domains/torca-messaging" }
+torca-peer-link = { path = "../torca-peer-link" }
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
+torca-peer-shared = { path = "../torca-peer-shared" }
