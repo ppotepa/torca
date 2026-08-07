@@ -12,12 +12,14 @@ use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayResponse};
 use crate::{DEFAULT_MAX_ACTIVE_SLOTS, RelayBroker};
 
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1024;
+pub const DEFAULT_CLEANUP_INTERVAL: Duration = Duration::from_secs(5);
 
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayServerConfig {
     pub bind: SocketAddr,
     pub io_timeout: Duration,
+    pub cleanup_interval: Duration,
     pub max_connections: usize,
     pub max_slots: usize,
 }
@@ -27,6 +29,7 @@ impl RelayServerConfig {
         Self {
             bind,
             io_timeout,
+            cleanup_interval: DEFAULT_CLEANUP_INTERVAL,
             max_connections: DEFAULT_MAX_CONNECTIONS,
             max_slots: DEFAULT_MAX_ACTIVE_SLOTS,
         }
@@ -35,6 +38,13 @@ impl RelayServerConfig {
     pub fn with_limits(mut self, max_connections: usize, max_slots: usize) -> Self {
         self.max_connections = max_connections.max(1);
         self.max_slots = max_slots.max(1);
+        self
+    }
+
+    pub fn with_cleanup_interval(mut self, interval: Duration) -> Self {
+        if !interval.is_zero() {
+            self.cleanup_interval = interval;
+        }
         self
     }
 }
@@ -57,6 +67,7 @@ pub struct RelayServer {
     listener: TcpListener,
     broker: Arc<Mutex<RelayBroker>>,
     io_timeout: Duration,
+    cleanup_interval: Duration,
     max_connections: usize,
     active_connections: Arc<AtomicUsize>,
 }
@@ -68,12 +79,20 @@ impl RelayServer {
             listener,
             broker: Arc::new(Mutex::new(RelayBroker::with_max_slots(config.max_slots))),
             io_timeout: config.io_timeout,
+            cleanup_interval: config.cleanup_interval,
             max_connections: config.max_connections.max(1),
             active_connections: Arc::new(AtomicUsize::new(0)),
         })
     }
 
     pub fn run(self) -> Result<(), RelayServerError> {
+        let cleanup_broker = Arc::clone(&self.broker);
+        let cleanup_interval = self.cleanup_interval;
+        let _cleanup_worker = thread::Builder::new()
+            .name("torca-relay-expiry".into())
+            .spawn(move || expiry_loop(cleanup_broker, cleanup_interval))
+            .map_err(io_error)?;
+
         for connection in self.listener.incoming() {
             let stream = connection.map_err(io_error)?;
             if !try_acquire_connection(&self.active_connections, self.max_connections) {
@@ -120,6 +139,19 @@ fn try_acquire_connection(active: &AtomicUsize, maximum: usize) -> bool {
             (current < maximum).then_some(current + 1)
         })
         .is_ok()
+}
+
+fn expiry_loop(broker: Arc<Mutex<RelayBroker>>, interval: Duration) {
+    loop {
+        thread::sleep(interval);
+        let Ok(now) = system_timestamp() else {
+            continue;
+        };
+        let Ok(mut broker) = broker.lock() else {
+            return;
+        };
+        let _ = broker.expire(now);
+    }
 }
 
 fn serve_connection(
