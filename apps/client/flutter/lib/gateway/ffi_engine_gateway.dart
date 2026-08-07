@@ -36,6 +36,28 @@ typedef _CreateIdentityDart = int Function(
 );
 typedef _StartPairingNative = _CreateIdentityNative;
 typedef _StartPairingDart = _CreateIdentityDart;
+typedef _ApprovePairingNative = ffi.Int32 Function(
+  _EngineHandle,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.UintPtr,
+  ffi.Int64,
+);
+typedef _ApprovePairingDart = int Function(
+  _EngineHandle,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+);
+typedef _TerminalPairingNative = ffi.Int32 Function(
+  _EngineHandle,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.UintPtr,
+);
+typedef _TerminalPairingDart = int Function(
+  _EngineHandle,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+);
 typedef _QueueMessageNative = ffi.Int32 Function(
   _EngineHandle,
   ffi.Pointer<ffi.Uint8>,
@@ -90,15 +112,9 @@ class FfiEngineGateway implements EngineGateway {
   }
 
   static String _libraryName() {
-    if (Platform.isWindows) {
-      return 'torca_bridge.dll';
-    }
-    if (Platform.isAndroid || Platform.isLinux) {
-      return 'libtorca_bridge.so';
-    }
-    if (Platform.isMacOS || Platform.isIOS) {
-      return 'libtorca_bridge.dylib';
-    }
+    if (Platform.isWindows) return 'torca_bridge.dll';
+    if (Platform.isAndroid || Platform.isLinux) return 'libtorca_bridge.so';
+    if (Platform.isMacOS || Platform.isIOS) return 'libtorca_bridge.dylib';
     throw UnsupportedError('Torca native runtime is unsupported on this platform');
   }
 
@@ -111,9 +127,7 @@ class FfiEngineGateway implements EngineGateway {
   @override
   ValueListenable<AppSnapshotDto> get snapshots => _snapshots;
 
-  Future<BridgeResultDto> initialize() async {
-    return _refreshSnapshot();
-  }
+  Future<BridgeResultDto> initialize() async => _refreshSnapshot();
 
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
@@ -124,10 +138,7 @@ class FfiEngineGateway implements EngineGateway {
         error: 'native engine gateway is disposed',
       );
     }
-
-    if (command is RefreshSnapshotCommandDto) {
-      return _refreshSnapshot();
-    }
+    if (command is RefreshSnapshotCommandDto) return _refreshSnapshot();
 
     if (command is CreateIdentityCommandDto) {
       final _NativeUtf8 identityId = _NativeUtf8(_bindings, command.identityIdHex);
@@ -145,28 +156,64 @@ class FfiEngineGateway implements EngineGateway {
         identityId.dispose();
         displayName.dispose();
       }
-    } else if (command is StartPairingCommandDto) {
-      final _NativeUtf8 sessionId = _NativeUtf8(_bindings, command.sessionIdHex);
-      final _NativeUtf8 code = _NativeUtf8(_bindings, command.code);
+    } else if (command is StartPairingCommandDto || command is JoinPairingCommandDto) {
+      final bool joining = command is JoinPairingCommandDto;
+      final String sessionIdHex = joining
+          ? (command as JoinPairingCommandDto).sessionIdHex
+          : (command as StartPairingCommandDto).sessionIdHex;
+      final String codeValue = joining
+          ? (command as JoinPairingCommandDto).code
+          : (command as StartPairingCommandDto).code;
+      final int expiresAtMs = joining
+          ? (command as JoinPairingCommandDto).expiresAtMs
+          : (command as StartPairingCommandDto).expiresAtMs;
+      final _NativeUtf8 sessionId = _NativeUtf8(_bindings, sessionIdHex);
+      final _NativeUtf8 code = _NativeUtf8(_bindings, codeValue);
       try {
-        _bindings.startPairing(
+        final _StartPairingDart operation = joining
+            ? _bindings.joinPairing
+            : _bindings.startPairing;
+        operation(
           _handle,
           sessionId.pointer,
           sessionId.length,
           code.pointer,
           code.length,
-          command.expiresAtMs,
+          expiresAtMs,
         );
       } finally {
         sessionId.dispose();
         code.dispose();
       }
+    } else if (command is ApprovePairingCommandDto) {
+      final _NativeUtf8 sessionId = _NativeUtf8(_bindings, command.sessionIdHex);
+      try {
+        _bindings.approvePairing(
+          _handle,
+          sessionId.pointer,
+          sessionId.length,
+          command.atMs,
+        );
+      } finally {
+        sessionId.dispose();
+      }
+    } else if (command is RejectPairingCommandDto || command is CancelPairingCommandDto) {
+      final bool rejecting = command is RejectPairingCommandDto;
+      final String sessionIdHex = rejecting
+          ? (command as RejectPairingCommandDto).sessionIdHex
+          : (command as CancelPairingCommandDto).sessionIdHex;
+      final _NativeUtf8 sessionId = _NativeUtf8(_bindings, sessionIdHex);
+      try {
+        final _TerminalPairingDart operation = rejecting
+            ? _bindings.rejectPairing
+            : _bindings.cancelPairing;
+        operation(_handle, sessionId.pointer, sessionId.length);
+      } finally {
+        sessionId.dispose();
+      }
     } else if (command is QueueMessageCommandDto) {
       final _NativeUtf8 messageId = _NativeUtf8(_bindings, command.messageIdHex);
-      final _NativeUtf8 conversationId = _NativeUtf8(
-        _bindings,
-        command.conversationIdHex,
-      );
+      final _NativeUtf8 conversationId = _NativeUtf8(_bindings, command.conversationIdHex);
       final _NativeUtf8 body = _NativeUtf8(_bindings, command.body);
       try {
         _bindings.queueMessage(
@@ -185,25 +232,17 @@ class FfiEngineGateway implements EngineGateway {
         body.dispose();
       }
     } else {
-      return const BridgeResultDto(
-        ok: false,
-        kind: 'error',
-        error: 'unsupported bridge command',
-      );
+      return const BridgeResultDto(ok: false, kind: 'error', error: 'unsupported bridge command');
     }
 
     final BridgeResultDto result = _decodeResult(_readResultJson());
-    if (result.ok) {
-      await _refreshSnapshot();
-    }
+    if (result.ok) await _refreshSnapshot();
     return result;
   }
 
   Future<BridgeResultDto> _refreshSnapshot() async {
     final int status = _bindings.refreshSnapshot(_handle);
-    if (status != 0) {
-      return _decodeResult(_readResultJson());
-    }
+    if (status != 0) return _decodeResult(_readResultJson());
     _snapshots.value = _decodeSnapshot(_readSnapshotJson());
     return const BridgeResultDto(ok: true, kind: 'snapshot');
   }
@@ -212,16 +251,13 @@ class FfiEngineGateway implements EngineGateway {
         _bindings.resultPointer(_handle),
         _bindings.resultLength(_handle),
       );
-
   String _readSnapshotJson() => _readNativeString(
         _bindings.snapshotPointer(_handle),
         _bindings.snapshotLength(_handle),
       );
 
   String _readNativeString(ffi.Pointer<ffi.Uint8> pointer, int length) {
-    if (pointer == ffi.nullptr || length == 0) {
-      return '';
-    }
+    if (pointer == ffi.nullptr || length == 0) return '';
     return utf8.decode(pointer.asTypedList(length), allowMalformed: false);
   }
 
@@ -242,125 +278,91 @@ class FfiEngineGateway implements EngineGateway {
     if (version != torcaContractVersion) {
       throw FormatException('unsupported native contract version $version');
     }
-
     final Object? identityValue = map['identity'];
     final IdentityDto? identity = identityValue == null
         ? null
         : IdentityDto(
-            displayName: _string(
-              _stringMap(identityValue, 'identity'),
-              'displayName',
-            ),
+            displayName: _string(_stringMap(identityValue, 'identity'), 'displayName'),
           );
-
     return AppSnapshotDto(
       identity: identity,
-      pairings: _list(map, 'pairings')
-          .map<PairingDto>((Object? value) {
-            final Map<String, Object?> item = _stringMap(value, 'pairing');
-            return PairingDto(
-              id: _string(item, 'id'),
-              code: _string(item, 'code'),
-              role: _string(item, 'role'),
-              state: _string(item, 'state'),
-              expiresAtMs: _int(item, 'expiresAtMs'),
-              localApproved: _bool(item, 'localApproved'),
-              remoteApproved: _bool(item, 'remoteApproved'),
-            );
-          })
-          .toList(growable: false),
-      contacts: _list(map, 'contacts')
-          .map<ContactDto>((Object? value) {
-            final Map<String, Object?> item = _stringMap(value, 'contact');
-            return ContactDto(
-              id: _string(item, 'id'),
-              onionAddress: _string(item, 'onionAddress'),
-              status: _string(item, 'status'),
-            );
-          })
-          .toList(growable: false),
-      conversations: _list(map, 'conversations')
-          .map<ConversationDto>((Object? value) {
-            final Map<String, Object?> item = _stringMap(value, 'conversation');
-            return ConversationDto(
-              id: _string(item, 'id'),
-              contactId: _string(item, 'contactId'),
-              status: _string(item, 'status'),
-            );
-          })
-          .toList(growable: false),
-      messages: _list(map, 'messages')
-          .map<MessageDto>((Object? value) {
-            final Map<String, Object?> item = _stringMap(value, 'message');
-            return MessageDto(
-              id: _string(item, 'id'),
-              conversationId: _string(item, 'conversationId'),
-              body: _string(item, 'body'),
-              direction: _string(item, 'direction'),
-              status: _string(item, 'status'),
-            );
-          })
-          .toList(growable: false),
+      pairings: _list(map, 'pairings').map<PairingDto>((Object? value) {
+        final Map<String, Object?> item = _stringMap(value, 'pairing');
+        return PairingDto(
+          id: _string(item, 'id'),
+          code: _string(item, 'code'),
+          role: _string(item, 'role'),
+          state: _string(item, 'state'),
+          expiresAtMs: _int(item, 'expiresAtMs'),
+          localApproved: _bool(item, 'localApproved'),
+          remoteApproved: _bool(item, 'remoteApproved'),
+        );
+      }).toList(growable: false),
+      contacts: _list(map, 'contacts').map<ContactDto>((Object? value) {
+        final Map<String, Object?> item = _stringMap(value, 'contact');
+        return ContactDto(
+          id: _string(item, 'id'),
+          onionAddress: _string(item, 'onionAddress'),
+          status: _string(item, 'status'),
+        );
+      }).toList(growable: false),
+      conversations: _list(map, 'conversations').map<ConversationDto>((Object? value) {
+        final Map<String, Object?> item = _stringMap(value, 'conversation');
+        return ConversationDto(
+          id: _string(item, 'id'),
+          contactId: _string(item, 'contactId'),
+          status: _string(item, 'status'),
+        );
+      }).toList(growable: false),
+      messages: _list(map, 'messages').map<MessageDto>((Object? value) {
+        final Map<String, Object?> item = _stringMap(value, 'message');
+        return MessageDto(
+          id: _string(item, 'id'),
+          conversationId: _string(item, 'conversationId'),
+          body: _string(item, 'body'),
+          direction: _string(item, 'direction'),
+          status: _string(item, 'status'),
+        );
+      }).toList(growable: false),
     );
   }
 
   Map<String, Object?> _stringMap(Object? value, String field) {
-    if (value is! Map<Object?, Object?>) {
-      throw FormatException('$field must be a map');
-    }
+    if (value is! Map<Object?, Object?>) throw FormatException('$field must be a map');
     return value.map<String, Object?>((Object? key, Object? item) {
-      if (key is! String) {
-        throw FormatException('$field contains a non-string key');
-      }
+      if (key is! String) throw FormatException('$field contains a non-string key');
       return MapEntry<String, Object?>(key, item);
     });
   }
-
   List<Object?> _list(Map<String, Object?> map, String field) {
     final Object? value = map[field];
-    if (value is List<Object?>) {
-      return value;
-    }
+    if (value is List<Object?>) return value;
     throw FormatException('$field must be a list');
   }
-
   String _string(Map<String, Object?> map, String field) {
     final Object? value = map[field];
-    if (value is String) {
-      return value;
-    }
+    if (value is String) return value;
     throw FormatException('$field must be a string');
   }
-
   String? _optionalString(Map<String, Object?> map, String field) {
     final Object? value = map[field];
-    if (value == null || value is String) {
-      return value as String?;
-    }
+    if (value == null || value is String) return value as String?;
     throw FormatException('$field must be a string or null');
   }
-
   bool _bool(Map<String, Object?> map, String field) {
     final Object? value = map[field];
-    if (value is bool) {
-      return value;
-    }
+    if (value is bool) return value;
     throw FormatException('$field must be a bool');
   }
-
   int _int(Map<String, Object?> map, String field) {
     final Object? value = map[field];
-    if (value is int) {
-      return value;
-    }
+    if (value is int) return value;
     throw FormatException('$field must be an int');
   }
 
   @override
   Future<void> dispose() async {
-    if (_disposed) {
-      return;
-    }
+    if (_disposed) return;
     _disposed = true;
     _bindings.close(_handle);
     _bindings.engineDestroy(_handle);
@@ -372,74 +374,37 @@ class _NativeUtf8 {
   _NativeUtf8(this._bindings, String value) : _bytes = utf8.encode(value) {
     pointer = _bindings.alloc(_bytes.length);
     if (_bytes.isNotEmpty) {
-      if (pointer == ffi.nullptr) {
-        throw StateError('native UTF-8 allocation failed');
-      }
+      if (pointer == ffi.nullptr) throw StateError('native UTF-8 allocation failed');
       pointer.asTypedList(_bytes.length).setAll(0, _bytes);
     }
   }
-
   final _NativeBindings _bindings;
   final List<int> _bytes;
   late final ffi.Pointer<ffi.Uint8> pointer;
-
   int get length => _bytes.length;
-
-  void dispose() {
-    _bindings.free(pointer, _bytes.length);
-  }
+  void dispose() => _bindings.free(pointer, _bytes.length);
 }
 
 class _NativeBindings {
   _NativeBindings(ffi.DynamicLibrary library)
-      : contractVersion = library.lookupFunction<
-            _ContractVersionNative,
-            _ContractVersionDart
-          >('torca_contract_version'),
+      : contractVersion = library.lookupFunction<_ContractVersionNative, _ContractVersionDart>('torca_contract_version'),
         alloc = library.lookupFunction<_AllocNative, _AllocDart>('torca_alloc'),
         free = library.lookupFunction<_FreeNative, _FreeDart>('torca_free'),
-        engineNew = library.lookupFunction<_EngineNewNative, _EngineNewDart>(
-          'torca_engine_new',
-        ),
-        engineDestroy = library.lookupFunction<
-            _EngineDestroyNative,
-            _EngineDestroyDart
-          >('torca_engine_destroy'),
-        createIdentity = library.lookupFunction<
-            _CreateIdentityNative,
-            _CreateIdentityDart
-          >('torca_engine_create_identity'),
-        startPairing = library.lookupFunction<
-            _StartPairingNative,
-            _StartPairingDart
-          >('torca_engine_start_pairing'),
-        queueMessage = library.lookupFunction<
-            _QueueMessageNative,
-            _QueueMessageDart
-          >('torca_engine_queue_message'),
-        refreshSnapshot = library.lookupFunction<
-            _RefreshSnapshotNative,
-            _RefreshSnapshotDart
-          >('torca_engine_refresh_snapshot'),
-        resultPointer = library.lookupFunction<
-            _BufferPointerNative,
-            _BufferPointerDart
-          >('torca_engine_result_ptr'),
-        resultLength = library.lookupFunction<
-            _BufferLengthNative,
-            _BufferLengthDart
-          >('torca_engine_result_len'),
-        snapshotPointer = library.lookupFunction<
-            _BufferPointerNative,
-            _BufferPointerDart
-          >('torca_engine_snapshot_ptr'),
-        snapshotLength = library.lookupFunction<
-            _BufferLengthNative,
-            _BufferLengthDart
-          >('torca_engine_snapshot_len'),
-        close = library.lookupFunction<_CloseNative, _CloseDart>(
-          'torca_engine_close',
-        );
+        engineNew = library.lookupFunction<_EngineNewNative, _EngineNewDart>('torca_engine_new'),
+        engineDestroy = library.lookupFunction<_EngineDestroyNative, _EngineDestroyDart>('torca_engine_destroy'),
+        createIdentity = library.lookupFunction<_CreateIdentityNative, _CreateIdentityDart>('torca_engine_create_identity'),
+        startPairing = library.lookupFunction<_StartPairingNative, _StartPairingDart>('torca_engine_start_pairing'),
+        joinPairing = library.lookupFunction<_StartPairingNative, _StartPairingDart>('torca_engine_join_pairing'),
+        approvePairing = library.lookupFunction<_ApprovePairingNative, _ApprovePairingDart>('torca_engine_approve_pairing'),
+        rejectPairing = library.lookupFunction<_TerminalPairingNative, _TerminalPairingDart>('torca_engine_reject_pairing'),
+        cancelPairing = library.lookupFunction<_TerminalPairingNative, _TerminalPairingDart>('torca_engine_cancel_pairing'),
+        queueMessage = library.lookupFunction<_QueueMessageNative, _QueueMessageDart>('torca_engine_queue_message'),
+        refreshSnapshot = library.lookupFunction<_RefreshSnapshotNative, _RefreshSnapshotDart>('torca_engine_refresh_snapshot'),
+        resultPointer = library.lookupFunction<_BufferPointerNative, _BufferPointerDart>('torca_engine_result_ptr'),
+        resultLength = library.lookupFunction<_BufferLengthNative, _BufferLengthDart>('torca_engine_result_len'),
+        snapshotPointer = library.lookupFunction<_BufferPointerNative, _BufferPointerDart>('torca_engine_snapshot_ptr'),
+        snapshotLength = library.lookupFunction<_BufferLengthNative, _BufferLengthDart>('torca_engine_snapshot_len'),
+        close = library.lookupFunction<_CloseNative, _CloseDart>('torca_engine_close');
 
   final _ContractVersionDart contractVersion;
   final _AllocDart alloc;
@@ -448,6 +413,10 @@ class _NativeBindings {
   final _EngineDestroyDart engineDestroy;
   final _CreateIdentityDart createIdentity;
   final _StartPairingDart startPairing;
+  final _StartPairingDart joinPairing;
+  final _ApprovePairingDart approvePairing;
+  final _TerminalPairingDart rejectPairing;
+  final _TerminalPairingDart cancelPairing;
   final _QueueMessageDart queueMessage;
   final _RefreshSnapshotDart refreshSnapshot;
   final _BufferPointerDart resultPointer;
