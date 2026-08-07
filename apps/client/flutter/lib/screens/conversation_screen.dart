@@ -114,6 +114,7 @@ class _ConversationPaneState extends State<ConversationPane> {
                       final attachments = snapshot.attachments
                           .where((attachment) => attachment.messageId == message.id)
                           .toList(growable: false);
+                      final retryable = message.direction == 'outbound' && message.status == 'failed';
                       return ListTile(
                         onLongPress: () => _showMessageActions(message),
                         title: Text(message.body),
@@ -128,7 +129,13 @@ class _ConversationPaneState extends State<ConversationPane> {
                               ),
                               const SizedBox(height: 4),
                             ],
-                            Text(message.status),
+                            Text(_messageStatusLabel(message.status)),
+                            if (retryable)
+                              TextButton.icon(
+                                onPressed: () => _retryMessage(message),
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry now'),
+                              ),
                             ...attachments.map((attachment) => _AttachmentProgress(
                               attachment: attachment,
                               onRetry: () => _attachmentCommand(
@@ -192,6 +199,16 @@ class _ConversationPaneState extends State<ConversationPane> {
       );
     },
   );
+
+  Future<void> _retryMessage(MessageDto message) async {
+    final result = await widget.gateway.execute(
+      RetryMessageCommandDto(
+        messageIdHex: message.id,
+        atMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    if (mounted && !result.ok) _showError(result.error ?? 'Could not retry message');
+  }
 
   Future<void> _showMessageActions(MessageDto message) async {
     final action = await showModalBottomSheet<_MessageAction>(
@@ -309,6 +326,17 @@ class _ConversationPaneState extends State<ConversationPane> {
     if (bytes.every((value) => value == 0)) bytes[15] = 1;
     return bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
   }
+
+  String _messageStatusLabel(String status) => switch (status) {
+        'queued' => 'Queued — waiting for a direct peer connection',
+        'sending' => 'Sending…',
+        'sent' => 'Sent',
+        'delivered' => 'Delivered',
+        'read' => 'Read',
+        'failed' => 'Delivery failed',
+        'cancelled' => 'Cancelled',
+        _ => status,
+      };
 }
 
 enum _MessageAction { reply, copy }
