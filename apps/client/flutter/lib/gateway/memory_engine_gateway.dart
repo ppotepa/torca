@@ -72,6 +72,31 @@ class MemoryEngineGateway implements EngineGateway {
       _snapshots.value = _copy(current, messages: <MessageDto>[...current.messages, message]);
       return const BridgeResultDto(ok: true, kind: 'message_queued');
     }
+    if (command is RetryMessageCommandDto) {
+      var found = false;
+      var invalid = false;
+      final messages = current.messages.map((message) {
+        if (message.id != command.messageIdHex) return message;
+        found = true;
+        if (message.direction != 'outbound' || message.status != 'failed') {
+          invalid = true;
+          return message;
+        }
+        return MessageDto(
+          id: message.id,
+          conversationId: message.conversationId,
+          body: message.body,
+          direction: message.direction,
+          status: 'queued',
+          replyToMessageId: message.replyToMessageId,
+        );
+      }).toList(growable: false);
+      if (!found || invalid) {
+        return const BridgeResultDto(ok: false, kind: 'error', error: 'message is not retryable');
+      }
+      _snapshots.value = _copy(current, messages: messages);
+      return const BridgeResultDto(ok: true, kind: 'message_updated');
+    }
     if (command is MarkConversationReadCommandDto) {
       final messages = current.messages.map((message) {
         if (message.conversationId != command.conversationIdHex ||
