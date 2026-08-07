@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../localization/app_locale_mode.dart';
+import '../localization/torca_strings.dart';
 import '../settings/local_preferences.dart';
 import '../theme/app_theme_mode.dart';
 
@@ -11,21 +13,25 @@ class SettingsScreen extends StatelessWidget {
   final LocalPreferences preferences;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Settings')),
-        body: ListenableBuilder(
-          listenable: preferences,
-          builder: (context, _) => ListView(
+  Widget build(BuildContext context) {
+    final strings = context.strings;
+    return Scaffold(
+      appBar: AppBar(title: Text(strings.settings)),
+      body: ListenableBuilder(
+        listenable: preferences,
+        builder: (context, _) {
+          final strings = context.strings;
+          return ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
             children: <Widget>[
-              Text('Appearance', style: Theme.of(context).textTheme.titleMedium),
+              Text(strings.appearance, style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               Card(
                 child: Column(
                   children: AppThemeMode.values
                       .map(
                         (mode) => RadioListTile<AppThemeMode>(
-                          title: Text(_themeLabel(mode)),
+                          title: Text(_themeLabel(strings, mode)),
                           value: mode,
                           groupValue: preferences.themeMode,
                           onChanged: (value) {
@@ -37,43 +43,66 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 24),
-              Text('Notifications', style: Theme.of(context).textTheme.titleMedium),
+              Text(strings.language, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Card(
+                child: Column(
+                  children: AppLocaleMode.values
+                      .map(
+                        (mode) => RadioListTile<AppLocaleMode>(
+                          title: Text(_localeLabel(strings, mode)),
+                          value: mode,
+                          groupValue: preferences.localeMode,
+                          onChanged: (value) {
+                            if (value != null) preferences.setLocaleMode(value);
+                          },
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(strings.notifications, style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               Card(
                 child: SwitchListTile(
                   secondary: const Icon(Icons.notifications_outlined),
-                  title: const Text('Enable notifications'),
-                  subtitle: const Text(
-                    'Show private-message notifications without message content.',
-                  ),
+                  title: Text(strings.enableNotifications),
+                  subtitle: Text(strings.notificationPrivacy),
                   value: preferences.notificationsEnabled,
                   onChanged: preferences.setNotificationsEnabled,
                 ),
               ),
               if (Platform.isWindows) ...<Widget>[
                 const SizedBox(height: 24),
-                Text('Desktop', style: Theme.of(context).textTheme.titleMedium),
+                Text(strings.desktop, style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 Card(
                   child: SwitchListTile(
                     secondary: const Icon(Icons.move_to_inbox_outlined),
-                    title: const Text('Close to tray'),
-                    subtitle: const Text(
-                      'Keep Torca running when the main window is closed. Disable this to quit Torca when closing the window.',
-                    ),
+                    title: Text(strings.closeToTray),
+                    subtitle: Text(strings.closeToTrayDescription),
                     value: preferences.closeToTrayEnabled,
                     onChanged: preferences.setCloseToTrayEnabled,
                   ),
                 ),
               ],
             ],
-          ),
-        ),
-      );
+          );
+        },
+      ),
+    );
+  }
 
-  String _themeLabel(AppThemeMode mode) => switch (mode) {
-        AppThemeMode.system => 'System',
-        AppThemeMode.light => 'Light',
-        AppThemeMode.dark => 'Dark',
+  String _themeLabel(TorcaStrings strings, AppThemeMode mode) => switch (mode) {
+        AppThemeMode.system => strings.system,
+        AppThemeMode.light => strings.light,
+        AppThemeMode.dark => strings.dark,
+      };
+
+  String _localeLabel(TorcaStrings strings, AppLocaleMode mode) => switch (mode) {
+        AppLocaleMode.system => strings.languageSystem,
+        AppLocaleMode.english => strings.languageEnglish,
+        AppLocaleMode.polish => strings.languagePolish,
       };
 }

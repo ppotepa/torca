@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'gateway/engine_gateway.dart';
 import 'generated/torca_contract.dart';
+import 'localization/app_locale_mode.dart';
+import 'localization/torca_strings.dart';
 import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
 import 'screens/deep_link_join_screen.dart';
@@ -152,6 +155,14 @@ class _TorcaAppState extends State<TorcaApp> {
           navigatorKey: _navigatorKey,
           title: 'Torca',
           debugShowCheckedModeBanner: false,
+          locale: widget.preferences.localeMode.locale,
+          supportedLocales: TorcaStrings.supportedLocales,
+          localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+            TorcaStrings.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
           themeMode: AppTheme.materialMode(widget.preferences.themeMode),

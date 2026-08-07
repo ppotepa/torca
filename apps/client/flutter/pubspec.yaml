@@ -10,6 +10,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   app_links: ^7.2.1
   file_picker: ^11.0.2
   local_notifier: ^0.1.6
