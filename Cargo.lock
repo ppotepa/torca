@@ -133,6 +133,7 @@ dependencies = ["torca-client-engine", "torca-contacts", "torca-conversations", 
 [[package]]
 name = "torca-transport-tor"
 version = "0.1.0-alpha.0"
+dependencies = ["torca-foundation", "torca-peer", "torca-peer-protocol", "torca-wire"]
 
 [[package]]
 name = "torca-wire"

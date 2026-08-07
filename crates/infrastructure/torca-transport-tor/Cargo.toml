@@ -8,5 +8,11 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[dependencies]
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-peer = { path = "../torca-peer" }
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
+torca-wire = { path = "../../protocol/torca-wire" }
+
 [lints]
 workspace = true

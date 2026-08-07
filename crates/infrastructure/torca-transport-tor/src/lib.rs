@@ -1,5 +1,9 @@
 //! Tor process lifecycle, onion-service configuration and SOCKS5 stream establishment.
 
+mod peer_transport;
+
+pub use peer_transport::TorPeerTransport;
+
 use core::fmt;
 use std::fs;
 use std::io::{Read, Write};
@@ -294,7 +298,6 @@ fn validate_host(host: &str) -> Result<(), TorError> {
 }
 
 fn validate_v3_onion_hostname(host: &str) -> Result<(), TorError> {
-    // Tor v3 hostnames contain 56 lowercase base32 characters followed by `.onion`.
     let Some(label) = host.strip_suffix(".onion") else {
         return Err(TorError::InvalidOnionHostname);
     };
