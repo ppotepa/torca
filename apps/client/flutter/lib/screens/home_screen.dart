@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
 import 'diagnostics_screen.dart';
 import 'pairing_screen.dart';
@@ -32,6 +33,14 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: _TorStatus(state: snapshot.torState),
           ),
+          if (snapshot.identity != null)
+            IconButton(
+              tooltip: 'Your Torca identity',
+              icon: const Icon(Icons.shield_outlined),
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute(builder: (_) => IdentityDetailsScreen(snapshot: snapshot)),
+              ),
+            ),
           IconButton(
             tooltip: 'Diagnostics',
             icon: const Icon(Icons.monitor_heart_outlined),
@@ -44,11 +53,15 @@ class _HomeScreenState extends State<HomeScreen> {
       body: snapshot.identity == null
           ? _IdentitySetup(gateway: widget.gateway)
           : LayoutBuilder(builder: (context, constraints) {
+              void contactInfo(ContactDto contact) => Navigator.of(context).push<void>(
+                    MaterialPageRoute(builder: (_) => ContactDetailsScreen(contact: contact)),
+                  );
               if (constraints.maxWidth < _wideLayoutBreakpoint) {
                 return _ConversationList(
                   conversations: snapshot.conversations,
                   contacts: snapshot.contacts,
                   selectedConversationId: null,
+                  onContactInfo: contactInfo,
                   onSelected: (conversation) => Navigator.of(context).push<void>(
                     MaterialPageRoute(builder: (_) => ConversationScreen(
                       gateway: widget.gateway,
@@ -65,6 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     conversations: snapshot.conversations,
                     contacts: snapshot.contacts,
                     selectedConversationId: selected?.id,
+                    onContactInfo: contactInfo,
                     onSelected: (conversation) => setState(() => _selectedConversationId = conversation.id),
                   ),
                 ),
@@ -127,11 +141,13 @@ class _ConversationList extends StatelessWidget {
     required this.contacts,
     required this.selectedConversationId,
     required this.onSelected,
+    required this.onContactInfo,
   });
   final List<ConversationDto> conversations;
   final List<ContactDto> contacts;
   final String? selectedConversationId;
   final ValueChanged<ConversationDto> onSelected;
+  final ValueChanged<ContactDto> onContactInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +168,15 @@ class _ConversationList extends StatelessWidget {
           leading: const CircleAvatar(child: Icon(Icons.person_outline)),
           title: Text('Contact ${_shortId(conversation.contactId)}'),
           subtitle: Text(conversation.status),
-          trailing: _ConnectionIndicator(state: connection),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
+            _ConnectionIndicator(state: connection),
+            if (contact != null)
+              IconButton(
+                tooltip: 'Contact details',
+                icon: const Icon(Icons.info_outline, size: 19),
+                onPressed: () => onContactInfo(contact),
+              ),
+          ]),
           onTap: () => onSelected(conversation),
         );
       },
