@@ -24,7 +24,7 @@ use torca_storage_sqlite::{
 use torca_transport_tor::PeerListener;
 
 use crate::{
-    AttachmentAdapter, InboundTextReceiptAdapter, PeerLinkAdapter, ReadStateAdapter,
+    AttachmentControlAdapter, InboundTextReceiptAdapter, PeerLinkAdapter, ReadStateAdapter,
     ReceiptPeerTransport, SharedControlWorker, SharedPeerCrypto, TextPeerTransport,
     TextWorkerAdapter,
 };
@@ -36,19 +36,12 @@ const RETRY_BASE: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommunicationBuildError {
-    Storage,
-    Attachment,
-    Cache,
-}
+pub enum CommunicationBuildError { Storage, Attachment, Cache }
 impl fmt::Display for CommunicationBuildError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{self:?}")
-    }
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { write!(formatter, "{self:?}") }
 }
 impl std::error::Error for CommunicationBuildError {}
 
-/// Platform-specific secure dependencies passed into the common communication composition.
 pub struct ProductionCommunicationInputs<K, P, AP> {
     pub signer: K,
     pub peer_secret_store: P,
@@ -120,10 +113,7 @@ where
     );
     let control_outbox = ControlOutbox::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
-    let control = SharedControlWorker::new(ControlDeliveryWorker::new(
-        control_outbox,
-        control_transport,
-    ));
+    let control = SharedControlWorker::new(ControlDeliveryWorker::new(control_outbox, control_transport));
 
     let inbound_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
@@ -145,6 +135,8 @@ where
         .map_err(|_| CommunicationBuildError::Storage)?;
     let attachment_metadata = SqlCipherAttachmentStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Attachment)?;
+    let attachment_controls = SqlCipherAttachmentStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Attachment)?;
     let attachment_cache = FileBlobStore::open(cache_root)
         .map_err(|_| CommunicationBuildError::Cache)?;
     let attachment_transfer = AttachmentTransfer::new(
@@ -157,9 +149,8 @@ where
         staging_root,
         inputs.local_identity_id,
         ACK_TIMEOUT,
-    )
-    .map_err(|_| CommunicationBuildError::Attachment)?;
-    let attachments = AttachmentAdapter::new(attachment_transfer);
+    ).map_err(|_| CommunicationBuildError::Attachment)?;
+    let attachments = AttachmentControlAdapter::new(attachment_transfer, attachment_controls);
 
     let read_state = SqlCipherReadState::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
