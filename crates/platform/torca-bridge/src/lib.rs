@@ -8,7 +8,7 @@ use torca_messaging::{MessageBody, MessageId};
 use torca_pairing::{PairingCode, PairingSessionId};
 
 /// Version of the cross-language contract.
-pub const CONTRACT_VERSION: u16 = 2;
+pub const CONTRACT_VERSION: u16 = 3;
 
 /// Primitive bridge commands suitable for generated language bindings.
 #[must_use]
@@ -16,6 +16,10 @@ pub const CONTRACT_VERSION: u16 = 2;
 pub enum BridgeCommand {
     CreateIdentity { identity_id_hex: String, display_name: String, at_ms: i64 },
     StartPairing { session_id_hex: String, code: String, expires_at_ms: i64 },
+    JoinPairing { session_id_hex: String, code: String, expires_at_ms: i64 },
+    ApprovePairing { session_id_hex: String, at_ms: i64 },
+    RejectPairing { session_id_hex: String },
+    CancelPairing { session_id_hex: String },
     QueueMessage { message_id_hex: String, conversation_id_hex: String, body: String, at_ms: i64 },
     RefreshSnapshot,
 }
@@ -100,19 +104,26 @@ impl EngineBridge {
                     .and_then(|command| self.engine.dispatch(command).map_err(string_error))
             }
             BridgeCommand::StartPairing { session_id_hex, code, expires_at_ms } => {
-                parse_id(&session_id_hex)
-                    .and_then(|id| {
-                        PairingCode::new(code).map_err(string_error).map(|code| (id, code))
-                    })
-                    .and_then(|(id, code)| {
-                        timestamp(expires_at_ms).map(|expires_at| EngineCommand::StartPairing {
-                            session_id: PairingSessionId::from_opaque(id),
-                            code,
-                            expires_at,
-                        })
+                pairing_open_command(session_id_hex, code, expires_at_ms, false)
+                    .and_then(|command| self.engine.dispatch(command).map_err(string_error))
+            }
+            BridgeCommand::JoinPairing { session_id_hex, code, expires_at_ms } => {
+                pairing_open_command(session_id_hex, code, expires_at_ms, true)
+                    .and_then(|command| self.engine.dispatch(command).map_err(string_error))
+            }
+            BridgeCommand::ApprovePairing { session_id_hex, at_ms } => {
+                parse_pairing_id(&session_id_hex)
+                    .and_then(|session_id| {
+                        timestamp(at_ms).map(|at| EngineCommand::ApprovePairing { session_id, at })
                     })
                     .and_then(|command| self.engine.dispatch(command).map_err(string_error))
             }
+            BridgeCommand::RejectPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
+                .map(|session_id| EngineCommand::RejectPairing { session_id })
+                .and_then(|command| self.engine.dispatch(command).map_err(string_error)),
+            BridgeCommand::CancelPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
+                .map(|session_id| EngineCommand::CancelPairing { session_id })
+                .and_then(|command| self.engine.dispatch(command).map_err(string_error)),
             BridgeCommand::QueueMessage { message_id_hex, conversation_id_hex, body, at_ms } => {
                 parse_id(&message_id_hex)
                     .and_then(|message_id| {
@@ -154,6 +165,30 @@ impl EngineBridge {
         self.engine.snapshot().map(map_snapshot)
     }
 }
+
+fn pairing_open_command(
+    session_id_hex: String,
+    code: String,
+    expires_at_ms: i64,
+    joining: bool,
+) -> Result<EngineCommand, String> {
+    parse_pairing_id(&session_id_hex)
+        .and_then(|session_id| {
+            PairingCode::new(code).map_err(string_error).map(|code| (session_id, code))
+        })
+        .and_then(|(session_id, code)| {
+            timestamp(expires_at_ms).map(|expires_at| {
+                if joining {
+                    EngineCommand::JoinPairing { session_id, code, expires_at }
+                } else {
+                    EngineCommand::StartPairing { session_id, code, expires_at }
+                }
+            })
+        })
+}
+fn parse_pairing_id(value: &str) -> Result<PairingSessionId, String> {
+    parse_id(value).map(PairingSessionId::from_opaque)
+}
 fn parse_id(value: &str) -> Result<OpaqueId, String> {
     value.parse::<OpaqueId>().map_err(string_error)
 }
@@ -167,7 +202,10 @@ fn result_kind(value: &EngineResult) -> &'static str {
     match value {
         EngineResult::IdentityCreated => "identity_created",
         EngineResult::PairingStarted => "pairing_started",
+        EngineResult::PairingJoined => "pairing_joined",
         EngineResult::PairingUpdated => "pairing_updated",
+        EngineResult::PairingRejected => "pairing_rejected",
+        EngineResult::PairingCancelled => "pairing_cancelled",
         EngineResult::PairingCompleted { .. } => "pairing_completed",
         EngineResult::MessageQueued { .. } => "message_queued",
         EngineResult::MessageUpdated { .. } => "message_updated",
