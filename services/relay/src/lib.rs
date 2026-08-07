@@ -1,5 +1,7 @@
 //! Ephemeral in-memory rendezvous broker. It owns no user database or offline mailbox.
 
+mod server;
+
 use std::collections::{BTreeMap, VecDeque};
 
 use torca_foundation::{OpaqueId, Timestamp};
@@ -7,6 +9,8 @@ use torca_relay_protocol::{
     RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySide, RelaySideToken,
     RelaySlotCapability, RelaySlotId, validate_blob,
 };
+
+pub use server::{RelayServer, RelayServerConfig, RelayServerError};
 
 const MAX_QUEUED_BLOBS_PER_SIDE: usize = 32;
 
