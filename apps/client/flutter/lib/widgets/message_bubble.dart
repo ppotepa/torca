@@ -14,6 +14,7 @@ class MessageBubble extends StatelessWidget {
     this.quotedBody,
     this.quotedUnavailable = false,
     this.footer = const <Widget>[],
+    this.compactTop = false,
     super.key,
   });
 
@@ -23,6 +24,7 @@ class MessageBubble extends StatelessWidget {
   final String? quotedBody;
   final bool quotedUnavailable;
   final List<Widget> footer;
+  final bool compactTop;
 
   @override
   Widget build(BuildContext context) {
@@ -32,8 +34,8 @@ class MessageBubble extends StatelessWidget {
         : context.semanticColors.messageInbound;
     final alignment = outbound ? Alignment.centerRight : Alignment.centerLeft;
     final radius = BorderRadius.only(
-      topLeft: const Radius.circular(16),
-      topRight: const Radius.circular(16),
+      topLeft: Radius.circular(compactTop && !outbound ? 6 : 16),
+      topRight: Radius.circular(compactTop && outbound ? 6 : 16),
       bottomLeft: Radius.circular(outbound ? 16 : 4),
       bottomRight: Radius.circular(outbound ? 4 : 16),
     );
@@ -48,7 +50,7 @@ class MessageBubble extends StatelessWidget {
           child: Padding(
             padding: EdgeInsets.fromLTRB(
               outbound ? 48 : 12,
-              4,
+              compactTop ? 1 : 4,
               outbound ? 12 : 48,
               4,
             ),

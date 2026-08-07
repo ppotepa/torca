@@ -67,22 +67,33 @@ class ConversationPane extends StatefulWidget {
   final EngineGateway gateway;
   final ConversationDto conversation;
   final bool showHeader;
+
   @override
   State<ConversationPane> createState() => _ConversationPaneState();
 }
 
 class _ConversationPaneState extends State<ConversationPane> {
   final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   final OperationTracker _operations = OperationTracker();
+  final Map<String, String> _drafts = <String, String>{};
   bool _markingRead = false;
+  bool _showJumpToLatest = false;
+  int _lastMessageCount = 0;
+  String? _unreadBoundaryMessageId;
   MessageDto? _replyingTo;
 
   @override
   void initState() {
     super.initState();
     _operations.addListener(_operationChanged);
+    _scrollController.addListener(_scrollChanged);
     widget.gateway.snapshots.addListener(_snapshotChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_markReadIfNeeded()));
+    _captureConversationState(widget.conversation.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_markReadIfNeeded());
+      _scrollToBottom(jump: true);
+    });
   }
 
   @override
@@ -93,25 +104,89 @@ class _ConversationPaneState extends State<ConversationPane> {
       widget.gateway.snapshots.addListener(_snapshotChanged);
     }
     if (oldWidget.conversation.id != widget.conversation.id) {
+      _drafts[oldWidget.conversation.id] = _controller.text;
+      _controller.text = _drafts[widget.conversation.id] ?? '';
       _replyingTo = null;
+      _showJumpToLatest = false;
+      _captureConversationState(widget.conversation.id);
       unawaited(_markReadIfNeeded());
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(jump: true));
     }
   }
 
   @override
   void dispose() {
     widget.gateway.snapshots.removeListener(_snapshotChanged);
+    _scrollController.removeListener(_scrollChanged);
     _operations.removeListener(_operationChanged);
     _operations.dispose();
+    _scrollController.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  void _captureConversationState(String conversationId) {
+    final messages = _messagesFor(widget.gateway.snapshots.value, conversationId);
+    _lastMessageCount = messages.length;
+    _unreadBoundaryMessageId = messages
+        .where((message) => message.direction == 'inbound' && message.status == 'delivered')
+        .map((message) => message.id)
+        .firstOrNull;
   }
 
   void _operationChanged() {
     if (mounted) setState(() {});
   }
 
-  void _snapshotChanged() => unawaited(_markReadIfNeeded());
+  void _scrollChanged() {
+    if (!_showJumpToLatest || !_nearBottom()) return;
+    setState(() => _showJumpToLatest = false);
+  }
+
+  void _snapshotChanged() {
+    unawaited(_markReadIfNeeded());
+    final count = _messagesFor(
+      widget.gateway.snapshots.value,
+      widget.conversation.id,
+    ).length;
+    if (count <= _lastMessageCount) {
+      _lastMessageCount = count;
+      return;
+    }
+    final follow = _nearBottom();
+    _lastMessageCount = count;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (follow) {
+        _scrollToBottom();
+      } else if (!_showJumpToLatest) {
+        setState(() => _showJumpToLatest = true);
+      }
+    });
+  }
+
+  bool _nearBottom() {
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels < 96;
+  }
+
+  void _scrollToBottom({bool jump = false}) {
+    if (!_scrollController.hasClients) return;
+    final target = _scrollController.position.maxScrollExtent;
+    if (jump) {
+      _scrollController.jumpTo(target);
+    } else {
+      unawaited(
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        ),
+      );
+    }
+    if (_showJumpToLatest && mounted) setState(() => _showJumpToLatest = false);
+  }
 
   Future<void> _markReadIfNeeded() async {
     if (_markingRead) return;
@@ -136,9 +211,7 @@ class _ConversationPaneState extends State<ConversationPane> {
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
         valueListenable: widget.gateway.snapshots,
         builder: (context, snapshot, _) {
-          final messages = snapshot.messages
-              .where((message) => message.conversationId == widget.conversation.id)
-              .toList(growable: false);
+          final messages = _messagesFor(snapshot, widget.conversation.id);
           final byId = <String, MessageDto>{for (final message in messages) message.id: message};
           final reply = _replyingTo;
           final contact = _contactFor(snapshot, widget.conversation);
@@ -160,8 +233,10 @@ class _ConversationPaneState extends State<ConversationPane> {
                 const Divider(height: 1),
               ],
               Expanded(
-                child: messages.isEmpty
-                    ? const Center(
+                child: Stack(
+                  children: <Widget>[
+                    if (messages.isEmpty)
+                      const Center(
                         child: Padding(
                           padding: EdgeInsets.all(24),
                           child: Text(
@@ -170,11 +245,21 @@ class _ConversationPaneState extends State<ConversationPane> {
                           ),
                         ),
                       )
-                    : ListView.builder(
+                    else
+                      ListView.builder(
+                        controller: _scrollController,
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         itemCount: messages.length,
                         itemBuilder: (context, index) {
                           final message = messages[index];
+                          final previous = index == 0 ? null : messages[index - 1];
+                          final showDate = previous == null || !_sameDay(previous, message);
+                          final showUnread = message.id == _unreadBoundaryMessageId;
+                          final grouped = previous != null &&
+                              previous.direction == message.direction &&
+                              !showDate &&
+                              !showUnread &&
+                              (message.createdAtMs - previous.createdAtMs).abs() < 5 * 60 * 1000;
                           final quoted = message.replyToMessageId == null
                               ? null
                               : byId[message.replyToMessageId];
@@ -184,59 +269,84 @@ class _ConversationPaneState extends State<ConversationPane> {
                           final retryable =
                               message.direction == 'outbound' && message.status == 'failed';
                           final retryBusy = _operations.isActive('message:${message.id}:retry');
-                          return MessageBubble(
-                            message: message,
-                            onLongPress: () => _showMessageActions(message),
-                            onSecondaryTapDown: (details) => _showMessageActions(
-                              message,
-                              globalPosition: details.globalPosition,
-                            ),
-                            quotedBody: message.replyToMessageId == null
-                                ? null
-                                : quoted?.body ?? 'Original message unavailable',
-                            quotedUnavailable:
-                                message.replyToMessageId != null && quoted == null,
-                            footer: <Widget>[
-                              if (retryable)
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: TextButton.icon(
-                                    onPressed: retryBusy ? null : () => _retryMessage(message),
-                                    icon: retryBusy
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(strokeWidth: 2),
-                                          )
-                                        : const Icon(Icons.refresh),
-                                    label: Text(retryBusy ? 'Retrying…' : 'Retry now'),
-                                  ),
+
+                          return Column(
+                            children: <Widget>[
+                              if (showDate) _DateSeparator(milliseconds: message.createdAtMs),
+                              if (showUnread) const _UnreadSeparator(),
+                              MessageBubble(
+                                message: message,
+                                compactTop: grouped,
+                                onLongPress: () => _showMessageActions(message),
+                                onSecondaryTapDown: (details) => _showMessageActions(
+                                  message,
+                                  globalPosition: details.globalPosition,
                                 ),
-                              ...attachments.map((attachment) {
-                                final attachmentBusy = _operations.anyWithPrefix(
-                                  'attachment:${attachment.id}:',
-                                );
-                                return AttachmentTile(
-                                  attachment: attachment,
-                                  operationBusy: attachmentBusy,
-                                  onRetry: () => _attachmentCommand(
-                                    attachment.id,
-                                    'retry',
-                                    RetryAttachmentCommandDto(attachmentIdHex: attachment.id),
-                                  ),
-                                  onCancel: () => _attachmentCommand(
-                                    attachment.id,
-                                    'cancel',
-                                    CancelAttachmentCommandDto(attachmentIdHex: attachment.id),
-                                  ),
-                                  onOpen: () => _openAttachment(attachment),
-                                  onSave: () => _saveAttachment(attachment),
-                                );
-                              }),
+                                quotedBody: message.replyToMessageId == null
+                                    ? null
+                                    : quoted?.body ?? 'Original message unavailable',
+                                quotedUnavailable:
+                                    message.replyToMessageId != null && quoted == null,
+                                footer: <Widget>[
+                                  if (retryable)
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: TextButton.icon(
+                                        onPressed: retryBusy ? null : () => _retryMessage(message),
+                                        icon: retryBusy
+                                            ? const SizedBox(
+                                                width: 16,
+                                                height: 16,
+                                                child: CircularProgressIndicator(strokeWidth: 2),
+                                              )
+                                            : const Icon(Icons.refresh),
+                                        label: Text(retryBusy ? 'Retrying…' : 'Retry now'),
+                                      ),
+                                    ),
+                                  ...attachments.map((attachment) {
+                                    final attachmentBusy = _operations.anyWithPrefix(
+                                      'attachment:${attachment.id}:',
+                                    );
+                                    return AttachmentTile(
+                                      attachment: attachment,
+                                      operationBusy: attachmentBusy,
+                                      onRetry: () => _attachmentCommand(
+                                        attachment.id,
+                                        'retry',
+                                        RetryAttachmentCommandDto(
+                                          attachmentIdHex: attachment.id,
+                                        ),
+                                      ),
+                                      onCancel: () => _attachmentCommand(
+                                        attachment.id,
+                                        'cancel',
+                                        CancelAttachmentCommandDto(
+                                          attachmentIdHex: attachment.id,
+                                        ),
+                                      ),
+                                      onOpen: () => _openAttachment(attachment),
+                                      onSave: () => _saveAttachment(attachment),
+                                    );
+                                  }),
+                                ],
+                              ),
                             ],
                           );
                         },
                       ),
+                    if (_showJumpToLatest)
+                      Positioned(
+                        right: 16,
+                        bottom: 12,
+                        child: FloatingActionButton.small(
+                          heroTag: null,
+                          tooltip: 'Jump to latest message',
+                          onPressed: _scrollToBottom,
+                          child: const Icon(Icons.arrow_downward),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               const Divider(height: 1),
               SafeArea(
@@ -267,18 +377,7 @@ class _ConversationPaneState extends State<ConversationPane> {
                                 : const Icon(Icons.attach_file),
                           ),
                           const SizedBox(width: 4),
-                          Expanded(
-                            child: TextField(
-                              controller: _controller,
-                              enabled: !sending,
-                              minLines: 1,
-                              maxLines: 5,
-                              textInputAction: TextInputAction.newline,
-                              decoration: InputDecoration(
-                                labelText: reply == null ? 'Message' : 'Reply',
-                              ),
-                            ),
-                          ),
+                          Expanded(child: _composerField(sending, reply != null)),
                           const SizedBox(width: 8),
                           IconButton.filled(
                             tooltip: sending ? 'Sending message' : 'Send message',
@@ -301,6 +400,36 @@ class _ConversationPaneState extends State<ConversationPane> {
           );
         },
       );
+
+  Widget _composerField(bool sending, bool replying) {
+    final field = TextField(
+      controller: _controller,
+      enabled: !sending,
+      minLines: 1,
+      maxLines: 5,
+      textInputAction: TextInputAction.newline,
+      decoration: InputDecoration(labelText: replying ? 'Reply' : 'Message'),
+    );
+    if (!(Platform.isWindows || Platform.isLinux || Platform.isMacOS)) return field;
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.enter): _sendMessage,
+        const SingleActivator(LogicalKeyboardKey.enter, shift: true): _insertNewline,
+      },
+      child: field,
+    );
+  }
+
+  void _insertNewline() {
+    final selection = _controller.selection;
+    final start = selection.isValid ? selection.start : _controller.text.length;
+    final end = selection.isValid ? selection.end : start;
+    final text = _controller.text.replaceRange(start, end, '\n');
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: start + 1),
+    );
+  }
 
   void _openConnectionDetails(String contactId) {
     Navigator.of(context).push<void>(
@@ -400,7 +529,9 @@ class _ConversationPaneState extends State<ConversationPane> {
       if (!mounted) return;
       if (result.ok) {
         _controller.clear();
+        _drafts.remove(widget.conversation.id);
         setState(() => _replyingTo = null);
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       } else {
         _showError(BridgeErrorPresenter.message(result, fallback: 'Could not queue message'));
       }
@@ -543,11 +674,62 @@ class _ConversationPaneState extends State<ConversationPane> {
       };
 }
 
+List<MessageDto> _messagesFor(AppSnapshotDto snapshot, String conversationId) => snapshot.messages
+    .where((message) => message.conversationId == conversationId)
+    .toList(growable: false);
+
+bool _sameDay(MessageDto first, MessageDto second) {
+  final a = DateTime.fromMillisecondsSinceEpoch(first.createdAtMs).toLocal();
+  final b = DateTime.fromMillisecondsSinceEpoch(second.createdAtMs).toLocal();
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
 ContactDto? _contactFor(AppSnapshotDto snapshot, ConversationDto conversation) {
   for (final contact in snapshot.contacts) {
     if (contact.id == conversation.contactId) return contact;
   }
   return null;
+}
+
+class _DateSeparator extends StatelessWidget {
+  const _DateSeparator({required this.milliseconds});
+  final int milliseconds;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(date.year, date.month, date.day);
+    final difference = today.difference(day).inDays;
+    final label = switch (difference) {
+      0 => 'Today',
+      1 => 'Yesterday',
+      _ => '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: Text(label, style: Theme.of(context).textTheme.labelSmall),
+      ),
+    );
+  }
+}
+
+class _UnreadSeparator extends StatelessWidget {
+  const _UnreadSeparator();
+
+  @override
+  Widget build(BuildContext context) => const Row(
+        children: <Widget>[
+          Expanded(child: Divider()),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Text('New messages'),
+          ),
+          Expanded(child: Divider()),
+        ],
+      );
 }
 
 class _ReplyComposerPreview extends StatelessWidget {
@@ -582,4 +764,8 @@ class _ReplyComposerPreview extends StatelessWidget {
           ],
         ),
       );
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
