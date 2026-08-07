@@ -1,14 +1,19 @@
 //! Single background owner for Tor, pairing, peer sessions and durable delivery.
 
+mod attachments;
+pub use attachments::{AttachmentSendRequest, AttachmentView};
+
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use torca_client_engine::EngineHandle;
+use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_contacts::ContactId;
+use torca_conversations::ConversationId;
 use torca_diagnostics::{Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState};
 use torca_foundation::{OpaqueId, Timestamp};
+use torca_messaging::{MessageBody, MessageId};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_peer_link::PeerConnectionState;
 
@@ -56,6 +61,10 @@ pub trait CommunicationDriver: Send + 'static {
     fn maintenance(&mut self, contacts: &[ContactId], now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState;
     fn mark_conversation_read(&mut self, conversation_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn prepare_attachment(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn retry_attachment(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn cancel_attachment(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError>;
     fn shutdown(&mut self);
 }
 
@@ -73,6 +82,10 @@ enum RuntimeCommand {
     RejectPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
     CancelPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
     MarkConversationRead(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
+    QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>),
+    RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
+    CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
+    AttachmentSnapshot(Sender<Result<Vec<AttachmentView>, RuntimeDriverError>>),
     NetworkSnapshot(Sender<Result<NetworkSnapshot, RuntimeDriverError>>),
     Diagnostics(Sender<String>),
     Wake,
@@ -100,6 +113,18 @@ impl RuntimeHostHandle {
     pub fn mark_conversation_read(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
         request(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, r))
     }
+    pub fn queue_attachment(&self, request_value: AttachmentSendRequest) -> Result<(), RuntimeDriverError> {
+        request(&self.sender, |r| RuntimeCommand::QueueAttachment(request_value, r))
+    }
+    pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
+        request(&self.sender, |r| RuntimeCommand::RetryAttachment(id, r))
+    }
+    pub fn cancel_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
+        request(&self.sender, |r| RuntimeCommand::CancelAttachment(id, r))
+    }
+    pub fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
+        request(&self.sender, RuntimeCommand::AttachmentSnapshot)
+    }
     pub fn network_snapshot(&self) -> Result<NetworkSnapshot, RuntimeDriverError> {
         request(&self.sender, RuntimeCommand::NetworkSnapshot)
     }
@@ -111,10 +136,7 @@ impl RuntimeHostHandle {
     pub fn wake_delivery(&self) { let _ = self.sender.send(RuntimeCommand::Wake); }
 }
 
-pub struct RuntimeHostOwner {
-    sender: Sender<RuntimeCommand>,
-    join: Option<JoinHandle<()>>,
-}
+pub struct RuntimeHostOwner { sender: Sender<RuntimeCommand>, join: Option<JoinHandle<()>> }
 impl RuntimeHostOwner {
     pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         engine: EngineHandle,
@@ -131,9 +153,7 @@ impl RuntimeHostOwner {
             let _ = communication.recover(startup);
             record(&mut diagnostics, &mut sequence, startup, Component::Engine, HealthState::Starting, "RUNTIME_STARTED");
             run_loop(receiver, &engine, &mut pairing, &mut communication, &mut tor, &mut diagnostics, &mut sequence);
-            communication.shutdown();
-            pairing.shutdown();
-            tor.shutdown();
+            communication.shutdown(); pairing.shutdown(); tor.shutdown();
         });
         (handle, Self { sender, join: Some(join) })
     }
@@ -142,20 +162,14 @@ impl RuntimeHostOwner {
         let (tx, rx) = mpsc::channel();
         self.sender.send(RuntimeCommand::Shutdown(tx)).map_err(|_| RuntimeDriverError::Communication)?;
         let _ = rx.recv();
-        if let Some(join) = self.join.take() {
-            join.join().map_err(|_| RuntimeDriverError::Communication)?;
-        }
+        if let Some(join) = self.join.take() { join.join().map_err(|_| RuntimeDriverError::Communication)?; }
         Ok(())
     }
 }
 
 fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
-    receiver: Receiver<RuntimeCommand>,
-    engine: &EngineHandle,
-    pairing: &mut P,
-    communication: &mut C,
-    tor: &mut T,
-    diagnostics: &mut DiagnosticBuffer,
+    receiver: Receiver<RuntimeCommand>, engine: &EngineHandle, pairing: &mut P,
+    communication: &mut C, tor: &mut T, diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
 ) {
     loop {
@@ -182,13 +196,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 }
 
 fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
-    command: RuntimeCommand,
-    engine: &EngineHandle,
-    pairing: &mut P,
-    communication: &mut C,
-    tor: &T,
-    diagnostics: &mut DiagnosticBuffer,
-    now: Timestamp,
+    command: RuntimeCommand, engine: &EngineHandle, pairing: &mut P,
+    communication: &mut C, tor: &T, diagnostics: &mut DiagnosticBuffer, now: Timestamp,
 ) {
     match command {
         RuntimeCommand::CreatePairing(id, r) => { let _ = r.send(pairing.create(id, now)); }
@@ -197,6 +206,24 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::RejectPairing(id, r) => { let _ = r.send(pairing.reject(id)); }
         RuntimeCommand::CancelPairing(id, r) => { let _ = r.send(pairing.cancel(id)); }
         RuntimeCommand::MarkConversationRead(id, r) => { let _ = r.send(communication.mark_conversation_read(id, now)); }
+        RuntimeCommand::QueueAttachment(request_value, r) => {
+            let body = MessageBody::new(format!("Attachment: {}", request_value.name))
+                .map_err(|_| RuntimeDriverError::Communication);
+            let result = body.and_then(|body| {
+                engine.dispatch(EngineCommand::QueueMessage {
+                    message_id: MessageId::from_opaque(request_value.message_id),
+                    conversation_id: ConversationId::from_opaque(request_value.conversation_id),
+                    body,
+                    reply_to: None,
+                    at: now,
+                }).map_err(|_| RuntimeDriverError::Engine)?;
+                communication.prepare_attachment(&request_value, now)
+            });
+            let _ = r.send(result);
+        }
+        RuntimeCommand::RetryAttachment(id, r) => { let _ = r.send(communication.retry_attachment(id, now)); }
+        RuntimeCommand::CancelAttachment(id, r) => { let _ = r.send(communication.cancel_attachment(id, now)); }
+        RuntimeCommand::AttachmentSnapshot(r) => { let _ = r.send(communication.attachment_snapshot()); }
         RuntimeCommand::NetworkSnapshot(r) => {
             let result = engine.snapshot().map_err(|_| RuntimeDriverError::Engine).map(|snapshot| {
                 let peers = snapshot.contacts.into_iter()
@@ -226,12 +253,8 @@ fn current_timestamp() -> Result<Timestamp, RuntimeDriverError> {
     Timestamp::from_unix_millis(millis).map_err(|_| RuntimeDriverError::Engine)
 }
 fn record(
-    buffer: &mut DiagnosticBuffer,
-    sequence: &mut u128,
-    at: Timestamp,
-    component: Component,
-    state: HealthState,
-    code: &str,
+    buffer: &mut DiagnosticBuffer, sequence: &mut u128, at: Timestamp,
+    component: Component, state: HealthState, code: &str,
 ) {
     let event_id = OpaqueId::from_u128(*sequence);
     *sequence = sequence.saturating_add(1);
