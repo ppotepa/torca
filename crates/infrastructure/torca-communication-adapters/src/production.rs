@@ -25,7 +25,7 @@ use torca_transport_tor::PeerListener;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
-    InboundTextReceiptAdapter, PeerLinkAdapter, ReadStateAdapter, ReceiptPeerTransport,
+    HealthPeerLinkAdapter, InboundTextReceiptAdapter, ReadStateAdapter, ReceiptPeerTransport,
     RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto, TextPeerTransport,
     TextWorkerAdapter,
 };
@@ -37,8 +37,16 @@ const RETRY_BASE: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommunicationBuildError { Storage, Attachment, Cache }
-impl fmt::Display for CommunicationBuildError { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{self:?}") } }
+pub enum CommunicationBuildError {
+    Storage,
+    Attachment,
+    Cache,
+}
+impl fmt::Display for CommunicationBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
 impl std::error::Error for CommunicationBuildError {}
 
 pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
@@ -70,6 +78,8 @@ where
 {
     let peer_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
+    let health_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
     let link = SharedPeerLink::new(PeerLink::new(
         inputs.listener,
         ActiveRelationshipStore::new(peer_relationships),
@@ -83,48 +93,121 @@ where
         inputs.peer_secret_store,
     ));
 
-    let text_relationships = SqlCipherStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let text_transport = TextPeerTransport::new(text_relationships, link.clone(), shared_crypto.clone(), inputs.local_identity_id, ACK_TIMEOUT);
-    let text_store = SqlCipherDurableStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let text = TextWorkerAdapter::new(DeliveryWorker::new(text_store, text_transport, RetryPolicy { max_attempts: RETRY_MAX_ATTEMPTS, base_delay: RETRY_BASE, max_delay: RETRY_MAX }));
+    let text_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let text_transport = TextPeerTransport::new(
+        text_relationships,
+        link.clone(),
+        shared_crypto.clone(),
+        inputs.local_identity_id,
+        ACK_TIMEOUT,
+    );
+    let text_store = SqlCipherDurableStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let text = TextWorkerAdapter::new(DeliveryWorker::new(
+        text_store,
+        text_transport,
+        RetryPolicy {
+            max_attempts: RETRY_MAX_ATTEMPTS,
+            base_delay: RETRY_BASE,
+            max_delay: RETRY_MAX,
+        },
+    ));
 
-    let control_relationships = SqlCipherStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let control_transport = ReceiptPeerTransport::new(control_relationships, link.clone(), shared_crypto.clone(), inputs.local_identity_id, ACK_TIMEOUT);
-    let control_outbox = SqlCipherControlOutbox::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let control = SharedControlWorker::new(ControlDeliveryWorker::new(control_outbox, control_transport));
+    let control_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let control_transport = ReceiptPeerTransport::new(
+        control_relationships,
+        link.clone(),
+        shared_crypto.clone(),
+        inputs.local_identity_id,
+        ACK_TIMEOUT,
+    );
+    let control_outbox = SqlCipherControlOutbox::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let control = SharedControlWorker::new(ControlDeliveryWorker::new(
+        control_outbox,
+        control_transport,
+    ));
 
-    let inbound_relationships = SqlCipherStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let inbound_store = SqlCipherInboundStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let inbound = InboundTextReceiptAdapter::new(inbound_relationships, link.clone(), shared_crypto, inbound_store, control.clone(), engine.clone(), inputs.local_identity_id);
+    let inbound_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let inbound_store = SqlCipherInboundStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let inbound = InboundTextReceiptAdapter::new(
+        inbound_relationships,
+        link.clone(),
+        shared_crypto,
+        inbound_store,
+        control.clone(),
+        engine.clone(),
+        inputs.local_identity_id,
+    );
 
-    let attachment_relationships = SqlCipherStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let attachment_messages = SqlCipherMessageStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let attachment_metadata = SqlCipherAttachmentStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Attachment)?;
-    let attachment_controls = SqlCipherAttachmentStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Attachment)?;
+    let attachment_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let attachment_messages = SqlCipherMessageStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let attachment_metadata = SqlCipherAttachmentStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Attachment)?;
+    let attachment_controls = SqlCipherAttachmentStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Attachment)?;
     let attachment_cache = FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
     let attachment_transfer = AttachmentTransfer::new(
-        attachment_relationships, attachment_messages, link.clone(),
+        attachment_relationships,
+        attachment_messages,
+        link.clone(),
         ManagedPeerSecrets::new(RustCryptoProvider, inputs.attachment_secret_store),
-        attachment_metadata, attachment_cache, staging_root, inputs.local_identity_id, ACK_TIMEOUT,
-    ).map_err(|_| CommunicationBuildError::Attachment)?;
+        attachment_metadata,
+        attachment_cache,
+        staging_root,
+        inputs.local_identity_id,
+        ACK_TIMEOUT,
+    )
+    .map_err(|_| CommunicationBuildError::Attachment)?;
     let attachments = AttachmentControlAdapter::new(attachment_transfer, attachment_controls);
 
-    let export_relationships = SqlCipherStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let export_messages = SqlCipherMessageStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let export_metadata = SqlCipherAttachmentStore::open(database_path, database_key).map_err(|_| CommunicationBuildError::Attachment)?;
+    let export_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let export_messages = SqlCipherMessageStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let export_metadata = SqlCipherAttachmentStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Attachment)?;
     let export_cache = FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
     let attachment_export = AttachmentExportAdapter::new(
-        export_relationships, export_messages, export_metadata, export_cache,
+        export_relationships,
+        export_messages,
+        export_metadata,
+        export_cache,
         ManagedPeerSecrets::new(RustCryptoProvider, inputs.export_secret_store),
     );
 
-    let read_state = SqlCipherReadState::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
-    let relationship_store = SqlCipherRelationshipAdmin::open(database_path, database_key).map_err(|_| CommunicationBuildError::Storage)?;
+    let read_state = SqlCipherReadState::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let relationship_store = SqlCipherRelationshipAdmin::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
     let relationship_cache = FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
-    let relationships = RelationshipAdminAdapter::new(relationship_store, inputs.relationship_secret_store, relationship_cache, staging_root.to_path_buf());
+    let relationships = RelationshipAdminAdapter::new(
+        relationship_store,
+        inputs.relationship_secret_store,
+        relationship_cache,
+        staging_root.to_path_buf(),
+    );
 
+    let peer = HealthPeerLinkAdapter::new(
+        link,
+        health_relationships,
+        inputs.local_identity_id,
+    );
     Ok(TorcaCommunicationDriver::new(
-        engine, Box::new(PeerLinkAdapter::new(link)), Box::new(text), Box::new(control), Box::new(inbound),
-        Box::new(attachments), Box::new(attachment_export), Box::new(ReadStateAdapter::new(read_state)), Box::new(relationships),
+        engine,
+        Box::new(peer),
+        Box::new(text),
+        Box::new(control),
+        Box::new(inbound),
+        Box::new(attachments),
+        Box::new(attachment_export),
+        Box::new(ReadStateAdapter::new(read_state)),
+        Box::new(relationships),
     ))
 }

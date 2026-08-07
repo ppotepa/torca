@@ -11,6 +11,9 @@ pub use attachment_controls::AttachmentControlAdapter;
 mod attachment_export;
 pub use attachment_export::AttachmentExportAdapter;
 
+mod peer_health;
+pub use peer_health::HealthPeerLinkAdapter;
+
 mod relationship_admin;
 pub use relationship_admin::RelationshipAdminAdapter;
 
