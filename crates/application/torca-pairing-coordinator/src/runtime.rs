@@ -5,11 +5,13 @@ use torca_contacts::ContactRoute;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityKey, KeyAlgorithm, PublicIdentity};
 use torca_pairing::{PairingCode, PairingRole, PairingSession, PairingSessionId, PeerProposal};
-use torca_pairing_protocol::{PairingEnvelope, PairingOffer, PairingPayload};
+use torca_pairing_protocol::{
+    PairingApproval, PairingEnvelope, PairingOffer, PairingPayload,
+};
 
 use crate::{
-    PairingCoordinator, PairingCoordinatorError, PairingCryptoPort, PairingRendezvousPort,
-    encode_invite_uri, invitation_expires_at,
+    PairingApprovalError, PairingApprovalPort, PairingCoordinator, PairingCoordinatorError,
+    PairingCryptoPort, PairingRendezvousPort, encode_invite_uri, invitation_expires_at,
 };
 
 /// Public local material used to construct an encrypted pairing offer. Private keys and
@@ -22,7 +24,6 @@ pub struct LocalPairingContext {
     pub capability_id: OpaqueId,
 }
 
-/// Presentation-safe result of creating an invitation.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingInvitation {
@@ -32,17 +33,19 @@ pub struct PairingInvitation {
     pub expires_at: Timestamp,
 }
 
-/// Summary of one bounded rendezvous poll.
 #[must_use]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PairingPollReport {
     pub offers_applied: usize,
+    pub approvals_applied: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PairingRuntimeError {
     Coordinator(PairingCoordinatorError),
+    Approval(PairingApprovalError),
     Engine,
+    IdentityMissing,
     InvalidOffer,
     UnsupportedAlgorithm,
     UnexpectedPayload,
@@ -59,25 +62,36 @@ impl From<PairingCoordinatorError> for PairingRuntimeError {
         Self::Coordinator(value)
     }
 }
+impl From<PairingApprovalError> for PairingRuntimeError {
+    fn from(value: PairingApprovalError) -> Self {
+        Self::Approval(value)
+    }
+}
 
-/// Single application owner that connects pairing transport events to the ClientEngine state
-/// machine. It stores only the local/remote public offer envelopes needed for transcript binding.
-pub struct PairingRuntime<R, C> {
+/// Single application owner connecting encrypted rendezvous events to the domain pairing state.
+pub struct PairingRuntime<R, C, A> {
     coordinator: PairingCoordinator<R, C>,
     engine: EngineHandle,
+    approval: A,
     local_offers: BTreeMap<PairingSessionId, PairingEnvelope>,
     remote_offers: BTreeMap<PairingSessionId, PairingEnvelope>,
 }
 
-impl<R, C> PairingRuntime<R, C>
+impl<R, C, A> PairingRuntime<R, C, A>
 where
     R: PairingRendezvousPort,
     C: PairingCryptoPort,
+    A: PairingApprovalPort,
 {
-    pub const fn new(coordinator: PairingCoordinator<R, C>, engine: EngineHandle) -> Self {
+    pub const fn new(
+        coordinator: PairingCoordinator<R, C>,
+        engine: EngineHandle,
+        approval: A,
+    ) -> Self {
         Self {
             coordinator,
             engine,
+            approval,
             local_offers: BTreeMap::new(),
             remote_offers: BTreeMap::new(),
         }
@@ -140,14 +154,50 @@ where
         Ok(())
     }
 
-    /// Applies decrypted offers to the engine. Approval/completion payloads are intentionally
-    /// rejected until their cryptographic workflow is installed by the next runtime stage.
+    /// Sends an identity-key-signed approval bound to the canonical creator/joiner transcript.
+    /// Repeating this call is safe: Ed25519 signing is deterministic and the domain transition is
+    /// only applied once, while re-pushing the same semantic approval can recover a lost response.
+    pub fn approve(
+        &mut self,
+        session_id: PairingSessionId,
+        now: Timestamp,
+    ) -> Result<(), PairingRuntimeError> {
+        let session = self.session(session_id)?;
+        let (creator, joiner) = self.ordered_offers(session_id, session.role())?;
+        let digest = self.approval.transcript_digest(&creator, &joiner)?;
+        let identity = self
+            .engine
+            .snapshot()
+            .map_err(|_| PairingRuntimeError::Engine)?
+            .identity
+            .ok_or(PairingRuntimeError::IdentityMissing)?;
+        let proof = self.approval.sign_approval(
+            identity.public().key().key_id(),
+            session_id,
+            digest,
+        )?;
+        let envelope = PairingEnvelope {
+            pairing_id: session_id.to_opaque(),
+            payload: PairingPayload::Approval(PairingApproval {
+                transcript_digest: digest,
+                proof,
+            }),
+        };
+        self.coordinator.push(session_id, &envelope)?;
+        if !session.local_approved() {
+            self.engine
+                .dispatch(EngineCommand::ApprovePairing { session_id, at: now })
+                .map_err(|_| PairingRuntimeError::Engine)?;
+        }
+        Ok(())
+    }
+
     pub fn poll(
         &mut self,
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<PairingPollReport, PairingRuntimeError> {
-        let session = self.session(session_id)?;
+        let role = self.session(session_id)?.role();
         let envelopes = self.coordinator.poll(session_id)?;
         let mut report = PairingPollReport::default();
         for envelope in envelopes {
@@ -165,7 +215,7 @@ where
                         .map_err(|_| PairingRuntimeError::Engine)?;
                     self.remote_offers.insert(session_id, envelope);
                     report.offers_applied += 1;
-                    if session.role() == PairingRole::Creator {
+                    if role == PairingRole::Creator {
                         let local_offer = self
                             .local_offers
                             .get(&session_id)
@@ -174,7 +224,30 @@ where
                         self.coordinator.push(session_id, &local_offer)?;
                     }
                 }
-                PairingPayload::Approval(_) | PairingPayload::Completion(_) => {
+                PairingPayload::Approval(remote_approval) => {
+                    let (creator, joiner) = self.ordered_offers(session_id, role)?;
+                    let digest = self.approval.transcript_digest(&creator, &joiner)?;
+                    if remote_approval.transcript_digest != digest {
+                        return Err(PairingRuntimeError::Approval(
+                            PairingApprovalError::InvalidTranscript,
+                        ));
+                    }
+                    let remote = self.remote_identity(session_id)?;
+                    self.approval.verify_approval(
+                        &remote,
+                        session_id,
+                        digest,
+                        &remote_approval.proof,
+                    )?;
+                    let session = self.session(session_id)?;
+                    if !session.remote_approved() {
+                        self.engine
+                            .dispatch(EngineCommand::RemoteApproved { session_id, at: now })
+                            .map_err(|_| PairingRuntimeError::Engine)?;
+                        report.approvals_applied += 1;
+                    }
+                }
+                PairingPayload::Completion(_) => {
                     return Err(PairingRuntimeError::UnexpectedPayload);
                 }
             }
@@ -191,8 +264,8 @@ where
         self.coordinator.close(session_id).map_err(Into::into)
     }
 
-    pub fn into_parts(self) -> (PairingCoordinator<R, C>, EngineHandle) {
-        (self.coordinator, self.engine)
+    pub fn into_parts(self) -> (PairingCoordinator<R, C>, EngineHandle, A) {
+        (self.coordinator, self.engine, self.approval)
     }
 
     fn session(&self, session_id: PairingSessionId) -> Result<PairingSession, PairingRuntimeError> {
@@ -203,6 +276,41 @@ where
             .into_iter()
             .find(|session| session.id() == session_id)
             .ok_or(PairingRuntimeError::SessionNotFound)
+    }
+
+    fn ordered_offers(
+        &self,
+        session_id: PairingSessionId,
+        role: PairingRole,
+    ) -> Result<(PairingEnvelope, PairingEnvelope), PairingRuntimeError> {
+        let local = self
+            .local_offers
+            .get(&session_id)
+            .cloned()
+            .ok_or(PairingRuntimeError::InvalidOffer)?;
+        let remote = self
+            .remote_offers
+            .get(&session_id)
+            .cloned()
+            .ok_or(PairingRuntimeError::InvalidOffer)?;
+        Ok(match role {
+            PairingRole::Creator => (local, remote),
+            PairingRole::Joiner => (remote, local),
+        })
+    }
+
+    fn remote_identity(
+        &self,
+        session_id: PairingSessionId,
+    ) -> Result<PublicIdentity, PairingRuntimeError> {
+        let envelope = self
+            .remote_offers
+            .get(&session_id)
+            .ok_or(PairingRuntimeError::InvalidOffer)?;
+        match &envelope.payload {
+            PairingPayload::Offer(offer) => Ok(peer_proposal(offer)?.public_identity),
+            _ => Err(PairingRuntimeError::InvalidOffer),
+        }
     }
 
     fn local_offer(
