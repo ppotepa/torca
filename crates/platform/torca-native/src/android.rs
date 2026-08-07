@@ -11,11 +11,6 @@ use torca_identity::KeyId;
 const BRIDGE_CLASS: &str = "com/torca/host/AndroidKeystoreBridge";
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
-/// Captures the process Java VM when Android loads `libtorca_bridge.so`.
-///
-/// # Safety
-///
-/// Called by the Android runtime with a valid JavaVM pointer during `System.loadLibrary`.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
@@ -29,17 +24,12 @@ pub unsafe extern "system" fn JNI_OnLoad(
     JNI_VERSION_1_6
 }
 
-/// Android Keystore-backed implementation of the common protected-secret port.
 pub(crate) struct AndroidProtectedSecretStore {
     namespace: &'static str,
 }
-
 impl AndroidProtectedSecretStore {
-    pub(crate) const fn new(namespace: &'static str) -> Self {
-        Self { namespace }
-    }
+    pub(crate) const fn new(namespace: &'static str) -> Self { Self { namespace } }
 }
-
 impl ProtectedSecretStore for AndroidProtectedSecretStore {
     fn insert(&mut self, key_id: KeyId, secret: &[u8]) -> Result<(), ProtectedSecretStoreError> {
         let namespace = self.namespace;
@@ -78,9 +68,7 @@ impl ProtectedSecretStore for AndroidProtectedSecretStore {
                 &[JValue::Object(&namespace_object), JValue::Object(&key_object)],
             )?;
             let object = value.l()?;
-            if object.is_null() {
-                return Ok(None);
-            }
+            if object.is_null() { return Ok(None); }
             let array = JByteArray::from(object);
             env.convert_byte_array(&array).map(Some)
         })
@@ -98,22 +86,33 @@ impl ProtectedSecretStore for AndroidProtectedSecretStore {
                 "delete",
                 "(Ljava/lang/String;Ljava/lang/String;)Z",
                 &[JValue::Object(&namespace_object), JValue::Object(&key_object)],
-            )?
-            .z()
+            )?.z()
         })
     }
 }
 
 pub(crate) fn database_path() -> Result<PathBuf, ProtectedSecretStoreError> {
+    string_method("databasePath").map(PathBuf::from)
+}
+pub(crate) fn runtime_root_path() -> Result<PathBuf, ProtectedSecretStoreError> {
+    string_method("runtimeRootPath").map(PathBuf::from)
+}
+pub(crate) fn tor_executable_path() -> Result<PathBuf, ProtectedSecretStoreError> {
+    string_method("torExecutablePath").map(PathBuf::from)
+}
+pub(crate) fn relay_endpoint() -> Result<String, ProtectedSecretStoreError> {
+    string_method("relayEndpoint")
+}
+
+fn string_method(method: &str) -> Result<String, ProtectedSecretStoreError> {
     with_env(|env| {
-        let value = env.call_static_method(BRIDGE_CLASS, "databasePath", "()Ljava/lang/String;", &[])?;
+        let value = env.call_static_method(BRIDGE_CLASS, method, "()Ljava/lang/String;", &[])?;
         let object = value.l()?;
         if object.is_null() {
-            return Err(jni::errors::Error::NullPtr("Android databasePath"));
+            return Err(jni::errors::Error::NullPtr("Android bridge string result"));
         }
-        let path = JString::from(object);
-        let value: String = env.get_string(&path)?.into();
-        Ok(PathBuf::from(value))
+        let value = JString::from(object);
+        Ok(env.get_string(&value)?.into())
     })
 }
 
@@ -129,12 +128,8 @@ fn with_env<T>(
     match operation(&mut env) {
         Ok(value) => Ok(value),
         Err(_) => {
-            if env.exception_check().unwrap_or(false) {
-                let _ = env.exception_clear();
-            }
-            Err(ProtectedSecretStoreError(
-                "Android Keystore JNI operation failed".into(),
-            ))
+            if env.exception_check().unwrap_or(false) { let _ = env.exception_clear(); }
+            Err(ProtectedSecretStoreError("Android JNI operation failed".into()))
         }
     }
 }
