@@ -93,12 +93,29 @@ pub struct PairingSession {
     remote_proposal: Option<PeerProposal>,
 }
 impl PairingSession {
-    /// Creates a creator session.
+    /// Creates a creator session waiting for a remote proposal.
     pub const fn creator(id: PairingSessionId, code: PairingCode, expires_at: Timestamp) -> Self {
         Self {
             id,
             code,
             role: PairingRole::Creator,
+            state: PairingState::Open,
+            expires_at,
+            local_approved: false,
+            remote_approved: false,
+            remote_proposal: None,
+        }
+    }
+    /// Creates a joiner session while rendezvous resolves the creator proposal.
+    ///
+    /// The proposal is deliberately absent here so presentation code only needs the invitation
+    /// code. The application coordinator later supplies the verified proposal through
+    /// [`Self::peer_joined`].
+    pub const fn joining(id: PairingSessionId, code: PairingCode, expires_at: Timestamp) -> Self {
+        Self {
+            id,
+            code,
+            role: PairingRole::Joiner,
             state: PairingState::Open,
             expires_at,
             local_approved: false,
@@ -152,14 +169,14 @@ impl PairingSession {
     pub const fn remote_approved(&self) -> bool {
         self.remote_approved
     }
-    /// Records a peer proposal on the creator side.
+    /// Records the verified remote proposal for either local role.
     pub fn peer_joined(
         &mut self,
         proposal: PeerProposal,
         now: Timestamp,
     ) -> Result<(), PairingError> {
         self.ensure_live(now)?;
-        if self.role != PairingRole::Creator || self.state != PairingState::Open {
+        if self.state != PairingState::Open {
             return Err(PairingError::InvalidTransition);
         }
         self.remote_proposal = Some(proposal);
