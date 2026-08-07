@@ -18,6 +18,8 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         const val EXTRA_CONVERSATION_ID = "torca.conversation_id"
+        const val NOTIFICATION_PREFERENCES = "torca.notification.preferences"
+        const val NOTIFICATION_ENABLED = "enabled"
         @Volatile var isVisible: Boolean = false
         init { System.loadLibrary("torca_bridge") }
     }
@@ -32,20 +34,38 @@ class MainActivity : FlutterActivity() {
         } else {
             applicationContext.startService(service)
         }
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
         }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        notificationChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "torca/notifications").also { channel ->
+        notificationChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "torca/notifications",
+        ).also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "takeInitialConversation" -> {
                         val value = pendingConversationId
                         pendingConversationId = null
                         result.success(value)
+                    }
+                    "setNotificationsEnabled" -> {
+                        val enabled = call.arguments as? Boolean
+                        if (enabled == null) {
+                            result.error("invalid_argument", "Expected boolean notification preference", null)
+                        } else {
+                            applicationContext
+                                .getSharedPreferences(NOTIFICATION_PREFERENCES, MODE_PRIVATE)
+                                .edit()
+                                .putBoolean(NOTIFICATION_ENABLED, enabled)
+                                .apply()
+                            result.success(null)
+                        }
                     }
                     else -> result.notImplemented()
                 }

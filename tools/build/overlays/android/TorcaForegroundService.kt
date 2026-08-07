@@ -58,11 +58,17 @@ class TorcaForegroundService : Service() {
             .build()
 
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(SERVICE_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
+            startForeground(
+                SERVICE_NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+            )
         } else {
             startForeground(SERVICE_NOTIFICATION_ID, notification)
         }
-        check(NativeRuntimeBridge.nativeEnsureRuntime()) { "Unable to initialize Torca process runtime" }
+        check(NativeRuntimeBridge.nativeEnsureRuntime()) {
+            "Unable to initialize Torca process runtime"
+        }
         pollMessageNotifications()
         handler.postDelayed(notificationPoller, NOTIFICATION_POLL_MS)
     }
@@ -95,7 +101,9 @@ class TorcaForegroundService : Service() {
                 val conversation = conversations.optJSONObject(index) ?: continue
                 val id = conversation.optString("id")
                 val contactId = conversation.optString("contactId")
-                if (id.isNotEmpty() && contactId.isNotEmpty()) conversationContacts[id] = contactId
+                if (id.isNotEmpty() && contactId.isNotEmpty()) {
+                    conversationContacts[id] = contactId
+                }
             }
         }
         val newMessages = ArrayList<Triple<String, String, String>>()
@@ -117,14 +125,24 @@ class TorcaForegroundService : Service() {
             notificationSnapshotSeeded = true
             return
         }
-        if (MainActivity.isVisible) return
+        if (!messageNotificationsEnabled() || MainActivity.isVisible) return
         for ((messageId, conversationId, displayName) in newMessages) {
             showMessageNotification(messageId, conversationId, displayName)
         }
     }
 
-    private fun showMessageNotification(messageId: String, conversationId: String, displayName: String) {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+    private fun messageNotificationsEnabled(): Boolean =
+        getSharedPreferences(MainActivity.NOTIFICATION_PREFERENCES, MODE_PRIVATE)
+            .getBoolean(MainActivity.NOTIFICATION_ENABLED, true)
+
+    private fun showMessageNotification(
+        messageId: String,
+        conversationId: String,
+        displayName: String,
+    ) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
         val pendingIntent = PendingIntent.getActivity(
             this,
             messageId.hashCode(),
@@ -149,7 +167,8 @@ class TorcaForegroundService : Service() {
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .build()
-        getSystemService(NotificationManager::class.java).notify(messageId.hashCode(), notification)
+        getSystemService(NotificationManager::class.java)
+            .notify(messageId.hashCode(), notification)
     }
 
     private fun createServiceChannel() {

@@ -19,27 +19,41 @@ AppNavigationController? _navigation;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  const bool useMemoryGateway = bool.fromEnvironment('TORCA_USE_MEMORY_GATEWAY', defaultValue: false);
+  const bool useMemoryGateway = bool.fromEnvironment(
+    'TORCA_USE_MEMORY_GATEWAY',
+    defaultValue: false,
+  );
   final preferences = LocalPreferences();
   await preferences.load();
-  final EngineGateway gateway = useMemoryGateway ? MemoryEngineGateway() : await _openNativeGateway();
+  final EngineGateway gateway =
+      useMemoryGateway ? MemoryEngineGateway() : await _openNativeGateway();
   final navigation = AppNavigationController();
   _navigation = navigation;
   _deepLinkRouter = DeepLinkRouter(navigation);
-  try { await _deepLinkRouter!.initialize(); } on Object {
+  try {
+    await _deepLinkRouter!.initialize();
+  } on Object {
     // Deep links are an optional entry path; failure must not prevent secure runtime startup.
   }
   if (Platform.isAndroid) {
-    _androidNotificationRouter = AndroidNotificationRouter(navigation);
-    try { await _androidNotificationRouter!.initialize(); } on Object {
-      // Notification routing is local UI integration; messaging remains owned by RuntimeHost.
+    _androidNotificationRouter = AndroidNotificationRouter(navigation, preferences);
+    try {
+      await _androidNotificationRouter!.initialize();
+    } on Object {
+      // Notification routing/preferences are local platform integration; messaging remains runtime-owned.
     }
   }
   if (Platform.isWindows) {
     _desktopLifecycle = DesktopLifecycle(gateway, preferences, navigation);
     await _desktopLifecycle!.initialize();
   }
-  runApp(TorcaApp(gateway: gateway, navigation: navigation, preferences: preferences));
+  runApp(
+    TorcaApp(
+      gateway: gateway,
+      navigation: navigation,
+      preferences: preferences,
+    ),
+  );
 }
 
 Future<EngineGateway> _openNativeGateway() async {
@@ -48,8 +62,12 @@ Future<EngineGateway> _openNativeGateway() async {
     final result = await nativeGateway.initialize();
     if (result.ok) return nativeGateway;
     await nativeGateway.dispose();
-    return UnavailableEngineGateway(result.error ?? 'native Torca engine failed to initialize');
+    return UnavailableEngineGateway(
+      result.error ?? 'native Torca engine failed to initialize',
+    );
   } on Object catch (error) {
-    return UnavailableEngineGateway('native Torca engine is unavailable: $error');
+    return UnavailableEngineGateway(
+      'native Torca engine is unavailable: $error',
+    );
   }
 }
