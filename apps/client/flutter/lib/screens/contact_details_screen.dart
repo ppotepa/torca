@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../widgets/connection_state_presenter.dart';
 
 class ContactDetailsScreen extends StatelessWidget {
   const ContactDetailsScreen({required this.gateway, required this.contact, super.key});
@@ -12,84 +13,99 @@ class ContactDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
-    valueListenable: gateway.snapshots,
-    builder: (context, snapshot, _) {
-      ContactDto? current;
-      for (final item in snapshot.contacts) {
-        if (item.id == contact.id) { current = item; break; }
-      }
-      if (current == null) {
-        return Scaffold(
-          appBar: AppBar(title: const Text('Contact details')),
-          body: const Center(child: Text('This contact has been removed.')),
-        );
-      }
-      ConversationDto? conversation;
-      for (final item in snapshot.conversations) {
-        if (item.contactId == current.id) { conversation = item; break; }
-      }
-      final value = current;
-      final safetyNumber = value.safetyNumber;
-      final blocked = value.status == 'blocked';
-      return Scaffold(
-        appBar: AppBar(title: Text(value.displayName)),
-        body: ListView(
-          padding: const EdgeInsets.all(24),
-          children: <Widget>[
-            const CircleAvatar(radius: 36, child: Icon(Icons.person_outline, size: 36)),
-            const SizedBox(height: 12),
-            Center(child: Text(value.displayName, style: Theme.of(context).textTheme.headlineSmall)),
-            const SizedBox(height: 12),
-            Center(
-              child: OutlinedButton.icon(
-                onPressed: () => _rename(context, value),
-                icon: const Icon(Icons.edit_outlined),
-                label: const Text('Rename contact'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _DetailTile(label: 'Contact ID', value: value.id, copyable: true),
-            _DetailTile(label: 'Connection', value: _connectionLabel(value.connectionState, blocked)),
-            _DetailTile(label: 'Relationship', value: blocked ? 'Blocked' : value.status),
-            _DetailTile(label: 'Onion address', value: value.onionAddress, copyable: true),
-            if (safetyNumber != null && safetyNumber.isNotEmpty) ...<Widget>[
-              _DetailTile(label: 'Safety number', value: safetyNumber, copyable: true),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(12, 4, 12, 12),
-                child: Text(
-                  'Compare this value with your contact over another trusted channel. Both devices calculate the same value from their verified public identity keys.',
+        valueListenable: gateway.snapshots,
+        builder: (context, snapshot, _) {
+          ContactDto? current;
+          for (final item in snapshot.contacts) {
+            if (item.id == contact.id) {
+              current = item;
+              break;
+            }
+          }
+          if (current == null) {
+            return Scaffold(
+              appBar: AppBar(title: const Text('Contact details')),
+              body: const Center(child: Text('This contact has been removed.')),
+            );
+          }
+          ConversationDto? conversation;
+          for (final item in snapshot.conversations) {
+            if (item.contactId == current.id) {
+              conversation = item;
+              break;
+            }
+          }
+          final value = current;
+          final safetyNumber = value.safetyNumber;
+          final blocked = value.status == 'blocked';
+          final connection = ConnectionStatePresenter.peer(
+            state: value.connectionState,
+            blocked: blocked,
+          );
+          return Scaffold(
+            appBar: AppBar(title: Text(value.displayName)),
+            body: ListView(
+              padding: const EdgeInsets.all(24),
+              children: <Widget>[
+                const CircleAvatar(radius: 36, child: Icon(Icons.person_outline, size: 36)),
+                const SizedBox(height: 12),
+                Center(
+                  child: Text(
+                    value.displayName,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
                 ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            FilledButton.tonalIcon(
-              onPressed: () => blocked ? _unblock(context, value) : _block(context, value),
-              icon: Icon(blocked ? Icons.check_circle_outline : Icons.block),
-              label: Text(blocked ? 'Unblock contact' : 'Block contact'),
+                const SizedBox(height: 12),
+                Center(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _rename(context, value),
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Rename contact'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _DetailTile(label: 'Contact ID', value: value.id, copyable: true),
+                _DetailTile(label: 'Connection', value: connection.label),
+                _DetailTile(label: 'Relationship', value: blocked ? 'Blocked' : value.status),
+                _DetailTile(label: 'Onion address', value: value.onionAddress, copyable: true),
+                if (safetyNumber != null && safetyNumber.isNotEmpty) ...<Widget>[
+                  _DetailTile(label: 'Safety number', value: safetyNumber, copyable: true),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(12, 4, 12, 12),
+                    child: Text(
+                      'Compare this value with your contact over another trusted channel. Both devices calculate the same value from their verified public identity keys.',
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                FilledButton.tonalIcon(
+                  onPressed: () => blocked ? _unblock(context, value) : _block(context, value),
+                  icon: Icon(blocked ? Icons.check_circle_outline : Icons.block),
+                  label: Text(blocked ? 'Unblock contact' : 'Block contact'),
+                ),
+                if (conversation != null) ...<Widget>[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => _clearHistory(context, conversation!),
+                    icon: const Icon(Icons.delete_sweep_outlined),
+                    label: const Text('Clear conversation history'),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => _remove(context, value),
+                  icon: const Icon(Icons.person_remove_outlined),
+                  label: const Text('Remove contact and local history'),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Direct messages are authenticated against the peer identity and are sent peer-to-peer through Tor. Blocking closes active peer sessions and prevents reconnects.',
+                ),
+              ],
             ),
-            if (conversation != null) ...<Widget>[
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => _clearHistory(context, conversation!),
-                icon: const Icon(Icons.delete_sweep_outlined),
-                label: const Text('Clear conversation history'),
-              ),
-            ],
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => _remove(context, value),
-              icon: const Icon(Icons.person_remove_outlined),
-              label: const Text('Remove contact and local history'),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Direct messages are authenticated against the peer identity and are sent peer-to-peer through Tor. Blocking closes active peer sessions and prevents reconnects.',
-            ),
-          ],
-        ),
+          );
+        },
       );
-    },
-  );
 
   Future<void> _rename(BuildContext context, ContactDto value) async {
     final controller = TextEditingController(text: value.displayName);
@@ -106,15 +122,22 @@ class ContactDetailsScreen extends StatelessWidget {
         ),
         actions: <Widget>[
           TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(controller.text), child: const Text('Save')),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
     controller.dispose();
     final normalized = name?.trim();
     if (normalized == null || normalized.isEmpty || !context.mounted) return;
-    final result = await gateway.execute(RenameContactCommandDto(contactIdHex: value.id, displayName: normalized));
-    if (context.mounted && !result.ok) _error(context, result.error ?? 'Could not rename contact');
+    final result = await gateway.execute(
+      RenameContactCommandDto(contactIdHex: value.id, displayName: normalized),
+    );
+    if (context.mounted && !result.ok) {
+      _error(context, result.error ?? 'Could not rename contact');
+    }
   }
 
   Future<void> _block(BuildContext context, ContactDto value) async {
@@ -126,12 +149,16 @@ class ContactDetailsScreen extends StatelessWidget {
     );
     if (!confirmed || !context.mounted) return;
     final result = await gateway.execute(BlockContactCommandDto(contactIdHex: value.id));
-    if (context.mounted && !result.ok) _error(context, result.error ?? 'Could not block contact');
+    if (context.mounted && !result.ok) {
+      _error(context, result.error ?? 'Could not block contact');
+    }
   }
 
   Future<void> _unblock(BuildContext context, ContactDto value) async {
     final result = await gateway.execute(UnblockContactCommandDto(contactIdHex: value.id));
-    if (context.mounted && !result.ok) _error(context, result.error ?? 'Could not unblock contact');
+    if (context.mounted && !result.ok) {
+      _error(context, result.error ?? 'Could not unblock contact');
+    }
   }
 
   Future<void> _clearHistory(BuildContext context, ConversationDto conversation) async {
@@ -142,10 +169,14 @@ class ContactDetailsScreen extends StatelessWidget {
       'Clear history',
     );
     if (!confirmed || !context.mounted) return;
-    final result = await gateway.execute(ClearConversationHistoryCommandDto(conversationIdHex: conversation.id));
+    final result = await gateway.execute(
+      ClearConversationHistoryCommandDto(conversationIdHex: conversation.id),
+    );
     if (context.mounted) {
       if (result.ok) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Conversation history cleared')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Conversation history cleared')),
+        );
       } else {
         _error(context, result.error ?? 'Could not clear conversation history');
       }
@@ -169,7 +200,12 @@ class ContactDetailsScreen extends StatelessWidget {
     }
   }
 
-  Future<bool> _confirm(BuildContext context, String title, String message, String action) async =>
+  Future<bool> _confirm(
+    BuildContext context,
+    String title,
+    String message,
+    String action,
+  ) async =>
       await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -180,20 +216,11 @@ class ContactDetailsScreen extends StatelessWidget {
             FilledButton(onPressed: () => Navigator.of(context).pop(true), child: Text(action)),
           ],
         ),
-      ) ?? false;
+      ) ??
+      false;
 
   void _error(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  String _connectionLabel(String state, bool blocked) {
-    if (blocked) return 'Blocked';
-    return switch (state) {
-      'ready' => 'Direct P2P over Tor',
-      'connecting' || 'handshaking' => 'Connecting',
-      'reconnecting' => 'Reconnecting',
-      _ => 'Offline',
-    };
   }
 }
 
@@ -203,23 +230,30 @@ class IdentityDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Your Torca identity')),
-    body: ListView(
-      padding: const EdgeInsets.all(24),
-      children: <Widget>[
-        const CircleAvatar(radius: 36, child: Icon(Icons.shield_outlined, size: 36)),
-        const SizedBox(height: 20),
-        _DetailTile(label: 'Display name', value: snapshot.identity?.displayName ?? 'Not created'),
-        _DetailTile(label: 'Tor', value: snapshot.torState),
-        if (snapshot.onionAddress != null)
-          _DetailTile(label: 'Onion address', value: snapshot.onionAddress!, copyable: true),
-        const SizedBox(height: 16),
-        const Text(
-          'Private signing keys and pairwise secrets never leave protected platform storage. The onion address is safe to copy; secret material is never exposed here.',
+        appBar: AppBar(title: const Text('Your Torca identity')),
+        body: ListView(
+          padding: const EdgeInsets.all(24),
+          children: <Widget>[
+            const CircleAvatar(radius: 36, child: Icon(Icons.shield_outlined, size: 36)),
+            const SizedBox(height: 20),
+            _DetailTile(
+              label: 'Display name',
+              value: snapshot.identity?.displayName ?? 'Not created',
+            ),
+            _DetailTile(label: 'Tor', value: snapshot.torState),
+            if (snapshot.onionAddress != null)
+              _DetailTile(
+                label: 'Onion address',
+                value: snapshot.onionAddress!,
+                copyable: true,
+              ),
+            const SizedBox(height: 16),
+            const Text(
+              'Private signing keys and pairwise secrets never leave protected platform storage. The onion address is safe to copy; secret material is never exposed here.',
+            ),
+          ],
         ),
-      ],
-    ),
-  );
+      );
 }
 
 class _DetailTile extends StatelessWidget {
@@ -230,21 +264,23 @@ class _DetailTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-    child: ListTile(
-      title: Text(label),
-      subtitle: SelectableText(value),
-      trailing: copyable
-          ? IconButton(
-              tooltip: 'Copy',
-              icon: const Icon(Icons.copy_outlined),
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: value));
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label copied')));
-                }
-              },
-            )
-          : null,
-    ),
-  );
+        child: ListTile(
+          title: Text(label),
+          subtitle: SelectableText(value),
+          trailing: copyable
+              ? IconButton(
+                  tooltip: 'Copy',
+                  icon: const Icon(Icons.copy_outlined),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: value));
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('$label copied')),
+                      );
+                    }
+                  },
+                )
+              : null,
+        ),
+      );
 }

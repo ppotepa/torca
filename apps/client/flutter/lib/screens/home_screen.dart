@@ -6,6 +6,8 @@ import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../settings/local_preferences.dart';
 import '../widgets/app_overflow_menu.dart';
+import '../widgets/connection_indicator.dart';
+import '../widgets/tor_status_indicator.dart';
 import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
 import 'diagnostics_screen.dart';
@@ -16,15 +18,9 @@ const double _wideLayoutBreakpoint = 900;
 const double _conversationRailWidth = 360;
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({
-    required this.gateway,
-    required this.preferences,
-    super.key,
-  });
-
+  const HomeScreen({required this.gateway, required this.preferences, super.key});
   final EngineGateway gateway;
   final LocalPreferences preferences;
-
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -41,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: <Widget>[
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
-                child: _TorStatus(state: snapshot.torState),
+                child: TorStatusIndicator(state: snapshot.torState),
               ),
               AppOverflowMenu(
                 hasIdentity: snapshot.identity != null,
@@ -52,8 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
           body: snapshot.identity == null
               ? _IdentitySetup(gateway: widget.gateway)
               : LayoutBuilder(builder: (context, constraints) {
-                  void contactInfo(ContactDto contact) =>
-                      Navigator.of(context).push<void>(
+                  void contactInfo(ContactDto contact) => Navigator.of(context).push<void>(
                         MaterialPageRoute(
                           builder: (_) => ContactDetailsScreen(
                             gateway: widget.gateway,
@@ -126,9 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       case AppOverflowAction.settings:
         Navigator.of(context).push<void>(
-          MaterialPageRoute(
-            builder: (_) => SettingsScreen(preferences: widget.preferences),
-          ),
+          MaterialPageRoute(builder: (_) => SettingsScreen(preferences: widget.preferences)),
         );
       case AppOverflowAction.about:
         showAboutDialog(
@@ -153,23 +146,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     return conversations.first;
-  }
-}
-
-class _TorStatus extends StatelessWidget {
-  const _TorStatus({required this.state});
-  final String state;
-  @override
-  Widget build(BuildContext context) {
-    final ready = state == 'ready';
-    return Tooltip(
-      message: 'Tor: $state',
-      child: Chip(
-        avatar: Icon(ready ? Icons.security : Icons.security_outlined, size: 17),
-        label: Text(ready ? 'Tor' : state),
-        visualDensity: VisualDensity.compact,
-      ),
-    );
   }
 }
 
@@ -202,15 +178,14 @@ class _ConversationList extends StatelessWidget {
       itemBuilder: (context, index) {
         final conversation = conversations[index];
         final contact = _contact(conversation.contactId);
-        final connection = contact?.connectionState ?? 'disconnected';
         return ListTile(
           selected: conversation.id == selectedConversationId,
           leading: const CircleAvatar(child: Icon(Icons.person_outline)),
           title: Text(contact?.displayName ?? 'Contact'),
           subtitle: Text(contact?.status == 'blocked' ? 'Blocked' : conversation.status),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-            _ConnectionIndicator(
-              state: connection,
+            ConnectionIndicator(
+              state: contact?.connectionState ?? 'disconnected',
               blocked: contact?.status == 'blocked',
             ),
             if (contact != null)
@@ -231,37 +206,6 @@ class _ConversationList extends StatelessWidget {
       if (contact.id == id) return contact;
     }
     return null;
-  }
-}
-
-class _ConnectionIndicator extends StatelessWidget {
-  const _ConnectionIndicator({required this.state, required this.blocked});
-  final String state;
-  final bool blocked;
-  @override
-  Widget build(BuildContext context) {
-    if (blocked) {
-      return const Tooltip(message: 'Blocked', child: Icon(Icons.block, size: 18));
-    }
-    final ready = state == 'ready';
-    final connecting = state == 'connecting' ||
-        state == 'handshaking' ||
-        state == 'reconnecting';
-    return Tooltip(
-      message: ready ? 'Direct P2P over Tor' : state,
-      child: Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-        Icon(
-          ready
-              ? Icons.hub
-              : connecting
-                  ? Icons.sync
-                  : Icons.cloud_off_outlined,
-          size: 18,
-        ),
-        const SizedBox(width: 5),
-        Text(ready ? 'P2P' : connecting ? '…' : 'offline'),
-      ]),
-    );
   }
 }
 
@@ -317,10 +261,7 @@ class _IdentitySetupState extends State<_IdentitySetup> {
                 TextField(
                   controller: controller,
                   enabled: !_submitting,
-                  decoration: InputDecoration(
-                    labelText: 'Display name',
-                    errorText: _error,
-                  ),
+                  decoration: InputDecoration(labelText: 'Display name', errorText: _error),
                   onSubmitted: _submitting ? null : (_) => _createIdentity(),
                 ),
                 const SizedBox(height: 12),
