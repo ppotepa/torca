@@ -1,191 +1,271 @@
 # Torca architecture
 
-Torca is a modular monolith built from focused Rust libraries and **one responsive Flutter client**. Deployment remains deliberately simple: one client application per device plus the optional ephemeral pairing relay.
+Torca 0.1 is a modular Rust monolith behind one responsive Flutter client. Windows and Android are platform hosts for the same application, not separate products or business-code implementations.
 
-## Top-level composition
+## Runtime ownership
 
 ```text
-                 one responsive Flutter client
-                           |
-                     FfiEngineGateway
-                           |
-             torca-native C ABI / cdylib
-                           |
-                       EngineBridge
-                           |
-               ClientEngine single writer
-                           |
-         application workflows / projections
-                           |
-                    mini-domain crates
-                           ^
-                           |
-       storage / crypto / peer / Tor / OS adapters
+Flutter UI
+   |
+   v
+EngineGateway / Bridge DTO v4
+   |
+   v
+torca-native C ABI
+   |
+   v
+process-owned NativeEngineRuntime
+   |
+   +-- EngineBridge / ClientEngineActor
+   |
+   +-- RuntimeHost
+       |
+       +-- PairingDriver
+       |    +-- PairingRuntime
+       |    +-- PairingCoordinator
+       |    +-- RendezvousClient
+       |    +-- protected identity / peer secrets
+       |
+       +-- TorDriver
+       |    +-- owned Tor child process
+       |    +-- SOCKS endpoint
+       |    +-- local onion service endpoint
+       |
+       +-- CommunicationDriver
+            +-- SharedPeerLink
+            +-- durable text DeliveryWorker
+            +-- durable control/receipt worker
+            +-- inbound exactly-once dispatcher
+            +-- read-state workflow
+            +-- attachment transfer
+            +-- diagnostics
 ```
 
-Windows and Android are build targets, not alternative application implementations. UI behavior may adapt to screen width, input model and lifecycle, but there is only one set of screens, commands and application state.
+The process runtime is the owner of Tor, pairing, peer sessions and delivery workers. Flutter owns presentation handles only. Destroying an Android Activity or Flutter engine does not destroy the Torca runtime. A real application Quit uses the explicit process-shutdown capability.
 
 ## Deployable units
 
 Version 0.1 has two deployable units:
 
-1. **Torca client** — the same Flutter/Rust client built for Windows or Android.
-2. **Torca relay** — an untrusted, in-memory rendezvous broker used only while contacts pair.
+1. **Torca client** — one Flutter/Rust client built for Windows or Android.
+2. **Torca relay** — an untrusted, in-memory rendezvous service used only while contacts pair.
 
-The relay is not a message server, presence server, account server, directory, backup service or mailbox.
+The relay is not a mailbox, account server, presence service, message history store or normal messaging path.
 
-## Component groups
+## Dependency groups
 
 ### Foundation
 
-Dependency-light identifiers, timestamps, command/event metadata and error primitives.
+`torca-foundation` contains identifiers, timestamps, command metadata and small dependency-light primitives.
 
 ### Domains
 
-Focused mini-domains own vocabulary and invariants:
+Focused domain crates own invariants for:
 
 - identity;
-- contacts;
-- pairing;
+- contacts and peer credential metadata;
 - conversations;
+- pairing;
 - messaging;
 - receipts;
 - attachments.
 
-Domain crates may depend on foundation and explicitly approved domain contracts. They never depend on Flutter, FFI, SQLite implementations, sockets or Tor process APIs.
+Domain crates do not depend on Flutter, FFI, SQLite implementations, Tor process APIs or OS key stores.
 
 ### Application
 
-Application code coordinates use cases across domains. `ClientEngine` is the single writer for mutable client state. Flutter must not implement a parallel workflow state machine.
+Application crates coordinate use cases and own inward-facing ports. Important owners are:
+
+- `torca-client-engine` — single writer for domain/application state;
+- `torca-runtime-host` — process background command/tick owner;
+- `torca-pairing-coordinator` — pairing orchestration boundary;
+- `torca-delivery` — durable text delivery worker;
+- `torca-control-delivery` — durable receipt/control delivery port + worker;
+- `torca-communication-driver` — central communication dispatcher contract;
+- `torca-read-state` — mark-read/receipt workflow;
+- `torca-diagnostics` — bounded redacted diagnostic events.
+
+Flutter never owns retries, outbox state, pairing cryptography, private keys or SQL.
 
 ### Infrastructure
 
-Infrastructure implements inward-facing ports and owns SQLCipher, cryptographic providers, encrypted file storage, peer sessions and Tor integration.
+Infrastructure implements application ports:
+
+- `torca-storage-sqlite` — SQLCipher, migrations and operational SQL;
+- `torca-crypto` — Ed25519, X25519, HKDF, XChaCha20-Poly1305 and protected-secret adapters;
+- `torca-rendezvous-client` — relay client and Tor-backed relay transport;
+- `torca-peer-link` / `torca-peer-shared` — authenticated peer link ownership and shared link handle;
+- `torca-transport-tor` — Tor process, SOCKS, peer listener and framed streams;
+- `torca-communication-adapters` — production composition for text/control/inbound/read/attachments;
+- `torca-attachment-sqlite` / `torca-attachment-transfer` — durable resumable attachment transfer;
+- `torca-pairing-driver` / `torca-tor-driver` — concrete RuntimeHost drivers;
+- `torca-file-storage` — encrypted attachment cache/staging.
+
+Superseded `torca-peer-runtime` and `torca-peer-delivery` crates were removed.
 
 ### Protocol
 
-Protocol crates own explicitly versioned peer/relay/wire representations. Domain aggregates are never serialized directly.
+Protocol crates own versioned, bounded wire representations:
 
-### Platform
+- `torca-wire` — TCP frame boundaries;
+- `torca-relay-protocol` — relay request/response v2;
+- `torca-pairing-protocol` — encrypted pairing payloads;
+- `torca-peer-protocol` — authenticated peer handshake/data/ACK;
+- `torca-attachment-protocol` — attachment metadata/chunk/resume/complete.
 
-`torca-bridge` maps application concepts to presentation-safe bridge DTOs.
+Domain aggregates are never serialized directly as the network protocol.
 
-`torca-native` owns the narrow shared C ABI and the process-local Rust engine lifetime. It builds as `torca_bridge.dll` on Windows and `libtorca_bridge.so` on Android.
+## Bridge and ABI v4
 
-OS-specific adapters remain only for capabilities that actually require an OS API, for example Windows DPAPI, Android Keystore, tray behavior, notifications and lifecycle ownership.
+`torca-bridge` projects application state into presentation-safe DTOs. Contract version 4 includes:
+
+- identity;
+- pairing sessions;
+- contacts and per-contact peer connection state;
+- conversations/messages;
+- Tor state and local onion endpoint;
+- attachment progress;
+- diagnostics access;
+- `MarkConversationRead`;
+- Create/Join/Approve/Reject/Cancel pairing commands.
+
+The C ABI uses opaque process handles and pointer/length UTF-8 arguments. `torca_engine_destroy` releases one presentation handle. `torca_process_shutdown` is the explicit process-wide shutdown used by real Quit.
+
+## Storage and SQL rule
+
+All operational SQLite/SQLCipher statements live as external `.sql` files under storage/infrastructure SQL directories and are executed with parameters. Rust application/domain source must not embed operational SQL.
+
+The final SQLCipher catalog currently contains migrations **1 through 14**. Important invariants include:
+
+- outbound message insert creates durable outbox ownership;
+- outbox lifecycle updates user-visible message lifecycle atomically;
+- stale claimed sends recover to queued;
+- delivery attempt counts and timestamps stay synchronized;
+- inbound dedup and message persistence are atomic;
+- receipts and message-state transitions are atomic;
+- control/receipt jobs are durable;
+- peer credential metadata is persistent while key material remains protected outside SQL;
+- attachment metadata/progress are persistent;
+- attachment preparation failure transitions the outbound message to `Failed` and dead-letters its text outbox row.
+
+## Key material
+
+Secrets do not cross the bridge.
+
+Windows uses DPAPI-backed protected stores. Android uses Android Keystore-backed stores. Separate namespaces are used for database, identity and peer secrets. SQLCipher receives a protected random database key. Identity private keys and pairwise peer secrets are referenced by opaque handles.
+
+Pairing uses ephemeral X25519 + HKDF and authenticated encryption. Explicit approvals sign a canonical transcript with the local Ed25519 identity key. Pairwise communication secrets are derived with a separate KDF context and stored through protected peer-secret storage.
+
+## Pairing flow
+
+```text
+Creator: Create invitation
+   -> Rust CSPRNG code + TTL
+   -> ephemeral X25519 key
+   -> relay slot + capability/token
+
+Joiner: Join code / QR
+   -> relay join
+   -> encrypted PairingOffer exchange
+
+Both
+   -> validate peer identity/route/capability
+   -> explicit user approval
+   -> signed canonical transcript approval
+   -> verified remote approval
+   -> completion confirmation
+   -> derive pairwise peer secret
+   -> protected secret store
+   -> atomic Contact + Conversation + PeerCredential metadata
+   -> relay/ephemeral cleanup
+```
+
+The invitation code/QR contains no long-term secret. The relay only carries opaque encrypted pairing material and is not used after the relationship is committed.
+
+## Direct messaging flow
+
+```text
+Flutter QueueMessage
+   -> ClientEngine
+   -> SQLCipher message + durable outbox
+   -> RuntimeHost wakes communication driver
+   -> PeerLink reuse/connect
+   -> Tor SOCKS -> peer onion service
+   -> signed authenticated handshake
+   -> application payload encode
+   -> pairwise AEAD
+   -> PeerMessage::Data
+   -> peer decrypt/validate
+   -> atomic inbound dedup + persist
+   -> protocol ACK
+   -> durable Delivered receipt
+```
+
+`Accepted` and `Duplicate` ACKs both complete the sender outbox because retransmission uses a stable envelope identifier. Rejected/timeouts are rescheduled according to bounded retry policy; dead-letter is durable.
+
+## Read receipts
+
+Opening a conversation emits `MarkConversationRead` through the bridge. Rust atomically changes eligible inbound messages to Read and inserts durable Read receipt jobs. Receipts use the same peer link/reconnect path rather than a separate socket stack.
+
+## Attachments
+
+Flutter selects a local file and passes path + metadata once. Rust immediately copies/encrypts it into app-private storage, then owns transfer state.
+
+```text
+picker path
+   -> prepare encrypted cache
+   -> persistent attachment metadata/progress
+   -> same SharedPeerLink
+   -> bounded chunks
+   -> duplicate-safe offset tracking
+   -> interruption/restart resume
+   -> SHA-256 completion verification
+   -> atomic final cache/staging finalization
+```
+
+Dart does not perform chunking, encryption, resume bookkeeping or retry scheduling.
+
+## Tor runtime
+
+Tor is a packaged runtime dependency, not discovered through PATH or Tor Browser. Build/run/deploy stage the packaged binary and relay endpoint configuration. `OwnedTorDriver` starts and monitors the child process, exposes SOCKS/onion state, and restarts failed Tor processes with bounded backoff/jitter.
+
+## Platform lifecycle
+
+### Windows
+
+- runner-level single-instance guard;
+- second launch activates the first window;
+- window close hides to tray;
+- tray Show restores/focuses;
+- tray Quit explicitly shuts down the process RuntimeHost, then releases FFI handles/window resources;
+- desktop notifications observe Rust snapshots only.
+
+### Android
+
+- foreground service uses the `remoteMessaging` service type;
+- service owns the process lifetime of the Rust runtime;
+- Activity/Flutter-engine recreation releases only presentation handles;
+- true process/service shutdown explicitly stops the Rust process runtime;
+- packaged Tor path/runtime root/relay endpoint are supplied by the Android host bridge.
+
+## Diagnostics
+
+Diagnostics are bounded and redacted. They may include component/state/code/timestamps but must not include plaintext messages, private keys, pairwise secrets, capability values or protected database keys.
 
 ## One-client UI rule
 
-Responsive behavior is expressed inside the shared Flutter widget tree:
+There is one shared Flutter widget tree. Screen width changes layout only; it does not select a second application implementation.
 
 ```text
-compact width
-    -> conversation list
-    -> routed ConversationScreen
-    -> ConversationPane
-
-wide width
-    -> conversation list | ConversationPane
+compact -> routed screens -> ConversationPane
+wide    -> conversation list | ConversationPane
 ```
 
-`ConversationPane` is the same widget in both cases. No desktop/mobile feature fork is permitted for business behavior.
-
-## Native boundary rule
-
-Flutter sends typed bridge commands through `FfiEngineGateway`. The C ABI exposes narrow operations and presentation snapshots; it does not expose Rust domain object layouts.
-
-```text
-Dart command DTO
-   -> UTF-8 / primitive ABI arguments
-   -> EngineBridge command
-   -> ClientEngine
-   -> BridgeSnapshot
-   -> presentation-safe JSON buffer
-   -> Dart DTO
-```
-
-Memory gateway selection is explicit development/test behavior only. Native-runtime failure is an error state, never a silent fallback.
-
-## Storage rule
-
-All SQL lives under the SQLite/SQLCipher storage crate as `.sql` files. Runtime business SQL in Rust source is prohibited. Storage owns transactions, migrations and raw database connections.
-
-Outbound messages use a durable outbox. Inbound envelopes use deduplication. Recovery behavior must remain idempotent across process interruption.
-
-## Network rule
-
-Pairing may use the relay to exchange opaque short-lived rendezvous material. Once a contact is verified, normal messaging is peer-to-peer through Tor onion services. Peer sessions operate on encrypted protocol envelopes, not Flutter DTOs or domain objects.
-
-## Core dependency direction
-
-```text
-foundation
-   <- domains
-   <- application
-   <- bridge
-   <- native/client presentation
-
-infrastructure implements ports defined inward
-```
-
-Infrastructure does not leak into domains. Flutter and OS hosts do not become alternative application layers.
-
-## Core rules
-
-1. One Flutter client source for every supported platform.
-2. One Rust `ClientEngine` owner per running client process.
-3. All state-changing client operations pass through that engine.
-4. Domain code contains no SQL, sockets, Flutter or FFI types.
-5. SQL is external, parameterized and storage-owned.
-6. Private keys never cross into Flutter DTOs.
-7. Outbound delivery is durable and retryable; inbound delivery is deduplicated.
-8. Wire protocols are explicitly versioned.
-9. Cross-domain effects are coordinated by application code.
-10. Platform-specific code is limited to actual OS integration.
-11. `main` remains internally coherent after every commit.
-
-## Primary flows
-
-### Pairing
-
-```text
-Flutter command
-    -> ClientEngine pairing workflow
-    -> ephemeral relay exchange
-    -> explicit approvals and verification
-    -> contact + direct conversation
-    -> direct peer endpoint registered
-```
-
-### Sending a message
-
-```text
-Flutter command
-    -> ClientEngine
-    -> messaging domain
-    -> SQLCipher message + durable outbox transaction
-    -> encrypted peer envelope over Tor
-    -> protocol acknowledgement / receipt
-    -> projection snapshot
-    -> Flutter UI
-```
-
-### Receiving a message
-
-```text
-Tor peer stream
-    -> authenticated peer session
-    -> envelope verification/decryption
-    -> inbound deduplication
-    -> messaging domain/application handler
-    -> durable state
-    -> projection snapshot
-    -> Flutter UI
-```
+Pairing Create/Join, Tor/P2P indicators, mark-read, attachments and diagnostics are shared features.
 
 ## Developer operations
 
-Only three public scripts exist:
+Public entrypoints remain:
 
 ```powershell
 ./scripts/build.ps1
@@ -193,4 +273,8 @@ Only three public scripts exist:
 ./scripts/deploy.ps1
 ```
 
-All formatting, code generation, validation, platform bootstrap, native compilation and packaging details live under `tools/build`.
+Platform bootstrap, code generation, native compilation and packaging live under `tools/build`.
+
+## Validation status
+
+This document describes the final **source architecture**. It does not assert that the current source has passed the final owner Windows/Android/end-to-end validation matrix. Validation status and exact handoff are tracked in `0.1_PROGRESS.md` and `docs/0.1/RELEASE_HANDOFF.md`.
