@@ -20,7 +20,7 @@ pub use key_management::{
 };
 pub use pairing::{PairingKeyError, RustPairingCrypto};
 pub use peer_handshake::{Ed25519HandshakeVerifier, ManagedHandshakeSigner};
-pub use peer_secrets::ManagedPeerSecrets;
+pub use peer_secrets::{ManagedPeerSecrets, PeerSecretError};
 pub use ports::CryptoProvider;
 pub use production::RustCryptoProvider;
 pub use test_support::DeterministicTestCrypto;
