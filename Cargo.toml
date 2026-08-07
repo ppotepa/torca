@@ -14,6 +14,7 @@ members = [
     "services/relay",
     "crates/application/torca-client-engine",
     "crates/application/torca-delivery",
+    "crates/application/torca-pairing-coordinator",
     "crates/domains/torca-messaging",
     "crates/domains/torca-receipts",
     "crates/application/torca-projections",
