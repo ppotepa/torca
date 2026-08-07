@@ -1,4 +1,4 @@
-//! Durable outbound and inbound delivery orchestration independent from concrete transports or databases.
+//! Durable delivery orchestration and strict encrypted application payloads.
 
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
@@ -6,7 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use torca_foundation::{CommandId, OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageDirection, MessageId, MessageStatus, RetryPolicy};
 
-/// Durable outbox lifecycle state.
+const PAYLOAD_MAGIC: &[u8; 4] = b"TCAP";
+const PAYLOAD_VERSION: u16 = 1;
+pub const MAX_TEXT_PAYLOAD_BODY: usize = 16 * 1024;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutboxState {
     Pending,
@@ -15,7 +18,6 @@ pub enum OutboxState {
     DeadLetter,
 }
 
-/// Message and delivery metadata returned to a worker.
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboxRecord {
@@ -27,7 +29,6 @@ pub struct OutboxRecord {
     pub state: OutboxState,
 }
 
-/// Durable delivery persistence failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DurableDeliveryError {
     DuplicateMessage,
@@ -42,7 +43,6 @@ impl fmt::Display for DurableDeliveryError {
 }
 impl std::error::Error for DurableDeliveryError {}
 
-/// Transactional outbound outbox and lightweight envelope-dedup persistence port.
 pub trait DurableDeliveryStore {
     fn queue_outbound(
         &mut self,
@@ -70,8 +70,6 @@ pub trait DurableDeliveryStore {
     fn record_inbound(&mut self, envelope_id: OpaqueId) -> Result<bool, DurableDeliveryError>;
 }
 
-/// Atomic inbound persistence port. Implementations must commit deduplication and the inbound
-/// message together; returning `false` means the envelope was already committed previously.
 pub trait InboundMessageStore {
     fn persist_inbound(
         &mut self,
@@ -80,7 +78,6 @@ pub trait InboundMessageStore {
     ) -> Result<bool, DurableDeliveryError>;
 }
 
-/// In-memory reference implementation used only by tests and explicit previews.
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryDurableDeliveryStore {
     outbox: BTreeMap<MessageId, OutboxRecord>,
@@ -217,14 +214,12 @@ impl InboundMessageStore for InMemoryDurableDeliveryStore {
     }
 }
 
-/// Protocol acknowledgement accepted by the durable worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeliveryAck {
     Accepted,
     Duplicate,
 }
 
-/// Redaction-safe transport failure. Transport-specific details stay behind the adapter boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveryTransportError(pub String);
 impl fmt::Display for DeliveryTransportError {
@@ -234,12 +229,10 @@ impl fmt::Display for DeliveryTransportError {
 }
 impl std::error::Error for DeliveryTransportError {}
 
-/// One authenticated transport capable of waiting for the peer protocol ACK of a message.
 pub trait DeliveryTransport {
     fn send(&mut self, message: &Message) -> Result<DeliveryAck, DeliveryTransportError>;
 }
 
-/// Protocol ACK sink for inbound envelopes.
 pub trait InboundAcknowledger {
     fn acknowledge(
         &mut self,
@@ -248,7 +241,7 @@ pub trait InboundAcknowledger {
     ) -> Result<(), DeliveryTransportError>;
 }
 
-/// Summary of one bounded delivery pass.
+#[must_use]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DeliveryBatchReport {
     pub claimed: usize,
@@ -257,8 +250,6 @@ pub struct DeliveryBatchReport {
     pub dead_lettered: usize,
 }
 
-/// Delivery-worker failure. Individual transport failures are converted into retry/dead-letter
-/// decisions and therefore are not returned as worker failures.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeliveryWorkerError {
     Store(DurableDeliveryError),
@@ -277,7 +268,6 @@ impl From<DurableDeliveryError> for DeliveryWorkerError {
     }
 }
 
-/// Single owner of durable outbound delivery attempts.
 pub struct DeliveryWorker<S, T> {
     store: S,
     transport: T,
@@ -289,12 +279,10 @@ where
     S: DurableDeliveryStore,
     T: DeliveryTransport,
 {
-    /// Creates a worker. No background thread is hidden here; the runtime decides when to call it.
     pub const fn new(store: S, transport: T, retry_policy: RetryPolicy) -> Self {
         Self { store, transport, retry_policy }
     }
 
-    /// Requeues claims left behind by a previous process instance.
     pub fn recover_stale_claims(
         &mut self,
         claimed_before: Timestamp,
@@ -302,7 +290,6 @@ where
         self.store.recover_stale_claims(claimed_before).map_err(Into::into)
     }
 
-    /// Processes at most `limit` currently due records.
     pub fn run_once(
         &mut self,
         now: Timestamp,
@@ -310,7 +297,6 @@ where
     ) -> Result<DeliveryBatchReport, DeliveryWorkerError> {
         let records = self.store.claim_due(now, limit)?;
         let mut report = DeliveryBatchReport { claimed: records.len(), ..Default::default() };
-
         for record in records {
             let message_id = record.message.id();
             let attempts = record
@@ -340,13 +326,11 @@ where
         Ok(report)
     }
 
-    /// Consumes the worker and returns its owned adapters.
     pub fn into_parts(self) -> (S, T) {
         (self.store, self.transport)
     }
 }
 
-/// Applies inbound deduplication and persistence before acknowledging the peer.
 pub struct InboundDeliveryHandler<S, A> {
     store: S,
     acknowledger: A,
@@ -361,10 +345,6 @@ where
         Self { store, acknowledger }
     }
 
-    /// Commits an inbound message exactly once, then sends Accepted or Duplicate.
-    ///
-    /// If ACK transmission fails after commit, redelivery remains safe: the next call observes the
-    /// durable dedup marker and replies Duplicate without inserting a second message.
     pub fn handle(
         &mut self,
         envelope_id: OpaqueId,
@@ -395,5 +375,227 @@ impl std::error::Error for InboundDeliveryError {}
 impl From<DurableDeliveryError> for InboundDeliveryError {
     fn from(value: DurableDeliveryError) -> Self {
         Self::Store(value)
+    }
+}
+
+/// Payload kind encrypted inside `PeerMessage::Data`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApplicationPayloadKind {
+    Text,
+    Receipt,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextPayload {
+    pub message_id: OpaqueId,
+    pub conversation_id: OpaqueId,
+    pub contact_id: OpaqueId,
+    pub body: String,
+    pub reply_to: Option<OpaqueId>,
+    pub sent_at: Timestamp,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeliveryReceiptKind {
+    Delivered,
+    Read,
+}
+
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReceiptPayload {
+    pub receipt_id: OpaqueId,
+    pub message_id: OpaqueId,
+    pub contact_id: OpaqueId,
+    pub kind: DeliveryReceiptKind,
+    pub at: Timestamp,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApplicationPayload {
+    Text(TextPayload),
+    Receipt(ReceiptPayload),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApplicationPayloadError {
+    InvalidMagic,
+    UnsupportedVersion(u16),
+    UnknownKind(u8),
+    InvalidUtf8,
+    EmptyBody,
+    BodyTooLarge,
+    InvalidTimestamp,
+    InvalidReplyFlag,
+    Truncated,
+    TrailingBytes,
+}
+impl fmt::Display for ApplicationPayloadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+impl std::error::Error for ApplicationPayloadError {}
+
+pub struct ApplicationPayloadCodec;
+impl ApplicationPayloadCodec {
+    pub fn encode(payload: &ApplicationPayload) -> Result<Vec<u8>, ApplicationPayloadError> {
+        let mut output = Vec::new();
+        output.extend_from_slice(PAYLOAD_MAGIC);
+        output.extend_from_slice(&PAYLOAD_VERSION.to_be_bytes());
+        match payload {
+            ApplicationPayload::Text(text) => {
+                validate_text(text)?;
+                output.push(1);
+                output.extend_from_slice(text.message_id.as_bytes());
+                output.extend_from_slice(text.conversation_id.as_bytes());
+                output.extend_from_slice(text.contact_id.as_bytes());
+                output.extend_from_slice(&text.sent_at.to_unix_millis().to_be_bytes());
+                match text.reply_to {
+                    Some(reply) => {
+                        output.push(1);
+                        output.extend_from_slice(reply.as_bytes());
+                    }
+                    None => output.push(0),
+                }
+                let body = text.body.as_bytes();
+                output.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                output.extend_from_slice(body);
+            }
+            ApplicationPayload::Receipt(receipt) => {
+                output.push(2);
+                output.extend_from_slice(receipt.receipt_id.as_bytes());
+                output.extend_from_slice(receipt.message_id.as_bytes());
+                output.extend_from_slice(receipt.contact_id.as_bytes());
+                output.push(match receipt.kind {
+                    DeliveryReceiptKind::Delivered => 1,
+                    DeliveryReceiptKind::Read => 2,
+                });
+                output.extend_from_slice(&receipt.at.to_unix_millis().to_be_bytes());
+            }
+        }
+        Ok(output)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<ApplicationPayload, ApplicationPayloadError> {
+        let mut cursor = PayloadCursor::new(input);
+        if cursor.take(4)? != PAYLOAD_MAGIC {
+            return Err(ApplicationPayloadError::InvalidMagic);
+        }
+        let version = cursor.u16()?;
+        if version != PAYLOAD_VERSION {
+            return Err(ApplicationPayloadError::UnsupportedVersion(version));
+        }
+        let payload = match cursor.u8()? {
+            1 => {
+                let message_id = cursor.id()?;
+                let conversation_id = cursor.id()?;
+                let contact_id = cursor.id()?;
+                let sent_at = timestamp(cursor.i64()?)?;
+                let reply_to = match cursor.u8()? {
+                    0 => None,
+                    1 => Some(cursor.id()?),
+                    _ => return Err(ApplicationPayloadError::InvalidReplyFlag),
+                };
+                let body_len = usize::try_from(cursor.u32()?)
+                    .map_err(|_| ApplicationPayloadError::BodyTooLarge)?;
+                if body_len > MAX_TEXT_PAYLOAD_BODY {
+                    return Err(ApplicationPayloadError::BodyTooLarge);
+                }
+                let body = String::from_utf8(cursor.take(body_len)?.to_vec())
+                    .map_err(|_| ApplicationPayloadError::InvalidUtf8)?;
+                let text = TextPayload {
+                    message_id,
+                    conversation_id,
+                    contact_id,
+                    body,
+                    reply_to,
+                    sent_at,
+                };
+                validate_text(&text)?;
+                ApplicationPayload::Text(text)
+            }
+            2 => {
+                let receipt_id = cursor.id()?;
+                let message_id = cursor.id()?;
+                let contact_id = cursor.id()?;
+                let kind = match cursor.u8()? {
+                    1 => DeliveryReceiptKind::Delivered,
+                    2 => DeliveryReceiptKind::Read,
+                    value => return Err(ApplicationPayloadError::UnknownKind(value)),
+                };
+                let at = timestamp(cursor.i64()?)?;
+                ApplicationPayload::Receipt(ReceiptPayload {
+                    receipt_id,
+                    message_id,
+                    contact_id,
+                    kind,
+                    at,
+                })
+            }
+            value => return Err(ApplicationPayloadError::UnknownKind(value)),
+        };
+        if !cursor.is_empty() {
+            return Err(ApplicationPayloadError::TrailingBytes);
+        }
+        Ok(payload)
+    }
+}
+
+fn validate_text(text: &TextPayload) -> Result<(), ApplicationPayloadError> {
+    if text.body.is_empty() {
+        return Err(ApplicationPayloadError::EmptyBody);
+    }
+    if text.body.len() > MAX_TEXT_PAYLOAD_BODY || text.body.contains('\0') {
+        return Err(ApplicationPayloadError::BodyTooLarge);
+    }
+    Ok(())
+}
+
+fn timestamp(value: i64) -> Result<Timestamp, ApplicationPayloadError> {
+    Timestamp::from_unix_millis(value).map_err(|_| ApplicationPayloadError::InvalidTimestamp)
+}
+
+struct PayloadCursor<'a> {
+    input: &'a [u8],
+    offset: usize,
+}
+impl<'a> PayloadCursor<'a> {
+    const fn new(input: &'a [u8]) -> Self {
+        Self { input, offset: 0 }
+    }
+    fn take(&mut self, len: usize) -> Result<&'a [u8], ApplicationPayloadError> {
+        let end = self.offset.checked_add(len).ok_or(ApplicationPayloadError::Truncated)?;
+        let value = self.input.get(self.offset..end).ok_or(ApplicationPayloadError::Truncated)?;
+        self.offset = end;
+        Ok(value)
+    }
+    fn u8(&mut self) -> Result<u8, ApplicationPayloadError> {
+        Ok(self.take(1)?[0])
+    }
+    fn u16(&mut self) -> Result<u16, ApplicationPayloadError> {
+        Ok(u16::from_be_bytes(
+            self.take(2)?.try_into().map_err(|_| ApplicationPayloadError::Truncated)?,
+        ))
+    }
+    fn u32(&mut self) -> Result<u32, ApplicationPayloadError> {
+        Ok(u32::from_be_bytes(
+            self.take(4)?.try_into().map_err(|_| ApplicationPayloadError::Truncated)?,
+        ))
+    }
+    fn i64(&mut self) -> Result<i64, ApplicationPayloadError> {
+        Ok(i64::from_be_bytes(
+            self.take(8)?.try_into().map_err(|_| ApplicationPayloadError::Truncated)?,
+        ))
+    }
+    fn id(&mut self) -> Result<OpaqueId, ApplicationPayloadError> {
+        Ok(OpaqueId::from_bytes(
+            self.take(16)?.try_into().map_err(|_| ApplicationPayloadError::Truncated)?,
+        ))
+    }
+    const fn is_empty(&self) -> bool {
+        self.offset == self.input.len()
     }
 }
