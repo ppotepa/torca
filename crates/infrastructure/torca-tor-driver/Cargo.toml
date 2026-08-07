@@ -1,0 +1,13 @@
+[package]
+name = "torca-tor-driver"
+version = "0.1.0-alpha.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+torca-crypto = { path = "../torca-crypto" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-runtime-host = { path = "../../application/torca-runtime-host" }
+torca-transport-tor = { path = "../torca-transport-tor" }
