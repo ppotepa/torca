@@ -3,12 +3,23 @@
 //! Domain approval state remains in `torca-pairing`. This coordinator owns only rendezvous slot
 //! capabilities and crypto handles needed while one pairing session is active.
 
+mod invitation;
+mod invite_uri;
+mod policy;
+mod runtime;
+
 use core::fmt;
 use std::collections::BTreeMap;
 
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_pairing_protocol::PairingEnvelope;
+
+pub use invite_uri::{decode_invite_uri, encode_invite_uri};
+pub use policy::{PAIRING_INVITATION_TTL, invitation_expires_at};
+pub use runtime::{
+    LocalPairingContext, PairingInvitation, PairingPollReport, PairingRuntime, PairingRuntimeError,
+};
 
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
