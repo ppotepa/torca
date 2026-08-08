@@ -1,7 +1,7 @@
 use core::fmt;
 
 use torca_client_engine::{ClientEngineActor, EngineHandle};
-use torca_storage_sqlite::SqlCipherMessageStore;
+use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherSecurityProjection};
 
 #[cfg(target_os = "android")]
 #[path = "android.rs"]
@@ -21,6 +21,7 @@ pub(crate) struct ProductionEngineParts {
     pub engine: EngineHandle,
     pub actor: ClientEngineActor,
     pub history: SqlCipherMessageStore,
+    pub security: SqlCipherSecurityProjection,
 }
 
 pub(crate) const DATABASE_KEY_HANDLE: torca_identity::KeyId =
@@ -58,6 +59,8 @@ pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeC
         .map_err(|error| storage_error("open message repository", &error))?;
     let history = SqlCipherMessageStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open history reader", &error))?;
+    let security = SqlCipherSecurityProjection::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open security projection", &error))?;
     let receipts = SqlCipherReceiptStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open receipt repository", &error))?;
 
@@ -73,7 +76,7 @@ pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeC
         receipts,
     );
     let (engine, actor) = ClientEngineActor::spawn(engine);
-    Ok(ProductionEngineParts { engine, actor, history })
+    Ok(ProductionEngineParts { engine, actor, history, security })
 }
 
 #[cfg(target_os = "android")]
@@ -97,6 +100,8 @@ pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeC
         .map_err(|error| storage_error("open message repository", &error))?;
     let history = SqlCipherMessageStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open history reader", &error))?;
+    let security = SqlCipherSecurityProjection::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open security projection", &error))?;
     let receipts = SqlCipherReceiptStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open receipt repository", &error))?;
     let identity_keys = ManagedIdentityKeys::new(
@@ -112,7 +117,7 @@ pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeC
         receipts,
     );
     let (engine, actor) = ClientEngineActor::spawn(engine);
-    Ok(ProductionEngineParts { engine, actor, history })
+    Ok(ProductionEngineParts { engine, actor, history, security })
 }
 
 #[cfg(any(windows, target_os = "android"))]

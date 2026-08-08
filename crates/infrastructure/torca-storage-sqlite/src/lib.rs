@@ -13,6 +13,7 @@ mod read_state;
 mod receipt_repository;
 mod relationship_admin;
 mod repository;
+mod security_projection;
 mod sqlcipher;
 mod storage;
 
@@ -39,5 +40,9 @@ pub use relationship_admin::{
     RelationshipAdminError, RelationshipCleanup, SqlCipherRelationshipAdmin,
 };
 pub use repository::{SqlCipherStore, SqlCipherStoreOpenError};
+pub use security_projection::{
+    ContactSecuritySnapshot, ContactSecurityState, SecurityProjectionError,
+    SqlCipherSecurityProjection,
+};
 pub use sqlcipher::{DatabaseKey, SqlCipherBackend};
 pub use storage::StorageKernel;

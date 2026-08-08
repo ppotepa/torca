@@ -2,15 +2,15 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use torca_bridge::{
-    BridgeMessagePage, EngineBridge, bridge_message_from_domain,
-};
+use torca_bridge::{BridgeMessagePage, EngineBridge, bridge_message_from_domain};
 use torca_client_engine::{ClientEngineActor, EngineHandle};
 use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::MessageId;
 use torca_runtime_host::{HostTorState, RuntimeHostHandle, RuntimeHostOwner};
-use torca_storage_sqlite::SqlCipherMessageStore;
+use torca_storage_sqlite::{
+    ContactSecurityState, SqlCipherMessageStore, SqlCipherSecurityProjection,
+};
 
 use crate::composition::{NativeCompositionError, spawn_production_engine};
 use crate::json::{
@@ -32,6 +32,7 @@ pub struct NativeEngineRuntime {
     bridge: EngineBridge,
     actor: Option<ClientEngineActor>,
     history: SqlCipherMessageStore,
+    security: SqlCipherSecurityProjection,
     host: Option<RuntimeHostOwner>,
     host_start: Option<Receiver<HostStartResult>>,
     host_retry_at: Option<Instant>,
@@ -52,6 +53,7 @@ impl NativeEngineRuntime {
             bridge,
             actor: Some(parts.actor),
             history: parts.history,
+            security: parts.security,
             host: None,
             host_start: None,
             host_retry_at: None,
@@ -61,9 +63,7 @@ impl NativeEngineRuntime {
             diagnostics_json: "{\"events\":[]}".into(),
             query_json: "{\"messages\":[],\"hasMore\":false}".into(),
         };
-        if runtime.has_identity()? {
-            runtime.begin_runtime_start();
-        }
+        if runtime.has_identity()? { runtime.begin_runtime_start(); }
         if runtime.refresh_snapshot() != ABI_OK { return Err(()); }
         Ok(runtime)
     }
@@ -74,15 +74,28 @@ impl NativeEngineRuntime {
             return ABI_CLOSED;
         }
         self.advance_runtime_start();
+        if let Some(conversation_id) = command_conversation_id(&command) {
+            match self.security.requires_reverification(conversation_id) {
+                Ok(true) => {
+                    self.last_result_json = error_result(
+                        "contact identity changed; safety number re-verification required",
+                    );
+                    return ABI_ERROR;
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    self.last_result_json = error_result("contact security state unavailable");
+                    return ABI_ERROR;
+                }
+            }
+        }
         let creates_identity = matches!(&command, torca_bridge::BridgeCommand::CreateIdentity { .. });
         let result = self.bridge.execute(command);
         if !result.ok {
             self.last_result_json = bridge_result_json(&result);
             return ABI_ERROR;
         }
-        if creates_identity && !self.bridge.has_runtime() {
-            self.begin_runtime_start();
-        }
+        if creates_identity && !self.bridge.has_runtime() { self.begin_runtime_start(); }
         self.last_result_json = bridge_result_json(&result);
         let _ = self.refresh_snapshot();
         ABI_OK
@@ -99,6 +112,10 @@ impl NativeEngineRuntime {
             }
         };
         if let Err(error) = self.apply_history_summaries(&mut snapshot) {
+            self.last_result_json = error_result(error);
+            return ABI_ERROR;
+        }
+        if let Err(error) = self.apply_security_states(&mut snapshot) {
             self.last_result_json = error_result(error);
             return ABI_ERROR;
         }
@@ -175,8 +192,7 @@ impl NativeEngineRuntime {
 
     pub(crate) fn notification_snapshot_json(&self) -> Result<String, ()> {
         if self.is_closed() { return Err(()); }
-        self.bridge
-            .full_snapshot()
+        self.bridge.full_snapshot()
             .map(|snapshot| notification_snapshot_json(&snapshot))
             .map_err(|_| ())
     }
@@ -215,7 +231,8 @@ impl NativeEngineRuntime {
         &self,
         snapshot: &mut torca_bridge::BridgeSnapshot,
     ) -> Result<(), &'static str> {
-        let summaries = self.history.conversation_summaries().map_err(|_| "conversation summaries unavailable")?;
+        let summaries = self.history.conversation_summaries()
+            .map_err(|_| "conversation summaries unavailable")?;
         for conversation in &mut snapshot.conversations {
             let id = conversation.id.parse::<OpaqueId>().map(ConversationId::from_opaque)
                 .map_err(|_| "invalid conversation id in snapshot")?;
@@ -227,6 +244,26 @@ impl NativeEngineRuntime {
                 conversation.last_message_direction = Some(format!("{:?}", message.direction()).to_lowercase());
                 conversation.last_message_status = Some(format!("{:?}", message.status()).to_lowercase());
             }
+        }
+        Ok(())
+    }
+
+    fn apply_security_states(
+        &self,
+        snapshot: &mut torca_bridge::BridgeSnapshot,
+    ) -> Result<(), &'static str> {
+        let states = self.security.contact_states().map_err(|_| "contact security state unavailable")?;
+        for contact in &mut snapshot.contacts {
+            let id = contact.id.parse::<OpaqueId>()
+                .map(torca_contacts::ContactId::from_opaque)
+                .map_err(|_| "invalid contact id in snapshot")?;
+            let Some(security) = states.get(&id) else { continue };
+            contact.verification_status = match security.state {
+                ContactSecurityState::Unverified => "unverified",
+                ContactSecurityState::Verified => "verified",
+                ContactSecurityState::IdentityChanged => "changed",
+            }.into();
+            contact.verified_at_ms = security.verified_at.map(|at| at.to_unix_millis());
         }
         Ok(())
     }
@@ -293,6 +330,16 @@ impl NativeEngineRuntime {
 
     fn is_closed(&self) -> bool { self.actor.is_none() }
 }
+
+fn command_conversation_id(command: &torca_bridge::BridgeCommand) -> Option<ConversationId> {
+    let raw = match command {
+        torca_bridge::BridgeCommand::QueueMessage { conversation_id_hex, .. }
+        | torca_bridge::BridgeCommand::QueueAttachment { conversation_id_hex, .. } => conversation_id_hex,
+        _ => return None,
+    };
+    raw.parse::<OpaqueId>().ok().map(ConversationId::from_opaque)
+}
+
 impl Drop for NativeEngineRuntime {
     fn drop(&mut self) { let _ = self.close(); }
 }

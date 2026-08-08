@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import com.torca.host.AndroidKeystoreBridge
 import com.torca.host.TorcaForegroundService
 import io.flutter.embedding.android.FlutterActivity
@@ -27,6 +28,9 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         AndroidKeystoreBridge.initialize(applicationContext)
         super.onCreate(savedInstanceState)
+        // Torca never exposes private conversation content to screenshots, screen recording,
+        // recent-app thumbnails or OS capture surfaces from the Android activity.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         pendingConversationId = intent?.getStringExtra(EXTRA_CONVERSATION_ID)
         val service = Intent(applicationContext, TorcaForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

@@ -38,20 +38,34 @@ pub(crate) fn bridge_result_json(result: &BridgeResult) -> String {
 
 fn classify_error(error: &str) -> &'static str {
     let value = error.to_ascii_lowercase();
-    if value.contains("expired") { "pairing_expired" }
-    else if value.contains("already") || value.contains("exists") { "already_exists" }
-    else if value.contains("not found") || value.contains("missing") { "not_found" }
-    else if value.contains("invalid") || value.contains("empty") || value.contains("utf-8") { "invalid_input" }
-    else if value.contains("storage") || value.contains("database") || value.contains("sql") { "storage_failure" }
-    else if value.contains("attachment") { "attachment_failure" }
-    else if value.contains("tor") || value.contains("peer") || value.contains("connection") || value.contains("network") { "network_unavailable" }
-    else if value.contains("not ready") || value.contains("unavailable") || value.contains("closed") { "runtime_unavailable" }
-    else if value.contains("transition") || value.contains("blocked") || value.contains("conflict") { "operation_conflict" }
-    else { "operation_failed" }
+    if value.contains("identity changed") || value.contains("re-verification") {
+        "identity_changed"
+    } else if value.contains("expired") {
+        "pairing_expired"
+    } else if value.contains("already") || value.contains("exists") {
+        "already_exists"
+    } else if value.contains("not found") || value.contains("missing") {
+        "not_found"
+    } else if value.contains("invalid") || value.contains("empty") || value.contains("utf-8") {
+        "invalid_input"
+    } else if value.contains("storage") || value.contains("database") || value.contains("sql") {
+        "storage_failure"
+    } else if value.contains("attachment") {
+        "attachment_failure"
+    } else if value.contains("tor") || value.contains("peer") || value.contains("connection") || value.contains("network") {
+        "network_unavailable"
+    } else if value.contains("not ready") || value.contains("unavailable") || value.contains("closed") {
+        "runtime_unavailable"
+    } else if value.contains("transition") || value.contains("blocked") || value.contains("conflict") {
+        "operation_conflict"
+    } else {
+        "operation_failed"
+    }
 }
 
 fn error_message(code: &str) -> &'static str {
     match code {
+        "identity_changed" => "Contact identity changed. Verify the new Safety Number before sending.",
         "pairing_expired" => "The pairing invitation has expired.",
         "already_exists" => "This item already exists.",
         "not_found" => "The requested item is no longer available.",

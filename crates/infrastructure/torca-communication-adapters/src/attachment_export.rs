@@ -18,7 +18,9 @@ use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherStore};
 
 const CACHE_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-CACHE-V1";
 const NONCE_BYTES: usize = 24;
-const TEMP_EXPORT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+// "Open" creates a plaintext hand-off for the OS. Keep that exposure window short; explicit
+// Save As destinations are user-owned and never participate in this cleanup namespace.
+const TEMP_EXPORT_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 
 pub struct AttachmentExportAdapter<P> {
     relationships: SqlCipherStore,
@@ -107,9 +109,6 @@ where
             return Err(CommunicationError::Attachment);
         }
 
-        // Controlled "Open" exports use a bounded torca-<id> name. Cleanup belongs to the
-        // verified export boundary, not Flutter preferences. Save As destinations are never
-        // scanned or deleted because their user-chosen names do not match this namespace.
         if destination
             .file_name()
             .and_then(|name| name.to_str())
@@ -133,14 +132,10 @@ fn cleanup_stale_controlled_exports(parent: &Path, now: SystemTime, max_age: Dur
     let Ok(entries) = fs::read_dir(parent) else { return };
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else { continue };
-        if !file_type.is_file() {
-            continue;
-        }
+        if !file_type.is_file() { continue; }
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if !is_controlled_open_export_name(name) {
-            continue;
-        }
+        if !is_controlled_open_export_name(name) { continue; }
         let Ok(metadata) = entry.metadata() else { continue };
         let Ok(modified) = metadata.modified() else { continue };
         let Ok(age) = now.duration_since(modified) else { continue };
@@ -152,16 +147,10 @@ fn cleanup_stale_controlled_exports(parent: &Path, now: SystemTime, max_age: Dur
 
 fn is_controlled_open_export_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("torca-") else { return false };
-    if rest.len() < 32 {
-        return false;
-    }
+    if rest.len() < 32 { return false; }
     let (id, suffix) = rest.split_at(32);
-    if !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return false;
-    }
-    if suffix.is_empty() {
-        return true;
-    }
+    if !id.bytes().all(|byte| byte.is_ascii_hexdigit()) { return false; }
+    if suffix.is_empty() { return true; }
     let Some(extension) = suffix.strip_prefix('.') else { return false };
     (1..=10).contains(&extension.len())
         && extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
