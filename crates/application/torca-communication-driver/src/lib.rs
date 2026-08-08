@@ -46,8 +46,19 @@ pub fn classify_peer_health(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommunicationError { Peer, Text, Control, Inbound, Attachment, ReadState, Relationship, Engine }
-impl fmt::Display for CommunicationError { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{self:?}") } }
+pub enum CommunicationError {
+    Peer,
+    Text,
+    Control,
+    Inbound,
+    Attachment,
+    ReadState,
+    Relationship,
+    Engine,
+}
+impl fmt::Display for CommunicationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { write!(formatter, "{self:?}") }
+}
 impl std::error::Error for CommunicationError {}
 
 pub trait PeerLinkRuntime: Send {
@@ -56,10 +67,17 @@ pub trait PeerLinkRuntime: Send {
     fn take_inbound(&mut self) -> Result<Option<InboundPeerEnvelope>, CommunicationError>;
     fn reject(&mut self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError>;
     fn shutdown(&mut self);
-    fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot { PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id)) }
+    fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
+        PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
+    }
     fn probe_due(&mut self, _now: Timestamp) -> Result<(), CommunicationError> { Ok(()) }
-    fn accept_probe(&mut self, _envelope: &InboundPeerEnvelope, _now: Timestamp) -> Result<(), CommunicationError> { Err(CommunicationError::Peer) }
+    fn accept_probe(
+        &mut self,
+        _envelope: &InboundPeerEnvelope,
+        _now: Timestamp,
+    ) -> Result<(), CommunicationError> { Err(CommunicationError::Peer) }
 }
+
 pub trait TextDeliveryRuntime: Send {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
@@ -72,16 +90,34 @@ pub trait InboundMessagingRuntime: Send {
     fn process(&mut self, envelope: InboundPeerEnvelope, now: Timestamp) -> Result<(), CommunicationError>;
 }
 pub trait AttachmentRuntime: Send {
-    fn prepare_outgoing(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), CommunicationError>;
+    fn prepare_outgoing(
+        &mut self,
+        request: &AttachmentSendRequest,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError>;
     fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
     fn cancel(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
     fn snapshot(&self, messages: &[Message]) -> Result<Vec<AttachmentView>, CommunicationError>;
+    /// Production adapters can provide a storage-owned projection without loading message history.
+    /// Legacy/test adapters may return `None` and retain the original fallback contract.
+    fn snapshot_projection(&self) -> Result<Option<Vec<AttachmentView>>, CommunicationError> {
+        Ok(None)
+    }
     fn process_inbound(&mut self, envelope: InboundPeerEnvelope, now: Timestamp) -> Result<(), CommunicationError>;
-    fn maintenance_outgoing(&mut self, messages: &[Message], now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
+    fn maintenance_outgoing(
+        &mut self,
+        messages: &[Message],
+        now: Timestamp,
+        limit: usize,
+    ) -> Result<(), CommunicationError>;
     fn shutdown(&mut self);
 }
 pub trait AttachmentExportRuntime: Send {
-    fn export_attachment(&mut self, attachment_id: AttachmentId, destination: PathBuf) -> Result<(), CommunicationError>;
+    fn export_attachment(
+        &mut self,
+        attachment_id: AttachmentId,
+        destination: PathBuf,
+    ) -> Result<(), CommunicationError>;
 }
 pub trait ReadStateRuntime: Send {
     fn mark_conversation_read(
@@ -89,7 +125,6 @@ pub trait ReadStateRuntime: Send {
         conversation_id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
-
     fn mark_conversation_read_with_policy(
         &mut self,
         conversation_id: OpaqueId,
@@ -137,7 +172,11 @@ impl TorcaCommunicationDriver {
     ) -> Self {
         Self { engine, peer, text, control, inbound, attachments, attachment_export, read_state, relationships }
     }
-    pub fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot { self.peer.peer_health(contact_id) }
+
+    pub fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
+        self.peer.peer_health(contact_id)
+    }
+
     fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         for _ in 0..INBOUND_BATCH {
             let Some(envelope) = self.peer.take_inbound()? else { break };
@@ -158,30 +197,52 @@ impl CommunicationDriver for TorcaCommunicationDriver {
         self.control.recover(now).map_err(map_runtime)?;
         Ok(())
     }
+
     fn maintenance(&mut self, contacts: &[ContactId], now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.peer.maintenance(contacts, now).map_err(map_runtime)?;
         self.drain_inbound(now).map_err(map_runtime)?;
         self.text.maintenance(now, TEXT_BATCH).map_err(map_runtime)?;
         self.control.maintenance(now, CONTROL_BATCH).map_err(map_runtime)?;
         let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
-        self.attachments.maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH).map_err(map_runtime)?;
+        self.attachments
+            .maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH)
+            .map_err(map_runtime)?;
         self.peer.probe_due(now).map_err(map_runtime)?;
         Ok(())
     }
-    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState { self.peer.connection_state(contact_id) }
-    fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot { self.peer.peer_health(contact_id) }
-    fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError> { self.relationships.contact_names().map_err(map_runtime) }
-    fn contact_verifications(&self) -> Result<BTreeMap<ContactId, ContactVerificationSnapshot>, RuntimeDriverError> { self.relationships.contact_verifications().map_err(map_runtime) }
-    fn verify_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> { self.relationships.verify_contact(id, now).map_err(map_runtime) }
-    fn reset_contact_verification(&mut self, id: ContactId) -> Result<(), RuntimeDriverError> { self.relationships.reset_contact_verification(id).map_err(map_runtime) }
-    fn rename_contact(&mut self, id: ContactId, name: String, now: Timestamp) -> Result<(), RuntimeDriverError> { self.relationships.rename_contact(id, name, now).map_err(map_runtime) }
+
+    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
+        self.peer.connection_state(contact_id)
+    }
+    fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
+        self.peer.peer_health(contact_id)
+    }
+    fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError> {
+        self.relationships.contact_names().map_err(map_runtime)
+    }
+    fn contact_verifications(&self) -> Result<BTreeMap<ContactId, ContactVerificationSnapshot>, RuntimeDriverError> {
+        self.relationships.contact_verifications().map_err(map_runtime)
+    }
+    fn verify_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.verify_contact(id, now).map_err(map_runtime)
+    }
+    fn reset_contact_verification(&mut self, id: ContactId) -> Result<(), RuntimeDriverError> {
+        self.relationships.reset_contact_verification(id).map_err(map_runtime)
+    }
+    fn rename_contact(&mut self, id: ContactId, name: String, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.rename_contact(id, name, now).map_err(map_runtime)
+    }
     fn block_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.relationships.block_contact(id, now).map_err(map_runtime)?;
         self.peer.shutdown();
         Ok(())
     }
-    fn unblock_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> { self.relationships.unblock_contact(id, now).map_err(map_runtime) }
-    fn clear_conversation_history(&mut self, id: ConversationId) -> Result<(), RuntimeDriverError> { self.relationships.clear_history(id).map_err(map_runtime) }
+    fn unblock_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.unblock_contact(id, now).map_err(map_runtime)
+    }
+    fn clear_conversation_history(&mut self, id: ConversationId) -> Result<(), RuntimeDriverError> {
+        self.relationships.clear_history(id).map_err(map_runtime)
+    }
     fn remove_contact(&mut self, id: ContactId) -> Result<(), RuntimeDriverError> {
         self.relationships.remove_contact(id).map_err(map_runtime)?;
         self.peer.shutdown();
@@ -200,14 +261,33 @@ impl CommunicationDriver for TorcaCommunicationDriver {
             .mark_conversation_read_with_policy(id, now, send_receipt)
             .map_err(map_runtime)
     }
-    fn prepare_attachment(&mut self, request: &AttachmentSendRequest, now: Timestamp) -> Result<(), RuntimeDriverError> { self.attachments.prepare_outgoing(request, now).map_err(map_runtime) }
-    fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> { self.attachments.retry(id, now).map_err(map_runtime) }
-    fn cancel_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> { self.attachments.cancel(id, now).map_err(map_runtime) }
-    fn export_attachment(&mut self, id: AttachmentId, destination: PathBuf) -> Result<(), RuntimeDriverError> { self.attachment_export.export_attachment(id, destination).map_err(map_runtime) }
+    fn prepare_attachment(
+        &mut self,
+        request: &AttachmentSendRequest,
+        now: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        self.attachments.prepare_outgoing(request, now).map_err(map_runtime)
+    }
+    fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.attachments.retry(id, now).map_err(map_runtime)
+    }
+    fn cancel_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.attachments.cancel(id, now).map_err(map_runtime)
+    }
+    fn export_attachment(&mut self, id: AttachmentId, destination: PathBuf) -> Result<(), RuntimeDriverError> {
+        self.attachment_export.export_attachment(id, destination).map_err(map_runtime)
+    }
     fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
+        if let Some(snapshot) = self.attachments.snapshot_projection().map_err(map_runtime)? {
+            return Ok(snapshot);
+        }
         let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         self.attachments.snapshot(&snapshot.messages).map_err(map_runtime)
     }
-    fn shutdown(&mut self) { self.attachments.shutdown(); self.peer.shutdown(); }
+    fn shutdown(&mut self) {
+        self.attachments.shutdown();
+        self.peer.shutdown();
+    }
 }
+
 fn map_runtime(_: CommunicationError) -> RuntimeDriverError { RuntimeDriverError::Communication }

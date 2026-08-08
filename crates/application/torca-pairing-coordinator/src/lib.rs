@@ -6,10 +6,10 @@
 mod approval;
 mod core;
 mod credential;
-mod final_runtime;
 mod invitation;
 mod invite_uri;
 mod policy;
+mod runtime;
 
 pub use approval::{PairingApprovalError, PairingApprovalPort};
 pub use core::{
@@ -18,9 +18,9 @@ pub use core::{
     PairingSideToken, PairingSlotCapability, PairingSlotId,
 };
 pub use credential::{PairingCredentialError, PairingPeerSecretStore};
-pub use final_runtime::{
+pub use invite_uri::{decode_invite_uri, encode_invite_uri};
+pub use policy::{PAIRING_INVITATION_TTL, invitation_expires_at};
+pub use runtime::{
     LocalPairingContext, PairingCompletedContact, PairingInvitation, PairingPollReport,
     PairingRuntime, PairingRuntimeError,
 };
-pub use invite_uri::{decode_invite_uri, encode_invite_uri};
-pub use policy::{PAIRING_INVITATION_TTL, invitation_expires_at};

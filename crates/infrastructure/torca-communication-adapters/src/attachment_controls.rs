@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 
-use torca_attachment_sqlite::SqlCipherAttachmentStore;
+use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
 use torca_attachment_transfer::AttachmentTransfer;
 use torca_attachments::{
     Attachment, AttachmentId, AttachmentName, AttachmentRepository, AttachmentStatus,
@@ -17,18 +17,40 @@ use torca_peer_link::InboundPeerEnvelope;
 use torca_peer_protocol::HandshakeSigner;
 use torca_runtime_host::{AttachmentSendRequest, AttachmentView};
 
-/// Attachment adapter with a separate SQLCipher control connection. Transfer and user controls
-/// still operate on the same durable attachment rows and the same process-owned PeerLink.
+/// Attachment adapter with separate SQLCipher control/projection connections. Transfer and user
+/// controls operate on durable attachment rows; the UI projection no longer needs full message
+/// history just to list attachment state.
 pub struct AttachmentControlAdapter<R, M, S, K, C, P> {
     transfer: AttachmentTransfer<R, M, S, K, C, P>,
     control: SqlCipherAttachmentStore,
+    projection: SqlCipherAttachmentProjection,
 }
 impl<R, M, S, K, C, P> AttachmentControlAdapter<R, M, S, K, C, P> {
     pub const fn new(
         transfer: AttachmentTransfer<R, M, S, K, C, P>,
         control: SqlCipherAttachmentStore,
+        projection: SqlCipherAttachmentProjection,
     ) -> Self {
-        Self { transfer, control }
+        Self { transfer, control, projection }
+    }
+
+    fn projection_snapshot(&self) -> Result<Vec<AttachmentView>, CommunicationError> {
+        self.projection
+            .list()
+            .map_err(|_| CommunicationError::Attachment)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| AttachmentView {
+                        id: row.id,
+                        message_id: row.message_id,
+                        name: row.name,
+                        media_type: row.media_type,
+                        size: row.size,
+                        status: row.status,
+                        offset: row.offset,
+                    })
+                    .collect()
+            })
     }
 }
 
@@ -108,27 +130,12 @@ where
         self.control.update(attachment).map_err(|_| CommunicationError::Attachment)
     }
 
-    fn snapshot(&self, messages: &[Message]) -> Result<Vec<AttachmentView>, CommunicationError> {
-        let mut views = Vec::new();
-        for message in messages {
-            for attachment in self.control.for_message(message.id())
-                .map_err(|_| CommunicationError::Attachment)?
-            {
-                let offset = self.control.transfer_state(attachment.id())
-                    .map_err(|_| CommunicationError::Attachment)?
-                    .map_or(0, |state| state.offset);
-                views.push(AttachmentView {
-                    id: attachment.id().to_opaque(),
-                    message_id: attachment.message_id().to_opaque(),
-                    name: attachment.name().as_str().to_owned(),
-                    media_type: attachment.media_type().as_str().to_owned(),
-                    size: attachment.size(),
-                    status: format!("{:?}", attachment.status()).to_lowercase(),
-                    offset,
-                });
-            }
-        }
-        Ok(views)
+    fn snapshot(&self, _messages: &[Message]) -> Result<Vec<AttachmentView>, CommunicationError> {
+        self.projection_snapshot()
+    }
+
+    fn snapshot_projection(&self) -> Result<Option<Vec<AttachmentView>>, CommunicationError> {
+        self.projection_snapshot().map(Some)
     }
 
     fn process_inbound(

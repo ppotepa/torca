@@ -29,17 +29,14 @@ pub(crate) const DATABASE_KEY_HANDLE: torca_identity::KeyId =
 
 #[cfg(windows)]
 pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeCompositionError> {
-    use std::path::PathBuf;
+    use crate::app_paths::windows_app_root;
     use torca_client_engine::ClientEngine;
     use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
     use torca_pairing::InMemoryPairingRepository;
     use torca_platform_windows::DpapiFileSecretStore;
     use torca_storage_sqlite::{SqlCipherReceiptStore, SqlCipherStore};
 
-    let root = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| NativeCompositionError::new("Windows local application data is unavailable"))?
-        .join("Torca").join("0.1");
+    let root = windows_app_root()?;
     let database_dir = root.join("data");
     std::fs::create_dir_all(&database_dir)
         .map_err(|error| io_error("create application data directory", &error))?;
@@ -48,7 +45,9 @@ pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeC
     let mut database_secret_store = DpapiFileSecretStore::new(root.join("secrets").join("database"))
         .map_err(|error| secret_error("open database secret store", &error))?;
     let database_key = load_or_create_database_key(
-        &mut database_secret_store, DATABASE_KEY_HANDLE, RustCryptoProvider,
+        &mut database_secret_store,
+        DATABASE_KEY_HANDLE,
+        RustCryptoProvider,
     )?;
 
     let identity_repository = SqlCipherStore::open(&database_path, &database_key)
@@ -81,16 +80,19 @@ pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeC
 
 #[cfg(target_os = "android")]
 pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeCompositionError> {
+    use self::android::{AndroidProtectedSecretStore, database_path};
     use torca_client_engine::ClientEngine;
     use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
     use torca_pairing::InMemoryPairingRepository;
     use torca_storage_sqlite::{SqlCipherReceiptStore, SqlCipherStore};
-    use self::android::{AndroidProtectedSecretStore, database_path};
 
-    let database_path = database_path().map_err(|error| secret_error("resolve Android database path", &error))?;
+    let database_path = database_path()
+        .map_err(|error| secret_error("resolve Android database path", &error))?;
     let mut database_secret_store = AndroidProtectedSecretStore::new("database");
     let database_key = load_or_create_database_key(
-        &mut database_secret_store, DATABASE_KEY_HANDLE, RustCryptoProvider,
+        &mut database_secret_store,
+        DATABASE_KEY_HANDLE,
+        RustCryptoProvider,
     )?;
     let identity_repository = SqlCipherStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open identity repository", &error))?;
@@ -158,7 +160,10 @@ fn io_error(operation: &str, error: &std::io::Error) -> NativeCompositionError {
     NativeCompositionError::new(format!("{operation} failed ({:?})", error.kind()))
 }
 #[cfg(any(windows, target_os = "android"))]
-fn secret_error(operation: &str, error: &torca_crypto::ProtectedSecretStoreError) -> NativeCompositionError {
+fn secret_error(
+    operation: &str,
+    error: &torca_crypto::ProtectedSecretStoreError,
+) -> NativeCompositionError {
     NativeCompositionError::new(format!("{operation} failed: {error}"))
 }
 #[cfg(any(windows, target_os = "android"))]
@@ -168,5 +173,7 @@ fn storage_error(operation: &str, error: &impl fmt::Display) -> NativeCompositio
 
 #[cfg(not(any(windows, target_os = "android")))]
 pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeCompositionError> {
-    Err(NativeCompositionError::new("production native composition is not implemented for this platform"))
+    Err(NativeCompositionError::new(
+        "production native composition is not implemented for this platform",
+    ))
 }

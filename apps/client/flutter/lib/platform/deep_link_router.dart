@@ -18,7 +18,10 @@ class DeepLinkRouter {
     _subscription = _links.uriLinkStream.listen(_accept);
     if (Platform.isWindows) {
       _pollWindowsPending();
-      _windowsPoller = Timer.periodic(const Duration(seconds: 1), (_) => _pollWindowsPending());
+      _windowsPoller = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pollWindowsPending(),
+      );
     }
   }
 
@@ -32,7 +35,9 @@ class DeepLinkRouter {
   void _pollWindowsPending() {
     final local = Platform.environment['LOCALAPPDATA'];
     if (local == null || local.isEmpty) return;
-    final file = File('$local${Platform.pathSeparator}Torca${Platform.pathSeparator}0.1${Platform.pathSeparator}pending_link.txt');
+    final file = File(
+      '$local${Platform.pathSeparator}Torca${Platform.pathSeparator}pending_link.txt',
+    );
     if (!file.existsSync()) return;
     try {
       final value = file.readAsStringSync().trim();

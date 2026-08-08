@@ -14,7 +14,7 @@
 #endif
 
 namespace {
-constexpr wchar_t kTorcaMutex[] = L"Local\\Torca-0.1-SingleInstance";
+constexpr wchar_t kTorcaMutex[] = L"Local\\Torca-SingleInstance";
 constexpr wchar_t kTorcaWindowTitle[] = L"Torca";
 constexpr wchar_t kTorcaSchemeKey[] = L"Software\\Classes\\torca";
 constexpr wchar_t kPairPrefix[] = L"torca://pair?";
@@ -42,7 +42,7 @@ std::filesystem::path RuntimeRoot() {
   wchar_t buffer[MAX_PATH] = {};
   const DWORD length = ::GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
   if (length == 0 || length >= MAX_PATH) return {};
-  return std::filesystem::path(buffer) / L"Torca" / L"0.1";
+  return std::filesystem::path(buffer) / L"Torca";
 }
 
 void WritePendingPairingLink(const wchar_t* command_line) {
@@ -98,8 +98,6 @@ void RegisterTorcaScheme() {
 
 void EnableCaptureProtection(HWND window) {
   if (window == nullptr) return;
-  // Exclude Torca from Recall/screen-capture surfaces when the OS supports it. Older Windows
-  // versions fall back to WDA_MONITOR, which still protects normal capture APIs.
   if (!::SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE)) {
     ::SetWindowDisplayAffinity(window, WDA_MONITOR);
   }

@@ -25,9 +25,7 @@ class AndroidKeystoreSecretStore(
     private val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
 
     init {
-        if (!root.exists() && !root.mkdirs()) {
-            error("could not create protected secret directory")
-        }
+        if (!root.exists() && !root.mkdirs()) error("could not create protected secret directory")
         ensureMasterKey()
     }
 
@@ -42,10 +40,7 @@ class AndroidKeystoreSecretStore(
         val ciphertext = cipher.doFinal(secret)
         val nonce = cipher.iv
         val encoded = ByteBuffer.allocate(4 + nonce.size + ciphertext.size)
-            .putInt(nonce.size)
-            .put(nonce)
-            .put(ciphertext)
-            .array()
+            .putInt(nonce.size).put(nonce).put(ciphertext).array()
         writeAtomic(target, encoded)
         encoded.fill(0)
         ciphertext.fill(0)
@@ -152,12 +147,23 @@ object AndroidKeystoreBridge {
         databaseSecrets = AndroidKeystoreSecretStore(appContext, "database")
         identitySecrets = AndroidKeystoreSecretStore(appContext, "identity")
         peerSecrets = AndroidKeystoreSecretStore(appContext, "peer")
-        val dataDirectory = File(appContext.noBackupFilesDir, "torca/data")
+
+        val torcaRoot = File(appContext.noBackupFilesDir, "torca")
+        if (!torcaRoot.exists() && !torcaRoot.mkdirs()) error("could not create Torca root directory")
+        val dataDirectory = File(torcaRoot, "data")
         if (!dataDirectory.exists() && !dataDirectory.mkdirs()) {
             error("could not create Torca data directory")
         }
         databaseFile = File(dataDirectory, "torca.db")
-        runtimeRoot = File(appContext.noBackupFilesDir, "torca/0.1")
+
+        val stableRuntime = File(torcaRoot, "runtime")
+        val legacyRuntime = File(torcaRoot, "0.1")
+        if (!stableRuntime.exists() && legacyRuntime.exists()) {
+            check(legacyRuntime.renameTo(stableRuntime)) {
+                "could not migrate legacy Torca runtime directory"
+            }
+        }
+        runtimeRoot = stableRuntime
         if (!runtimeRoot.exists() && !runtimeRoot.mkdirs()) {
             error("could not create Torca runtime directory")
         }
@@ -176,7 +182,6 @@ object AndroidKeystoreBridge {
     @JvmStatic
     fun runtimeRootPath(): String = runtimeRoot.absolutePath
 
-    /** Executable PIE Tor binary packaged in the APK native library directory. */
     @JvmStatic
     fun torExecutablePath(): String {
         val path = File(applicationContext.applicationInfo.nativeLibraryDir, "libtor.so")
@@ -184,7 +189,6 @@ object AndroidKeystoreBridge {
         return path.absolutePath
     }
 
-    /** Build tooling writes a single validated `host.onion:port` asset; no endpoint is hardcoded. */
     @JvmStatic
     fun relayEndpoint(): String =
         applicationContext.assets.open("torca/relay_endpoint.txt")

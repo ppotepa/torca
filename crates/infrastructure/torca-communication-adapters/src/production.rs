@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
 
-use torca_attachment_sqlite::SqlCipherAttachmentStore;
+use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
 use torca_attachment_transfer::AttachmentTransfer;
 use torca_client_engine::EngineHandle;
 use torca_communication_driver::TorcaCommunicationDriver;
@@ -25,9 +25,9 @@ use torca_transport_tor::PeerListener;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
-    HealthPeerLinkAdapter, InboundTextReceiptAdapter, PrivacyReadStateAdapter,
-    ReceiptPeerTransport, RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto,
-    TextPeerTransport, TextWorkerAdapter,
+    HealthPeerLinkAdapter, InboundTextReceiptAdapter, ReadStateAdapter, ReceiptPeerTransport,
+    RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto, TextPeerTransport,
+    TextWorkerAdapter,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -43,9 +43,7 @@ pub enum CommunicationBuildError {
     Cache,
 }
 impl fmt::Display for CommunicationBuildError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
-    }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{self:?}") }
 }
 impl std::error::Error for CommunicationBuildError {}
 
@@ -152,7 +150,10 @@ where
         .map_err(|_| CommunicationBuildError::Attachment)?;
     let attachment_controls = SqlCipherAttachmentStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Attachment)?;
-    let attachment_cache = FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
+    let attachment_projection = SqlCipherAttachmentProjection::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Attachment)?;
+    let attachment_cache = FileBlobStore::open(cache_root)
+        .map_err(|_| CommunicationBuildError::Cache)?;
     let attachment_transfer = AttachmentTransfer::new(
         attachment_relationships,
         attachment_messages,
@@ -163,9 +164,12 @@ where
         staging_root,
         inputs.local_identity_id,
         ACK_TIMEOUT,
-    )
-    .map_err(|_| CommunicationBuildError::Attachment)?;
-    let attachments = AttachmentControlAdapter::new(attachment_transfer, attachment_controls);
+    ).map_err(|_| CommunicationBuildError::Attachment)?;
+    let attachments = AttachmentControlAdapter::new(
+        attachment_transfer,
+        attachment_controls,
+        attachment_projection,
+    );
 
     let export_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
@@ -173,7 +177,8 @@ where
         .map_err(|_| CommunicationBuildError::Storage)?;
     let export_metadata = SqlCipherAttachmentStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Attachment)?;
-    let export_cache = FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
+    let export_cache = FileBlobStore::open(cache_root)
+        .map_err(|_| CommunicationBuildError::Cache)?;
     let attachment_export = AttachmentExportAdapter::new(
         export_relationships,
         export_messages,
@@ -186,7 +191,8 @@ where
         .map_err(|_| CommunicationBuildError::Storage)?;
     let relationship_store = SqlCipherRelationshipAdmin::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
-    let relationship_cache = FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
+    let relationship_cache = FileBlobStore::open(cache_root)
+        .map_err(|_| CommunicationBuildError::Cache)?;
     let relationships = RelationshipAdminAdapter::new(
         relationship_store,
         inputs.relationship_secret_store,
@@ -194,11 +200,7 @@ where
         staging_root.to_path_buf(),
     );
 
-    let peer = HealthPeerLinkAdapter::new(
-        link,
-        health_relationships,
-        inputs.local_identity_id,
-    );
+    let peer = HealthPeerLinkAdapter::new(link, health_relationships, inputs.local_identity_id);
     Ok(TorcaCommunicationDriver::new(
         engine,
         Box::new(peer),
@@ -207,7 +209,7 @@ where
         Box::new(inbound),
         Box::new(attachments),
         Box::new(attachment_export),
-        Box::new(PrivacyReadStateAdapter::new(read_state)),
+        Box::new(ReadStateAdapter::new(read_state)),
         Box::new(relationships),
     ))
 }
