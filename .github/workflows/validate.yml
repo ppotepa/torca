@@ -25,6 +25,9 @@ jobs:
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
           rustup override set 1.97.1
+      - name: Source policy
+        shell: pwsh
+        run: ./tools/build/Torca.SourcePolicy.ps1 -RepoRoot .
       - name: Rust format
         run: cargo fmt --all -- --check
       - name: Rust check
@@ -56,7 +59,7 @@ jobs:
         run: flutter pub get
       - name: Dart format
         working-directory: apps/client/flutter
-        run: dart format --output=none --set-exit-if-changed lib test ../../crates/platform/torca-bridge/schema/torca_contract.dart
+        run: dart format --output=none --set-exit-if-changed lib test ../../../crates/platform/torca-bridge/schema/torca_contract.dart
       - name: Generated contract drift
         run: cargo run -p torca-contract-gen -- --check apps/client/flutter/lib/generated/torca_contract.dart
       - name: Flutter analysis

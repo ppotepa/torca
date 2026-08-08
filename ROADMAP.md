@@ -1,26 +1,38 @@
 # Torca roadmap
 
-The active engineering target is Torca **0.1** validation, followed by planning for **0.2**.
+## Current: 0.2 validation
 
-## Core implementation state
+Torca 0.2 **source implementation is complete**. Source completion is not release completion. The active work is now validation of the existing Windows/Android product rather than adding broad feature surface.
 
-All 20 dependency-ordered source batches in [`docs/0.1/IMPLEMENTATION_ORDER.md`](docs/0.1/IMPLEMENTATION_ORDER.md) have committed code and documentation.
+Canonical status: [`0.2_PROGRESS.md`](0.2_PROGRESS.md). Final source findings: [`docs/0.2/FINAL_AUDIT.md`](docs/0.2/FINAL_AUDIT.md).
 
-This means the original **core source-roadmap coverage is 100%**. It does not mean release validation is complete. The remaining production integrations and owner-run checks are listed in:
+Required release gates include:
 
-- [`0.1_PROGRESS.md`](0.1_PROGRESS.md);
-- [`docs/0.1/KNOWN_LIMITATIONS.md`](docs/0.1/KNOWN_LIMITATIONS.md);
-- [`docs/0.1/RELEASE_CHECKLIST.md`](docs/0.1/RELEASE_CHECKLIST.md);
-- [`docs/0.1/TEST_MATRIX.md`](docs/0.1/TEST_MATRIX.md).
+- actual CI execution for Rust, Flutter, Windows and Android jobs;
+- clean Windows and Android builds from fresh workspaces;
+- two real clients pairing through the configured relay/Tor path;
+- bidirectional text, reply, read/delivery receipts and durable retry;
+- restart/reconnect/offline behavior;
+- attachment send/resume/open/save paths;
+- notification/background/tray lifecycle;
+- Safety Number verification and identity-change blocking;
+- database/path migration from an existing 0.1 installation;
+- source-generated contract/ABI consistency.
 
-## 0.1 UI productization track
+## Next architecture/security priority
 
-The shared-client product/UI source pass defined in [`docs/0.1/UI_IMPLEMENTATION_ORDER.md`](docs/0.1/UI_IMPLEMENTATION_ORDER.md) is source-complete through UI-15. The final source audit is recorded in [`docs/0.1/UI_FINAL_AUDIT.md`](docs/0.1/UI_FINAL_AUDIT.md).
+Before Torca is positioned as a mature security-first messenger, evaluate a reviewed standard ratchet/MLS design. 0.2 intentionally does not claim forward secrecy or post-compromise security for message history.
 
-The UI track did not reopen the architecture: Flutter remains one responsive presentation client and Rust/runtime remains the owner of messaging, pairing, Tor, peer state, persistence, cryptography and background workflows.
+## 0.3 candidates after 0.2 validation
 
-Platform and end-to-end validation remain release gates and are always recorded in [`0.1_PROGRESS.md`](0.1_PROGRESS.md).
+Candidate work, in approximate priority order:
 
-## 0.2 planning rule
+1. reviewed ratchet/MLS message-key evolution;
+2. disappearing-message retention policy;
+3. ephemeral P2P typing indicators with a privacy toggle;
+4. encrypted persistent drafts and improved conversation search/navigation;
+5. archive/pin/mute and richer message actions;
+6. additional attachment/media UX;
+7. Linux production composition after Windows/Android are stable.
 
-0.2 should be planned as a concrete improvement over the validated 0.1 baseline. Source candidates may be collected before validation is complete, but no 0.2 item should silently redefine an unresolved 0.1 release gate.
+Groups, calls/video, cloud backup and multi-device synchronization remain larger product tracks and should not be mixed into reliability fixes.

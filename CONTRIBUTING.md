@@ -2,13 +2,13 @@
 
 ## Start of work
 
-Read [`0.1_PROGRESS.md`](0.1_PROGRESS.md) before changing the repository. It is the only live status/handoff document and records current implementation, validation evidence, release gates and the exact next action.
+Read [`0.2_PROGRESS.md`](0.2_PROGRESS.md) before changing the repository. It is the live implementation/validation handoff. Historical 0.1 documents are reference material, not the current status source.
 
-All 0.1 work currently lands directly on `main`. Every commit must therefore leave the repository internally coherent; incomplete production behavior must remain explicit and must not be presented as validated.
+Work currently lands directly on `main`; each commit must leave the repository internally coherent. Never present source-complete behavior as platform/E2E validated without actual evidence.
 
 ## Developer workflow
 
-Developers use only three root workflows:
+Use only the three public root workflows:
 
 ```powershell
 ./scripts/build.ps1
@@ -16,60 +16,40 @@ Developers use only three root workflows:
 ./scripts/deploy.ps1
 ```
 
-- `build` is the correctness/build gate. It owns formatting, code generation, release/architecture checks, dependency resolution, Rust check/Clippy/tests, Flutter analysis/tests and optional platform compilation.
-- `run` is the fast inner loop. It prepares the generated contract and shared native runtime, then launches Flutter with hot reload.
-- `deploy` performs a strict release build, packages artifacts and generates SHA-256 checksums.
+- `build` owns source policy, formatting/codegen, architecture/release checks, Rust/Flutter validation and optional platform compilation.
+- `run` prepares the shared native/runtime composition and launches the selected client target.
+- `deploy` performs release builds, packaging and checksums.
 
-Do not add a new public script for formatting, validation, codegen, packaging, lock refresh or platform bootstrap. Add such behavior to `tools/build/Torca.Build.psm1` and expose it only through one of the three workflows.
+Do not create public one-off scripts for formatting, codegen, packaging or platform bootstrap. Private helpers belong under `tools/build/`.
 
-CI uses the same build path:
-
-```powershell
-./scripts/build.ps1 -Target check -CI
-```
+The lightweight `tools/build/Torca.SourcePolicy.ps1` runs before expensive build work and protects settled 0.2 decisions: canonical Rust source roots, intent-only Bridge v11 ownership and the absence of historical frontend-owned mutation ABI.
 
 ## One-client rule
 
-Torca has one Flutter client source. Windows and Android are target platforms, not separate application implementations.
+Torca has one responsive Flutter client. Windows and Android are platform hosts, not separate product implementations. OS-specific Kotlin/C++ is allowed only for genuine platform capabilities such as protected key storage, notifications, lifecycle/tray, deep links and capture protection.
 
-Responsive differences belong in the shared Flutter widget tree. OS-specific Kotlin/C++ is allowed only for true platform capabilities such as protected key storage, notifications, lifecycle integration and tray behavior. Product workflows and state machines remain in Rust.
+Flutter owns presentation/navigation/local ephemeral UI state. Rust owns identifiers, timestamps, domain workflows, persistence, Tor/pairing/peer state, delivery/retry and security policy.
 
-## Dependency discipline
+## Data and SQL
 
-Before adding a Rust dependency, verify that it follows [`docs/architecture/DEPENDENCY_RULES.md`](docs/architecture/DEPENDENCY_RULES.md).
+Business SQL lives in `.sql` files under storage infrastructure. Commands, queries and migrations are separated and parameterized. Do not move message paging, summaries or search back into Flutter-side full-history filtering.
 
-- foundation stays dependency-light;
-- domains may depend on foundation and approved domain contracts;
-- application coordinates domains;
-- infrastructure implements inward-defined ports;
-- bridge/native/presentation sit outside application/domain code;
-- domains never depend on infrastructure, Flutter or FFI.
+Runtime/application code must consume storage-owned projections rather than raw database connections.
 
-## Domain library rules
+## Native boundary
 
-A mini-domain owns value objects, entities, commands/inputs, events, invariants, state transitions, errors and ports required by its use cases. It must not expose database connections, SQL rows, FFI handles, Flutter models, sockets or a global application context.
+- `torca-native` is the narrowly reviewed C ABI boundary.
+- Bridge v11 accepts user intent; Flutter must not generate domain IDs or command timestamps.
+- ABI functions expose primitive arguments/JSON projections, never Rust domain layouts or secret bytes.
+- production native failure is explicit; there is no silent memory fallback.
+- long-running Tor/network work must not block access to local encrypted state or Flutter UI progress.
 
-## SQL rules
+## Security changes
 
-All business SQL lives in `.sql` files under the SQLCipher storage crate. Runtime SQL string construction is prohibited except narrowly reviewed connection/key bootstrap operations that cannot be parameterized normally.
+Do not invent custom ratchets or cryptographic protocols. 0.2 uses authenticated encryption with protected pairwise secrets but does not claim forward secrecy/post-compromise security. Any change to this guarantee requires a reviewed standard design plus updates to `SECURITY.md` and the threat model.
 
-Commands, queries and migrations have separate roots and use positional parameters (`?1`, `?2`, ...).
-
-## Native boundary rules
-
-- `torca-native` is the narrowly reviewed unsafe C ABI boundary.
-- ABI functions expose primitive arguments and bridge snapshots/results, not Rust domain layouts.
-- private key material never crosses into Dart.
-- native runtime failure is surfaced as an error; production never silently falls back to the memory gateway.
+A previously verified contact identity changing is a security event. Do not weaken the send block or allow reset actions to silently erase the mismatch.
 
 ## Work unit
 
-A coherent work unit should contain:
-
-1. the smallest complete implementation;
-2. appropriate unit/contract/integration tests;
-3. relevant documentation updates;
-4. an update to `0.1_PROGRESS.md` when status, architecture, defects or gates change;
-5. exact owner validation evidence when available.
-
-A file existing is not completion. A release gate closes only when its behavior is composed and validated at the relevant layer.
+A coherent work unit contains the smallest complete implementation, focused tests/contracts where appropriate, documentation/status updates, and exact validation evidence when it exists. One file existing is not completion; a release gate closes only after behavior is composed and validated at the relevant layer.

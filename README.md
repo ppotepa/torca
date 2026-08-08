@@ -1,55 +1,76 @@
 # Torca
 
-Torca is a privacy-focused, peer-to-peer messenger built around local identities, Tor onion services, encrypted local storage and explicit contact pairing.
+Torca is a privacy-focused 1:1 messenger built around local identities, Tor onion services, encrypted local storage and explicit contact pairing. Windows and Android use the same responsive Flutter client and the same Rust runtime; platform code is limited to operating-system integration.
 
-This repository is the clean implementation of Torca. The previous [`ppotepa/tOrca`](https://github.com/ppotepa/tOrca) repository remains only a source of requirements, protocol lessons and selected reviewed implementations.
+The previous [`ppotepa/tOrca`](https://github.com/ppotepa/tOrca) repository is a requirements/reference source, not a second active implementation.
 
-## Start here
+## Current engineering state
 
-Development targets **Torca 0.1**. Read [`0.1_PROGRESS.md`](0.1_PROGRESS.md) before changing the repository. It is the canonical record of implementation, validation, release gaps and the exact next action.
+The active code line is **Torca 0.2.0-alpha.0** with Bridge contract v11. The 0.2 source track is complete, but platform/release validation is still open. Start with [`0.2_PROGRESS.md`](0.2_PROGRESS.md); do not infer release readiness from source completion.
 
-## One client
+0.2 focuses on a reliable daily-use 1:1 messenger:
 
-Torca has one application client:
+- local installation identity and encrypted SQLCipher persistence;
+- short-lived pairing codes/QR with explicit approval;
+- direct authenticated peer delivery through Tor onion services;
+- durable message retry, delivered/read receipts and reply-to;
+- paged/searchable conversation history and conversation summaries;
+- encrypted/resumable attachments;
+- per-contact PeerHealth and redacted diagnostics;
+- local Safety Number verification with identity-change send blocking;
+- notification privacy and host-level screen-capture protection;
+- one shared responsive Flutter application for Windows and Android.
+
+Calls, groups, multi-device sync, public discovery, cloud backup and Linux production composition are not part of 0.2.
+
+## Security scope
+
+Torca 0.2 authenticates peers and encrypts peer payloads with a protected pairwise secret established during pairing. It does **not** currently implement MLS or a Double Ratchet-style per-message key schedule, so forward secrecy and post-compromise security are not claimed for message history. See [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md).
+
+## Architecture
 
 ```text
 responsive Flutter UI
         |
-shared Dart FFI gateway
+EngineGateway / generated DTOs
         |
-torca-native (torca_bridge.dll / libtorca_bridge.so)
+torca-native C ABI
         |
-EngineBridge
+process-owned NativeEngineRuntime
         |
-ClientEngine actor
+ClientEngine actor + RuntimeHost
         |
-domains and infrastructure adapters
+SQLCipher / crypto / peer link / Tor drivers
 ```
 
-Windows and Android are build targets of the same Flutter application. They do not have separate UI or application-workflow implementations. Platform-specific Kotlin/C++ is limited to actual operating-system services such as protected key storage, lifecycle integration and tray/notification behavior.
+Important rules:
 
-The UI adapts by available width: compact devices use routed screens, while wide desktop/tablet layouts use split views backed by the same widgets and the same engine state.
+- Flutter renders state and submits typed user intent; Rust owns identifiers, timestamps, durable state, networking and security rules.
+- Business SQL lives in parameterized `.sql` files owned by storage crates.
+- Pairing may use the untrusted ephemeral relay; normal contact traffic is direct over Tor.
+- Production never silently falls back to the memory gateway.
+- Long-running network startup must not prevent access to local encrypted history.
+- Normal UI snapshots do not load the complete message history; conversation history uses bounded SQLCipher paging/search.
 
 ## Repository layout
 
 ```text
-apps/client/flutter/      the single responsive application client
-crates/foundation/        dependency-light shared primitives
-crates/domains/           independent mini-domain libraries
-crates/application/       engine, projections and diagnostics
-crates/infrastructure/    storage, crypto, files, peer and Tor adapters
-crates/protocol/          versioned wire contracts
-crates/platform/          bridge, native ABI and OS adapters
-tools/build/              private build/run/deploy implementation
-tools/                    deterministic contract generation
-services/relay/           ephemeral rendezvous broker
-tests/torca-integration/  cross-crate primary-journey tests
-docs/0.1/                 release scope and gates
+apps/client/flutter/      single responsive application client
+crates/foundation/        dependency-light primitives
+crates/domains/           domain vocabulary and invariants
+crates/application/       engine/runtime/application orchestration
+crates/infrastructure/    SQLCipher, crypto, files, peer and Tor adapters
+crates/protocol/          wire/pairing/relay/peer protocols
+crates/platform/          bridge, native ABI and platform adapters
+services/relay/           ephemeral pairing rendezvous broker
+tests/torca-integration/  cross-crate integration journeys
+tools/build/              private build/source-policy/platform implementation
+docs/0.2/                 current source track and final audit
 ```
 
 ## Developer workflow
 
-There are exactly three public workflows:
+Public entrypoints remain deliberately small:
 
 ```powershell
 ./scripts/build.ps1
@@ -57,42 +78,15 @@ There are exactly three public workflows:
 ./scripts/deploy.ps1
 ```
 
-Typical usage:
-
-```powershell
-# Validate and build the default local target.
-./scripts/build.ps1
-
-# Fast Windows development loop with Flutter hot reload.
-./scripts/run.ps1 -Target windows
-
-# Run on an Android device/emulator.
-./scripts/run.ps1 -Target android -Device emulator-5554
-
-# Produce release artifacts and SHA-256 checksums.
-./scripts/deploy.ps1 -Target all
-```
-
-Formatting, code generation, architecture checks, lockfile refresh, Clippy, tests, Flutter platform bootstrap, Android Rust cross-compilation and packaging are private implementation details of those three commands.
-
-## Architecture rules
-
-- Domains never depend on Flutter, SQLite implementations, sockets, FFI or Tor process APIs.
-- Flutter sends commands and renders snapshots; workflow state belongs to Rust.
-- All state-changing client operations pass through the single-writer `ClientEngine` actor.
-- SQL lives in parameterized `.sql` files owned by storage.
-- Pairing may use the untrusted ephemeral relay; normal contact traffic is direct over Tor.
-- Memory implementations are explicit development/test choices and are never a silent production fallback.
+`build.ps1` starts with a cheap source-policy gate that rejects obsolete source roots, legacy frontend-owned native mutation ABI and Bridge v11 presentation-ownership debt before expensive tooling runs.
 
 ## Canonical documents
 
-- [`0.1_PROGRESS.md`](0.1_PROGRESS.md) — quantitative status and handoff.
+- [`0.2_PROGRESS.md`](0.2_PROGRESS.md) — live status and validation handoff.
+- [`docs/0.2/IMPLEMENTATION_ORDER.md`](docs/0.2/IMPLEMENTATION_ORDER.md) — dependency-ordered 0.2 batches.
+- [`docs/0.2/FINAL_AUDIT.md`](docs/0.2/FINAL_AUDIT.md) — final source audit and open validation gates.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — system boundaries.
-- [`docs/0.1/IMPLEMENTATION_ORDER.md`](docs/0.1/IMPLEMENTATION_ORDER.md) — implementation batches.
-- [`docs/0.1/TEST_MATRIX.md`](docs/0.1/TEST_MATRIX.md) — automated and platform test matrix.
-- [`docs/0.1/KNOWN_LIMITATIONS.md`](docs/0.1/KNOWN_LIMITATIONS.md) — current limitations.
-- [`docs/0.1/RELEASE_CHECKLIST.md`](docs/0.1/RELEASE_CHECKLIST.md) — binary release gate.
-- [`docs/security/threat-model.md`](docs/security/threat-model.md) — assets, boundaries and threats.
-- [`docs/decisions`](docs/decisions/README.md) — architecture decision records.
+- [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) — security guarantees and non-guarantees.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development rules.
 
-All 0.1 work currently lands directly on `main`. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Historical 0.1 documents remain under `docs/0.1/` for traceability; they are not the active implementation tracker.

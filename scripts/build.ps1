@@ -9,6 +9,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+
+& (Join-Path $root 'tools/build/Torca.SourcePolicy.ps1') -RepoRoot $root
+
 $assetsModule = Join-Path $root 'tools/build/Torca.PlatformAssets.psm1'
 Import-Module $assetsModule -Force
 
