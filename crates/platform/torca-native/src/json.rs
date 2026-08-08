@@ -1,7 +1,7 @@
 use core::fmt::Write as _;
 use std::cmp::Reverse;
 
-use torca_bridge::{BridgeMessage, BridgeResult, BridgeSnapshot, CONTRACT_VERSION};
+use torca_bridge::{BridgeMessage, BridgeMessagePage, BridgeResult, BridgeSnapshot, CONTRACT_VERSION};
 
 pub(crate) fn success_result(kind: &str) -> String {
     bridge_result_json(&BridgeResult { ok: true, kind: kind.to_owned(), error: None })
@@ -21,13 +21,19 @@ pub(crate) fn bridge_result_json(result: &BridgeResult) -> String {
     };
     let mut output = String::from("{\"ok\":");
     output.push_str(if result.ok { "true" } else { "false" });
-    output.push_str(",\"kind\":\""); push_json_string(&kind, &mut output);
+    output.push_str(",\"kind\":\"");
+    push_json_string(&kind, &mut output);
     output.push_str("\",\"error\":");
     match error {
-        Some(value) => { output.push('"'); push_json_string(value, &mut output); output.push('"'); }
+        Some(value) => {
+            output.push('"');
+            push_json_string(value, &mut output);
+            output.push('"');
+        }
         None => output.push_str("null"),
     }
-    output.push('}'); output
+    output.push('}');
+    output
 }
 
 fn classify_error(error: &str) -> &'static str {
@@ -68,12 +74,25 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
     let _ = write!(output, "{{\"contractVersion\":{}", snapshot.contract_version);
     output.push_str(",\"identity\":");
     match &snapshot.identity_name {
-        Some(name) => { output.push_str("{\"displayName\":\""); push_json_string(name, &mut output); output.push_str("\"}"); }
+        Some(name) => {
+            output.push_str("{\"displayName\":\"");
+            push_json_string(name, &mut output);
+            output.push_str("\"}");
+        }
         None => output.push_str("null"),
     }
-    output.push_str(",\"torState\":\""); push_json_string(&snapshot.tor_state, &mut output); output.push('"');
+    output.push_str(",\"torState\":\"");
+    push_json_string(&snapshot.tor_state, &mut output);
+    output.push('"');
     output.push_str(",\"onionAddress\":");
-    match &snapshot.onion_address { Some(value) => { output.push('"'); push_json_string(value, &mut output); output.push('"'); } None => output.push_str("null") }
+    match &snapshot.onion_address {
+        Some(value) => {
+            output.push('"');
+            push_json_string(value, &mut output);
+            output.push('"');
+        }
+        None => output.push_str("null"),
+    }
 
     output.push_str(",\"pairings\":[");
     for (index, pairing) in snapshot.pairings.iter().enumerate() {
@@ -108,33 +127,25 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
 
     output.push_str("],\"conversations\":[");
     let mut conversations = snapshot.conversations.iter().collect::<Vec<_>>();
-    conversations.sort_by_key(|conversation| Reverse(conversation_metrics(snapshot, &conversation.id).1));
+    conversations.sort_by_key(|conversation| Reverse(conversation.last_activity_at_ms));
     for (index, conversation) in conversations.into_iter().enumerate() {
         if index != 0 { output.push(','); }
-        let (unread_count, last_activity_at_ms, last_message) = conversation_metrics(snapshot, &conversation.id);
         output.push_str("{\"id\":\""); push_json_string(&conversation.id, &mut output);
         output.push_str("\",\"contactId\":\""); push_json_string(&conversation.contact_id, &mut output);
         output.push_str("\",\"status\":\""); push_json_string(&conversation.status, &mut output);
-        let _ = write!(output, "\",\"unreadCount\":{unread_count},\"lastActivityAtMs\":{last_activity_at_ms},\"lastMessageBody\":");
-        match last_message { Some(message) => { output.push('"'); push_json_string(&message.body, &mut output); output.push('"'); } None => output.push_str("null") }
+        let _ = write!(output, "\",\"unreadCount\":{},\"lastActivityAtMs\":{},\"lastMessageBody\":", conversation.unread_count, conversation.last_activity_at_ms);
+        push_optional_string(&conversation.last_message_body, &mut output);
         output.push_str(",\"lastMessageDirection\":");
-        match last_message { Some(message) => { output.push('"'); push_json_string(&message.direction, &mut output); output.push('"'); } None => output.push_str("null") }
+        push_optional_string(&conversation.last_message_direction, &mut output);
         output.push_str(",\"lastMessageStatus\":");
-        match last_message { Some(message) => { output.push('"'); push_json_string(&message.status, &mut output); output.push('"'); } None => output.push_str("null") }
+        push_optional_string(&conversation.last_message_status, &mut output);
         output.push('}');
     }
 
     output.push_str("],\"messages\":[");
     for (index, message) in snapshot.messages.iter().enumerate() {
         if index != 0 { output.push(','); }
-        output.push_str("{\"id\":\""); push_json_string(&message.id, &mut output);
-        output.push_str("\",\"conversationId\":\""); push_json_string(&message.conversation_id, &mut output);
-        output.push_str("\",\"body\":\""); push_json_string(&message.body, &mut output);
-        output.push_str("\",\"direction\":\""); push_json_string(&message.direction, &mut output);
-        output.push_str("\",\"status\":\""); push_json_string(&message.status, &mut output);
-        output.push_str("\",\"replyToMessageId\":");
-        match &message.reply_to_message_id { Some(value) => { output.push('"'); push_json_string(value, &mut output); output.push('"'); } None => output.push_str("null") }
-        let _ = write!(output, ",\"createdAtMs\":{},\"updatedAtMs\":{},\"attemptCount\":{}}}", message.created_at_ms, message.updated_at_ms, message.attempt_count);
+        push_bridge_message(message, &mut output);
     }
 
     output.push_str("],\"attachments\":[");
@@ -147,17 +158,42 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         let _ = write!(output, "\",\"size\":{},\"status\":\"", attachment.size); push_json_string(&attachment.status, &mut output);
         let _ = write!(output, "\",\"offset\":{}}}", attachment.offset);
     }
-    output.push_str("]}"); output
+    output.push_str("]}");
+    output
 }
 
-fn conversation_metrics<'a>(snapshot: &'a BridgeSnapshot, conversation_id: &str) -> (u32, i64, Option<&'a BridgeMessage>) {
-    let mut unread_count = 0_u32; let mut last_activity_at_ms = 0_i64; let mut last_message = None;
-    for message in snapshot.messages.iter().filter(|message| message.conversation_id == conversation_id) {
-        if message.direction == "inbound" && message.status == "delivered" { unread_count = unread_count.saturating_add(1); }
-        let activity = message.updated_at_ms.max(message.created_at_ms);
-        if last_message.is_none() || activity >= last_activity_at_ms { last_activity_at_ms = activity; last_message = Some(message); }
+pub(crate) fn bridge_message_page_json(page: &BridgeMessagePage) -> String {
+    let mut output = String::from("{\"messages\":[");
+    for (index, message) in page.messages.iter().enumerate() {
+        if index != 0 { output.push(','); }
+        push_bridge_message(message, &mut output);
     }
-    (unread_count, last_activity_at_ms, last_message)
+    output.push_str("],\"hasMore\":");
+    output.push_str(if page.has_more { "true" } else { "false" });
+    output.push('}');
+    output
+}
+
+fn push_bridge_message(message: &BridgeMessage, output: &mut String) {
+    output.push_str("{\"id\":\""); push_json_string(&message.id, output);
+    output.push_str("\",\"conversationId\":\""); push_json_string(&message.conversation_id, output);
+    output.push_str("\",\"body\":\""); push_json_string(&message.body, output);
+    output.push_str("\",\"direction\":\""); push_json_string(&message.direction, output);
+    output.push_str("\",\"status\":\""); push_json_string(&message.status, output);
+    output.push_str("\",\"replyToMessageId\":");
+    push_optional_string(&message.reply_to_message_id, output);
+    let _ = write!(output, ",\"createdAtMs\":{},\"updatedAtMs\":{},\"attemptCount\":{}}}", message.created_at_ms, message.updated_at_ms, message.attempt_count);
+}
+
+fn push_optional_string(value: &Option<String>, output: &mut String) {
+    match value {
+        Some(value) => {
+            output.push('"');
+            push_json_string(value, output);
+            output.push('"');
+        }
+        None => output.push_str("null"),
+    }
 }
 
 fn push_json_string(value: &str, output: &mut String) {

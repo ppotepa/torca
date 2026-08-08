@@ -29,44 +29,15 @@ use torca_receipts::{InMemoryReceiptRepository, Receipt, ReceiptRepository};
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineCommand {
-    CreateIdentity {
-        identity_id: IdentityId,
-        profile: Profile,
-        at: Timestamp,
-    },
-    StartPairing {
-        session_id: PairingSessionId,
-        code: PairingCode,
-        expires_at: Timestamp,
-    },
-    JoinPairing {
-        session_id: PairingSessionId,
-        code: PairingCode,
-        expires_at: Timestamp,
-    },
-    PeerJoined {
-        session_id: PairingSessionId,
-        proposal: PeerProposal,
-        at: Timestamp,
-    },
-    ApprovePairing {
-        session_id: PairingSessionId,
-        at: Timestamp,
-    },
-    RejectPairing {
-        session_id: PairingSessionId,
-    },
-    CancelPairing {
-        session_id: PairingSessionId,
-    },
-    ExpirePairing {
-        session_id: PairingSessionId,
-        at: Timestamp,
-    },
-    RemoteApproved {
-        session_id: PairingSessionId,
-        at: Timestamp,
-    },
+    CreateIdentity { identity_id: IdentityId, profile: Profile, at: Timestamp },
+    StartPairing { session_id: PairingSessionId, code: PairingCode, expires_at: Timestamp },
+    JoinPairing { session_id: PairingSessionId, code: PairingCode, expires_at: Timestamp },
+    PeerJoined { session_id: PairingSessionId, proposal: PeerProposal, at: Timestamp },
+    ApprovePairing { session_id: PairingSessionId, at: Timestamp },
+    RejectPairing { session_id: PairingSessionId },
+    CancelPairing { session_id: PairingSessionId },
+    ExpirePairing { session_id: PairingSessionId, at: Timestamp },
+    RemoteApproved { session_id: PairingSessionId, at: Timestamp },
     CompletePairing {
         session_id: PairingSessionId,
         contact_id: ContactId,
@@ -81,23 +52,10 @@ pub enum EngineCommand {
         reply_to: Option<ReplyReference>,
         at: Timestamp,
     },
-    BeginMessageSend {
-        message_id: MessageId,
-        at: Timestamp,
-    },
-    MarkMessageSent {
-        message_id: MessageId,
-        at: Timestamp,
-    },
-    MarkMessageFailed {
-        message_id: MessageId,
-        at: Timestamp,
-        error_code: ErrorCode,
-    },
-    RetryMessage {
-        message_id: MessageId,
-        at: Timestamp,
-    },
+    BeginMessageSend { message_id: MessageId, at: Timestamp },
+    MarkMessageSent { message_id: MessageId, at: Timestamp },
+    MarkMessageFailed { message_id: MessageId, at: Timestamp, error_code: ErrorCode },
+    RetryMessage { message_id: MessageId, at: Timestamp },
     ApplyReceipt(Receipt),
 }
 
@@ -154,51 +112,21 @@ pub struct InMemoryRelationshipRepository {
 }
 
 impl ContactRepository for InMemoryRelationshipRepository {
-    fn insert(&mut self, contact: Contact) -> Result<(), ContactError> {
-        self.contacts.insert(contact)
-    }
-    fn get(&self, id: ContactId) -> Result<Option<Contact>, ContactError> {
-        self.contacts.get(id)
-    }
-    fn update(&mut self, contact: Contact) -> Result<(), ContactError> {
-        self.contacts.update(contact)
-    }
-    fn list(&self) -> Result<Vec<Contact>, ContactError> {
-        self.contacts.list()
-    }
+    fn insert(&mut self, contact: Contact) -> Result<(), ContactError> { self.contacts.insert(contact) }
+    fn get(&self, id: ContactId) -> Result<Option<Contact>, ContactError> { self.contacts.get(id) }
+    fn update(&mut self, contact: Contact) -> Result<(), ContactError> { self.contacts.update(contact) }
+    fn list(&self) -> Result<Vec<Contact>, ContactError> { self.contacts.list() }
 }
-
 impl ConversationRepository for InMemoryRelationshipRepository {
-    fn insert(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
-        self.conversations.insert(conversation)
-    }
-    fn get(&self, id: ConversationId) -> Result<Option<DirectConversation>, ConversationError> {
-        self.conversations.get(id)
-    }
-    fn for_contact(
-        &self,
-        contact_id: ContactId,
-    ) -> Result<Option<DirectConversation>, ConversationError> {
-        self.conversations.for_contact(contact_id)
-    }
-    fn list(&self) -> Result<Vec<DirectConversation>, ConversationError> {
-        self.conversations.list()
-    }
+    fn insert(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> { self.conversations.insert(conversation) }
+    fn get(&self, id: ConversationId) -> Result<Option<DirectConversation>, ConversationError> { self.conversations.get(id) }
+    fn for_contact(&self, contact_id: ContactId) -> Result<Option<DirectConversation>, ConversationError> { self.conversations.for_contact(contact_id) }
+    fn list(&self) -> Result<Vec<DirectConversation>, ConversationError> { self.conversations.list() }
 }
-
 impl PeerCredentialRepository for InMemoryRelationshipRepository {
-    fn insert_credential(&mut self, credential: PeerCredential) -> Result<(), ContactError> {
-        self.credentials.insert_credential(credential)
-    }
-
-    fn credential_for_contact(
-        &self,
-        contact_id: ContactId,
-    ) -> Result<Option<PeerCredential>, ContactError> {
-        self.credentials.credential_for_contact(contact_id)
-    }
+    fn insert_credential(&mut self, credential: PeerCredential) -> Result<(), ContactError> { self.credentials.insert_credential(credential) }
+    fn credential_for_contact(&self, contact_id: ContactId) -> Result<Option<PeerCredential>, ContactError> { self.credentials.credential_for_contact(contact_id) }
 }
-
 impl RelationshipRepository for InMemoryRelationshipRepository {
     fn insert_pairing_result(
         &mut self,
@@ -211,12 +139,8 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
         }
         if ContactRepository::get(self, contact.id()).map_err(map_error)?.is_some()
             || ConversationRepository::get(self, conversation.id()).map_err(map_error)?.is_some()
-            || ConversationRepository::for_contact(self, contact.id())
-                .map_err(map_error)?
-                .is_some()
-            || PeerCredentialRepository::credential_for_contact(self, contact.id())
-                .map_err(map_error)?
-                .is_some()
+            || ConversationRepository::for_contact(self, contact.id()).map_err(map_error)?.is_some()
+            || PeerCredentialRepository::credential_for_contact(self, contact.id()).map_err(map_error)?.is_some()
         {
             return Err(EngineError("contact, conversation or credential already exists".into()));
         }
@@ -248,16 +172,7 @@ pub struct ClientEngine<
     receipts: R,
 }
 
-impl Default
-    for ClientEngine<
-        InMemoryIdentityRepository,
-        DeterministicKeyProvider,
-        InMemoryPairingRepository,
-        InMemoryRelationshipRepository,
-        InMemoryMessageRepository,
-        InMemoryReceiptRepository,
-    >
-{
+impl Default for ClientEngine<InMemoryIdentityRepository, DeterministicKeyProvider, InMemoryPairingRepository, InMemoryRelationshipRepository, InMemoryMessageRepository, InMemoryReceiptRepository> {
     fn default() -> Self {
         Self::new(
             InMemoryIdentityRepository::default(),
@@ -279,42 +194,22 @@ where
     M: MessageRepository,
     R: ReceiptRepository,
 {
-    pub const fn new(
-        identity_repository: I,
-        key_provider: K,
-        pairings: P,
-        relationships: L,
-        messages: M,
-        receipts: R,
-    ) -> Self {
-        Self {
-            identity: IdentityService::new(identity_repository, key_provider),
-            pairings,
-            relationships,
-            messages,
-            receipts,
-        }
+    pub const fn new(identity_repository: I, key_provider: K, pairings: P, relationships: L, messages: M, receipts: R) -> Self {
+        Self { identity: IdentityService::new(identity_repository, key_provider), pairings, relationships, messages, receipts }
     }
 
     pub fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError> {
         match command {
             EngineCommand::CreateIdentity { identity_id, profile, at } => {
-                let (_identity, _event) = self
-                    .identity
-                    .create(CreateIdentity { identity_id, profile, at })
-                    .map_err(map_error)?;
+                let (_identity, _event) = self.identity.create(CreateIdentity { identity_id, profile, at }).map_err(map_error)?;
                 Ok(EngineResult::IdentityCreated)
             }
             EngineCommand::StartPairing { session_id, code, expires_at } => {
-                self.pairings
-                    .insert(PairingSession::creator(session_id, code, expires_at))
-                    .map_err(map_error)?;
+                self.pairings.insert(PairingSession::creator(session_id, code, expires_at)).map_err(map_error)?;
                 Ok(EngineResult::PairingStarted)
             }
             EngineCommand::JoinPairing { session_id, code, expires_at } => {
-                self.pairings
-                    .insert(PairingSession::joining(session_id, code, expires_at))
-                    .map_err(map_error)?;
+                self.pairings.insert(PairingSession::joining(session_id, code, expires_at)).map_err(map_error)?;
                 Ok(EngineResult::PairingJoined)
             }
             EngineCommand::PeerJoined { session_id, proposal, at } => {
@@ -343,9 +238,7 @@ where
             }
             EngineCommand::ExpirePairing { session_id, at } => {
                 let mut session = self.load_pairing(session_id)?;
-                if !session.expire(at) {
-                    return Err(EngineError("pairing session is not due to expire".into()));
-                }
+                if !session.expire(at) { return Err(EngineError("pairing session is not due to expire".into())); }
                 self.pairings.update(session).map_err(map_error)?;
                 Ok(EngineResult::PairingUpdated)
             }
@@ -355,55 +248,28 @@ where
                 self.pairings.update(session).map_err(map_error)?;
                 Ok(EngineResult::PairingUpdated)
             }
-            EngineCommand::CompletePairing {
-                session_id,
-                contact_id,
-                conversation_id,
-                credential,
-                at,
-            } => {
-                if credential.contact_id() != contact_id {
-                    return Err(EngineError("peer credential contact does not match pairing".into()));
-                }
-                if ContactRepository::get(&self.relationships, contact_id)
-                    .map_err(map_error)?
-                    .is_some()
-                    || ConversationRepository::get(&self.relationships, conversation_id)
-                        .map_err(map_error)?
-                        .is_some()
-                    || ConversationRepository::for_contact(&self.relationships, contact_id)
-                        .map_err(map_error)?
-                        .is_some()
-                    || PeerCredentialRepository::credential_for_contact(&self.relationships, contact_id)
-                        .map_err(map_error)?
-                        .is_some()
+            EngineCommand::CompletePairing { session_id, contact_id, conversation_id, credential, at } => {
+                if credential.contact_id() != contact_id { return Err(EngineError("peer credential contact does not match pairing".into())); }
+                if ContactRepository::get(&self.relationships, contact_id).map_err(map_error)?.is_some()
+                    || ConversationRepository::get(&self.relationships, conversation_id).map_err(map_error)?.is_some()
+                    || ConversationRepository::for_contact(&self.relationships, contact_id).map_err(map_error)?.is_some()
+                    || PeerCredentialRepository::credential_for_contact(&self.relationships, contact_id).map_err(map_error)?.is_some()
                 {
-                    return Err(EngineError(
-                        "contact, conversation or peer credential already exists".into(),
-                    ));
+                    return Err(EngineError("contact, conversation or peer credential already exists".into()));
                 }
                 let mut session = self.load_pairing(session_id)?;
                 let proposal = session.complete(at).map_err(map_error)?;
                 let contact = Contact::new(contact_id, proposal.public_identity, proposal.route, at);
                 let conversation = DirectConversation::new(conversation_id, contact_id, at);
-                self.relationships
-                    .insert_pairing_result(contact, conversation, credential)?;
-                // Pairing sessions are intentionally ephemeral. Once the verified relationship and
-                // credential metadata are durable, failure to mirror Completed into the in-memory
-                // session must not make callers roll back/delete the protected peer secret.
+                self.relationships.insert_pairing_result(contact, conversation, credential)?;
                 let _ = self.pairings.update(session);
                 Ok(EngineResult::PairingCompleted { contact_id, conversation_id })
             }
             EngineCommand::QueueMessage { message_id, conversation_id, body, reply_to, at } => {
-                if ConversationRepository::get(&self.relationships, conversation_id)
-                    .map_err(map_error)?
-                    .is_none()
-                {
+                if ConversationRepository::get(&self.relationships, conversation_id).map_err(map_error)?.is_none() {
                     return Err(EngineError("conversation not found".into()));
                 }
-                self.messages
-                    .insert(Message::outbound(message_id, conversation_id, body, reply_to, at))
-                    .map_err(map_error)?;
+                self.messages.insert(Message::outbound(message_id, conversation_id, body, reply_to, at)).map_err(map_error)?;
                 Ok(EngineResult::MessageQueued { message_id })
             }
             EngineCommand::BeginMessageSend { message_id, at } => {
@@ -441,33 +307,34 @@ where
     }
 
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
+        let mut snapshot = self.overview_snapshot()?;
+        snapshot.messages = self.messages.list().map_err(map_error)?;
+        Ok(snapshot)
+    }
+
+    pub fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         Ok(ClientSnapshot {
             identity: self.identity.load().map_err(map_error)?,
             pairings: self.pairings.list().map_err(map_error)?,
             contacts: ContactRepository::list(&self.relationships).map_err(map_error)?,
             conversations: ConversationRepository::list(&self.relationships).map_err(map_error)?,
-            messages: self.messages.list().map_err(map_error)?,
+            messages: Vec::new(),
         })
     }
 
     fn load_pairing(&self, id: PairingSessionId) -> Result<PairingSession, EngineError> {
-        self.pairings
-            .get(id)
-            .map_err(map_error)?
-            .ok_or_else(|| EngineError("pairing session not found".into()))
+        self.pairings.get(id).map_err(map_error)?.ok_or_else(|| EngineError("pairing session not found".into()))
     }
 
     fn load_message(&self, id: MessageId) -> Result<Message, EngineError> {
-        self.messages
-            .get(id)
-            .map_err(map_error)?
-            .ok_or_else(|| EngineError("message not found".into()))
+        self.messages.get(id).map_err(map_error)?.ok_or_else(|| EngineError("message not found".into()))
     }
 }
 
 pub trait EngineRuntime: Send + 'static {
     fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError>;
     fn snapshot(&self) -> Result<ClientSnapshot, EngineError>;
+    fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> { self.snapshot() }
 }
 
 impl<I, K, P, L, M, R> EngineRuntime for ClientEngine<I, K, P, L, M, R>
@@ -479,51 +346,41 @@ where
     M: MessageRepository + Send + 'static,
     R: ReceiptRepository + Send + 'static,
 {
-    fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError> {
-        ClientEngine::dispatch(self, command)
-    }
-
-    fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
-        ClientEngine::snapshot(self)
-    }
+    fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError> { ClientEngine::dispatch(self, command) }
+    fn snapshot(&self) -> Result<ClientSnapshot, EngineError> { ClientEngine::snapshot(self) }
+    fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> { ClientEngine::overview_snapshot(self) }
 }
 
-fn map_error(error: impl fmt::Display) -> EngineError {
-    EngineError(error.to_string())
-}
+fn map_error(error: impl fmt::Display) -> EngineError { EngineError(error.to_string()) }
 
 enum ActorRequest {
     Dispatch(EngineCommand, Sender<Result<EngineResult, EngineError>>),
     Snapshot(Sender<Result<ClientSnapshot, EngineError>>),
+    OverviewSnapshot(Sender<Result<ClientSnapshot, EngineError>>),
     Shutdown,
 }
 
 #[derive(Clone)]
-pub struct EngineHandle {
-    sender: Sender<ActorRequest>,
-}
+pub struct EngineHandle { sender: Sender<ActorRequest> }
 impl EngineHandle {
     pub fn dispatch(&self, command: EngineCommand) -> Result<EngineResult, EngineError> {
         let (sender, receiver) = mpsc::channel();
-        self.sender
-            .send(ActorRequest::Dispatch(command, sender))
-            .map_err(|_| EngineError("engine actor stopped".into()))?;
+        self.sender.send(ActorRequest::Dispatch(command, sender)).map_err(|_| EngineError("engine actor stopped".into()))?;
         receiver.recv().map_err(|_| EngineError("engine response channel closed".into()))?
     }
-
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         let (sender, receiver) = mpsc::channel();
-        self.sender
-            .send(ActorRequest::Snapshot(sender))
-            .map_err(|_| EngineError("engine actor stopped".into()))?;
+        self.sender.send(ActorRequest::Snapshot(sender)).map_err(|_| EngineError("engine actor stopped".into()))?;
+        receiver.recv().map_err(|_| EngineError("engine response channel closed".into()))?
+    }
+    pub fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
+        let (sender, receiver) = mpsc::channel();
+        self.sender.send(ActorRequest::OverviewSnapshot(sender)).map_err(|_| EngineError("engine actor stopped".into()))?;
         receiver.recv().map_err(|_| EngineError("engine response channel closed".into()))?
     }
 }
 
-pub struct ClientEngineActor {
-    sender: Sender<ActorRequest>,
-    join: Option<JoinHandle<()>>,
-}
+pub struct ClientEngineActor { sender: Sender<ActorRequest>, join: Option<JoinHandle<()>> }
 impl ClientEngineActor {
     pub fn spawn<E: EngineRuntime>(mut engine: E) -> (EngineHandle, Self) {
         let (sender, receiver): (Sender<ActorRequest>, Receiver<ActorRequest>) = mpsc::channel();
@@ -531,12 +388,9 @@ impl ClientEngineActor {
         let join = thread::spawn(move || {
             while let Ok(request) = receiver.recv() {
                 match request {
-                    ActorRequest::Dispatch(command, response) => {
-                        let _ = response.send(engine.dispatch(command));
-                    }
-                    ActorRequest::Snapshot(response) => {
-                        let _ = response.send(engine.snapshot());
-                    }
+                    ActorRequest::Dispatch(command, response) => { let _ = response.send(engine.dispatch(command)); }
+                    ActorRequest::Snapshot(response) => { let _ = response.send(engine.snapshot()); }
+                    ActorRequest::OverviewSnapshot(response) => { let _ = response.send(engine.overview_snapshot()); }
                     ActorRequest::Shutdown => break,
                 }
             }
@@ -545,9 +399,7 @@ impl ClientEngineActor {
     }
 
     pub fn shutdown(mut self) -> Result<(), EngineError> {
-        self.sender
-            .send(ActorRequest::Shutdown)
-            .map_err(|_| EngineError("engine actor stopped".into()))?;
+        self.sender.send(ActorRequest::Shutdown).map_err(|_| EngineError("engine actor stopped".into()))?;
         if let Some(join) = self.join.take() {
             join.join().map_err(|_| EngineError("engine actor panicked".into()))?;
         }

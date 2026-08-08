@@ -28,14 +28,12 @@ typedef _OneStringNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, f
 typedef _OneStringDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
 typedef _ReadIntentNative = ffi.Int32 Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
   ffi.Uint8,
 );
 typedef _ReadIntentDart = int Function(
   _Handle,
-  ffi.Pointer<ffi.Uint8>,
-  int,
+  ffi.Pointer<ffi.Uint8>, int,
   int,
 );
 typedef _TwoStringsNative = ffi.Int32 Function(
@@ -76,6 +74,32 @@ typedef _AttachmentIntentDart = int Function(
   ffi.Pointer<ffi.Uint8>, int,
   int,
 );
+typedef _HistoryPageNative = ffi.Int32 Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Int64,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Uint32,
+);
+typedef _HistoryPageDart = int Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>, int,
+  int,
+  ffi.Pointer<ffi.Uint8>, int,
+  int,
+);
+typedef _HistorySearchNative = ffi.Int32 Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
+  ffi.Uint32,
+);
+typedef _HistorySearchDart = int Function(
+  _Handle,
+  ffi.Pointer<ffi.Uint8>, int,
+  ffi.Pointer<ffi.Uint8>, int,
+  int,
+);
 typedef _RefreshNative = ffi.Int32 Function(_Handle);
 typedef _RefreshDart = int Function(_Handle);
 typedef _PointerNative = ffi.Pointer<ffi.Uint8> Function(_Handle);
@@ -83,17 +107,18 @@ typedef _PointerDart = ffi.Pointer<ffi.Uint8> Function(_Handle);
 typedef _LengthNative = ffi.UintPtr Function(_Handle);
 typedef _LengthDart = int Function(_Handle);
 
-class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider {
+class FfiEngineGateway
+    implements EngineGateway, AttachmentCapabilitiesProvider, ConversationHistoryProvider {
   FfiEngineGateway._(this._bindings, this._handle, this.capabilities) {
     _poller = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_disposed && !_commandInFlight) {
+      if (!_disposed && !_nativeOperationInFlight) {
         unawaited(_refreshSnapshot(silent: true));
       }
     });
   }
 
   static FfiEngineGateway open({ffi.DynamicLibrary? library}) {
-    final bindings = _NativeBindings(library ?? ffi.DynamicLibrary.open(_libraryName()));
+    final bindings = _NativeBindings(library ?? ffi.DynamicLibrary.open(_nativeLibraryName()));
     final version = bindings.contractVersion();
     if (version != torcaContractVersion) {
       throw StateError(
@@ -111,17 +136,15 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
     );
   }
 
-  static String _libraryName() => _nativeLibraryName();
-
   final _NativeBindings _bindings;
   final _Handle _handle;
   @override
   final AppCapabilities capabilities;
   final ValueNotifier<AppSnapshotDto> _snapshots = ValueNotifier(const AppSnapshotDto());
   late final Timer _poller;
-  Future<void> _commandTail = Future<void>.value();
+  Future<void> _nativeTail = Future<void>.value();
   String _lastDiagnostics = '{"events":[]}';
-  bool _commandInFlight = false;
+  bool _nativeOperationInFlight = false;
   bool _disposed = false;
 
   @override
@@ -133,7 +156,6 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     if (_disposed) return _runtimeUnavailable();
     if (command is RefreshSnapshotCommandDto) return _refreshSnapshot();
-
     final call = _encodeNativeCall(command);
     if (call == null) {
       return const BridgeResultDto(
@@ -142,33 +164,76 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
         error: 'The supplied value is not valid.',
       );
     }
+    final result = await _serializedNative(() async {
+      final resultJson = await Isolate.run(() => _executeNativeCall(call));
+      return _decodeResult(resultJson);
+    });
+    if (result.ok && !_disposed) await _refreshSnapshot(silent: true);
+    return result;
+  }
 
-    final previous = _commandTail;
+  @override
+  Future<ConversationPageDto> loadConversationPage(
+    String conversationId, {
+    MessageDto? before,
+    int limit = 100,
+  }) =>
+      _serializedNative(() async {
+        final json = await Isolate.run(
+          () => _executeNativeCall(<Object?>[
+            'history_page',
+            conversationId,
+            before?.createdAtMs ?? -1,
+            before?.id ?? '',
+            limit.clamp(1, 200),
+          ]),
+        );
+        return _decodeConversationPage(json);
+      });
+
+  @override
+  Future<ConversationPageDto> searchConversation(
+    String conversationId,
+    String query, {
+    int limit = 100,
+  }) async {
+    if (query.trim().isEmpty) {
+      return const ConversationPageDto(messages: <MessageDto>[], hasMore: false);
+    }
+    return _serializedNative(() async {
+      final json = await Isolate.run(
+        () => _executeNativeCall(<Object?>[
+          'history_search',
+          conversationId,
+          query,
+          limit.clamp(1, 200),
+        ]),
+      );
+      return _decodeConversationPage(json);
+    });
+  }
+
+  Future<T> _serializedNative<T>(Future<T> Function() action) async {
+    final previous = _nativeTail;
     final release = Completer<void>();
-    _commandTail = release.future;
+    _nativeTail = release.future;
     await previous;
     if (_disposed) {
       release.complete();
-      return _runtimeUnavailable();
+      throw StateError('native engine gateway is disposed');
     }
-
-    _commandInFlight = true;
+    _nativeOperationInFlight = true;
     try {
-      final resultJson = await Isolate.run(() => _executeNativeCall(call));
-      final result = _decodeResult(resultJson);
-      if (result.ok && !_disposed) await _refreshSnapshot(silent: true);
-      return result;
-    } on Object {
-      return _runtimeUnavailable();
+      return await action();
     } finally {
-      _commandInFlight = false;
+      _nativeOperationInFlight = false;
       release.complete();
     }
   }
 
   @override
   Future<String> diagnosticsJson() async {
-    if (_disposed || _commandInFlight) return _lastDiagnostics;
+    if (_disposed || _nativeOperationInFlight) return _lastDiagnostics;
     if (_bindings.refreshDiagnostics(_handle) != 0) return _lastDiagnostics;
     _lastDiagnostics = _readNativeString(
       _bindings.diagnosticsPointer(_handle),
@@ -179,7 +244,7 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
 
   Future<BridgeResultDto> _refreshSnapshot({bool silent = false}) async {
     if (_disposed) return _runtimeUnavailable();
-    if (_commandInFlight) {
+    if (_nativeOperationInFlight) {
       return silent
           ? const BridgeResultDto(ok: false, kind: 'busy')
           : const BridgeResultDto(ok: true, kind: 'snapshot_cached');
@@ -211,6 +276,17 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
       ok: _bool(map, 'ok'),
       kind: _string(map, 'kind'),
       error: _optionalString(map, 'error'),
+    );
+  }
+
+  ConversationPageDto _decodeConversationPage(String json) {
+    final map = _map(jsonDecode(json), 'conversation page');
+    final messages = _list(map, 'messages')
+        .map((value) => _decodeMessage(_map(value, 'message')))
+        .toList(growable: false);
+    return ConversationPageDto(
+      messages: messages,
+      hasMore: _bool(map, 'hasMore'),
     );
   }
 
@@ -276,20 +352,9 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
           lastMessageStatus: _optionalString(item, 'lastMessageStatus'),
         );
       }).toList(growable: false),
-      messages: _list(map, 'messages').map((value) {
-        final item = _map(value, 'message');
-        return MessageDto(
-          id: _string(item, 'id'),
-          conversationId: _string(item, 'conversationId'),
-          body: _string(item, 'body'),
-          direction: _string(item, 'direction'),
-          status: _string(item, 'status'),
-          replyToMessageId: _optionalString(item, 'replyToMessageId'),
-          createdAtMs: _int(item, 'createdAtMs'),
-          updatedAtMs: _int(item, 'updatedAtMs'),
-          attemptCount: _int(item, 'attemptCount'),
-        );
-      }).toList(growable: false),
+      messages: _list(map, 'messages')
+          .map((value) => _decodeMessage(_map(value, 'message')))
+          .toList(growable: false),
       attachments: _list(map, 'attachments').map((value) {
         final item = _map(value, 'attachment');
         return AttachmentDto(
@@ -304,6 +369,18 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
       }).toList(growable: false),
     );
   }
+
+  MessageDto _decodeMessage(Map<String, Object?> item) => MessageDto(
+        id: _string(item, 'id'),
+        conversationId: _string(item, 'conversationId'),
+        body: _string(item, 'body'),
+        direction: _string(item, 'direction'),
+        status: _string(item, 'status'),
+        replyToMessageId: _optionalString(item, 'replyToMessageId'),
+        createdAtMs: _int(item, 'createdAtMs'),
+        updatedAtMs: _int(item, 'updatedAtMs'),
+        attemptCount: _int(item, 'attemptCount'),
+      );
 
   Map<String, Object?> _map(Object? value, String field) {
     if (value is! Map<Object?, Object?>) throw FormatException('$field must be a map');
@@ -356,7 +433,7 @@ class FfiEngineGateway implements EngineGateway, AttachmentCapabilitiesProvider 
     if (_disposed) return;
     _disposed = true;
     _poller.cancel();
-    await _commandTail;
+    await _nativeTail;
     _bindings.engineDestroy(_handle);
     _snapshots.dispose();
   }
@@ -384,26 +461,12 @@ List<Object?>? _encodeNativeCall(BridgeCommandDto command) {
   if (command is RemoveContactCommandDto) return <Object?>['remove_contact', command.contactIdHex];
   if (command is ClearConversationHistoryCommandDto) return <Object?>['clear_history', command.conversationIdHex];
   if (command is QueueMessageCommandDto) {
-    return <Object?>[
-      'queue_message',
-      command.conversationIdHex,
-      command.body,
-      command.replyToMessageId ?? '',
-    ];
+    return <Object?>['queue_message', command.conversationIdHex, command.body, command.replyToMessageId ?? ''];
   }
   if (command is RetryMessageCommandDto) return <Object?>['retry_message', command.messageIdHex];
-  if (command is MarkConversationReadCommandDto) {
-    return <Object?>['mark_read', command.conversationIdHex, command.sendReceipt];
-  }
+  if (command is MarkConversationReadCommandDto) return <Object?>['mark_read', command.conversationIdHex, command.sendReceipt];
   if (command is QueueAttachmentCommandDto) {
-    return <Object?>[
-      'queue_attachment',
-      command.conversationIdHex,
-      command.sourcePath,
-      command.name,
-      command.mediaType,
-      command.size,
-    ];
+    return <Object?>['queue_attachment', command.conversationIdHex, command.sourcePath, command.name, command.mediaType, command.size];
   }
   if (command is RetryAttachmentCommandDto) return <Object?>['retry_attachment', command.attachmentIdHex];
   if (command is CancelAttachmentCommandDto) return <Object?>['cancel_attachment', command.attachmentIdHex];
@@ -413,68 +476,41 @@ List<Object?>? _encodeNativeCall(BridgeCommandDto command) {
 
 String _executeNativeCall(List<Object?> call) {
   final bindings = _NativeBindings(ffi.DynamicLibrary.open(_nativeLibraryName()));
-  if (bindings.contractVersion() != torcaContractVersion) {
-    throw StateError('native contract mismatch');
-  }
+  if (bindings.contractVersion() != torcaContractVersion) throw StateError('native contract mismatch');
   final handle = bindings.engineNew();
   if (handle == ffi.nullptr) throw StateError('native process handle unavailable');
+  final kind = call[0] as String;
   try {
-    switch (call[0] as String) {
-      case 'create_identity':
-        _callOne(bindings, handle, call[1] as String, bindings.createIdentityIntent);
-      case 'create_pairing':
-        bindings.createPairingIntent(handle);
-      case 'join_pairing':
-        _callOne(bindings, handle, call[1] as String, bindings.joinPairingIntent);
-      case 'approve_pairing':
-        _callOne(bindings, handle, call[1] as String, bindings.approvePairing);
-      case 'reject_pairing':
-        _callOne(bindings, handle, call[1] as String, bindings.rejectPairing);
-      case 'cancel_pairing':
-        _callOne(bindings, handle, call[1] as String, bindings.cancelPairing);
-      case 'rename_contact':
-        _callTwo(bindings, handle, call[1] as String, call[2] as String, bindings.renameContact);
-      case 'verify_contact':
-        _callOne(bindings, handle, call[1] as String, bindings.verifyContact);
-      case 'reset_verification':
-        _callOne(bindings, handle, call[1] as String, bindings.resetContactVerification);
-      case 'block_contact':
-        _callOne(bindings, handle, call[1] as String, bindings.blockContact);
-      case 'unblock_contact':
-        _callOne(bindings, handle, call[1] as String, bindings.unblockContact);
-      case 'remove_contact':
-        _callOne(bindings, handle, call[1] as String, bindings.removeContact);
-      case 'clear_history':
-        _callOne(bindings, handle, call[1] as String, bindings.clearConversationHistory);
-      case 'queue_message':
-        _callMessage(bindings, handle, call[1] as String, call[2] as String, call[3] as String);
-      case 'retry_message':
-        _callOne(bindings, handle, call[1] as String, bindings.retryMessageIntent);
-      case 'mark_read':
-        _callRead(bindings, handle, call[1] as String, call[2] as bool);
+    switch (kind) {
+      case 'create_identity': _callOne(bindings, handle, call[1] as String, bindings.createIdentityIntent);
+      case 'create_pairing': bindings.createPairingIntent(handle);
+      case 'join_pairing': _callOne(bindings, handle, call[1] as String, bindings.joinPairingIntent);
+      case 'approve_pairing': _callOne(bindings, handle, call[1] as String, bindings.approvePairing);
+      case 'reject_pairing': _callOne(bindings, handle, call[1] as String, bindings.rejectPairing);
+      case 'cancel_pairing': _callOne(bindings, handle, call[1] as String, bindings.cancelPairing);
+      case 'rename_contact': _callTwo(bindings, handle, call[1] as String, call[2] as String, bindings.renameContact);
+      case 'verify_contact': _callOne(bindings, handle, call[1] as String, bindings.verifyContact);
+      case 'reset_verification': _callOne(bindings, handle, call[1] as String, bindings.resetContactVerification);
+      case 'block_contact': _callOne(bindings, handle, call[1] as String, bindings.blockContact);
+      case 'unblock_contact': _callOne(bindings, handle, call[1] as String, bindings.unblockContact);
+      case 'remove_contact': _callOne(bindings, handle, call[1] as String, bindings.removeContact);
+      case 'clear_history': _callOne(bindings, handle, call[1] as String, bindings.clearConversationHistory);
+      case 'queue_message': _callMessage(bindings, handle, call[1] as String, call[2] as String, call[3] as String);
+      case 'retry_message': _callOne(bindings, handle, call[1] as String, bindings.retryMessageIntent);
+      case 'mark_read': _callRead(bindings, handle, call[1] as String, call[2] as bool);
       case 'queue_attachment':
-        _callAttachment(
-          bindings,
-          handle,
-          call[1] as String,
-          call[2] as String,
-          call[3] as String,
-          call[4] as String,
-          call[5] as int,
-        );
-      case 'retry_attachment':
-        _callOne(bindings, handle, call[1] as String, bindings.retryAttachment);
-      case 'cancel_attachment':
-        _callOne(bindings, handle, call[1] as String, bindings.cancelAttachment);
-      case 'export_attachment':
-        _callTwo(bindings, handle, call[1] as String, call[2] as String, bindings.exportAttachment);
-      default:
-        throw StateError('unsupported native command');
+        _callAttachment(bindings, handle, call[1] as String, call[2] as String, call[3] as String, call[4] as String, call[5] as int);
+      case 'retry_attachment': _callOne(bindings, handle, call[1] as String, bindings.retryAttachment);
+      case 'cancel_attachment': _callOne(bindings, handle, call[1] as String, bindings.cancelAttachment);
+      case 'export_attachment': _callTwo(bindings, handle, call[1] as String, call[2] as String, bindings.exportAttachment);
+      case 'history_page': _callHistoryPage(bindings, handle, call[1] as String, call[2] as int, call[3] as String, call[4] as int);
+      case 'history_search': _callHistorySearch(bindings, handle, call[1] as String, call[2] as String, call[3] as int);
+      default: throw StateError('unsupported native command');
     }
-    return _readNativeString(
-      bindings.resultPointer(handle),
-      bindings.resultLength(handle),
-    );
+    if (kind.startsWith('history_')) {
+      return _readNativeString(bindings.queryPointer(handle), bindings.queryLength(handle));
+    }
+    return _readNativeString(bindings.resultPointer(handle), bindings.resultLength(handle));
   } finally {
     bindings.engineDestroy(handle);
   }
@@ -485,71 +521,33 @@ void _callOne(_NativeBindings bindings, _Handle handle, String value, _OneString
   try { operation(handle, native.pointer, native.length); } finally { native.dispose(); }
 }
 void _callTwo(_NativeBindings bindings, _Handle handle, String first, String second, _TwoStringsDart operation) {
-  final a = _NativeUtf8(bindings, first);
-  final b = _NativeUtf8(bindings, second);
-  try { operation(handle, a.pointer, a.length, b.pointer, b.length); }
-  finally { a.dispose(); b.dispose(); }
+  final a = _NativeUtf8(bindings, first); final b = _NativeUtf8(bindings, second);
+  try { operation(handle, a.pointer, a.length, b.pointer, b.length); } finally { a.dispose(); b.dispose(); }
 }
 void _callMessage(_NativeBindings bindings, _Handle handle, String conversationId, String body, String replyId) {
-  final conversation = _NativeUtf8(bindings, conversationId);
-  final message = _NativeUtf8(bindings, body);
-  final reply = _NativeUtf8(bindings, replyId);
-  try {
-    bindings.queueMessageIntent(
-      handle,
-      conversation.pointer,
-      conversation.length,
-      message.pointer,
-      message.length,
-      reply.pointer,
-      reply.length,
-    );
-  } finally {
-    conversation.dispose(); message.dispose(); reply.dispose();
-  }
+  final conversation = _NativeUtf8(bindings, conversationId); final message = _NativeUtf8(bindings, body); final reply = _NativeUtf8(bindings, replyId);
+  try { bindings.queueMessageIntent(handle, conversation.pointer, conversation.length, message.pointer, message.length, reply.pointer, reply.length); }
+  finally { conversation.dispose(); message.dispose(); reply.dispose(); }
 }
 void _callRead(_NativeBindings bindings, _Handle handle, String conversationId, bool sendReceipt) {
   final conversation = _NativeUtf8(bindings, conversationId);
-  try {
-    bindings.markConversationReadIntent(
-      handle,
-      conversation.pointer,
-      conversation.length,
-      sendReceipt ? 1 : 0,
-    );
-  } finally {
-    conversation.dispose();
-  }
+  try { bindings.markConversationReadIntent(handle, conversation.pointer, conversation.length, sendReceipt ? 1 : 0); }
+  finally { conversation.dispose(); }
 }
-void _callAttachment(
-  _NativeBindings bindings,
-  _Handle handle,
-  String conversationId,
-  String path,
-  String name,
-  String mediaType,
-  int size,
-) {
-  final conversation = _NativeUtf8(bindings, conversationId);
-  final source = _NativeUtf8(bindings, path);
-  final filename = _NativeUtf8(bindings, name);
-  final media = _NativeUtf8(bindings, mediaType);
-  try {
-    bindings.queueAttachmentIntent(
-      handle,
-      conversation.pointer,
-      conversation.length,
-      source.pointer,
-      source.length,
-      filename.pointer,
-      filename.length,
-      media.pointer,
-      media.length,
-      size,
-    );
-  } finally {
-    conversation.dispose(); source.dispose(); filename.dispose(); media.dispose();
-  }
+void _callAttachment(_NativeBindings bindings, _Handle handle, String conversationId, String path, String name, String mediaType, int size) {
+  final conversation = _NativeUtf8(bindings, conversationId); final source = _NativeUtf8(bindings, path); final filename = _NativeUtf8(bindings, name); final media = _NativeUtf8(bindings, mediaType);
+  try { bindings.queueAttachmentIntent(handle, conversation.pointer, conversation.length, source.pointer, source.length, filename.pointer, filename.length, media.pointer, media.length, size); }
+  finally { conversation.dispose(); source.dispose(); filename.dispose(); media.dispose(); }
+}
+void _callHistoryPage(_NativeBindings bindings, _Handle handle, String conversationId, int beforeAtMs, String beforeId, int limit) {
+  final conversation = _NativeUtf8(bindings, conversationId); final before = _NativeUtf8(bindings, beforeId);
+  try { bindings.conversationPage(handle, conversation.pointer, conversation.length, beforeAtMs, before.pointer, before.length, limit); }
+  finally { conversation.dispose(); before.dispose(); }
+}
+void _callHistorySearch(_NativeBindings bindings, _Handle handle, String conversationId, String query, int limit) {
+  final conversation = _NativeUtf8(bindings, conversationId); final value = _NativeUtf8(bindings, query);
+  try { bindings.searchMessages(handle, conversation.pointer, conversation.length, value.pointer, value.length, limit); }
+  finally { conversation.dispose(); value.dispose(); }
 }
 
 String _nativeLibraryName() {
@@ -607,6 +605,10 @@ class _NativeBindings {
         retryAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_retry_attachment'),
         cancelAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_cancel_attachment'),
         exportAttachment = library.lookupFunction<_TwoStringsNative, _TwoStringsDart>('torca_engine_export_attachment'),
+        conversationPage = library.lookupFunction<_HistoryPageNative, _HistoryPageDart>('torca_engine_conversation_page'),
+        searchMessages = library.lookupFunction<_HistorySearchNative, _HistorySearchDart>('torca_engine_search_messages'),
+        queryPointer = library.lookupFunction<_PointerNative, _PointerDart>('torca_engine_query_ptr'),
+        queryLength = library.lookupFunction<_LengthNative, _LengthDart>('torca_engine_query_len'),
         refreshSnapshot = library.lookupFunction<_RefreshNative, _RefreshDart>('torca_engine_refresh_snapshot'),
         refreshDiagnostics = library.lookupFunction<_RefreshNative, _RefreshDart>('torca_engine_refresh_diagnostics'),
         resultPointer = library.lookupFunction<_PointerNative, _PointerDart>('torca_engine_result_ptr'),
@@ -642,6 +644,10 @@ class _NativeBindings {
   final _OneStringDart retryAttachment;
   final _OneStringDart cancelAttachment;
   final _TwoStringsDart exportAttachment;
+  final _HistoryPageDart conversationPage;
+  final _HistorySearchDart searchMessages;
+  final _PointerDart queryPointer;
+  final _LengthDart queryLength;
   final _RefreshDart refreshSnapshot;
   final _RefreshDart refreshDiagnostics;
   final _PointerDart resultPointer;

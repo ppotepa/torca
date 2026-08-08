@@ -1,6 +1,7 @@
 use core::fmt;
 
 use torca_client_engine::{ClientEngineActor, EngineHandle};
+use torca_storage_sqlite::SqlCipherMessageStore;
 
 #[cfg(target_os = "android")]
 #[path = "android.rs"]
@@ -12,22 +13,27 @@ impl NativeCompositionError {
     pub(crate) fn new(message: impl Into<String>) -> Self { Self(message.into()) }
 }
 impl fmt::Display for NativeCompositionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result { formatter.write_str(&self.0) }
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result { formatter.write_str(&self.0) }
 }
 impl std::error::Error for NativeCompositionError {}
+
+pub(crate) struct ProductionEngineParts {
+    pub engine: EngineHandle,
+    pub actor: ClientEngineActor,
+    pub history: SqlCipherMessageStore,
+}
 
 pub(crate) const DATABASE_KEY_HANDLE: torca_identity::KeyId =
     torca_identity::KeyId::from_u128(0x746f7263615f64625f6b6579);
 
 #[cfg(windows)]
-pub(crate) fn spawn_production_engine(
-) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
+pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeCompositionError> {
     use std::path::PathBuf;
     use torca_client_engine::ClientEngine;
     use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
     use torca_pairing::InMemoryPairingRepository;
     use torca_platform_windows::DpapiFileSecretStore;
-    use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore};
+    use torca_storage_sqlite::{SqlCipherReceiptStore, SqlCipherStore};
 
     let root = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -50,6 +56,8 @@ pub(crate) fn spawn_production_engine(
         .map_err(|error| storage_error("open relationship repository", &error))?;
     let messages = SqlCipherMessageStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open message repository", &error))?;
+    let history = SqlCipherMessageStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open history reader", &error))?;
     let receipts = SqlCipherReceiptStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open receipt repository", &error))?;
 
@@ -64,16 +72,16 @@ pub(crate) fn spawn_production_engine(
         messages,
         receipts,
     );
-    Ok(ClientEngineActor::spawn(engine))
+    let (engine, actor) = ClientEngineActor::spawn(engine);
+    Ok(ProductionEngineParts { engine, actor, history })
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn spawn_production_engine(
-) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
+pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeCompositionError> {
     use torca_client_engine::ClientEngine;
     use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
     use torca_pairing::InMemoryPairingRepository;
-    use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherReceiptStore, SqlCipherStore};
+    use torca_storage_sqlite::{SqlCipherReceiptStore, SqlCipherStore};
     use self::android::{AndroidProtectedSecretStore, database_path};
 
     let database_path = database_path().map_err(|error| secret_error("resolve Android database path", &error))?;
@@ -87,6 +95,8 @@ pub(crate) fn spawn_production_engine(
         .map_err(|error| storage_error("open relationship repository", &error))?;
     let messages = SqlCipherMessageStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open message repository", &error))?;
+    let history = SqlCipherMessageStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open history reader", &error))?;
     let receipts = SqlCipherReceiptStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open receipt repository", &error))?;
     let identity_keys = ManagedIdentityKeys::new(
@@ -101,7 +111,8 @@ pub(crate) fn spawn_production_engine(
         messages,
         receipts,
     );
-    Ok(ClientEngineActor::spawn(engine))
+    let (engine, actor) = ClientEngineActor::spawn(engine);
+    Ok(ProductionEngineParts { engine, actor, history })
 }
 
 #[cfg(any(windows, target_os = "android"))]
@@ -151,7 +162,6 @@ fn storage_error(operation: &str, error: &impl fmt::Display) -> NativeCompositio
 }
 
 #[cfg(not(any(windows, target_os = "android")))]
-pub(crate) fn spawn_production_engine(
-) -> Result<(EngineHandle, ClientEngineActor), NativeCompositionError> {
+pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeCompositionError> {
     Err(NativeCompositionError::new("production native composition is not implemented for this platform"))
 }

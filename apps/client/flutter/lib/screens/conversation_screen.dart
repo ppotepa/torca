@@ -16,6 +16,7 @@ import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/operation_tracker.dart';
 import 'connection_details_screen.dart';
+import 'conversation_timeline_controller.dart';
 
 class ConversationScreen extends StatelessWidget {
   const ConversationScreen({required this.gateway, required this.conversation, super.key});
@@ -74,12 +75,21 @@ class ConversationPane extends StatefulWidget {
 class _ConversationPaneState extends State<ConversationPane>
     with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final OperationTracker _operations = OperationTracker();
   final Map<String, String> _drafts = <String, String>{};
+
+  late ConversationTimelineController _timeline;
+  Timer? _searchDebounce;
+  List<MessageDto> _searchResults = const <MessageDto>[];
+  bool _searching = false;
+  bool _searchBusy = false;
   bool _markingRead = false;
+  bool _loadingOlder = false;
   bool _showJumpToLatest = false;
   int _lastMessageCount = 0;
+  int _lastActivityAtMs = 0;
   String? _unreadBoundaryMessageId;
   MessageDto? _replyingTo;
 
@@ -87,10 +97,25 @@ class _ConversationPaneState extends State<ConversationPane>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _timeline = _newTimeline();
+    _timeline.addListener(_timelineChanged);
     _operations.addListener(_operationChanged);
     _scrollController.addListener(_scrollChanged);
     widget.gateway.snapshots.addListener(_snapshotChanged);
-    _captureConversationState(widget.conversation.id);
+    _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
+    unawaited(_initializeTimeline());
+  }
+
+  ConversationTimelineController _newTimeline() => ConversationTimelineController(
+        gateway: widget.gateway,
+        conversationId: widget.conversation.id,
+      );
+
+  Future<void> _initializeTimeline() async {
+    await _timeline.initialize();
+    if (!mounted) return;
+    _captureUnreadBoundary();
+    _lastMessageCount = _timeline.messages.length;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _scrollToBottom(jump: true);
@@ -105,17 +130,23 @@ class _ConversationPaneState extends State<ConversationPane>
       oldWidget.gateway.snapshots.removeListener(_snapshotChanged);
       widget.gateway.snapshots.addListener(_snapshotChanged);
     }
-    if (oldWidget.conversation.id != widget.conversation.id) {
+    if (oldWidget.gateway != widget.gateway ||
+        oldWidget.conversation.id != widget.conversation.id) {
       _drafts[oldWidget.conversation.id] = _controller.text;
       _controller.text = _drafts[widget.conversation.id] ?? '';
       _replyingTo = null;
+      _searching = false;
+      _searchController.clear();
+      _searchResults = const <MessageDto>[];
       _showJumpToLatest = false;
-      _captureConversationState(widget.conversation.id);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _scrollToBottom(jump: true);
-        unawaited(_markReadIfNeeded());
-      });
+      _timeline.removeListener(_timelineChanged);
+      _timeline.dispose();
+      _timeline = _newTimeline();
+      _timeline.addListener(_timelineChanged);
+      _lastMessageCount = 0;
+      _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
+      _unreadBoundaryMessageId = null;
+      unawaited(_initializeTimeline());
     }
   }
 
@@ -131,6 +162,10 @@ class _ConversationPaneState extends State<ConversationPane>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.gateway.snapshots.removeListener(_snapshotChanged);
+    _timeline.removeListener(_timelineChanged);
+    _timeline.dispose();
+    _searchDebounce?.cancel();
+    _searchController.dispose();
     _scrollController.removeListener(_scrollChanged);
     _operations.removeListener(_operationChanged);
     _operations.dispose();
@@ -139,44 +174,87 @@ class _ConversationPaneState extends State<ConversationPane>
     super.dispose();
   }
 
-  void _captureConversationState(String conversationId) {
-    final messages = _messagesFor(widget.gateway.snapshots.value, conversationId);
-    _lastMessageCount = messages.length;
-    _unreadBoundaryMessageId = messages
-        .where((message) => message.direction == 'inbound' && message.status == 'delivered')
-        .map((message) => message.id)
-        .firstOrNull;
+  void _timelineChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _operationChanged() {
     if (mounted) setState(() {});
   }
 
+  void _captureUnreadBoundary() {
+    _unreadBoundaryMessageId = _timeline.messages
+        .where((message) => message.direction == 'inbound' && message.status == 'delivered')
+        .map((message) => message.id)
+        .firstOrNull;
+  }
+
   void _scrollChanged() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.pixels <= 180 &&
+        !_loadingOlder &&
+        _timeline.hasMore &&
+        !_searching) {
+      unawaited(_loadOlder());
+    }
     if (!_nearBottom()) return;
     unawaited(_markReadIfNeeded());
     if (_showJumpToLatest) setState(() => _showJumpToLatest = false);
   }
 
-  void _snapshotChanged() {
-    final count = _messagesFor(
-      widget.gateway.snapshots.value,
-      widget.conversation.id,
-    ).length;
-    if (count <= _lastMessageCount) {
-      _lastMessageCount = count;
-      return;
+  Future<void> _loadOlder() async {
+    if (_loadingOlder || !_timeline.hasMore || !_scrollController.hasClients) return;
+    _loadingOlder = true;
+    final beforePixels = _scrollController.position.pixels;
+    final beforeExtent = _scrollController.position.maxScrollExtent;
+    try {
+      final loaded = await _timeline.loadOlder();
+      if (!mounted || loaded == 0) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients) return;
+        final delta = _scrollController.position.maxScrollExtent - beforeExtent;
+        _scrollController.jumpTo(
+          (beforePixels + delta).clamp(0.0, _scrollController.position.maxScrollExtent),
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _loadingOlder = false);
     }
+  }
+
+  void _snapshotChanged() {
+    final summary = _conversationSummary();
+    final activity = summary?.lastActivityAtMs ?? 0;
+    if (activity == _lastActivityAtMs) return;
+    _lastActivityAtMs = activity;
     final follow = _nearBottom();
-    _lastMessageCount = count;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    final beforeCount = _timeline.messages.length;
+    unawaited(() async {
+      await _timeline.refreshLatest();
       if (!mounted) return;
-      if (follow) {
-        _scrollToBottom();
-      } else if (!_showJumpToLatest) {
-        setState(() => _showJumpToLatest = true);
+      final count = _timeline.messages.length;
+      if (count > beforeCount && _unreadBoundaryMessageId == null) {
+        _captureUnreadBoundary();
       }
-    });
+      _lastMessageCount = count;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (follow) {
+          _scrollToBottom();
+          unawaited(_markReadIfNeeded());
+        } else if (!_showJumpToLatest && count > beforeCount) {
+          setState(() => _showJumpToLatest = true);
+        }
+      });
+    }());
+  }
+
+  ConversationDto? _conversationSummary() {
+    for (final conversation in widget.gateway.snapshots.value.conversations) {
+      if (conversation.id == widget.conversation.id) return conversation;
+    }
+    return null;
   }
 
   bool _nearBottom() {
@@ -203,14 +281,11 @@ class _ConversationPaneState extends State<ConversationPane>
   }
 
   Future<void> _markReadIfNeeded() async {
-    if (_markingRead || !mounted) return;
+    if (_markingRead || !mounted || _searching) return;
     if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
     if (ModalRoute.of(context)?.isCurrent != true || !_nearBottom()) return;
-    final hasDelivered = widget.gateway.snapshots.value.messages.any(
-      (message) =>
-          message.conversationId == widget.conversation.id &&
-          message.direction == 'inbound' &&
-          message.status == 'delivered',
+    final hasDelivered = _timeline.messages.any(
+      (message) => message.direction == 'inbound' && message.status == 'delivered',
     );
     if (!hasDelivered) return;
     final sendReceipt =
@@ -232,8 +307,8 @@ class _ConversationPaneState extends State<ConversationPane>
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
         valueListenable: widget.gateway.snapshots,
         builder: (context, snapshot, _) {
-          final messages = _messagesFor(snapshot, widget.conversation.id);
-          final byId = <String, MessageDto>{for (final message in messages) message.id: message};
+          final messages = _searching ? _searchResults : _timeline.messages;
+          final byId = <String, MessageDto>{for (final message in _timeline.messages) message.id: message};
           final reply = _replyingTo;
           final contact = _contactFor(snapshot, widget.conversation);
           final sending = _operations.isActive('message:send');
@@ -253,15 +328,22 @@ class _ConversationPaneState extends State<ConversationPane>
                 ),
                 const Divider(height: 1),
               ],
+              _buildSearchBar(),
               Expanded(
                 child: Stack(
                   children: <Widget>[
-                    if (messages.isEmpty)
-                      const Center(
+                    if (_timeline.loading && messages.isEmpty)
+                      const Center(child: CircularProgressIndicator())
+                    else if (messages.isEmpty)
+                      Center(
                         child: Padding(
-                          padding: EdgeInsets.all(24),
+                          padding: const EdgeInsets.all(24),
                           child: Text(
-                            'No messages yet. Messages are sent directly through Tor.',
+                            _searching
+                                ? (_searchController.text.trim().isEmpty
+                                    ? 'Type to search this conversation.'
+                                    : 'No matching messages.')
+                                : 'No messages yet. Messages are sent directly through Tor.',
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -275,7 +357,7 @@ class _ConversationPaneState extends State<ConversationPane>
                           final message = messages[index];
                           final previous = index == 0 ? null : messages[index - 1];
                           final showDate = previous == null || !_sameDay(previous, message);
-                          final showUnread = message.id == _unreadBoundaryMessageId;
+                          final showUnread = !_searching && message.id == _unreadBoundaryMessageId;
                           final grouped = previous != null &&
                               previous.direction == message.direction &&
                               !showDate &&
@@ -309,7 +391,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                 quotedUnavailable:
                                     message.replyToMessageId != null && quoted == null,
                                 footer: <Widget>[
-                                  if (retryable)
+                                  if (retryable && !_searching)
                                     Align(
                                       alignment: Alignment.centerLeft,
                                       child: TextButton.icon(
@@ -334,16 +416,12 @@ class _ConversationPaneState extends State<ConversationPane>
                                       onRetry: () => _attachmentCommand(
                                         attachment.id,
                                         'retry',
-                                        RetryAttachmentCommandDto(
-                                          attachmentIdHex: attachment.id,
-                                        ),
+                                        RetryAttachmentCommandDto(attachmentIdHex: attachment.id),
                                       ),
                                       onCancel: () => _attachmentCommand(
                                         attachment.id,
                                         'cancel',
-                                        CancelAttachmentCommandDto(
-                                          attachmentIdHex: attachment.id,
-                                        ),
+                                        CancelAttachmentCommandDto(attachmentIdHex: attachment.id),
                                       ),
                                       onOpen: () => _openAttachment(attachment),
                                       onSave: () => _saveAttachment(attachment),
@@ -355,7 +433,20 @@ class _ConversationPaneState extends State<ConversationPane>
                           );
                         },
                       ),
-                    if (_showJumpToLatest)
+                    if (_loadingOlder)
+                      const Positioned(
+                        top: 6,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      ),
+                    if (_showJumpToLatest && !_searching)
                       Positioned(
                         right: 16,
                         bottom: 12,
@@ -388,7 +479,7 @@ class _ConversationPaneState extends State<ConversationPane>
                         children: <Widget>[
                           IconButton(
                             tooltip: 'Attach files',
-                            onPressed: pickingAttachment ? null : _pickAttachments,
+                            onPressed: pickingAttachment || _searching ? null : _pickAttachments,
                             icon: pickingAttachment
                                 ? const SizedBox(
                                     width: 20,
@@ -398,11 +489,11 @@ class _ConversationPaneState extends State<ConversationPane>
                                 : const Icon(Icons.attach_file),
                           ),
                           const SizedBox(width: 4),
-                          Expanded(child: _composerField(sending, reply != null)),
+                          Expanded(child: _composerField(sending || _searching, reply != null)),
                           const SizedBox(width: 8),
                           IconButton.filled(
                             tooltip: sending ? 'Sending message' : 'Send message',
-                            onPressed: sending ? null : _sendMessage,
+                            onPressed: sending || _searching ? null : _sendMessage,
                             icon: sending
                                 ? const SizedBox(
                                     width: 18,
@@ -422,10 +513,98 @@ class _ConversationPaneState extends State<ConversationPane>
         },
       );
 
-  Widget _composerField(bool sending, bool replying) {
+  Widget _buildSearchBar() {
+    if (!_searching) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: IconButton(
+            tooltip: 'Search messages',
+            onPressed: () => setState(() => _searching = true),
+            icon: const Icon(Icons.search),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: 'Search this conversation',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: _searchChanged,
+            ),
+          ),
+          if (_searchBusy)
+            const Padding(
+              padding: EdgeInsets.all(10),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: 'Close search',
+              onPressed: _closeSearch,
+              icon: const Icon(Icons.close),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _searchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () async {
+      final query = value.trim();
+      if (!mounted) return;
+      if (query.isEmpty) {
+        setState(() => _searchResults = const <MessageDto>[]);
+        return;
+      }
+      setState(() => _searchBusy = true);
+      try {
+        final page = await _timeline.search(query);
+        if (!mounted || _searchController.text.trim() != query) return;
+        final results = page.messages.toList(growable: false)
+          ..sort((a, b) {
+            final byTime = a.createdAtMs.compareTo(b.createdAtMs);
+            return byTime != 0 ? byTime : a.id.compareTo(b.id);
+          });
+        setState(() => _searchResults = results);
+      } finally {
+        if (mounted && _searchController.text.trim() == query) {
+          setState(() => _searchBusy = false);
+        }
+      }
+    });
+  }
+
+  void _closeSearch() {
+    _searchDebounce?.cancel();
+    setState(() {
+      _searching = false;
+      _searchBusy = false;
+      _searchResults = const <MessageDto>[];
+      _searchController.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(jump: true));
+  }
+
+  Widget _composerField(bool disabled, bool replying) {
     final field = TextField(
       controller: _controller,
-      enabled: !sending,
+      enabled: !disabled,
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.newline,
@@ -488,7 +667,7 @@ class _ConversationPaneState extends State<ConversationPane>
   Future<void> _applyMessageAction(MessageDto message, MessageAction action) async {
     switch (action) {
       case MessageAction.reply:
-        setState(() => _replyingTo = message);
+        if (!_searching) setState(() => _replyingTo = message);
       case MessageAction.copy:
         await Clipboard.setData(ClipboardData(text: message.body));
         if (mounted) {
@@ -537,7 +716,7 @@ class _ConversationPaneState extends State<ConversationPane>
 
   Future<void> _sendMessage() async {
     final body = _controller.text.trim();
-    if (body.isEmpty) return;
+    if (body.isEmpty || _searching) return;
     final replyTo = _replyingTo?.id;
     await _operations.run('message:send', () async {
       final result = await widget.gateway.execute(
@@ -552,6 +731,7 @@ class _ConversationPaneState extends State<ConversationPane>
         _controller.clear();
         _drafts.remove(widget.conversation.id);
         setState(() => _replyingTo = null);
+        await _timeline.refreshLatest();
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       } else {
         _showError(BridgeErrorPresenter.message(result, fallback: 'Could not queue message'));
@@ -561,10 +741,7 @@ class _ConversationPaneState extends State<ConversationPane>
 
   Future<void> _pickAttachments() async {
     await _operations.run('attachment:pick', () async {
-      final picked = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        withData: false,
-      );
+      final picked = await FilePicker.platform.pickFiles(allowMultiple: true, withData: false);
       if (picked == null || picked.files.isEmpty || !mounted) return;
       final maxBytes = capabilitiesFor(widget.gateway).maxAttachmentBytes;
       var queued = 0;
@@ -596,6 +773,7 @@ class _ConversationPaneState extends State<ConversationPane>
         }
         queued++;
       }
+      if (queued > 0) await _timeline.refreshLatest();
       if (mounted && queued > 1) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('$queued attachments queued')),
@@ -711,10 +889,6 @@ class _ConversationPaneState extends State<ConversationPane>
       };
 }
 
-List<MessageDto> _messagesFor(AppSnapshotDto snapshot, String conversationId) => snapshot.messages
-    .where((message) => message.conversationId == conversationId)
-    .toList(growable: false);
-
 bool _sameDay(MessageDto first, MessageDto second) {
   final a = DateTime.fromMillisecondsSinceEpoch(first.createdAtMs).toLocal();
   final b = DateTime.fromMillisecondsSinceEpoch(second.createdAtMs).toLocal();
@@ -746,9 +920,7 @@ class _DateSeparator extends StatelessWidget {
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Center(
-        child: Text(label, style: Theme.of(context).textTheme.labelSmall),
-      ),
+      child: Center(child: Text(label, style: Theme.of(context).textTheme.labelSmall)),
     );
   }
 }
@@ -786,11 +958,7 @@ class _ReplyComposerPreview extends StatelessWidget {
             const Icon(Icons.reply, size: 18),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                message.body,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text(message.body, maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
             IconButton(
               tooltip: 'Cancel reply',

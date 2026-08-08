@@ -15,6 +15,9 @@ int32_t torca_engine_queue_message_intent(NativeEngineHandle*,const uint8_t*,siz
 int32_t torca_engine_retry_message_intent(NativeEngineHandle*,const uint8_t*,size_t);
 int32_t torca_engine_mark_conversation_read_intent(NativeEngineHandle*,const uint8_t*,size_t,uint8_t);
 int32_t torca_engine_queue_attachment_intent(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t,const uint8_t*,size_t,const uint8_t*,size_t,uint64_t);
+int32_t torca_engine_conversation_page(NativeEngineHandle*,const uint8_t*,size_t,int64_t,const uint8_t*,size_t,uint32_t);
+int32_t torca_engine_search_messages(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t,uint32_t);
+const uint8_t *torca_engine_query_ptr(const NativeEngineHandle*); size_t torca_engine_query_len(const NativeEngineHandle*);
 int32_t torca_engine_create_identity(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t,int64_t);
 int32_t torca_engine_create_pairing(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_join_pairing(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t); int32_t torca_engine_approve_pairing(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_reject_pairing(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_cancel_pairing(NativeEngineHandle*,const uint8_t*,size_t);
 int32_t torca_engine_rename_contact(NativeEngineHandle*,const uint8_t*,size_t,const uint8_t*,size_t); int32_t torca_engine_verify_contact(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_reset_contact_verification(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_block_contact(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_unblock_contact(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_remove_contact(NativeEngineHandle*,const uint8_t*,size_t); int32_t torca_engine_clear_conversation_history(NativeEngineHandle*,const uint8_t*,size_t);

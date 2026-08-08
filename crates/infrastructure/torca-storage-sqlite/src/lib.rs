@@ -28,7 +28,10 @@ pub use durable::{
 };
 pub use durable_sqlcipher::{SqlCipherDurableStore, SqlCipherDurableStoreOpenError};
 pub use inbound_sqlcipher::{SqlCipherInboundStore, SqlCipherInboundStoreOpenError};
-pub use message_repository::{SqlCipherMessageStore, SqlCipherMessageStoreOpenError};
+pub use message_repository::{
+    ConversationMessagePage, ConversationMessageSummary, SqlCipherMessageStore,
+    SqlCipherMessageStoreOpenError,
+};
 pub use migration::{Migration, MigrationError, MigrationRunner, migrations};
 pub use read_state::{ReadStateError, SqlCipherReadState};
 pub use receipt_repository::{SqlCipherReceiptStore, SqlCipherReceiptStoreOpenError};
