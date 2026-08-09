@@ -189,12 +189,6 @@ object AndroidKeystoreBridge {
         Log.e("TorcaRuntime", message)
     }
 
-    @JvmStatic
-    fun relayEndpoint(): String =
-        applicationContext.assets.open("torca/relay_endpoint.txt")
-            .bufferedReader(Charsets.US_ASCII)
-            .use { it.readText().trim() }
-
     private fun store(namespace: String): AndroidKeystoreSecretStore = when (namespace) {
         "database" -> databaseSecrets
         "identity" -> identitySecrets

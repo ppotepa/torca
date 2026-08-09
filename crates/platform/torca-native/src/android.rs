@@ -123,10 +123,6 @@ pub(crate) fn database_path() -> Result<PathBuf, ProtectedSecretStoreError> {
 pub(crate) fn log_root_path() -> Result<PathBuf, ProtectedSecretStoreError> {
     string_method("logRootPath").map(PathBuf::from)
 }
-pub(crate) fn relay_endpoint() -> Result<String, ProtectedSecretStoreError> {
-    string_method("relayEndpoint")
-}
-
 #[allow(dead_code)]
 pub(crate) fn report_runtime_error(message: &str) {
     eprintln!("Torca Android runtime error: {message}");

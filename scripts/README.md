@@ -26,9 +26,10 @@ Examples:
 ```
 
 `stack rotate` intentionally creates a new onion identity. The generated
-endpoint is stored in `.torca/stack/relay_endpoint.txt` and is passed to the
-existing platform-asset pipeline, so a build after rotation embeds the new
-endpoint in the client. `.torca` is runtime state and is ignored by Git.
+endpoint is stored in `.torca/stack/relay_endpoint.txt` and is passed as
+`TORCA_RELAY_ENDPOINT` to the native build, so a build after rotation embeds
+the new endpoint directly in both platform native libraries. `.torca` is
+runtime state and is ignored by Git.
 
 Full `deploy` defaults to `Ensure`: it preserves the current onion and creates
 one only when none exists. Use `-OnionPolicy Rotate` when a fresh network and a
@@ -117,5 +118,5 @@ that provider for subsequent runs until Docker is explicitly selected:
 
 `-StackAction rotate` recreates the Docker Tor volume and therefore creates a
 new v3 relay onion address. The endpoint is written to `.torca/stack/relay_endpoint.txt`
-and is included in the next client build fingerprint. Use `-StackProvider process`
+and is included in the next native build fingerprint. Use `-StackProvider process`
 only for a local fallback when Docker Desktop is unavailable.

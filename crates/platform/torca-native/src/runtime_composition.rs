@@ -24,6 +24,10 @@ use crate::composition::{NativeCompositionError, load_or_create_database_key};
 
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(30);
 const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const COMPILED_RELAY_ENDPOINT: &str = match option_env!("TORCA_RELAY_ENDPOINT") {
+    Some(value) => value,
+    None => "",
+};
 
 struct TorRelayProbe {
     tor: Arc<TorService>,
@@ -49,7 +53,7 @@ pub(crate) fn spawn_production_runtime(
         use crate::app_paths::windows_app_root;
         use torca_platform_windows::WindowsPlatformServices;
         let root = windows_app_root()?;
-        let relay = read_windows_relay_endpoint()?;
+        let relay = parse_relay_endpoint(COMPILED_RELAY_ENDPOINT)?;
         let platform = WindowsPlatformServices::new(
             root.join("data"),
             root.join("cache"),
@@ -60,15 +64,12 @@ pub(crate) fn spawn_production_runtime(
     }
     #[cfg(target_os = "android")]
     {
-        use crate::composition::android::{database_path, log_root_path, relay_endpoint};
+        use crate::composition::android::{database_path, log_root_path};
         use torca_platform_android::AndroidPlatformServices;
         let database = database_path()
             .map_err(|_| NativeCompositionError::new("resolve Android database path failed"))?;
         let data = database.parent().map_or_else(|| database.clone(), std::path::Path::to_path_buf);
-        let relay =
-            parse_relay_endpoint(&relay_endpoint().map_err(|_| {
-                NativeCompositionError::new("read packaged relay endpoint failed")
-            })?)?;
+        let relay = parse_relay_endpoint(COMPILED_RELAY_ENDPOINT)?;
         let platform = AndroidPlatformServices::new(
             data.clone(),
             data.join("cache"),
@@ -211,19 +212,6 @@ fn engine_identity(
         .map_err(|_| NativeCompositionError::new("load local identity failed"))?
         .identity
         .ok_or_else(|| NativeCompositionError::new("local identity is not initialized"))
-}
-
-#[cfg(windows)]
-fn read_windows_relay_endpoint() -> Result<(String, u16), NativeCompositionError> {
-    let executable = std::env::current_exe()
-        .map_err(|_| NativeCompositionError::new("resolve Windows application directory failed"))?;
-    let file = executable
-        .parent()
-        .ok_or_else(|| NativeCompositionError::new("Windows application directory is unavailable"))?
-        .join("relay_endpoint.txt");
-    let value = std::fs::read_to_string(file)
-        .map_err(|_| NativeCompositionError::new("packaged relay endpoint is missing"))?;
-    parse_relay_endpoint(value.trim())
 }
 
 fn parse_relay_endpoint(value: &str) -> Result<(String, u16), NativeCompositionError> {

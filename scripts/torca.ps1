@@ -33,6 +33,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $clientDataPolicySpecified = $PSBoundParameters.ContainsKey('ClientDataPolicy')
+$buildPolicySpecified = $PSBoundParameters.ContainsKey('BuildPolicy')
 $interactiveDataResetConfirmed = $false
 $root = Split-Path -Parent $PSScriptRoot
 $previousStackProvider = $env:TORCA_STACK_PROVIDER
@@ -79,7 +80,6 @@ if ($Command -eq 'menu') {
     if ($Command -eq 'deploy' -and -not $NonInteractive) {
         $options = Get-TorcaInteractiveOptions
         $OnionPolicy = if ($options.OnionPolicy -like 'Restart*') { 'Restart' } elseif ($options.OnionPolicy -like 'Rotate*') { 'Rotate' } else { 'Ensure' }
-        $BuildPolicy = if ($options.BuildPolicy -like 'Rebuild*') { 'Rebuild' } elseif ($options.BuildPolicy -like 'Reuse*') { 'Reuse' } else { 'IfRequired' }
         $InstallPolicy = if ($options.InstallPolicy -like 'Always*') { 'Always' } elseif ($options.InstallPolicy -like 'Skip*') { 'Skip' } else { 'Selected' }
         $RunPolicy = if ($options.RunPolicy -like 'Start*') { 'Start' } elseif ($options.RunPolicy -like 'Skip*') { 'Skip' } else { 'Restart' }
     }
@@ -161,12 +161,31 @@ switch ($Command) {
         if ($ClientDataPolicy -eq 'ResetAll') {
             $selected = @($available | Where-Object { $_.CanInstall -and $_.CanRun })
         }
-        if ($ClientDataPolicy -ne 'Preserve') { Reset-TorcaClientData -Devices $selected }
         $android = @($selected | Where-Object Platform -eq 'android')
         $windows = @($selected | Where-Object Platform -eq 'windows')
         $buildTarget = if ($windows.Count -gt 0 -and $android.Count -gt 0) { 'all' } elseif ($android.Count -gt 0) { 'android' } else { 'windows' }
         $required = Test-TorcaBuildRequired -Paths $paths -Endpoint $stack.Endpoint -Target $buildTarget -Configuration $Configuration
         if ($BuildPolicy -eq 'Reuse' -and $required) { throw 'Requested build reuse, but matching artifacts are not available.' }
+        if (-not $NonInteractive -and -not $buildPolicySpecified -and -not $ReuseBuild) {
+            $manifestState = if ($required) { 'no verified matching artifact is available' } else { 'a verified matching artifact is available' }
+            $buildChoice = if ($required) {
+                Read-TorcaMenuChoice "Build decision ($buildTarget/$Configuration; relay $($stack.Endpoint)) - $manifestState" @(
+                    'Rebuild now (required)',
+                    'Abort deployment'
+                ) '1'
+            } else {
+                Read-TorcaMenuChoice "Build decision ($buildTarget/$Configuration; relay $($stack.Endpoint)) - $manifestState" @(
+                    'Reuse verified artifact',
+                    'Rebuild anyway',
+                    'Abort deployment'
+                ) '1'
+            }
+            if ($buildChoice -like 'Abort*') { throw 'Deployment cancelled before data reset or installation.' }
+            $BuildPolicy = if ($buildChoice -like 'Rebuild*') { 'Rebuild' } else { 'Reuse' }
+        }
+        $buildDetail = if ($BuildPolicy -eq 'Rebuild') { 'Rebuild selected; endpoint and source fingerprint will be embedded' } else { 'Verified artifact reuse selected' }
+        Write-TorcaStage -Name 'Build decision' -State 'ready' -Detail $buildDetail
+        if ($ClientDataPolicy -ne 'Preserve') { Reset-TorcaClientData -Devices $selected }
         if ($BuildPolicy -eq 'Rebuild' -or ($BuildPolicy -eq 'IfRequired' -and $required)) {
             Write-TorcaStage -Name 'Application build' -State 'running' -Detail "$buildTarget / $Configuration"
             Invoke-TorcaClientBuild -RepoRoot $root -Target $buildTarget -Configuration $Configuration -Endpoint $stack.Endpoint

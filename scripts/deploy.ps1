@@ -32,9 +32,10 @@ if (-not $env:TORCA_ORCHESTRATED) {
         Command = 'deploy'; Target = $Target; Configuration = $Configuration
         OnionPolicy = $OnionPolicy
         StackProvider = $StackProvider
-        BuildPolicy = $BuildPolicy; InstallPolicy = $InstallPolicy; RunPolicy = $RunPolicy
+        InstallPolicy = $InstallPolicy; RunPolicy = $RunPolicy
     }
     if ($PSBoundParameters.ContainsKey('ClientDataPolicy')) { $arguments.ClientDataPolicy = $ClientDataPolicy }
+    if ($PSBoundParameters.ContainsKey('BuildPolicy')) { $arguments.BuildPolicy = $BuildPolicy }
     if ($Device) { $arguments.Device = $Device }
     if ($NonInteractive) { $arguments.NonInteractive = $true }
     if ($Confirm) { $arguments.Confirm = $true }

@@ -1,30 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Get-TorcaRelayEndpoint {
-    param([Parameter(Mandatory = $true)][string]$RepoRoot)
-
-    $value = [string]$env:TORCA_RELAY_ENDPOINT
-    if ([string]::IsNullOrWhiteSpace($value)) {
-        $file = Join-Path $RepoRoot 'release/relay_endpoint.txt'
-        if (Test-Path $file) {
-            $value = (Get-Content $file -Raw).Trim()
-        }
-    }
-    if ([string]::IsNullOrWhiteSpace($value)) {
-        $file = Join-Path $RepoRoot '.torca/stack/relay_endpoint.txt'
-        if (Test-Path $file) {
-            $value = (Get-Content $file -Raw).Trim()
-        }
-    }
-    if ($value -notmatch '^[a-z2-7]{56}\.onion:[1-9][0-9]{0,4}$') {
-        throw 'Set TORCA_RELAY_ENDPOINT (or release/relay_endpoint.txt) to a v3 host.onion:port.'
-    }
-    $port = [int]($value -split ':')[-1]
-    if ($port -gt 65535) { throw 'TORCA_RELAY_ENDPOINT port is outside 1..65535.' }
-    return $value
-}
-
 function Ensure-TorcaPlatformScaffold {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
@@ -56,10 +32,11 @@ function Prepare-TorcaWindowsAssets {
     if (Test-Path -LiteralPath $obsoleteTor) {
         Remove-Item -LiteralPath $obsoleteTor -Recurse -Force
     }
+    $obsoleteEndpoint = Join-Path $runner 'relay_endpoint.txt'
+    if (Test-Path -LiteralPath $obsoleteEndpoint) {
+        Remove-Item -LiteralPath $obsoleteEndpoint -Force
+    }
     Copy-Item (Join-Path $overlay 'main.cpp') (Join-Path $runner 'main.cpp') -Force
-
-    $endpoint = Get-TorcaRelayEndpoint -RepoRoot $RepoRoot
-    Set-Content -Path (Join-Path $runner 'relay_endpoint.txt') -Value $endpoint -NoNewline -Encoding ascii
 
     $cmake = Join-Path $flutterRoot 'windows/CMakeLists.txt'
     $runnerCmake = Join-Path $flutterRoot 'windows/runner/CMakeLists.txt'
@@ -71,9 +48,6 @@ function Prepare-TorcaWindowsAssets {
     $block = @"
 $begin
 add_custom_command(TARGET `${BINARY_NAME} POST_BUILD
-  COMMAND `${CMAKE_COMMAND} -E copy_if_different
-    "`${CMAKE_CURRENT_SOURCE_DIR}/relay_endpoint.txt"
-    "`$<TARGET_FILE_DIR:`${BINARY_NAME}>/relay_endpoint.txt"
   COMMAND `${CMAKE_COMMAND} -E copy_if_different
     "`${CMAKE_CURRENT_SOURCE_DIR}/resources/app_icon.ico"
     "`$<TARGET_FILE_DIR:`${BINARY_NAME}>/torca.ico")
@@ -109,8 +83,11 @@ function Prepare-TorcaAndroidAssets {
     if (Test-Path -LiteralPath $obsoleteTorAssets) {
         Remove-Item -LiteralPath $obsoleteTorAssets -Recurse -Force
     }
+    $obsoleteEndpoint = Join-Path $assets 'relay_endpoint.txt'
+    if (Test-Path -LiteralPath $obsoleteEndpoint) {
+        Remove-Item -LiteralPath $obsoleteEndpoint -Force
+    }
     New-Item -ItemType Directory -Force -Path $assets | Out-Null
-    Set-Content -Path (Join-Path $assets 'relay_endpoint.txt') -Value (Get-TorcaRelayEndpoint -RepoRoot $RepoRoot) -NoNewline -Encoding ascii
 }
 
 function Prepare-TorcaPlatformAssets {

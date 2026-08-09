@@ -722,6 +722,18 @@ function Write-TorcaArtifactManifest {
         ).Replace('-', '').ToLowerInvariant()
     } finally { $artifactSha.Dispose() }
     $release = Get-Content (Join-Path $script:RepoRoot 'release/version.json') -Raw | ConvertFrom-Json
+    $artifactEndpoint = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Endpoint') {
+        [string]$buildManifest.Endpoint
+    } else { '' }
+    $relayEndpointHash = [string]$release.relayEndpointHash
+    if (-not [string]::IsNullOrWhiteSpace($artifactEndpoint)) {
+        $endpointSha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $relayEndpointHash = [BitConverter]::ToString(
+                $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($artifactEndpoint))
+            ).Replace('-', '').ToLowerInvariant()
+        } finally { $endpointSha.Dispose() }
+    }
     [pscustomobject]@{
         Schema = 1
         Product = 'Torca'
@@ -735,12 +747,12 @@ function Write-TorcaArtifactManifest {
         SchemaVersion = $release.schemaVersion
         SourceCommit = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Commit') { $buildManifest.Commit } else { $release.sourceCommit }
         SourceFingerprint = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'SourceFingerprint') { $buildManifest.SourceFingerprint } else { $release.sourceFingerprint }
-        RelayEndpointHash = $release.relayEndpointHash
+        RelayEndpointHash = $relayEndpointHash
         NativeLibraryHash = $nativeLibraryHash
         ApplicationArtifactHash = $applicationArtifactHash
         TargetPlatform = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Targets') { (@($buildManifest.Targets) -join '|') } else { $release.targetPlatform }
         TargetArchitecture = $release.targetArchitecture
-        Endpoint = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Endpoint') { $buildManifest.Endpoint } else { $null }
+        Endpoint = if (-not [string]::IsNullOrWhiteSpace($artifactEndpoint)) { $artifactEndpoint } else { $null }
         Configuration = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Configuration') { $buildManifest.Configuration } else { $null }
         Files = $files
     } | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $Root 'torca-artifact.json')

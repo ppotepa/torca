@@ -39,14 +39,16 @@ if ($Target -ne 'check' -and [string]::IsNullOrWhiteSpace($env:TORCA_BUILD_ID)) 
     $release = Get-Content (Join-Path $root 'release/version.json') -Raw | ConvertFrom-Json
     $endpoint = [string]$env:TORCA_RELAY_ENDPOINT
     if ([string]::IsNullOrWhiteSpace($endpoint)) {
-        $endpointFile = Join-Path $root 'release/relay_endpoint.txt'
-        if (Test-Path -LiteralPath $endpointFile) { $endpoint = (Get-Content $endpointFile -Raw).Trim() }
-    }
-    if ([string]::IsNullOrWhiteSpace($endpoint)) {
         $endpointFile = Join-Path $root '.torca/stack/relay_endpoint.txt'
         if (Test-Path -LiteralPath $endpointFile) { $endpoint = (Get-Content $endpointFile -Raw).Trim() }
     }
-    if ([string]::IsNullOrWhiteSpace($endpoint)) { $endpoint = 'configured-at-build' }
+    if ([string]::IsNullOrWhiteSpace($endpoint)) {
+        throw 'Relay endpoint is required for a native build. Start the relay stack or set TORCA_RELAY_ENDPOINT.'
+    }
+    # The native crate embeds the exact endpoint used for this build. Keep the
+    # environment value populated even when the build was invoked directly
+    # instead of through the deploy orchestrator.
+    $env:TORCA_RELAY_ENDPOINT = $endpoint
     $env:TORCA_BUILD_ID = Get-TorcaBuildId -RepoRoot $root -Endpoint $endpoint -Target $Target -Configuration $Configuration
     $env:TORCA_PRODUCT_VERSION = [string]$release.version
     $env:TORCA_SOURCE_FINGERPRINT = Get-TorcaBuildSourceFingerprint -RepoRoot $root
