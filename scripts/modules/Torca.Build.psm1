@@ -234,7 +234,9 @@ function Invoke-TorcaClientRun {
         [string]$Target,
         [string]$Device,
         [ValidateSet('debug','release')][string]$Configuration = 'debug',
-        [switch]$Installed
+        [switch]$Installed,
+        [string]$ExpectedBuildId,
+        [ValidateRange(5,120)][int]$HealthTimeoutSeconds = 30
     )
     if ($Installed -and $Target -eq 'windows') {
         $exe = Join-Path $RepoRoot 'apps/client/flutter/build/windows/x64/runner/Release/torca_app.exe'
@@ -268,11 +270,13 @@ function Invoke-TorcaClientRun {
         }
         Stop-TorcaOwnedWindowsTor -RepoRoot $RepoRoot
         Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
+        Wait-TorcaClientLaunch -Platform windows -ExpectedBuildId $ExpectedBuildId -TimeoutSeconds $HealthTimeoutSeconds
         return
     }
     if ($Installed -and $Device -and (Get-Command adb -ErrorAction SilentlyContinue)) {
         & adb -s $Device shell monkey -p com.torca.torca_app 1
         if ($LASTEXITCODE -ne 0) { throw "ADB launch failed with code $LASTEXITCODE." }
+        Wait-TorcaClientLaunch -Platform android -Device $Device -ExpectedBuildId $ExpectedBuildId -TimeoutSeconds $HealthTimeoutSeconds
         return
     }
     $args = @{ Target = $Target }
@@ -282,6 +286,56 @@ function Invoke-TorcaClientRun {
     try { $env:TORCA_ORCHESTRATED = '1'; & (Join-Path $RepoRoot 'scripts/run.ps1') @args }
     finally { $env:TORCA_ORCHESTRATED = $oldOrchestrated }
     if ($LASTEXITCODE -ne 0) { throw "Run failed with code $LASTEXITCODE." }
+}
+
+function Wait-TorcaClientLaunch {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('windows','android')][string]$Platform,
+        [string]$Device,
+        [string]$ExpectedBuildId,
+        [ValidateRange(5,120)][int]$TimeoutSeconds = 30
+    )
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastDetail = ''
+    do {
+        if ($Platform -eq 'windows') {
+            $process = @(Get-Process -Name torca_app -ErrorAction SilentlyContinue)
+            if ($process.Count -gt 0) {
+                $logRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Torca/logs/devices' } else { $null }
+                $runStart = if ($logRoot -and (Test-Path -LiteralPath $logRoot)) {
+                    Get-ChildItem -LiteralPath $logRoot -Recurse -File -Filter 'run.start.json' -ErrorAction SilentlyContinue |
+                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                } else { $null }
+                if ($runStart) {
+                    try {
+                        $run = Get-Content -LiteralPath $runStart.FullName -Raw | ConvertFrom-Json
+                        if ($ExpectedBuildId -and [string]$run.build_id -and [string]$run.build_id -ne $ExpectedBuildId) {
+                            throw "Windows runtime build ID mismatch. Expected=$ExpectedBuildId Actual=$($run.build_id). Diagnostic: $($runStart.FullName)"
+                        }
+                        Write-Host "Windows runtime launch verified: PID $($process[0].Id), build=$($run.build_id)" -ForegroundColor Green
+                    } catch {
+                        if ($_.Exception.Message -like 'Windows runtime build ID mismatch*') { throw }
+                        Write-Warning "Windows process is running but startup metadata could not be read: $($runStart.FullName)"
+                    }
+                } else {
+                    Write-Host "Windows process is running: PID $($process[0].Id) (runtime log is still initializing)" -ForegroundColor Green
+                }
+                return
+            }
+            $lastDetail = 'Windows torca_app process is not running yet'
+        } else {
+            if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required for Android launch verification.' }
+            $pid = (& adb -s $Device shell pidof com.torca.torca_app 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($pid)) {
+                Write-Host "Android runtime launch verified on ${Device}: PID $pid" -ForegroundColor Green
+                return
+            }
+            $lastDetail = "Android package process is not running on $Device yet"
+        }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $deadline)
+    $hint = if ($Platform -eq 'windows') { 'collect logs with scripts/torca.ps1 -Command collect -Profile incident' } else { 'collect logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat' }
+    throw "Runtime launch health check timed out after ${TimeoutSeconds}s: $lastDetail. $hint"
 }
 
 function Stop-TorcaOwnedWindowsTor {
@@ -316,4 +370,4 @@ function Write-TorcaBuildManifest {
     })
 }
 
-Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Stop-TorcaOwnedWindowsTor, Write-TorcaBuildManifest
+Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Wait-TorcaClientLaunch, Stop-TorcaOwnedWindowsTor, Write-TorcaBuildManifest

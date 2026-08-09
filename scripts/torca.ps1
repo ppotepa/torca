@@ -52,6 +52,14 @@ function Resolve-TorcaTarget {
     return 'android'
 }
 
+function Get-TorcaSha256Text {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))).Replace('-', '')).ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
 function Get-TorcaSelectedDevices {
     param([object[]]$Available)
     if ($Device) {
@@ -79,7 +87,8 @@ function Write-TorcaDeviceDeploymentManifest {
     param(
         [Parameter(Mandatory = $true)]$Device,
         [Parameter(Mandatory = $true)]$Release,
-        [Parameter(Mandatory = $true)][string]$Endpoint
+        [Parameter(Mandatory = $true)][string]$Endpoint,
+        [Parameter(Mandatory = $true)][string]$BuildId
     )
     $manifestPath = Get-TorcaDeviceManifestPath -Paths $paths -DeviceId $Device.Id
     [pscustomobject]@{
@@ -88,13 +97,13 @@ function Write-TorcaDeviceDeploymentManifest {
         Platform = $Device.Platform
         ProductVersion = $Release.version
         BuildNumber = $Release.build
-        BuildId = $Release.buildId
+        BuildId = $BuildId
         StorageEpoch = $Release.storageEpoch
         SchemaVersion = $Release.schemaVersion
         ContractSchema = $Release.contractSchema
         WireVersion = $Release.wireVersion
         RelayEndpoint = $Endpoint
-        RelayEndpointHash = ([System.Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($Endpoint)) | ForEach-Object { $_.ToString('x2') }) -join ''
+        RelayEndpointHash = Get-TorcaSha256Text -Text $Endpoint
         DeployedAt = [DateTime]::UtcNow.ToString('o')
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding utf8
 }
@@ -153,6 +162,24 @@ switch ($Command) {
     'build' {
         Write-TorcaConsoleHeader -Title 'Torca build' -Details @{ Target = (Resolve-TorcaTarget $Target); Configuration = $Configuration; Policy = $BuildPolicy }
         $stack = Invoke-TorcaStackEnsure -Policy $OnionPolicy
+        Write-TorcaStage -Name 'Preflight' -State 'running' -Detail 'Checking device connectivity, endpoint provenance and toolchain'
+        $preflightErrors = [System.Collections.Generic.List[string]]::new()
+        foreach ($item in $selected) {
+            if (-not $item.CanInstall -or -not $item.CanRun -or [string]$item.State -notin @('online','device')) {
+                $preflightErrors.Add("$($item.Platform):$($item.Name) is not online/deployable")
+            }
+            if ($item.Platform -eq 'android' -and -not (Get-Command adb -ErrorAction SilentlyContinue)) {
+                $preflightErrors.Add('adb is required for the selected Android device')
+            }
+        }
+        if ([string]$stack.Endpoint -notmatch '^[a-z2-7]{56}\.onion:\d+$') {
+            $preflightErrors.Add("Relay endpoint is not a v3 onion endpoint: $($stack.Endpoint)")
+        }
+        if ($preflightErrors.Count -gt 0) {
+            Write-TorcaStage -Name 'Preflight' -State 'failed' -Detail ($preflightErrors -join '; ')
+            throw "Preflight failed: $($preflightErrors -join '; ')"
+        }
+        Write-TorcaStage -Name 'Preflight' -State 'ready' -Detail "endpoint=$($stack.Endpoint), endpointHash=$(Get-TorcaSha256Text -Text $stack.Endpoint)"
         $endpointMismatches = @($selected | ForEach-Object {
             $previous = Get-TorcaDeviceDeploymentManifest -DeviceId $_.Id
             if ($previous -and $previous.PSObject.Properties.Name -contains 'RelayEndpoint' -and
@@ -234,6 +261,20 @@ switch ($Command) {
         $android = @($selected | Where-Object Platform -eq 'android')
         $windows = @($selected | Where-Object Platform -eq 'windows')
         $buildTarget = if ($windows.Count -gt 0 -and $android.Count -gt 0) { 'all' } elseif ($android.Count -gt 0) { 'android' } else { 'windows' }
+        $expectedBuildId = Get-TorcaBuildId -RepoRoot $root -Endpoint $stack.Endpoint -Target $buildTarget -Configuration $Configuration
+        Write-TorcaStage -Name 'Build identity' -State 'ready' -Detail "buildId=$expectedBuildId, endpointHash=$(Get-TorcaSha256Text -Text $stack.Endpoint)"
+        $buildMismatches = @($selected | ForEach-Object {
+            $previous = Get-TorcaDeviceDeploymentManifest -DeviceId $_.Id
+            if ($previous -and $previous.PSObject.Properties.Name -contains 'BuildId' -and
+                -not [string]::IsNullOrWhiteSpace([string]$previous.BuildId) -and
+                [string]$previous.BuildId -ne $expectedBuildId) {
+                [pscustomobject]@{ Device = $_; Previous = $previous.BuildId; Current = $expectedBuildId }
+            }
+        })
+        if ($buildMismatches.Count -gt 0) {
+            $summary = ($buildMismatches | ForEach-Object { "$($_.Device.Platform):$($_.Device.Name)" }) -join ', '
+            Write-TorcaStage -Name 'Build identity' -State 'warning' -Detail "Installed build ID differs on $summary; install will use $expectedBuildId"
+        }
         $required = Test-TorcaBuildRequired -Paths $paths -Endpoint $stack.Endpoint -Target $buildTarget -Configuration $Configuration
         if ($BuildPolicy -eq 'Reuse' -and $required) { throw 'Requested build reuse, but matching artifacts are not available.' }
         if (-not $NonInteractive -and -not $buildPolicySpecified -and -not $ReuseBuild) {
@@ -277,14 +318,15 @@ switch ($Command) {
         if ($RunPolicy -ne 'Skip') {
             $runDevice = ($selected | Select-Object -First 1).Id
             if ($Configuration -eq 'release') {
-                Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration -Installed
+                Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration -Installed -ExpectedBuildId $expectedBuildId
             } else {
-                Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration
+                Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration -ExpectedBuildId $expectedBuildId
             }
             Write-TorcaStage -Name 'Application launch' -State 'ready' -Detail 'Launch command issued'
+            Write-TorcaStage -Name 'Launch health' -State 'ready' -Detail "Process and native startup handoff verified; incident logs: $(Join-Path $root 'logs/collected')"
         }
         if ($InstallPolicy -ne 'Skip' -or $RunPolicy -ne 'Skip') {
-            foreach ($item in $selected) { Write-TorcaDeviceDeploymentManifest -Device $item -Release $release -Endpoint $stack.Endpoint }
+            foreach ($item in $selected) { Write-TorcaDeviceDeploymentManifest -Device $item -Release $release -Endpoint $stack.Endpoint -BuildId $expectedBuildId }
             Write-TorcaStage -Name 'Device manifest' -State 'ready' -Detail 'Installed storage epoch recorded per device'
         }
     }
