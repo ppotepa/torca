@@ -71,12 +71,20 @@ impl TorcaRuntime {
             crate::composition::android::log_root_path().unwrap_or_else(|_| default_root());
         #[cfg(not(target_os = "android"))]
         let log_root = default_root();
-        let logger = Logger::new(
+        let logger = match Logger::new(
             log_root,
             std::env::var("TORCA_DEVICE_ID").unwrap_or_else(|_| "native".into()),
             crate::torca_runtime::compiled_build_id(),
-        )
-        .ok();
+        ) {
+            Ok(logger) => Some(logger),
+            Err(error) => {
+                // A logger failure must never erase the only startup
+                // diagnostic.  Packaged Windows/Android launches still have
+                // stderr/logcat available for collection.
+                eprintln!("Torca native logger startup failed: {error}");
+                None
+            }
+        };
         let mut runtime = Self {
             engine,
             bridge,
