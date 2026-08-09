@@ -277,8 +277,9 @@ impl ContractRuntime {
     pub fn execute(&self, command: BridgeCommand) -> BridgeResult {
         let result: Result<&'static str, String> = match command {
             BridgeCommand::SetNotifications { .. } => Ok("notifications_updated"),
-            BridgeCommand::UpdateProfile { display_name, at_ms } => ProfileName::new(display_name)
-                .map_err(string_error)
+            BridgeCommand::UpdateProfile { display_name, at_ms } => self
+                .profile_setup_allowed()
+                .and_then(|()| ProfileName::new(display_name).map_err(string_error))
                 .and_then(|display_name| timestamp(at_ms).map(|at| (display_name, at)))
                 .and_then(|(display_name, at)| {
                     self.engine
@@ -634,6 +635,31 @@ impl ContractRuntime {
                 Err("RELAY_DEGRADED".into())
             }
             _ => Err("RELAY_NOT_READY".into()),
+        }
+    }
+
+    fn profile_setup_allowed(&self) -> Result<(), String> {
+        let network = self.runtime().and_then(|runtime| {
+            runtime.network_snapshot().map_err(|_| "network readiness is unavailable".to_owned())
+        })?;
+        if network.tor != TorState::Ready || network.onion_address.is_none() {
+            return Err("PROFILE_NOT_READY".into());
+        }
+        let relay = network
+            .probes
+            .into_iter()
+            .find(|probe| probe.target == ProbeTarget::Relay)
+            .map(|probe| probe.status);
+        match relay {
+            Some(
+                ProbeStatus::Healthy
+                | ProbeStatus::Degraded
+                | ProbeStatus::Failed
+                | ProbeStatus::Unreachable,
+            ) => Ok(()),
+            Some(ProbeStatus::Checking | ProbeStatus::Unknown | ProbeStatus::Disabled) | None => {
+                Err("PROFILE_NOT_READY".into())
+            }
         }
     }
 }
