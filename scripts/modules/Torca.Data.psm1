@@ -6,7 +6,15 @@ function Reset-TorcaWindowsClientData {
     foreach ($process in $processes) {
         $null = $process.CloseMainWindow()
         if (-not $process.WaitForExit(5000)) {
-            throw "Torca desktop process $($process.Id) is still running; close it before resetting data."
+            # Normal desktop close deliberately keeps the runtime alive in the tray.
+            # A confirmed data reset is an explicit terminal action, so finish that
+            # process here before removing its verified application directory.
+            Write-Warning "Stopping Torca desktop process $($process.Id) for the confirmed data reset."
+            Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            $process.WaitForExit(5000)
+            if (-not $process.HasExited) {
+                throw "Torca desktop process $($process.Id) could not be stopped for data reset."
+            }
         }
     }
     $root = Join-Path $env:LOCALAPPDATA 'Torca'
