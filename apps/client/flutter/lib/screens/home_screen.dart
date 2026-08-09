@@ -81,63 +81,108 @@ class _BootstrapProgressScreen extends StatelessWidget {
   final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const LinearProgressIndicator(),
-                const SizedBox(height: 22),
-                Text(
-                  'Preparing secure network',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 18),
-                for (final id in const <String>[
-                  'local_storage',
-                  'device_identity',
-                  'tor_network',
-                  'onion_service',
-                  'secure_relay',
-                ])
-                  _BootstrapStepTile(
-                    label: _bootstrapLabel(id),
-                    state: _stateFor(snapshot, id),
-                  ),
-                if (snapshot.bootstrapPhase == 'failed' ||
-                    snapshot.bootstrapPhase == 'degraded') ...<Widget>[
-                  const SizedBox(height: 12),
-                  Text(
-                    _diagnostic(snapshot),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme;
+    const steps = <String>[
+      'local_storage',
+      'device_identity',
+      'tor_network',
+      'onion_service',
+      'secure_relay',
+    ];
+    final ready = steps
+        .where((id) => _stateFor(snapshot, id) == 'ready')
+        .length;
+    return Scaffold(
+      body: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: <Color>[color.primaryContainer, color.surface],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Card(
+                  elevation: 0,
+                  color: color.surface.withValues(alpha: 0.92),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        CircleAvatar(
+                          radius: 30,
+                          backgroundColor: color.primaryContainer,
+                          foregroundColor: color.onPrimaryContainer,
+                          child: const Icon(Icons.shield_outlined, size: 32),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Preparing your private space',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Setting up encrypted storage and a private Tor connection. You can safely leave this screen open.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 22),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(99),
+                          child: LinearProgressIndicator(
+                            value: ready / steps.length,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '$ready of ${steps.length} secure checks complete',
+                        ),
+                        const SizedBox(height: 16),
+                        for (final id in steps)
+                          _BootstrapStepTile(
+                            label: _bootstrapLabel(id),
+                            state: _stateFor(snapshot, id),
+                          ),
+                        if (snapshot.bootstrapPhase == 'failed' ||
+                            snapshot.bootstrapPhase == 'degraded') ...<Widget>[
+                          const SizedBox(height: 12),
+                          Text(
+                            _diagnostic(snapshot),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: <Widget>[
+                              FilledButton(
+                                onPressed: onRetry,
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      FilledButton(
-                        onPressed: onRetry,
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
+                ),
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
   String _stateFor(AppSnapshotDto snapshot, String id) {
     return _stateForId(snapshot, id);
@@ -177,25 +222,60 @@ class _BootstrapStepTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ready = state == 'ready';
-    final running = state == 'running' || state == 'verifying';
-    return ListTile(
-      dense: true,
-      leading: Icon(
-        ready
-            ? Icons.check_circle
-            : running
-            ? Icons.sync
-            : Icons.radio_button_unchecked,
+    final running =
+        state == 'running' || state == 'verifying' || state == 'retrying';
+    final degraded = state == 'degraded';
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      decoration: BoxDecoration(
         color: ready
-            ? Colors.green
-            : running
-            ? Theme.of(context).colorScheme.primary
+            ? Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.45)
+            : null,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ListTile(
+        dense: true,
+        leading: Icon(
+          ready
+              ? Icons.check_circle
+              : degraded
+              ? Icons.cloud_off_outlined
+              : running
+              ? Icons.sync_outlined
+              : Icons.radio_button_unchecked,
+          color: ready
+              ? Colors.green
+              : degraded
+              ? Theme.of(context).colorScheme.tertiary
+              : running
+              ? Theme.of(context).colorScheme.primary
+              : null,
+        ),
+        title: Text(label),
+        subtitle: Text(_stateDescription(state)),
+        trailing: running
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
             : null,
       ),
-      title: Text(label),
-      subtitle: Text(state),
     );
   }
+
+  String _stateDescription(String value) => switch (value) {
+    'ready' => 'Protected and ready',
+    'running' => 'Working securely…',
+    'verifying' => 'Verifying connection…',
+    'retrying' => 'Retrying in the background…',
+    'degraded' => 'Temporarily unavailable; retrying',
+    'failed' => 'Needs attention',
+    _ => 'Waiting to begin',
+  };
 }
 
 class HomeScreen extends StatefulWidget {

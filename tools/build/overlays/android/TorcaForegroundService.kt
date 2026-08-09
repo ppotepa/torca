@@ -11,29 +11,35 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
-import android.os.Looper
 import android.util.Log
 import com.torca.app.MainActivity
 import org.json.JSONObject
 
 /** Process-level owner for the Rust Torca runtime independent from FlutterActivity recreation. */
 class TorcaForegroundService : Service() {
-    private val handler = Handler(Looper.getMainLooper())
+    // Reading the native event cursor can briefly contend with the runtime actor.
+    // It must never run on Android's main looper: doing so caused visible UI stalls
+    // while the foreground service was polling for notifications.
+    private val notificationThread = HandlerThread("TorcaNotificationPoller")
+    private lateinit var notificationHandler: Handler
     private var notificationCursor = 0L
     private val notificationPoller = object : Runnable {
         override fun run() {
             if (!NativeRuntimeBridge.nativeRuntimeAvailable()) {
-                handler.postDelayed(this, RUNTIME_WAIT_MS)
+                notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
                 return
             }
             pollMessageNotifications()
-            handler.postDelayed(this, NOTIFICATION_POLL_MS)
+            notificationHandler.postDelayed(this, NOTIFICATION_POLL_MS)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        notificationThread.start()
+        notificationHandler = Handler(notificationThread.looper)
         notificationCursor = getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
             .getLong(NOTIFICATION_CURSOR, 0L)
         AndroidKeystoreBridge.initialize(applicationContext)
@@ -85,14 +91,15 @@ class TorcaForegroundService : Service() {
                 Log.e(TAG, "Native Torca runtime startup failed", error)
             }
         }.start()
-        handler.post(notificationPoller)
+        notificationHandler.post(notificationPoller)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        handler.removeCallbacks(notificationPoller)
+        notificationHandler.removeCallbacks(notificationPoller)
+        notificationThread.quitSafely()
         super.onDestroy()
     }
 

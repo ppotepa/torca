@@ -182,6 +182,7 @@ class _PairingScreenState extends State<PairingScreen> {
                         busy: _operations.anyWithPrefix(
                           'pairing:${pairing.id}:',
                         ),
+                        onOpen: () => _showSession(pairing),
                         onApprove: () => _session(
                           pairing.id,
                           'approve',
@@ -210,8 +211,82 @@ class _PairingScreenState extends State<PairingScreen> {
   );
 
   Future<void> _create() async {
-    await _run('pairing:create', const CreatePairingCommandDto());
+    final result = await _run(
+      'pairing:create',
+      const CreatePairingCommandDto(),
+    );
+    if (result?.ok != true || !mounted) return;
+    // The response publishes its post-transaction snapshot before succeeding.
+    // Open the newly-created invitation immediately instead of making the user
+    // locate its session card in a growing list.
+    PairingDto? invitation;
+    for (final pairing in widget.gateway.snapshots.value.pairings.reversed) {
+      if (pairing.role == 'creator') {
+        invitation = pairing;
+        break;
+      }
+    }
+    if (invitation != null) await _showSession(invitation);
   }
+
+  Future<void> _showSession(PairingDto pairing) => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => Dialog(
+      child: SizedBox(
+        width: 460,
+        height: 650,
+        child: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 12, 8),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      pairing.role == 'creator'
+                          ? 'Your invitation'
+                          : 'Pairing session',
+                      style: Theme.of(dialogContext).textTheme.titleLarge,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                child: _PairingSessionCard(
+                  pairing: pairing,
+                  busy: _operations.anyWithPrefix('pairing:${pairing.id}:'),
+                  expanded: true,
+                  onApprove: () => _session(
+                    pairing.id,
+                    'approve',
+                    ApprovePairingCommandDto(sessionIdHex: pairing.id),
+                  ),
+                  onReject: () => _session(
+                    pairing.id,
+                    'reject',
+                    RejectPairingCommandDto(sessionIdHex: pairing.id),
+                  ),
+                  onCancel: () => _session(
+                    pairing.id,
+                    'cancel',
+                    CancelPairingCommandDto(sessionIdHex: pairing.id),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 
   Future<void> _join() async {
     final code = _extractCode(_code.text);
@@ -319,12 +394,16 @@ class _PairingSessionCard extends StatelessWidget {
     required this.onApprove,
     required this.onReject,
     required this.onCancel,
+    this.onOpen,
+    this.expanded = false,
   });
   final PairingDto pairing;
   final bool busy;
   final VoidCallback onApprove;
   final VoidCallback onReject;
   final VoidCallback onCancel;
+  final VoidCallback? onOpen;
+  final bool expanded;
 
   bool get _terminal => const {
     'rejected',
@@ -337,6 +416,45 @@ class _PairingSessionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!expanded) {
+      return Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          onTap: onOpen,
+          leading: Icon(
+            pairing.role == 'creator' ? Icons.qr_code_2 : Icons.link,
+          ),
+          title: Text(
+            pairing.role == 'creator'
+                ? 'Invitation ${pairing.code}'
+                : 'Joined ${pairing.code}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '${_stateHelp(pairing.state)}\n${_expiryLabel(pairing.expiresAtMs)}',
+          ),
+          isThreeLine: true,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (busy)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              Chip(label: Text(_stateLabel(pairing.state))),
+              const Icon(Icons.chevron_right),
+            ],
+          ),
+        ),
+      );
+    }
     final canReview =
         pairing.state == 'awaitingapproval' ||
         pairing.state == 'awaiting_approval';
