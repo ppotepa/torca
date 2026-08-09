@@ -726,11 +726,9 @@ fn map_peer(_: PeerLinkError) -> AttachmentTransferError {
     AttachmentTransferError::Peer
 }
 
-#[cfg(not(windows))]
 fn sync_directory(path: &Path) -> Result<(), AttachmentTransferError> {
+    if std::env::consts::OS == "windows" {
+        return Ok(());
+    }
     File::open(path).and_then(|file| file.sync_all()).map_err(|_| AttachmentTransferError::Io)
-}
-#[cfg(windows)]
-fn sync_directory(_path: &Path) -> Result<(), AttachmentTransferError> {
-    Ok(())
 }

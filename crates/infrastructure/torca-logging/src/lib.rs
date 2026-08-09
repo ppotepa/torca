@@ -53,16 +53,14 @@ pub fn default_root() -> PathBuf {
     if let Some(root) = std::env::var_os("TORCA_LOG_ROOT") {
         return root.into();
     }
-    #[cfg(windows)]
-    if let Some(root) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(root).join("Torca").join("logs");
+    if std::env::consts::OS == "windows" {
+        if let Some(root) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(root).join("Torca").join("logs");
+        }
     }
-    #[cfg(target_os = "android")]
-    {
+    if std::env::consts::OS == "android" {
         PathBuf::from("/sdcard/Android/data/com.torca.torca_app/files/torca/logs")
-    }
-    #[cfg(not(target_os = "android"))]
-    {
+    } else {
         std::env::temp_dir().join("Torca").join("logs")
     }
 }

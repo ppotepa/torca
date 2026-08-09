@@ -85,6 +85,22 @@ foreach ($root in $sourceRoots) {
     }
 }
 
+$rustPlatformBoundary = [IO.Path]::GetFullPath((Join-Path $RepoRoot 'crates/platform'))
+$platformConditionalFragments = @(
+    '#[cfg(windows)]', '#[cfg(not(windows))]',
+    '#[cfg(target_os = "android")]', '#[cfg(not(target_os = "android"))]'
+)
+$rustFilesOutsidePlatform = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Recurse -Filter '*.rs' -File |
+    Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' -and -not $_.FullName.StartsWith($rustPlatformBoundary, [StringComparison]::OrdinalIgnoreCase) }
+foreach ($file in $rustFilesOutsidePlatform) {
+    $text = Get-Content -LiteralPath $file.FullName -Raw
+    foreach ($fragment in $platformConditionalFragments) {
+        if ($text.Contains($fragment)) {
+            throw "Platform conditional escaped crates/platform: $($file.FullName) ($fragment)"
+        }
+    }
+}
+
 $flutterLib = Join-Path $RepoRoot 'apps/client/flutter/lib'
 if (Test-Path -LiteralPath $flutterLib) {
     $uiFiles = Get-ChildItem -LiteralPath $flutterLib -Recurse -Filter '*.dart' -File |

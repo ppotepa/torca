@@ -118,13 +118,11 @@ impl BlobStore for FileBlobStore {
         Ok(self.path(id).try_exists()?)
     }
 }
-#[cfg(not(windows))]
 fn sync_directory(path: &Path) -> Result<(), std::io::Error> {
+    if std::env::consts::OS == "windows" {
+        return Ok(());
+    }
     File::open(path)?.sync_all()
-}
-#[cfg(windows)]
-fn sync_directory(_path: &Path) -> Result<(), std::io::Error> {
-    Ok(())
 }
 #[derive(Clone, Debug, Default)]
 pub struct MemoryBlobStore {
