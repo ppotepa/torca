@@ -36,6 +36,14 @@ function Prepare-TorcaWindowsAssets {
     if (Test-Path -LiteralPath $obsoleteEndpoint) {
         Remove-Item -LiteralPath $obsoleteEndpoint -Force
     }
+    # Remove sidecars left by builds made before the relay endpoint became a
+    # compile-time native setting. They are not part of the Windows package.
+    foreach ($configuration in @('Debug', 'Release')) {
+        $outputEndpoint = Join-Path $flutterRoot "build/windows/x64/runner/$configuration/relay_endpoint.txt"
+        if (Test-Path -LiteralPath $outputEndpoint) {
+            Remove-Item -LiteralPath $outputEndpoint -Force
+        }
+    }
     Copy-Item (Join-Path $overlay 'main.cpp') (Join-Path $runner 'main.cpp') -Force
 
     $cmake = Join-Path $flutterRoot 'windows/CMakeLists.txt'
