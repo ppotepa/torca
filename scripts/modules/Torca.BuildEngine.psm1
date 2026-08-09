@@ -276,6 +276,14 @@ function Assert-TorcaNativeAbi {
     if ($missing.Count -gt 0) {
         throw "Native bridge ABI is stale or incompatible. Missing export(s): $($missing -join ', '). Rebuild before deploy."
     }
+    $exportedTorcaNames = @([Regex]::Matches($exports, '(?<![A-Za-z0-9_])(torca_[a-z0-9_]+)(?![A-Za-z0-9_])') |
+        ForEach-Object { $_.Groups[1].Value } |
+        Where-Object { $_ -ne 'torca_native' } |
+        Sort-Object -Unique)
+    $unexpected = @($exportedTorcaNames | Where-Object { $required -notcontains $_ })
+    if ($unexpected.Count -gt 0) {
+        throw "Native bridge ABI exports symbols outside the allowlist: $($unexpected -join ', ')"
+    }
     Write-Host "Native $Platform ABI verified: $([IO.Path]::GetFileName($Library))"
 }
 
