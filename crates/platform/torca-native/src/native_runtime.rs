@@ -74,7 +74,7 @@ impl TorcaRuntime {
         let logger = Logger::new(
             log_root,
             std::env::var("TORCA_DEVICE_ID").unwrap_or_else(|_| "native".into()),
-            std::env::var("TORCA_BUILD_ID").unwrap_or_else(|_| "unknown".into()),
+            crate::torca_runtime::compiled_build_id(),
         )
         .ok();
         let mut runtime = Self {

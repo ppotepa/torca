@@ -37,6 +37,13 @@ const RELAY_ENDPOINT_HASH: &str = match option_env!("TORCA_RELAY_ENDPOINT_HASH")
     None => "configured-at-build",
 };
 
+/// Build identity compiled into the native library.  Runtime logging must use
+/// this value rather than an environment variable: packaged Windows/Android
+/// launches do not inherit the build shell environment.
+pub(crate) const fn compiled_build_id() -> &'static str {
+    BUILD_ID
+}
+
 static REGISTRY: OnceLock<Mutex<Option<Arc<RuntimeHandleInner>>>> = OnceLock::new();
 static METADATA: OnceLock<Vec<u8>> = OnceLock::new();
 static INITIALIZATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
