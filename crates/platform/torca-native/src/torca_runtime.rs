@@ -526,10 +526,12 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeEnsureRunti
     if handle.is_null() {
         0
     } else {
+        let available =
+            unsafe { handle.as_ref().is_some_and(|value| value.inner.startup_error.is_none()) };
         unsafe {
             torca_runtime_release(handle);
         }
-        1
+        u8::from(available)
     }
 }
 
@@ -540,7 +542,9 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeRuntimeAvai
     _class: jni::sys::jclass,
 ) -> jni::sys::jboolean {
     let registry = REGISTRY.get_or_init(|| Mutex::new(None));
-    registry.lock().map_or(0, |guard| u8::from(guard.is_some()))
+    registry.lock().map_or(0, |guard| {
+        u8::from(guard.as_ref().is_some_and(|value| value.startup_error.is_none()))
+    })
 }
 
 #[cfg(target_os = "android")]
