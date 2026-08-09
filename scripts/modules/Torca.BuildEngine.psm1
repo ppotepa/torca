@@ -82,7 +82,13 @@ function Assert-TorcaArchitecture {
     Get-ChildItem (Join-Path $script:RepoRoot 'crates') -Recurse -Filter '*.rs' |
         Where-Object { $_.FullName -notlike '*torca-storage-sqlite*' } |
         Where-Object {
-            (Get-Content $_.FullName -Raw) -match '(?i)\b(SELECT\s+|INSERT\s+INTO\s+|UPDATE\s+\w+\s+SET\s+|CREATE\s+TABLE\s+|DELETE\s+FROM\s+)'
+            # The SQL policy applies to executable Rust/string literals, not prose.
+            # In particular, `tokio::select!` and explanatory comments must not be
+            # mistaken for a SQL SELECT statement.
+            $source = Get-Content $_.FullName -Raw
+            $source = [regex]::Replace($source, '(?s)/\*.*?\*/', '')
+            $source = [regex]::Replace($source, '(?m)//.*$', '')
+            $source -match '(?i)\b(SELECT\s+|INSERT\s+INTO\s+|UPDATE\s+\w+\s+SET\s+|CREATE\s+TABLE\s+|DELETE\s+FROM\s+)'
         } |
         ForEach-Object { $violations += "$($_.FullName): SQL text outside storage crate" }
 
