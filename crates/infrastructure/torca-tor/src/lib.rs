@@ -145,7 +145,6 @@ impl TorService {
                 let mut last_progress = Instant::now();
                 let bootstrap_started = Instant::now();
                 let mut last_fraction = 0.0_f32;
-                let mut last_status = String::new();
                 // A closed watch stream returns `None` immediately.  Keeping it
                 // in `select!` after that would continuously select this branch,
                 // starve the stall/deadline branches, and leave startup spinning
@@ -159,7 +158,10 @@ impl TorService {
                     // stream prevent the safety deadlines below from being
                     // observed.
                     if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
-                        return Err(TorError("bootstrap Arti client stalled".into()));
+                        return Err(TorError(format!(
+                            "bootstrap Arti client stalled at {:.0}%",
+                            last_fraction * 100.0
+                        )));
                     }
                     if bootstrap_started.elapsed() >= timeout {
                         return Err(TorError("bootstrap Arti client timed out".into()));
@@ -173,12 +175,12 @@ impl TorService {
                             match status {
                                 Some(status) => {
                                     let fraction = status.as_frac();
-                                    let status_debug = format!("{status:?}");
-                                    if (fraction - last_fraction).abs() > f32::EPSILON
-                                        || status_debug != last_status
-                                    {
+                                    // A changed retry/error description is not
+                                    // forward bootstrap progress.  Only a
+                                    // monotonic increase in Arti's normalized
+                                    // fraction may extend the stall deadline.
+                                    if fraction > last_fraction + f32::EPSILON {
                                         last_fraction = fraction;
-                                        last_status = status_debug;
                                         last_progress = Instant::now();
                                     }
                                 }
@@ -192,7 +194,10 @@ impl TorService {
                         }
                         _ = stall_tick.tick() => {
                             if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
-                                return Err(TorError("bootstrap Arti client stalled".into()));
+                                return Err(TorError(format!(
+                                    "bootstrap Arti client stalled at {:.0}%",
+                                    last_fraction * 100.0
+                                )));
                             }
                         }
                         () = &mut deadline => return Err(TorError("bootstrap Arti client timed out".into())),
