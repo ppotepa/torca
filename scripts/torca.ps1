@@ -32,6 +32,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$clientDataPolicySpecified = $PSBoundParameters.ContainsKey('ClientDataPolicy')
+$interactiveDataResetConfirmed = $false
 $root = Split-Path -Parent $PSScriptRoot
 $previousStackProvider = $env:TORCA_STACK_PROVIDER
 if ($StackProvider -ne 'auto') { $env:TORCA_STACK_PROVIDER = $StackProvider }
@@ -77,7 +79,6 @@ if ($Command -eq 'menu') {
     if ($Command -eq 'deploy' -and -not $NonInteractive) {
         $options = Get-TorcaInteractiveOptions
         $OnionPolicy = if ($options.OnionPolicy -like 'Restart*') { 'Restart' } elseif ($options.OnionPolicy -like 'Rotate*') { 'Rotate' } else { 'Ensure' }
-        $ClientDataPolicy = if ($options.ClientDataPolicy -like 'ResetSelected*') { 'ResetSelected' } elseif ($options.ClientDataPolicy -like 'ResetAll*') { 'ResetAll' } else { 'Preserve' }
         $BuildPolicy = if ($options.BuildPolicy -like 'Rebuild*') { 'Rebuild' } elseif ($options.BuildPolicy -like 'Reuse*') { 'Reuse' } else { 'IfRequired' }
         $InstallPolicy = if ($options.InstallPolicy -like 'Always*') { 'Always' } elseif ($options.InstallPolicy -like 'Skip*') { 'Skip' } else { 'Selected' }
         $RunPolicy = if ($options.RunPolicy -like 'Start*') { 'Start' } elseif ($options.RunPolicy -like 'Skip*') { 'Skip' } else { 'Restart' }
@@ -137,10 +138,25 @@ switch ($Command) {
         $available = @(Get-TorcaDevices -FlutterRoot (Join-Path $root 'apps/client/flutter'))
         $selected = @(Get-TorcaSelectedDevices -Available $available)
         if ($selected.Count -eq 0) { throw 'No deployable device selected.' }
+        if (-not $NonInteractive -and -not $clientDataPolicySpecified) {
+            $deviceSummary = ($selected | ForEach-Object { "$($_.Platform):$($_.Name)" }) -join ', '
+            $dataChoice = Read-TorcaMenuChoice "Client data on selected devices ($deviceSummary)" @(
+                'Keep existing identity and local database (recommended)',
+                'RESET EVERYTHING - delete identity, local database, Tor cache and preferences; next launch creates a new identity'
+            ) '1'
+            if ($dataChoice -like 'RESET EVERYTHING*') {
+                $ClientDataPolicy = 'ResetSelected'
+                $interactiveDataResetConfirmed = $true
+            } else {
+                $ClientDataPolicy = 'Preserve'
+            }
+        }
         Write-TorcaConsoleHeader -Title 'Torca deploy' -Details @{ Target = $Target; Configuration = $Configuration; Devices = (($selected | ForEach-Object { $_.Platform + ':' + $_.Name }) -join ', '); Build = $BuildPolicy; Install = $InstallPolicy; Run = $RunPolicy }
         Write-TorcaStage -Name 'Devices' -State 'ready' -Detail ("{0} selected" -f $selected.Count)
-        if ($ClientDataPolicy -ne 'Preserve' -and -not ($Confirm -or $AllowDataReset)) { throw 'Reset danych wymaga jawnego -AllowDataReset.' }
+        if ($ClientDataPolicy -ne 'Preserve' -and -not ($Confirm -or $AllowDataReset -or $interactiveDataResetConfirmed)) { throw 'Reset danych wymaga jawnego -AllowDataReset.' }
         if ($ClientDataPolicy -ne 'Preserve' -and $NonInteractive -and -not $AllowDataReset) { throw 'Non-interactive reset requires -AllowDataReset.' }
+        $dataDetail = if ($ClientDataPolicy -eq 'Preserve') { 'Existing identity and database will be preserved' } else { 'Confirmed full application-data reset before installation' }
+        Write-TorcaStage -Name 'Client data' -State $(if ($ClientDataPolicy -eq 'Preserve') { 'ready' } else { 'warning' }) -Detail $dataDetail
         $stack = Invoke-TorcaStackEnsure -Policy $OnionPolicy
         if ($ClientDataPolicy -eq 'ResetAll') {
             $selected = @($available | Where-Object { $_.CanInstall -and $_.CanRun })

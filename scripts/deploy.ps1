@@ -30,10 +30,11 @@ if ($StackProvider -ne 'auto') { $env:TORCA_STACK_PROVIDER = $StackProvider }
 if (-not $env:TORCA_ORCHESTRATED) {
     $arguments = @{
         Command = 'deploy'; Target = $Target; Configuration = $Configuration
-        OnionPolicy = $OnionPolicy; ClientDataPolicy = $ClientDataPolicy
+        OnionPolicy = $OnionPolicy
         StackProvider = $StackProvider
         BuildPolicy = $BuildPolicy; InstallPolicy = $InstallPolicy; RunPolicy = $RunPolicy
     }
+    if ($PSBoundParameters.ContainsKey('ClientDataPolicy')) { $arguments.ClientDataPolicy = $ClientDataPolicy }
     if ($Device) { $arguments.Device = $Device }
     if ($NonInteractive) { $arguments.NonInteractive = $true }
     if ($Confirm) { $arguments.Confirm = $true }
