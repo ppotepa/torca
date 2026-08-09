@@ -16,7 +16,7 @@ Manage authenticated peer sessions independently from the concrete Tor stream pr
 
 ## Does not own
 
-Message domain transitions, Tor process lifecycle, SQLite outbox queries, rendezvous pairing or Flutter connectivity indicators.
+Message domain transitions, embedded Tor lifecycle, SQLite outbox queries, rendezvous pairing or Flutter connectivity indicators.
 
 ## 0.1 completion
 

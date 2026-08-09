@@ -12,11 +12,17 @@ void main() {
       'Connecting',
     );
     expect(
-      ConnectionStatePresenter.peer(state: 'reconnecting', blocked: false).label,
+      ConnectionStatePresenter.peer(
+        state: 'reconnecting',
+        blocked: false,
+      ).label,
       'Reconnecting',
     );
     expect(
-      ConnectionStatePresenter.peer(state: 'disconnected', blocked: false).label,
+      ConnectionStatePresenter.peer(
+        state: 'disconnected',
+        blocked: false,
+      ).label,
       'Offline',
     );
     expect(
@@ -28,6 +34,9 @@ void main() {
   test('Tor states have one canonical presentation mapping', () {
     expect(ConnectionStatePresenter.tor('ready').label, 'Tor ready');
     expect(ConnectionStatePresenter.tor('starting').label, 'Tor starting');
-    expect(ConnectionStatePresenter.tor('reconnecting').label, 'Tor reconnecting');
+    expect(
+      ConnectionStatePresenter.tor('reconnecting').label,
+      'Tor reconnecting',
+    );
   });
 }

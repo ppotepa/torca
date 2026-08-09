@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +7,7 @@ import 'package:open_filex/open_filex.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../platform/platform_capabilities.dart';
 import '../settings/preferences_scope.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/bridge_error_presenter.dart';
@@ -19,39 +19,44 @@ import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
 
 class ConversationScreen extends StatelessWidget {
-  const ConversationScreen({required this.gateway, required this.conversation, super.key});
+  const ConversationScreen({
+    required this.gateway,
+    required this.conversation,
+    super.key,
+  });
   final EngineGateway gateway;
   final ConversationDto conversation;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
-        valueListenable: gateway.snapshots,
-        builder: (context, snapshot, _) {
-          final contact = _contactFor(snapshot, conversation);
-          return Scaffold(
-            appBar: AppBar(
-              titleSpacing: 0,
-              title: ConversationHeader(
-                contact: contact,
-                compact: true,
-                onConnectionDetails: contact == null
-                    ? () {}
-                    : () => _openConnectionDetails(context, contact.id),
-              ),
-            ),
-            body: ConversationPane(
-              gateway: gateway,
-              conversation: conversation,
-              showHeader: false,
-            ),
-          );
-        },
+    valueListenable: gateway.snapshots,
+    builder: (context, snapshot, _) {
+      final contact = _contactFor(snapshot, conversation);
+      return Scaffold(
+        appBar: AppBar(
+          titleSpacing: 0,
+          title: ConversationHeader(
+            contact: contact,
+            compact: true,
+            onConnectionDetails: contact == null
+                ? () {}
+                : () => _openConnectionDetails(context, contact.id),
+          ),
+        ),
+        body: ConversationPane(
+          gateway: gateway,
+          conversation: conversation,
+          showHeader: false,
+        ),
       );
+    },
+  );
 
   void _openConnectionDetails(BuildContext context, String contactId) {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => ConnectionDetailsScreen(gateway: gateway, contactId: contactId),
+        builder: (_) =>
+            ConnectionDetailsScreen(gateway: gateway, contactId: contactId),
       ),
     );
   }
@@ -88,7 +93,6 @@ class _ConversationPaneState extends State<ConversationPane>
   bool _markingRead = false;
   bool _loadingOlder = false;
   bool _showJumpToLatest = false;
-  int _lastMessageCount = 0;
   int _lastActivityAtMs = 0;
   String? _unreadBoundaryMessageId;
   MessageDto? _replyingTo;
@@ -106,7 +110,8 @@ class _ConversationPaneState extends State<ConversationPane>
     unawaited(_initializeTimeline());
   }
 
-  ConversationTimelineController _newTimeline() => ConversationTimelineController(
+  ConversationTimelineController _newTimeline() =>
+      ConversationTimelineController(
         gateway: widget.gateway,
         conversationId: widget.conversation.id,
       );
@@ -115,7 +120,6 @@ class _ConversationPaneState extends State<ConversationPane>
     await _timeline.initialize();
     if (!mounted) return;
     _captureUnreadBoundary();
-    _lastMessageCount = _timeline.messages.length;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _scrollToBottom(jump: true);
@@ -143,7 +147,6 @@ class _ConversationPaneState extends State<ConversationPane>
       _timeline.dispose();
       _timeline = _newTimeline();
       _timeline.addListener(_timelineChanged);
-      _lastMessageCount = 0;
       _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
       _unreadBoundaryMessageId = null;
       unawaited(_initializeTimeline());
@@ -185,7 +188,10 @@ class _ConversationPaneState extends State<ConversationPane>
 
   void _captureUnreadBoundary() {
     _unreadBoundaryMessageId = _timeline.messages
-        .where((message) => message.direction == 'inbound' && message.status == 'delivered')
+        .where(
+          (message) =>
+              message.direction == 'inbound' && message.status == 'delivered',
+        )
         .map((message) => message.id)
         .firstOrNull;
   }
@@ -204,7 +210,8 @@ class _ConversationPaneState extends State<ConversationPane>
   }
 
   Future<void> _loadOlder() async {
-    if (_loadingOlder || !_timeline.hasMore || !_scrollController.hasClients) return;
+    if (_loadingOlder || !_timeline.hasMore || !_scrollController.hasClients)
+      return;
     _loadingOlder = true;
     final beforePixels = _scrollController.position.pixels;
     final beforeExtent = _scrollController.position.maxScrollExtent;
@@ -215,7 +222,10 @@ class _ConversationPaneState extends State<ConversationPane>
         if (!mounted || !_scrollController.hasClients) return;
         final delta = _scrollController.position.maxScrollExtent - beforeExtent;
         _scrollController.jumpTo(
-          (beforePixels + delta).clamp(0.0, _scrollController.position.maxScrollExtent),
+          (beforePixels + delta).clamp(
+            0.0,
+            _scrollController.position.maxScrollExtent,
+          ),
         );
       });
     } finally {
@@ -237,7 +247,6 @@ class _ConversationPaneState extends State<ConversationPane>
       if (count > beforeCount && _unreadBoundaryMessageId == null) {
         _captureUnreadBoundary();
       }
-      _lastMessageCount = count;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         if (follow) {
@@ -282,10 +291,12 @@ class _ConversationPaneState extends State<ConversationPane>
 
   Future<void> _markReadIfNeeded() async {
     if (_markingRead || !mounted || _searching) return;
-    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
+      return;
     if (ModalRoute.of(context)?.isCurrent != true || !_nearBottom()) return;
     final hasDelivered = _timeline.messages.any(
-      (message) => message.direction == 'inbound' && message.status == 'delivered',
+      (message) =>
+          message.direction == 'inbound' && message.status == 'delivered',
     );
     if (!hasDelivered) return;
     final sendReceipt =
@@ -305,213 +316,250 @@ class _ConversationPaneState extends State<ConversationPane>
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
-        valueListenable: widget.gateway.snapshots,
-        builder: (context, snapshot, _) {
-          final messages = _searching ? _searchResults : _timeline.messages;
-          final byId = <String, MessageDto>{for (final message in _timeline.messages) message.id: message};
-          final reply = _replyingTo;
-          final contact = _contactFor(snapshot, widget.conversation);
-          final sending = _operations.isActive('message:send');
-          final pickingAttachment = _operations.isActive('attachment:pick');
+    valueListenable: widget.gateway.snapshots,
+    builder: (context, snapshot, _) {
+      final messages = _searching ? _searchResults : _timeline.messages;
+      final byId = <String, MessageDto>{
+        for (final message in _timeline.messages) message.id: message,
+      };
+      final reply = _replyingTo;
+      final contact = _contactFor(snapshot, widget.conversation);
+      final sending = _operations.isActive('message:send');
+      final pickingAttachment = _operations.isActive('attachment:pick');
 
-          return Column(
-            children: <Widget>[
-              if (widget.showHeader) ...<Widget>[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-                  child: ConversationHeader(
-                    contact: contact,
-                    onConnectionDetails: contact == null
-                        ? () {}
-                        : () => _openConnectionDetails(contact.id),
-                  ),
-                ),
-                const Divider(height: 1),
-              ],
-              _buildSearchBar(),
-              Expanded(
-                child: Stack(
-                  children: <Widget>[
-                    if (_timeline.loading && messages.isEmpty)
-                      const Center(child: CircularProgressIndicator())
-                    else if (messages.isEmpty)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            _searching
-                                ? (_searchController.text.trim().isEmpty
-                                    ? 'Type to search this conversation.'
-                                    : 'No matching messages.')
-                                : 'No messages yet. Messages are sent directly through Tor.',
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      )
-                    else
-                      ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          final message = messages[index];
-                          final previous = index == 0 ? null : messages[index - 1];
-                          final showDate = previous == null || !_sameDay(previous, message);
-                          final showUnread = !_searching && message.id == _unreadBoundaryMessageId;
-                          final grouped = previous != null &&
-                              previous.direction == message.direction &&
-                              !showDate &&
-                              !showUnread &&
-                              (message.createdAtMs - previous.createdAtMs).abs() < 5 * 60 * 1000;
-                          final quoted = message.replyToMessageId == null
-                              ? null
-                              : byId[message.replyToMessageId];
-                          final attachments = snapshot.attachments
-                              .where((attachment) => attachment.messageId == message.id)
-                              .toList(growable: false);
-                          final retryable =
-                              message.direction == 'outbound' && message.status == 'failed';
-                          final retryBusy = _operations.isActive('message:${message.id}:retry');
+      return Column(
+        children: <Widget>[
+          if (widget.showHeader) ...<Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+              child: ConversationHeader(
+                contact: contact,
+                onConnectionDetails: contact == null
+                    ? () {}
+                    : () => _openConnectionDetails(contact.id),
+              ),
+            ),
+            const Divider(height: 1),
+          ],
+          _buildSearchBar(),
+          Expanded(
+            child: Stack(
+              children: <Widget>[
+                if (_timeline.loading && messages.isEmpty)
+                  const Center(child: CircularProgressIndicator())
+                else if (messages.isEmpty)
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        _searching
+                            ? (_searchController.text.trim().isEmpty
+                                  ? 'Type to search this conversation.'
+                                  : 'No matching messages.')
+                            : 'No messages yet. Messages are sent directly through Tor.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                else
+                  ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final message = messages[index];
+                      final previous = index == 0 ? null : messages[index - 1];
+                      final showDate =
+                          previous == null || !_sameDay(previous, message);
+                      final showUnread =
+                          !_searching && message.id == _unreadBoundaryMessageId;
+                      final grouped =
+                          previous != null &&
+                          previous.direction == message.direction &&
+                          !showDate &&
+                          !showUnread &&
+                          (message.createdAtMs - previous.createdAtMs).abs() <
+                              5 * 60 * 1000;
+                      final quoted = message.replyToMessageId == null
+                          ? null
+                          : byId[message.replyToMessageId];
+                      final attachments = snapshot.attachments
+                          .where(
+                            (attachment) => attachment.messageId == message.id,
+                          )
+                          .toList(growable: false);
+                      final retryable =
+                          message.direction == 'outbound' &&
+                          message.status == 'failed';
+                      final retryBusy = _operations.isActive(
+                        'message:${message.id}:retry',
+                      );
 
-                          return Column(
-                            children: <Widget>[
-                              if (showDate) _DateSeparator(milliseconds: message.createdAtMs),
-                              if (showUnread) const _UnreadSeparator(),
-                              MessageBubble(
-                                message: message,
-                                compactTop: grouped,
-                                onLongPress: () => _showMessageActions(message),
-                                onSecondaryTapDown: (details) => _showMessageActions(
+                      return Column(
+                        children: <Widget>[
+                          if (showDate)
+                            _DateSeparator(milliseconds: message.createdAtMs),
+                          if (showUnread) const _UnreadSeparator(),
+                          MessageBubble(
+                            message: message,
+                            compactTop: grouped,
+                            onLongPress: () => _showMessageActions(message),
+                            onSecondaryTapDown: (details) =>
+                                _showMessageActions(
                                   message,
                                   globalPosition: details.globalPosition,
                                 ),
-                                quotedBody: message.replyToMessageId == null
-                                    ? null
-                                    : quoted?.body ?? 'Original message unavailable',
-                                quotedUnavailable:
-                                    message.replyToMessageId != null && quoted == null,
-                                footer: <Widget>[
-                                  if (retryable && !_searching)
-                                    Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: TextButton.icon(
-                                        onPressed: retryBusy ? null : () => _retryMessage(message),
-                                        icon: retryBusy
-                                            ? const SizedBox(
-                                                width: 16,
-                                                height: 16,
-                                                child: CircularProgressIndicator(strokeWidth: 2),
-                                              )
-                                            : const Icon(Icons.refresh),
-                                        label: Text(retryBusy ? 'Retrying…' : 'Retry now'),
-                                      ),
+                            quotedBody: message.replyToMessageId == null
+                                ? null
+                                : quoted?.body ??
+                                      'Original message unavailable',
+                            quotedUnavailable:
+                                message.replyToMessageId != null &&
+                                quoted == null,
+                            footer: <Widget>[
+                              if (retryable && !_searching)
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: TextButton.icon(
+                                    onPressed: retryBusy
+                                        ? null
+                                        : () => _retryMessage(message),
+                                    icon: retryBusy
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Icon(Icons.refresh),
+                                    label: Text(
+                                      retryBusy ? 'Retrying…' : 'Retry now',
                                     ),
-                                  ...attachments.map((attachment) {
-                                    final attachmentBusy = _operations.anyWithPrefix(
+                                  ),
+                                ),
+                              ...attachments.map((attachment) {
+                                final attachmentBusy = _operations
+                                    .anyWithPrefix(
                                       'attachment:${attachment.id}:',
                                     );
-                                    return AttachmentTile(
-                                      attachment: attachment,
-                                      operationBusy: attachmentBusy,
-                                      onRetry: () => _attachmentCommand(
-                                        attachment.id,
-                                        'retry',
-                                        RetryAttachmentCommandDto(attachmentIdHex: attachment.id),
-                                      ),
-                                      onCancel: () => _attachmentCommand(
-                                        attachment.id,
-                                        'cancel',
-                                        CancelAttachmentCommandDto(attachmentIdHex: attachment.id),
-                                      ),
-                                      onOpen: () => _openAttachment(attachment),
-                                      onSave: () => _saveAttachment(attachment),
-                                    );
-                                  }),
-                                ],
-                              ),
+                                return AttachmentTile(
+                                  attachment: attachment,
+                                  operationBusy: attachmentBusy,
+                                  onRetry: () => _attachmentCommand(
+                                    attachment.id,
+                                    'retry',
+                                    RetryAttachmentCommandDto(
+                                      attachmentIdHex: attachment.id,
+                                    ),
+                                  ),
+                                  onCancel: () => _attachmentCommand(
+                                    attachment.id,
+                                    'cancel',
+                                    CancelAttachmentCommandDto(
+                                      attachmentIdHex: attachment.id,
+                                    ),
+                                  ),
+                                  onOpen: () => _openAttachment(attachment),
+                                  onSave: () => _saveAttachment(attachment),
+                                );
+                              }),
                             ],
-                          );
-                        },
-                      ),
-                    if (_loadingOlder)
-                      const Positioned(
-                        top: 6,
-                        left: 0,
-                        right: 0,
-                        child: Center(
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      ),
-                    if (_showJumpToLatest && !_searching)
-                      Positioned(
-                        right: 16,
-                        bottom: 12,
-                        child: FloatingActionButton.small(
-                          heroTag: null,
-                          tooltip: 'Jump to latest message',
-                          onPressed: _scrollToBottom,
-                          child: const Icon(Icons.arrow_downward),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      if (reply != null) ...<Widget>[
-                        _ReplyComposerPreview(
-                          message: reply,
-                          onCancel: () => setState(() => _replyingTo = null),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      Row(
-                        children: <Widget>[
-                          IconButton(
-                            tooltip: 'Attach files',
-                            onPressed: pickingAttachment || _searching ? null : _pickAttachments,
-                            icon: pickingAttachment
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.attach_file),
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(child: _composerField(sending || _searching, reply != null)),
-                          const SizedBox(width: 8),
-                          IconButton.filled(
-                            tooltip: sending ? 'Sending message' : 'Send message',
-                            onPressed: sending || _searching ? null : _sendMessage,
-                            icon: sending
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.send),
                           ),
                         ],
+                      );
+                    },
+                  ),
+                if (_loadingOlder)
+                  const Positioned(
+                    top: 6,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ),
+                if (_showJumpToLatest && !_searching)
+                  Positioned(
+                    right: 16,
+                    bottom: 12,
+                    child: FloatingActionButton.small(
+                      heroTag: null,
+                      tooltip: 'Jump to latest message',
+                      onPressed: _scrollToBottom,
+                      child: const Icon(Icons.arrow_downward),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (reply != null) ...<Widget>[
+                    _ReplyComposerPreview(
+                      message: reply,
+                      onCancel: () => setState(() => _replyingTo = null),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Row(
+                    children: <Widget>[
+                      IconButton(
+                        tooltip: 'Attach files',
+                        onPressed: pickingAttachment || _searching
+                            ? null
+                            : _pickAttachments,
+                        icon: pickingAttachment
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.attach_file),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: _composerField(
+                          sending || _searching,
+                          reply != null,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        tooltip: sending ? 'Sending message' : 'Send message',
+                        onPressed: sending || _searching ? null : _sendMessage,
+                        icon: sending
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.send),
                       ),
                     ],
                   ),
-                ),
+                ],
               ),
-            ],
-          );
-        },
+            ),
+          ),
+        ],
       );
+    },
+  );
 
   Widget _buildSearchBar() {
     if (!_searching) {
@@ -598,7 +646,9 @@ class _ConversationPaneState extends State<ConversationPane>
       _searchResults = const <MessageDto>[];
       _searchController.clear();
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(jump: true));
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _scrollToBottom(jump: true),
+    );
   }
 
   Widget _composerField(bool disabled, bool replying) {
@@ -610,11 +660,12 @@ class _ConversationPaneState extends State<ConversationPane>
       textInputAction: TextInputAction.newline,
       decoration: InputDecoration(labelText: replying ? 'Reply' : 'Message'),
     );
-    if (!(Platform.isWindows || Platform.isLinux || Platform.isMacOS)) return field;
+    if (!isTorcaDesktop) return field;
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.enter): _sendMessage,
-        const SingleActivator(LogicalKeyboardKey.enter, shift: true): _insertNewline,
+        const SingleActivator(LogicalKeyboardKey.enter, shift: true):
+            _insertNewline,
       },
       child: field,
     );
@@ -648,7 +699,12 @@ class _ConversationPaneState extends State<ConversationPane>
         RetryMessageCommandDto(messageIdHex: message.id),
       );
       if (mounted && !result.ok) {
-        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not retry message'));
+        _showError(
+          BridgeErrorPresenter.message(
+            result,
+            fallback: 'Could not retry message',
+          ),
+        );
       }
     });
   }
@@ -664,16 +720,19 @@ class _ConversationPaneState extends State<ConversationPane>
     await _applyMessageAction(message, action);
   }
 
-  Future<void> _applyMessageAction(MessageDto message, MessageAction action) async {
+  Future<void> _applyMessageAction(
+    MessageDto message,
+    MessageAction action,
+  ) async {
     switch (action) {
       case MessageAction.reply:
         if (!_searching) setState(() => _replyingTo = message);
       case MessageAction.copy:
         await Clipboard.setData(ClipboardData(text: message.body));
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Message copied')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Message copied')));
         }
       case MessageAction.details:
         await _showMessageDetails(message);
@@ -681,34 +740,34 @@ class _ConversationPaneState extends State<ConversationPane>
   }
 
   Future<void> _showMessageDetails(MessageDto message) => showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Message details'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              _detail('ID', message.id),
-              _detail('Direction', message.direction),
-              _detail('Status', _messageStatusLabel(message.status)),
-              _detail('Queued / received', _date(message.createdAtMs)),
-              _detail('Last update', _date(message.updatedAtMs)),
-              _detail('Send attempts', '${message.attemptCount}'),
-            ],
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Message details'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _detail('ID', message.id),
+          _detail('Direction', message.direction),
+          _detail('Status', _messageStatusLabel(message.status)),
+          _detail('Queued / received', _date(message.createdAtMs)),
+          _detail('Last update', _date(message.updatedAtMs)),
+          _detail('Send attempts', '${message.attemptCount}'),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
         ),
-      );
+      ],
+    ),
+  );
 
   Widget _detail(String label, String value) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text('$label: $value'),
-      );
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text('$label: $value'),
+  );
 
   String _date(int ms) => ms <= 0
       ? 'Unavailable'
@@ -734,14 +793,22 @@ class _ConversationPaneState extends State<ConversationPane>
         await _timeline.refreshLatest();
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       } else {
-        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not queue message'));
+        _showError(
+          BridgeErrorPresenter.message(
+            result,
+            fallback: 'Could not queue message',
+          ),
+        );
       }
     });
   }
 
   Future<void> _pickAttachments() async {
     await _operations.run('attachment:pick', () async {
-      final picked = await FilePicker.platform.pickFiles(allowMultiple: true, withData: false);
+      final picked = await FilePicker.pickFiles(
+        allowMultiple: true,
+        withData: false,
+      );
       if (picked == null || picked.files.isEmpty || !mounted) return;
       final maxBytes = capabilitiesFor(widget.gateway).maxAttachmentBytes;
       var queued = 0;
@@ -752,7 +819,9 @@ class _ConversationPaneState extends State<ConversationPane>
           continue;
         }
         if (file.size <= 0 || file.size > maxBytes) {
-          _showError('${file.name}: maximum attachment size is ${formatBytes(maxBytes)}');
+          _showError(
+            '${file.name}: maximum attachment size is ${formatBytes(maxBytes)}',
+          );
           continue;
         }
         final response = await widget.gateway.execute(
@@ -775,16 +844,16 @@ class _ConversationPaneState extends State<ConversationPane>
       }
       if (queued > 0) await _timeline.refreshLatest();
       if (mounted && queued > 1) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$queued attachments queued')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$queued attachments queued')));
       }
     });
   }
 
   Future<void> _saveAttachment(AttachmentDto attachment) async {
     await _operations.run('attachment:${attachment.id}:save', () async {
-      final path = await FilePicker.platform.saveFile(
+      final path = await FilePicker.saveFile(
         dialogTitle: 'Save attachment',
         fileName: attachment.name,
       );
@@ -797,11 +866,16 @@ class _ConversationPaneState extends State<ConversationPane>
       );
       if (!mounted) return;
       if (result.ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Attachment saved')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Attachment saved')));
       } else {
-        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not save attachment'));
+        _showError(
+          BridgeErrorPresenter.message(
+            result,
+            fallback: 'Could not save attachment',
+          ),
+        );
       }
     });
   }
@@ -810,7 +884,7 @@ class _ConversationPaneState extends State<ConversationPane>
     await _operations.run('attachment:${attachment.id}:open', () async {
       final ext = _safeExtension(attachment.name);
       final path =
-          '${Directory.systemTemp.path}${Platform.pathSeparator}torca-${attachment.id}$ext';
+          '${Directory.systemTemp.path}${torcaPathSeparator}torca-${attachment.id}$ext';
       final result = await widget.gateway.execute(
         ExportAttachmentCommandDto(
           attachmentIdHex: attachment.id,
@@ -819,7 +893,12 @@ class _ConversationPaneState extends State<ConversationPane>
       );
       if (!mounted) return;
       if (!result.ok) {
-        _showError(BridgeErrorPresenter.message(result, fallback: 'Could not open attachment'));
+        _showError(
+          BridgeErrorPresenter.message(
+            result,
+            fallback: 'Could not open attachment',
+          ),
+        );
         return;
       }
       final opened = await OpenFilex.open(path);
@@ -844,7 +923,12 @@ class _ConversationPaneState extends State<ConversationPane>
     await _operations.run('attachment:$attachmentId:$action', () async {
       final result = await widget.gateway.execute(command);
       if (mounted && !result.ok) {
-        _showError(BridgeErrorPresenter.message(result, fallback: 'Attachment operation failed'));
+        _showError(
+          BridgeErrorPresenter.message(
+            result,
+            fallback: 'Attachment operation failed',
+          ),
+        );
       }
     });
   }
@@ -878,15 +962,15 @@ class _ConversationPaneState extends State<ConversationPane>
   }
 
   String _messageStatusLabel(String status) => switch (status) {
-        'queued' => 'Queued — waiting for a direct peer connection',
-        'sending' => 'Sending…',
-        'sent' => 'Sent',
-        'delivered' => 'Delivered',
-        'read' => 'Read',
-        'failed' => 'Delivery failed',
-        'cancelled' => 'Cancelled',
-        _ => status,
-      };
+    'queued' => 'Queued — waiting for a direct peer connection',
+    'sending' => 'Sending…',
+    'sent' => 'Sent',
+    'delivered' => 'Delivered',
+    'read' => 'Read',
+    'failed' => 'Delivery failed',
+    'cancelled' => 'Cancelled',
+    _ => status,
+  };
 }
 
 bool _sameDay(MessageDto first, MessageDto second) {
@@ -916,11 +1000,14 @@ class _DateSeparator extends StatelessWidget {
     final label = switch (difference) {
       0 => 'Today',
       1 => 'Yesterday',
-      _ => '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
+      _ =>
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Center(child: Text(label, style: Theme.of(context).textTheme.labelSmall)),
+      child: Center(
+        child: Text(label, style: Theme.of(context).textTheme.labelSmall),
+      ),
     );
   }
 }
@@ -930,15 +1017,15 @@ class _UnreadSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Row(
-        children: <Widget>[
-          Expanded(child: Divider()),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Text('New messages'),
-          ),
-          Expanded(child: Divider()),
-        ],
-      );
+    children: <Widget>[
+      Expanded(child: Divider()),
+      Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text('New messages'),
+      ),
+      Expanded(child: Divider()),
+    ],
+  );
 }
 
 class _ReplyComposerPreview extends StatelessWidget {
@@ -948,27 +1035,31 @@ class _ReplyComposerPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(10),
+    padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      children: <Widget>[
+        const Icon(Icons.reply, size: 18),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            message.body,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
-        child: Row(
-          children: <Widget>[
-            const Icon(Icons.reply, size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(message.body, maxLines: 2, overflow: TextOverflow.ellipsis),
-            ),
-            IconButton(
-              tooltip: 'Cancel reply',
-              visualDensity: VisualDensity.compact,
-              onPressed: onCancel,
-              icon: const Icon(Icons.close),
-            ),
-          ],
+        IconButton(
+          tooltip: 'Cancel reply',
+          visualDensity: VisualDensity.compact,
+          onPressed: onCancel,
+          icon: const Icon(Icons.close),
         ),
-      );
+      ],
+    ),
+  );
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

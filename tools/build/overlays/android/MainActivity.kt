@@ -19,10 +19,8 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         const val EXTRA_CONVERSATION_ID = "torca.conversation_id"
-        const val NOTIFICATION_PREFERENCES = "torca.notification.preferences"
-        const val NOTIFICATION_ENABLED = "enabled"
         @Volatile var isVisible: Boolean = false
-        init { System.loadLibrary("torca_bridge") }
+        init { System.loadLibrary("torca_native") }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,19 +55,6 @@ class MainActivity : FlutterActivity() {
                         val value = pendingConversationId
                         pendingConversationId = null
                         result.success(value)
-                    }
-                    "setNotificationsEnabled" -> {
-                        val enabled = call.arguments as? Boolean
-                        if (enabled == null) {
-                            result.error("invalid_argument", "Expected boolean notification preference", null)
-                        } else {
-                            applicationContext
-                                .getSharedPreferences(NOTIFICATION_PREFERENCES, MODE_PRIVATE)
-                                .edit()
-                                .putBoolean(NOTIFICATION_ENABLED, enabled)
-                                .apply()
-                            result.success(null)
-                        }
                     }
                     else -> result.notImplemented()
                 }

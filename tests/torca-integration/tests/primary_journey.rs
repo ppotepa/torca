@@ -44,7 +44,11 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     let profile = Profile::new(ProfileName::new("Orca").expect("profile name is valid"), None);
     assert_eq!(
         engine
-            .dispatch(EngineCommand::CreateIdentity { identity_id, profile, at: ts(1) })
+            .dispatch(EngineCommand::CreateIdentity {
+                identity_id,
+                profile: Some(profile),
+                at: ts(1)
+            })
             .expect("identity command succeeds"),
         EngineResult::IdentityCreated
     );

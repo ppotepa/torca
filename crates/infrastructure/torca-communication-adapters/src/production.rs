@@ -1,6 +1,6 @@
 use core::fmt;
-use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
@@ -16,12 +16,13 @@ use torca_messaging::RetryPolicy;
 use torca_peer_link::PeerLink;
 use torca_peer_protocol::HandshakeSigner;
 use torca_peer_shared::SharedPeerLink;
-use torca_read_state::SqlCipherReadState;
+use torca_storage_sqlite::SqlCipherReadState;
 use torca_storage_sqlite::{
     DatabaseKey, SqlCipherControlOutbox, SqlCipherDurableStore, SqlCipherInboundStore,
     SqlCipherMessageStore, SqlCipherRelationshipAdmin, SqlCipherStore,
 };
-use torca_transport_tor::PeerListener;
+use torca_tor::PeerListener;
+use torca_tor::TorService;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
@@ -30,7 +31,6 @@ use crate::{
     TextWorkerAdapter,
 };
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const ACK_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_MAX_ATTEMPTS: u32 = 12;
 const RETRY_BASE: Duration = Duration::from_secs(1);
@@ -43,7 +43,9 @@ pub enum CommunicationBuildError {
     Cache,
 }
 impl fmt::Display for CommunicationBuildError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{self:?}") }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 impl std::error::Error for CommunicationBuildError {}
 
@@ -54,7 +56,7 @@ pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
     pub export_secret_store: EP,
     pub relationship_secret_store: RP,
     pub listener: PeerListener,
-    pub socks_address: SocketAddr,
+    pub tor_client: Arc<TorService>,
     pub local_identity_id: OpaqueId,
 }
 
@@ -83,8 +85,7 @@ where
         ActiveRelationshipStore::new(peer_relationships),
         inputs.signer,
         inputs.local_identity_id,
-        inputs.socks_address,
-        CONNECT_TIMEOUT,
+        inputs.tor_client,
     ));
     let shared_crypto = SharedPeerCrypto::new(ManagedPeerSecrets::new(
         RustCryptoProvider,
@@ -123,10 +124,8 @@ where
     );
     let control_outbox = SqlCipherControlOutbox::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
-    let control = SharedControlWorker::new(ControlDeliveryWorker::new(
-        control_outbox,
-        control_transport,
-    ));
+    let control =
+        SharedControlWorker::new(ControlDeliveryWorker::new(control_outbox, control_transport));
 
     let inbound_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
@@ -152,8 +151,8 @@ where
         .map_err(|_| CommunicationBuildError::Attachment)?;
     let attachment_projection = SqlCipherAttachmentProjection::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Attachment)?;
-    let attachment_cache = FileBlobStore::open(cache_root)
-        .map_err(|_| CommunicationBuildError::Cache)?;
+    let attachment_cache =
+        FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
     let attachment_transfer = AttachmentTransfer::new(
         attachment_relationships,
         attachment_messages,
@@ -164,7 +163,8 @@ where
         staging_root,
         inputs.local_identity_id,
         ACK_TIMEOUT,
-    ).map_err(|_| CommunicationBuildError::Attachment)?;
+    )
+    .map_err(|_| CommunicationBuildError::Attachment)?;
     let attachments = AttachmentControlAdapter::new(
         attachment_transfer,
         attachment_controls,
@@ -177,8 +177,8 @@ where
         .map_err(|_| CommunicationBuildError::Storage)?;
     let export_metadata = SqlCipherAttachmentStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Attachment)?;
-    let export_cache = FileBlobStore::open(cache_root)
-        .map_err(|_| CommunicationBuildError::Cache)?;
+    let export_cache =
+        FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
     let attachment_export = AttachmentExportAdapter::new(
         export_relationships,
         export_messages,
@@ -191,8 +191,8 @@ where
         .map_err(|_| CommunicationBuildError::Storage)?;
     let relationship_store = SqlCipherRelationshipAdmin::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
-    let relationship_cache = FileBlobStore::open(cache_root)
-        .map_err(|_| CommunicationBuildError::Cache)?;
+    let relationship_cache =
+        FileBlobStore::open(cache_root).map_err(|_| CommunicationBuildError::Cache)?;
     let relationships = RelationshipAdminAdapter::new(
         relationship_store,
         inputs.relationship_secret_store,

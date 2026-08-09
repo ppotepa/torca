@@ -23,7 +23,7 @@ class DiagnosticsOverview extends StatelessWidget {
         : '$readyPeers of $totalPeers direct peer links ready';
 
     final checks = <_OverviewItem>[
-      _OverviewItem(
+      const _OverviewItem(
         'Native bridge',
         true,
         'Contract $torcaContractVersion snapshot readable',
@@ -56,20 +56,31 @@ class DiagnosticsOverview extends StatelessWidget {
       _OverviewItem(
         'Diagnostics stream',
         diagnosticsReadable,
-        diagnosticsReadable ? 'Redacted health events readable' : 'No readable health events',
+        diagnosticsReadable
+            ? 'Redacted health events readable'
+            : 'No readable health events',
         Icons.monitor_heart_outlined,
       ),
     ];
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 720 ? 3 : constraints.maxWidth >= 440 ? 2 : 1;
+        final columns = constraints.maxWidth >= 720
+            ? 3
+            : constraints.maxWidth >= 440
+            ? 2
+            : 1;
         final width = (constraints.maxWidth - (columns - 1) * 10) / columns;
         return Wrap(
           spacing: 10,
           runSpacing: 10,
           children: checks
-              .map((item) => SizedBox(width: width, child: _HealthCard(item: item)))
+              .map(
+                (item) => SizedBox(
+                  width: width,
+                  child: _HealthCard(item: item),
+                ),
+              )
               .toList(growable: false),
         );
       },
@@ -83,38 +94,38 @@ class _HealthCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Icon(
-                item.ok ? Icons.check_circle_outline : Icons.error_outline,
-                color: item.ok
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.error,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            item.ok ? Icons.check_circle_outline : Icons.error_outline,
+            color: item.ok
+                ? Theme.of(context).colorScheme.primary
+                : Theme.of(context).colorScheme.error,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
                   children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        Icon(item.icon, size: 16),
-                        const SizedBox(width: 5),
-                        Expanded(child: Text(item.name)),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(item.detail, style: Theme.of(context).textTheme.bodySmall),
+                    Icon(item.icon, size: 16),
+                    const SizedBox(width: 5),
+                    Expanded(child: Text(item.name)),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(item.detail, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 }
 
 class _OverviewItem {

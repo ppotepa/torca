@@ -148,40 +148,48 @@ impl AttachmentRepository for SqlCipherAttachmentStore {
         let attempts = i64::try_from(attachment.attempts().len())
             .map_err(|_| AttachmentError::RepositoryFailure)?;
         let offset = i64::try_from(state.offset).map_err(|_| AttachmentError::RepositoryFailure)?;
-        let changed = self.backend.connection().execute(
-            UPDATE_SQL,
-            params![
-                id.as_slice(),
-                encode_status(attachment.status()),
-                attachment.updated_at().to_unix_millis(),
-                attempts,
-                offset,
-                digest,
-            ],
-        ).map_err(|_| AttachmentError::RepositoryFailure)?;
+        let changed = self
+            .backend
+            .connection()
+            .execute(
+                UPDATE_SQL,
+                params![
+                    id.as_slice(),
+                    encode_status(attachment.status()),
+                    attachment.updated_at().to_unix_millis(),
+                    attempts,
+                    offset,
+                    digest,
+                ],
+            )
+            .map_err(|_| AttachmentError::RepositoryFailure)?;
         if changed == 1 { Ok(()) } else { Err(AttachmentError::NotFound) }
     }
 
     fn for_message(&self, message_id: MessageId) -> Result<Vec<Attachment>, AttachmentError> {
         let message = message_id.to_opaque().into_bytes();
-        let mut statement = self.backend.connection().prepare(FOR_MESSAGE_SQL)
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(FOR_MESSAGE_SQL)
             .map_err(|_| AttachmentError::RepositoryFailure)?;
-        let rows = statement.query_map(params![message.as_slice()], |row| {
-            Ok(AttachmentRow {
-                attachment_id: row.get(0)?,
-                message_id: message.to_vec(),
-                name: row.get(1)?,
-                media_type: row.get(2)?,
-                size: row.get(3)?,
-                status: row.get(4)?,
-                created_at_ms: row.get(5)?,
-                updated_at_ms: row.get(6)?,
-                attempt_count: row.get(7)?,
+        let rows = statement
+            .query_map(params![message.as_slice()], |row| {
+                Ok(AttachmentRow {
+                    attachment_id: row.get(0)?,
+                    message_id: message.to_vec(),
+                    name: row.get(1)?,
+                    media_type: row.get(2)?,
+                    size: row.get(3)?,
+                    status: row.get(4)?,
+                    created_at_ms: row.get(5)?,
+                    updated_at_ms: row.get(6)?,
+                    attempt_count: row.get(7)?,
+                })
             })
-        }).map_err(|_| AttachmentError::RepositoryFailure)?;
-        rows.map(|row| {
-            row.map_err(|_| AttachmentError::RepositoryFailure)?.into_attachment()
-        }).collect()
+            .map_err(|_| AttachmentError::RepositoryFailure)?;
+        rows.map(|row| row.map_err(|_| AttachmentError::RepositoryFailure)?.into_attachment())
+            .collect()
     }
 }
 
@@ -208,8 +216,8 @@ impl AttachmentRow {
             .map_err(|_| AttachmentError::RepositoryFailure)?;
         let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
             .map_err(|_| AttachmentError::RepositoryFailure)?;
-        let attempt_count = u32::try_from(self.attempt_count)
-            .map_err(|_| AttachmentError::RepositoryFailure)?;
+        let attempt_count =
+            u32::try_from(self.attempt_count).map_err(|_| AttachmentError::RepositoryFailure)?;
         let attempts = (1..=attempt_count)
             .map(|number| AttachmentAttempt { number, at: updated_at, error_code: None })
             .collect();
@@ -219,32 +227,41 @@ impl AttachmentRow {
     }
 }
 
-fn execute_insert(backend: &SqlCipherBackend, attachment: &Attachment) -> Result<(), AttachmentError> {
+fn execute_insert(
+    backend: &SqlCipherBackend,
+    attachment: &Attachment,
+) -> Result<(), AttachmentError> {
     let id = attachment.id().to_opaque().into_bytes();
     let message = attachment.message_id().to_opaque().into_bytes();
     let size = i64::try_from(attachment.size()).map_err(|_| AttachmentError::RepositoryFailure)?;
     let attempts = i64::try_from(attachment.attempts().len())
         .map_err(|_| AttachmentError::RepositoryFailure)?;
-    backend.connection().execute(
-        INSERT_SQL,
-        params![
-            id.as_slice(),
-            message.as_slice(),
-            attachment.name().as_str(),
-            attachment.media_type().as_str(),
-            size,
-            encode_status(attachment.status()),
-            attachment.created_at().to_unix_millis(),
-            attachment.updated_at().to_unix_millis(),
-            attempts,
-            0_i64,
-            Option::<&[u8]>::None,
-        ],
-    ).map_err(|_| AttachmentError::RepositoryFailure)?;
+    backend
+        .connection()
+        .execute(
+            INSERT_SQL,
+            params![
+                id.as_slice(),
+                message.as_slice(),
+                attachment.name().as_str(),
+                attachment.media_type().as_str(),
+                size,
+                encode_status(attachment.status()),
+                attachment.created_at().to_unix_millis(),
+                attachment.updated_at().to_unix_millis(),
+                attempts,
+                0_i64,
+                Option::<&[u8]>::None,
+            ],
+        )
+        .map_err(|_| AttachmentError::RepositoryFailure)?;
     Ok(())
 }
 
-fn transfer_state(offset: i64, digest: Option<Vec<u8>>) -> Result<AttachmentTransferState, AttachmentError> {
+fn transfer_state(
+    offset: i64,
+    digest: Option<Vec<u8>>,
+) -> Result<AttachmentTransferState, AttachmentError> {
     let offset = u64::try_from(offset).map_err(|_| AttachmentError::RepositoryFailure)?;
     let content_digest = digest
         .map(|value| value.try_into().map_err(|_| AttachmentError::RepositoryFailure))
@@ -278,5 +295,9 @@ fn decode_status(value: i64) -> Result<AttachmentStatus, AttachmentError> {
 fn fixed16(value: Vec<u8>) -> Result<[u8; 16], AttachmentError> {
     value.try_into().map_err(|_| AttachmentError::RepositoryFailure)
 }
-fn map_backend(_: StorageBackendError) -> AttachmentStoreOpenError { AttachmentStoreOpenError::Backend }
-fn map_migration(_: MigrationError) -> AttachmentStoreOpenError { AttachmentStoreOpenError::Migration }
+fn map_backend(_: StorageBackendError) -> AttachmentStoreOpenError {
+    AttachmentStoreOpenError::Backend
+}
+fn map_migration(_: MigrationError) -> AttachmentStoreOpenError {
+    AttachmentStoreOpenError::Migration
+}

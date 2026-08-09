@@ -6,9 +6,9 @@ The previous [`ppotepa/tOrca`](https://github.com/ppotepa/tOrca) repository is a
 
 ## Current engineering state
 
-The active code line is **Torca 0.2.0-alpha.0** with Bridge contract v11. The 0.2 source track is complete, but platform/release validation is still open. Start with [`0.2_PROGRESS.md`](0.2_PROGRESS.md); do not infer release readiness from source completion.
+The active code line is the unified baseline. Source checks are green; platform/release validation is still open. Start with [`0.2_PROGRESS.md`](0.2_PROGRESS.md); do not infer release readiness from source completion.
 
-0.2 focuses on a reliable daily-use 1:1 messenger:
+The baseline provides a reliable daily-use 1:1 messenger:
 
 - local installation identity and encrypted SQLCipher persistence;
 - short-lived pairing codes/QR with explicit approval;
@@ -21,11 +21,11 @@ The active code line is **Torca 0.2.0-alpha.0** with Bridge contract v11. The 0.
 - notification privacy and host-level screen-capture protection;
 - one shared responsive Flutter application for Windows and Android.
 
-Calls, groups, multi-device sync, public discovery, cloud backup and Linux production composition are not part of 0.2.
+Calls, groups, multi-device sync, public discovery, cloud backup and Linux production composition are outside this baseline.
 
 ## Security scope
 
-Torca 0.2 authenticates peers and encrypts peer payloads with a protected pairwise secret established during pairing. It does **not** currently implement MLS or a Double Ratchet-style per-message key schedule, so forward secrecy and post-compromise security are not claimed for message history. See [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md).
+Torca authenticates peers and encrypts peer payloads with a protected pairwise secret established during pairing. It does **not** currently implement MLS or a Double Ratchet-style per-message key schedule, so forward secrecy and post-compromise security are not claimed for message history. See [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md).
 
 ## Architecture
 
@@ -36,11 +36,9 @@ EngineGateway / generated DTOs
         |
 torca-native C ABI
         |
-process-owned NativeEngineRuntime
+process-owned TorcaRuntime actor
         |
-ClientEngine actor + RuntimeHost
-        |
-SQLCipher / crypto / peer link / Tor drivers
+SQLCipher / crypto / peer link / embedded torca-tor
 ```
 
 Important rules:
@@ -64,7 +62,8 @@ crates/protocol/          wire/pairing/relay/peer protocols
 crates/platform/          bridge, native ABI and platform adapters
 services/relay/           ephemeral pairing rendezvous broker
 tests/torca-integration/  cross-crate integration journeys
-tools/build/              private build/source-policy/platform implementation
+scripts/modules/          private build/source-policy/platform implementation
+tools/build/overlays/     required platform templates
 docs/0.2/                 current source track and final audit
 ```
 
@@ -78,7 +77,7 @@ Public entrypoints remain deliberately small:
 ./scripts/deploy.ps1
 ```
 
-`build.ps1` starts with a cheap source-policy gate that rejects obsolete source roots, legacy frontend-owned native mutation ABI and Bridge v11 presentation-ownership debt before expensive tooling runs.
+`build.ps1` starts with a cheap source-policy gate that rejects obsolete source roots, frontend-owned native mutation ABI and contract drift before expensive tooling runs.
 
 ## Canonical documents
 
@@ -88,5 +87,3 @@ Public entrypoints remain deliberately small:
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — system boundaries.
 - [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) — security guarantees and non-guarantees.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — development rules.
-
-Historical 0.1 documents remain under `docs/0.1/` for traceability; they are not the active implementation tracker.

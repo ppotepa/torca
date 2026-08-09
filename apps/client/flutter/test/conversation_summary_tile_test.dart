@@ -4,7 +4,9 @@ import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/widgets/conversation_summary_tile.dart';
 
 void main() {
-  testWidgets('conversation summary shows preview and unread badge', (tester) async {
+  testWidgets('conversation summary shows preview and unread badge', (
+    tester,
+  ) async {
     const conversation = ConversationDto(
       id: 'c1',
       contactId: 'p1',

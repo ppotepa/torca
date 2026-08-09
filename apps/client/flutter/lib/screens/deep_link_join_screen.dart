@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 
 import '../gateway/engine_gateway.dart';
@@ -7,14 +5,18 @@ import '../generated/torca_contract.dart';
 import 'pairing_screen.dart';
 
 class DeepLinkJoinScreen extends StatefulWidget {
-  const DeepLinkJoinScreen({required this.gateway, required this.code, super.key});
+  const DeepLinkJoinScreen({
+    required this.gateway,
+    required this.code,
+    super.key,
+  });
   final EngineGateway gateway;
   final String code;
-  @override State<DeepLinkJoinScreen> createState() => _DeepLinkJoinScreenState();
+  @override
+  State<DeepLinkJoinScreen> createState() => _DeepLinkJoinScreenState();
 }
 
 class _DeepLinkJoinScreenState extends State<DeepLinkJoinScreen> {
-  final Random _random = Random.secure();
   bool _busy = false;
   String? _error;
 
@@ -34,12 +36,22 @@ class _DeepLinkJoinScreenState extends State<DeepLinkJoinScreen> {
               const SizedBox(height: 16),
               const Text('Invitation code', textAlign: TextAlign.center),
               const SizedBox(height: 8),
-              SelectableText(widget.code, textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall),
+              SelectableText(
+                widget.code,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
               const SizedBox(height: 20),
-              FilledButton(onPressed: _busy ? null : _join, child: Text(_busy ? 'Joining…' : 'Join invitation')),
+              FilledButton(
+                onPressed: _busy ? null : _join,
+                child: Text(_busy ? 'Joining…' : 'Join invitation'),
+              ),
               if (_error != null) ...<Widget>[
                 const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ],
             ],
           ),
@@ -49,19 +61,25 @@ class _DeepLinkJoinScreenState extends State<DeepLinkJoinScreen> {
   );
 
   Future<void> _join() async {
-    setState(() { _busy = true; _error = null; });
-    final result = await widget.gateway.execute(JoinPairingCommandDto(sessionIdHex: _newId(), code: widget.code));
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final result = await widget.gateway.execute(
+      JoinPairingCommandDto(code: widget.code),
+    );
     if (!mounted) return;
     if (result.ok) {
-      await Navigator.of(context).pushReplacement<void, void>(MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)));
+      await Navigator.of(context).pushReplacement<void, void>(
+        MaterialPageRoute(
+          builder: (_) => PairingScreen(gateway: widget.gateway),
+        ),
+      );
     } else {
-      setState(() { _busy = false; _error = result.error ?? 'Could not join invitation'; });
+      setState(() {
+        _busy = false;
+        _error = result.error ?? 'Could not join invitation';
+      });
     }
-  }
-
-  String _newId() {
-    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
-    if (bytes.every((value) => value == 0)) bytes[15] = 1;
-    return bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
   }
 }

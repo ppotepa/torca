@@ -5,7 +5,9 @@ import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/diagnostics_overview.dart';
 
 void main() {
-  testWidgets('diagnostics overview renders supported health surfaces', (tester) async {
+  testWidgets('diagnostics overview renders supported health surfaces', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),

@@ -39,10 +39,7 @@ class PeerHealthIndicator extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Icon(icon, size: 17, color: color),
-          if (showLabel) ...<Widget>[
-            const SizedBox(width: 5),
-            Text(quality),
-          ],
+          if (showLabel) ...<Widget>[const SizedBox(width: 5), Text(quality)],
         ],
       ),
     );
@@ -62,10 +59,10 @@ class PeerHealthIndicator extends StatelessWidget {
   }
 
   static String _qualityLabel(String quality) => switch (quality) {
-        'excellent' => 'Excellent',
-        'good' => 'Good',
-        'fair' => 'Fair',
-        'poor' => 'Poor',
-        _ => 'Unknown',
-      };
+    'excellent' => 'Excellent',
+    'good' => 'Good',
+    'fair' => 'Fair',
+    'poor' => 'Poor',
+    _ => 'Unknown',
+  };
 }

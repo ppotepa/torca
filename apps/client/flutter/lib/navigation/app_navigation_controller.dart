@@ -1,8 +1,12 @@
 import 'package:flutter/foundation.dart';
 
 class AppNavigationController {
-  final ValueNotifier<String?> conversationRequest = ValueNotifier<String?>(null);
-  final ValueNotifier<String?> pairingCodeRequest = ValueNotifier<String?>(null);
+  final ValueNotifier<String?> conversationRequest = ValueNotifier<String?>(
+    null,
+  );
+  final ValueNotifier<String?> pairingCodeRequest = ValueNotifier<String?>(
+    null,
+  );
   final ValueNotifier<int> newPairingRequest = ValueNotifier<int>(0);
 
   void openConversation(String conversationId) {

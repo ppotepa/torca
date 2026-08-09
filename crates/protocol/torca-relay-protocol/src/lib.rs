@@ -75,11 +75,7 @@ pub enum RelayRequest {
         creator_token: RelaySideToken,
     },
     /// Joins a slot and installs the joiner's client-generated side token.
-    Join {
-        code: RelayCode,
-        joiner_blob: Vec<u8>,
-        joiner_token: RelaySideToken,
-    },
+    Join { code: RelayCode, joiner_blob: Vec<u8>, joiner_token: RelaySideToken },
     /// Pushes an opaque blob to the opposite side. Side is inferred from the capability.
     Push { slot_id: RelaySlotId, token: RelaySideToken, blob: Vec<u8> },
     /// Polls queued blobs for the authenticated side.
@@ -99,8 +95,13 @@ pub enum RelaySide {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayResponse {
-    Opened { slot_id: RelaySlotId },
-    Joined { slot_id: RelaySlotId, creator_blob: Vec<u8> },
+    Opened {
+        slot_id: RelaySlotId,
+    },
+    Joined {
+        slot_id: RelaySlotId,
+        creator_blob: Vec<u8>,
+    },
     Accepted,
     Blobs(Vec<Vec<u8>>),
     Closed,
@@ -252,7 +253,8 @@ impl RelayCodec {
                 if blobs.len() > MAX_RELAY_BATCH_BLOBS {
                     return Err(RelayCodecError::TooManyBlobs { actual: blobs.len() });
                 }
-                let count = u16::try_from(blobs.len()).map_err(|_| RelayCodecError::InvalidField)?;
+                let count =
+                    u16::try_from(blobs.len()).map_err(|_| RelayCodecError::InvalidField)?;
                 payload.extend_from_slice(&count.to_be_bytes());
                 for blob in blobs {
                     put_blob(blob, &mut payload)?;
@@ -306,13 +308,12 @@ impl RelayCodec {
         header: &[u8; RELAY_HEADER_LEN],
     ) -> Result<usize, RelayCodecError> {
         validate_header_prefix(header)?;
-        let payload_len = u32::from_be_bytes(
-            header[8..12].try_into().map_err(|_| RelayCodecError::Truncated)?,
-        );
-        let payload_len = usize::try_from(payload_len).map_err(|_| RelayCodecError::InvalidField)?;
-        let frame_len = RELAY_HEADER_LEN
-            .checked_add(payload_len)
-            .ok_or(RelayCodecError::InvalidField)?;
+        let payload_len =
+            u32::from_be_bytes(header[8..12].try_into().map_err(|_| RelayCodecError::Truncated)?);
+        let payload_len =
+            usize::try_from(payload_len).map_err(|_| RelayCodecError::InvalidField)?;
+        let frame_len =
+            RELAY_HEADER_LEN.checked_add(payload_len).ok_or(RelayCodecError::InvalidField)?;
         if frame_len > MAX_RELAY_FRAME_LEN {
             return Err(RelayCodecError::PayloadTooLarge { actual: payload_len });
         }
@@ -332,9 +333,8 @@ pub fn validate_blob(blob: &[u8]) -> Result<(), RelayProtocolError> {
 fn encode_frame(direction: u8, kind: u8, payload: &[u8]) -> Result<Vec<u8>, RelayCodecError> {
     let payload_len = u32::try_from(payload.len())
         .map_err(|_| RelayCodecError::PayloadTooLarge { actual: payload.len() })?;
-    let frame_len = RELAY_HEADER_LEN
-        .checked_add(payload.len())
-        .ok_or(RelayCodecError::InvalidField)?;
+    let frame_len =
+        RELAY_HEADER_LEN.checked_add(payload.len()).ok_or(RelayCodecError::InvalidField)?;
     if frame_len > MAX_RELAY_FRAME_LEN {
         return Err(RelayCodecError::PayloadTooLarge { actual: payload.len() });
     }
@@ -352,9 +352,8 @@ fn decode_frame(bytes: &[u8]) -> Result<(u8, u8, &[u8]), RelayCodecError> {
     if bytes.len() < RELAY_HEADER_LEN {
         return Err(RelayCodecError::Truncated);
     }
-    let header: &[u8; RELAY_HEADER_LEN] = bytes[..RELAY_HEADER_LEN]
-        .try_into()
-        .map_err(|_| RelayCodecError::Truncated)?;
+    let header: &[u8; RELAY_HEADER_LEN] =
+        bytes[..RELAY_HEADER_LEN].try_into().map_err(|_| RelayCodecError::Truncated)?;
     let frame_len = RelayCodec::frame_len_from_header(header)?;
     if bytes.len() < frame_len {
         return Err(RelayCodecError::Truncated);
@@ -369,9 +368,8 @@ fn validate_header_prefix(header: &[u8; RELAY_HEADER_LEN]) -> Result<(), RelayCo
     if &header[..4] != RELAY_MAGIC {
         return Err(RelayCodecError::InvalidMagic);
     }
-    let version = u16::from_be_bytes(
-        header[4..6].try_into().map_err(|_| RelayCodecError::Truncated)?,
-    );
+    let version =
+        u16::from_be_bytes(header[4..6].try_into().map_err(|_| RelayCodecError::Truncated)?);
     if version != RelayProtocolVersion::V2.0 {
         return Err(RelayCodecError::UnsupportedVersion(version));
     }
@@ -443,27 +441,19 @@ impl<'a> Cursor<'a> {
     }
 
     fn u16(&mut self) -> Result<u16, RelayCodecError> {
-        Ok(u16::from_be_bytes(
-            self.take(2)?.try_into().map_err(|_| RelayCodecError::Truncated)?,
-        ))
+        Ok(u16::from_be_bytes(self.take(2)?.try_into().map_err(|_| RelayCodecError::Truncated)?))
     }
 
     fn u32(&mut self) -> Result<u32, RelayCodecError> {
-        Ok(u32::from_be_bytes(
-            self.take(4)?.try_into().map_err(|_| RelayCodecError::Truncated)?,
-        ))
+        Ok(u32::from_be_bytes(self.take(4)?.try_into().map_err(|_| RelayCodecError::Truncated)?))
     }
 
     fn i64(&mut self) -> Result<i64, RelayCodecError> {
-        Ok(i64::from_be_bytes(
-            self.take(8)?.try_into().map_err(|_| RelayCodecError::Truncated)?,
-        ))
+        Ok(i64::from_be_bytes(self.take(8)?.try_into().map_err(|_| RelayCodecError::Truncated)?))
     }
 
     fn id(&mut self) -> Result<OpaqueId, RelayCodecError> {
-        Ok(OpaqueId::from_bytes(
-            self.take(16)?.try_into().map_err(|_| RelayCodecError::Truncated)?,
-        ))
+        Ok(OpaqueId::from_bytes(self.take(16)?.try_into().map_err(|_| RelayCodecError::Truncated)?))
     }
 
     fn timestamp(&mut self) -> Result<Timestamp, RelayCodecError> {
@@ -472,7 +462,8 @@ impl<'a> Cursor<'a> {
 
     fn code(&mut self) -> Result<RelayCode, RelayCodecError> {
         let length = usize::from(self.u8()?);
-        let value = core::str::from_utf8(self.take(length)?).map_err(|_| RelayCodecError::InvalidField)?;
+        let value =
+            core::str::from_utf8(self.take(length)?).map_err(|_| RelayCodecError::InvalidField)?;
         RelayCode::new(value).map_err(|_| RelayCodecError::InvalidField)
     }
 
@@ -501,11 +492,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn finish(&self) -> Result<(), RelayCodecError> {
-        if self.offset == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(RelayCodecError::TrailingBytes)
-        }
+        if self.offset == self.bytes.len() { Ok(()) } else { Err(RelayCodecError::TrailingBytes) }
     }
 }
 

@@ -1,6 +1,7 @@
 package com.torca.host
 
 import android.content.Context
+import android.util.Log
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
@@ -157,16 +158,11 @@ object AndroidKeystoreBridge {
         databaseFile = File(dataDirectory, "torca.db")
 
         val stableRuntime = File(torcaRoot, "runtime")
-        val legacyRuntime = File(torcaRoot, "0.1")
-        if (!stableRuntime.exists() && legacyRuntime.exists()) {
-            check(legacyRuntime.renameTo(stableRuntime)) {
-                "could not migrate legacy Torca runtime directory"
-            }
-        }
         runtimeRoot = stableRuntime
         if (!runtimeRoot.exists() && !runtimeRoot.mkdirs()) {
             error("could not create Torca runtime directory")
         }
+        check(nativeBindRuntime()) { "could not bind Android runtime bridge" }
     }
 
     @JvmStatic
@@ -181,12 +177,16 @@ object AndroidKeystoreBridge {
     fun databasePath(): String = databaseFile.absolutePath
     @JvmStatic
     fun runtimeRootPath(): String = runtimeRoot.absolutePath
+    @JvmStatic
+    fun logRootPath(): String {
+        val root = File(applicationContext.getExternalFilesDir(null), "torca/logs")
+        check(root.exists() || root.mkdirs()) { "could not create Torca log directory" }
+        return root.absolutePath
+    }
 
     @JvmStatic
-    fun torExecutablePath(): String {
-        val path = File(applicationContext.applicationInfo.nativeLibraryDir, "libtor.so")
-        check(path.isFile) { "packaged Tor executable is missing" }
-        return path.absolutePath
+    fun reportNativeFailure(message: String) {
+        Log.e("TorcaRuntime", message)
     }
 
     @JvmStatic
@@ -201,4 +201,6 @@ object AndroidKeystoreBridge {
         "peer" -> peerSecrets
         else -> error("unsupported secret namespace")
     }
+
+    @JvmStatic external fun nativeBindRuntime(): Boolean
 }

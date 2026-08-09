@@ -4,10 +4,10 @@ enum AppThemeMode {
   dark;
 
   static AppThemeMode parse(String? value) => switch (value) {
-        'light' => AppThemeMode.light,
-        'dark' => AppThemeMode.dark,
-        _ => AppThemeMode.system,
-      };
+    'light' => AppThemeMode.light,
+    'dark' => AppThemeMode.dark,
+    _ => AppThemeMode.system,
+  };
 
   String get storageValue => name;
 }

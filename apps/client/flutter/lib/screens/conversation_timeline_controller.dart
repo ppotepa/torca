@@ -8,8 +8,8 @@ class ConversationTimelineController extends ChangeNotifier {
     required EngineGateway gateway,
     required String conversationId,
     this.pageSize = 100,
-  })  : _gateway = gateway,
-        _conversationId = conversationId;
+  }) : _gateway = gateway,
+       _conversationId = conversationId;
 
   EngineGateway _gateway;
   String _conversationId;
@@ -27,7 +27,10 @@ class ConversationTimelineController extends ChangeNotifier {
 
   Future<void> initialize() => _loadLatest(replace: true);
 
-  Future<void> reset({required EngineGateway gateway, required String conversationId}) async {
+  Future<void> reset({
+    required EngineGateway gateway,
+    required String conversationId,
+  }) async {
     _generation++;
     _gateway = gateway;
     _conversationId = conversationId;
@@ -66,12 +69,7 @@ class ConversationTimelineController extends ChangeNotifier {
   }
 
   Future<ConversationPageDto> search(String query, {int limit = 100}) =>
-      searchConversationFor(
-        _gateway,
-        _conversationId,
-        query,
-        limit: limit,
-      );
+      searchConversationFor(_gateway, _conversationId, query, limit: limit);
 
   Future<void> _loadLatest({required bool replace}) async {
     if (_loading) return;

@@ -24,10 +24,7 @@ impl<R: ContactRepository> ContactRepository for ActiveRelationshipStore<R> {
     }
 
     fn get(&self, id: ContactId) -> Result<Option<Contact>, ContactError> {
-        Ok(self
-            .inner
-            .get(id)?
-            .filter(|contact| contact.status() == ContactStatus::Active))
+        Ok(self.inner.get(id)?.filter(|contact| contact.status() == ContactStatus::Active))
     }
 
     fn update(&mut self, contact: Contact) -> Result<(), ContactError> {

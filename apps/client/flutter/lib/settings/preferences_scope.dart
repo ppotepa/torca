@@ -11,12 +11,16 @@ class PreferencesScope extends InheritedNotifier<LocalPreferences> {
 
   final LocalPreferences preferences;
 
-  static LocalPreferences? maybeOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<PreferencesScope>()?.preferences;
+  static LocalPreferences? maybeOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<PreferencesScope>()
+      ?.preferences;
 
   static LocalPreferences of(BuildContext context) {
     final preferences = maybeOf(context);
-    assert(preferences != null, 'PreferencesScope is missing above this context.');
+    assert(
+      preferences != null,
+      'PreferencesScope is missing above this context.',
+    );
     return preferences!;
   }
 }

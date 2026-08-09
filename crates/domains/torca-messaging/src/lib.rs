@@ -152,6 +152,7 @@ impl Message {
         }
     }
     /// Restores an aggregate from trusted persistence after validating attempt numbering.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_persisted(
         id: MessageId,
         conversation_id: ConversationId,
@@ -311,7 +312,9 @@ impl Message {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessageError {
     EmptyBody,
-    BodyTooLarge { actual: usize },
+    BodyTooLarge {
+        actual: usize,
+    },
     InvalidBody,
     InvalidTransition,
     AttemptsExhausted,

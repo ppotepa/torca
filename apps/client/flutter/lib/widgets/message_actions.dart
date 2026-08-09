@@ -11,7 +11,12 @@ abstract final class MessageActionMenu {
             children: <Widget>[
               _tile(context, MessageAction.reply, Icons.reply, 'Reply'),
               _tile(context, MessageAction.copy, Icons.copy_outlined, 'Copy'),
-              _tile(context, MessageAction.details, Icons.info_outline, 'Message details'),
+              _tile(
+                context,
+                MessageAction.details,
+                Icons.info_outline,
+                'Message details',
+              ),
             ],
           ),
         ),
@@ -65,10 +70,9 @@ abstract final class MessageActionMenu {
     MessageAction action,
     IconData icon,
     String label,
-  ) =>
-      ListTile(
-        leading: Icon(icon),
-        title: Text(label),
-        onTap: () => Navigator.of(context).pop(action),
-      );
+  ) => ListTile(
+    leading: Icon(icon),
+    title: Text(label),
+    onTap: () => Navigator.of(context).pop(action),
+  );
 }

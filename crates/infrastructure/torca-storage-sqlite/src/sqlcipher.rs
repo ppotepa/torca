@@ -70,7 +70,7 @@ impl SqlCipherBackend {
         &self.cipher_version
     }
 
-    pub(crate) const fn connection(&self) -> &Connection {
+    pub const fn connection(&self) -> &Connection {
         &self.connection
     }
 }

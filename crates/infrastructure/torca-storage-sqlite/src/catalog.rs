@@ -35,10 +35,8 @@ pub mod contact_sql {
         name: "contact.select_by_id",
         sql: include_str!("../sql/queries/contact_select_by_id.sql"),
     };
-    pub const LIST: SqlStatement = SqlStatement {
-        name: "contact.list",
-        sql: include_str!("../sql/queries/contact_list.sql"),
-    };
+    pub const LIST: SqlStatement =
+        SqlStatement { name: "contact.list", sql: include_str!("../sql/queries/contact_list.sql") };
 }
 
 pub mod peer_credential_sql {

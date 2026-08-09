@@ -16,7 +16,8 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         capability: PairingSlotCapability,
         creator_token: PairingSideToken,
     ) -> Result<PairingSlotId, PairingCoordinatorError> {
-        let relay_code = RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
+        let relay_code =
+            RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
         RendezvousClient::open(
             self,
             relay_code,
@@ -35,15 +36,11 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         joiner_blob: Vec<u8>,
         joiner_token: PairingSideToken,
     ) -> Result<(PairingSlotId, Vec<u8>), PairingCoordinatorError> {
-        let relay_code = RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
-        RendezvousClient::join(
-            self,
-            relay_code,
-            joiner_blob,
-            RelaySideToken(joiner_token.0),
-        )
-        .map(|(slot, creator_blob)| (PairingSlotId(slot.0), creator_blob))
-        .map_err(|_| PairingCoordinatorError::Rendezvous)
+        let relay_code =
+            RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
+        RendezvousClient::join(self, relay_code, joiner_blob, RelaySideToken(joiner_token.0))
+            .map(|(slot, creator_blob)| (PairingSlotId(slot.0), creator_blob))
+            .map_err(|_| PairingCoordinatorError::Rendezvous)
     }
 
     fn push(

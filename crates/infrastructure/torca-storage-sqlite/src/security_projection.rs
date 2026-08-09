@@ -42,8 +42,12 @@ pub struct SqlCipherSecurityProjection {
     backend: SqlCipherBackend,
 }
 impl SqlCipherSecurityProjection {
-    pub fn open(path: impl AsRef<Path>, key: &DatabaseKey) -> Result<Self, SecurityProjectionError> {
-        let backend = SqlCipherBackend::open(path, key).map_err(|_| SecurityProjectionError::Storage)?;
+    pub fn open(
+        path: impl AsRef<Path>,
+        key: &DatabaseKey,
+    ) -> Result<Self, SecurityProjectionError> {
+        let backend =
+            SqlCipherBackend::open(path, key).map_err(|_| SecurityProjectionError::Storage)?;
         let mut kernel = StorageKernel::new(backend);
         kernel.bootstrap().map_err(|_| SecurityProjectionError::Storage)?;
         Ok(Self { backend: kernel.into_backend() })
@@ -52,18 +56,24 @@ impl SqlCipherSecurityProjection {
     pub fn contact_states(
         &self,
     ) -> Result<BTreeMap<ContactId, ContactSecuritySnapshot>, SecurityProjectionError> {
-        let mut statement = self.backend.connection().prepare(CONTACT_STATES_SQL)
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(CONTACT_STATES_SQL)
             .map_err(|_| SecurityProjectionError::Storage)?;
-        let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, Vec<u8>>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-            ))
-        }).map_err(|_| SecurityProjectionError::Storage)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .map_err(|_| SecurityProjectionError::Storage)?;
         let mut result = BTreeMap::new();
         for row in rows {
-            let (contact_id, state, verified_at_ms) = row.map_err(|_| SecurityProjectionError::Storage)?;
+            let (contact_id, state, verified_at_ms) =
+                row.map_err(|_| SecurityProjectionError::Storage)?;
             let contact_id = ContactId::from_opaque(OpaqueId::from_bytes(fixed16(contact_id)?));
             let verified_at = verified_at_ms
                 .map(Timestamp::from_unix_millis)
@@ -92,11 +102,14 @@ impl SqlCipherSecurityProjection {
         conversation_id: ConversationId,
     ) -> Result<ContactSecurityState, SecurityProjectionError> {
         let conversation = conversation_id.to_opaque().into_bytes();
-        let state = self.backend.connection().query_row(
-            CONVERSATION_STATE_SQL,
-            params![conversation.as_slice()],
-            |row| row.get::<_, i64>(0),
-        ).optional().map_err(|_| SecurityProjectionError::Storage)?
+        let state = self
+            .backend
+            .connection()
+            .query_row(CONVERSATION_STATE_SQL, params![conversation.as_slice()], |row| {
+                row.get::<_, i64>(0)
+            })
+            .optional()
+            .map_err(|_| SecurityProjectionError::Storage)?
             .ok_or(SecurityProjectionError::NotFound)?;
         decode_state(state)
     }

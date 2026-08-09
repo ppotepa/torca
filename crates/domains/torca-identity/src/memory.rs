@@ -82,7 +82,7 @@ mod tests {
         let (identity, event) = service
             .create(CreateIdentity {
                 identity_id: IdentityId::from_u128(7),
-                profile,
+                profile: Some(profile),
                 at: Timestamp::UNIX_EPOCH,
             })
             .expect("creation succeeds");
@@ -91,7 +91,7 @@ mod tests {
             service
                 .create(CreateIdentity {
                     identity_id: IdentityId::from_u128(8),
-                    profile: identity.profile().clone(),
+                    profile: identity.profile().cloned(),
                     at: Timestamp::UNIX_EPOCH
                 })
                 .is_err()

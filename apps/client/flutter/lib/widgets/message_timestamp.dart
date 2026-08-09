@@ -11,12 +11,13 @@ class MessageTimestamp extends StatelessWidget {
     final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
     final localizations = MaterialLocalizations.of(context);
     return Tooltip(
-      message: '${localizations.formatMediumDate(date)} ${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(date))}',
+      message:
+          '${localizations.formatMediumDate(date)} ${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(date))}',
       child: Text(
         localizations.formatTimeOfDay(TimeOfDay.fromDateTime(date)),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }

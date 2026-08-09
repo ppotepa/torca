@@ -4,7 +4,10 @@ import 'package:torca_app/widgets/bridge_error_presenter.dart';
 
 void main() {
   test('typed error code is exposed from bridge kind', () {
-    const result = BridgeResultDto(ok: false, kind: 'error:network_unavailable');
+    const result = BridgeResultDto(
+      ok: false,
+      kind: 'error:network_unavailable',
+    );
     expect(result.errorCode, 'network_unavailable');
     expect(
       BridgeErrorPresenter.message(result),
@@ -18,6 +21,9 @@ void main() {
       kind: 'error:operation_failed',
       error: 'The operation could not be completed.',
     );
-    expect(BridgeErrorPresenter.message(result), 'The operation could not be completed.');
+    expect(
+      BridgeErrorPresenter.message(result),
+      'The operation could not be completed.',
+    );
   });
 }

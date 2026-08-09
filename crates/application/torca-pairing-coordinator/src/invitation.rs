@@ -1,6 +1,8 @@
 use torca_pairing::PairingCode;
 
-use crate::{PairingCoordinator, PairingCoordinatorError, PairingCryptoPort, PairingRendezvousPort};
+use crate::{
+    PairingCoordinator, PairingCoordinatorError, PairingCryptoPort, PairingRendezvousPort,
+};
 
 const CODE_ALPHABET: &[u8; 36] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const GENERATED_CODE_LEN: usize = 8;

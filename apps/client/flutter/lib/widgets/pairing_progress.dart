@@ -16,7 +16,11 @@ class PairingProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final current = _stage(state);
-    final terminalFailure = const {'rejected', 'cancelled', 'expired'}.contains(state);
+    final terminalFailure = const {
+      'rejected',
+      'cancelled',
+      'expired',
+    }.contains(state);
     return Semantics(
       label: terminalFailure
           ? 'Pairing ${state.toLowerCase()}'
@@ -58,10 +62,10 @@ class PairingProgress extends StatelessWidget {
   }
 
   static int _stage(String state) => switch (state) {
-        'peerjoined' || 'peer_joined' => 1,
-        'awaitingapproval' || 'awaiting_approval' => 2,
-        'approved' => 3,
-        'completed' => 4,
-        _ => 0,
-      };
+    'peerjoined' || 'peer_joined' => 1,
+    'awaitingapproval' || 'awaiting_approval' => 2,
+    'approved' => 3,
+    'completed' => 4,
+    _ => 0,
+  };
 }

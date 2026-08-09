@@ -10,7 +10,7 @@ There is no desktop UI implementation and mobile UI implementation to keep in sy
 - wide layouts render a conversation list and the same `ConversationPane` side by side;
 - all commands go through the same `EngineGateway` and all state comes from the same Rust snapshot.
 
-The default production gateway is `FfiEngineGateway`, backed by the shared `torca-native` Rust library. `MemoryEngineGateway` exists only for explicit tests/development with `TORCA_USE_MEMORY_GATEWAY=true`; missing native runtime never silently selects memory state.
+The default production gateway is `FfiEngineGateway`, backed by the shared `torca_native` Rust library. Test-only fakes live under `test/`; production never falls back to an in-memory engine when native startup fails.
 
 ## Platform targets
 

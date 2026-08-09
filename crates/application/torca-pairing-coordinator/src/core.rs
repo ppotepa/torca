@@ -188,9 +188,13 @@ where
         let setup = (|| {
             let capability = PairingSlotCapability(self.random_id()?);
             let token = PairingSideToken(self.random_id()?);
-            let slot = self
-                .rendezvous
-                .open(code, expires_at, key.public_key.to_vec(), capability, token)?;
+            let slot = self.rendezvous.open(
+                code,
+                expires_at,
+                key.public_key.to_vec(),
+                capability,
+                token,
+            )?;
             Ok::<_, PairingCoordinatorError>((slot, capability, token))
         })();
         let (slot, capability, token) = match setup {
@@ -229,16 +233,12 @@ where
         let key = self.crypto.generate_ephemeral_key()?;
         let setup = (|| {
             let token = PairingSideToken(self.random_id()?);
-            let (slot, creator_blob) = self.rendezvous.join(code, key.public_key.to_vec(), token)?;
-            let creator_public_key: [u8; 32] = creator_blob
-                .try_into()
-                .map_err(|_| PairingCoordinatorError::InvalidBlob)?;
-            let encrypted = self.encrypt_envelope(
-                session_id,
-                &key,
-                creator_public_key,
-                local_offer,
-            )?;
+            let (slot, creator_blob) =
+                self.rendezvous.join(code, key.public_key.to_vec(), token)?;
+            let creator_public_key: [u8; 32] =
+                creator_blob.try_into().map_err(|_| PairingCoordinatorError::InvalidBlob)?;
+            let encrypted =
+                self.encrypt_envelope(session_id, &key, creator_public_key, local_offer)?;
             self.rendezvous.push(slot, token, encode_encrypted(&encrypted))?;
             Ok::<_, PairingCoordinatorError>((slot, token, creator_public_key))
         })();
@@ -318,12 +318,9 @@ where
             .get(&session_id)
             .cloned()
             .ok_or(PairingCoordinatorError::SessionNotFound)?;
-        let remote = session
-            .remote_public_key
-            .ok_or(PairingCoordinatorError::InvalidBlob)?;
+        let remote = session.remote_public_key.ok_or(PairingCoordinatorError::InvalidBlob)?;
         let encrypted = self.encrypt_envelope(session_id, &session.key, remote, envelope)?;
-        self.rendezvous
-            .push(session.slot, session.token, encode_encrypted(&encrypted))
+        self.rendezvous.push(session.slot, session.token, encode_encrypted(&encrypted))
     }
 
     /// Derives the long-lived peer secret from the same contributory X25519 exchange but a
@@ -333,22 +330,15 @@ where
         session_id: PairingSessionId,
         transcript_digest: [u8; 32],
     ) -> Result<PairingDerivedSecret, PairingCoordinatorError> {
-        let session = self
-            .sessions
-            .get(&session_id)
-            .ok_or(PairingCoordinatorError::SessionNotFound)?;
-        let remote = session
-            .remote_public_key
-            .ok_or(PairingCoordinatorError::InvalidBlob)?;
-        self.crypto
-            .derive_peer_secret(session.key.handle, remote, transcript_digest)
+        let session =
+            self.sessions.get(&session_id).ok_or(PairingCoordinatorError::SessionNotFound)?;
+        let remote = session.remote_public_key.ok_or(PairingCoordinatorError::InvalidBlob)?;
+        self.crypto.derive_peer_secret(session.key.handle, remote, transcript_digest)
     }
 
     pub fn close(&mut self, session_id: PairingSessionId) -> Result<(), PairingCoordinatorError> {
-        let session = self
-            .sessions
-            .remove(&session_id)
-            .ok_or(PairingCoordinatorError::SessionNotFound)?;
+        let session =
+            self.sessions.remove(&session_id).ok_or(PairingCoordinatorError::SessionNotFound)?;
         let relay_result = if session.role == LocalRole::Creator {
             match session.slot_capability {
                 Some(capability) => self.rendezvous.close(session.slot, capability),
@@ -383,11 +373,7 @@ where
             &associated_data(session_id),
             &plaintext,
         )?;
-        Ok(EncryptedPairingPayload {
-            sender_public_key: local_key.public_key,
-            nonce,
-            ciphertext,
-        })
+        Ok(EncryptedPairingPayload { sender_public_key: local_key.public_key, nonce, ciphertext })
     }
 
     fn random_id(&mut self) -> Result<OpaqueId, PairingCoordinatorError> {
@@ -421,24 +407,15 @@ fn decode_encrypted(bytes: &[u8]) -> Result<EncryptedPairingPayload, PairingCoor
     if bytes.len() < 60 {
         return Err(PairingCoordinatorError::InvalidBlob);
     }
-    let sender_public_key = bytes[0..32]
-        .try_into()
-        .map_err(|_| PairingCoordinatorError::InvalidBlob)?;
-    let nonce = bytes[32..56]
-        .try_into()
-        .map_err(|_| PairingCoordinatorError::InvalidBlob)?;
+    let sender_public_key =
+        bytes[0..32].try_into().map_err(|_| PairingCoordinatorError::InvalidBlob)?;
+    let nonce = bytes[32..56].try_into().map_err(|_| PairingCoordinatorError::InvalidBlob)?;
     let length = u32::from_be_bytes(
-        bytes[56..60]
-            .try_into()
-            .map_err(|_| PairingCoordinatorError::InvalidBlob)?,
+        bytes[56..60].try_into().map_err(|_| PairingCoordinatorError::InvalidBlob)?,
     );
     let length = usize::try_from(length).map_err(|_| PairingCoordinatorError::InvalidBlob)?;
     if bytes.len() != 60_usize.saturating_add(length) {
         return Err(PairingCoordinatorError::InvalidBlob);
     }
-    Ok(EncryptedPairingPayload {
-        sender_public_key,
-        nonce,
-        ciphertext: bytes[60..].to_vec(),
-    })
+    Ok(EncryptedPairingPayload { sender_public_key, nonce, ciphertext: bytes[60..].to_vec() })
 }

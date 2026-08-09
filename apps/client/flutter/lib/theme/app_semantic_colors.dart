@@ -1,3 +1,5 @@
+// ignore_for_file: sort_constructors_first
+
 import 'package:flutter/material.dart';
 
 @immutable
@@ -21,14 +23,14 @@ class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
   final Color messageOutbound;
 
   factory AppSemanticColors.fromScheme(ColorScheme scheme) => AppSemanticColors(
-        connectionReady: scheme.primary,
-        connectionConnecting: scheme.tertiary,
-        connectionOffline: scheme.outline,
-        warning: scheme.tertiary,
-        destructive: scheme.error,
-        messageInbound: scheme.surfaceContainerHighest,
-        messageOutbound: scheme.primaryContainer,
-      );
+    connectionReady: scheme.primary,
+    connectionConnecting: scheme.tertiary,
+    connectionOffline: scheme.outline,
+    warning: scheme.tertiary,
+    destructive: scheme.error,
+    messageInbound: scheme.surfaceContainerHighest,
+    messageOutbound: scheme.primaryContainer,
+  );
 
   @override
   AppSemanticColors copyWith({
@@ -39,25 +41,31 @@ class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
     Color? destructive,
     Color? messageInbound,
     Color? messageOutbound,
-  }) =>
-      AppSemanticColors(
-        connectionReady: connectionReady ?? this.connectionReady,
-        connectionConnecting: connectionConnecting ?? this.connectionConnecting,
-        connectionOffline: connectionOffline ?? this.connectionOffline,
-        warning: warning ?? this.warning,
-        destructive: destructive ?? this.destructive,
-        messageInbound: messageInbound ?? this.messageInbound,
-        messageOutbound: messageOutbound ?? this.messageOutbound,
-      );
+  }) => AppSemanticColors(
+    connectionReady: connectionReady ?? this.connectionReady,
+    connectionConnecting: connectionConnecting ?? this.connectionConnecting,
+    connectionOffline: connectionOffline ?? this.connectionOffline,
+    warning: warning ?? this.warning,
+    destructive: destructive ?? this.destructive,
+    messageInbound: messageInbound ?? this.messageInbound,
+    messageOutbound: messageOutbound ?? this.messageOutbound,
+  );
 
   @override
   AppSemanticColors lerp(covariant AppSemanticColors? other, double t) {
     if (other == null) return this;
     return AppSemanticColors(
       connectionReady: Color.lerp(connectionReady, other.connectionReady, t)!,
-      connectionConnecting:
-          Color.lerp(connectionConnecting, other.connectionConnecting, t)!,
-      connectionOffline: Color.lerp(connectionOffline, other.connectionOffline, t)!,
+      connectionConnecting: Color.lerp(
+        connectionConnecting,
+        other.connectionConnecting,
+        t,
+      )!,
+      connectionOffline: Color.lerp(
+        connectionOffline,
+        other.connectionOffline,
+        t,
+      )!,
       warning: Color.lerp(warning, other.warning, t)!,
       destructive: Color.lerp(destructive, other.destructive, t)!,
       messageInbound: Color.lerp(messageInbound, other.messageInbound, t)!,

@@ -1,6 +1,6 @@
 [package]
 name = "torca-communication-driver"
-version = "0.1.0-alpha.0"
+version.workspace = true
 edition = "2024"
 rust-version = "1.97.1"
 license = "AGPL-3.0-or-later"
@@ -18,5 +18,4 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-peer-link = { path = "../../infrastructure/torca-peer-link" }
 torca-peer-shared = { path = "../../infrastructure/torca-peer-shared" }
-torca-read-state = { path = "../torca-read-state" }
-torca-runtime-host = { path = "../torca-runtime-host" }
+torca-runtime = { path = "../torca-runtime" }

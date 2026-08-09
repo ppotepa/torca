@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "wireVersion": 1,
+  "nativeAbi": 1,
+  "operations": {
+    "commands": [
+      "profile.set", "pairing.create", "pairing.join", "pairing.approve",
+      "pairing.reject", "pairing.cancel", "contact.rename", "contact.verify",
+      "contact.verification.reset", "contact.block", "contact.unblock",
+      "contact.remove", "conversation.clear", "message.send", "message.retry",
+      "notifications.set",
+      "conversation.read", "attachment.queue", "attachment.retry",
+      "attachment.cancel", "attachment.export"
+    ],
+    "queries": ["snapshot.get", "conversation.page", "conversation.search", "notifications.poll", "pairing.parse"]
+  },
+  "error": {
+    "code": "stable-machine-code",
+    "category": "runtime|domain|transport|storage",
+    "severity": "info|warning|error",
+    "retryable": true,
+    "messageKey": "localization.key",
+    "diagnosticId": "redacted-correlation-id"
+  }
+}

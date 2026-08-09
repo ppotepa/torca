@@ -20,9 +20,9 @@ Use only the three public root workflows:
 - `run` prepares the shared native/runtime composition and launches the selected client target.
 - `deploy` performs release builds, packaging and checksums.
 
-Do not create public one-off scripts for formatting, codegen, packaging or platform bootstrap. Private helpers belong under `tools/build/`.
+Do not create public one-off scripts for formatting, codegen, packaging or platform bootstrap. Private helpers belong under `scripts/modules/`; `tools/build/overlays/` contains only platform templates.
 
-The lightweight `tools/build/Torca.SourcePolicy.ps1` runs before expensive build work and protects settled 0.2 decisions: canonical Rust source roots, intent-only Bridge v11 ownership and the absence of historical frontend-owned mutation ABI.
+The lightweight `scripts/modules/Torca.SourcePolicy.ps1` runs before expensive build work and protects the canonical Rust source roots, generic native invoke contract and absence of frontend-owned mutation ABI.
 
 ## One-client rule
 
@@ -39,7 +39,7 @@ Runtime/application code must consume storage-owned projections rather than raw 
 ## Native boundary
 
 - `torca-native` is the narrowly reviewed C ABI boundary.
-- Bridge v11 accepts user intent; Flutter must not generate domain IDs or command timestamps.
+- The canonical contract accepts user intent; Flutter must not generate domain IDs or command timestamps.
 - ABI functions expose primitive arguments/JSON projections, never Rust domain layouts or secret bytes.
 - production native failure is explicit; there is no silent memory fallback.
 - long-running Tor/network work must not block access to local encrypted state or Flutter UI progress.

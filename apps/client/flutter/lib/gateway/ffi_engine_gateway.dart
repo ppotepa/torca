@@ -1,175 +1,152 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
-import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 
 import '../generated/torca_contract.dart';
+import '../platform/native_library.dart';
 import 'engine_gateway.dart';
 
 typedef _Handle = ffi.Pointer<ffi.Void>;
-typedef _EngineNewNative = _Handle Function();
-typedef _EngineNewDart = _Handle Function();
-typedef _EngineDestroyNative = ffi.Void Function(_Handle);
-typedef _EngineDestroyDart = void Function(_Handle);
-typedef _ContractVersionNative = ffi.Uint16 Function();
-typedef _ContractVersionDart = int Function();
-typedef _MaxAttachmentNative = ffi.Uint64 Function();
-typedef _MaxAttachmentDart = int Function();
+typedef _AcquireNative = _Handle Function();
+typedef _AcquireDart = _Handle Function();
+typedef _ReleaseNative = ffi.Void Function(_Handle);
+typedef _ReleaseDart = void Function(_Handle);
+typedef _InvokeNative =
+    ffi.Int32 Function(
+      _Handle,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.UintPtr,
+      ffi.Uint32,
+    );
+typedef _InvokeDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, int);
+typedef _ResponsePtrNative = ffi.Pointer<ffi.Uint8> Function(_Handle);
+typedef _ResponsePtrDart = ffi.Pointer<ffi.Uint8> Function(_Handle);
+typedef _ResponseLenNative = ffi.UintPtr Function(_Handle);
+typedef _ResponseLenDart = int Function(_Handle);
 typedef _AllocNative = ffi.Pointer<ffi.Uint8> Function(ffi.UintPtr);
 typedef _AllocDart = ffi.Pointer<ffi.Uint8> Function(int);
 typedef _FreeNative = ffi.Void Function(ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
 typedef _FreeDart = void Function(ffi.Pointer<ffi.Uint8>, int);
-typedef _NoArgNative = ffi.Int32 Function(_Handle);
-typedef _NoArgDart = int Function(_Handle);
-typedef _OneStringNative = ffi.Int32 Function(_Handle, ffi.Pointer<ffi.Uint8>, ffi.UintPtr);
-typedef _OneStringDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int);
-typedef _ReadIntentNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Uint8,
-);
-typedef _ReadIntentDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  int,
-);
-typedef _TwoStringsNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-);
-typedef _TwoStringsDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-);
-typedef _MessageIntentNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-);
-typedef _MessageIntentDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-);
-typedef _AttachmentIntentNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Uint64,
-);
-typedef _AttachmentIntentDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  int,
-);
-typedef _HistoryPageNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Int64,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Uint32,
-);
-typedef _HistoryPageDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  int,
-  ffi.Pointer<ffi.Uint8>, int,
-  int,
-);
-typedef _HistorySearchNative = ffi.Int32 Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Pointer<ffi.Uint8>, ffi.UintPtr,
-  ffi.Uint32,
-);
-typedef _HistorySearchDart = int Function(
-  _Handle,
-  ffi.Pointer<ffi.Uint8>, int,
-  ffi.Pointer<ffi.Uint8>, int,
-  int,
-);
-typedef _RefreshNative = ffi.Int32 Function(_Handle);
-typedef _RefreshDart = int Function(_Handle);
-typedef _PointerNative = ffi.Pointer<ffi.Uint8> Function(_Handle);
-typedef _PointerDart = ffi.Pointer<ffi.Uint8> Function(_Handle);
-typedef _LengthNative = ffi.UintPtr Function(_Handle);
-typedef _LengthDart = int Function(_Handle);
+typedef _ShutdownNative = ffi.Int32 Function(ffi.Uint32);
+typedef _ShutdownDart = int Function(int);
+typedef _MetadataPtrNative = ffi.Pointer<ffi.Uint8> Function();
+typedef _MetadataPtrDart = ffi.Pointer<ffi.Uint8> Function();
+typedef _MetadataLenNative = ffi.UintPtr Function();
+typedef _MetadataLenDart = int Function();
 
 class FfiEngineGateway
-    implements EngineGateway, AttachmentCapabilitiesProvider, ConversationHistoryProvider {
-  FfiEngineGateway._(this._bindings, this._handle, this.capabilities) {
-    _poller = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_disposed && !_nativeOperationInFlight) {
-        unawaited(_refreshSnapshot(silent: true));
+    implements
+        EngineGateway,
+        PairingUriParser,
+        GatewayAvailability,
+        AttachmentCapabilitiesProvider,
+        ConversationHistoryProvider,
+        RuntimeShutdownGateway {
+  FfiEngineGateway._(this._worker, this._snapshots, this._eventsController) {
+    _worker.events.listen((event) {
+      final value = jsonDecode(event);
+      if (value is Map<String, dynamic> && value['eventId'] != null) {
+        _eventsController.add(RuntimeEventDto.fromJson(value));
+      } else {
+        final snapshot = _decodeSnapshot(event);
+        if (snapshot != null) _snapshots.value = snapshot;
       }
     });
   }
 
-  static FfiEngineGateway open({ffi.DynamicLibrary? library}) {
-    final bindings = _NativeBindings(library ?? ffi.DynamicLibrary.open(_nativeLibraryName()));
-    final version = bindings.contractVersion();
-    if (version != torcaContractVersion) {
-      throw StateError(
-        'native Torca contract $version does not match Flutter contract $torcaContractVersion',
-      );
-    }
-    final handle = bindings.engineNew();
-    if (handle == ffi.nullptr) {
-      throw StateError('native Torca process handle could not be acquired');
-    }
-    return FfiEngineGateway._(
-      bindings,
-      handle,
-      AppCapabilities(maxAttachmentBytes: bindings.maxAttachmentBytes()),
+  static Future<FfiEngineGateway> open() async {
+    final worker = await NativeRuntimeWorker.start();
+    final gateway = FfiEngineGateway._(
+      worker,
+      ValueNotifier<AppSnapshotDto>(const AppSnapshotDto()),
+      StreamController<RuntimeEventDto>.broadcast(),
     );
+    await gateway.initialize();
+    return gateway;
   }
 
-  final _NativeBindings _bindings;
-  final _Handle _handle;
-  @override
-  final AppCapabilities capabilities;
-  final ValueNotifier<AppSnapshotDto> _snapshots = ValueNotifier(const AppSnapshotDto());
-  late final Timer _poller;
-  Future<void> _nativeTail = Future<void>.value();
-  String _lastDiagnostics = '{"events":[]}';
-  bool _nativeOperationInFlight = false;
+  final NativeRuntimeWorker _worker;
+  final ValueNotifier<AppSnapshotDto> _snapshots;
+  final StreamController<RuntimeEventDto> _eventsController;
   bool _disposed = false;
 
   @override
   ValueListenable<AppSnapshotDto> get snapshots => _snapshots;
 
-  Future<BridgeResultDto> initialize() => _refreshSnapshot();
+  @override
+  Stream<RuntimeEventDto> get events => _eventsController.stream;
+
+  @override
+  AppCapabilities get capabilities =>
+      const AppCapabilities(maxAttachmentBytes: 16 * 1024 * 1024);
+
+  @override
+  bool get isAvailable => !_disposed && _worker.isAlive;
+
+  @override
+  String? get failureReason =>
+      isAvailable ? null : 'native runtime unavailable';
+
+  Future<BridgeResultDto> initialize() async {
+    final response = await _worker.invoke(
+      _request(kind: 'query', name: 'snapshot.get', payload: const {}),
+    );
+    return _applyResponse(response);
+  }
 
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
-    if (_disposed) return _runtimeUnavailable();
-    if (command is RefreshSnapshotCommandDto) return _refreshSnapshot();
-    final call = _encodeNativeCall(command);
-    if (call == null) {
+    if (_disposed) return _unavailable();
+    final request = _requestForCommand(command);
+    if (request == null) {
       return const BridgeResultDto(
         ok: false,
-        kind: 'error:invalid_input',
-        error: 'The supplied value is not valid.',
+        kind: 'error:contract.operation.unknown',
+        error: 'The requested operation is not available.',
       );
     }
-    final result = await _serializedNative(() async {
-      final resultJson = await Isolate.run(() => _executeNativeCall(call));
-      return _decodeResult(resultJson);
-    });
-    if (result.ok && !_disposed) await _refreshSnapshot(silent: true);
+    final response = await _worker.invoke(request);
+    final result = _applyResponse(response);
+    if (command is UpdateProfileCommandDto && result.ok) {
+      final profile = _snapshots.value.identity?.displayName;
+      if (profile == null || profile.isEmpty) {
+        return const BridgeResultDto(
+          ok: false,
+          kind: 'error:PROFILE_SNAPSHOT_INCONSISTENT',
+          error: 'profile.snapshot.inconsistent',
+        );
+      }
+    }
     return result;
+  }
+
+  @override
+  Future<void> sendLifecycle(String event) async {
+    if (_disposed) return;
+    await _worker.invoke(
+      _request(kind: 'lifecycle', name: event, payload: const {}),
+    );
+  }
+
+  @override
+  Future<String?> parsePairingUri(String rawUri) async {
+    if (_disposed) return null;
+    final response = await _worker.invoke(
+      _request(
+        kind: 'query',
+        name: 'pairing.parse',
+        payload: <String, Object?>{'uri': rawUri},
+      ),
+    );
+    final value = jsonDecode(response);
+    if (value is! Map<String, dynamic> || value['status'] != 'succeeded') {
+      return null;
+    }
+    final snapshot = value['snapshot'];
+    return snapshot is Map ? snapshot['code'] as String? : null;
   }
 
   @override
@@ -177,19 +154,20 @@ class FfiEngineGateway
     String conversationId, {
     MessageDto? before,
     int limit = 100,
-  }) =>
-      _serializedNative(() async {
-        final json = await Isolate.run(
-          () => _executeNativeCall(<Object?>[
-            'history_page',
-            conversationId,
-            before?.createdAtMs ?? -1,
-            before?.id ?? '',
-            limit.clamp(1, 200),
-          ]),
-        );
-        return _decodeConversationPage(json);
-      });
+  }) async {
+    final response = await _worker.invoke(
+      _request(
+        kind: 'query',
+        name: 'conversation.page',
+        payload: <String, Object?>{
+          'conversationId': conversationId,
+          'beforeMessageId': before?.id,
+          'limit': limit.clamp(1, 200),
+        },
+      ),
+    );
+    return _decodePage(response);
+  }
 
   @override
   Future<ConversationPageDto> searchConversation(
@@ -198,462 +176,666 @@ class FfiEngineGateway
     int limit = 100,
   }) async {
     if (query.trim().isEmpty) {
-      return const ConversationPageDto(messages: <MessageDto>[], hasMore: false);
+      return const ConversationPageDto(messages: [], hasMore: false);
     }
-    return _serializedNative(() async {
-      final json = await Isolate.run(
-        () => _executeNativeCall(<Object?>[
-          'history_search',
-          conversationId,
-          query,
-          limit.clamp(1, 200),
-        ]),
-      );
-      return _decodeConversationPage(json);
-    });
-  }
-
-  Future<T> _serializedNative<T>(Future<T> Function() action) async {
-    final previous = _nativeTail;
-    final release = Completer<void>();
-    _nativeTail = release.future;
-    await previous;
-    if (_disposed) {
-      release.complete();
-      throw StateError('native engine gateway is disposed');
-    }
-    _nativeOperationInFlight = true;
-    try {
-      return await action();
-    } finally {
-      _nativeOperationInFlight = false;
-      release.complete();
-    }
+    final response = await _worker.invoke(
+      _request(
+        kind: 'query',
+        name: 'conversation.search',
+        payload: <String, Object?>{
+          'conversationId': conversationId,
+          'query': query,
+          'limit': limit.clamp(1, 200),
+        },
+      ),
+    );
+    return _decodePage(response);
   }
 
   @override
-  Future<String> diagnosticsJson() async {
-    if (_disposed || _nativeOperationInFlight) return _lastDiagnostics;
-    if (_bindings.refreshDiagnostics(_handle) != 0) return _lastDiagnostics;
-    _lastDiagnostics = _readNativeString(
-      _bindings.diagnosticsPointer(_handle),
-      _bindings.diagnosticsLength(_handle),
-    );
-    return _lastDiagnostics;
-  }
+  Future<String> diagnosticsJson() async => '{"events":[]}';
 
-  Future<BridgeResultDto> _refreshSnapshot({bool silent = false}) async {
-    if (_disposed) return _runtimeUnavailable();
-    if (_nativeOperationInFlight) {
-      return silent
-          ? const BridgeResultDto(ok: false, kind: 'busy')
-          : const BridgeResultDto(ok: true, kind: 'snapshot_cached');
-    }
-    final status = _bindings.refreshSnapshot(_handle);
-    if (status != 0) {
-      final error = _decodeResult(_readResultJson());
-      return silent
-          ? const BridgeResultDto(ok: false, kind: 'error:runtime_unavailable')
-          : error;
-    }
-    _snapshots.value = _decodeSnapshot(_readSnapshotJson());
-    return const BridgeResultDto(ok: true, kind: 'snapshot');
-  }
-
-  String _readResultJson() => _readNativeString(
-        _bindings.resultPointer(_handle),
-        _bindings.resultLength(_handle),
-      );
-  String _readSnapshotJson() => _readNativeString(
-        _bindings.snapshotPointer(_handle),
-        _bindings.snapshotLength(_handle),
-      );
-
-  BridgeResultDto _decodeResult(String json) {
-    if (json.isEmpty) return _runtimeUnavailable();
-    final map = _map(jsonDecode(json), 'bridge result');
-    return BridgeResultDto(
-      ok: _bool(map, 'ok'),
-      kind: _string(map, 'kind'),
-      error: _optionalString(map, 'error'),
-    );
-  }
-
-  ConversationPageDto _decodeConversationPage(String json) {
-    final map = _map(jsonDecode(json), 'conversation page');
-    final messages = _list(map, 'messages')
-        .map((value) => _decodeMessage(_map(value, 'message')))
-        .toList(growable: false);
-    return ConversationPageDto(
-      messages: messages,
-      hasMore: _bool(map, 'hasMore'),
-    );
-  }
-
-  AppSnapshotDto _decodeSnapshot(String json) {
-    final map = _map(jsonDecode(json), 'app snapshot');
-    final version = _int(map, 'contractVersion');
-    if (version != torcaContractVersion) {
-      throw FormatException('unsupported native contract version $version');
-    }
-    final identityValue = map['identity'];
-    return AppSnapshotDto(
-      identity: identityValue == null
-          ? null
-          : IdentityDto(
-              displayName: _string(_map(identityValue, 'identity'), 'displayName'),
-            ),
-      torState: _string(map, 'torState'),
-      onionAddress: _optionalString(map, 'onionAddress'),
-      pairings: _list(map, 'pairings').map((value) {
-        final item = _map(value, 'pairing');
-        return PairingDto(
-          id: _string(item, 'id'),
-          code: _string(item, 'code'),
-          role: _string(item, 'role'),
-          state: _string(item, 'state'),
-          expiresAtMs: _int(item, 'expiresAtMs'),
-          localApproved: _bool(item, 'localApproved'),
-          remoteApproved: _bool(item, 'remoteApproved'),
-        );
-      }).toList(growable: false),
-      contacts: _list(map, 'contacts').map((value) {
-        final item = _map(value, 'contact');
-        final health = _map(item['peerHealth'], 'contact.peerHealth');
-        return ContactDto(
-          id: _string(item, 'id'),
-          displayName: _string(item, 'displayName'),
-          onionAddress: _string(item, 'onionAddress'),
-          status: _string(item, 'status'),
-          connectionState: _string(item, 'connectionState'),
-          safetyNumber: _optionalString(item, 'safetyNumber'),
-          peerHealth: PeerHealthDto(
-            state: _string(health, 'state'),
-            quality: _string(health, 'quality'),
-            rttMs: _optionalInt(health, 'rttMs'),
-            lastSuccessAtMs: _optionalInt(health, 'lastSuccessAtMs'),
-            consecutiveFailures: _int(health, 'consecutiveFailures'),
-            reconnectAttempt: _int(health, 'reconnectAttempt'),
-          ),
-          verificationStatus: _stringOr(item, 'verificationStatus', 'unverified'),
-          verifiedAtMs: _optionalInt(item, 'verifiedAtMs'),
-        );
-      }).toList(growable: false),
-      conversations: _list(map, 'conversations').map((value) {
-        final item = _map(value, 'conversation');
-        return ConversationDto(
-          id: _string(item, 'id'),
-          contactId: _string(item, 'contactId'),
-          status: _string(item, 'status'),
-          unreadCount: _intOr(item, 'unreadCount', 0),
-          lastActivityAtMs: _intOr(item, 'lastActivityAtMs', 0),
-          lastMessageBody: _optionalString(item, 'lastMessageBody'),
-          lastMessageDirection: _optionalString(item, 'lastMessageDirection'),
-          lastMessageStatus: _optionalString(item, 'lastMessageStatus'),
-        );
-      }).toList(growable: false),
-      messages: _list(map, 'messages')
-          .map((value) => _decodeMessage(_map(value, 'message')))
-          .toList(growable: false),
-      attachments: _list(map, 'attachments').map((value) {
-        final item = _map(value, 'attachment');
-        return AttachmentDto(
-          id: _string(item, 'id'),
-          messageId: _string(item, 'messageId'),
-          name: _string(item, 'name'),
-          mediaType: _string(item, 'mediaType'),
-          size: _int(item, 'size'),
-          status: _string(item, 'status'),
-          offset: _int(item, 'offset'),
-        );
-      }).toList(growable: false),
-    );
-  }
-
-  MessageDto _decodeMessage(Map<String, Object?> item) => MessageDto(
-        id: _string(item, 'id'),
-        conversationId: _string(item, 'conversationId'),
-        body: _string(item, 'body'),
-        direction: _string(item, 'direction'),
-        status: _string(item, 'status'),
-        replyToMessageId: _optionalString(item, 'replyToMessageId'),
-        createdAtMs: _int(item, 'createdAtMs'),
-        updatedAtMs: _int(item, 'updatedAtMs'),
-        attemptCount: _int(item, 'attemptCount'),
-      );
-
-  Map<String, Object?> _map(Object? value, String field) {
-    if (value is! Map<Object?, Object?>) throw FormatException('$field must be a map');
-    return value.map((key, item) {
-      if (key is! String) throw FormatException('$field contains a non-string key');
-      return MapEntry<String, Object?>(key, item);
-    });
-  }
-  List<Object?> _list(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is List<Object?>) return value;
-    throw FormatException('$field must be a list');
-  }
-  String _string(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is String) return value;
-    throw FormatException('$field must be a string');
-  }
-  String _stringOr(Map<String, Object?> map, String field, String fallback) {
-    final value = map[field];
-    return value is String ? value : fallback;
-  }
-  String? _optionalString(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value == null || value is String) return value as String?;
-    throw FormatException('$field must be a string or null');
-  }
-  bool _bool(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is bool) return value;
-    throw FormatException('$field must be a bool');
-  }
-  int _int(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value is int) return value;
-    throw FormatException('$field must be an int');
-  }
-  int _intOr(Map<String, Object?> map, String field, int fallback) {
-    final value = map[field];
-    return value is int ? value : fallback;
-  }
-  int? _optionalInt(Map<String, Object?> map, String field) {
-    final value = map[field];
-    if (value == null || value is int) return value as int?;
-    throw FormatException('$field must be an int or null');
+  @override
+  Future<void> shutdown() async {
+    if (_disposed) return;
+    await _worker.shutdown();
   }
 
   @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    _poller.cancel();
-    await _nativeTail;
-    _bindings.engineDestroy(_handle);
+    await _worker.dispose();
+    await _eventsController.close();
     _snapshots.dispose();
   }
 
-  static const BridgeResultDto _runtimeUnavailableResult = BridgeResultDto(
+  BridgeResultDto _applyResponse(String raw) {
+    final value = jsonDecode(raw);
+    if (value is! Map<String, dynamic>) return _unavailable();
+    final status = value['status'] as String?;
+    final snapshot = value['snapshot'];
+    if (snapshot is Map) {
+      final decoded = _decodeSnapshot(jsonEncode(snapshot));
+      if (decoded != null) _snapshots.value = decoded;
+    }
+    if (status == 'succeeded') {
+      return BridgeResultDto(
+        ok: true,
+        kind: value['resultKind'] as String? ?? 'succeeded',
+      );
+    }
+    final error = value['error'];
+    final code = error is Map ? error['code'] as String? : null;
+    return BridgeResultDto(
+      ok: false,
+      kind: 'error:${code ?? 'runtime.operation.failed'}',
+      error: error is Map ? error['messageKey'] as String? : null,
+    );
+  }
+
+  ConversationPageDto _decodePage(String raw) {
+    final value = jsonDecode(raw);
+    if (value is! Map<String, dynamic>) {
+      return const ConversationPageDto(messages: [], hasMore: false);
+    }
+    final messages =
+        (value['messages'] is List<Object?>
+                ? value['messages'] as List<Object?>
+                : const <Object?>[])
+            .whereType<Map<String, dynamic>>()
+            .map(_decodeMessage)
+            .toList(growable: false);
+    return ConversationPageDto(
+      messages: messages,
+      hasMore: value['hasMore'] == true,
+    );
+  }
+
+  BridgeResultDto _unavailable() => const BridgeResultDto(
     ok: false,
-    kind: 'error:runtime_unavailable',
-    error: 'The secure Torca runtime is currently unavailable.',
+    kind: 'error:runtime.unavailable',
+    error: 'The secure runtime is unavailable.',
   );
-  BridgeResultDto _runtimeUnavailable() => _runtimeUnavailableResult;
 }
 
-List<Object?>? _encodeNativeCall(BridgeCommandDto command) {
-  if (command is CreateIdentityCommandDto) return <Object?>['create_identity', command.displayName];
-  if (command is CreatePairingCommandDto) return const <Object?>['create_pairing'];
-  if (command is JoinPairingCommandDto) return <Object?>['join_pairing', command.code];
-  if (command is ApprovePairingCommandDto) return <Object?>['approve_pairing', command.sessionIdHex];
-  if (command is RejectPairingCommandDto) return <Object?>['reject_pairing', command.sessionIdHex];
-  if (command is CancelPairingCommandDto) return <Object?>['cancel_pairing', command.sessionIdHex];
-  if (command is RenameContactCommandDto) return <Object?>['rename_contact', command.contactIdHex, command.displayName];
-  if (command is VerifyContactCommandDto) return <Object?>['verify_contact', command.contactIdHex];
-  if (command is ResetContactVerificationCommandDto) return <Object?>['reset_verification', command.contactIdHex];
-  if (command is BlockContactCommandDto) return <Object?>['block_contact', command.contactIdHex];
-  if (command is UnblockContactCommandDto) return <Object?>['unblock_contact', command.contactIdHex];
-  if (command is RemoveContactCommandDto) return <Object?>['remove_contact', command.contactIdHex];
-  if (command is ClearConversationHistoryCommandDto) return <Object?>['clear_history', command.conversationIdHex];
-  if (command is QueueMessageCommandDto) {
-    return <Object?>['queue_message', command.conversationIdHex, command.body, command.replyToMessageId ?? ''];
+class NativeRuntimeWorker {
+  NativeRuntimeWorker._(this._commandPort, this._events, this._isolate);
+
+  static Future<NativeRuntimeWorker> start() async {
+    final ready = ReceivePort();
+    final isolate = await Isolate.spawn(_workerMain, <Object?>[
+      ready.sendPort,
+    ], debugName: 'torca-native-runtime-worker');
+    final ports = await ready.first.timeout(const Duration(seconds: 15)) as Map;
+    if (ports['error'] != null) {
+      throw StateError(ports['error'] as String);
+    }
+    final commandPort = ports['commandPort'] as SendPort;
+    final eventPort = ReceivePort();
+    commandPort.send(<String, Object?>{'attachEvents': eventPort.sendPort});
+    return NativeRuntimeWorker._(commandPort, eventPort, isolate);
   }
-  if (command is RetryMessageCommandDto) return <Object?>['retry_message', command.messageIdHex];
-  if (command is MarkConversationReadCommandDto) return <Object?>['mark_read', command.conversationIdHex, command.sendReceipt];
-  if (command is QueueAttachmentCommandDto) {
-    return <Object?>['queue_attachment', command.conversationIdHex, command.sourcePath, command.name, command.mediaType, command.size];
+
+  final SendPort _commandPort;
+  final ReceivePort _events;
+  final Isolate _isolate;
+  int _requestCounter = 0;
+  bool _disposed = false;
+  Future<void> _requestTail = Future<void>.value();
+
+  Stream<String> get events =>
+      _events.where((value) => value is String).cast<String>();
+  bool get isAlive => !_disposed;
+
+  Future<String> invoke(Map<String, Object?> request) async {
+    if (_disposed) throw StateError('native worker disposed');
+    final requestId = 'flutter-${++_requestCounter}';
+    final queued = _requestTail.then<String>((_) async {
+      final first = await _invokeNow(request, requestId);
+      if (_isRetryableTimeout(first)) {
+        // Reuse the same correlation id. Rust's operation ledger then returns
+        // the first committed result instead of duplicating a mutation.
+        return _invokeNow(request, requestId);
+      }
+      return first;
+    });
+    _requestTail = queued.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return queued;
   }
-  if (command is RetryAttachmentCommandDto) return <Object?>['retry_attachment', command.attachmentIdHex];
-  if (command is CancelAttachmentCommandDto) return <Object?>['cancel_attachment', command.attachmentIdHex];
-  if (command is ExportAttachmentCommandDto) return <Object?>['export_attachment', command.attachmentIdHex, command.destinationPath];
-  return null;
+
+  Future<String> _invokeNow(
+    Map<String, Object?> request,
+    String requestId,
+  ) async {
+    final reply = ReceivePort();
+    final withId = <String, Object?>{...request, 'requestId': requestId};
+    _commandPort.send(<String, Object?>{
+      'invoke': jsonEncode(withId),
+      'reply': reply.sendPort,
+    });
+    final value = await reply.first;
+    reply.close();
+    return value as String;
+  }
+
+  bool _isRetryableTimeout(String raw) {
+    try {
+      final value = jsonDecode(raw);
+      final error = value is Map ? value['error'] : null;
+      return error is Map && error['code'] == 'RUNTIME_TIMEOUT';
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<void> shutdown() async {
+    if (_disposed) return;
+    final queued = _requestTail.then((_) async {
+      final reply = ReceivePort();
+      _commandPort.send(<String, Object?>{
+        'shutdown': true,
+        'reply': reply.sendPort,
+      });
+      await reply.first;
+      reply.close();
+    });
+    _requestTail = queued.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    await queued;
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    final queued = _requestTail.then((_) async {
+      final reply = ReceivePort();
+      _commandPort.send(<String, Object?>{
+        'dispose': true,
+        'reply': reply.sendPort,
+      });
+      await reply.first;
+      reply.close();
+    });
+    _requestTail = queued.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    await queued;
+    _events.close();
+    _isolate.kill(priority: Isolate.immediate);
+  }
 }
 
-String _executeNativeCall(List<Object?> call) {
-  final bindings = _NativeBindings(ffi.DynamicLibrary.open(_nativeLibraryName()));
-  if (bindings.contractVersion() != torcaContractVersion) throw StateError('native contract mismatch');
-  final handle = bindings.engineNew();
-  if (handle == ffi.nullptr) throw StateError('native process handle unavailable');
-  final kind = call[0] as String;
+void _workerMain(List<Object?> arguments) {
   try {
-    switch (kind) {
-      case 'create_identity': _callOne(bindings, handle, call[1] as String, bindings.createIdentityIntent);
-      case 'create_pairing': bindings.createPairingIntent(handle);
-      case 'join_pairing': _callOne(bindings, handle, call[1] as String, bindings.joinPairingIntent);
-      case 'approve_pairing': _callOne(bindings, handle, call[1] as String, bindings.approvePairing);
-      case 'reject_pairing': _callOne(bindings, handle, call[1] as String, bindings.rejectPairing);
-      case 'cancel_pairing': _callOne(bindings, handle, call[1] as String, bindings.cancelPairing);
-      case 'rename_contact': _callTwo(bindings, handle, call[1] as String, call[2] as String, bindings.renameContact);
-      case 'verify_contact': _callOne(bindings, handle, call[1] as String, bindings.verifyContact);
-      case 'reset_verification': _callOne(bindings, handle, call[1] as String, bindings.resetContactVerification);
-      case 'block_contact': _callOne(bindings, handle, call[1] as String, bindings.blockContact);
-      case 'unblock_contact': _callOne(bindings, handle, call[1] as String, bindings.unblockContact);
-      case 'remove_contact': _callOne(bindings, handle, call[1] as String, bindings.removeContact);
-      case 'clear_history': _callOne(bindings, handle, call[1] as String, bindings.clearConversationHistory);
-      case 'queue_message': _callMessage(bindings, handle, call[1] as String, call[2] as String, call[3] as String);
-      case 'retry_message': _callOne(bindings, handle, call[1] as String, bindings.retryMessageIntent);
-      case 'mark_read': _callRead(bindings, handle, call[1] as String, call[2] as bool);
-      case 'queue_attachment':
-        _callAttachment(bindings, handle, call[1] as String, call[2] as String, call[3] as String, call[4] as String, call[5] as int);
-      case 'retry_attachment': _callOne(bindings, handle, call[1] as String, bindings.retryAttachment);
-      case 'cancel_attachment': _callOne(bindings, handle, call[1] as String, bindings.cancelAttachment);
-      case 'export_attachment': _callTwo(bindings, handle, call[1] as String, call[2] as String, bindings.exportAttachment);
-      case 'history_page': _callHistoryPage(bindings, handle, call[1] as String, call[2] as int, call[3] as String, call[4] as int);
-      case 'history_search': _callHistorySearch(bindings, handle, call[1] as String, call[2] as String, call[3] as int);
-      default: throw StateError('unsupported native command');
-    }
-    if (kind.startsWith('history_')) {
-      return _readNativeString(bindings.queryPointer(handle), bindings.queryLength(handle));
-    }
-    return _readNativeString(bindings.resultPointer(handle), bindings.resultLength(handle));
-  } finally {
-    bindings.engineDestroy(handle);
+    _workerMainImpl(arguments);
+  } on Object catch (error) {
+    (arguments[0] as SendPort).send(<String, Object?>{'error': '$error'});
   }
 }
 
-void _callOne(_NativeBindings bindings, _Handle handle, String value, _OneStringDart operation) {
-  final native = _NativeUtf8(bindings, value);
-  try { operation(handle, native.pointer, native.length); } finally { native.dispose(); }
-}
-void _callTwo(_NativeBindings bindings, _Handle handle, String first, String second, _TwoStringsDart operation) {
-  final a = _NativeUtf8(bindings, first); final b = _NativeUtf8(bindings, second);
-  try { operation(handle, a.pointer, a.length, b.pointer, b.length); } finally { a.dispose(); b.dispose(); }
-}
-void _callMessage(_NativeBindings bindings, _Handle handle, String conversationId, String body, String replyId) {
-  final conversation = _NativeUtf8(bindings, conversationId); final message = _NativeUtf8(bindings, body); final reply = _NativeUtf8(bindings, replyId);
-  try { bindings.queueMessageIntent(handle, conversation.pointer, conversation.length, message.pointer, message.length, reply.pointer, reply.length); }
-  finally { conversation.dispose(); message.dispose(); reply.dispose(); }
-}
-void _callRead(_NativeBindings bindings, _Handle handle, String conversationId, bool sendReceipt) {
-  final conversation = _NativeUtf8(bindings, conversationId);
-  try { bindings.markConversationReadIntent(handle, conversation.pointer, conversation.length, sendReceipt ? 1 : 0); }
-  finally { conversation.dispose(); }
-}
-void _callAttachment(_NativeBindings bindings, _Handle handle, String conversationId, String path, String name, String mediaType, int size) {
-  final conversation = _NativeUtf8(bindings, conversationId); final source = _NativeUtf8(bindings, path); final filename = _NativeUtf8(bindings, name); final media = _NativeUtf8(bindings, mediaType);
-  try { bindings.queueAttachmentIntent(handle, conversation.pointer, conversation.length, source.pointer, source.length, filename.pointer, filename.length, media.pointer, media.length, size); }
-  finally { conversation.dispose(); source.dispose(); filename.dispose(); media.dispose(); }
-}
-void _callHistoryPage(_NativeBindings bindings, _Handle handle, String conversationId, int beforeAtMs, String beforeId, int limit) {
-  final conversation = _NativeUtf8(bindings, conversationId); final before = _NativeUtf8(bindings, beforeId);
-  try { bindings.conversationPage(handle, conversation.pointer, conversation.length, beforeAtMs, before.pointer, before.length, limit); }
-  finally { conversation.dispose(); before.dispose(); }
-}
-void _callHistorySearch(_NativeBindings bindings, _Handle handle, String conversationId, String query, int limit) {
-  final conversation = _NativeUtf8(bindings, conversationId); final value = _NativeUtf8(bindings, query);
-  try { bindings.searchMessages(handle, conversation.pointer, conversation.length, value.pointer, value.length, limit); }
-  finally { conversation.dispose(); value.dispose(); }
+void _workerMainImpl(List<Object?> arguments) {
+  final ready = arguments[0] as SendPort;
+  final commandPort = ReceivePort();
+  final library = ffi.DynamicLibrary.open(nativeRuntimeLibraryName());
+  final bindings = _WorkerBindings(library);
+  final metadata = bindings.metadata();
+  if (metadata['nativeAbi'] != torcaNativeAbiVersion ||
+      metadata['contractSchema'] != torcaContractVersion) {
+    throw StateError('native runtime metadata is incompatible');
+  }
+  const expectedBuildId = String.fromEnvironment('TORCA_BUILD_ID');
+  if (expectedBuildId.isNotEmpty && metadata['buildId'] != expectedBuildId) {
+    throw StateError('native runtime build id does not match the application');
+  }
+  final handle = bindings.acquire();
+  if (handle == ffi.nullptr) {
+    throw StateError('native runtime could not be acquired');
+  }
+  SendPort? eventsPort;
+  Timer? snapshotTimer;
+  var notificationCursor = 0;
+  ready.send(<String, Object?>{'commandPort': commandPort.sendPort});
+  commandPort.listen((message) {
+    if (message is! Map) return;
+    if (message['attachEvents'] is SendPort) {
+      eventsPort = message['attachEvents'] as SendPort;
+      void pollSnapshot() {
+        final target = eventsPort;
+        if (target == null) return;
+        var next = const Duration(milliseconds: 250);
+        try {
+          final raw = bindings.invoke(
+            handle,
+            jsonEncode(<String, Object?>{
+              'schema': 1,
+              'requestId':
+                  'worker-poll-${DateTime.now().microsecondsSinceEpoch}',
+              'kind': 'query',
+              'name': 'snapshot.get',
+              'payload': const <String, Object?>{},
+            }),
+            5000,
+          );
+          final decoded = jsonDecode(raw);
+          if (decoded is Map && decoded['snapshot'] is Map) {
+            final snapshot = decoded['snapshot'] as Map;
+            target.send(jsonEncode(snapshot));
+            if (snapshot['bootstrapPhase'] == 'ready' ||
+                snapshot['bootstrapPhase'] == 'ready_for_profile') {
+              next = const Duration(seconds: 1);
+            }
+          }
+          final notificationRaw = bindings.invoke(
+            handle,
+            jsonEncode(<String, Object?>{
+              'schema': 1,
+              'requestId':
+                  'worker-events-${DateTime.now().microsecondsSinceEpoch}',
+              'kind': 'query',
+              'name': 'notifications.poll',
+              'payload': <String, Object?>{'afterCursor': notificationCursor},
+            }),
+            5000,
+          );
+          final notificationDecoded = jsonDecode(notificationRaw);
+          final events = notificationDecoded is Map
+              ? notificationDecoded['snapshot']
+              : null;
+          if (events is Map && events['events'] is List) {
+            for (final event in events['events'] as List) {
+              if (event is Map) {
+                final cursor = event['cursor'];
+                if (cursor is int && cursor > notificationCursor) {
+                  notificationCursor = cursor;
+                }
+                target.send(jsonEncode(event));
+              }
+            }
+            final afterCursor = events['afterCursor'];
+            if (afterCursor is int && afterCursor > notificationCursor) {
+              notificationCursor = afterCursor;
+            }
+          }
+        } on Object {
+          // The next scheduled poll retries after a transient native failure.
+        }
+        snapshotTimer = Timer(next, pollSnapshot);
+      }
+
+      snapshotTimer ??= Timer(Duration.zero, pollSnapshot);
+      return;
+    }
+    if (message['dispose'] == true) {
+      snapshotTimer?.cancel();
+      bindings.release(handle);
+      (message['reply'] as SendPort?)?.send('ok');
+      return;
+    }
+    final reply = message['reply'] as SendPort?;
+    if (message['shutdown'] == true) {
+      bindings.shutdown(15000);
+      reply?.send('ok');
+      return;
+    }
+    final raw = message['invoke'] as String?;
+    if (raw == null || reply == null) return;
+    try {
+      final result = bindings.invoke(handle, raw, 10000);
+      reply.send(result);
+    } on Object catch (error) {
+      final requestId =
+          (jsonDecode(raw) as Map?)?['requestId'] as String? ?? '';
+      reply.send(
+        jsonEncode(<String, Object?>{
+          'schema': 1,
+          'requestId': requestId,
+          'status': 'failed',
+          'resultKind': 'error',
+          'snapshot': null,
+          'error': <String, Object?>{
+            'code': 'RUNTIME_TIMEOUT',
+            'category': 'runtime',
+            'severity': 'error',
+            'retryable': true,
+            'messageKey': 'runtime.timeout',
+            'diagnosticId': '$error',
+          },
+        }),
+      );
+    }
+  });
 }
 
-String _nativeLibraryName() {
-  if (Platform.isWindows) return 'torca_bridge.dll';
-  if (Platform.isAndroid || Platform.isLinux) return 'libtorca_bridge.so';
-  if (Platform.isMacOS || Platform.isIOS) return 'libtorca_bridge.dylib';
-  throw UnsupportedError('Torca native runtime is unsupported on this platform');
-}
+class _WorkerBindings {
+  _WorkerBindings(ffi.DynamicLibrary library)
+    : _acquire = library.lookupFunction<_AcquireNative, _AcquireDart>(
+        'torca_runtime_acquire',
+      ),
+      _release = library.lookupFunction<_ReleaseNative, _ReleaseDart>(
+        'torca_runtime_release',
+      ),
+      _invoke = library.lookupFunction<_InvokeNative, _InvokeDart>(
+        'torca_runtime_invoke',
+      ),
+      _responsePtr = library
+          .lookupFunction<_ResponsePtrNative, _ResponsePtrDart>(
+            'torca_runtime_response_ptr',
+          ),
+      _responseLen = library
+          .lookupFunction<_ResponseLenNative, _ResponseLenDart>(
+            'torca_runtime_response_len',
+          ),
+      _alloc = library.lookupFunction<_AllocNative, _AllocDart>('torca_alloc'),
+      _free = library.lookupFunction<_FreeNative, _FreeDart>('torca_free'),
+      _shutdown = library.lookupFunction<_ShutdownNative, _ShutdownDart>(
+        'torca_runtime_shutdown',
+      ),
+      _metadataPtr = library
+          .lookupFunction<_MetadataPtrNative, _MetadataPtrDart>(
+            'torca_runtime_metadata_ptr',
+          ),
+      _metadataLen = library
+          .lookupFunction<_MetadataLenNative, _MetadataLenDart>(
+            'torca_runtime_metadata_len',
+          );
 
-String _readNativeString(ffi.Pointer<ffi.Uint8> pointer, int length) {
-  if (pointer == ffi.nullptr || length == 0) return '';
-  return utf8.decode(pointer.asTypedList(length), allowMalformed: false);
-}
+  final _AcquireDart _acquire;
+  final _ReleaseDart _release;
+  final _InvokeDart _invoke;
+  final _ResponsePtrDart _responsePtr;
+  final _ResponseLenDart _responseLen;
+  final _AllocDart _alloc;
+  final _FreeDart _free;
+  final _ShutdownDart _shutdown;
+  final _MetadataPtrDart _metadataPtr;
+  final _MetadataLenDart _metadataLen;
 
-class _NativeUtf8 {
-  _NativeUtf8(this._bindings, String value) : _bytes = utf8.encode(value) {
-    pointer = _bindings.alloc(_bytes.length);
-    if (_bytes.isNotEmpty) {
-      if (pointer == ffi.nullptr) throw StateError('native UTF-8 allocation failed');
-      pointer.asTypedList(_bytes.length).setAll(0, _bytes);
+  _Handle acquire() => _acquire();
+  void release(_Handle handle) => _release(handle);
+  int shutdown(int timeoutMs) => _shutdown(timeoutMs);
+
+  Map<String, dynamic> metadata() {
+    final pointer = _metadataPtr();
+    final length = _metadataLen();
+    if (pointer == ffi.nullptr || length == 0) {
+      throw StateError('native runtime metadata is empty');
+    }
+    final value = jsonDecode(utf8.decode(pointer.asTypedList(length)));
+    if (value is! Map<String, dynamic>) {
+      throw StateError('native runtime metadata is invalid');
+    }
+    return value;
+  }
+
+  String invoke(_Handle handle, String request, int timeoutMs) {
+    final bytes = utf8.encode(request);
+    final pointer = _alloc(bytes.length);
+    if (pointer == ffi.nullptr)
+      throw StateError('native request allocation failed');
+    pointer.asTypedList(bytes.length).setAll(0, bytes);
+    try {
+      final status = _invoke(handle, pointer, bytes.length, timeoutMs);
+      if (status != 0) throw StateError('native invoke failed: $status');
+      final resultPointer = _responsePtr(handle);
+      final resultLength = _responseLen(handle);
+      if (resultPointer == ffi.nullptr || resultLength == 0) {
+        throw StateError('native response is empty');
+      }
+      return utf8.decode(resultPointer.asTypedList(resultLength));
+    } finally {
+      _free(pointer, bytes.length);
     }
   }
-  final _NativeBindings _bindings;
-  final List<int> _bytes;
-  late final ffi.Pointer<ffi.Uint8> pointer;
-  int get length => _bytes.length;
-  void dispose() => _bindings.free(pointer, _bytes.length);
 }
 
-class _NativeBindings {
-  _NativeBindings(ffi.DynamicLibrary library)
-      : contractVersion = library.lookupFunction<_ContractVersionNative, _ContractVersionDart>('torca_contract_version'),
-        maxAttachmentBytes = library.lookupFunction<_MaxAttachmentNative, _MaxAttachmentDart>('torca_max_attachment_bytes'),
-        alloc = library.lookupFunction<_AllocNative, _AllocDart>('torca_alloc'),
-        free = library.lookupFunction<_FreeNative, _FreeDart>('torca_free'),
-        engineNew = library.lookupFunction<_EngineNewNative, _EngineNewDart>('torca_engine_new'),
-        engineDestroy = library.lookupFunction<_EngineDestroyNative, _EngineDestroyDart>('torca_engine_destroy'),
-        createIdentityIntent = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_create_identity_intent'),
-        createPairingIntent = library.lookupFunction<_NoArgNative, _NoArgDart>('torca_engine_create_pairing_intent'),
-        joinPairingIntent = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_join_pairing_intent'),
-        approvePairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_approve_pairing'),
-        rejectPairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_reject_pairing'),
-        cancelPairing = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_cancel_pairing'),
-        renameContact = library.lookupFunction<_TwoStringsNative, _TwoStringsDart>('torca_engine_rename_contact'),
-        verifyContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_verify_contact'),
-        resetContactVerification = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_reset_contact_verification'),
-        blockContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_block_contact'),
-        unblockContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_unblock_contact'),
-        removeContact = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_remove_contact'),
-        clearConversationHistory = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_clear_conversation_history'),
-        queueMessageIntent = library.lookupFunction<_MessageIntentNative, _MessageIntentDart>('torca_engine_queue_message_intent'),
-        retryMessageIntent = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_retry_message_intent'),
-        markConversationReadIntent = library.lookupFunction<_ReadIntentNative, _ReadIntentDart>('torca_engine_mark_conversation_read_intent'),
-        queueAttachmentIntent = library.lookupFunction<_AttachmentIntentNative, _AttachmentIntentDart>('torca_engine_queue_attachment_intent'),
-        retryAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_retry_attachment'),
-        cancelAttachment = library.lookupFunction<_OneStringNative, _OneStringDart>('torca_engine_cancel_attachment'),
-        exportAttachment = library.lookupFunction<_TwoStringsNative, _TwoStringsDart>('torca_engine_export_attachment'),
-        conversationPage = library.lookupFunction<_HistoryPageNative, _HistoryPageDart>('torca_engine_conversation_page'),
-        searchMessages = library.lookupFunction<_HistorySearchNative, _HistorySearchDart>('torca_engine_search_messages'),
-        queryPointer = library.lookupFunction<_PointerNative, _PointerDart>('torca_engine_query_ptr'),
-        queryLength = library.lookupFunction<_LengthNative, _LengthDart>('torca_engine_query_len'),
-        refreshSnapshot = library.lookupFunction<_RefreshNative, _RefreshDart>('torca_engine_refresh_snapshot'),
-        refreshDiagnostics = library.lookupFunction<_RefreshNative, _RefreshDart>('torca_engine_refresh_diagnostics'),
-        resultPointer = library.lookupFunction<_PointerNative, _PointerDart>('torca_engine_result_ptr'),
-        resultLength = library.lookupFunction<_LengthNative, _LengthDart>('torca_engine_result_len'),
-        snapshotPointer = library.lookupFunction<_PointerNative, _PointerDart>('torca_engine_snapshot_ptr'),
-        snapshotLength = library.lookupFunction<_LengthNative, _LengthDart>('torca_engine_snapshot_len'),
-        diagnosticsPointer = library.lookupFunction<_PointerNative, _PointerDart>('torca_engine_diagnostics_ptr'),
-        diagnosticsLength = library.lookupFunction<_LengthNative, _LengthDart>('torca_engine_diagnostics_len');
+Map<String, Object?> _request({
+  required String kind,
+  required String name,
+  required Map<String, Object?> payload,
+}) => <String, Object?>{
+  'schema': 1,
+  'kind': kind,
+  'name': name,
+  'payload': payload,
+};
 
-  final _ContractVersionDart contractVersion;
-  final _MaxAttachmentDart maxAttachmentBytes;
-  final _AllocDart alloc;
-  final _FreeDart free;
-  final _EngineNewDart engineNew;
-  final _EngineDestroyDart engineDestroy;
-  final _OneStringDart createIdentityIntent;
-  final _NoArgDart createPairingIntent;
-  final _OneStringDart joinPairingIntent;
-  final _OneStringDart approvePairing;
-  final _OneStringDart rejectPairing;
-  final _OneStringDart cancelPairing;
-  final _TwoStringsDart renameContact;
-  final _OneStringDart verifyContact;
-  final _OneStringDart resetContactVerification;
-  final _OneStringDart blockContact;
-  final _OneStringDart unblockContact;
-  final _OneStringDart removeContact;
-  final _OneStringDart clearConversationHistory;
-  final _MessageIntentDart queueMessageIntent;
-  final _OneStringDart retryMessageIntent;
-  final _ReadIntentDart markConversationReadIntent;
-  final _AttachmentIntentDart queueAttachmentIntent;
-  final _OneStringDart retryAttachment;
-  final _OneStringDart cancelAttachment;
-  final _TwoStringsDart exportAttachment;
-  final _HistoryPageDart conversationPage;
-  final _HistorySearchDart searchMessages;
-  final _PointerDart queryPointer;
-  final _LengthDart queryLength;
-  final _RefreshDart refreshSnapshot;
-  final _RefreshDart refreshDiagnostics;
-  final _PointerDart resultPointer;
-  final _LengthDart resultLength;
-  final _PointerDart snapshotPointer;
-  final _LengthDart snapshotLength;
-  final _PointerDart diagnosticsPointer;
-  final _LengthDart diagnosticsLength;
+Map<String, Object?>? _requestForCommand(BridgeCommandDto command) {
+  String? name;
+  Map<String, Object?> payload = <String, Object?>{};
+  if (command is UpdateProfileCommandDto) {
+    name = 'profile.set';
+    payload = {'displayName': command.displayName};
+  } else if (command is CreatePairingCommandDto) {
+    name = 'pairing.create';
+  } else if (command is JoinPairingCommandDto) {
+    name = 'pairing.join';
+    payload = {'code': command.code};
+  } else if (command is ApprovePairingCommandDto) {
+    name = 'pairing.approve';
+    payload = {'sessionIdHex': command.sessionIdHex};
+  } else if (command is RejectPairingCommandDto) {
+    name = 'pairing.reject';
+    payload = {'sessionIdHex': command.sessionIdHex};
+  } else if (command is CancelPairingCommandDto) {
+    name = 'pairing.cancel';
+    payload = {'sessionIdHex': command.sessionIdHex};
+  } else if (command is RenameContactCommandDto) {
+    name = 'contact.rename';
+    payload = {
+      'contactIdHex': command.contactIdHex,
+      'displayName': command.displayName,
+    };
+  } else if (command is VerifyContactCommandDto) {
+    name = 'contact.verify';
+    payload = {'contactIdHex': command.contactIdHex};
+  } else if (command is ResetContactVerificationCommandDto) {
+    name = 'contact.verification.reset';
+    payload = {'contactIdHex': command.contactIdHex};
+  } else if (command is BlockContactCommandDto) {
+    name = 'contact.block';
+    payload = {'contactIdHex': command.contactIdHex};
+  } else if (command is UnblockContactCommandDto) {
+    name = 'contact.unblock';
+    payload = {'contactIdHex': command.contactIdHex};
+  } else if (command is RemoveContactCommandDto) {
+    name = 'contact.remove';
+    payload = {'contactIdHex': command.contactIdHex};
+  } else if (command is ClearConversationHistoryCommandDto) {
+    name = 'conversation.clear';
+    payload = {'conversationIdHex': command.conversationIdHex};
+  } else if (command is QueueMessageCommandDto) {
+    name = 'message.send';
+    payload = {
+      'conversationIdHex': command.conversationIdHex,
+      'body': command.body,
+      'replyToMessageIdHex': command.replyToMessageId,
+    };
+  } else if (command is RetryMessageCommandDto) {
+    name = 'message.retry';
+    payload = {'messageIdHex': command.messageIdHex};
+  } else if (command is MarkConversationReadCommandDto) {
+    name = 'conversation.read';
+    payload = {
+      'conversationIdHex': command.conversationIdHex,
+      'sendReceipt': command.sendReceipt,
+    };
+  } else if (command is QueueAttachmentCommandDto) {
+    name = 'attachment.queue';
+    payload = {
+      'conversationIdHex': command.conversationIdHex,
+      'sourcePath': command.sourcePath,
+      'name': command.name,
+      'mediaType': command.mediaType,
+      'size': command.size,
+    };
+  } else if (command is RetryAttachmentCommandDto) {
+    name = 'attachment.retry';
+    payload = {'attachmentIdHex': command.attachmentIdHex};
+  } else if (command is CancelAttachmentCommandDto) {
+    name = 'attachment.cancel';
+    payload = {'attachmentIdHex': command.attachmentIdHex};
+  } else if (command is ExportAttachmentCommandDto) {
+    name = 'attachment.export';
+    payload = {
+      'attachmentIdHex': command.attachmentIdHex,
+      'destinationPath': command.destinationPath,
+    };
+  } else if (command is SetNotificationsCommandDto) {
+    name = 'notifications.set';
+    payload = {'enabled': command.enabled};
+  }
+  if (command is RefreshSnapshotCommandDto) {
+    return _request(kind: 'query', name: 'snapshot.get', payload: const {});
+  }
+  return name == null
+      ? null
+      : _request(kind: 'command', name: name, payload: payload);
 }
+
+AppSnapshotDto? _decodeSnapshot(String raw) {
+  final value = jsonDecode(raw);
+  if (value is! Map<String, dynamic>) return null;
+  final identity = value['identity'];
+  final bootstrapSteps =
+      (value['bootstrapSteps'] is List<Object?>
+              ? value['bootstrapSteps'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (item) => BootstrapStepDto(
+              id: item['id'] as String? ?? '',
+              state: item['state'] as String? ?? 'pending',
+              code: item['code'] as String?,
+            ),
+          )
+          .toList(growable: false);
+  final pairings =
+      (value['pairings'] is List
+              ? value['pairings'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (item) => PairingDto(
+              id: item['id'] as String? ?? '',
+              code: item['code'] as String? ?? '',
+              role: item['role'] as String? ?? '',
+              state: item['state'] as String? ?? '',
+              expiresAtMs: item['expiresAtMs'] as int? ?? 0,
+              localApproved: item['localApproved'] as bool? ?? false,
+              remoteApproved: item['remoteApproved'] as bool? ?? false,
+            ),
+          )
+          .toList(growable: false);
+  final contacts =
+      (value['contacts'] is List
+              ? value['contacts'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map((item) {
+            final health = item['peerHealth'] is Map<String, dynamic>
+                ? item['peerHealth'] as Map<String, dynamic>
+                : const <String, dynamic>{};
+            return ContactDto(
+              id: item['id'] as String? ?? '',
+              displayName: item['displayName'] as String? ?? 'Contact',
+              onionAddress: item['onionAddress'] as String? ?? '',
+              status: item['status'] as String? ?? '',
+              connectionState: item['connectionState'] as String? ?? '',
+              safetyNumber: item['safetyNumber'] as String?,
+              verificationStatus:
+                  item['verificationStatus'] as String? ?? 'unverified',
+              verifiedAtMs: item['verifiedAtMs'] as int?,
+              peerHealth: PeerHealthDto(
+                state: health['state'] as String? ?? 'disconnected',
+                quality: health['quality'] as String? ?? 'unknown',
+                rttMs: health['rttMs'] as int?,
+                lastSuccessAtMs: health['lastSuccessAtMs'] as int?,
+                consecutiveFailures: health['consecutiveFailures'] as int? ?? 0,
+                reconnectAttempt: health['reconnectAttempt'] as int? ?? 0,
+              ),
+            );
+          })
+          .toList(growable: false);
+  final conversations =
+      (value['conversations'] is List
+              ? value['conversations'] as List
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (item) => ConversationDto(
+              id: item['id'] as String? ?? '',
+              contactId: item['contactId'] as String? ?? '',
+              status: item['status'] as String? ?? '',
+              unreadCount: item['unreadCount'] as int? ?? 0,
+              lastActivityAtMs: item['lastActivityAtMs'] as int? ?? 0,
+              lastMessageBody: item['lastMessageBody'] as String?,
+              lastMessageDirection: item['lastMessageDirection'] as String?,
+              lastMessageStatus: item['lastMessageStatus'] as String?,
+            ),
+          )
+          .toList(growable: false);
+  final messages =
+      (value['messages'] is List
+              ? value['messages'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(_decodeMessage)
+          .toList(growable: false);
+  final attachments =
+      (value['attachments'] is List
+              ? value['attachments'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (item) => AttachmentDto(
+              id: item['id'] as String? ?? '',
+              messageId: item['messageId'] as String? ?? '',
+              name: item['name'] as String? ?? '',
+              mediaType: item['mediaType'] as String? ?? '',
+              size: item['size'] as int? ?? 0,
+              status: item['status'] as String? ?? '',
+              offset: item['offset'] as int? ?? 0,
+            ),
+          )
+          .toList(growable: false);
+  return AppSnapshotDto(
+    runtimeId: value['runtimeId'] as String? ?? '',
+    revision: value['revision'] as int? ?? 0,
+    notificationCursor: value['notificationCursor'] as int? ?? 0,
+    notificationsEnabled: value['notificationsEnabled'] as bool? ?? true,
+    identity: identity is Map<String, dynamic>
+        ? IdentityDto(
+            displayName: identity['displayName'] as String?,
+            fingerprint: identity['fingerprint'] as String?,
+          )
+        : null,
+    torState: value['torState'] as String? ?? 'stopped',
+    onionAddress: value['onionAddress'] as String?,
+    bootstrapPhase: value['bootstrapPhase'] as String? ?? 'starting',
+    bootstrapSteps: bootstrapSteps,
+    pairings: pairings,
+    contacts: contacts,
+    conversations: conversations,
+    messages: messages,
+    attachments: attachments,
+  );
+}
+
+MessageDto _decodeMessage(Map<String, dynamic> value) => MessageDto(
+  id: value['id'] as String? ?? '',
+  conversationId: value['conversationId'] as String? ?? '',
+  body: value['body'] as String? ?? '',
+  direction: value['direction'] as String? ?? 'unknown',
+  status: value['status'] as String? ?? 'unknown',
+  replyToMessageId: value['replyToMessageId'] as String?,
+  createdAtMs: value['createdAtMs'] as int? ?? 0,
+  updatedAtMs: value['updatedAtMs'] as int? ?? 0,
+  attemptCount: value['attemptCount'] as int? ?? 0,
+);
