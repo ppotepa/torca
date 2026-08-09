@@ -48,6 +48,7 @@ enum ActorMessage {
 
 struct RuntimeHandleInner {
     sender: SyncSender<ActorMessage>,
+    startup_error: Option<String>,
 }
 
 #[repr(C)]
@@ -194,13 +195,13 @@ pub extern "C" fn torca_runtime_acquire() -> *mut TorcaRuntimeHandle {
 
 fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
     let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     thread::Builder::new()
         .name("torca-runtime".into())
         .spawn(move || match TorcaRuntime::new() {
             Ok(runtime) => {
                 let runtime_id = secure_id_hex().unwrap_or_else(|_| "runtime-unavailable".into());
-                let _ = ready_tx.send(true);
+                let _ = ready_tx.send(Ok(()));
                 actor_loop(
                     receiver,
                     ActorState { runtime, runtime_id, revision: 1, completed: HashMap::new() },
@@ -208,14 +209,16 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
             }
             Err(error) => {
                 eprintln!("Torca runtime startup failed: {error}");
-                let _ = ready_tx.send(false);
+                let _ = ready_tx.send(Err(error));
             }
         })
         .map_err(|_| ())?;
-    if ready_rx.recv_timeout(Duration::from_secs(10)).ok() != Some(true) {
-        return Err(());
-    }
-    Ok(Arc::new(RuntimeHandleInner { sender }))
+    let startup_error = match ready_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(error),
+        Err(_) => return Err(()),
+    };
+    Ok(Arc::new(RuntimeHandleInner { sender, startup_error }))
 }
 
 fn actor_loop(receiver: Receiver<ActorMessage>, mut state: ActorState) {
@@ -409,6 +412,36 @@ pub unsafe extern "C" fn torca_runtime_invoke(
     else {
         return -1;
     };
+    if handle.inner.startup_error.is_some() {
+        let request_id = serde_json::from_str::<Value>(request)
+            .ok()
+            .and_then(|value| value.get("requestId").and_then(Value::as_str).map(str::to_owned))
+            .unwrap_or_default();
+        let response = serde_json::to_vec(&json!({
+            "schema": 1,
+            "requestId": request_id,
+            "status": "failed",
+            "resultKind": "error",
+            "runtimeId": "runtime-unavailable",
+            "revision": 0,
+            "snapshot": Value::Null,
+            "error": {
+                "code": "RUNTIME_STARTUP_FAILED",
+                "category": "runtime",
+                "severity": "error",
+                "retryable": true,
+                "messageKey": "runtime.startup.failed",
+                "diagnosticId": secure_id_hex().unwrap_or_default()
+            },
+            "timing": { "queuedMs": 0, "executionMs": 0 }
+        }))
+        .unwrap_or_else(|_| b"{\"status\":\"failed\"}".to_vec());
+        if let Ok(mut target) = handle.response.lock() {
+            *target = response;
+            return ABI_OK;
+        }
+        return -1;
+    }
     let (tx, rx) = mpsc::sync_channel(1);
     if send_with_timeout(
         &handle.inner.sender,
@@ -462,6 +495,9 @@ pub extern "C" fn torca_runtime_shutdown(timeout_ms: u32) -> i32 {
     let Some(inner) = inner else {
         return ABI_OK;
     };
+    if inner.startup_error.is_some() {
+        return ABI_OK;
+    }
     let (tx, rx) = mpsc::sync_channel(1);
     if send_with_timeout(
         &inner.sender,
