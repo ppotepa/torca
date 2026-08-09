@@ -27,9 +27,28 @@ function Reset-TorcaAndroidClientData {
     param([Parameter(Mandatory = $true)][string]$DeviceId)
     if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required to reset Android client data.' }
     $packageName = if ($env:TORCA_ANDROID_PACKAGE) { $env:TORCA_ANDROID_PACKAGE } else { 'com.torca.torca_app' }
-    & adb -s $DeviceId shell pm clear $packageName
-    if ($LASTEXITCODE -ne 0) { throw "Unable to clear Android data on device $DeviceId." }
-    Write-Host "Cleared Android client data on: $DeviceId" -ForegroundColor Yellow
+    & adb -s $DeviceId shell am force-stop $packageName *> $null
+    $clearOutput = (& adb -s $DeviceId shell pm clear $packageName 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and $clearOutput -match '(?i)^(Success|new data cleared)$') {
+        Write-Host "Cleared Android client data on: $DeviceId" -ForegroundColor Yellow
+        return
+    }
+
+    # Some OEM Android builds deny pm clear to the adb shell even for a
+    # user-installed package (CLEAR_APP_USER_DATA). Removing the package for
+    # user 0 is the equivalent recoverable reset; deploy installs the APK again
+    # immediately afterwards. Keep the original error in the diagnostic.
+    if ($clearOutput -match '(?i)CLEAR_APP_USER_DATA|SecurityException|not permitted|Exception occurred') {
+        Write-Host "pm clear denied on $DeviceId; falling back to package removal for user 0." -ForegroundColor Yellow
+        $removeOutput = (& adb -s $DeviceId shell pm uninstall --user 0 $packageName 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and $removeOutput -match '(?i)^Success') {
+            Write-Host "Removed Android package and local data on: $DeviceId" -ForegroundColor Yellow
+            return
+        }
+        throw "Android data reset was denied on $DeviceId. pm clear: $clearOutput; package removal fallback: $removeOutput"
+    }
+
+    throw "Unable to clear Android data on device $DeviceId. Details: $clearOutput"
 }
 
 function Reset-TorcaClientData {
