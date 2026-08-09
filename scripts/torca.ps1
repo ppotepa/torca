@@ -78,7 +78,8 @@ function Get-TorcaDeviceDeploymentManifest {
 function Write-TorcaDeviceDeploymentManifest {
     param(
         [Parameter(Mandatory = $true)]$Device,
-        [Parameter(Mandatory = $true)]$Release
+        [Parameter(Mandatory = $true)]$Release,
+        [Parameter(Mandatory = $true)][string]$Endpoint
     )
     $manifestPath = Get-TorcaDeviceManifestPath -Paths $paths -DeviceId $Device.Id
     [pscustomobject]@{
@@ -92,6 +93,8 @@ function Write-TorcaDeviceDeploymentManifest {
         SchemaVersion = $Release.schemaVersion
         ContractSchema = $Release.contractSchema
         WireVersion = $Release.wireVersion
+        RelayEndpoint = $Endpoint
+        RelayEndpointHash = ([System.Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($Endpoint)) | ForEach-Object { $_.ToString('x2') }) -join ''
         DeployedAt = [DateTime]::UtcNow.ToString('o')
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding utf8
 }
@@ -150,6 +153,19 @@ switch ($Command) {
     'build' {
         Write-TorcaConsoleHeader -Title 'Torca build' -Details @{ Target = (Resolve-TorcaTarget $Target); Configuration = $Configuration; Policy = $BuildPolicy }
         $stack = Invoke-TorcaStackEnsure -Policy $OnionPolicy
+        $endpointMismatches = @($selected | ForEach-Object {
+            $previous = Get-TorcaDeviceDeploymentManifest -DeviceId $_.Id
+            if ($previous -and $previous.PSObject.Properties.Name -contains 'RelayEndpoint' -and
+                [string]$previous.RelayEndpoint -ne [string]$stack.Endpoint) {
+                [pscustomobject]@{ Device = $_; Previous = $previous.RelayEndpoint; Current = $stack.Endpoint }
+            }
+        })
+        if ($endpointMismatches.Count -gt 0) {
+            $summary = ($endpointMismatches | ForEach-Object { "$($_.Device.Platform):$($_.Device.Name)" }) -join ', '
+            Write-TorcaStage -Name 'Relay endpoint' -State 'warning' -Detail "Installed artifact endpoint differs on $summary; matching native rebuild is required"
+        } else {
+            Write-TorcaStage -Name 'Relay endpoint' -State 'ready' -Detail "Embedded at build time: $($stack.Endpoint)"
+        }
         $buildTarget = Resolve-TorcaTarget $Target
         $required = Test-TorcaBuildRequired -Paths $paths -Endpoint $stack.Endpoint -Target $buildTarget -Configuration $Configuration
         if ($BuildPolicy -eq 'Reuse' -and $required) { throw 'Requested build reuse, but matching artifacts are not available.' }
@@ -268,7 +284,7 @@ switch ($Command) {
             Write-TorcaStage -Name 'Application launch' -State 'ready' -Detail 'Launch command issued'
         }
         if ($InstallPolicy -ne 'Skip' -or $RunPolicy -ne 'Skip') {
-            foreach ($item in $selected) { Write-TorcaDeviceDeploymentManifest -Device $item -Release $release }
+            foreach ($item in $selected) { Write-TorcaDeviceDeploymentManifest -Device $item -Release $release -Endpoint $stack.Endpoint }
             Write-TorcaStage -Name 'Device manifest' -State 'ready' -Detail 'Installed storage epoch recorded per device'
         }
     }

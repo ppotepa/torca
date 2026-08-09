@@ -419,7 +419,11 @@ function Assert-TorcaWindowsPackage {
     if (-not (Test-Path -LiteralPath $Root)) { throw "Windows package is missing: $Root" }
     $forbiddenNativeNames = @('torca_' + 'bridge.dll', 'torca_' + 'contract.dll', 'libtorca_' + 'bridge.so', 'libtorca_' + 'contract.so')
     $obsoleteTorFiles = @(Get-ChildItem $Root -Recurse -File |
-        Where-Object { $_.Name -match '^(tor\.exe|libtor\.so|torrc(?:-defaults)?)$' -or $forbiddenNativeNames -contains $_.Name })
+        Where-Object {
+            $_.Name -match '^(tor\.exe|libtor\.so|torrc(?:-defaults)?)$' -or
+            $_.Name -eq 'relay_endpoint.txt' -or
+            $forbiddenNativeNames -contains $_.Name
+        })
     if ($obsoleteTorFiles.Count -gt 0) {
         throw "Windows package contains forbidden external Tor assets: $($obsoleteTorFiles.FullName -join ', ')"
     }

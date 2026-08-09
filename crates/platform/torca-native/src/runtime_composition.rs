@@ -120,8 +120,14 @@ fn spawn_runtime_for<P: PlatformServices>(
         TOR_STARTUP_TIMEOUT,
         current_timestamp()?,
     )
-    .map_err(|(_, error)| {
-        NativeCompositionError::new(format!("start Tor runtime failed: {error}"))
+    .map_err(|(error, diagnostic)| {
+        // Preserve the redacted, actionable Arti diagnostic.  Previously the
+        // native boundary discarded it and Windows only reported the opaque
+        // `start Tor runtime failed`, making a failed bootstrap impossible to
+        // distinguish from a disconnected worker.
+        NativeCompositionError::new(format!(
+            "start Tor runtime failed: {error}; diagnostic: {diagnostic}"
+        ))
     })?;
     let tor_client = tor
         .client_handle()
