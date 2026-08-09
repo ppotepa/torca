@@ -67,6 +67,35 @@ function Get-TorcaSelectedDevices {
     return @(Select-TorcaDevices -Devices $Available)
 }
 
+function Get-TorcaDeviceDeploymentManifest {
+    param([Parameter(Mandatory = $true)][string]$DeviceId)
+    $manifestPath = Get-TorcaDeviceManifestPath -Paths $paths -DeviceId $DeviceId
+    if (-not (Test-Path -LiteralPath $manifestPath)) { return $null }
+    try { return Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json }
+    catch { Write-Warning "Ignoring unreadable device deployment manifest: $manifestPath"; return $null }
+}
+
+function Write-TorcaDeviceDeploymentManifest {
+    param(
+        [Parameter(Mandatory = $true)]$Device,
+        [Parameter(Mandatory = $true)]$Release
+    )
+    $manifestPath = Get-TorcaDeviceManifestPath -Paths $paths -DeviceId $Device.Id
+    [pscustomobject]@{
+        DeviceId = $Device.Id
+        DeviceName = $Device.Name
+        Platform = $Device.Platform
+        ProductVersion = $Release.version
+        BuildNumber = $Release.build
+        BuildId = $Release.buildId
+        StorageEpoch = $Release.storageEpoch
+        SchemaVersion = $Release.schemaVersion
+        ContractSchema = $Release.contractSchema
+        WireVersion = $Release.wireVersion
+        DeployedAt = [DateTime]::UtcNow.ToString('o')
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+}
+
 function Invoke-TorcaStackEnsure {
     param([string]$Policy)
     $result = Start-TorcaStack -Paths $paths -OnionPolicy $Policy
@@ -138,6 +167,13 @@ switch ($Command) {
         $available = @(Get-TorcaDevices -FlutterRoot (Join-Path $root 'apps/client/flutter'))
         $selected = @(Get-TorcaSelectedDevices -Available $available)
         if ($selected.Count -eq 0) { throw 'No deployable device selected.' }
+        $release = Get-Content (Join-Path $root 'release/version.json') -Raw | ConvertFrom-Json
+        $epochMismatches = @($selected | ForEach-Object {
+            $previous = Get-TorcaDeviceDeploymentManifest -DeviceId $_.Id
+            if ($previous -and [string]$previous.StorageEpoch -ne [string]$release.storageEpoch) {
+                [pscustomobject]@{ Device = $_; Previous = $previous.StorageEpoch; Current = $release.storageEpoch }
+            }
+        })
         if (-not $NonInteractive -and -not $clientDataPolicySpecified) {
             $deviceSummary = ($selected | ForEach-Object { "$($_.Platform):$($_.Name)" }) -join ', '
             $dataChoice = Read-TorcaMenuChoice "Client data on selected devices ($deviceSummary)" @(
@@ -149,6 +185,24 @@ switch ($Command) {
                 $interactiveDataResetConfirmed = $true
             } else {
                 $ClientDataPolicy = 'Preserve'
+            }
+        }
+        if ($epochMismatches.Count -gt 0 -and $ClientDataPolicy -eq 'Preserve') {
+            $summary = ($epochMismatches | ForEach-Object { "$($_.Device.Platform):$($_.Device.Name) ($($_.Previous) -> $($_.Current))" }) -join ', '
+            Write-TorcaStage -Name 'Storage epoch' -State 'warning' -Detail "Installed epoch differs: $summary"
+            if ($NonInteractive -and -not $AllowDataReset) {
+                throw 'Storage epoch changed on selected devices; non-interactive deployment requires -AllowDataReset.'
+            }
+            if (-not $NonInteractive) {
+                $epochChoice = Read-TorcaMenuChoice 'Storage epoch changed; reset selected device data before installation?' @(
+                    'RESET selected devices and continue',
+                    'Abort deployment'
+                ) '1'
+                if ($epochChoice -like 'Abort*') { throw 'Deployment cancelled because storage epoch changed.' }
+                $ClientDataPolicy = 'ResetSelected'
+                $interactiveDataResetConfirmed = $true
+            } else {
+                $ClientDataPolicy = 'ResetSelected'
             }
         }
         Write-TorcaConsoleHeader -Title 'Torca deploy' -Details @{ Target = $Target; Configuration = $Configuration; Devices = (($selected | ForEach-Object { $_.Platform + ':' + $_.Name }) -join ', '); Build = $BuildPolicy; Install = $InstallPolicy; Run = $RunPolicy }
@@ -212,6 +266,10 @@ switch ($Command) {
                 Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration
             }
             Write-TorcaStage -Name 'Application launch' -State 'ready' -Detail 'Launch command issued'
+        }
+        if ($InstallPolicy -ne 'Skip' -or $RunPolicy -ne 'Skip') {
+            foreach ($item in $selected) { Write-TorcaDeviceDeploymentManifest -Device $item -Release $release }
+            Write-TorcaStage -Name 'Device manifest' -State 'ready' -Detail 'Installed storage epoch recorded per device'
         }
     }
 }

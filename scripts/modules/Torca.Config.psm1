@@ -8,6 +8,7 @@ function Get-TorcaPaths {
         RepoRoot = $RepoRoot; RuntimeRoot = $runtime
         StateFile = Join-Path $runtime 'state.json'
         BuildManifestRoot = Join-Path $runtime 'manifests'
+        DeviceManifestRoot = Join-Path $runtime 'devices'
         ManifestFile = Join-Path $runtime 'build-manifest.json'
         StackRoot = Join-Path $runtime 'stack'
         RelayLog = Join-Path $runtime 'logs/relay.log'
@@ -22,7 +23,7 @@ function Get-TorcaPaths {
 
 function Initialize-TorcaPaths {
     param([Parameter(Mandatory = $true)]$Paths)
-    foreach ($directory in @($Paths.RuntimeRoot, $Paths.BuildManifestRoot, $Paths.StackRoot, (Split-Path $Paths.RelayLog))) {
+    foreach ($directory in @($Paths.RuntimeRoot, $Paths.BuildManifestRoot, $Paths.DeviceManifestRoot, $Paths.StackRoot, (Split-Path $Paths.RelayLog))) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 }
@@ -32,8 +33,17 @@ function Get-TorcaBuildManifestPath {
     Join-Path $Paths.BuildManifestRoot "$($Target.ToLowerInvariant())-$($Configuration.ToLowerInvariant()).json"
 }
 
+function Get-TorcaDeviceManifestPath {
+    param(
+        [Parameter(Mandatory = $true)]$Paths,
+        [Parameter(Mandatory = $true)][string]$DeviceId
+    )
+    $safeId = [Regex]::Replace($DeviceId, '[^A-Za-z0-9_.-]', '_')
+    Join-Path $Paths.DeviceManifestRoot "$safeId.json"
+}
+
 function Get-TorcaDefaultOptions {
     [pscustomobject]@{ OnionPolicy = 'Ensure'; ClientDataPolicy = 'Preserve'; BuildPolicy = 'IfRequired'; InstallPolicy = 'Selected'; RunPolicy = 'Restart'; Readiness = 'Strict' }
 }
 
-Export-ModuleMember -Function Get-TorcaPaths, Initialize-TorcaPaths, Get-TorcaBuildManifestPath, Get-TorcaDefaultOptions
+Export-ModuleMember -Function Get-TorcaPaths, Initialize-TorcaPaths, Get-TorcaBuildManifestPath, Get-TorcaDeviceManifestPath, Get-TorcaDefaultOptions
