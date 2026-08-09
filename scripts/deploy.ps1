@@ -39,6 +39,7 @@ if (-not $env:TORCA_ORCHESTRATED) {
     if ($Confirm) { $arguments.Confirm = $true }
     if ($AllowDataReset) { $arguments.AllowDataReset = $true }
     if ($ReuseBuild) { $arguments.ReuseBuild = $true }
+    if ($PSBoundParameters.ContainsKey('Verbose')) { $arguments.Verbose = $true }
     & (Join-Path $PSScriptRoot 'torca.ps1') @arguments
     if ($LASTEXITCODE -ne 0) { throw "Orchestrated deploy failed with code $LASTEXITCODE." }
     return
@@ -49,7 +50,7 @@ if ($resolved -eq 'auto') {
     $resolved = if ($env:OS -eq 'Windows_NT') { 'windows' } else { 'android' }
 }
 $assetsModule = Join-Path $root 'scripts/modules/Torca.PlatformAssets.psm1'
-Import-Module $assetsModule -Force -WarningAction SilentlyContinue
+Import-Module $assetsModule -Force -WarningAction SilentlyContinue -Verbose:$false
 if ($resolved -in @('windows','all')) {
     Prepare-TorcaPlatformAssets -RepoRoot $root -Platform windows
 }
@@ -58,7 +59,7 @@ if ($resolved -in @('android','all')) {
 }
 
 $module = Join-Path $root 'scripts/modules/Torca.BuildEngine.psm1'
-Import-Module $module -Force -WarningAction SilentlyContinue
+Import-Module $module -Force -WarningAction SilentlyContinue -Verbose:$false
 $deployArguments = @{ Target = $Target; Device = $Device }
 if ($ReuseBuild) { $deployArguments.ReuseBuild = $true }
 Invoke-TorcaDeploy @deployArguments

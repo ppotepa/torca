@@ -37,7 +37,7 @@ $previousStackProvider = $env:TORCA_STACK_PROVIDER
 if ($StackProvider -ne 'auto') { $env:TORCA_STACK_PROVIDER = $StackProvider }
 $moduleRoot = Join-Path $PSScriptRoot 'modules'
 foreach ($module in @('Torca.Core','Torca.Config','Torca.State','Torca.Devices','Torca.Data','Torca.Stack','Torca.Build','Torca.Ui')) {
-    Import-Module (Join-Path $moduleRoot "$module.psm1") -Force -WarningAction SilentlyContinue
+    Import-Module (Join-Path $moduleRoot "$module.psm1") -Force -WarningAction SilentlyContinue -Verbose:$false
 }
 $paths = Get-TorcaPaths -RepoRoot $root
 Initialize-TorcaPaths -Paths $paths
@@ -67,8 +67,7 @@ function Get-TorcaSelectedDevices {
 function Invoke-TorcaStackEnsure {
     param([string]$Policy)
     $result = Start-TorcaStack -Paths $paths -OnionPolicy $Policy
-    Write-TorcaLog 'Stack provider returned.'
-    Write-Host "Tor endpoint: $($result.Endpoint)" -ForegroundColor Green
+    Write-TorcaStage -Name 'Runtime stack' -State 'ready' -Detail ("provider={0}, endpoint={1}" -f $result.Provider, $result.Endpoint)
     return $result
 }
 
@@ -92,7 +91,16 @@ switch ($Command) {
     }
     'devices' { Get-TorcaDevices -FlutterRoot (Join-Path $root 'apps/client/flutter') | Format-Table }
     'stop' { Stop-TorcaStack -Paths $paths }
-    'logs' { if (Test-Path $paths.RelayLog) { Get-Content $paths.RelayLog -Tail 80 }; if (Test-Path $paths.RelayErrorLog) { Get-Content $paths.RelayErrorLog -Tail 40 } }
+    'logs' {
+        $stackStatus = Get-TorcaStackStatus -Paths $paths
+        if ($stackStatus.Provider -eq 'docker') {
+            Write-TorcaConsoleHeader -Title 'Torca relay logs' -Details @{ Provider = 'Docker'; State = $stackStatus.ContainerState; Health = $stackStatus.ContainerHealth }
+            & docker compose -f $paths.DockerCompose logs --no-color --tail 120 relay
+        } else {
+            if (Test-Path $paths.RelayLog) { Get-Content $paths.RelayLog -Tail 80 }
+            if (Test-Path $paths.RelayErrorLog) { Get-Content $paths.RelayErrorLog -Tail 40 }
+        }
+    }
     'collect' {
         $arguments = @('-LastRuns', $LastRuns, '-Target', $Target, '-Profile', $Profile)
         if ($Device) { $arguments += @('-Device', $Device) }
@@ -105,10 +113,12 @@ switch ($Command) {
         if ($StackAction -eq 'stop') { Stop-TorcaStack -Paths $paths }
         else {
             $policy = if ($StackAction -eq 'rotate') { 'Rotate' } elseif ($StackAction -eq 'restart') { 'Restart' } else { 'Ensure' }
+            Write-TorcaConsoleHeader -Title 'Torca stack' -Details @{ Provider = $StackProvider; Onion = $policy }
             Invoke-TorcaStackEnsure -Policy $policy
         }
     }
     'build' {
+        Write-TorcaConsoleHeader -Title 'Torca build' -Details @{ Target = (Resolve-TorcaTarget $Target); Configuration = $Configuration; Policy = $BuildPolicy }
         $stack = Invoke-TorcaStackEnsure -Policy $OnionPolicy
         $buildTarget = Resolve-TorcaTarget $Target
         $required = Test-TorcaBuildRequired -Paths $paths -Endpoint $stack.Endpoint -Target $buildTarget -Configuration $Configuration
@@ -116,9 +126,10 @@ switch ($Command) {
         if ($BuildPolicy -eq 'Rebuild' -or ($BuildPolicy -eq 'IfRequired' -and $required)) {
             Invoke-TorcaClientBuild -RepoRoot $root -Target $buildTarget -Configuration $Configuration -Endpoint $stack.Endpoint
             Write-TorcaBuildManifest -Paths $paths -Endpoint $stack.Endpoint -Targets @($buildTarget) -Configuration $Configuration
-        } else { Write-Host 'Build artifacts reused.' }
+        } else { Write-TorcaStage -Name 'Build artifacts' -State 'ready' -Detail 'Reused existing verified artifacts' }
     }
     'run' {
+        Write-TorcaConsoleHeader -Title 'Torca run' -Details @{ Target = (Resolve-TorcaTarget $Target); Configuration = $Configuration }
         $stack = Invoke-TorcaStackEnsure -Policy $OnionPolicy
         Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device (($Device | Select-Object -First 1))
     }
@@ -126,6 +137,8 @@ switch ($Command) {
         $available = @(Get-TorcaDevices -FlutterRoot (Join-Path $root 'apps/client/flutter'))
         $selected = @(Get-TorcaSelectedDevices -Available $available)
         if ($selected.Count -eq 0) { throw 'No deployable device selected.' }
+        Write-TorcaConsoleHeader -Title 'Torca deploy' -Details @{ Target = $Target; Configuration = $Configuration; Devices = (($selected | ForEach-Object { $_.Platform + ':' + $_.Name }) -join ', '); Build = $BuildPolicy; Install = $InstallPolicy; Run = $RunPolicy }
+        Write-TorcaStage -Name 'Devices' -State 'ready' -Detail ("{0} selected" -f $selected.Count)
         if ($ClientDataPolicy -ne 'Preserve' -and -not ($Confirm -or $AllowDataReset)) { throw 'Reset danych wymaga jawnego -AllowDataReset.' }
         if ($ClientDataPolicy -ne 'Preserve' -and $NonInteractive -and -not $AllowDataReset) { throw 'Non-interactive reset requires -AllowDataReset.' }
         $stack = Invoke-TorcaStackEnsure -Policy $OnionPolicy
@@ -139,12 +152,16 @@ switch ($Command) {
         $required = Test-TorcaBuildRequired -Paths $paths -Endpoint $stack.Endpoint -Target $buildTarget -Configuration $Configuration
         if ($BuildPolicy -eq 'Reuse' -and $required) { throw 'Requested build reuse, but matching artifacts are not available.' }
         if ($BuildPolicy -eq 'Rebuild' -or ($BuildPolicy -eq 'IfRequired' -and $required)) {
+            Write-TorcaStage -Name 'Application build' -State 'running' -Detail "$buildTarget / $Configuration"
             Invoke-TorcaClientBuild -RepoRoot $root -Target $buildTarget -Configuration $Configuration -Endpoint $stack.Endpoint
             Write-TorcaBuildManifest -Paths $paths -Endpoint $stack.Endpoint -Targets @($buildTarget) -Configuration $Configuration
-        } else { Write-Host 'Build artifacts reused.' }
+            Write-TorcaStage -Name 'Application build' -State 'ready' -Detail 'Artifact manifest verified'
+        } else { Write-TorcaStage -Name 'Application build' -State 'ready' -Detail 'Reused existing verified artifacts' }
         if ($Configuration -eq 'release') {
             $packageDevice = if ($InstallPolicy -eq 'Skip') { $null } else { ($selected | Where-Object Platform -eq 'android' | Select-Object -First 1).Id }
+            Write-TorcaStage -Name 'Release package' -State 'running' -Detail 'Checking artifact and native library hashes'
             Invoke-TorcaClientReleaseDeploy -RepoRoot $root -Target $buildTarget -Device $packageDevice -Endpoint $stack.Endpoint
+            Write-TorcaStage -Name 'Release package' -State 'ready' -Detail 'Package verification completed'
         }
         if ($InstallPolicy -ne 'Skip') {
             foreach ($item in $selected) {
@@ -159,6 +176,7 @@ switch ($Command) {
             } else {
                 Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration
             }
+            Write-TorcaStage -Name 'Application launch' -State 'ready' -Detail 'Launch command issued'
         }
     }
 }
