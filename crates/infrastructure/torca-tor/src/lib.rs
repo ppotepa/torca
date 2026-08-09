@@ -145,6 +145,11 @@ impl TorService {
                 let mut last_progress = Instant::now();
                 let mut last_fraction = 0.0_f32;
                 let mut last_status = String::new();
+                // A closed watch stream returns `None` immediately.  Keeping it
+                // in `select!` after that would continuously select this branch,
+                // starve the stall/deadline branches, and leave startup spinning
+                // forever without a terminal diagnostic.
+                let mut events_open = true;
                 tokio::pin!(bootstrap);
                 tokio::pin!(deadline);
                 loop {
@@ -153,17 +158,20 @@ impl TorService {
                             result.map_err(|error| TorError(format!("bootstrap Arti client: {error}")))?;
                             break;
                         }
-                        status = events.next() => {
-                            if let Some(status) = status {
-                                let fraction = status.as_frac();
-                                let status_debug = format!("{status:?}");
-                                if (fraction - last_fraction).abs() > f32::EPSILON
-                                    || status_debug != last_status
-                                {
-                                    last_fraction = fraction;
-                                    last_status = status_debug;
-                                    last_progress = Instant::now();
+                        status = events.next(), if events_open => {
+                            match status {
+                                Some(status) => {
+                                    let fraction = status.as_frac();
+                                    let status_debug = format!("{status:?}");
+                                    if (fraction - last_fraction).abs() > f32::EPSILON
+                                        || status_debug != last_status
+                                    {
+                                        last_fraction = fraction;
+                                        last_status = status_debug;
+                                        last_progress = Instant::now();
+                                    }
                                 }
+                                None => events_open = false,
                             }
                         }
                         _ = stall_tick.tick() => {

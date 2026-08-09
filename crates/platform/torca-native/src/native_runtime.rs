@@ -267,7 +267,9 @@ impl TorcaRuntime {
             TorState::Ready => ("starting", "running", None),
         };
         snapshot.bootstrap_phase = phase.into();
-        if let Some(step) = snapshot.bootstrap_steps.iter_mut().find(|step| step.id == "tor") {
+        if let Some(step) =
+            snapshot.bootstrap_steps.iter_mut().find(|step| step.id == "tor_network")
+        {
             step.state = state.into();
             step.code = code.map(str::to_owned);
         }
