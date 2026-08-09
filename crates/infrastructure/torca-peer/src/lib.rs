@@ -228,11 +228,8 @@ impl<T: PeerTransport, V: HandshakeVerifier> PeerSession<T, V> {
         if self.in_flight.contains(&envelope_id) {
             return Err(PeerSessionError::DuplicateEnvelope);
         }
-        let payload = PeerCodec::encode(&PeerMessage::Data {
-            envelope_id,
-            message_kind,
-            ciphertext,
-        })?;
+        let payload =
+            PeerCodec::encode(&PeerMessage::Data { envelope_id, message_kind, ciphertext })?;
         if let Err(error) = self.transport.send(payload) {
             self.transition_to_reconnecting();
             return Err(error.into());

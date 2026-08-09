@@ -43,7 +43,10 @@ class ConversationHeader extends StatelessWidget {
               ),
               if (value != null)
                 blocked
-                    ? Text('Blocked', style: Theme.of(context).textTheme.bodySmall)
+                    ? Text(
+                        'Blocked',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      )
                     : PeerHealthIndicator(
                         health: value.peerHealth,
                         onPressed: onConnectionDetails,

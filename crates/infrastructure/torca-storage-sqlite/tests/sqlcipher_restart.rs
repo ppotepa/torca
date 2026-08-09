@@ -39,7 +39,7 @@ fn identity() -> Identity {
         IdentityKey::new(KeyId::from_u128(2), KeyAlgorithm::Ed25519, vec![3; 32]).expect("key");
     Identity::new(
         PublicIdentity::new(IdentityId::from_u128(1), key, 0),
-        profile,
+        Some(profile),
         Timestamp::UNIX_EPOCH,
     )
 }

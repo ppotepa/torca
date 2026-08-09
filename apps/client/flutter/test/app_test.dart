@@ -3,29 +3,29 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/app.dart';
 import 'package:torca_app/gateway/engine_gateway.dart';
-import 'package:torca_app/gateway/memory_engine_gateway.dart';
 import 'package:torca_app/navigation/app_navigation_controller.dart';
 import 'package:torca_app/settings/local_preferences.dart';
+import 'fake_engine_gateway.dart';
 
 TorcaApp _app(EngineGateway gateway) => TorcaApp(
-      gateway: gateway,
-      navigation: AppNavigationController(),
-      preferences: LocalPreferences(),
-    );
+  gateway: gateway,
+  navigation: AppNavigationController(),
+  preferences: LocalPreferences(),
+);
 
 void main() {
-  testWidgets('identity setup is the initial recoverable route', (
+  testWidgets('profile setup is the initial recoverable route', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(_app(MemoryEngineGateway()));
-    expect(find.text('Create local identity'), findsWidgets);
+    await tester.pumpWidget(_app(FakeEngineGateway()));
+    expect(find.text('Choose your nickname'), findsWidgets);
     expect(find.text('Torca'), findsOneWidget);
   });
 
   testWidgets('settings are reachable from the shared app menu', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(_app(MemoryEngineGateway()));
+    await tester.pumpWidget(_app(FakeEngineGateway()));
     await tester.tap(find.byTooltip('Application menu'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings'));
@@ -36,23 +36,24 @@ void main() {
     expect(find.text('Enable notifications'), findsOneWidget);
   });
 
-  testWidgets('desktop settings shortcut opens and Escape dismisses the route', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_app(MemoryEngineGateway()));
+  testWidgets(
+    'desktop settings shortcut opens and Escape dismisses the route',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(_app(FakeEngineGateway()));
 
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.comma);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-    await tester.pumpAndSettle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
 
-    expect(find.text('Appearance'), findsOneWidget);
+      expect(find.text('Appearance'), findsOneWidget);
 
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
 
-    expect(find.text('Create local identity'), findsWidgets);
-  });
+      expect(find.text('Choose your nickname'), findsWidgets);
+    },
+  );
 
   testWidgets('wide layout exposes the current pairing flow', (
     WidgetTester tester,
@@ -62,9 +63,9 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(_app(MemoryEngineGateway()));
+    await tester.pumpWidget(_app(FakeEngineGateway()));
     await tester.enterText(find.byType(TextField), 'Alice');
-    await tester.tap(find.widgetWithText(FilledButton, 'Create local identity'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Pair contact'));
@@ -82,12 +83,12 @@ void main() {
     'native startup failure is surfaced instead of silently using memory state',
     (WidgetTester tester) async {
       const String failure = 'native runtime missing';
-      await tester.pumpWidget(_app(UnavailableEngineGateway(failure)));
-      await tester.enterText(find.byType(TextField), 'Alice');
-      await tester.tap(find.widgetWithText(FilledButton, 'Create local identity'));
+      await tester.pumpWidget(_app(StartupFailureGateway(failure)));
       await tester.pump();
 
       expect(find.text(failure), findsOneWidget);
+      expect(find.text('Secure runtime is not ready'), findsOneWidget);
+      expect(find.text('Create local identity'), findsNothing);
     },
   );
 }

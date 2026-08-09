@@ -50,153 +50,164 @@ class _PairingScreenState extends State<PairingScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Pair contact')),
-        body: ValueListenableBuilder<AppSnapshotDto>(
-          valueListenable: widget.gateway.snapshots,
-          builder: (context, snapshot, _) => ListView(
-            padding: const EdgeInsets.all(24),
-            children: <Widget>[
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 560),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      const Card(
-                        child: ListTile(
-                          leading: Icon(Icons.restart_alt),
-                          title: Text('Pairing invitations are temporary'),
-                          subtitle: Text(
-                            'An active invitation is intentionally invalid after Torca restarts. Create a fresh invitation instead of reusing an old code.',
-                          ),
-                        ),
+    appBar: AppBar(title: const Text('Pair contact')),
+    body: ValueListenableBuilder<AppSnapshotDto>(
+      valueListenable: widget.gateway.snapshots,
+      builder: (context, snapshot, _) => ListView(
+        padding: const EdgeInsets.all(24),
+        children: <Widget>[
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Card(
+                    child: ListTile(
+                      leading: Icon(Icons.restart_alt),
+                      title: Text('Pairing invitations are temporary'),
+                      subtitle: Text(
+                        'An active invitation is intentionally invalid after Torca restarts. Create a fresh invitation instead of reusing an old code.',
                       ),
-                      const SizedBox(height: 16),
-                      SegmentedButton<_PairingMode>(
-                        segments: const <ButtonSegment<_PairingMode>>[
-                          ButtonSegment(
-                            value: _PairingMode.create,
-                            icon: Icon(Icons.qr_code_2),
-                            label: Text('Create invitation'),
-                          ),
-                          ButtonSegment(
-                            value: _PairingMode.join,
-                            icon: Icon(Icons.qr_code_scanner),
-                            label: Text('Join invitation'),
-                          ),
-                        ],
-                        selected: <_PairingMode>{_mode},
-                        onSelectionChanged: _primaryBusy
-                            ? null
-                            : (value) => setState(() {
-                                  _mode = value.single;
-                                  _error = null;
-                                }),
-                      ),
-                      const SizedBox(height: 20),
-                      if (_mode == _PairingMode.create) ...<Widget>[
-                        const Text(
-                          'Create a short-lived invitation. The secure Rust runtime owns its ID, code and expiry.',
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          onPressed: _primaryBusy ? null : _create,
-                          icon: _operations.isActive('pairing:create')
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Icon(Icons.add_link),
-                          label: Text(
-                            _operations.isActive('pairing:create')
-                                ? 'Creating…'
-                                : 'Create invitation',
-                          ),
-                        ),
-                      ] else ...<Widget>[
-                        TextField(
-                          controller: _code,
-                          enabled: !_primaryBusy,
-                          textCapitalization: TextCapitalization.characters,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          decoration: InputDecoration(
-                            labelText: 'Pairing code or Torca QR URI',
-                            helperText: 'Enter the code or scan the QR shown by your contact.',
-                            errorText: _error,
-                            suffixIcon: IconButton(
-                              tooltip: 'Scan QR',
-                              onPressed: _primaryBusy ? null : _scan,
-                              icon: _operations.isActive('pairing:scan')
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    )
-                                  : const Icon(Icons.qr_code_scanner),
-                            ),
-                          ),
-                          onSubmitted: _primaryBusy ? null : (_) => _join(),
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          onPressed: _primaryBusy ? null : _join,
-                          icon: _operations.isActive('pairing:join')
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Icon(Icons.link),
-                          label: Text(
-                            _operations.isActive('pairing:join')
-                                ? 'Joining…'
-                                : 'Join invitation',
-                          ),
-                        ),
-                      ],
-                      if (_error != null && _mode == _PairingMode.create) ...<Widget>[
-                        const SizedBox(height: 12),
-                        Text(
-                          _error!,
-                          style: TextStyle(color: Theme.of(context).colorScheme.error),
-                        ),
-                      ],
-                      if (snapshot.pairings.isNotEmpty) ...<Widget>[
-                        const SizedBox(height: 32),
-                        Text('Pairing sessions', style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 12),
-                        ...snapshot.pairings.reversed.map(
-                          (pairing) => _PairingSessionCard(
-                            pairing: pairing,
-                            busy: _operations.anyWithPrefix('pairing:${pairing.id}:'),
-                            onApprove: () => _session(
-                              pairing.id,
-                              'approve',
-                              ApprovePairingCommandDto(sessionIdHex: pairing.id),
-                            ),
-                            onReject: () => _session(
-                              pairing.id,
-                              'reject',
-                              RejectPairingCommandDto(sessionIdHex: pairing.id),
-                            ),
-                            onCancel: () => _session(
-                              pairing.id,
-                              'cancel',
-                              CancelPairingCommandDto(sessionIdHex: pairing.id),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 16),
+                  SegmentedButton<_PairingMode>(
+                    segments: const <ButtonSegment<_PairingMode>>[
+                      ButtonSegment(
+                        value: _PairingMode.create,
+                        icon: Icon(Icons.qr_code_2),
+                        label: Text('Create invitation'),
+                      ),
+                      ButtonSegment(
+                        value: _PairingMode.join,
+                        icon: Icon(Icons.qr_code_scanner),
+                        label: Text('Join invitation'),
+                      ),
+                    ],
+                    selected: <_PairingMode>{_mode},
+                    onSelectionChanged: _primaryBusy
+                        ? null
+                        : (value) => setState(() {
+                            _mode = value.single;
+                            _error = null;
+                          }),
+                  ),
+                  const SizedBox(height: 20),
+                  if (_mode == _PairingMode.create) ...<Widget>[
+                    const Text(
+                      'Create a short-lived invitation. The secure Rust runtime owns its ID, code and expiry.',
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _primaryBusy ? null : _create,
+                      icon: _operations.isActive('pairing:create')
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.add_link),
+                      label: Text(
+                        _operations.isActive('pairing:create')
+                            ? 'Creating…'
+                            : 'Create invitation',
+                      ),
+                    ),
+                  ] else ...<Widget>[
+                    TextField(
+                      controller: _code,
+                      enabled: !_primaryBusy,
+                      textCapitalization: TextCapitalization.characters,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      decoration: InputDecoration(
+                        labelText: 'Pairing code or Torca QR URI',
+                        helperText:
+                            'Enter the code or scan the QR shown by your contact.',
+                        errorText: _error,
+                        suffixIcon: IconButton(
+                          tooltip: 'Scan QR',
+                          onPressed: _primaryBusy ? null : _scan,
+                          icon: _operations.isActive('pairing:scan')
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.qr_code_scanner),
+                        ),
+                      ),
+                      onSubmitted: _primaryBusy ? null : (_) => _join(),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _primaryBusy ? null : _join,
+                      icon: _operations.isActive('pairing:join')
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.link),
+                      label: Text(
+                        _operations.isActive('pairing:join')
+                            ? 'Joining…'
+                            : 'Join invitation',
+                      ),
+                    ),
+                  ],
+                  if (_error != null &&
+                      _mode == _PairingMode.create) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                  if (snapshot.pairings.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 32),
+                    Text(
+                      'Pairing sessions',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    ...snapshot.pairings.reversed.map(
+                      (pairing) => _PairingSessionCard(
+                        pairing: pairing,
+                        busy: _operations.anyWithPrefix(
+                          'pairing:${pairing.id}:',
+                        ),
+                        onApprove: () => _session(
+                          pairing.id,
+                          'approve',
+                          ApprovePairingCommandDto(sessionIdHex: pairing.id),
+                        ),
+                        onReject: () => _session(
+                          pairing.id,
+                          'reject',
+                          RejectPairingCommandDto(sessionIdHex: pairing.id),
+                        ),
+                        onCancel: () => _session(
+                          pairing.id,
+                          'cancel',
+                          CancelPairingCommandDto(sessionIdHex: pairing.id),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   Future<void> _create() async {
     await _run('pairing:create', const CreatePairingCommandDto());
@@ -205,7 +216,9 @@ class _PairingScreenState extends State<PairingScreen> {
   Future<void> _join() async {
     final code = _extractCode(_code.text);
     if (code == null) {
-      setState(() => _error = 'Use a 6–16 character code or a valid Torca QR URI');
+      setState(
+        () => _error = 'Use a 6–16 character code or a valid Torca QR URI',
+      );
       return;
     }
     final result = await _run(
@@ -313,14 +326,20 @@ class _PairingSessionCard extends StatelessWidget {
   final VoidCallback onReject;
   final VoidCallback onCancel;
 
-  bool get _terminal =>
-      const {'rejected', 'cancelled', 'expired', 'completed'}.contains(pairing.state);
-  String get _uri => 'torca://pair?v=1&code=${Uri.encodeQueryComponent(pairing.code)}';
+  bool get _terminal => const {
+    'rejected',
+    'cancelled',
+    'expired',
+    'completed',
+  }.contains(pairing.state);
+  String get _uri =>
+      'torca://pair?v=1&code=${Uri.encodeQueryComponent(pairing.code)}';
 
   @override
   Widget build(BuildContext context) {
     final canReview =
-        pairing.state == 'awaitingapproval' || pairing.state == 'awaiting_approval';
+        pairing.state == 'awaitingapproval' ||
+        pairing.state == 'awaiting_approval';
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -377,7 +396,11 @@ class _PairingSessionCard extends StatelessWidget {
                     label: const Text('Copy code'),
                     onPressed: busy
                         ? null
-                        : () => _copy(context, pairing.code, 'Pairing code copied'),
+                        : () => _copy(
+                            context,
+                            pairing.code,
+                            'Pairing code copied',
+                          ),
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.link),
@@ -412,7 +435,7 @@ class _PairingSessionCard extends StatelessWidget {
               const SizedBox(height: 8),
               TextButton(
                 onPressed: busy ? null : onCancel,
-                child: const Text('Cancel pairing'),
+                child: const Text('Cancel'),
               ),
             ],
           ],
@@ -424,35 +447,43 @@ class _PairingSessionCard extends StatelessWidget {
   Future<void> _copy(BuildContext context, String value, String message) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
   String _stateLabel(String state) => switch (state) {
-        'open' => 'Waiting',
-        'peerjoined' || 'peer_joined' => 'Peer joined',
-        'awaitingapproval' || 'awaiting_approval' => 'Review peer',
-        'approved' => 'Approved',
-        'completed' => 'Connected',
-        'rejected' => 'Rejected',
-        'cancelled' => 'Cancelled',
-        'expired' => 'Expired',
-        _ => state,
-      };
+    'open' => 'Waiting',
+    'peerjoined' || 'peer_joined' => 'Peer joined',
+    'awaitingapproval' || 'awaiting_approval' => 'Review peer',
+    'approved' => 'Approved',
+    'completed' => 'Connected',
+    'rejected' => 'Rejected',
+    'cancelled' => 'Cancelled',
+    'expired' => 'Expired',
+    _ => state,
+  };
 
   String _stateHelp(String state) => switch (state) {
-        'open' => 'Waiting for the other device to join through the short-lived rendezvous.',
-        'peerjoined' || 'peer_joined' || 'awaitingapproval' || 'awaiting_approval' =>
-          'Review the peer before accepting the relationship.',
-        'approved' =>
-          'Your approval was recorded. Waiting for the peer to approve and finish the handshake.',
-        'completed' =>
-          'The direct peer relationship is ready. The rendezvous is no longer used for normal messages.',
-        'rejected' => 'This peer was rejected. Create a new invitation to try again.',
-        'cancelled' => 'Pairing was cancelled. Create or join another invitation when ready.',
-        'expired' => 'The invitation expired. Create a fresh invitation instead of reusing the old code.',
-        _ => 'Pairing is being processed by the secure runtime.',
-      };
+    'open' =>
+      'Waiting for the other device to join through the short-lived rendezvous.',
+    'peerjoined' ||
+    'peer_joined' ||
+    'awaitingapproval' ||
+    'awaiting_approval' => 'Review the peer before accepting the relationship.',
+    'approved' =>
+      'Your approval was recorded. Waiting for the peer to approve and finish the handshake.',
+    'completed' =>
+      'The direct peer relationship is ready. The rendezvous is no longer used for normal messages.',
+    'rejected' =>
+      'This peer was rejected. Create a new invitation to try again.',
+    'cancelled' =>
+      'Pairing was cancelled. Create or join another invitation when ready.',
+    'expired' =>
+      'The invitation expired. Create a fresh invitation instead of reusing the old code.',
+    _ => 'Pairing is being processed by the secure runtime.',
+  };
 
   String _expiryLabel(int milliseconds) {
     final expiry = DateTime.fromMillisecondsSinceEpoch(milliseconds);

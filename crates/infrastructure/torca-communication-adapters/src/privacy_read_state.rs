@@ -1,6 +1,6 @@
 use torca_communication_driver::{CommunicationError, ReadStateRuntime};
 use torca_foundation::{OpaqueId, Timestamp};
-use torca_read_state::SqlCipherReadState;
+use torca_storage_sqlite::SqlCipherReadState;
 
 /// Storage-backed read-state adapter that separates local read state from the optional
 /// privacy-sensitive read receipt sent to the remote peer.

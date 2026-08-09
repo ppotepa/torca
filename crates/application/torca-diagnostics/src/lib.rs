@@ -2,6 +2,7 @@
 
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
+use std::fmt::Write as _;
 
 use torca_foundation::{OpaqueId, Timestamp};
 
@@ -153,7 +154,15 @@ impl DiagnosticBuffer {
             if index > 0 {
                 output.push(',');
             }
-            output.push_str(&format!("{{\"id\":\"{}\",\"at_ms\":{},\"component\":\"{:?}\",\"state\":\"{:?}\",\"code\":\"{}\"", event.event_id, event.at.to_unix_millis(), event.component, event.state, event.code.as_str()));
+            let _ = write!(
+                output,
+                "{{\"id\":\"{}\",\"at_ms\":{},\"component\":\"{:?}\",\"state\":\"{:?}\",\"code\":\"{}\"",
+                event.event_id,
+                event.at.to_unix_millis(),
+                event.component,
+                event.state,
+                event.code.as_str()
+            );
             if let Some(detail) = &event.detail {
                 output.push_str(",\"detail\":\"");
                 push_json_string(detail.as_str(), &mut output);

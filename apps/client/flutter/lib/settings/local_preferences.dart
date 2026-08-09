@@ -6,21 +6,22 @@ import '../theme/app_theme_mode.dart';
 
 class LocalPreferences extends ChangeNotifier {
   LocalPreferences({SharedPreferencesAsync? store})
-      : _store = store ?? SharedPreferencesAsync();
+    : _store = _makeStore(store);
 
-  final SharedPreferencesAsync _store;
+  final _PreferencesStore _store;
 
   static const _themeModeKey = 'appearance.theme_mode';
   static const _localeModeKey = 'appearance.locale_mode';
-  static const _notificationsKey = 'notifications.enabled';
   static const _readReceiptsKey = 'privacy.read_receipts';
   static const _closeToTrayKey = 'desktop.close_to_tray';
 
   AppThemeMode _themeMode = AppThemeMode.system;
-  AppLocaleMode _localeMode = AppLocaleMode.system;
+  // English is the safe pre-load presentation; load() applies the persisted/system choice.
+  AppLocaleMode _localeMode = AppLocaleMode.english;
   bool _notificationsEnabled = true;
   bool _readReceiptsEnabled = true;
   bool _closeToTrayEnabled = true;
+  Future<void> Function(bool enabled)? _runtimeNotificationSetter;
 
   AppThemeMode get themeMode => _themeMode;
   AppLocaleMode get localeMode => _localeMode;
@@ -28,10 +29,23 @@ class LocalPreferences extends ChangeNotifier {
   bool get readReceiptsEnabled => _readReceiptsEnabled;
   bool get closeToTrayEnabled => _closeToTrayEnabled;
 
+  void attachRuntimeNotificationSetting(
+    Future<void> Function(bool enabled) setter,
+  ) {
+    _runtimeNotificationSetter = setter;
+  }
+
+  /// Mirrors the process-runtime setting for presentation and host notification rendering.
+  /// Rust/SQLite remains the source of truth; this value is never persisted in Flutter.
+  void syncNotificationsEnabled(bool value) {
+    if (_notificationsEnabled == value) return;
+    _notificationsEnabled = value;
+    notifyListeners();
+  }
+
   Future<void> load() async {
     _themeMode = AppThemeMode.parse(await _store.getString(_themeModeKey));
     _localeMode = parseAppLocaleMode(await _store.getString(_localeModeKey));
-    _notificationsEnabled = await _store.getBool(_notificationsKey) ?? true;
     _readReceiptsEnabled = await _store.getBool(_readReceiptsKey) ?? true;
     _closeToTrayEnabled = await _store.getBool(_closeToTrayKey) ?? true;
     notifyListeners();
@@ -55,7 +69,7 @@ class LocalPreferences extends ChangeNotifier {
     if (_notificationsEnabled == value) return;
     _notificationsEnabled = value;
     notifyListeners();
-    await _store.setBool(_notificationsKey, value);
+    await _runtimeNotificationSetter?.call(value);
   }
 
   Future<void> setReadReceiptsEnabled(bool value) async {
@@ -71,4 +85,51 @@ class LocalPreferences extends ChangeNotifier {
     notifyListeners();
     await _store.setBool(_closeToTrayKey, value);
   }
+}
+
+_PreferencesStore _makeStore(SharedPreferencesAsync? store) {
+  if (store != null) return _PlatformPreferencesStore(store);
+  try {
+    return _PlatformPreferencesStore(SharedPreferencesAsync());
+  } on StateError {
+    return _MemoryPreferencesStore();
+  }
+}
+
+abstract interface class _PreferencesStore {
+  Future<String?> getString(String key);
+  Future<bool?> getBool(String key);
+  Future<void> setString(String key, String value);
+  Future<void> setBool(String key, bool value);
+}
+
+class _PlatformPreferencesStore implements _PreferencesStore {
+  _PlatformPreferencesStore(this._store);
+  final SharedPreferencesAsync _store;
+
+  @override
+  Future<String?> getString(String key) => _store.getString(key);
+  @override
+  Future<bool?> getBool(String key) => _store.getBool(key);
+  @override
+  Future<void> setString(String key, String value) =>
+      _store.setString(key, value);
+  @override
+  Future<void> setBool(String key, bool value) => _store.setBool(key, value);
+}
+
+class _MemoryPreferencesStore implements _PreferencesStore {
+  final Map<String, Object> _values = <String, Object>{
+    'appearance.locale_mode': 'en',
+  };
+
+  @override
+  Future<String?> getString(String key) async => _values[key] as String?;
+  @override
+  Future<bool?> getBool(String key) async => _values[key] as bool?;
+  @override
+  Future<void> setString(String key, String value) async =>
+      _values[key] = value;
+  @override
+  Future<void> setBool(String key, bool value) async => _values[key] = value;
 }

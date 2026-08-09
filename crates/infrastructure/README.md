@@ -7,7 +7,7 @@ Planned components:
 - [`torca-storage-sqlite`](torca-storage-sqlite/README.md)
 - [`torca-crypto`](torca-crypto/README.md)
 - [`torca-peer`](torca-peer/README.md)
-- [`torca-transport-tor`](torca-transport-tor/README.md)
+- Tor transport and peer framing are owned by [`torca-tor`](torca-tor/README.md).
 - [`torca-rendezvous-client`](torca-rendezvous-client/README.md)
 - [`torca-file-storage`](torca-file-storage/README.md)
 

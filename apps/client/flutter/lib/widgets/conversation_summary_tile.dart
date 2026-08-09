@@ -27,12 +27,14 @@ class ConversationSummaryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final blocked = contact?.status == 'blocked';
     final message = conversation.lastMessageBody;
-    final prefix = conversation.lastMessageDirection == 'outbound' ? 'You: ' : '';
+    final prefix = conversation.lastMessageDirection == 'outbound'
+        ? 'You: '
+        : '';
     final subtitle = blocked
         ? 'Blocked'
         : message == null || message.isEmpty
-            ? 'No messages yet'
-            : '$prefix$message';
+        ? 'No messages yet'
+        : '$prefix$message';
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -71,6 +73,7 @@ class ConversationSummaryTile extends StatelessWidget {
             ConnectionIndicator(
               state: contact?.connectionState ?? 'disconnected',
               blocked: blocked,
+              showLabel: false,
             ),
             if (contact != null)
               IconButton(
@@ -89,7 +92,9 @@ class ConversationSummaryTile extends StatelessWidget {
   static String _timeLabel(int milliseconds) {
     final value = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
     final now = DateTime.now();
-    if (value.year == now.year && value.month == now.month && value.day == now.day) {
+    if (value.year == now.year &&
+        value.month == now.month &&
+        value.day == now.day) {
       return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
     }
     if (value.year == now.year) {

@@ -22,13 +22,27 @@ impl std::error::Error for ProtectedSecretStoreError {}
 ///
 /// Production implementations must use Windows DPAPI/CNG or Android Keystore-backed wrapping.
 /// Implementations must never include secret bytes in errors or diagnostics.
-pub trait ProtectedSecretStore {
+pub trait ProtectedSecretStore: Send {
     /// Stores one secret only when the handle is unused.
     fn insert(&mut self, key_id: KeyId, secret: &[u8]) -> Result<(), ProtectedSecretStoreError>;
     /// Loads one secret into caller-owned memory for the shortest practical duration.
     fn load(&self, key_id: KeyId) -> Result<Option<Vec<u8>>, ProtectedSecretStoreError>;
     /// Deletes one secret.
     fn delete(&mut self, key_id: KeyId) -> Result<bool, ProtectedSecretStoreError>;
+}
+
+impl<T: ProtectedSecretStore + ?Sized> ProtectedSecretStore for Box<T> {
+    fn insert(&mut self, key_id: KeyId, secret: &[u8]) -> Result<(), ProtectedSecretStoreError> {
+        (**self).insert(key_id, secret)
+    }
+
+    fn load(&self, key_id: KeyId) -> Result<Option<Vec<u8>>, ProtectedSecretStoreError> {
+        (**self).load(key_id)
+    }
+
+    fn delete(&mut self, key_id: KeyId) -> Result<bool, ProtectedSecretStoreError> {
+        (**self).delete(key_id)
+    }
 }
 
 /// Identity key provider that combines production algorithms with a protected secret store.

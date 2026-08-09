@@ -13,11 +13,16 @@ abstract final class BridgeErrorPresenter {
       'already_exists' => 'This item already exists.',
       'not_found' => 'The requested item is no longer available.',
       'invalid_input' => 'The supplied value is not valid.',
-      'storage_failure' => 'Encrypted local storage could not complete the operation.',
-      'attachment_failure' => 'The attachment operation could not be completed.',
-      'network_unavailable' => 'The secure Tor peer connection is currently unavailable.',
-      'runtime_unavailable' => 'The secure Torca runtime is currently unavailable.',
-      'operation_conflict' => 'The operation is not valid in the current state.',
+      'storage_failure' =>
+        'Encrypted local storage could not complete the operation.',
+      'attachment_failure' =>
+        'The attachment operation could not be completed.',
+      'network_unavailable' =>
+        'The secure Tor peer connection is currently unavailable.',
+      'runtime_unavailable' =>
+        'The secure Torca runtime is currently unavailable.',
+      'operation_conflict' =>
+        'The operation is not valid in the current state.',
       _ => fallback,
     };
   }

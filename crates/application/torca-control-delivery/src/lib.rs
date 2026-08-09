@@ -64,8 +64,16 @@ pub trait ControlOutboxStore: Send {
         next_attempt_at: Timestamp,
     ) -> Result<(), ControlDeliveryError>;
     fn recover_stale(&mut self, claimed_before: Timestamp) -> Result<usize, ControlDeliveryError>;
-    fn claim_due(&mut self, now: Timestamp, limit: usize) -> Result<Vec<ControlJob>, ControlDeliveryError>;
-    fn reschedule(&mut self, job_id: OpaqueId, next_attempt_at: Timestamp) -> Result<(), ControlDeliveryError>;
+    fn claim_due(
+        &mut self,
+        now: Timestamp,
+        limit: usize,
+    ) -> Result<Vec<ControlJob>, ControlDeliveryError>;
+    fn reschedule(
+        &mut self,
+        job_id: OpaqueId,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), ControlDeliveryError>;
     fn complete(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError>;
     fn dead_letter(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError>;
 }
@@ -133,7 +141,8 @@ impl<T: ControlTransport> ControlDeliveryWorker<T> {
                 }
                 Err(_) => {
                     let delay = retry_delay(job.attempts);
-                    let next = now.checked_add(delay).ok_or(ControlDeliveryError::TimestampOverflow)?;
+                    let next =
+                        now.checked_add(delay).ok_or(ControlDeliveryError::TimestampOverflow)?;
                     self.outbox.reschedule(job.job_id, next)?;
                     report.rescheduled += 1;
                 }
@@ -156,13 +165,12 @@ impl<T: ControlTransport> ControlDeliveryWorker<T> {
         self.outbox.queue(job_id, contact_id, kind, payload, next_attempt_at)
     }
 
-    pub fn into_transport(self) -> T { self.transport }
+    pub fn into_transport(self) -> T {
+        self.transport
+    }
 }
 
 fn retry_delay(attempts: u32) -> Duration {
     let exponent = attempts.saturating_sub(1).min(16);
-    BASE_DELAY
-        .checked_mul(1_u32 << exponent)
-        .unwrap_or(MAX_DELAY)
-        .min(MAX_DELAY)
+    BASE_DELAY.checked_mul(1_u32 << exponent).unwrap_or(MAX_DELAY).min(MAX_DELAY)
 }

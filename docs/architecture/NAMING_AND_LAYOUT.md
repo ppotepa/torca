@@ -28,9 +28,9 @@ docs/
 
 - domain: `torca-identity`, `torca-messaging`;
 - application: `torca-client-engine`, `torca-projections`;
-- infrastructure: `torca-storage-sqlite`, `torca-transport-tor`;
+- infrastructure: `torca-storage-sqlite`, `torca-tor`;
 - protocol: `torca-wire`, `torca-peer-protocol`;
-- platform: `torca-bridge`.
+- platform: `torca-contract`.
 
 Names describe capability, not implementation layer aliases such as `helpers`, `common2`, `manager`, `new-runtime` or `misc`.
 

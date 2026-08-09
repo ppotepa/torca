@@ -8,18 +8,18 @@ import 'package:window_manager/window_manager.dart';
 import '../gateway/engine_gateway.dart';
 import '../navigation/app_navigation_controller.dart';
 import '../settings/local_preferences.dart';
-import 'process_runtime_control.dart';
 
 class DesktopLifecycle with WindowListener, TrayListener {
   DesktopLifecycle(this.gateway, this.preferences, this.navigation);
   final EngineGateway gateway;
   final LocalPreferences preferences;
   final AppNavigationController navigation;
-  final Set<String> _knownInbound = <String>{};
+  StreamSubscription<RuntimeEventDto>? _eventSubscription;
   bool _quitting = false;
 
   Future<void> initialize() async {
     if (!Platform.isWindows) return;
+    await gateway.sendLifecycle('host_started');
     await windowManager.ensureInitialized();
     await windowManager.setPreventClose(true);
     windowManager.addListener(this);
@@ -32,17 +32,17 @@ class DesktopLifecycle with WindowListener, TrayListener {
     if (File(trayIcon).existsSync()) await trayManager.setIcon(trayIcon);
     await trayManager.setToolTip('Torca');
     await _updateTrayMenu();
-    await localNotifier.setup(appName: 'Torca', shortcutPolicy: ShortcutPolicy.requireCreate);
-    for (final message in gateway.snapshots.value.messages) {
-      if (message.direction == 'inbound') _knownInbound.add(message.id);
-    }
-    gateway.snapshots.addListener(_snapshotChanged);
+    await localNotifier.setup(
+      appName: 'Torca',
+      shortcutPolicy: ShortcutPolicy.requireCreate,
+    );
+    _eventSubscription = gateway.events.listen(_runtimeEvent);
     preferences.addListener(_preferencesChanged);
   }
 
   Future<void> dispose() async {
     if (!Platform.isWindows) return;
-    gateway.snapshots.removeListener(_snapshotChanged);
+    await _eventSubscription?.cancel();
     preferences.removeListener(_preferencesChanged);
     windowManager.removeListener(this);
     trayManager.removeListener(this);
@@ -53,31 +53,26 @@ class DesktopLifecycle with WindowListener, TrayListener {
     if (!_quitting) unawaited(_updateTrayMenu());
   }
 
-  void _snapshotChanged() {
+  void _runtimeEvent(RuntimeEventDto event) {
     if (!Platform.isWindows || _quitting) return;
-    final snapshot = gateway.snapshots.value;
     unawaited(_updateTrayMenu());
-    if (!preferences.notificationsEnabled) {
-      for (final message in snapshot.messages) {
-        if (message.direction == 'inbound') _knownInbound.add(message.id);
-      }
-      return;
-    }
-    for (final message in snapshot.messages) {
-      if (message.direction != 'inbound' || !_knownInbound.add(message.id)) continue;
-      unawaited(_notify());
-    }
+    if (preferences.notificationsEnabled) unawaited(_notify());
   }
 
   Future<void> _updateTrayMenu() async {
     if (!Platform.isWindows || _quitting) return;
     final snapshot = gateway.snapshots.value;
-    final readyPeers = snapshot.contacts.where((contact) => contact.peerHealth.state == 'ready').length;
+    final readyPeers = snapshot.contacts
+        .where((contact) => contact.peerHealth.state == 'ready')
+        .length;
     await trayManager.setContextMenu(
       Menu(
         items: <MenuItem>[
           MenuItem(key: 'show', label: 'Show Torca'),
-          MenuItem(key: 'tor-status', label: 'Tor: ${_torLabel(snapshot.torState)}'),
+          MenuItem(
+            key: 'tor-status',
+            label: 'Tor: ${_torLabel(snapshot.torState)}',
+          ),
           MenuItem(key: 'peer-status', label: 'Peers: $readyPeers connected'),
           MenuItem.separator(),
           MenuItem(key: 'pair', label: 'New pairing'),
@@ -89,8 +84,12 @@ class DesktopLifecycle with WindowListener, TrayListener {
   }
 
   Future<void> _notify() async {
-    if (!preferences.notificationsEnabled || await windowManager.isFocused()) return;
-    final notification = LocalNotification(title: 'Torca', body: 'New private message');
+    if (!preferences.notificationsEnabled || await windowManager.isFocused())
+      return;
+    final notification = LocalNotification(
+      title: 'Torca',
+      body: 'New private message',
+    );
     notification.onClick = () {
       unawaited(_showWindow());
     };
@@ -111,10 +110,13 @@ class DesktopLifecycle with WindowListener, TrayListener {
   Future<void> _quit() async {
     if (_quitting) return;
     _quitting = true;
-    gateway.snapshots.removeListener(_snapshotChanged);
+    await _eventSubscription?.cancel();
     preferences.removeListener(_preferencesChanged);
     try {
-      await shutdownProcessRuntime();
+      await gateway.sendLifecycle('terminating');
+      if (gateway is RuntimeShutdownGateway) {
+        await (gateway as RuntimeShutdownGateway).shutdown();
+      }
     } finally {
       await gateway.dispose();
       await trayManager.destroy();
@@ -124,17 +126,18 @@ class DesktopLifecycle with WindowListener, TrayListener {
   }
 
   String _torLabel(String state) => switch (state) {
-        'ready' => 'Connected',
-        'starting' => 'Starting',
-        'reconnecting' => 'Reconnecting',
-        'failed' => 'Failed',
-        _ => state,
-      };
+    'ready' => 'Connected',
+    'starting' => 'Starting',
+    'reconnecting' => 'Reconnecting',
+    'failed' => 'Failed',
+    _ => state,
+  };
 
   @override
   void onWindowClose() {
     if (_quitting) return;
     if (preferences.closeToTrayEnabled) {
+      unawaited(gateway.sendLifecycle('backgrounded'));
       unawaited(windowManager.hide());
     } else {
       unawaited(_quit());

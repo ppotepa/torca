@@ -7,10 +7,15 @@ import 'package:torca_app/screens/connection_details_screen.dart';
 import 'package:torca_app/theme/app_theme.dart';
 
 class _SnapshotGateway implements EngineGateway {
-  _SnapshotGateway(AppSnapshotDto snapshot) : _snapshot = ValueNotifier(snapshot);
+  _SnapshotGateway(AppSnapshotDto snapshot)
+    : _snapshot = ValueNotifier(snapshot);
   final ValueNotifier<AppSnapshotDto> _snapshot;
   @override
   ValueListenable<AppSnapshotDto> get snapshots => _snapshot;
+  @override
+  Stream<RuntimeEventDto> get events => const Stream<RuntimeEventDto>.empty();
+  @override
+  Future<void> sendLifecycle(String event) async {}
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async =>
       const BridgeResultDto(ok: true, kind: 'noop');
@@ -21,7 +26,9 @@ class _SnapshotGateway implements EngineGateway {
 }
 
 void main() {
-  testWidgets('connection details render runtime-owned peer health', (tester) async {
+  testWidgets('connection details render runtime-owned peer health', (
+    tester,
+  ) async {
     final gateway = _SnapshotGateway(
       const AppSnapshotDto(
         contacts: <ContactDto>[

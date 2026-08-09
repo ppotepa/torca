@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use torca_communication_driver::{
-    CommunicationError, PROBE_MESSAGE_KIND, PeerHealthQuality, PeerHealthSnapshot,
-    PeerLinkRuntime, classify_peer_health,
+    CommunicationError, PROBE_MESSAGE_KIND, PeerHealthQuality, PeerHealthSnapshot, PeerLinkRuntime,
+    classify_peer_health,
 };
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
 use torca_foundation::{OpaqueId, Timestamp};
@@ -31,18 +31,8 @@ pub struct HealthPeerLinkAdapter<R, S, K> {
 }
 
 impl<R, S, K> HealthPeerLinkAdapter<R, S, K> {
-    pub fn new(
-        link: SharedPeerLink<S, K>,
-        relationships: R,
-        local_identity_id: OpaqueId,
-    ) -> Self {
-        Self {
-            relationships,
-            link,
-            local_identity_id,
-            health: BTreeMap::new(),
-            probe_sequence: 1,
-        }
+    pub fn new(link: SharedPeerLink<S, K>, relationships: R, local_identity_id: OpaqueId) -> Self {
+        Self { relationships, link, local_identity_id, health: BTreeMap::new(), probe_sequence: 1 }
     }
 }
 
@@ -64,7 +54,8 @@ where
             if entry.previous_state == PeerConnectionState::Ready
                 && state != PeerConnectionState::Ready
             {
-                entry.snapshot.reconnect_attempt = entry.snapshot.reconnect_attempt.saturating_add(1);
+                entry.snapshot.reconnect_attempt =
+                    entry.snapshot.reconnect_attempt.saturating_add(1);
             }
             entry.snapshot.state = state;
             if state != PeerConnectionState::Ready {
@@ -119,11 +110,8 @@ where
                 entry.snapshot.rtt_ms = Some(rtt_ms);
                 entry.snapshot.last_success_at = Some(now);
                 entry.snapshot.consecutive_failures = 0;
-                entry.snapshot.quality = classify_peer_health(
-                    Some(rtt_ms),
-                    0,
-                    Some(Duration::ZERO),
-                );
+                entry.snapshot.quality =
+                    classify_peer_health(Some(rtt_ms), 0, Some(Duration::ZERO));
                 entry.next_probe_at = now.checked_add(PROBE_INTERVAL).unwrap_or(now);
             }
             Err(_) => {
@@ -151,9 +139,7 @@ where
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
-        self.link
-            .maintenance(contacts, now)
-            .map_err(|_| CommunicationError::Peer)?;
+        let _ = self.link.maintenance(contacts, now).map_err(|_| CommunicationError::Peer)?;
         self.refresh_states(contacts, now);
         Ok(())
     }
@@ -228,11 +214,7 @@ where
         entry.snapshot.consecutive_failures = 0;
         if reported != u64::MAX {
             entry.snapshot.rtt_ms = Some(reported);
-            entry.snapshot.quality = classify_peer_health(
-                Some(reported),
-                0,
-                Some(Duration::ZERO),
-            );
+            entry.snapshot.quality = classify_peer_health(Some(reported), 0, Some(Duration::ZERO));
         }
         self.link
             .send_ack(envelope.contact_id, envelope.envelope_id, AckStatus::Accepted)

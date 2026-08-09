@@ -3,6 +3,19 @@
   "version": "0.2.0-alpha.0",
   "build": 1,
   "channel": "alpha",
-  "contractVersion": 11,
-  "wireVersion": 1
+  "contractSchema": 12,
+  "wireVersion": 1,
+  "storageEpoch": 2,
+  "schemaVersion": 1,
+  "nativeAbi": 1,
+  "buildId": "dev",
+  "sourceCommit": "working-tree",
+  "sourceFingerprint": "development",
+  "relayEndpointHash": "configured-at-build",
+  "nativeLibraryHash": "verified-at-package",
+  "applicationArtifactHash": "verified-at-package",
+  "targetPlatform": "windows|android",
+  "targetArchitecture": "x86_64|arm64",
+  "configuration": "release",
+  "builtAt": "not-built"
 }

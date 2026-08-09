@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 torca-foundation = { path = "../../crates/foundation/torca-foundation" }
 torca-relay-protocol = { path = "../../crates/protocol/torca-relay-protocol" }
+torca-tor = { package = "torca-tor", path = "../../crates/infrastructure/torca-tor" }
 
 [lints]
 workspace = true

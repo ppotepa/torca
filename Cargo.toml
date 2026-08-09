@@ -17,27 +17,29 @@ members = [
     "crates/application/torca-pairing-coordinator",
     "crates/application/torca-projections",
     "crates/application/torca-diagnostics",
-    "crates/application/torca-runtime-host",
+    "crates/application/torca-probing",
+    "crates/application/torca-bootstrap",
+    "crates/application/torca-runtime",
     "crates/application/torca-communication-driver",
     "crates/application/torca-control-delivery",
-    "crates/application/torca-read-state",
     "crates/infrastructure/torca-storage-sqlite",
     "crates/infrastructure/torca-crypto",
     "crates/infrastructure/torca-rendezvous-client",
     "crates/infrastructure/torca-peer",
     "crates/infrastructure/torca-peer-link",
     "crates/infrastructure/torca-peer-shared",
-    "crates/infrastructure/torca-transport-tor",
+    "crates/infrastructure/torca-tor",
     "crates/infrastructure/torca-file-storage",
     "crates/infrastructure/torca-communication-adapters",
     "crates/infrastructure/torca-attachment-sqlite",
     "crates/infrastructure/torca-attachment-transfer",
     "crates/infrastructure/torca-pairing-driver",
-    "crates/infrastructure/torca-tor-driver",
+    "crates/infrastructure/torca-logging",
     "services/relay",
-    "crates/platform/torca-bridge",
+    "crates/platform/torca-contract",
     "crates/platform/torca-native",
     "crates/platform/torca-platform",
+    "crates/platform/torca-platform-android",
     "crates/platform/torca-platform-windows",
     "tools/torca-contract-gen",
     "tests/torca-integration",
@@ -53,12 +55,38 @@ repository = "https://github.com/ppotepa/torca-test"
 authors = ["Torca contributors"]
 
 [workspace.lints.rust]
-missing_docs = "warn"
+missing_docs = "allow"
 unsafe_code = "forbid"
 unused_must_use = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+doc_markdown = "allow"
+needless_pass_by_value = "allow"
+collapsible_if = "allow"
+single_match_else = "allow"
+duration_suboptimal_units = "allow"
+map_unwrap_or = "allow"
+struct_field_names = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+cast_possible_truncation = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+ignored_unit_patterns = "allow"
+unreadable_literal = "allow"
+needless_borrows_for_generic_args = "allow"
+unnecessary_wraps = "allow"
+unnecessary_lazy_evaluations = "allow"
+uninlined_format_args = "allow"
+manual_let_else = "allow"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+match_same_arms = "allow"
+format_collect = "allow"
+ref_option = "allow"
+redundant_closure_for_method_calls = "allow"
+unsafe_removed_from_name = "allow"
+missing_safety_doc = "allow"

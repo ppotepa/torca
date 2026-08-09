@@ -9,7 +9,8 @@ class OperationTracker extends ChangeNotifier {
 
   bool isActive(String key) => _active.contains(key);
 
-  bool anyWithPrefix(String prefix) => _active.any((key) => key.startsWith(prefix));
+  bool anyWithPrefix(String prefix) =>
+      _active.any((key) => key.startsWith(prefix));
 
   Future<bool> run(String key, Future<void> Function() action) async {
     if (!_active.add(key)) return false;

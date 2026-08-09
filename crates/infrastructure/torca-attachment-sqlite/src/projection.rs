@@ -37,27 +37,32 @@ impl SqlCipherAttachmentProjection {
         path: impl AsRef<Path>,
         key: &DatabaseKey,
     ) -> Result<Self, AttachmentProjectionError> {
-        let backend = SqlCipherBackend::open(path, key)
-            .map_err(|_| AttachmentProjectionError::Storage)?;
+        let backend =
+            SqlCipherBackend::open(path, key).map_err(|_| AttachmentProjectionError::Storage)?;
         let mut kernel = StorageKernel::new(backend);
         kernel.bootstrap().map_err(|_| AttachmentProjectionError::Storage)?;
         Ok(Self { backend: kernel.into_backend() })
     }
 
     pub fn list(&self) -> Result<Vec<AttachmentProjectionRow>, AttachmentProjectionError> {
-        let mut statement = self.backend.connection().prepare(LIST_SQL)
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(LIST_SQL)
             .map_err(|_| AttachmentProjectionError::Storage)?;
-        let rows = statement.query_map(params![], |row| {
-            Ok((
-                row.get::<_, Vec<u8>>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, i64>(9)?,
-            ))
-        }).map_err(|_| AttachmentProjectionError::Storage)?;
+        let rows = statement
+            .query_map(params![], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            })
+            .map_err(|_| AttachmentProjectionError::Storage)?;
         rows.map(|row| {
             let (id, message_id, name, media_type, size, status, offset) =
                 row.map_err(|_| AttachmentProjectionError::Storage)?;
@@ -72,7 +77,8 @@ impl SqlCipherAttachmentProjection {
                 offset: u64::try_from(offset)
                     .map_err(|_| AttachmentProjectionError::InvalidStoredState)?,
             })
-        }).collect()
+        })
+        .collect()
     }
 }
 

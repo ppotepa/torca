@@ -136,6 +136,7 @@ impl Attachment {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_persisted(
         id: AttachmentId,
         message_id: MessageId,

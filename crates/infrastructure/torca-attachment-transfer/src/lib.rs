@@ -15,15 +15,15 @@ use torca_attachment_protocol::{
     AttachmentChunkFrame, AttachmentCodec, AttachmentCompleteFrame, AttachmentFrame,
     AttachmentMetadataFrame, AttachmentResumeFrame, MAX_ATTACHMENT_CHUNK,
 };
-use torca_attachment_sqlite::{AttachmentTransferState, SqlCipherAttachmentStore};
+use torca_attachment_sqlite::SqlCipherAttachmentStore;
 use torca_attachments::{
     Attachment, AttachmentError, AttachmentId, AttachmentRepository, AttachmentStatus,
 };
-use torca_contacts::{Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository};
-use torca_conversations::ConversationRepository;
-use torca_crypto::{
-    Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, ProtectedSecretStore,
+use torca_contacts::{
+    Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
 };
+use torca_conversations::ConversationRepository;
+use torca_crypto::{Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, ProtectedSecretStore};
 use torca_file_storage::{BlobStore, FileBlobStore};
 use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageDirection, MessageId, MessageRepository};
@@ -141,14 +141,8 @@ where
         let contact = self.contact_for_message(attachment.message_id())?;
         let credential = self.credential(contact.id())?;
         let digest = sha256(plaintext);
-        attachment
-            .begin_encryption(at)
-            .map_err(map_attachment)?;
-        self.store_final_cache(
-            credential.secret_handle(),
-            attachment.id(),
-            plaintext,
-        )?;
+        attachment.begin_encryption(at).map_err(map_attachment)?;
+        self.store_final_cache(credential.secret_handle(), attachment.id(), plaintext)?;
         attachment.mark_queued(at).map_err(map_attachment)?;
         self.metadata.insert(attachment.clone()).map_err(map_attachment)?;
         self.metadata
@@ -165,17 +159,13 @@ where
         max_attachments: usize,
     ) -> Result<AttachmentTransferReport, AttachmentTransferError> {
         let mut report = AttachmentTransferReport::default();
-        for message in messages
-            .iter()
-            .filter(|message| message.direction() == MessageDirection::Outbound)
+        for message in
+            messages.iter().filter(|message| message.direction() == MessageDirection::Outbound)
         {
             if report.attempted >= max_attachments {
                 break;
             }
-            let attachments = self
-                .metadata
-                .for_message(message.id())
-                .map_err(map_attachment)?;
+            let attachments = self.metadata.for_message(message.id()).map_err(map_attachment)?;
             for attachment in attachments {
                 if report.attempted >= max_attachments {
                     break;
@@ -188,9 +178,7 @@ where
                 ) {
                     continue;
                 }
-                if attachment.status() == AttachmentStatus::Failed
-                    && !retry_due(&attachment, now)
-                {
+                if attachment.status() == AttachmentStatus::Failed && !retry_due(&attachment, now) {
                     continue;
                 }
                 report.attempted += 1;
@@ -215,9 +203,7 @@ where
         if envelope.message_kind != ATTACHMENT_MESSAGE_KIND {
             return Err(AttachmentTransferError::Protocol);
         }
-        let contact = self
-            .relationships
-            .get(envelope.contact_id)
+        let contact = ContactRepository::get(&self.relationships, envelope.contact_id)
             .map_err(|_| AttachmentTransferError::Relationship)?
             .ok_or(AttachmentTransferError::Relationship)?;
         let credential = self.credential(contact.id())?;
@@ -227,8 +213,8 @@ where
             contact.remote_identity().identity_id().to_opaque(),
             &envelope.ciphertext,
         )?;
-        let frame = AttachmentCodec::decode(&plaintext)
-            .map_err(|_| AttachmentTransferError::Protocol)?;
+        let frame =
+            AttachmentCodec::decode(&plaintext).map_err(|_| AttachmentTransferError::Protocol)?;
         let outcome = match frame {
             AttachmentFrame::Metadata(metadata) => {
                 self.accept_metadata(contact.id(), metadata, now)?
@@ -249,9 +235,7 @@ where
                 AckStatus::Accepted
             }
         };
-        self.link
-            .send_ack(contact.id(), envelope.envelope_id, ack)
-            .map_err(map_peer)?;
+        self.link.send_ack(contact.id(), envelope.envelope_id, ack).map_err(map_peer)?;
         Ok(outcome)
     }
 
@@ -276,10 +260,7 @@ where
             .map_err(map_attachment)?
             .ok_or(AttachmentTransferError::InvalidState)?;
         let digest = state.content_digest.ok_or(AttachmentTransferError::InvalidState)?;
-        let plaintext = self.load_final_cache(
-            credential.secret_handle(),
-            attachment.id(),
-        )?;
+        let plaintext = self.load_final_cache(credential.secret_handle(), attachment.id())?;
         if u64::try_from(plaintext.len()).ok() != Some(attachment.size())
             || sha256(&plaintext) != digest
         {
@@ -295,12 +276,7 @@ where
                 size: attachment.size(),
                 digest,
             });
-            self.send_frame(
-                &contact,
-                &credential,
-                stable_frame_id(attachment.id(), 1, 0),
-                frame,
-            )?;
+            self.send_frame(&contact, &credential, stable_frame_id(attachment.id(), 1, 0), frame)?;
         }
 
         if state.offset < attachment.size() {
@@ -347,8 +323,7 @@ where
         now: Timestamp,
         error: AttachmentTransferError,
     ) -> Result<T, AttachmentTransferError> {
-        let code = ErrorCode::new("ATTACHMENT_SEND")
-            .map_err(|_| AttachmentTransferError::InvalidState)?;
+        let code = ErrorCode::new("ATTACHMENT_SEND");
         if attachment.status() == AttachmentStatus::Transferring {
             let _ = attachment.mark_failed(now, code);
             let _ = self.metadata.update(attachment);
@@ -363,8 +338,8 @@ where
         envelope_id: OpaqueId,
         frame: AttachmentFrame,
     ) -> Result<LinkAck, AttachmentTransferError> {
-        let plaintext = AttachmentCodec::encode(&frame)
-            .map_err(|_| AttachmentTransferError::Protocol)?;
+        let plaintext =
+            AttachmentCodec::encode(&frame).map_err(|_| AttachmentTransferError::Protocol)?;
         let encrypted = self.seal_wire(
             credential.secret_handle(),
             envelope_id,
@@ -394,11 +369,10 @@ where
             .get(message_id)
             .map_err(|_| AttachmentTransferError::Message)?
             .ok_or(AttachmentTransferError::Message)?;
-        let conversation = self
-            .relationships
-            .get(message.conversation_id())
-            .map_err(|_| AttachmentTransferError::Relationship)?
-            .ok_or(AttachmentTransferError::Relationship)?;
+        let conversation =
+            ConversationRepository::get(&self.relationships, message.conversation_id())
+                .map_err(|_| AttachmentTransferError::Relationship)?
+                .ok_or(AttachmentTransferError::Relationship)?;
         if conversation.contact_id() != contact_id {
             return Err(AttachmentTransferError::Relationship);
         }
@@ -454,10 +428,8 @@ where
             .ok_or(AttachmentTransferError::InvalidState)?;
         let chunk_len = u64::try_from(chunk.bytes.len())
             .map_err(|_| AttachmentTransferError::OffsetMismatch)?;
-        let end = chunk
-            .offset
-            .checked_add(chunk_len)
-            .ok_or(AttachmentTransferError::OffsetMismatch)?;
+        let end =
+            chunk.offset.checked_add(chunk_len).ok_or(AttachmentTransferError::OffsetMismatch)?;
         if end > attachment.size() {
             return Err(AttachmentTransferError::OffsetMismatch);
         }
@@ -499,9 +471,7 @@ where
             .transfer_state(complete.attachment_id)
             .map_err(map_attachment)?
             .ok_or(AttachmentTransferError::InvalidState)?;
-        if state.offset != attachment.size()
-            || state.content_digest != Some(complete.digest)
-        {
+        if state.offset != attachment.size() || state.content_digest != Some(complete.digest) {
             return Err(AttachmentTransferError::InvalidState);
         }
         let plaintext = self.load_staging_plaintext(
@@ -512,30 +482,27 @@ where
         if sha256(&plaintext) != complete.digest {
             return Err(AttachmentTransferError::DigestMismatch);
         }
-        self.store_final_cache(
-            credential.secret_handle(),
-            complete.attachment_id,
-            &plaintext,
-        )?;
+        self.store_final_cache(credential.secret_handle(), complete.attachment_id, &plaintext)?;
         attachment.mark_available(now).map_err(map_attachment)?;
         self.metadata.update(attachment).map_err(map_attachment)?;
         self.remove_staging(complete.attachment_id);
         Ok(InboundAttachmentResult::Completed)
     }
 
-    fn contact_for_message(&self, message_id: MessageId) -> Result<Contact, AttachmentTransferError> {
+    fn contact_for_message(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Contact, AttachmentTransferError> {
         let message = self
             .messages
             .get(message_id)
             .map_err(|_| AttachmentTransferError::Message)?
             .ok_or(AttachmentTransferError::Message)?;
-        let conversation = self
-            .relationships
-            .get(message.conversation_id())
-            .map_err(|_| AttachmentTransferError::Relationship)?
-            .ok_or(AttachmentTransferError::Relationship)?;
-        self.relationships
-            .get(conversation.contact_id())
+        let conversation =
+            ConversationRepository::get(&self.relationships, message.conversation_id())
+                .map_err(|_| AttachmentTransferError::Relationship)?
+                .ok_or(AttachmentTransferError::Relationship)?;
+        ContactRepository::get(&self.relationships, conversation.contact_id())
             .map_err(|_| AttachmentTransferError::Relationship)?
             .ok_or(AttachmentTransferError::Relationship)
     }
@@ -599,10 +566,8 @@ where
         handle: OpaqueId,
         attachment_id: AttachmentId,
     ) -> Result<Vec<u8>, AttachmentTransferError> {
-        let stored = self
-            .cache
-            .read(attachment_id)
-            .map_err(|_| AttachmentTransferError::Storage)?;
+        let stored =
+            self.cache.read(attachment_id).map_err(|_| AttachmentTransferError::Storage)?;
         let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
         self.secrets
             .open_peer_payload(handle, nonce, &cache_aad(attachment_id), &ciphertext)
@@ -651,18 +616,16 @@ where
             let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
             let chunk = self
                 .secrets
-                .open_peer_payload(
-                    handle,
-                    nonce,
-                    &staging_aad(attachment_id, offset),
-                    &ciphertext,
-                )
+                .open_peer_payload(handle, nonce, &staging_aad(attachment_id, offset), &ciphertext)
                 .map_err(|_| AttachmentTransferError::Crypto)?;
             if chunk.is_empty() || chunk.len() > MAX_ATTACHMENT_CHUNK {
                 return Err(AttachmentTransferError::InvalidState);
             }
             offset = offset
-                .checked_add(u64::try_from(chunk.len()).map_err(|_| AttachmentTransferError::InvalidState)?)
+                .checked_add(
+                    u64::try_from(chunk.len())
+                        .map_err(|_| AttachmentTransferError::InvalidState)?,
+                )
                 .ok_or(AttachmentTransferError::InvalidState)?;
             plaintext.extend_from_slice(&chunk);
         }
@@ -690,8 +653,7 @@ fn retry_due(attachment: &Attachment, now: Timestamp) -> bool {
     let attempts = u32::try_from(attachment.attempts().len()).unwrap_or(u32::MAX);
     let exponent = attempts.saturating_sub(1).min(6);
     let delay = Duration::from_secs(1_u64 << exponent).min(RETRY_MAX_DELAY);
-    now.duration_since(attachment.updated_at())
-        .is_some_and(|elapsed| elapsed >= delay)
+    now.duration_since(attachment.updated_at()).is_some_and(|elapsed| elapsed >= delay)
 }
 
 fn stable_frame_id(id: AttachmentId, kind: u8, offset: u64) -> OpaqueId {
@@ -711,11 +673,7 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
-fn peer_aad(
-    envelope_id: OpaqueId,
-    local_identity: OpaqueId,
-    remote_identity: OpaqueId,
-) -> Vec<u8> {
+fn peer_aad(envelope_id: OpaqueId, local_identity: OpaqueId, remote_identity: OpaqueId) -> Vec<u8> {
     let (first, second) = if local_identity <= remote_identity {
         (local_identity, remote_identity)
     } else {
@@ -756,11 +714,8 @@ fn unpack_ciphertext(stored: &[u8]) -> Result<(Nonce, Ciphertext), AttachmentTra
     if stored.len() <= NONCE_BYTES {
         return Err(AttachmentTransferError::Crypto);
     }
-    let nonce = Nonce(
-        stored[..NONCE_BYTES]
-            .try_into()
-            .map_err(|_| AttachmentTransferError::Crypto)?,
-    );
+    let nonce =
+        Nonce(stored[..NONCE_BYTES].try_into().map_err(|_| AttachmentTransferError::Crypto)?);
     Ok((nonce, Ciphertext(stored[NONCE_BYTES..].to_vec())))
 }
 
@@ -773,9 +728,7 @@ fn map_peer(_: PeerLinkError) -> AttachmentTransferError {
 
 #[cfg(not(windows))]
 fn sync_directory(path: &Path) -> Result<(), AttachmentTransferError> {
-    File::open(path)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| AttachmentTransferError::Io)
+    File::open(path).and_then(|file| file.sync_all()).map_err(|_| AttachmentTransferError::Io)
 }
 #[cfg(windows)]
 fn sync_directory(_path: &Path) -> Result<(), AttachmentTransferError> {

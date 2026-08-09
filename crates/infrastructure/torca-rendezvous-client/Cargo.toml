@@ -13,7 +13,7 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
 torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
-torca-transport-tor = { path = "../torca-transport-tor" }
+torca-tor = { package = "torca-tor", path = "../torca-tor" }
 
 [lints]
 workspace = true

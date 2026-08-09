@@ -140,9 +140,6 @@ mod tests {
     fn unknown_message_has_no_receipts() {
         let key = DatabaseKey::new([0x27; 32]);
         let store = SqlCipherReceiptStore::open_in_memory(&key).expect("open store");
-        assert!(store
-            .for_message(MessageId::from_u128(42))
-            .expect("query receipts")
-            .is_empty());
+        assert!(store.for_message(MessageId::from_u128(42)).expect("query receipts").is_empty());
     }
 }

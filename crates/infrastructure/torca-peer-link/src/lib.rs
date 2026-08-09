@@ -1,4 +1,4 @@
-//! Final authenticated Tor peer-link owner for Torca 0.1.
+//! Authenticated Tor peer-link owner for the Torca runtime.
 //!
 //! One instance owns accepted/outgoing sockets, authenticated sessions, reconnect timing and a
 //! bounded queue of encrypted inbound application envelopes. Durable message retry remains outside
@@ -6,7 +6,7 @@
 
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
-use std::net::SocketAddr;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -17,13 +17,11 @@ use torca_crypto::{CryptoProvider, Ed25519HandshakeVerifier, RustCryptoProvider}
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_peer::{PeerSession, PeerSessionError, PeerSessionState, PeerTransport};
 use torca_peer_protocol::{
-    AckStatus, HandshakePolicy, HandshakeSigner, PeerCodec, PeerMessage, build_handshake_ack,
-    build_handshake_hello,
+    AckStatus, HandshakeAck, HandshakeHello, HandshakePolicy, HandshakeSigner, PeerCodec,
+    PeerMessage,
 };
-use torca_transport_tor::{
-    IncomingPeerTransport, PeerListener, Socks5Connector, TorError, TorPeerTransport,
-    TOR_PEER_VIRTUAL_PORT,
-};
+use torca_tor::TorService;
+use torca_tor::{PeerListener, TOR_PEER_VIRTUAL_PORT, TorPeerTransport, TransportError};
 
 const MAX_CLOCK_SKEW_MS: i64 = 2 * 60 * 1000;
 const MAX_PENDING_INCOMING: usize = 64;
@@ -98,7 +96,7 @@ struct ReconnectEntry {
     in_progress: bool,
 }
 
-type IncomingSession = PeerSession<IncomingPeerTransport, Ed25519HandshakeVerifier>;
+type IncomingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
 type OutgoingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
 
 pub struct PeerLink<S, K> {
@@ -106,10 +104,9 @@ pub struct PeerLink<S, K> {
     relationships: S,
     signer: K,
     local_identity_id: OpaqueId,
-    socks_address: SocketAddr,
-    connect_timeout: Duration,
+    tor_client: Arc<TorService>,
     random: RustCryptoProvider,
-    pending: Vec<IncomingPeerTransport>,
+    pending: Vec<TorPeerTransport>,
     incoming: BTreeMap<ContactId, IncomingSession>,
     outgoing: BTreeMap<ContactId, OutgoingSession>,
     reconnect: BTreeMap<ContactId, ReconnectEntry>,
@@ -126,16 +123,14 @@ where
         relationships: S,
         signer: K,
         local_identity_id: OpaqueId,
-        socks_address: SocketAddr,
-        connect_timeout: Duration,
+        tor_client: Arc<TorService>,
     ) -> Self {
         Self {
             listener,
             relationships,
             signer,
             local_identity_id,
-            socks_address,
-            connect_timeout,
+            tor_client,
             random: RustCryptoProvider,
             pending: Vec::new(),
             incoming: BTreeMap::new(),
@@ -210,9 +205,7 @@ where
             return Err(PeerLinkError::NotReady);
         }
         self.send_data(contact_id, envelope_id, message_kind, ciphertext)?;
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .ok_or(PeerLinkError::AckTimeout)?;
+        let deadline = Instant::now().checked_add(timeout).ok_or(PeerLinkError::AckTimeout)?;
         loop {
             let now = system_timestamp()?;
             match self.poll_contact(contact_id, now) {
@@ -225,11 +218,7 @@ where
                         AckStatus::Rejected => Err(PeerLinkError::AckRejected),
                     };
                 }
-                Ok(Some(PeerMessage::Data {
-                    envelope_id,
-                    message_kind,
-                    ciphertext,
-                })) => {
+                Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
                     self.queue_inbound(InboundPeerEnvelope {
                         contact_id,
                         envelope_id,
@@ -378,7 +367,7 @@ where
         let transport = self.pending.swap_remove(index);
         let mut session = PeerSession::new(transport, verifier, policy);
         session.receive(&payload, now).map_err(map_session)?;
-        let ack = build_handshake_ack(hello.session_id, hello.nonce, &self.signer)
+        let ack = HandshakeAck::signed(hello.session_id, hello.nonce, &self.signer)
             .map_err(|_| PeerLinkError::Protocol)?;
         session.send_handshake_ack(ack).map_err(map_session)?;
         let contact_id = contact.id();
@@ -405,16 +394,15 @@ where
             expected_capability: contact.route().capability_id(),
             max_clock_skew_ms: MAX_CLOCK_SKEW_MS,
         };
-        let connector = Socks5Connector::new(self.socks_address, self.connect_timeout);
         let transport = TorPeerTransport::new(
-            connector,
+            self.tor_client.clone(),
             contact.route().onion_address(),
             TOR_PEER_VIRTUAL_PORT,
         );
         let mut session = PeerSession::new(transport, verifier, policy);
         let session_id = self.random_id()?;
         let nonce = self.random_32()?;
-        let hello = build_handshake_hello(
+        let hello = HandshakeHello::signed(
             session_id,
             self.local_identity_id,
             contact.route().capability_id(),
@@ -440,11 +428,7 @@ where
                 .get(&contact_id)
                 .is_some_and(|session| session.state() == PeerSessionState::Ready);
             match self.poll_contact(contact_id, now) {
-                Ok(Some(PeerMessage::Data {
-                    envelope_id,
-                    message_kind,
-                    ciphertext,
-                })) => {
+                Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
                     self.queue_inbound(InboundPeerEnvelope {
                         contact_id,
                         envelope_id,
@@ -469,11 +453,7 @@ where
         let incoming_ids: Vec<_> = self.incoming.keys().copied().collect();
         for contact_id in incoming_ids {
             match self.poll_contact(contact_id, now) {
-                Ok(Some(PeerMessage::Data {
-                    envelope_id,
-                    message_kind,
-                    ciphertext,
-                })) => {
+                Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
                     self.queue_inbound(InboundPeerEnvelope {
                         contact_id,
                         envelope_id,
@@ -609,32 +589,24 @@ where
             self.reconnect.remove(&contact_id);
             return Ok(());
         }
-        let failures = self
-            .reconnect
-            .get(&contact_id)
-            .map_or(1, |entry| entry.failures.saturating_add(1));
+        let failures =
+            self.reconnect.get(&contact_id).map_or(1, |entry| entry.failures.saturating_add(1));
         let delay = self.reconnect_delay(failures)?;
         let next_attempt_at = now.checked_add(delay).ok_or(PeerLinkError::Clock)?;
-        self.reconnect.insert(
-            contact_id,
-            ReconnectEntry { failures, next_attempt_at, in_progress: false },
-        );
+        self.reconnect
+            .insert(contact_id, ReconnectEntry { failures, next_attempt_at, in_progress: false });
         Ok(())
     }
 
     fn reconnect_delay(&mut self, failures: u32) -> Result<Duration, PeerLinkError> {
         let exponent = failures.saturating_sub(1).min(16);
-        let base = RECONNECT_BASE_MS
-            .saturating_mul(1_u64 << exponent)
-            .min(RECONNECT_MAX_MS);
+        let base = RECONNECT_BASE_MS.saturating_mul(1_u64 << exponent).min(RECONNECT_MAX_MS);
         let jitter_room = (base / 4).min(RECONNECT_MAX_MS.saturating_sub(base));
         let jitter = if jitter_room == 0 {
             0
         } else {
             let mut random = [0_u8; 8];
-            self.random
-                .fill_random(&mut random)
-                .map_err(|_| PeerLinkError::Randomness)?;
+            self.random.fill_random(&mut random).map_err(|_| PeerLinkError::Randomness)?;
             u64::from_le_bytes(random) % (jitter_room + 1)
         };
         Ok(Duration::from_millis(base + jitter))
@@ -686,9 +658,7 @@ where
     fn random_id(&mut self) -> Result<OpaqueId, PeerLinkError> {
         for _ in 0..8 {
             let mut bytes = [0_u8; 16];
-            self.random
-                .fill_random(&mut bytes)
-                .map_err(|_| PeerLinkError::Randomness)?;
+            self.random.fill_random(&mut bytes).map_err(|_| PeerLinkError::Randomness)?;
             let id = OpaqueId::from_bytes(bytes);
             if !id.is_nil() {
                 return Ok(id);
@@ -699,9 +669,7 @@ where
 
     fn random_32(&mut self) -> Result<[u8; 32], PeerLinkError> {
         let mut bytes = [0_u8; 32];
-        self.random
-            .fill_random(&mut bytes)
-            .map_err(|_| PeerLinkError::Randomness)?;
+        self.random.fill_random(&mut bytes).map_err(|_| PeerLinkError::Randomness)?;
         Ok(bytes)
     }
 }
@@ -738,14 +706,13 @@ fn map_contact(_: ContactError) -> PeerLinkError {
 fn map_session(_: PeerSessionError) -> PeerLinkError {
     PeerLinkError::Protocol
 }
-fn map_tor(_: TorError) -> PeerLinkError {
+fn map_tor(_: TransportError) -> PeerLinkError {
     PeerLinkError::Listener
 }
 
 fn system_timestamp() -> Result<Timestamp, PeerLinkError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| PeerLinkError::Clock)?;
+    let duration =
+        SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| PeerLinkError::Clock)?;
     let millis = i64::try_from(duration.as_millis()).map_err(|_| PeerLinkError::Clock)?;
     Timestamp::from_unix_millis(millis).map_err(|_| PeerLinkError::Clock)
 }

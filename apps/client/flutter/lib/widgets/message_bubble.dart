@@ -45,7 +45,9 @@ class MessageBubble extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) => ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: constraints.maxWidth < 560 ? constraints.maxWidth * 0.84 : 520,
+            maxWidth: constraints.maxWidth < 560
+                ? constraints.maxWidth * 0.84
+                : 520,
           ),
           child: Padding(
             padding: EdgeInsets.fromLTRB(
@@ -64,13 +66,19 @@ class MessageBubble extends StatelessWidget {
                   onLongPress: onLongPress,
                   child: Ink(
                     padding: const EdgeInsets.fromLTRB(12, 10, 10, 7),
-                    decoration: BoxDecoration(color: background, borderRadius: radius),
+                    decoration: BoxDecoration(
+                      color: background,
+                      borderRadius: radius,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
                         if (quotedBody != null) ...<Widget>[
-                          ReplyQuote(body: quotedBody!, unavailable: quotedUnavailable),
+                          ReplyQuote(
+                            body: quotedBody!,
+                            unavailable: quotedUnavailable,
+                          ),
                           const SizedBox(height: 7),
                         ],
                         SelectableText(message.body),

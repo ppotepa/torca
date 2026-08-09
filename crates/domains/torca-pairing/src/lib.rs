@@ -169,6 +169,39 @@ impl PairingSession {
     pub const fn remote_approved(&self) -> bool {
         self.remote_approved
     }
+    /// Returns the verified remote proposal, when one has been received.
+    pub const fn remote_proposal(&self) -> Option<&PeerProposal> {
+        self.remote_proposal.as_ref()
+    }
+    /// Restores a session from durable storage.
+    pub fn restore(
+        id: PairingSessionId,
+        code: PairingCode,
+        role: PairingRole,
+        state: PairingState,
+        expires_at: Timestamp,
+        local_approved: bool,
+        remote_approved: bool,
+        remote_proposal: Option<PeerProposal>,
+    ) -> Result<Self, PairingError> {
+        if matches!(
+            state,
+            PairingState::AwaitingApproval | PairingState::Approved | PairingState::Completed
+        ) && remote_proposal.is_none()
+        {
+            return Err(PairingError::InvalidTransition);
+        }
+        Ok(Self {
+            id,
+            code,
+            role,
+            state,
+            expires_at,
+            local_approved,
+            remote_approved,
+            remote_proposal,
+        })
+    }
     /// Records the verified remote proposal for either local role.
     pub fn peer_joined(
         &mut self,
@@ -273,6 +306,7 @@ pub enum PairingError {
     MissingProposal,
     AlreadyExists,
     NotFound,
+    Storage,
 }
 impl fmt::Display for PairingError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

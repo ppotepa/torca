@@ -103,7 +103,9 @@ impl IdentityRepository for SqlCipherStore {
     fn insert(&mut self, identity: &Identity) -> Result<(), IdentityRepositoryError> {
         let identity_id = identity.public().identity_id().to_opaque().into_bytes();
         let key_id = identity.public().key().key_id().to_opaque().into_bytes();
-        let avatar = identity.profile().avatar().map(AvatarReference::as_str);
+        let avatar =
+            identity.profile().and_then(|profile| profile.avatar().map(AvatarReference::as_str));
+        let display_name = identity.profile().map(|profile| profile.display_name().as_str());
         self.backend
             .connection()
             .execute(
@@ -114,7 +116,7 @@ impl IdentityRepository for SqlCipherStore {
                     encode_algorithm(identity.public().key().algorithm()),
                     identity.public().key().public_key(),
                     i64::from(identity.public().generation()),
-                    identity.profile().display_name().as_str(),
+                    display_name,
                     avatar,
                     identity.created_at().to_unix_millis(),
                     identity.updated_at().to_unix_millis(),
@@ -130,7 +132,9 @@ impl IdentityRepository for SqlCipherStore {
         identity: &Identity,
     ) -> Result<bool, IdentityRepositoryError> {
         let key_id = identity.public().key().key_id().to_opaque().into_bytes();
-        let avatar = identity.profile().avatar().map(AvatarReference::as_str);
+        let avatar =
+            identity.profile().and_then(|profile| profile.avatar().map(AvatarReference::as_str));
+        let display_name = identity.profile().map(|profile| profile.display_name().as_str());
         let changed = self
             .backend
             .connection()
@@ -141,7 +145,7 @@ impl IdentityRepository for SqlCipherStore {
                     encode_algorithm(identity.public().key().algorithm()),
                     identity.public().key().public_key(),
                     i64::from(identity.public().generation()),
-                    identity.profile().display_name().as_str(),
+                    display_name,
                     avatar,
                     identity.updated_at().to_unix_millis(),
                     i64::from(expected_generation),
@@ -215,10 +219,7 @@ impl ContactRepository for SqlCipherStore {
                 })
             })
             .map_err(|_| ContactError::RepositoryFailure)?;
-        rows.map(|row| {
-            row.map_err(|_| ContactError::RepositoryFailure)?.into_contact()
-        })
-        .collect()
+        rows.map(|row| row.map_err(|_| ContactError::RepositoryFailure)?.into_contact()).collect()
     }
 }
 
@@ -275,19 +276,15 @@ impl ConversationRepository for SqlCipherStore {
         let row = self
             .backend
             .connection()
-            .query_row(
-                conversation_sql::SELECT_BY_ID.sql,
-                params![id_bytes.as_slice()],
-                |row| {
-                    Ok(ConversationRow {
-                        conversation_id: id_bytes.to_vec(),
-                        contact_id: row.get(0)?,
-                        status: row.get(1)?,
-                        created_at_ms: row.get(2)?,
-                        updated_at_ms: row.get(3)?,
-                    })
-                },
-            )
+            .query_row(conversation_sql::SELECT_BY_ID.sql, params![id_bytes.as_slice()], |row| {
+                Ok(ConversationRow {
+                    conversation_id: id_bytes.to_vec(),
+                    contact_id: row.get(0)?,
+                    status: row.get(1)?,
+                    created_at_ms: row.get(2)?,
+                    updated_at_ms: row.get(3)?,
+                })
+            })
             .optional()
             .map_err(|_| ConversationError::RepositoryFailure)?;
         row.map(ConversationRow::into_conversation).transpose()
@@ -336,10 +333,8 @@ impl ConversationRepository for SqlCipherStore {
                 })
             })
             .map_err(|_| ConversationError::RepositoryFailure)?;
-        rows.map(|row| {
-            row.map_err(|_| ConversationError::RepositoryFailure)?.into_conversation()
-        })
-        .collect()
+        rows.map(|row| row.map_err(|_| ConversationError::RepositoryFailure)?.into_conversation())
+            .collect()
     }
 }
 
@@ -364,9 +359,7 @@ impl RelationshipRepository for SqlCipherStore {
                 .map_err(relationship_error)?
                 .is_some()
         {
-            return Err(EngineError(
-                "contact, conversation or credential already exists".into(),
-            ));
+            return Err(EngineError("contact, conversation or credential already exists".into()));
         }
 
         self.backend.begin().map_err(|_| relationship_failure())?;
@@ -394,7 +387,7 @@ struct IdentityRow {
     key_algorithm: i64,
     public_key: Vec<u8>,
     key_generation: i64,
-    display_name: String,
+    display_name: Option<String>,
     avatar_reference: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
@@ -406,31 +399,36 @@ impl IdentityRow {
             self.identity_id,
             "identity_id",
         )?));
-        let key_id = KeyId::from_opaque(OpaqueId::from_bytes(fixed_16_identity(
-            self.key_id,
-            "key_id",
-        )?));
+        let key_id =
+            KeyId::from_opaque(OpaqueId::from_bytes(fixed_16_identity(self.key_id, "key_id")?));
         let algorithm = decode_algorithm(self.key_algorithm)?;
         let generation = u32::try_from(self.key_generation)
             .map_err(|_| data_error("key_generation is outside u32 range"))?;
         let key = IdentityKey::new(key_id, algorithm, self.public_key)
             .map_err(|error| data_error(&format!("invalid public key: {error}")))?;
         let public = PublicIdentity::new(identity_id, key, generation);
-        let name = ProfileName::new(self.display_name)
-            .map_err(|error| data_error(&format!("invalid display name: {error}")))?;
-        let avatar = self
-            .avatar_reference
-            .map(AvatarReference::new)
+        let profile = self
+            .display_name
+            .map(ProfileName::new)
             .transpose()
-            .map_err(|error| data_error(&format!("invalid avatar reference: {error}")))?;
-        let profile = Profile::new(name, avatar);
+            .map_err(|error| data_error(&format!("invalid display name: {error}")))?
+            .map(|name| {
+                let avatar =
+                    self.avatar_reference.clone().map(AvatarReference::new).transpose().map_err(
+                        |error| data_error(&format!("invalid avatar reference: {error}")),
+                    )?;
+                Ok::<Profile, IdentityRepositoryError>(Profile::new(name, avatar))
+            })
+            .transpose()?;
         let created_at = Timestamp::from_unix_millis(self.created_at_ms)
             .map_err(|error| data_error(&format!("invalid created_at: {error}")))?;
         let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
             .map_err(|error| data_error(&format!("invalid updated_at: {error}")))?;
         let mut identity = Identity::new(public, profile.clone(), created_at);
         if updated_at != created_at {
-            identity.update_profile(profile, updated_at);
+            if let Some(profile) = profile {
+                identity.update_profile(profile, updated_at);
+            }
         }
         Ok(identity)
     }
@@ -452,15 +450,13 @@ struct ContactRow {
 
 impl ContactRow {
     fn into_contact(self) -> Result<Contact, ContactError> {
-        let contact_id = ContactId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(
-            self.contact_id,
-        )?));
+        let contact_id =
+            ContactId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(self.contact_id)?));
         let identity_id = IdentityId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(
             self.remote_identity_id,
         )?));
-        let key_id = KeyId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(
-            self.remote_key_id,
-        )?));
+        let key_id =
+            KeyId::from_opaque(OpaqueId::from_bytes(fixed_16_contact(self.remote_key_id)?));
         let algorithm = match self.remote_key_algorithm {
             1 => KeyAlgorithm::Ed25519,
             _ => return Err(ContactError::RepositoryFailure),
@@ -483,14 +479,7 @@ impl ContactRow {
             .map_err(|_| ContactError::RepositoryFailure)?;
         let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
             .map_err(|_| ContactError::RepositoryFailure)?;
-        Ok(Contact::restore(
-            contact_id,
-            remote_identity,
-            route,
-            status,
-            created_at,
-            updated_at,
-        ))
+        Ok(Contact::restore(contact_id, remote_identity, route, status, created_at, updated_at))
     }
 }
 
@@ -507,9 +496,8 @@ impl ConversationRow {
         let id = ConversationId::from_opaque(OpaqueId::from_bytes(fixed_16_conversation(
             self.conversation_id,
         )?));
-        let contact_id = ContactId::from_opaque(OpaqueId::from_bytes(fixed_16_conversation(
-            self.contact_id,
-        )?));
+        let contact_id =
+            ContactId::from_opaque(OpaqueId::from_bytes(fixed_16_conversation(self.contact_id)?));
         let status = match self.status {
             0 => ConversationStatus::Active,
             1 => ConversationStatus::Archived,
@@ -519,13 +507,7 @@ impl ConversationRow {
             .map_err(|_| ConversationError::RepositoryFailure)?;
         let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
             .map_err(|_| ConversationError::RepositoryFailure)?;
-        Ok(DirectConversation::from_persisted(
-            id,
-            contact_id,
-            status,
-            created_at,
-            updated_at,
-        ))
+        Ok(DirectConversation::from_persisted(id, contact_id, status, created_at, updated_at))
     }
 }
 
@@ -593,20 +575,13 @@ fn insert_peer_credential(
         .connection()
         .execute(
             peer_credential_sql::INSERT.sql,
-            params![
-                contact_id.as_slice(),
-                local_capability.as_slice(),
-                secret_handle.as_slice(),
-            ],
+            params![contact_id.as_slice(), local_capability.as_slice(), secret_handle.as_slice(),],
         )
         .map_err(|_| ContactError::RepositoryFailure)?;
     Ok(())
 }
 
-fn fixed_16_identity(
-    value: Vec<u8>,
-    field: &str,
-) -> Result<[u8; 16], IdentityRepositoryError> {
+fn fixed_16_identity(value: Vec<u8>, field: &str) -> Result<[u8; 16], IdentityRepositoryError> {
     value.try_into().map_err(|_| data_error(&format!("{field} must contain 16 bytes")))
 }
 
@@ -696,7 +671,7 @@ mod tests {
         let public_key =
             IdentityKey::new(KeyId::from_u128(2), KeyAlgorithm::Ed25519, vec![7; 32]).expect("key");
         let public = PublicIdentity::new(IdentityId::from_u128(1), public_key, 0);
-        let identity = Identity::new(public, profile, Timestamp::UNIX_EPOCH);
+        let identity = Identity::new(public, Some(profile), Timestamp::UNIX_EPOCH);
         IdentityRepository::insert(&mut store, &identity).expect("insert");
         assert_eq!(IdentityRepository::load(&store).expect("load"), Some(identity));
     }
@@ -716,12 +691,9 @@ mod tests {
             contact.id(),
             Timestamp::UNIX_EPOCH,
         );
-        let credential = PeerCredential::new(
-            contact.id(),
-            OpaqueId::from_u128(24),
-            OpaqueId::from_u128(25),
-        )
-        .expect("credential");
+        let credential =
+            PeerCredential::new(contact.id(), OpaqueId::from_u128(24), OpaqueId::from_u128(25))
+                .expect("credential");
         store
             .insert_pairing_result(contact.clone(), conversation.clone(), credential)
             .expect("insert relationship");

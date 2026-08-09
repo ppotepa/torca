@@ -1,9 +1,7 @@
 use torca_identity::KeyId;
 use torca_peer_protocol::{HandshakeSigner, HandshakeSigningError, HandshakeVerifier};
 
-use crate::{
-    CryptoProvider, ManagedIdentityKeys, ProtectedSecretStore, PublicKey, Signature,
-};
+use crate::{CryptoProvider, ManagedIdentityKeys, ProtectedSecretStore, PublicKey, Signature};
 
 /// Handshake signer backed by a borrowed protected identity-key manager.
 pub struct ManagedHandshakeSigner<'a, C, S> {
@@ -72,8 +70,6 @@ impl<C: CryptoProvider> HandshakeVerifier for Ed25519HandshakeVerifier<C> {
         let Ok(bytes) = <[u8; 64]>::try_from(proof) else {
             return false;
         };
-        self.crypto
-            .verify(&self.public_key, canonical, &Signature(bytes))
-            .is_ok()
+        self.crypto.verify(&self.public_key, canonical, &Signature(bytes)).is_ok()
     }
 }

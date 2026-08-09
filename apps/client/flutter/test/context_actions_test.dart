@@ -4,7 +4,9 @@ import 'package:torca_app/widgets/conversation_actions.dart';
 import 'package:torca_app/widgets/message_actions.dart';
 
 void main() {
-  testWidgets('touch message actions use the shared action model', (tester) async {
+  testWidgets('touch message actions use the shared action model', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
@@ -28,10 +30,8 @@ void main() {
       MaterialApp(
         home: Builder(
           builder: (context) => FilledButton(
-            onPressed: () => ConversationActionMenu.showTouch(
-              context,
-              blocked: true,
-            ),
+            onPressed: () =>
+                ConversationActionMenu.showTouch(context, blocked: true),
             child: const Text('Actions'),
           ),
         ),

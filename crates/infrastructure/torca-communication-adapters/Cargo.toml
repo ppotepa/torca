@@ -1,6 +1,6 @@
 [package]
 name = "torca-communication-adapters"
-version = "0.1.0-alpha.0"
+version.workspace = true
 edition = "2024"
 rust-version = "1.97.1"
 license = "AGPL-3.0-or-later"
@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 sha2 = "0.10"
+torca-attachments = { path = "../../domains/torca-attachments" }
 torca-attachment-sqlite = { path = "../torca-attachment-sqlite" }
 torca-attachment-transfer = { path = "../torca-attachment-transfer" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
@@ -19,14 +20,15 @@ torca-crypto = { path = "../torca-crypto" }
 torca-delivery = { path = "../../application/torca-delivery" }
 torca-file-storage = { path = "../torca-file-storage" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-identity = { path = "../../domains/torca-identity" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-peer-link = { path = "../torca-peer-link" }
+torca-tor = { package = "torca-tor", path = "../torca-tor" }
 torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
 torca-peer-shared = { path = "../torca-peer-shared" }
-torca-read-state = { path = "../../application/torca-read-state" }
 torca-receipts = { path = "../../domains/torca-receipts" }
+torca-runtime = { path = "../../application/torca-runtime" }
 torca-storage-sqlite = { path = "../torca-storage-sqlite" }
-torca-transport-tor = { path = "../torca-transport-tor" }
 
 [lints]
 workspace = true

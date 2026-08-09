@@ -5,7 +5,9 @@ import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/message_bubble.dart';
 
 void main() {
-  testWidgets('message bubble presents reply time and delivery state', (tester) async {
+  testWidgets('message bubble presents reply time and delivery state', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),

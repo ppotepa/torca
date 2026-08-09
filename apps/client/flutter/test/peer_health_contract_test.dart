@@ -2,8 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 
 void main() {
-  test('bridge contract v11 carries nested peer health', () {
-    expect(torcaContractVersion, 11);
+  test('bridge contract v12 carries bootstrap and nested peer health', () {
+    expect(torcaContractVersion, 12);
 
     const health = PeerHealthDto(
       state: 'ready',
@@ -26,9 +26,9 @@ void main() {
     expect(contact.peerHealth.reconnectAttempt, 2);
   });
 
-  test('v11 creation commands carry user intent only', () {
-    const identity = CreateIdentityCommandDto(displayName: 'Alice');
+  test('runtime commands carry user intent only', () {
     const pairing = CreatePairingCommandDto();
+    const profile = UpdateProfileCommandDto(displayName: 'Alice');
     const message = QueueMessageCommandDto(
       conversationIdHex: '00000000000000000000000000000001',
       body: 'hello',
@@ -41,7 +41,7 @@ void main() {
       size: 1,
     );
 
-    expect(identity.displayName, 'Alice');
+    expect(profile.displayName, 'Alice');
     expect(pairing, isA<CreatePairingCommandDto>());
     expect(message.body, 'hello');
     expect(attachment.size, 1);

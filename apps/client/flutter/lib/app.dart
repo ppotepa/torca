@@ -22,12 +22,14 @@ class TorcaApp extends StatefulWidget {
     required this.gateway,
     required this.navigation,
     required this.preferences,
+    this.onRetryBootstrap,
     super.key,
   });
 
   final EngineGateway gateway;
   final AppNavigationController navigation;
   final LocalPreferences preferences;
+  final VoidCallback? onRetryBootstrap;
 
   @override
   State<TorcaApp> createState() => _TorcaAppState();
@@ -54,7 +56,9 @@ class _TorcaAppState extends State<TorcaApp> {
   void didUpdateWidget(covariant TorcaApp oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.navigation == widget.navigation) return;
-    oldWidget.navigation.conversationRequest.removeListener(_conversationRequested);
+    oldWidget.navigation.conversationRequest.removeListener(
+      _conversationRequested,
+    );
     oldWidget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
     oldWidget.navigation.newPairingRequest.removeListener(_newPairingRequested);
     widget.navigation.conversationRequest.addListener(_conversationRequested);
@@ -65,7 +69,9 @@ class _TorcaAppState extends State<TorcaApp> {
 
   @override
   void dispose() {
-    widget.navigation.conversationRequest.removeListener(_conversationRequested);
+    widget.navigation.conversationRequest.removeListener(
+      _conversationRequested,
+    );
     widget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
     widget.navigation.newPairingRequest.removeListener(_newPairingRequested);
     super.dispose();
@@ -76,7 +82,9 @@ class _TorcaAppState extends State<TorcaApp> {
     if (id == null) return;
     final navigator = _navigatorKey.currentState;
     if (navigator == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _conversationRequested());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _conversationRequested(),
+      );
       return;
     }
     widget.navigation.clearConversationRequest();
@@ -119,7 +127,9 @@ class _TorcaAppState extends State<TorcaApp> {
     if (request == _handledPairingRequest) return;
     final navigator = _navigatorKey.currentState;
     if (navigator == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _newPairingRequested());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _newPairingRequested(),
+      );
       return;
     }
     _handledPairingRequest = request;
@@ -134,13 +144,17 @@ class _TorcaAppState extends State<TorcaApp> {
 
   void _openSettings() {
     _navigatorKey.currentState?.push<void>(
-      MaterialPageRoute(builder: (_) => SettingsScreen(preferences: widget.preferences)),
+      MaterialPageRoute(
+        builder: (_) => SettingsScreen(preferences: widget.preferences),
+      ),
     );
   }
 
   void _openDiagnostics() {
     _navigatorKey.currentState?.push<void>(
-      MaterialPageRoute(builder: (_) => DiagnosticsScreen(gateway: widget.gateway)),
+      MaterialPageRoute(
+        builder: (_) => DiagnosticsScreen(gateway: widget.gateway),
+      ),
     );
   }
 
@@ -151,75 +165,78 @@ class _TorcaAppState extends State<TorcaApp> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: widget.preferences,
-        builder: (context, _) => MaterialApp(
-          navigatorKey: _navigatorKey,
-          title: 'Torca',
-          debugShowCheckedModeBanner: false,
-          locale: widget.preferences.localeMode.locale,
-          supportedLocales: TorcaStrings.supportedLocales,
-          localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
-            TorcaStrings.delegate,
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate,
-          ],
-          theme: AppTheme.light(),
-          darkTheme: AppTheme.dark(),
-          themeMode: AppTheme.materialMode(widget.preferences.themeMode),
-          builder: (context, child) => PreferencesScope(
-            preferences: widget.preferences,
-            child: Shortcuts(
-              shortcuts: const <ShortcutActivator, Intent>{
-                SingleActivator(LogicalKeyboardKey.keyN, control: true): _NewPairingIntent(),
-                SingleActivator(LogicalKeyboardKey.comma, control: true): _SettingsIntent(),
-                SingleActivator(
-                  LogicalKeyboardKey.keyD,
-                  control: true,
-                  shift: true,
-                ): _DiagnosticsIntent(),
-                SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
-              },
-              child: Actions(
-                actions: <Type, Action<Intent>>{
-                  _NewPairingIntent: CallbackAction<_NewPairingIntent>(
-                    onInvoke: (_) {
-                      _openPairing();
-                      return null;
-                    },
-                  ),
-                  _SettingsIntent: CallbackAction<_SettingsIntent>(
-                    onInvoke: (_) {
-                      _openSettings();
-                      return null;
-                    },
-                  ),
-                  _DiagnosticsIntent: CallbackAction<_DiagnosticsIntent>(
-                    onInvoke: (_) {
-                      _openDiagnostics();
-                      return null;
-                    },
-                  ),
-                  _DismissIntent: CallbackAction<_DismissIntent>(
-                    onInvoke: (_) {
-                      _dismissTopRoute();
-                      return null;
-                    },
-                  ),
+    listenable: widget.preferences,
+    builder: (context, _) => MaterialApp(
+      navigatorKey: _navigatorKey,
+      title: 'Torca',
+      debugShowCheckedModeBanner: false,
+      locale: widget.preferences.localeMode.locale,
+      supportedLocales: TorcaStrings.supportedLocales,
+      localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+        TorcaStrings.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: AppTheme.materialMode(widget.preferences.themeMode),
+      builder: (context, child) => PreferencesScope(
+        preferences: widget.preferences,
+        child: Shortcuts(
+          shortcuts: const <ShortcutActivator, Intent>{
+            SingleActivator(LogicalKeyboardKey.keyN, control: true):
+                _NewPairingIntent(),
+            SingleActivator(LogicalKeyboardKey.comma, control: true):
+                _SettingsIntent(),
+            SingleActivator(
+              LogicalKeyboardKey.keyD,
+              control: true,
+              shift: true,
+            ): _DiagnosticsIntent(),
+            SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
+          },
+          child: Actions(
+            actions: <Type, Action<Intent>>{
+              _NewPairingIntent: CallbackAction<_NewPairingIntent>(
+                onInvoke: (_) {
+                  _openPairing();
+                  return null;
                 },
-                child: FocusTraversalGroup(
-                  policy: ReadingOrderTraversalPolicy(),
-                  child: child ?? const SizedBox.shrink(),
-                ),
               ),
+              _SettingsIntent: CallbackAction<_SettingsIntent>(
+                onInvoke: (_) {
+                  _openSettings();
+                  return null;
+                },
+              ),
+              _DiagnosticsIntent: CallbackAction<_DiagnosticsIntent>(
+                onInvoke: (_) {
+                  _openDiagnostics();
+                  return null;
+                },
+              ),
+              _DismissIntent: CallbackAction<_DismissIntent>(
+                onInvoke: (_) {
+                  _dismissTopRoute();
+                  return null;
+                },
+              ),
+            },
+            child: FocusTraversalGroup(
+              policy: ReadingOrderTraversalPolicy(),
+              child: child ?? const SizedBox.shrink(),
             ),
           ),
-          home: HomeScreen(
-            gateway: widget.gateway,
-            preferences: widget.preferences,
-          ),
         ),
-      );
+      ),
+      home: HomeScreen(
+        gateway: widget.gateway,
+        preferences: widget.preferences,
+        onRetryBootstrap: widget.onRetryBootstrap,
+      ),
+    ),
+  );
 }
 
 class _NewPairingIntent extends Intent {

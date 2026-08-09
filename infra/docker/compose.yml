@@ -1,0 +1,29 @@
+name: torca
+
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.relay
+    restart: unless-stopped
+    networks: [torca]
+    expose: ["8844"]
+    environment:
+      TORCA_RELAY_BIND: 0.0.0.0:8844
+      TORCA_TOR_STATE: /var/lib/torca/tor
+      TORCA_RELAY_ENDPOINT_FILE: /var/lib/torca/relay_endpoint.txt
+      # Docker Desktop exposes the Windows bind mount with permissive Unix
+      # metadata. Arti's strict fs-mistrust check would reject that mount;
+      # the container has an isolated state volume and does not use host Tor.
+      ARTI_FS_DISABLE_PERMISSION_CHECKS: "1"
+    volumes:
+      - ./../../.torca/stack:/var/lib/torca
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/lib/torca/relay_endpoint.txt"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+networks:
+  torca:
+    driver: bridge

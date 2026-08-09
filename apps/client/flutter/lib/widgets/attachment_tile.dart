@@ -129,15 +129,15 @@ class AttachmentTile extends StatelessWidget {
   }
 
   static String _statusLabel(String status) => switch (status) {
-        'queued' => 'Queued',
-        'preparing' => 'Preparing',
-        'sending' => 'Sending',
-        'receiving' => 'Receiving',
-        'available' => 'Available',
-        'failed' => 'Transfer failed',
-        'cancelled' => 'Cancelled',
-        _ => status,
-      };
+    'queued' => 'Queued',
+    'preparing' => 'Preparing',
+    'sending' => 'Sending',
+    'receiving' => 'Receiving',
+    'available' => 'Available',
+    'failed' => 'Transfer failed',
+    'cancelled' => 'Cancelled',
+    _ => status,
+  };
 }
 
 String formatBytes(int bytes) {

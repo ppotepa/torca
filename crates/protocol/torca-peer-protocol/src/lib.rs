@@ -54,14 +54,8 @@ impl HandshakeHello {
         nonce: [u8; 32],
         signer: &S,
     ) -> Result<Self, HandshakeBuildError> {
-        let mut hello = Self {
-            session_id,
-            identity_id,
-            capability_id,
-            issued_at,
-            nonce,
-            proof: Vec::new(),
-        };
+        let mut hello =
+            Self { session_id, identity_id, capability_id, issued_at, nonce, proof: Vec::new() };
         let proof = signer.sign(&canonical_hello_bytes(&hello))?;
         if proof.len() > MAX_PROOF_LEN {
             return Err(HandshakeBuildError::ProofTooLarge);

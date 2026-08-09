@@ -10,15 +10,14 @@ use torca_relay_protocol::{
     RelaySlotCapability, RelaySlotId, validate_blob,
 };
 
-pub use server::{
-    DEFAULT_MAX_CONNECTIONS, RelayServer, RelayServerConfig, RelayServerError,
-};
+pub use server::{DEFAULT_MAX_CONNECTIONS, RelayServer, RelayServerConfig, RelayServerError};
 
 /// Default maximum number of simultaneously active ephemeral pairing slots.
 pub const DEFAULT_MAX_ACTIVE_SLOTS: usize = 4096;
 const MAX_QUEUED_BLOBS_PER_SIDE: usize = 32;
 
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_field_names)]
 struct Slot {
     id: RelaySlotId,
     expires_at: Timestamp,

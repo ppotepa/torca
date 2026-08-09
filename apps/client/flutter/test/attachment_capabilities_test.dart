@@ -4,13 +4,21 @@ import 'package:torca_app/gateway/engine_gateway.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 
 class _Gateway implements EngineGateway, AttachmentCapabilitiesProvider {
-  final ValueNotifier<AppSnapshotDto> _snapshots = ValueNotifier(const AppSnapshotDto());
+  final ValueNotifier<AppSnapshotDto> _snapshots = ValueNotifier(
+    const AppSnapshotDto(),
+  );
 
   @override
-  AppCapabilities get capabilities => const AppCapabilities(maxAttachmentBytes: 1234);
+  AppCapabilities get capabilities =>
+      const AppCapabilities(maxAttachmentBytes: 1234);
 
   @override
   ValueListenable<AppSnapshotDto> get snapshots => _snapshots;
+
+  @override
+  Stream<RuntimeEventDto> get events => const Stream<RuntimeEventDto>.empty();
+  @override
+  Future<void> sendLifecycle(String event) async {}
 
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async =>

@@ -1,10 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
-use torca_communication_adapters::{
-    ProductionCommunicationInputs, build_production_communication,
-};
+use torca_communication_adapters::{ProductionCommunicationInputs, build_production_communication};
 use torca_crypto::{
     ManagedIdentityKeys, ManagedPeerSecrets, OwnedHandshakeSigner, RustCryptoProvider,
     RustPairingCrypto,
@@ -13,126 +12,98 @@ use torca_pairing_coordinator::{
     PairingApprovalPort, PairingCoordinator, PairingPeerSecretStore, PairingRuntime,
 };
 use torca_pairing_driver::RuntimePairingDriver;
+use torca_platform::{PlatformServices, RelayEndpoint, SecretNamespace};
 use torca_rendezvous_client::{RendezvousClient, TorRelayTransport};
-use torca_runtime_host::{RuntimeHostHandle, RuntimeHostOwner};
-use torca_storage_sqlite::SqlCipherRelationshipAdmin;
-use torca_tor_driver::{OwnedTorDriver, SharedTorEndpoint};
-use torca_transport_tor::{PeerListener, Socks5Connector, TorRuntimeConfig};
-
-use crate::composition::{
-    DATABASE_KEY_HANDLE, NativeCompositionError, load_or_create_database_key,
+use torca_runtime::{
+    OwnedTorDriver, RelayProbe, RuntimeDriverError, RuntimeHandle, RuntimeOwner, SharedTorEndpoint,
 };
+use torca_storage_sqlite::SqlCipherRelationshipAdmin;
+use torca_tor::{PeerListener, TorService};
+
+use crate::composition::{NativeCompositionError, load_or_create_database_key};
 
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(30);
-const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-#[cfg(windows)]
-pub(crate) fn spawn_production_host(
-    engine: EngineHandle,
-) -> Result<(RuntimeHostHandle, RuntimeHostOwner), NativeCompositionError> {
-    use crate::app_paths::windows_app_root;
-    use torca_platform_windows::{DpapiFileSecretStore, discover_packaged_tor};
-
-    let root = windows_app_root()?;
-    let database_path = root.join("data").join("torca.db");
-    let identity_dir = root.join("secrets").join("identity");
-    let peer_dir = root.join("secrets").join("peer");
-
-    let mut database_store = DpapiFileSecretStore::new(root.join("secrets").join("database"))
-        .map_err(|_| NativeCompositionError::new("open database secret store failed"))?;
-    let database_key = load_or_create_database_key(
-        &mut database_store,
-        DATABASE_KEY_HANDLE,
-        RustCryptoProvider,
-    )?;
-    let identity = engine_identity(&engine)?;
-    let key_id = identity.public().key().key_id();
-    let identity_id = identity.public().identity_id().to_opaque();
-
-    let listener = bind_peer_listener()?;
-    let tor_config = TorRuntimeConfig::new(
-        discover_packaged_tor()
-            .map_err(|_| NativeCompositionError::new("resolve packaged Tor executable failed"))?,
-        &root,
-        listener.local_addr(),
-    );
-    let endpoint = SharedTorEndpoint::default();
-    let tor = OwnedTorDriver::bootstrap(
-        tor_config.process.clone(),
-        endpoint.clone(),
-        TOR_STARTUP_TIMEOUT,
-        current_timestamp()?,
-    ).map_err(|_| NativeCompositionError::new("start Tor runtime failed"))?;
-
-    let signer = OwnedHandshakeSigner::new(
-        ManagedIdentityKeys::new(
-            RustCryptoProvider,
-            DpapiFileSecretStore::new(&identity_dir)
-                .map_err(|_| NativeCompositionError::new("open identity signer store failed"))?,
-        ),
-        key_id,
-    );
-    let communication = build_production_communication(
-        engine.clone(),
-        &database_path,
-        &database_key,
-        &root.join("attachments").join("cache"),
-        &root.join("attachments").join("staging"),
-        ProductionCommunicationInputs {
-            signer,
-            peer_secret_store: DpapiFileSecretStore::new(&peer_dir)
-                .map_err(|_| NativeCompositionError::new("open peer secret store failed"))?,
-            attachment_secret_store: DpapiFileSecretStore::new(&peer_dir)
-                .map_err(|_| NativeCompositionError::new("open attachment peer secret store failed"))?,
-            export_secret_store: DpapiFileSecretStore::new(&peer_dir)
-                .map_err(|_| NativeCompositionError::new("open export peer secret store failed"))?,
-            relationship_secret_store: DpapiFileSecretStore::new(&peer_dir)
-                .map_err(|_| NativeCompositionError::new("open relationship peer secret store failed"))?,
-            listener,
-            socks_address: tor_config.process.socks_address,
-            local_identity_id: identity_id,
-        },
-    ).map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
-
-    let metadata = SqlCipherRelationshipAdmin::open(&database_path, &database_key)
-        .map_err(|_| NativeCompositionError::new("open pairing contact metadata store failed"))?;
-    let pairing = build_pairing_driver(
-        engine.clone(),
-        endpoint,
-        tor_config.process.socks_address,
-        read_windows_relay_endpoint()?,
-        ManagedIdentityKeys::new(
-            RustCryptoProvider,
-            DpapiFileSecretStore::new(&identity_dir)
-                .map_err(|_| NativeCompositionError::new("open pairing identity store failed"))?,
-        ),
-        ManagedPeerSecrets::new(
-            RustCryptoProvider,
-            DpapiFileSecretStore::new(&peer_dir)
-                .map_err(|_| NativeCompositionError::new("open pairing peer secret store failed"))?,
-        ),
-    ).with_contact_metadata(metadata);
-
-    Ok(RuntimeHostOwner::spawn(engine, pairing, communication, tor))
+struct TorRelayProbe {
+    tor: Arc<TorService>,
+    host: String,
+    port: u16,
 }
 
-#[cfg(target_os = "android")]
-pub(crate) fn spawn_production_host(
+impl RelayProbe for TorRelayProbe {
+    fn probe(&self) -> Result<(), RuntimeDriverError> {
+        let stream = self
+            .tor
+            .connect_onion_with_timeout(&self.host, self.port, Duration::from_secs(15))
+            .map_err(|_| RuntimeDriverError::Communication)?;
+        stream.peer_addr().map_err(|_| RuntimeDriverError::Communication)?;
+        Ok(())
+    }
+}
+pub(crate) fn spawn_production_runtime(
     engine: EngineHandle,
-) -> Result<(RuntimeHostHandle, RuntimeHostOwner), NativeCompositionError> {
-    use crate::composition::android::{
-        AndroidProtectedSecretStore, database_path, relay_endpoint, runtime_root_path,
-        tor_executable_path,
-    };
+) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
+    #[cfg(windows)]
+    {
+        use crate::app_paths::windows_app_root;
+        use torca_platform_windows::WindowsPlatformServices;
+        let root = windows_app_root()?;
+        let relay = read_windows_relay_endpoint()?;
+        let platform = WindowsPlatformServices::new(
+            root.join("data"),
+            root.join("cache"),
+            root.join("logs"),
+            RelayEndpoint { host: relay.0, port: relay.1 },
+        );
+        return spawn_runtime_for(&platform, engine);
+    }
+    #[cfg(target_os = "android")]
+    {
+        use crate::composition::android::{database_path, log_root_path, relay_endpoint};
+        use torca_platform_android::AndroidPlatformServices;
+        let database = database_path()
+            .map_err(|_| NativeCompositionError::new("resolve Android database path failed"))?;
+        let data = database.parent().map_or_else(|| database.clone(), std::path::Path::to_path_buf);
+        let relay =
+            parse_relay_endpoint(&relay_endpoint().map_err(|_| {
+                NativeCompositionError::new("read packaged relay endpoint failed")
+            })?)?;
+        let platform = AndroidPlatformServices::new(
+            data.clone(),
+            data.join("cache"),
+            log_root_path().unwrap_or_else(|_| data.join("logs")),
+            RelayEndpoint { host: relay.0, port: relay.1 },
+        )
+        .with_secret_store_factory(|namespace| {
+            let name = match namespace {
+                torca_platform::SecretNamespace::Identity => "identity",
+                torca_platform::SecretNamespace::Storage => "database",
+                torca_platform::SecretNamespace::Runtime => "peer",
+            };
+            Box::new(crate::composition::android::AndroidProtectedSecretStore::new(name))
+        });
+        return spawn_runtime_for(&platform, engine);
+    }
+    #[cfg(not(any(windows, target_os = "android")))]
+    {
+        let _ = engine;
+        Err(NativeCompositionError::new(
+            "production network runtime is not implemented for this platform",
+        ))
+    }
+}
 
-    let root = runtime_root_path()
-        .map_err(|_| NativeCompositionError::new("resolve Android runtime root failed"))?;
-    let database_path = database_path()
-        .map_err(|_| NativeCompositionError::new("resolve Android database path failed"))?;
-    let mut database_store = AndroidProtectedSecretStore::new("database");
+fn spawn_runtime_for<P: PlatformServices>(
+    platform: &P,
+    engine: EngineHandle,
+) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
+    let paths = platform.app_paths();
+    let database_path = paths.data.join("torca.db");
+    let mut database_store = platform.open_secret_store(SecretNamespace::Storage);
     let database_key = load_or_create_database_key(
-        &mut database_store,
-        DATABASE_KEY_HANDLE,
+        database_store.as_mut(),
+        crate::composition::DATABASE_KEY_HANDLE,
         RustCryptoProvider,
     )?;
     let identity = engine_identity(&engine)?;
@@ -140,24 +111,24 @@ pub(crate) fn spawn_production_host(
     let identity_id = identity.public().identity_id().to_opaque();
 
     let listener = bind_peer_listener()?;
-    let tor_config = TorRuntimeConfig::new(
-        tor_executable_path()
-            .map_err(|_| NativeCompositionError::new("resolve packaged Tor executable failed"))?,
-        &root,
-        listener.local_addr(),
-    );
     let endpoint = SharedTorEndpoint::default();
-    let tor = OwnedTorDriver::bootstrap(
-        tor_config.process.clone(),
+    let tor = OwnedTorDriver::bootstrap_with_diagnostic(
+        paths.data.join("tor"),
+        listener.local_addr(),
         endpoint.clone(),
         TOR_STARTUP_TIMEOUT,
         current_timestamp()?,
-    ).map_err(|_| NativeCompositionError::new("start Tor runtime failed"))?;
-
+    )
+    .map_err(|(_, error)| {
+        NativeCompositionError::new(format!("start Tor runtime failed: {error}"))
+    })?;
+    let tor_client = tor
+        .client_handle()
+        .ok_or_else(|| NativeCompositionError::new("Arti Tor client is unavailable"))?;
     let signer = OwnedHandshakeSigner::new(
         ManagedIdentityKeys::new(
             RustCryptoProvider,
-            AndroidProtectedSecretStore::new("identity"),
+            platform.open_secret_store(SecretNamespace::Identity),
         ),
         key_id,
     );
@@ -165,40 +136,47 @@ pub(crate) fn spawn_production_host(
         engine.clone(),
         &database_path,
         &database_key,
-        &root.join("attachments").join("cache"),
-        &root.join("attachments").join("staging"),
+        &paths.cache.join("attachments"),
+        &paths.data.join("attachments").join("staging"),
         ProductionCommunicationInputs {
             signer,
-            peer_secret_store: AndroidProtectedSecretStore::new("peer"),
-            attachment_secret_store: AndroidProtectedSecretStore::new("peer"),
-            export_secret_store: AndroidProtectedSecretStore::new("peer"),
-            relationship_secret_store: AndroidProtectedSecretStore::new("peer"),
+            peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
             listener,
-            socks_address: tor_config.process.socks_address,
+            tor_client: tor_client.clone(),
             local_identity_id: identity_id,
         },
-    ).map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
-
+    )
+    .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
     let metadata = SqlCipherRelationshipAdmin::open(&database_path, &database_key)
         .map_err(|_| NativeCompositionError::new("open pairing contact metadata store failed"))?;
-    let relay = relay_endpoint()
-        .map_err(|_| NativeCompositionError::new("read packaged relay endpoint failed"))?;
+    let relay = platform
+        .relay_endpoint()
+        .map_err(NativeCompositionError::new)
+        .map(|endpoint| (endpoint.host, endpoint.port))?;
+    // Relay health is deliberately asynchronous. A relay outage must put the
+    // relay step into degraded state without preventing Tor/onion/profile from
+    // becoming available.
+    let relay_probe: Arc<dyn RelayProbe> =
+        Arc::new(TorRelayProbe { tor: tor_client.clone(), host: relay.0.clone(), port: relay.1 });
     let pairing = build_pairing_driver(
         engine.clone(),
         endpoint,
-        tor_config.process.socks_address,
-        parse_relay_endpoint(&relay)?,
+        tor_client,
+        relay,
         ManagedIdentityKeys::new(
             RustCryptoProvider,
-            AndroidProtectedSecretStore::new("identity"),
+            platform.open_secret_store(SecretNamespace::Identity),
         ),
         ManagedPeerSecrets::new(
             RustCryptoProvider,
-            AndroidProtectedSecretStore::new("peer"),
+            platform.open_secret_store(SecretNamespace::Runtime),
         ),
-    ).with_contact_metadata(metadata);
-
-    Ok(RuntimeHostOwner::spawn(engine, pairing, communication, tor))
+    )
+    .with_contact_metadata(metadata);
+    Ok(RuntimeOwner::spawn_with_relay_probe(engine, pairing, communication, tor, Some(relay_probe)))
 }
 
 fn bind_peer_listener() -> Result<PeerListener, NativeCompositionError> {
@@ -209,7 +187,7 @@ fn bind_peer_listener() -> Result<PeerListener, NativeCompositionError> {
 fn build_pairing_driver<A, S>(
     engine: EngineHandle,
     endpoint: SharedTorEndpoint,
-    socks_address: SocketAddr,
+    tor_client: Arc<TorService>,
     relay: (String, u16),
     approval: A,
     peer_secrets: S,
@@ -218,15 +196,16 @@ where
     A: PairingApprovalPort + Send + 'static,
     S: PairingPeerSecretStore + Send + 'static,
 {
-    let connector = Socks5Connector::new(socks_address, NETWORK_TIMEOUT);
-    let transport = TorRelayTransport::new(connector, relay.0, relay.1);
+    let transport = TorRelayTransport::new(tor_client, relay.0, relay.1);
     let rendezvous = RendezvousClient::new(transport, NETWORK_TIMEOUT);
     let coordinator = PairingCoordinator::new(rendezvous, RustPairingCrypto::new());
     let runtime = PairingRuntime::new(coordinator, engine.clone(), approval, peer_secrets);
     RuntimePairingDriver::new(runtime, engine, endpoint)
 }
 
-fn engine_identity(engine: &EngineHandle) -> Result<torca_identity::Identity, NativeCompositionError> {
+fn engine_identity(
+    engine: &EngineHandle,
+) -> Result<torca_identity::Identity, NativeCompositionError> {
     engine
         .overview_snapshot()
         .map_err(|_| NativeCompositionError::new("load local identity failed"))?
@@ -251,9 +230,9 @@ fn parse_relay_endpoint(value: &str) -> Result<(String, u16), NativeCompositionE
     let (host, port) = value
         .rsplit_once(':')
         .ok_or_else(|| NativeCompositionError::new("relay endpoint must be host.onion:port"))?;
-    let label = host
-        .strip_suffix(".onion")
-        .ok_or_else(|| NativeCompositionError::new("relay endpoint must use a v3 onion hostname"))?;
+    let label = host.strip_suffix(".onion").ok_or_else(|| {
+        NativeCompositionError::new("relay endpoint must use a v3 onion hostname")
+    })?;
     if label.len() != 56 || !label.bytes().all(|byte| matches!(byte, b'a'..=b'z' | b'2'..=b'7')) {
         return Err(NativeCompositionError::new(
             "relay endpoint contains an invalid v3 onion hostname",
@@ -276,13 +255,4 @@ fn current_timestamp() -> Result<torca_foundation::Timestamp, NativeCompositionE
         .map_err(|_| NativeCompositionError::new("system timestamp is out of range"))?;
     torca_foundation::Timestamp::from_unix_millis(millis)
         .map_err(|_| NativeCompositionError::new("system timestamp is invalid"))
-}
-
-#[cfg(not(any(windows, target_os = "android")))]
-pub(crate) fn spawn_production_host(
-    _engine: EngineHandle,
-) -> Result<(RuntimeHostHandle, RuntimeHostOwner), NativeCompositionError> {
-    Err(NativeCompositionError::new(
-        "production network runtime is not implemented for this platform",
-    ))
 }

@@ -11,7 +11,9 @@ void main() {
     expect(formatBytes(4 * 1024 * 1024), '4.00 MiB');
   });
 
-  testWidgets('attachment tile shows transfer progress and actions', (tester) async {
+  testWidgets('attachment tile shows transfer progress and actions', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),

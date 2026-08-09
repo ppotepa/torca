@@ -14,7 +14,7 @@ Derive user-facing availability from multiple independent signals without turnin
 
 ## Does not own
 
-Peer sockets, contact trust, Tor process management, OS background state or UI animation.
+Peer sockets, contact trust, embedded Tor management, OS background state or UI animation.
 
 ## Key rule
 

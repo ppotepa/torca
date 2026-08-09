@@ -26,44 +26,20 @@ class MessageStatusIndicator extends StatelessWidget {
 
 ({IconData icon, String label, bool isError}) _presentation(String status) =>
     switch (status) {
-      'queued' => (
-          icon: Icons.schedule,
-          label: 'Queued',
-          isError: false,
-        ),
-      'sending' => (
-          icon: Icons.sync,
-          label: 'Sending',
-          isError: false,
-        ),
-      'sent' => (
-          icon: Icons.check,
-          label: 'Sent',
-          isError: false,
-        ),
-      'delivered' => (
-          icon: Icons.done_all,
-          label: 'Delivered',
-          isError: false,
-        ),
-      'read' => (
-          icon: Icons.done_all,
-          label: 'Read',
-          isError: false,
-        ),
+      'queued' => (icon: Icons.schedule, label: 'Queued', isError: false),
+      'sending' => (icon: Icons.sync, label: 'Sending', isError: false),
+      'sent' => (icon: Icons.check, label: 'Sent', isError: false),
+      'delivered' => (icon: Icons.done_all, label: 'Delivered', isError: false),
+      'read' => (icon: Icons.done_all, label: 'Read', isError: false),
       'failed' => (
-          icon: Icons.error_outline,
-          label: 'Delivery failed',
-          isError: true,
-        ),
+        icon: Icons.error_outline,
+        label: 'Delivery failed',
+        isError: true,
+      ),
       'cancelled' => (
-          icon: Icons.cancel_outlined,
-          label: 'Cancelled',
-          isError: true,
-        ),
-      _ => (
-          icon: Icons.info_outline,
-          label: status,
-          isError: false,
-        ),
+        icon: Icons.cancel_outlined,
+        label: 'Cancelled',
+        isError: true,
+      ),
+      _ => (icon: Icons.info_outline, label: status, isError: false),
     };

@@ -1,27 +1,43 @@
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
 
-use torca_attachment_transfer::AttachmentTransferStore;
+use torca_attachments::AttachmentId;
 use torca_communication_driver::{CommunicationError, RelationshipAdminRuntime};
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_crypto::ProtectedSecretStore;
+use torca_file_storage::{BlobStore, FileBlobStore};
 use torca_foundation::Timestamp;
-use torca_runtime_host::ContactVerificationSnapshot;
+use torca_identity::KeyId;
+use torca_runtime::ContactVerificationSnapshot;
 use torca_storage_sqlite::SqlCipherRelationshipAdmin;
 
-pub struct RelationshipAdminAdapter<S, A> {
+pub struct RelationshipAdminAdapter<S> {
     metadata: SqlCipherRelationshipAdmin,
     peer_secrets: S,
-    attachments: A,
+    cache: FileBlobStore,
+    staging_root: PathBuf,
 }
-impl<S, A> RelationshipAdminAdapter<S, A> {
-    pub const fn new(metadata: SqlCipherRelationshipAdmin, peer_secrets: S, attachments: A) -> Self {
-        Self { metadata, peer_secrets, attachments }
+
+impl<S> RelationshipAdminAdapter<S> {
+    pub fn new(
+        metadata: SqlCipherRelationshipAdmin,
+        peer_secrets: S,
+        cache: FileBlobStore,
+        staging_root: PathBuf,
+    ) -> Self {
+        Self { metadata, peer_secrets, cache, staging_root }
+    }
+
+    fn delete_attachment_files(&mut self, attachment_id: torca_foundation::OpaqueId) {
+        let id = AttachmentId::from_opaque(attachment_id);
+        let _ = self.cache.remove(id);
+        let _ = fs::remove_dir_all(self.staging_root.join(id.to_string()));
     }
 }
-impl<S: ProtectedSecretStore + Send, A: AttachmentTransferStore + Send> RelationshipAdminRuntime
-    for RelationshipAdminAdapter<S, A>
-{
+
+impl<S: ProtectedSecretStore + Send> RelationshipAdminRuntime for RelationshipAdminAdapter<S> {
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, CommunicationError> {
         self.metadata.contact_names().map_err(|_| CommunicationError::Relationship)
     }
@@ -47,9 +63,7 @@ impl<S: ProtectedSecretStore + Send, A: AttachmentTransferStore + Send> Relation
         contact_id: ContactId,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
-        self.metadata
-            .verify_contact(contact_id, now)
-            .map_err(|_| CommunicationError::Relationship)
+        self.metadata.verify_contact(contact_id, now).map_err(|_| CommunicationError::Relationship)
     }
 
     fn reset_contact_verification(
@@ -77,9 +91,7 @@ impl<S: ProtectedSecretStore + Send, A: AttachmentTransferStore + Send> Relation
         contact_id: ContactId,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
-        self.metadata
-            .block_contact(contact_id, now)
-            .map_err(|_| CommunicationError::Relationship)
+        self.metadata.block_contact(contact_id, now).map_err(|_| CommunicationError::Relationship)
     }
 
     fn unblock_contact(
@@ -87,9 +99,7 @@ impl<S: ProtectedSecretStore + Send, A: AttachmentTransferStore + Send> Relation
         contact_id: ContactId,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
-        self.metadata
-            .unblock_contact(contact_id, now)
-            .map_err(|_| CommunicationError::Relationship)
+        self.metadata.unblock_contact(contact_id, now).map_err(|_| CommunicationError::Relationship)
     }
 
     fn clear_history(&mut self, conversation_id: ConversationId) -> Result<(), CommunicationError> {
@@ -97,10 +107,8 @@ impl<S: ProtectedSecretStore + Send, A: AttachmentTransferStore + Send> Relation
             .metadata
             .clear_conversation_history(conversation_id)
             .map_err(|_| CommunicationError::Relationship)?;
-        for attachment_id in cleanup.attachment_ids {
-            self.attachments
-                .delete_attachment(attachment_id)
-                .map_err(|_| CommunicationError::Attachment)?;
+        for id in cleanup.attachment_ids {
+            self.delete_attachment_files(id);
         }
         Ok(())
     }
@@ -110,14 +118,12 @@ impl<S: ProtectedSecretStore + Send, A: AttachmentTransferStore + Send> Relation
             .metadata
             .remove_contact(contact_id)
             .map_err(|_| CommunicationError::Relationship)?;
-        for attachment_id in cleanup.attachment_ids {
-            self.attachments
-                .delete_attachment(attachment_id)
-                .map_err(|_| CommunicationError::Attachment)?;
+        for id in cleanup.attachment_ids {
+            self.delete_attachment_files(id);
         }
         if let Some(handle) = cleanup.peer_secret_handle {
             self.peer_secrets
-                .delete(torca_identity::KeyId::from_opaque(handle))
+                .delete(KeyId::from_opaque(handle))
                 .map_err(|_| CommunicationError::Relationship)?;
         }
         Ok(())

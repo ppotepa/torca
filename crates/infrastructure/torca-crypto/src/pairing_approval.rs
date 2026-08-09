@@ -28,10 +28,10 @@ where
         let joiner = joiner_offer
             .transcript_component()
             .map_err(|_| PairingApprovalError::InvalidTranscript)?;
-        let creator_len = u32::try_from(creator.len())
-            .map_err(|_| PairingApprovalError::InvalidTranscript)?;
-        let joiner_len = u32::try_from(joiner.len())
-            .map_err(|_| PairingApprovalError::InvalidTranscript)?;
+        let creator_len =
+            u32::try_from(creator.len()).map_err(|_| PairingApprovalError::InvalidTranscript)?;
+        let joiner_len =
+            u32::try_from(joiner.len()).map_err(|_| PairingApprovalError::InvalidTranscript)?;
 
         let mut digest = Sha256::new();
         digest.update(TRANSCRIPT_LABEL);
@@ -69,9 +69,8 @@ where
             .public_key()
             .try_into()
             .map_err(|_| PairingApprovalError::InvalidKey)?;
-        let signature: [u8; 64] = proof
-            .try_into()
-            .map_err(|_| PairingApprovalError::InvalidProof)?;
+        let signature: [u8; 64] =
+            proof.try_into().map_err(|_| PairingApprovalError::InvalidProof)?;
         RustCryptoProvider
             .verify(
                 &PublicKey(public),

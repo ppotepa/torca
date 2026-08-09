@@ -70,9 +70,10 @@ where
             .get(attachment.message_id())
             .map_err(|_| CommunicationError::Attachment)?
             .ok_or(CommunicationError::Attachment)?;
-        let conversation = ConversationRepository::get(&self.relationships, message.conversation_id())
-            .map_err(|_| CommunicationError::Relationship)?
-            .ok_or(CommunicationError::Relationship)?;
+        let conversation =
+            ConversationRepository::get(&self.relationships, message.conversation_id())
+                .map_err(|_| CommunicationError::Relationship)?
+                .ok_or(CommunicationError::Relationship)?;
         let credential = self
             .relationships
             .credential_for_contact(conversation.contact_id())
@@ -82,11 +83,8 @@ where
         if stored.len() <= NONCE_BYTES {
             return Err(CommunicationError::Attachment);
         }
-        let nonce = Nonce(
-            stored[..NONCE_BYTES]
-                .try_into()
-                .map_err(|_| CommunicationError::Attachment)?,
-        );
+        let nonce =
+            Nonce(stored[..NONCE_BYTES].try_into().map_err(|_| CommunicationError::Attachment)?);
         let mut aad = Vec::with_capacity(CACHE_AAD_LABEL.len() + 16);
         aad.extend_from_slice(CACHE_AAD_LABEL);
         aad.extend_from_slice(id.to_opaque().as_bytes());
@@ -132,10 +130,14 @@ fn cleanup_stale_controlled_exports(parent: &Path, now: SystemTime, max_age: Dur
     let Ok(entries) = fs::read_dir(parent) else { return };
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else { continue };
-        if !file_type.is_file() { continue; }
+        if !file_type.is_file() {
+            continue;
+        }
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if !is_controlled_open_export_name(name) { continue; }
+        if !is_controlled_open_export_name(name) {
+            continue;
+        }
         let Ok(metadata) = entry.metadata() else { continue };
         let Ok(modified) = metadata.modified() else { continue };
         let Ok(age) = now.duration_since(modified) else { continue };
@@ -147,10 +149,16 @@ fn cleanup_stale_controlled_exports(parent: &Path, now: SystemTime, max_age: Dur
 
 fn is_controlled_open_export_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("torca-") else { return false };
-    if rest.len() < 32 { return false; }
+    if rest.len() < 32 {
+        return false;
+    }
     let (id, suffix) = rest.split_at(32);
-    if !id.bytes().all(|byte| byte.is_ascii_hexdigit()) { return false; }
-    if suffix.is_empty() { return true; }
+    if !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return false;
+    }
+    if suffix.is_empty() {
+        return true;
+    }
     let Some(extension) = suffix.strip_prefix('.') else { return false };
     (1..=10).contains(&extension.len())
         && extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
@@ -162,18 +170,10 @@ mod tests {
 
     #[test]
     fn controlled_open_export_names_are_strictly_bounded() {
-        assert!(is_controlled_open_export_name(
-            "torca-0123456789abcdef0123456789abcdef"
-        ));
-        assert!(is_controlled_open_export_name(
-            "torca-0123456789abcdef0123456789abcdef.pdf"
-        ));
+        assert!(is_controlled_open_export_name("torca-0123456789abcdef0123456789abcdef"));
+        assert!(is_controlled_open_export_name("torca-0123456789abcdef0123456789abcdef.pdf"));
         assert!(!is_controlled_open_export_name("torca-short.pdf"));
-        assert!(!is_controlled_open_export_name(
-            "torca-0123456789abcdef0123456789abcdef.tar.gz"
-        ));
-        assert!(!is_controlled_open_export_name(
-            "report-0123456789abcdef0123456789abcdef.pdf"
-        ));
+        assert!(!is_controlled_open_export_name("torca-0123456789abcdef0123456789abcdef.tar.gz"));
+        assert!(!is_controlled_open_export_name("report-0123456789abcdef0123456789abcdef.pdf"));
     }
 }

@@ -46,7 +46,7 @@ impl ContactRoute {
     ) -> Result<Self, ContactError> {
         let onion_address = onion_address.into();
         if onion_address.len() > 255
-            || !onion_address.ends_with(".onion")
+            || !onion_address.to_ascii_lowercase().ends_with(".onion")
             || onion_address.chars().any(char::is_whitespace)
         {
             return Err(ContactError::InvalidOnionAddress);

@@ -15,7 +15,7 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageId, MessageRepository};
 use torca_peer_link::InboundPeerEnvelope;
 use torca_peer_protocol::HandshakeSigner;
-use torca_runtime_host::{AttachmentSendRequest, AttachmentView};
+use torca_runtime::{AttachmentSendRequest, AttachmentView};
 
 /// Attachment adapter with separate SQLCipher control/projection connections. Transfer and user
 /// controls operate on durable attachment rows; the UI projection no longer needs full message
@@ -35,22 +35,19 @@ impl<R, M, S, K, C, P> AttachmentControlAdapter<R, M, S, K, C, P> {
     }
 
     fn projection_snapshot(&self) -> Result<Vec<AttachmentView>, CommunicationError> {
-        self.projection
-            .list()
-            .map_err(|_| CommunicationError::Attachment)
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|row| AttachmentView {
-                        id: row.id,
-                        message_id: row.message_id,
-                        name: row.name,
-                        media_type: row.media_type,
-                        size: row.size,
-                        status: row.status,
-                        offset: row.offset,
-                    })
-                    .collect()
-            })
+        self.projection.list().map_err(|_| CommunicationError::Attachment).map(|rows| {
+            rows.into_iter()
+                .map(|row| AttachmentView {
+                    id: row.id,
+                    message_id: row.message_id,
+                    name: row.name,
+                    media_type: row.media_type,
+                    size: row.size,
+                    status: row.status,
+                    offset: row.offset,
+                })
+                .collect()
+        })
     }
 }
 
@@ -68,8 +65,8 @@ where
         request: &AttachmentSendRequest,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
-        let metadata = std::fs::metadata(&request.source_path)
-            .map_err(|_| CommunicationError::Attachment)?;
+        let metadata =
+            std::fs::metadata(&request.source_path).map_err(|_| CommunicationError::Attachment)?;
         if !metadata.is_file()
             || metadata.len() != request.size
             || request.size == 0
@@ -77,8 +74,8 @@ where
         {
             return Err(CommunicationError::Attachment);
         }
-        let maximum = usize::try_from(MAX_ATTACHMENT_BYTES)
-            .map_err(|_| CommunicationError::Attachment)?;
+        let maximum =
+            usize::try_from(MAX_ATTACHMENT_BYTES).map_err(|_| CommunicationError::Attachment)?;
         let mut bytes = Vec::with_capacity(
             usize::try_from(request.size).map_err(|_| CommunicationError::Attachment)?,
         );
@@ -94,12 +91,17 @@ where
         let attachment = Attachment::prepare(
             AttachmentId::from_opaque(request.attachment_id),
             MessageId::from_opaque(request.message_id),
-            AttachmentName::new(request.name.clone()).map_err(|_| CommunicationError::Attachment)?,
-            MediaType::new(request.media_type.clone()).map_err(|_| CommunicationError::Attachment)?,
+            AttachmentName::new(request.name.clone())
+                .map_err(|_| CommunicationError::Attachment)?,
+            MediaType::new(request.media_type.clone())
+                .map_err(|_| CommunicationError::Attachment)?,
             request.size,
             now,
-        ).map_err(|_| CommunicationError::Attachment)?;
-        let result = self.transfer.prepare_outgoing(attachment, &bytes, now)
+        )
+        .map_err(|_| CommunicationError::Attachment)?;
+        let result = self
+            .transfer
+            .prepare_outgoing(attachment, &bytes, now)
             .map(|_| ())
             .map_err(|_| CommunicationError::Attachment);
         bytes.fill(0);
@@ -108,7 +110,9 @@ where
 
     fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError> {
         let id = AttachmentId::from_opaque(attachment_id);
-        let mut attachment = self.control.get(id)
+        let mut attachment = self
+            .control
+            .get(id)
             .map_err(|_| CommunicationError::Attachment)?
             .ok_or(CommunicationError::Attachment)?;
         match attachment.status() {
@@ -121,9 +125,15 @@ where
         }
     }
 
-    fn cancel(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError> {
+    fn cancel(
+        &mut self,
+        attachment_id: OpaqueId,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError> {
         let id = AttachmentId::from_opaque(attachment_id);
-        let mut attachment = self.control.get(id)
+        let mut attachment = self
+            .control
+            .get(id)
             .map_err(|_| CommunicationError::Attachment)?
             .ok_or(CommunicationError::Attachment)?;
         attachment.cancel(now).map_err(|_| CommunicationError::Attachment)?;
@@ -143,7 +153,8 @@ where
         envelope: InboundPeerEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
-        self.transfer.process_inbound(envelope, now)
+        self.transfer
+            .process_inbound(envelope, now)
             .map(|_| ())
             .map_err(|_| CommunicationError::Attachment)
     }
@@ -154,7 +165,8 @@ where
         now: Timestamp,
         limit: usize,
     ) -> Result<(), CommunicationError> {
-        self.transfer.maintenance_outgoing(messages, now, limit)
+        self.transfer
+            .maintenance_outgoing(messages, now, limit)
             .map(|_| ())
             .map_err(|_| CommunicationError::Attachment)
     }

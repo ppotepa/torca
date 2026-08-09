@@ -34,18 +34,13 @@ where
     ) -> Result<OpaqueId, PairingCredentialError> {
         let handle = self.new_handle()?;
         self.store
-            .insert(
-                KeyId::from_opaque(handle),
-                secret.expose_for_protected_storage(),
-            )
+            .insert(KeyId::from_opaque(handle), secret.expose_for_protected_storage())
             .map_err(|_| PairingCredentialError::Storage)?;
         Ok(handle)
     }
 
     fn delete_peer_secret(&mut self, handle: OpaqueId) -> Result<bool, PairingCredentialError> {
-        self.store
-            .delete(KeyId::from_opaque(handle))
-            .map_err(|_| PairingCredentialError::Storage)
+        self.store.delete(KeyId::from_opaque(handle)).map_err(|_| PairingCredentialError::Storage)
     }
 }
 
@@ -57,9 +52,7 @@ where
     /// Generates an AEAD nonce without exposing the protected key.
     pub fn peer_nonce(&mut self) -> Result<Nonce, PeerSecretError> {
         let mut bytes = [0_u8; 24];
-        self.crypto
-            .fill_random(&mut bytes)
-            .map_err(|_| PeerSecretError::Crypto)?;
+        self.crypto.fill_random(&mut bytes).map_err(|_| PeerSecretError::Crypto)?;
         Ok(Nonce(bytes))
     }
 
@@ -115,9 +108,7 @@ where
     fn new_handle(&mut self) -> Result<OpaqueId, PairingCredentialError> {
         for _ in 0..8 {
             let mut bytes = [0_u8; 16];
-            self.crypto
-                .fill_random(&mut bytes)
-                .map_err(|_| PairingCredentialError::Storage)?;
+            self.crypto.fill_random(&mut bytes).map_err(|_| PairingCredentialError::Storage)?;
             let handle = OpaqueId::from_bytes(bytes);
             if !handle.is_nil() {
                 return Ok(handle);

@@ -8,5 +8,9 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[dependencies]
+torca-crypto = { path = "../../infrastructure/torca-crypto" }
+torca-identity = { path = "../../domains/torca-identity" }
+
 [lints]
 workspace = true

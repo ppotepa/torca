@@ -42,6 +42,8 @@ local.properties
 secrets/
 runtime/
 artifacts/
+.torca/
+/logs/
 
 # OS
 .DS_Store

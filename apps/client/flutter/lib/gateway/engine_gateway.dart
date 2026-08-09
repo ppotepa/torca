@@ -2,11 +2,50 @@ import 'package:flutter/foundation.dart';
 
 import '../generated/torca_contract.dart';
 
+class RuntimeEventDto {
+  const RuntimeEventDto({
+    required this.cursor,
+    required this.eventId,
+    required this.kind,
+    required this.conversationId,
+    required this.contactDisplayName,
+    required this.createdAtMs,
+  });
+
+  factory RuntimeEventDto.fromJson(Map<String, dynamic> value) =>
+      RuntimeEventDto(
+        cursor: (value['cursor'] as num?)?.toInt() ?? 0,
+        eventId: value['eventId'] as String? ?? '',
+        kind: value['kind'] as String? ?? '',
+        conversationId: value['conversationId'] as String? ?? '',
+        contactDisplayName: value['contactDisplayName'] as String? ?? '',
+        createdAtMs: (value['createdAtMs'] as num?)?.toInt() ?? 0,
+      );
+
+  final int cursor;
+  final String eventId;
+  final String kind;
+  final String conversationId;
+  final String contactDisplayName;
+  final int createdAtMs;
+}
+
 abstract interface class EngineGateway {
   ValueListenable<AppSnapshotDto> get snapshots;
+  Stream<RuntimeEventDto> get events;
+  Future<void> sendLifecycle(String event);
   Future<BridgeResultDto> execute(BridgeCommandDto command);
   Future<String> diagnosticsJson();
   Future<void> dispose();
+}
+
+abstract interface class GatewayAvailability {
+  bool get isAvailable;
+  String? get failureReason;
+}
+
+abstract interface class PairingUriParser {
+  Future<String?> parsePairingUri(String rawUri);
 }
 
 class AppCapabilities {
@@ -20,14 +59,11 @@ abstract interface class AttachmentCapabilitiesProvider {
 
 AppCapabilities capabilitiesFor(EngineGateway gateway) =>
     gateway is AttachmentCapabilitiesProvider
-        ? gateway.capabilities
-        : const AppCapabilities(maxAttachmentBytes: 16 * 1024 * 1024);
+    ? (gateway as AttachmentCapabilitiesProvider).capabilities
+    : const AppCapabilities(maxAttachmentBytes: 16 * 1024 * 1024);
 
 class ConversationPageDto {
-  const ConversationPageDto({
-    required this.messages,
-    required this.hasMore,
-  });
+  const ConversationPageDto({required this.messages, required this.hasMore});
 
   final List<MessageDto> messages;
   final bool hasMore;
@@ -54,27 +90,15 @@ Future<ConversationPageDto> conversationPageFor(
   int limit = 100,
 }) async {
   if (gateway is ConversationHistoryProvider) {
-    return gateway.loadConversationPage(
+    return (gateway as ConversationHistoryProvider).loadConversationPage(
       conversationId,
       before: before,
       limit: limit,
     );
   }
-  final all = gateway.snapshots.value.messages
-      .where((message) => message.conversationId == conversationId)
-      .toList(growable: false)
-    ..sort(_messageOrder);
-  final filtered = before == null
-      ? all
-      : all
-          .where((message) => _messageOrder(message, before) < 0)
-          .toList(growable: false);
-  final bounded = limit.clamp(1, 200);
-  final start = filtered.length > bounded ? filtered.length - bounded : 0;
-  return ConversationPageDto(
-    messages: filtered.sublist(start),
-    hasMore: start > 0,
-  );
+  // History is a paginated Rust query. No UI-side filtering of root snapshots
+  // is allowed, even for gateways that do not expose the optional capability.
+  return const ConversationPageDto(messages: <MessageDto>[], hasMore: false);
 }
 
 Future<ConversationPageDto> searchConversationFor(
@@ -84,41 +108,23 @@ Future<ConversationPageDto> searchConversationFor(
   int limit = 100,
 }) async {
   if (gateway is ConversationHistoryProvider) {
-    return gateway.searchConversation(conversationId, query, limit: limit);
+    return (gateway as ConversationHistoryProvider).searchConversation(
+      conversationId,
+      query,
+      limit: limit,
+    );
   }
-  final normalized = query.trim().toLowerCase();
-  if (normalized.isEmpty) {
-    return const ConversationPageDto(messages: <MessageDto>[], hasMore: false);
-  }
-  final messages = gateway.snapshots.value.messages
-      .where(
-        (message) =>
-            message.conversationId == conversationId &&
-            message.body.toLowerCase().contains(normalized),
-      )
-      .toList(growable: false)
-    ..sort(_messageOrder);
-  final bounded = limit.clamp(1, 200);
-  return ConversationPageDto(
-    messages: messages.length <= bounded
-        ? messages
-        : messages.sublist(messages.length - bounded),
-    hasMore: messages.length > bounded,
-  );
-}
-
-int _messageOrder(MessageDto first, MessageDto second) {
-  final byTime = first.createdAtMs.compareTo(second.createdAtMs);
-  return byTime != 0 ? byTime : first.id.compareTo(second.id);
+  return const ConversationPageDto(messages: <MessageDto>[], hasMore: false);
 }
 
 /// Optional host capability used only for an explicit application-level Quit.
-abstract interface class ProcessRuntimeControl {
+abstract interface class RuntimeShutdownGateway {
   Future<void> shutdown();
 }
 
-class UnavailableEngineGateway implements EngineGateway, ProcessRuntimeControl {
-  UnavailableEngineGateway(this.reason);
+class StartupFailureGateway
+    implements EngineGateway, RuntimeShutdownGateway, GatewayAvailability {
+  StartupFailureGateway(this.reason);
 
   final String reason;
   final ValueNotifier<AppSnapshotDto> _snapshots =
@@ -128,9 +134,21 @@ class UnavailableEngineGateway implements EngineGateway, ProcessRuntimeControl {
   ValueListenable<AppSnapshotDto> get snapshots => _snapshots;
 
   @override
+  Stream<RuntimeEventDto> get events => const Stream<RuntimeEventDto>.empty();
+
+  @override
+  bool get isAvailable => false;
+
+  @override
+  String get failureReason => reason;
+
+  @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     return BridgeResultDto(ok: false, kind: 'error', error: reason);
   }
+
+  @override
+  Future<void> sendLifecycle(String event) async {}
 
   @override
   Future<String> diagnosticsJson() async => '{"events":[]}';

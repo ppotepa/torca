@@ -21,11 +21,14 @@ class ConnectionIndicator extends StatelessWidget {
       state: state,
       blocked: blocked,
     );
+    final semantic = Theme.of(context).extension<AppSemanticColors>();
+    final scheme = Theme.of(context).colorScheme;
     final color = switch (presentation.tone) {
-      ConnectionTone.ready => context.semanticColors.connectionReady,
-      ConnectionTone.connecting => context.semanticColors.connectionConnecting,
-      ConnectionTone.offline => context.semanticColors.connectionOffline,
-      ConnectionTone.blocked => context.semanticColors.destructive,
+      ConnectionTone.ready => semantic?.connectionReady ?? scheme.primary,
+      ConnectionTone.connecting =>
+        semantic?.connectionConnecting ?? scheme.tertiary,
+      ConnectionTone.offline => semantic?.connectionOffline ?? scheme.outline,
+      ConnectionTone.blocked => semantic?.destructive ?? scheme.error,
     };
     return Tooltip(
       message: presentation.tooltip,

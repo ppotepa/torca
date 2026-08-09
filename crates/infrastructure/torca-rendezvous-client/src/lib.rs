@@ -163,16 +163,15 @@ impl<T: RelayTransport> RendezvousClient<T> {
                 Err(RendezvousClientError::OutcomeUnknown(error.kind))
             }
             Err(first_error) => {
-                self.transport
-                    .reconnect()
-                    .map_err(RendezvousClientError::Transport)?;
-                let response = self.transport.exchange(&request, self.timeout).map_err(|error| {
-                    if error.request_was_sent {
-                        RendezvousClientError::OutcomeUnknown(error.kind)
-                    } else {
-                        RendezvousClientError::Transport(first_error)
-                    }
-                })?;
+                self.transport.reconnect().map_err(RendezvousClientError::Transport)?;
+                let response =
+                    self.transport.exchange(&request, self.timeout).map_err(|error| {
+                        if error.request_was_sent {
+                            RendezvousClientError::OutcomeUnknown(error.kind)
+                        } else {
+                            RendezvousClientError::Transport(first_error)
+                        }
+                    })?;
                 checked_response(response)
             }
         }

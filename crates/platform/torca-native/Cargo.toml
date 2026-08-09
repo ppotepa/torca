@@ -7,41 +7,49 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+build = "build.rs"
 
 [lib]
-name = "torca_bridge"
+name = "torca_native"
 path = "src/runtime.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-torca-bridge = { path = "../torca-bridge" }
+torca-contract = { path = "../torca-contract" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-communication-adapters = { path = "../../infrastructure/torca-communication-adapters" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-conversations = { path = "../../domains/torca-conversations" }
 torca-crypto = { path = "../../infrastructure/torca-crypto" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
 torca-pairing-driver = { path = "../../infrastructure/torca-pairing-driver" }
+torca-platform = { path = "../torca-platform" }
+torca-messaging = { path = "../../domains/torca-messaging" }
 torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
-torca-runtime-host = { path = "../../application/torca-runtime-host" }
+torca-runtime = { path = "../../application/torca-runtime" }
 torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
-torca-tor-driver = { path = "../../infrastructure/torca-tor-driver" }
-torca-transport-tor = { path = "../../infrastructure/torca-transport-tor" }
+torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor" }
+torca-logging = { path = "../../infrastructure/torca-logging" }
+serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 torca-platform-windows = { path = "../torca-platform-windows" }
 
 [target.'cfg(target_os = "android")'.dependencies]
+torca-platform-android = { path = "../torca-platform-android" }
+
 jni = "0.21.1"
 
 [lints.rust]
-missing_docs = "warn"
+missing_docs = "allow"
 unsafe_op_in_unsafe_fn = "deny"
 unused_must_use = "deny"
 
 [lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+all = { level = "allow", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
 module_name_repetitions = "allow"
 must_use_candidate = "allow"

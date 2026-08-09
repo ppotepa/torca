@@ -197,14 +197,18 @@ impl PublicIdentity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Identity {
     public: PublicIdentity,
-    profile: Profile,
+    profile: Option<Profile>,
     created_at: Timestamp,
     updated_at: Timestamp,
 }
 
 impl Identity {
     /// Creates a local identity.
-    pub const fn new(public: PublicIdentity, profile: Profile, created_at: Timestamp) -> Self {
+    pub const fn new(
+        public: PublicIdentity,
+        profile: Option<Profile>,
+        created_at: Timestamp,
+    ) -> Self {
         Self { public, profile, created_at, updated_at: created_at }
     }
     /// Returns the public representation.
@@ -212,8 +216,8 @@ impl Identity {
         &self.public
     }
     /// Returns the local profile.
-    pub const fn profile(&self) -> &Profile {
-        &self.profile
+    pub const fn profile(&self) -> Option<&Profile> {
+        self.profile.as_ref()
     }
     /// Returns the creation timestamp.
     pub const fn created_at(&self) -> Timestamp {
@@ -225,7 +229,7 @@ impl Identity {
     }
     /// Updates the profile.
     pub fn update_profile(&mut self, profile: Profile, at: Timestamp) {
-        self.profile = profile;
+        self.profile = Some(profile);
         self.updated_at = at;
     }
     /// Replaces the public key and increments generation.
@@ -253,7 +257,7 @@ pub struct GeneratedSigningKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateIdentity {
     pub identity_id: IdentityId,
-    pub profile: Profile,
+    pub profile: Option<Profile>,
     pub at: Timestamp,
 }
 /// Input for profile mutation.

@@ -155,14 +155,8 @@ impl PairingCryptoPort for RustPairingCrypto {
         associated_data: &[u8],
         plaintext: &[u8],
     ) -> Result<Vec<u8>, PairingCoordinatorError> {
-        self.seal_pairing(
-            local_key,
-            remote_public_key,
-            nonce,
-            associated_data,
-            plaintext,
-        )
-        .map_err(|_| PairingCoordinatorError::Crypto)
+        self.seal_pairing(local_key, remote_public_key, nonce, associated_data, plaintext)
+            .map_err(|_| PairingCoordinatorError::Crypto)
     }
 
     fn open_from_peer(
@@ -173,14 +167,8 @@ impl PairingCryptoPort for RustPairingCrypto {
         associated_data: &[u8],
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, PairingCoordinatorError> {
-        self.open_pairing(
-            local_key,
-            remote_public_key,
-            nonce,
-            associated_data,
-            ciphertext,
-        )
-        .map_err(|_| PairingCoordinatorError::Crypto)
+        self.open_pairing(local_key, remote_public_key, nonce, associated_data, ciphertext)
+            .map_err(|_| PairingCoordinatorError::Crypto)
     }
 
     fn derive_peer_secret(

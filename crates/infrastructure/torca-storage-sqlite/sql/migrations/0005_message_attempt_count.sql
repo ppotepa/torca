@@ -1,1 +1,0 @@
-ALTER TABLE messages ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;

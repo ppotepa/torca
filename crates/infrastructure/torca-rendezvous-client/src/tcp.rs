@@ -41,10 +41,8 @@ impl RelayTransport for TcpRelayTransport {
         request: &RelayRequest,
         timeout: Duration,
     ) -> Result<RelayResponse, RelayTransportError> {
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or_else(|| before_send(std::io::ErrorKind::NotConnected))?;
+        let stream =
+            self.stream.as_mut().ok_or_else(|| before_send(std::io::ErrorKind::NotConnected))?;
         exchange_stream(stream, request, timeout)
     }
 }

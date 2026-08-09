@@ -13,16 +13,20 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import com.torca.app.MainActivity
 import org.json.JSONObject
 
 /** Process-level owner for the Rust Torca runtime independent from FlutterActivity recreation. */
 class TorcaForegroundService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private val knownInboundMessages = HashSet<String>()
-    private var notificationSnapshotSeeded = false
+    private var notificationCursor = 0L
     private val notificationPoller = object : Runnable {
         override fun run() {
+            if (!NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                handler.postDelayed(this, RUNTIME_WAIT_MS)
+                return
+            }
             pollMessageNotifications()
             handler.postDelayed(this, NOTIFICATION_POLL_MS)
         }
@@ -30,6 +34,8 @@ class TorcaForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        notificationCursor = getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
+            .getLong(NOTIFICATION_CURSOR, 0L)
         AndroidKeystoreBridge.initialize(applicationContext)
         createServiceChannel()
         createMessageChannel()
@@ -66,11 +72,20 @@ class TorcaForegroundService : Service() {
         } else {
             startForeground(SERVICE_NOTIFICATION_ID, notification)
         }
-        check(NativeRuntimeBridge.nativeEnsureRuntime()) {
-            "Unable to initialize Torca process runtime"
-        }
-        pollMessageNotifications()
-        handler.postDelayed(notificationPoller, NOTIFICATION_POLL_MS)
+        // The service is the process-level owner of the native runtime. Flutter only
+        // observes the same runtime through FFI; it must not be the sole starter,
+        // otherwise a restarted foreground service can remain alive without Tor.
+        Thread {
+            try {
+                val available = NativeRuntimeBridge.nativeEnsureRuntime()
+                if (!available) {
+                    Log.e(TAG, "Native Torca runtime reported unavailable")
+                }
+            } catch (error: Throwable) {
+                Log.e(TAG, "Native Torca runtime startup failed", error)
+            }
+        }.start()
+        handler.post(notificationPoller)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -82,58 +97,28 @@ class TorcaForegroundService : Service() {
     }
 
     private fun pollMessageNotifications() {
-        val raw = NativeRuntimeBridge.nativeNotificationSnapshotJson() ?: return
+        val raw = NativeRuntimeBridge.nativeNotificationSnapshotJson(notificationCursor) ?: return
         val snapshot = try { JSONObject(raw) } catch (_: Exception) { return }
-        val contactNames = HashMap<String, String>()
-        val contacts = snapshot.optJSONArray("contacts")
-        if (contacts != null) {
-            for (index in 0 until contacts.length()) {
-                val contact = contacts.optJSONObject(index) ?: continue
-                val id = contact.optString("id")
-                val name = contact.optString("displayName", "Torca contact")
-                if (id.isNotEmpty()) contactNames[id] = name
+        val events = snapshot.optJSONArray("events") ?: return
+        val newEvents = ArrayList<Triple<String, String, String>>()
+        for (index in 0 until events.length()) {
+            val event = events.optJSONObject(index) ?: continue
+            val cursor = event.optLong("cursor", 0L)
+            if (cursor <= notificationCursor) continue
+            notificationCursor = maxOf(notificationCursor, cursor)
+            getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
+                .edit().putLong(NOTIFICATION_CURSOR, notificationCursor).apply()
+            val eventId = event.optString("eventId")
+            val conversationId = event.optString("conversationId")
+            if (eventId.isNotEmpty() && conversationId.isNotEmpty()) {
+                newEvents.add(Triple(eventId, conversationId, event.optString("contactDisplayName", "Torca contact")))
             }
         }
-        val conversationContacts = HashMap<String, String>()
-        val conversations = snapshot.optJSONArray("conversations")
-        if (conversations != null) {
-            for (index in 0 until conversations.length()) {
-                val conversation = conversations.optJSONObject(index) ?: continue
-                val id = conversation.optString("id")
-                val contactId = conversation.optString("contactId")
-                if (id.isNotEmpty() && contactId.isNotEmpty()) {
-                    conversationContacts[id] = contactId
-                }
-            }
-        }
-        val newMessages = ArrayList<Triple<String, String, String>>()
-        val messages = snapshot.optJSONArray("messages")
-        if (messages != null) {
-            for (index in 0 until messages.length()) {
-                val message = messages.optJSONObject(index) ?: continue
-                if (message.optString("direction") != "inbound") continue
-                val messageId = message.optString("id")
-                val conversationId = message.optString("conversationId")
-                if (messageId.isEmpty() || conversationId.isEmpty()) continue
-                if (!knownInboundMessages.add(messageId)) continue
-                val contactId = conversationContacts[conversationId]
-                val displayName = contactId?.let(contactNames::get) ?: "Torca contact"
-                newMessages.add(Triple(messageId, conversationId, displayName))
-            }
-        }
-        if (!notificationSnapshotSeeded) {
-            notificationSnapshotSeeded = true
-            return
-        }
-        if (!messageNotificationsEnabled() || MainActivity.isVisible) return
-        for ((messageId, conversationId, displayName) in newMessages) {
-            showMessageNotification(messageId, conversationId, displayName)
+        if (MainActivity.isVisible) return
+        for ((eventId, conversationId, displayName) in newEvents) {
+            showMessageNotification(eventId, conversationId, displayName)
         }
     }
-
-    private fun messageNotificationsEnabled(): Boolean =
-        getSharedPreferences(MainActivity.NOTIFICATION_PREFERENCES, MODE_PRIVATE)
-            .getBoolean(MainActivity.NOTIFICATION_ENABLED, true)
 
     private fun showMessageNotification(
         messageId: String,
@@ -203,13 +188,17 @@ class TorcaForegroundService : Service() {
         const val SERVICE_CHANNEL_ID = "torca_remote_messaging"
         const val MESSAGE_CHANNEL_ID = "torca_private_messages"
         const val SERVICE_NOTIFICATION_ID = 1001
+        const val NOTIFICATION_CURSOR_PREFERENCES = "torca_notification_cursor"
+        const val NOTIFICATION_CURSOR = "cursor"
         const val NOTIFICATION_POLL_MS = 1500L
+        const val RUNTIME_WAIT_MS = 250L
+        const val TAG = "TorcaRuntime"
     }
 }
 
 object NativeRuntimeBridge {
-    init { System.loadLibrary("torca_bridge") }
+    init { System.loadLibrary("torca_native") }
     @JvmStatic external fun nativeEnsureRuntime(): Boolean
-    @JvmStatic external fun nativeNotificationSnapshotJson(): String?
-    @JvmStatic external fun nativeShutdownRuntime()
+    @JvmStatic external fun nativeRuntimeAvailable(): Boolean
+    @JvmStatic external fun nativeNotificationSnapshotJson(afterCursor: Long): String?
 }

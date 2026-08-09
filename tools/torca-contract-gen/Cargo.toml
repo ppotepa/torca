@@ -8,8 +8,5 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
-[dependencies]
-torca-bridge = { path = "../../crates/platform/torca-bridge" }
-
 [lints]
 workspace = true

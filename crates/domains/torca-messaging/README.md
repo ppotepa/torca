@@ -16,7 +16,7 @@ Own text-message semantics and the valid lifecycle of inbound and outbound messa
 
 ## Does not own
 
-Socket connections, Tor process state, SQL tables, encryption algorithm details, Flutter message bubbles or operating-system notifications.
+Socket connections, embedded Tor state, SQL tables, encryption algorithm details, Flutter message bubbles or operating-system notifications.
 
 ## Planned commands
 

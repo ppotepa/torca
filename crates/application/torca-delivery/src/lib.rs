@@ -290,6 +290,7 @@ where
         self.store.recover_stale_claims(claimed_before).map_err(Into::into)
     }
 
+    #[allow(clippy::single_match_else)]
     pub fn run_once(
         &mut self,
         now: Timestamp,
@@ -299,10 +300,8 @@ where
         let mut report = DeliveryBatchReport { claimed: records.len(), ..Default::default() };
         for record in records {
             let message_id = record.message.id();
-            let attempts = record
-                .attempts
-                .checked_add(1)
-                .ok_or(DeliveryWorkerError::AttemptOverflow)?;
+            let attempts =
+                record.attempts.checked_add(1).ok_or(DeliveryWorkerError::AttemptOverflow)?;
             match self.transport.send(&record.message) {
                 Ok(DeliveryAck::Accepted | DeliveryAck::Duplicate) => {
                     self.store.complete(message_id)?;
@@ -310,9 +309,8 @@ where
                 }
                 Err(_) => match self.retry_policy.delay_after(attempts) {
                     Some(delay) => {
-                        let next = now
-                            .checked_add(delay)
-                            .ok_or(DeliveryWorkerError::TimestampOverflow)?;
+                        let next =
+                            now.checked_add(delay).ok_or(DeliveryWorkerError::TimestampOverflow)?;
                         self.store.reschedule(message_id, attempts, next)?;
                         report.rescheduled += 1;
                     }
@@ -441,6 +439,7 @@ impl std::error::Error for ApplicationPayloadError {}
 
 pub struct ApplicationPayloadCodec;
 impl ApplicationPayloadCodec {
+    #[allow(clippy::cast_possible_truncation)]
     pub fn encode(payload: &ApplicationPayload) -> Result<Vec<u8>, ApplicationPayloadError> {
         let mut output = Vec::new();
         output.extend_from_slice(PAYLOAD_MAGIC);

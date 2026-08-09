@@ -102,12 +102,10 @@ impl RelayServer {
             let broker = Arc::clone(&self.broker);
             let active = Arc::clone(&self.active_connections);
             let timeout = self.io_timeout;
-            let spawn = thread::Builder::new()
-                .name("torca-relay-client".into())
-                .spawn(move || {
-                    let _permit = ConnectionPermit { active };
-                    let _ = serve_connection(stream, broker, timeout);
-                });
+            let spawn = thread::Builder::new().name("torca-relay-client".into()).spawn(move || {
+                let _permit = ConnectionPermit { active };
+                let _ = serve_connection(stream, broker, timeout);
+            });
             if spawn.is_err() {
                 self.active_connections.fetch_sub(1, Ordering::AcqRel);
             }
@@ -141,6 +139,7 @@ fn try_acquire_connection(active: &AtomicUsize, maximum: usize) -> bool {
         .is_ok()
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn expiry_loop(broker: Arc<Mutex<RelayBroker>>, interval: Duration) {
     loop {
         thread::sleep(interval);
@@ -154,6 +153,7 @@ fn expiry_loop(broker: Arc<Mutex<RelayBroker>>, interval: Duration) {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn serve_connection(
     mut stream: TcpStream,
     broker: Arc<Mutex<RelayBroker>>,
@@ -176,7 +176,8 @@ fn serve_connection(
                 Err(error) => RelayResponse::Error(error),
             }
         };
-        let encoded = RelayCodec::encode_response(&response).map_err(|_| RelayServerError::Codec)?;
+        let encoded =
+            RelayCodec::encode_response(&response).map_err(|_| RelayServerError::Codec)?;
         stream.write_all(&encoded).map_err(io_error)?;
         stream.flush().map_err(io_error)?;
     }
@@ -187,10 +188,13 @@ fn read_frame(stream: &mut TcpStream) -> Result<Option<Vec<u8>>, RelayServerErro
     match stream.read_exact(&mut header) {
         Ok(()) => {}
         Err(error) if matches!(error.kind(), std::io::ErrorKind::UnexpectedEof) => return Ok(None),
-        Err(error) if matches!(error.kind(), std::io::ErrorKind::ConnectionReset) => return Ok(None),
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::ConnectionReset) => {
+            return Ok(None);
+        }
         Err(error) => return Err(io_error(error)),
     }
-    let frame_len = RelayCodec::frame_len_from_header(&header).map_err(|_| RelayServerError::Codec)?;
+    let frame_len =
+        RelayCodec::frame_len_from_header(&header).map_err(|_| RelayServerError::Codec)?;
     let payload_len = frame_len - RELAY_HEADER_LEN;
     let mut frame = Vec::with_capacity(frame_len);
     frame.extend_from_slice(&header);
@@ -203,11 +207,13 @@ fn read_frame(stream: &mut TcpStream) -> Result<Option<Vec<u8>>, RelayServerErro
 }
 
 pub(crate) fn system_timestamp() -> Result<Timestamp, RelayServerError> {
-    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| RelayServerError::Clock)?;
+    let elapsed =
+        SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| RelayServerError::Clock)?;
     let millis = i64::try_from(elapsed.as_millis()).map_err(|_| RelayServerError::Clock)?;
     Timestamp::from_unix_millis(millis).map_err(|_| RelayServerError::Clock)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn io_error(error: std::io::Error) -> RelayServerError {
     RelayServerError::Io(error.kind())
 }
