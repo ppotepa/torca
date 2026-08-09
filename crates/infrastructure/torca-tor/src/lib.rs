@@ -143,6 +143,7 @@ impl TorService {
                 let deadline = tokio::time::sleep(timeout);
                 let mut stall_tick = tokio::time::interval(std::time::Duration::from_secs(1));
                 let mut last_progress = Instant::now();
+                let bootstrap_started = Instant::now();
                 let mut last_fraction = 0.0_f32;
                 let mut last_status = String::new();
                 // A closed watch stream returns `None` immediately.  Keeping it
@@ -153,6 +154,16 @@ impl TorService {
                 tokio::pin!(bootstrap);
                 tokio::pin!(deadline);
                 loop {
+                    // Bootstrap-event implementations are allowed to yield
+                    // immediately.  Do not let a continuously-ready event
+                    // stream prevent the safety deadlines below from being
+                    // observed.
+                    if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
+                        return Err(TorError("bootstrap Arti client stalled".into()));
+                    }
+                    if bootstrap_started.elapsed() >= timeout {
+                        return Err(TorError("bootstrap Arti client timed out".into()));
+                    }
                     tokio::select! {
                         result = &mut bootstrap => {
                             result.map_err(|error| TorError(format!("bootstrap Arti client: {error}")))?;
@@ -173,6 +184,11 @@ impl TorService {
                                 }
                                 None => events_open = false,
                             }
+                            // Some Arti event streams can repeatedly yield an
+                            // unchanged status.  Bound the observation loop so
+                            // it cannot monopolize a Tokio worker or the host
+                            // startup thread while the network is unavailable.
+                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                         }
                         _ = stall_tick.tick() => {
                             if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
