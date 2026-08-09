@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../settings/local_preferences.dart';
+import '../widgets/adaptive_app_shell.dart';
 import '../widgets/app_overflow_menu.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_actions.dart';
@@ -14,8 +15,10 @@ import 'diagnostics_screen.dart';
 import 'pairing_screen.dart';
 import 'settings_screen.dart';
 
-const double _wideLayoutBreakpoint = 900;
+const double _wideLayoutBreakpoint = 960;
 const double _conversationRailWidth = 360;
+
+enum _HomeSection { chats, contacts, invitations }
 
 class _BootstrapFailureScreen extends StatelessWidget {
   const _BootstrapFailureScreen({required this.reason, this.onRetry});
@@ -295,6 +298,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   String? _selectedConversationId;
+  String? _selectedContactId;
+  _HomeSection _section = _HomeSection.chats;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
@@ -317,78 +322,47 @@ class _HomeScreenState extends State<HomeScreen> {
               widget.gateway.execute(const RefreshSnapshotCommandDto()),
         );
       }
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(snapshot.identity?.displayName ?? 'Torca'),
-          actions: <Widget>[
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: TorStatusIndicator(state: snapshot.torState),
-            ),
-            AppOverflowMenu(
-              hasIdentity: snapshot.identity != null,
-              onSelected: (action) => _handleAppAction(action, snapshot),
-            ),
-          ],
-        ),
-        body:
-            snapshot.identity == null || snapshot.identity!.displayName == null
+      final profileMissing =
+          snapshot.identity == null || snapshot.identity!.displayName == null;
+      return AdaptiveAppShell(
+        title: snapshot.identity?.displayName ?? 'Torca',
+        selectedIndex: _section.index,
+        onDestinationSelected: (index) =>
+            setState(() => _section = _HomeSection.values[index]),
+        destinations: const <NavigationDestination>[
+          NavigationDestination(
+            icon: Icon(Icons.forum_outlined),
+            selectedIcon: Icon(Icons.forum),
+            label: 'Chats',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.people_outline),
+            selectedIcon: Icon(Icons.people),
+            label: 'Contacts',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.qr_code_2_outlined),
+            selectedIcon: Icon(Icons.qr_code_2),
+            label: 'Invitations',
+          ),
+        ],
+        actions: <Widget>[
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: TorStatusIndicator(state: snapshot.torState),
+          ),
+          AppOverflowMenu(
+            hasIdentity: snapshot.identity != null,
+            onSelected: (action) => _handleAppAction(action, snapshot),
+          ),
+        ],
+        body: profileMissing
             ? _ProfileSetup(
                 gateway: widget.gateway,
                 fingerprint: snapshot.identity?.fingerprint,
               )
-            : LayoutBuilder(
-                builder: (context, constraints) {
-                  final conversations = snapshot.conversations;
-                  if (constraints.maxWidth < _wideLayoutBreakpoint) {
-                    return _ConversationList(
-                      conversations: conversations,
-                      contacts: snapshot.contacts,
-                      selectedConversationId: null,
-                      onContactInfo: _openContactDetails,
-                      onAction: _handleConversationAction,
-                      onSelected: (conversation) =>
-                          Navigator.of(context).push<void>(
-                            MaterialPageRoute(
-                              builder: (_) => ConversationScreen(
-                                gateway: widget.gateway,
-                                conversation: conversation,
-                              ),
-                            ),
-                          ),
-                    );
-                  }
-                  final selected = _selectedConversation(conversations);
-                  return Row(
-                    children: <Widget>[
-                      SizedBox(
-                        width: _conversationRailWidth,
-                        child: _ConversationList(
-                          conversations: conversations,
-                          contacts: snapshot.contacts,
-                          selectedConversationId: selected?.id,
-                          onContactInfo: _openContactDetails,
-                          onAction: _handleConversationAction,
-                          onSelected: (conversation) => setState(
-                            () => _selectedConversationId = conversation.id,
-                          ),
-                        ),
-                      ),
-                      const VerticalDivider(width: 1),
-                      Expanded(
-                        child: selected == null
-                            ? const _ConversationPlaceholder()
-                            : ConversationPane(
-                                key: ValueKey(selected.id),
-                                gateway: widget.gateway,
-                                conversation: selected,
-                              ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-        floatingActionButton: snapshot.identity == null
+            : _sectionBody(snapshot),
+        floatingActionButton: profileMissing
             ? null
             : FloatingActionButton(
                 tooltip: 'Pair contact',
@@ -398,6 +372,91 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     },
   );
+
+  Widget _sectionBody(AppSnapshotDto snapshot) => switch (_section) {
+    _HomeSection.chats => _chats(snapshot),
+    _HomeSection.contacts => _ContactsSection(
+      contacts: snapshot.contacts,
+      selectedContactId: _selectedContactId,
+      onSelected: (contact) => setState(() => _selectedContactId = contact.id),
+      onOpenDetails: _openContactDetails,
+    ),
+    _HomeSection.invitations => _InvitationsSection(
+      pairings: snapshot.pairings,
+      onOpen: _openPairing,
+    ),
+  };
+
+  Widget _chats(AppSnapshotDto snapshot) => LayoutBuilder(
+    builder: (context, constraints) {
+      final conversations = snapshot.conversations;
+      if (constraints.maxWidth < _wideLayoutBreakpoint) {
+        return _ConversationList(
+          conversations: conversations,
+          contacts: snapshot.contacts,
+          selectedConversationId: null,
+          onContactInfo: _openContactDetails,
+          onAction: _handleConversationAction,
+          onSelected: (conversation) => Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => ConversationScreen(
+                gateway: widget.gateway,
+                conversation: conversation,
+              ),
+            ),
+          ),
+        );
+      }
+      final selected = _selectedConversation(conversations);
+      final contact = selected == null
+          ? null
+          : _contactFor(snapshot.contacts, selected.contactId);
+      final contextPanel = constraints.maxWidth >= 1440 && contact != null;
+      return Row(
+        children: <Widget>[
+          SizedBox(
+            width: _conversationRailWidth,
+            child: _ConversationList(
+              conversations: conversations,
+              contacts: snapshot.contacts,
+              selectedConversationId: selected?.id,
+              onContactInfo: _openContactDetails,
+              onAction: _handleConversationAction,
+              onSelected: (conversation) =>
+                  setState(() => _selectedConversationId = conversation.id),
+            ),
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(
+            child: selected == null
+                ? const _ConversationPlaceholder()
+                : ConversationPane(
+                    key: ValueKey(selected.id),
+                    gateway: widget.gateway,
+                    conversation: selected,
+                  ),
+          ),
+          if (contextPanel) ...<Widget>[
+            const VerticalDivider(width: 1),
+            SizedBox(
+              width: 300,
+              child: _ContactContextPanel(
+                contact: contact,
+                onOpen: () => _openContactDetails(contact),
+              ),
+            ),
+          ],
+        ],
+      );
+    },
+  );
+
+  ContactDto? _contactFor(List<ContactDto> contacts, String id) {
+    for (final contact in contacts) {
+      if (contact.id == id) return contact;
+    }
+    return null;
+  }
 
   void _handleAppAction(AppOverflowAction action, AppSnapshotDto snapshot) {
     switch (action) {
@@ -664,6 +723,206 @@ class _ConversationList extends StatelessWidget {
     }
     return null;
   }
+}
+
+class _ContactsSection extends StatelessWidget {
+  const _ContactsSection({
+    required this.contacts,
+    required this.selectedContactId,
+    required this.onSelected,
+    required this.onOpenDetails,
+  });
+
+  final List<ContactDto> contacts;
+  final String? selectedContactId;
+  final ValueChanged<ContactDto> onSelected;
+  final ValueChanged<ContactDto> onOpenDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    if (contacts.isEmpty) {
+      return const _SectionEmptyState(
+        icon: Icons.people_outline,
+        title: 'No contacts yet',
+        message: 'Create an invitation to add a private contact.',
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= _wideLayoutBreakpoint;
+        ContactDto? selected;
+        for (final contact in contacts) {
+          if (contact.id == selectedContactId) {
+            selected = contact;
+            break;
+          }
+        }
+        final active = selected ?? contacts.first;
+        final list = ListView(
+          padding: const EdgeInsets.all(16),
+          children: <Widget>[
+            Text('Contacts', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            Text(
+              '${contacts.length} private ${contacts.length == 1 ? 'contact' : 'contacts'}',
+            ),
+            const SizedBox(height: 12),
+            for (final contact in contacts)
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  selected: wide && contact.id == active.id,
+                  onTap: () =>
+                      wide ? onSelected(contact) : onOpenDetails(contact),
+                  leading: CircleAvatar(
+                    child: Text(_initial(contact.displayName)),
+                  ),
+                  title: Text(contact.displayName),
+                  subtitle: Text(
+                    '${contact.verificationStatus} · ${contact.connectionState}',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                ),
+              ),
+          ],
+        );
+        if (!wide) return list;
+        return Row(
+          children: <Widget>[
+            SizedBox(width: 390, child: list),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: _ContactContextPanel(
+                contact: active,
+                onOpen: () => onOpenDetails(active),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _InvitationsSection extends StatelessWidget {
+  const _InvitationsSection({required this.pairings, required this.onOpen});
+
+  final List<PairingDto> pairings;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(24),
+    children: <Widget>[
+      Text('Invitations', style: Theme.of(context).textTheme.headlineSmall),
+      const SizedBox(height: 8),
+      const Text('Create and manage short-lived private contact invitations.'),
+      const SizedBox(height: 20),
+      FilledButton.icon(
+        onPressed: onOpen,
+        icon: const Icon(Icons.add_link),
+        label: const Text('Create or join invitation'),
+      ),
+      const SizedBox(height: 24),
+      if (pairings.isEmpty)
+        const _SectionEmptyState(
+          icon: Icons.qr_code_2_outlined,
+          title: 'No invitations',
+          message:
+              'Your active invitations and pairing requests will appear here.',
+        )
+      else ...<Widget>[
+        Text('Recent sessions', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        for (final pairing in pairings.reversed)
+          Card(
+            child: ListTile(
+              leading: Icon(
+                pairing.role == 'creator' ? Icons.qr_code_2 : Icons.link,
+              ),
+              title: Text(
+                pairing.role == 'creator'
+                    ? 'Created invitation'
+                    : 'Joined invitation',
+              ),
+              subtitle: Text('Code ${pairing.code}'),
+              trailing: Chip(label: Text(pairing.state)),
+              onTap: onOpen,
+            ),
+          ),
+      ],
+    ],
+  );
+}
+
+class _ContactContextPanel extends StatelessWidget {
+  const _ContactContextPanel({required this.contact, required this.onOpen});
+
+  final ContactDto contact;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        CircleAvatar(radius: 28, child: Text(_initial(contact.displayName))),
+        const SizedBox(height: 14),
+        Text(
+          contact.displayName,
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 4),
+        Text(contact.connectionState),
+        const SizedBox(height: 20),
+        const Text('Security', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        Text('Verification: ${contact.verificationStatus}'),
+        Text('Peer health: ${contact.peerHealth.quality}'),
+        const Spacer(),
+        OutlinedButton.icon(
+          onPressed: onOpen,
+          icon: const Icon(Icons.person_outline),
+          label: const Text('Contact details'),
+        ),
+      ],
+    ),
+  );
+}
+
+String _initial(String value) => value.isEmpty ? '?' : value[0].toUpperCase();
+
+class _SectionEmptyState extends StatelessWidget {
+  const _SectionEmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 340),
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 52, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(height: 16),
+            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(message, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _ConversationPlaceholder extends StatelessWidget {

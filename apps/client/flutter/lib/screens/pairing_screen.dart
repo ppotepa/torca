@@ -5,6 +5,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../widgets/app_modal.dart';
+import '../widgets/async_action_button.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/pairing_progress.dart';
@@ -99,20 +101,11 @@ class _PairingScreenState extends State<PairingScreen> {
                       'Create a short-lived invitation. The secure Rust runtime owns its ID, code and expiry.',
                     ),
                     const SizedBox(height: 12),
-                    FilledButton.icon(
+                    AsyncActionButton(
                       onPressed: _primaryBusy ? null : _create,
-                      icon: _operations.isActive('pairing:create')
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.add_link),
-                      label: Text(
-                        _operations.isActive('pairing:create')
-                            ? 'Creating…'
-                            : 'Create invitation',
-                      ),
+                      busy: _operations.isActive('pairing:create'),
+                      icon: Icons.add_link,
+                      label: 'Create invitation',
                     ),
                   ] else ...<Widget>[
                     TextField(
@@ -231,58 +224,26 @@ class _PairingScreenState extends State<PairingScreen> {
 
   Future<void> _showSession(PairingDto pairing) => showDialog<void>(
     context: context,
-    builder: (dialogContext) => Dialog(
-      child: SizedBox(
-        width: 460,
-        height: 650,
-        child: Column(
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 12, 8),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      pairing.role == 'creator'
-                          ? 'Your invitation'
-                          : 'Pairing session',
-                      style: Theme.of(dialogContext).textTheme.titleLarge,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                child: _PairingSessionCard(
-                  pairing: pairing,
-                  busy: _operations.anyWithPrefix('pairing:${pairing.id}:'),
-                  expanded: true,
-                  onApprove: () => _session(
-                    pairing.id,
-                    'approve',
-                    ApprovePairingCommandDto(sessionIdHex: pairing.id),
-                  ),
-                  onReject: () => _session(
-                    pairing.id,
-                    'reject',
-                    RejectPairingCommandDto(sessionIdHex: pairing.id),
-                  ),
-                  onCancel: () => _session(
-                    pairing.id,
-                    'cancel',
-                    CancelPairingCommandDto(sessionIdHex: pairing.id),
-                  ),
-                ),
-              ),
-            ),
-          ],
+    builder: (_) => AppModal(
+      title: pairing.role == 'creator' ? 'Your invitation' : 'Pairing session',
+      child: _PairingSessionCard(
+        pairing: pairing,
+        busy: _operations.anyWithPrefix('pairing:${pairing.id}:'),
+        expanded: true,
+        onApprove: () => _session(
+          pairing.id,
+          'approve',
+          ApprovePairingCommandDto(sessionIdHex: pairing.id),
+        ),
+        onReject: () => _session(
+          pairing.id,
+          'reject',
+          RejectPairingCommandDto(sessionIdHex: pairing.id),
+        ),
+        onCancel: () => _session(
+          pairing.id,
+          'cancel',
+          CancelPairingCommandDto(sessionIdHex: pairing.id),
         ),
       ),
     ),
