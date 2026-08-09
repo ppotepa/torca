@@ -279,6 +279,39 @@ function Assert-TorcaNativeAbi {
     Write-Host "Native $Platform ABI verified: $([IO.Path]::GetFileName($Library))"
 }
 
+function Assert-TorcaRelayEndpointEmbedded {
+    param(
+        [Parameter(Mandatory = $true)][string]$Library,
+        [Parameter(Mandatory = $true)][string]$Endpoint
+    )
+
+    if (-not (Test-Path -LiteralPath $Library)) {
+        throw "Native library is missing while verifying the compiled relay endpoint: $Library"
+    }
+    if ([string]::IsNullOrWhiteSpace($Endpoint)) {
+        throw 'Cannot verify a blank compiled relay endpoint.'
+    }
+    $needle = [Text.Encoding]::UTF8.GetBytes($Endpoint)
+    $bytes = [IO.File]::ReadAllBytes($Library)
+    $found = $false
+    if ($needle.Length -le $bytes.Length) {
+        for ($offset = 0; $offset -le $bytes.Length - $needle.Length -and -not $found; $offset++) {
+            $match = $true
+            for ($index = 0; $index -lt $needle.Length; $index++) {
+                if ($bytes[$offset + $index] -ne $needle[$index]) {
+                    $match = $false
+                    break
+                }
+            }
+            $found = $match
+        }
+    }
+    if (-not $found) {
+        throw "Native library does not contain the relay endpoint compiled for this build: $Endpoint"
+    }
+    Write-Host "Relay endpoint embedded: $Endpoint"
+}
+
 function Assert-TorcaAndroidPackage {
     param(
         [Parameter(Mandatory = $true)][string]$Apk
@@ -301,6 +334,7 @@ function Assert-TorcaAndroidPackage {
         if ($libraries.Count -eq 0) { throw "Android package contains no libtorca_native.so: $Apk" }
         foreach ($library in $libraries) {
             Assert-TorcaNativeAbi -Library $library.FullName -Platform android
+            Assert-TorcaRelayEndpointEmbedded -Library $library.FullName -Endpoint $env:TORCA_RELAY_ENDPOINT
             $flutterLibrary = Join-Path $library.DirectoryName 'libflutter.so'
             if (-not (Test-Path -LiteralPath $flutterLibrary)) {
                 throw "Android package is missing libflutter.so beside $($library.FullName): $Apk"
@@ -562,8 +596,10 @@ function Build-TorcaFlutterTarget {
                 throw "Native Windows library missing: $rustDll"
             }
             Assert-TorcaNativeAbi -Library $rustDll -Platform windows
+            Assert-TorcaRelayEndpointEmbedded -Library $rustDll -Endpoint $env:TORCA_RELAY_ENDPOINT
             Copy-Item $rustDll (Join-Path $runnerDir 'torca_native.dll') -Force
             Assert-TorcaNativeAbi -Library (Join-Path $runnerDir 'torca_native.dll') -Platform windows
+            Assert-TorcaRelayEndpointEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -Endpoint $env:TORCA_RELAY_ENDPOINT
             $forbiddenNativeNames = @('torca_' + 'bridge.dll', 'torca_' + 'contract.dll')
             Get-ChildItem $runnerDir -Recurse -File |
                 Where-Object { $forbiddenNativeNames -contains $_.Name } |
