@@ -316,4 +316,4 @@ function Write-TorcaBuildManifest {
     })
 }
 
-Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Write-TorcaBuildManifest
+Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Stop-TorcaOwnedWindowsTor, Write-TorcaBuildManifest
