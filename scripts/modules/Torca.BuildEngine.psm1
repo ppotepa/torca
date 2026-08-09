@@ -306,6 +306,35 @@ function Assert-TorcaAndroidPackage {
     }
 }
 
+function Get-TorcaAndroidDeviceAbis {
+    param([Parameter(Mandatory = $true)][string]$Device)
+
+    if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
+        throw 'ADB is required to select an ABI-specific Android APK.'
+    }
+
+    $observations = [System.Collections.Generic.List[string]]::new()
+    foreach ($attempt in 1..3) {
+        $output = (& adb -s $Device shell getprop ro.product.cpu.abilist 2>&1 | Out-String).Trim()
+        $exitCode = $LASTEXITCODE
+        $observations.Add("attempt=$attempt exit=$exitCode abilist='$output'")
+        if ($exitCode -eq 0) {
+            $abis = @($output -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($abis.Count -gt 0) { return $abis }
+        }
+        if ($attempt -lt 3) { Start-Sleep -Seconds 1 }
+    }
+
+    $primary = (& adb -s $Device shell getprop ro.product.cpu.abi 2>&1 | Out-String).Trim()
+    $primaryExitCode = $LASTEXITCODE
+    $observations.Add("fallback exit=$primaryExitCode abi='$primary'")
+    if ($primaryExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($primary)) {
+        return @($primary)
+    }
+
+    throw "Could not determine Android ABIs for $Device. ADB observations: $($observations -join '; ')"
+}
+
 function Select-TorcaAndroidApk {
     param(
         [Parameter(Mandatory = $true)][string]$OutputRoot,
@@ -313,11 +342,8 @@ function Select-TorcaAndroidApk {
         [Parameter(Mandatory = $true)][string]$Device
     )
 
-    $abis = @()
-    if (Get-Command adb -ErrorAction SilentlyContinue) {
-        $abis = @((& adb -s $Device shell getprop ro.product.cpu.abilist 2>$null | Out-String).Trim() -split ',') |
-            Where-Object { $_ }
-    }
+    $abis = @(Get-TorcaAndroidDeviceAbis -Device $Device)
+    Write-Verbose "Android ABIs for ${Device}: $($abis -join ', ')"
     $candidates = foreach ($abi in $abis) {
         switch ($abi.Trim()) {
             'arm64-v8a' { Join-Path $OutputRoot 'app-arm64-v8a-release.apk' }
@@ -331,7 +357,9 @@ function Select-TorcaAndroidApk {
         }
     }
     if (-not (Test-Path -LiteralPath $UniversalApk)) {
-        throw "No compatible Android APK found for $Device. ABIs=$($abis -join ',')"
+        $available = @(Get-ChildItem -LiteralPath $OutputRoot -Filter 'app-*-release.apk' -File -ErrorAction SilentlyContinue |
+            ForEach-Object Name) -join ', '
+        throw "No compatible Android APK found for $Device. Device ABIs=$($abis -join ', '); available APKs=$available"
     }
     Write-Host "No ABI-specific APK found for $Device; using validated universal APK."
     return $UniversalApk
