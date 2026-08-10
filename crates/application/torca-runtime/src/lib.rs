@@ -578,6 +578,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 ) {
     let mut last_tor_state = None;
     let mut last_peer_states = BTreeMap::<ContactId, PeerConnectionState>::new();
+    let mut last_peer_successes = BTreeMap::<ContactId, Option<Timestamp>>::new();
     let mut tor_failed = false;
     let mut pairing_failed = false;
     let mut communication_failed = false;
@@ -675,6 +676,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 "COMMUNICATION_MAINTENANCE_RECOVERED",
             );
             let mut current = BTreeMap::new();
+            let mut current_successes = BTreeMap::new();
             for id in contacts {
                 let state = communication.connection_state(id);
                 if last_peer_states.get(&id) != Some(&state) {
@@ -689,9 +691,18 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                         "PEER_STATE_CHANGED",
                     );
                 }
+                let health = communication.peer_health(id);
+                if health.last_success_at.is_some()
+                    && last_peer_successes.get(&id) != Some(&health.last_success_at)
+                {
+                    transport_activity.mark_tor(now);
+                    transport_activity.mark_peer(id, now);
+                }
                 current.insert(id, state);
+                current_successes.insert(id, health.last_success_at);
             }
             last_peer_states = current;
+            last_peer_successes = current_successes;
         }
     }
 }
