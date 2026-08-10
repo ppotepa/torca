@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::{RuntimeDriverError, TorDriver, TorState};
 use torca_foundation::Timestamp;
-use torca_tor::TorService;
+use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage, TorService};
 
 const RESTART_BACKOFF: [Duration; 3] =
     [Duration::from_secs(5), Duration::from_secs(15), Duration::from_secs(30)];
@@ -62,6 +62,17 @@ impl OwnedTorDriver {
         startup_timeout: Duration,
         now: Timestamp,
     ) -> Result<Self, (RuntimeDriverError, String)> {
+        Self::bootstrap_observed(state_root, peer_target, endpoint, startup_timeout, now, None)
+    }
+
+    pub fn bootstrap_observed(
+        state_root: impl Into<PathBuf>,
+        peer_target: SocketAddr,
+        endpoint: SharedTorEndpoint,
+        startup_timeout: Duration,
+        now: Timestamp,
+        observer: Option<TorBootstrapObserver>,
+    ) -> Result<Self, (RuntimeDriverError, String)> {
         let mut driver = Self {
             state_root: state_root.into(),
             peer_target,
@@ -73,7 +84,7 @@ impl OwnedTorDriver {
             state: TorState::Starting,
             last_diagnostic: None,
         };
-        if let Err(error) = driver.start(peer_target, now) {
+        if let Err(error) = driver.start(peer_target, now, observer) {
             let diagnostic = driver
                 .last_diagnostic
                 .clone()
@@ -83,29 +94,61 @@ impl OwnedTorDriver {
         Ok(driver)
     }
 
-    fn start(&mut self, peer_target: SocketAddr, now: Timestamp) -> Result<(), RuntimeDriverError> {
+    fn start(
+        &mut self,
+        peer_target: SocketAddr,
+        now: Timestamp,
+        observer: Option<TorBootstrapObserver>,
+    ) -> Result<(), RuntimeDriverError> {
         self.endpoint.set(None);
         self.state = TorState::Starting;
-        match TorService::bootstrap(&self.state_root, self.startup_timeout) {
+        match TorService::bootstrap_observed(
+            &self.state_root,
+            self.startup_timeout,
+            observer.clone(),
+        ) {
             Ok(mut client) => {
-                match client.publish_onion_service(peer_target, ONION_SERVICE_TIMEOUT) {
-                    Ok(address) => {
-                        self.endpoint.set(Some(address));
-                        self.client = Some(Arc::new(client));
-                        self.failures = 0;
-                        self.next_restart_at = None;
-                        self.state = TorState::Ready;
-                        self.last_diagnostic = None;
-                        Ok(())
+                let mut last_error = None;
+                for attempt in 1..=MAX_BOOTSTRAP_ATTEMPTS {
+                    notify_onion(&observer, attempt, 5, None, "ONION_SERVICE_PUBLISHING");
+                    match client.publish_onion_service(peer_target, ONION_SERVICE_TIMEOUT) {
+                        Ok(address) => {
+                            notify_onion(&observer, attempt, 100, None, "ONION_SERVICE_READY");
+                            self.endpoint.set(Some(address));
+                            self.client = Some(Arc::new(client));
+                            self.failures = 0;
+                            self.next_restart_at = None;
+                            self.state = TorState::Ready;
+                            self.last_diagnostic = None;
+                            return Ok(());
+                        }
+                        Err(error) => last_error = Some(error),
                     }
-                    Err(error) => {
-                        self.last_diagnostic = Some(format!("Arti onion service failed: {error}"));
-                        self.client = None;
-                        self.state = TorState::Degraded;
-                        self.schedule_restart(now)?;
-                        Err(RuntimeDriverError::Tor)
+                    if attempt < MAX_BOOTSTRAP_ATTEMPTS {
+                        let backoff = RESTART_BACKOFF[usize::try_from(attempt - 1)
+                            .unwrap_or(RESTART_BACKOFF.len() - 1)
+                            .min(RESTART_BACKOFF.len() - 1)];
+                        notify_onion(
+                            &observer,
+                            attempt,
+                            5,
+                            u64::try_from(backoff.as_millis()).ok(),
+                            "ONION_SERVICE_RETRYING",
+                        );
+                        std::thread::sleep(backoff);
                     }
                 }
+                self.last_diagnostic = Some(format!(
+                    "Arti onion service exhausted {MAX_BOOTSTRAP_ATTEMPTS} attempts: {}",
+                    last_error.map_or_else(
+                        || "unknown publication failure".to_owned(),
+                        |error| { error.to_string() }
+                    )
+                ));
+                self.client = None;
+                self.state = TorState::Failed;
+                self.next_restart_at = None;
+                Err(RuntimeDriverError::Tor)
             }
             Err(error) => {
                 self.last_diagnostic = Some(format!("Arti bootstrap failed: {error}"));
@@ -147,11 +190,35 @@ impl OwnedTorDriver {
     }
 }
 
+fn notify_onion(
+    observer: &Option<TorBootstrapObserver>,
+    attempt: u32,
+    progress: u8,
+    retry_after_ms: Option<u64>,
+    code: &'static str,
+) {
+    if let Some(observer) = observer {
+        observer(TorBootstrapEvent {
+            stage: TorBootstrapStage::OnionService,
+            progress,
+            attempt,
+            retry_after_ms,
+            code,
+            summary: match code {
+                "ONION_SERVICE_READY" => "Private onion service published",
+                "ONION_SERVICE_RETRYING" => "Onion publication retry scheduled",
+                _ => "Publishing private onion service",
+            }
+            .into(),
+        });
+    }
+}
+
 impl TorDriver for OwnedTorDriver {
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.detect_process_state(now)?;
         if self.client.is_none() && self.next_restart_at.is_some_and(|deadline| deadline <= now) {
-            let _ = self.start(self.peer_target, now);
+            let _ = self.start(self.peer_target, now, None);
         }
         Ok(())
     }

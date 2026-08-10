@@ -18,7 +18,7 @@ use torca_runtime::{
     OwnedTorDriver, RelayProbe, RuntimeDriverError, RuntimeHandle, RuntimeOwner, SharedTorEndpoint,
 };
 use torca_storage_sqlite::SqlCipherRelationshipAdmin;
-use torca_tor::{PeerListener, TorService};
+use torca_tor::{PeerListener, TorBootstrapObserver, TorService};
 
 use crate::composition::{NativeCompositionError, load_or_create_database_key};
 
@@ -47,6 +47,7 @@ impl RelayProbe for TorRelayProbe {
 }
 pub(crate) fn spawn_production_runtime(
     engine: EngineHandle,
+    bootstrap_observer: TorBootstrapObserver,
 ) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
     #[cfg(windows)]
     {
@@ -60,7 +61,7 @@ pub(crate) fn spawn_production_runtime(
             root.join("logs"),
             RelayEndpoint { host: relay.0, port: relay.1 },
         );
-        return spawn_runtime_for(&platform, engine);
+        return spawn_runtime_for(&platform, engine, bootstrap_observer);
     }
     #[cfg(target_os = "android")]
     {
@@ -84,11 +85,12 @@ pub(crate) fn spawn_production_runtime(
             };
             Box::new(crate::composition::android::AndroidProtectedSecretStore::new(name))
         });
-        return spawn_runtime_for(&platform, engine);
+        return spawn_runtime_for(&platform, engine, bootstrap_observer);
     }
     #[cfg(not(any(windows, target_os = "android")))]
     {
         let _ = engine;
+        let _ = bootstrap_observer;
         Err(NativeCompositionError::new(
             "production network runtime is not implemented for this platform",
         ))
@@ -98,6 +100,7 @@ pub(crate) fn spawn_production_runtime(
 fn spawn_runtime_for<P: PlatformServices>(
     platform: &P,
     engine: EngineHandle,
+    bootstrap_observer: TorBootstrapObserver,
 ) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
     let paths = platform.app_paths();
     let database_path = paths.data.join("torca.db");
@@ -113,12 +116,13 @@ fn spawn_runtime_for<P: PlatformServices>(
 
     let listener = bind_peer_listener()?;
     let endpoint = SharedTorEndpoint::default();
-    let tor = OwnedTorDriver::bootstrap_with_diagnostic(
+    let tor = OwnedTorDriver::bootstrap_observed(
         paths.data.join("tor"),
         listener.local_addr(),
         endpoint.clone(),
         TOR_STARTUP_TIMEOUT,
         current_timestamp()?,
+        Some(bootstrap_observer),
     )
     .map_err(|(error, diagnostic)| {
         // Preserve the redacted, actionable Arti diagnostic.  Previously the

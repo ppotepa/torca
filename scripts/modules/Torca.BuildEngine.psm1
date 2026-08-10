@@ -944,6 +944,10 @@ function Invoke-TorcaDeploy {
                             }
                             Write-Host "Android MainActivity is running on ${Device}: PID $activityPid" -ForegroundColor Green
                         } else {
+                            $forceStopOutput = (& adb -s $Device shell am force-stop com.torca.torca_app 2>&1 | Out-String).Trim()
+                            if ($LASTEXITCODE -ne 0) {
+                                throw "Android could not be held stopped for sequential launch on $Device. Details: $forceStopOutput"
+                            }
                             Write-Host "Android release installed on ${Device}; launch deferred to the sequential runtime health phase." -ForegroundColor Green
                         }
                     }

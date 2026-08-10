@@ -713,6 +713,11 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
               id: item['id'] as String? ?? '',
               state: item['state'] as String? ?? 'pending',
               code: item['code'] as String?,
+              progress: item['progress'] as int? ?? 0,
+              attempt: item['attempt'] as int? ?? 0,
+              startedAtMs: item['startedAtMs'] as int?,
+              lastProgressAtMs: item['lastProgressAtMs'] as int?,
+              retryAtMs: item['retryAtMs'] as int?,
             ),
           )
           .toList(growable: false);

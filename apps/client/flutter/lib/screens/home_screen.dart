@@ -117,6 +117,24 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
     final ready = steps
         .where((id) => _stateFor(widget.snapshot, id) == 'ready')
         .length;
+    final projectedSteps = steps
+        .map((id) => _stepFor(widget.snapshot, id))
+        .toList(growable: false);
+    final progress =
+        projectedSteps.fold<int>(0, (sum, step) => sum + step.progress) /
+        (steps.length * 100);
+    final active = projectedSteps.where(
+      (step) =>
+          step.state == 'running' ||
+          step.state == 'verifying' ||
+          step.state == 'retrying',
+    );
+    final elapsed = active.isEmpty ? _elapsed : _elapsedFor(active.first);
+    final restartRequired = projectedSteps.any(
+      (step) =>
+          step.code == 'TOR_RESTART_REQUIRED' ||
+          step.code == 'ONION_SERVICE_RESTART_REQUIRED',
+    );
     return Scaffold(
       body: DecoratedBox(
         decoration: BoxDecoration(
@@ -163,21 +181,20 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(99),
                             child: LinearProgressIndicator(
-                              value: ready / steps.length,
+                              value: progress.clamp(0, 1),
                             ),
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '$ready of ${steps.length} secure checks complete  •  ${_formatDuration(_elapsed)}',
+                            '$ready of ${steps.length} secure checks complete  •  ${_formatDuration(elapsed)}',
                           ),
                           const SizedBox(height: 16),
-                          for (final id in steps)
+                          for (final step in projectedSteps)
                             _BootstrapStepTile(
-                              id: id,
-                              label: _bootstrapLabel(id),
-                              state: _stateFor(widget.snapshot, id),
-                              code: _codeFor(widget.snapshot, id),
-                              elapsed: _elapsed,
+                              step: step,
+                              label: _bootstrapLabel(step.id),
+                              elapsed: _elapsedFor(step),
+                              retryRemaining: _retryRemaining(step),
                             ),
                           if (widget.snapshot.bootstrapPhase == 'failed' ||
                               widget.snapshot.bootstrapPhase ==
@@ -195,8 +212,14 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: <Widget>[
                                 FilledButton(
-                                  onPressed: widget.onRetry,
-                                  child: const Text('Retry'),
+                                  onPressed: restartRequired
+                                      ? null
+                                      : widget.onRetry,
+                                  child: Text(
+                                    restartRequired
+                                        ? 'Restart application'
+                                        : 'Retry',
+                                  ),
                                 ),
                               ],
                             ),
@@ -223,9 +246,29 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
     return match.isEmpty ? 'pending' : match.first.state;
   }
 
-  String? _codeFor(AppSnapshotDto snapshot, String id) {
+  BootstrapStepDto _stepFor(AppSnapshotDto snapshot, String id) {
     final match = snapshot.bootstrapSteps.where((step) => step.id == id);
-    return match.isEmpty ? null : match.first.code;
+    return match.isEmpty
+        ? BootstrapStepDto(id: id, state: 'pending')
+        : match.first;
+  }
+
+  Duration _elapsedFor(BootstrapStepDto step) {
+    final startedAtMs = step.startedAtMs;
+    if (startedAtMs == null) return _elapsed;
+    final elapsed = DateTime.now().difference(
+      DateTime.fromMillisecondsSinceEpoch(startedAtMs),
+    );
+    return elapsed.isNegative ? Duration.zero : elapsed;
+  }
+
+  Duration? _retryRemaining(BootstrapStepDto step) {
+    final retryAtMs = step.retryAtMs;
+    if (retryAtMs == null) return null;
+    final remaining = DateTime.fromMillisecondsSinceEpoch(
+      retryAtMs,
+    ).difference(DateTime.now());
+    return remaining.isNegative ? Duration.zero : remaining;
   }
 
   String _diagnostic(AppSnapshotDto snapshot) {
@@ -257,24 +300,24 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
 
 class _BootstrapStepTile extends StatelessWidget {
   const _BootstrapStepTile({
-    required this.id,
+    required this.step,
     required this.label,
-    required this.state,
-    this.code,
     required this.elapsed,
+    this.retryRemaining,
   });
-  final String id;
+  final BootstrapStepDto step;
   final String label;
-  final String state;
-  final String? code;
   final Duration elapsed;
+  final Duration? retryRemaining;
 
   @override
   Widget build(BuildContext context) {
-    final ready = state == 'ready';
+    final ready = step.state == 'ready';
     final running =
-        state == 'running' || state == 'verifying' || state == 'retrying';
-    final degraded = state == 'degraded';
+        step.state == 'running' ||
+        step.state == 'verifying' ||
+        step.state == 'retrying';
+    final degraded = step.state == 'degraded';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       margin: const EdgeInsets.symmetric(vertical: 3),
@@ -304,13 +347,26 @@ class _BootstrapStepTile extends StatelessWidget {
               ? Theme.of(context).colorScheme.primary
               : null,
         ),
-        title: Text(label),
-        subtitle: Text(_stateDescription(id, state, code, elapsed)),
+        title: Text(
+          step.attempt > 0 &&
+                  (step.id == 'tor_network' || step.id == 'onion_service')
+              ? '$label  •  attempt ${step.attempt} of 3'
+              : label,
+        ),
+        subtitle: Text(_stateDescription(step, retryRemaining)),
         trailing: running
             ? Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Text(_formatDuration(elapsed)),
+                  if (step.progress > 0) ...<Widget>[
+                    Text('${step.progress}%'),
+                    const SizedBox(width: 10),
+                  ],
+                  Text(
+                    step.state == 'retrying' && retryRemaining != null
+                        ? _formatDuration(retryRemaining!)
+                        : _formatDuration(elapsed),
+                  ),
                   const SizedBox(width: 10),
                   const SizedBox(
                     width: 16,
@@ -324,23 +380,27 @@ class _BootstrapStepTile extends StatelessWidget {
     );
   }
 
-  String _stateDescription(
-    String id,
-    String value,
-    String? code,
-    Duration elapsed,
-  ) {
+  String _stateDescription(BootstrapStepDto step, Duration? retryRemaining) {
+    final id = step.id;
+    final value = step.state;
+    final code = step.code;
     if (value == 'running' || value == 'verifying') {
       if (id == 'tor_network') {
         return switch (code) {
           'TOR_CONNECTING_DIRECTORY' =>
             'Opening secure channels to the Tor directory…',
-          'TOR_DOWNLOADING_CONSENSUS' =>
-            'Downloading network consensus and selecting guards…',
-          'TOR_BUILDING_CIRCUITS' => 'Building the first private Tor circuits…',
-          'TOR_BOOTSTRAP_SLOW' =>
-            'Tor is taking longer than usual; the watchdog is monitoring progress…',
+          'TOR_DIRECTORY_CONSENSUS' =>
+            'Channels are ready; waiting for Tor directory consensus…',
+          'TOR_BOOTSTRAP_BLOCKED' =>
+            'Arti reports that directory bootstrap is blocked…',
           _ => 'Preparing the embedded Tor client…',
+        };
+      }
+      if (id == 'onion_service') {
+        return switch (code) {
+          'ONION_SERVICE_PUBLISHING' =>
+            'Publishing this device’s private onion service…',
+          _ => 'Preparing the private onion service…',
         };
       }
       return switch (id) {
@@ -360,9 +420,17 @@ class _BootstrapStepTile extends StatelessWidget {
         'secure_relay' => 'Secure relay is reachable',
         _ => 'Protected and ready',
       },
-      'retrying' => 'Retrying in the background…',
+      'retrying' =>
+        retryRemaining == null
+            ? 'Preparing a controlled retry…'
+            : 'Previous attempt failed; retrying in ${_formatDuration(retryRemaining)}',
       'degraded' => 'Temporarily unavailable; retrying',
-      'failed' => 'Needs attention',
+      'failed'
+          when code == 'TOR_RESTART_REQUIRED' ||
+              code == 'ONION_SERVICE_RESTART_REQUIRED' =>
+        'Tor did not stop safely; restart the application before retrying',
+      'blocked' => 'Waiting for the Tor network to become ready',
+      'failed' => 'Needs attention: ${code ?? 'TOR_RUNTIME_FAILED'}',
       _ => 'Waiting for the previous secure check',
     };
   }

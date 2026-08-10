@@ -244,7 +244,7 @@ function Invoke-TorcaClientRun {
         [ValidateSet('debug','release')][string]$Configuration = 'debug',
         [switch]$Installed,
         [string]$ExpectedBuildId,
-        [ValidateRange(5,900)][int]$HealthTimeoutSeconds = 300
+        [ValidateRange(5,900)][int]$HealthTimeoutSeconds = 900
     )
     if ($Installed -and $Target -eq 'windows') {
         $exe = Join-Path $RepoRoot 'apps/client/flutter/build/windows/x64/runner/Release/torca_app.exe'
@@ -301,7 +301,7 @@ function Wait-TorcaClientLaunch {
         [Parameter(Mandatory = $true)][ValidateSet('windows','android')][string]$Platform,
         [string]$Device,
         [string]$ExpectedBuildId,
-        [ValidateRange(5,900)][int]$TimeoutSeconds = 300
+        [ValidateRange(5,900)][int]$TimeoutSeconds = 900
     )
     $startedAt = [DateTime]::UtcNow.AddSeconds(-10)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -334,10 +334,13 @@ function Wait-TorcaClientLaunch {
                             Write-Host "Windows runtime health verified: PID $($process[0].Id), build=$($run.build_id), state=TOR_READY" -ForegroundColor Green
                             return
                         }
+                        if ($failure -and [string]$failure.message -match 'bootstrap Arti client stalled') {
+                            throw "Windows Tor bootstrap reached a terminal stall. $($failure.message). Restart is required; incident log: $bootstrapLog"
+                        }
                         if ($failure) { $lastDetail = "Windows Tor startup: $($failure.message)" }
                         else { $lastEvent = $events | Select-Object -Last 1; $lastDetail = if ($lastEvent) { "Windows runtime event: $($lastEvent.code)" } else { 'Windows runtime log is initializing' } }
                     } catch {
-                        if ($_.Exception.Message -like 'Windows runtime build ID mismatch*') { throw }
+                        if ($_.Exception.Message -like 'Windows runtime build ID mismatch*' -or $_.Exception.Message -like 'Windows Tor bootstrap reached a terminal stall*') { throw }
                         Write-Warning "Windows process is running but startup metadata could not be read: $($runStart.FullName)"
                     }
                 } else { $lastDetail = "Windows process PID $($process[0].Id) is running; waiting for a fresh runtime log" }

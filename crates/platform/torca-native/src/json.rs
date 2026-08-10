@@ -133,6 +133,13 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         push_json_string(&step.state, &mut output);
         output.push_str("\",\"code\":");
         push_optional_string(&step.code, &mut output);
+        let _ = write!(output, ",\"progress\":{},\"attempt\":{}", step.progress, step.attempt);
+        output.push_str(",\"startedAtMs\":");
+        push_optional_i64(step.started_at_ms, &mut output);
+        output.push_str(",\"lastProgressAtMs\":");
+        push_optional_i64(step.last_progress_at_ms, &mut output);
+        output.push_str(",\"retryAtMs\":");
+        push_optional_i64(step.retry_at_ms, &mut output);
         output.push('}');
     }
     output.push(']');
@@ -289,6 +296,14 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
     }
     output.push_str("]}");
     output
+}
+
+fn push_optional_i64(value: Option<i64>, output: &mut String) {
+    if let Some(value) = value {
+        let _ = write!(output, "{value}");
+    } else {
+        output.push_str("null");
+    }
 }
 
 pub(crate) fn bridge_message_page_json(page: &BridgeMessagePage) -> String {

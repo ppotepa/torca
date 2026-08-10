@@ -8,7 +8,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Once;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use arti_client::{BootstrapBehavior, TorClient, config::TorClientConfigBuilder};
 use futures_util::StreamExt;
@@ -24,6 +24,8 @@ pub use peer_transport::TorPeerTransport;
 
 pub const TOR_PEER_VIRTUAL_PORT: u16 = 17491;
 const BOOTSTRAP_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const BOOTSTRAP_RETRY_BACKOFF: [Duration; 2] = [Duration::from_secs(5), Duration::from_secs(15)];
+const MAX_BOOTSTRAP_ATTEMPTS: u32 = 3;
 
 #[derive(Debug)]
 pub enum TransportError {
@@ -51,11 +53,22 @@ pub enum TorErrorCode {
     Shutdown,
 }
 
-/// Normalized Tor bootstrap progress event.
+/// Stable phase identifier for embedded Tor startup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TorBootstrapStage {
+    Network,
+    OnionService,
+}
+
+/// Normalized progress event emitted by the embedded Tor service.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TorBootstrapEvent {
+    pub stage: TorBootstrapStage,
     pub progress: u8,
-    pub message_key: &'static str,
+    pub attempt: u32,
+    pub retry_after_ms: Option<u64>,
+    pub code: &'static str,
+    pub summary: String,
 }
 
 /// Health state projected by the shared runtime.
@@ -69,6 +82,8 @@ pub enum TorHealth {
 
 /// Opaque handle to a running Tor service.
 pub type TorServiceHandle = Arc<TorService>;
+
+pub type TorBootstrapObserver = Arc<dyn Fn(TorBootstrapEvent) + Send + Sync>;
 
 /// Stable blocking stream type returned by Torca transport adapters.
 pub type TorStream = std::net::TcpStream;
@@ -109,6 +124,15 @@ impl TorService {
         state_root: impl Into<std::path::PathBuf>,
         timeout: std::time::Duration,
     ) -> Result<Self, TorError> {
+        Self::bootstrap_observed(state_root, timeout, None)
+    }
+
+    /// Creates a client while publishing redacted, monotonic progress events.
+    pub fn bootstrap_observed(
+        state_root: impl Into<std::path::PathBuf>,
+        timeout: std::time::Duration,
+        observer: Option<TorBootstrapObserver>,
+    ) -> Result<Self, TorError> {
         ensure_rustls_provider();
         let state_root = state_root.into();
         std::fs::create_dir_all(&state_root)
@@ -137,87 +161,37 @@ impl TorService {
                 .await
                 .map_err(|error| TorError(format!("construct Arti client: {error}")))?;
 
-            let mut events = client.bootstrap_events();
-            {
-                // Poll Arti on its own runtime task.  On Windows a single poll
-                // can monopolize its worker while negotiating directory
-                // channels.  The watchdog must therefore run on a different
-                // worker instead of wrapping that future in the same select.
-                let bootstrap_client = client.clone();
-                let bootstrap = tokio::spawn(async move { bootstrap_client.bootstrap().await });
-                let deadline = tokio::time::sleep(timeout);
-                let mut stall_tick = tokio::time::interval(std::time::Duration::from_secs(1));
-                let mut last_progress = Instant::now();
-                let bootstrap_started = Instant::now();
-                let mut last_fraction = 0.0_f32;
-                // A closed watch stream returns `None` immediately.  Keeping it
-                // in `select!` after that would continuously select this branch,
-                // starve the stall/deadline branches, and leave startup spinning
-                // forever without a terminal diagnostic.
-                let mut events_open = true;
-                tokio::pin!(bootstrap);
-                tokio::pin!(deadline);
-                loop {
-                    // Bootstrap-event implementations are allowed to yield
-                    // immediately.  Do not let a continuously-ready event
-                    // stream prevent the safety deadlines below from being
-                    // observed.
-                    if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
-                        bootstrap.abort();
-                        return Err(TorError(format!(
-                            "bootstrap Arti client stalled at {:.0}%",
-                            last_fraction * 100.0
-                        )));
+            let mut last_error = None;
+            for attempt in 1..=MAX_BOOTSTRAP_ATTEMPTS {
+                match bootstrap_attempt(client.clone(), timeout, attempt, observer.as_ref()).await {
+                    Ok(()) => return Ok(client),
+                    Err(error) if is_unambiguous_state_corruption(&error) => return Err(error),
+                    Err(error) => last_error = Some(error),
+                }
+                if attempt < MAX_BOOTSTRAP_ATTEMPTS {
+                    let backoff = BOOTSTRAP_RETRY_BACKOFF[usize::try_from(attempt - 1)
+                        .unwrap_or(BOOTSTRAP_RETRY_BACKOFF.len() - 1)
+                        .min(BOOTSTRAP_RETRY_BACKOFF.len() - 1)];
+                    if let Some(observer) = &observer {
+                        observer(TorBootstrapEvent {
+                            stage: TorBootstrapStage::Network,
+                            progress: progress_percent(client.bootstrap_status().as_frac()),
+                            attempt,
+                            retry_after_ms: u64::try_from(backoff.as_millis()).ok(),
+                            code: "TOR_BOOTSTRAP_RETRYING",
+                            summary: format!(
+                                "Tor bootstrap attempt {attempt} stopped making progress; retry scheduled"
+                            ),
+                        });
                     }
-                    if bootstrap_started.elapsed() >= timeout {
-                        bootstrap.abort();
-                        return Err(TorError("bootstrap Arti client timed out".into()));
-                    }
-                    tokio::select! {
-                        result = &mut bootstrap => {
-                            result
-                                .map_err(|error| TorError(format!("join Arti bootstrap task: {error}")))?
-                                .map_err(|error| TorError(format!("bootstrap Arti client: {error}")))?;
-                            break;
-                        }
-                        status = events.next(), if events_open => {
-                            match status {
-                                Some(status) => {
-                                    let fraction = status.as_frac();
-                                    // A changed retry/error description is not
-                                    // forward bootstrap progress.  Only a
-                                    // monotonic increase in Arti's normalized
-                                    // fraction may extend the stall deadline.
-                                    if fraction > last_fraction + f32::EPSILON {
-                                        last_fraction = fraction;
-                                        last_progress = Instant::now();
-                                    }
-                                }
-                                None => events_open = false,
-                            }
-                            // Some Arti event streams can repeatedly yield an
-                            // unchanged status.  Bound the observation loop so
-                            // it cannot monopolize a Tokio worker or the host
-                            // startup thread while the network is unavailable.
-                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-                        }
-                        _ = stall_tick.tick() => {
-                            if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
-                                bootstrap.abort();
-                                return Err(TorError(format!(
-                                    "bootstrap Arti client stalled at {:.0}%",
-                                    last_fraction * 100.0
-                                )));
-                            }
-                        }
-                        () = &mut deadline => {
-                            bootstrap.abort();
-                            return Err(TorError("bootstrap Arti client timed out".into()));
-                        },
-                    }
+                    tokio::time::sleep(backoff).await;
                 }
             }
-            Ok(client)
+            let error = last_error
+                .unwrap_or_else(|| TorError("bootstrap Arti client failed without a diagnostic".into()));
+            Err(TorError(format!(
+                "bootstrap Arti client exhausted {MAX_BOOTSTRAP_ATTEMPTS} attempts: {error}"
+            )))
         });
         let client = match bootstrap_result {
             Ok(client) => client,
@@ -372,11 +346,126 @@ impl TorService {
     }
 }
 
+async fn bootstrap_attempt(
+    client: Arc<TorClient<PreferredRuntime>>,
+    timeout: Duration,
+    attempt: u32,
+    observer: Option<&TorBootstrapObserver>,
+) -> Result<(), TorError> {
+    let mut events = client.bootstrap_events();
+    let bootstrap_client = client.clone();
+    let mut bootstrap = tokio::spawn(async move { bootstrap_client.bootstrap().await });
+    let deadline = tokio::time::sleep(timeout);
+    let mut stall_tick = tokio::time::interval(Duration::from_secs(1));
+    let mut last_progress = Instant::now();
+    let bootstrap_started = Instant::now();
+    let mut last_fraction = client.bootstrap_status().as_frac();
+    let mut last_summary = client.bootstrap_status().to_string();
+    notify_bootstrap(observer, last_fraction, attempt, "TOR_BOOTSTRAP_STARTING", &last_summary);
+    let mut events_open = true;
+    tokio::pin!(deadline);
+    loop {
+        if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
+            bootstrap.abort();
+            let _ = bootstrap.await;
+            return Err(stalled_error(last_fraction, &last_summary));
+        }
+        if bootstrap_started.elapsed() >= timeout {
+            bootstrap.abort();
+            let _ = bootstrap.await;
+            return Err(TorError(format!(
+                "bootstrap Arti client timed out at {:.0}% ({last_summary})",
+                last_fraction * 100.0
+            )));
+        }
+        tokio::select! {
+            result = &mut bootstrap => {
+                result
+                    .map_err(|error| TorError(format!("join Arti bootstrap task: {error}")))?
+                    .map_err(|error| TorError(format!("bootstrap Arti client: {error}")))?;
+                notify_bootstrap(observer, 1.0, attempt, "TOR_BOOTSTRAP_READY", "Tor network bootstrap completed");
+                return Ok(());
+            }
+            status = events.next(), if events_open => {
+                match status {
+                    Some(status) => {
+                        let fraction = status.as_frac();
+                        last_summary = status.to_string();
+                        if fraction > last_fraction + f32::EPSILON {
+                            last_fraction = fraction;
+                            last_progress = Instant::now();
+                        }
+                        let percent = progress_percent(fraction);
+                        let code = if status.blocked().is_some() {
+                            "TOR_BOOTSTRAP_BLOCKED"
+                        } else if percent >= 100 {
+                            "TOR_BOOTSTRAP_READY"
+                        } else if percent >= 15 {
+                            "TOR_DIRECTORY_CONSENSUS"
+                        } else {
+                            "TOR_CONNECTING_DIRECTORY"
+                        };
+                        notify_bootstrap(observer, fraction, attempt, code, &last_summary);
+                    }
+                    None => events_open = false,
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            _ = stall_tick.tick() => {
+                if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
+                    bootstrap.abort();
+                    let _ = bootstrap.await;
+                    return Err(stalled_error(last_fraction, &last_summary));
+                }
+            }
+            () = &mut deadline => {
+                bootstrap.abort();
+                let _ = bootstrap.await;
+                return Err(TorError(format!(
+                    "bootstrap Arti client timed out at {:.0}% ({last_summary})",
+                    last_fraction * 100.0
+                )));
+            },
+        }
+    }
+}
+
+fn notify_bootstrap(
+    observer: Option<&TorBootstrapObserver>,
+    fraction: f32,
+    attempt: u32,
+    code: &'static str,
+    summary: &str,
+) {
+    if let Some(observer) = observer {
+        observer(TorBootstrapEvent {
+            stage: TorBootstrapStage::Network,
+            progress: progress_percent(fraction),
+            attempt,
+            retry_after_ms: None,
+            code,
+            summary: summary.to_owned(),
+        });
+    }
+}
+
+fn stalled_error(last_fraction: f32, last_summary: &str) -> TorError {
+    TorError(format!(
+        "bootstrap Arti client stalled at {:.0}% ({last_summary})",
+        last_fraction * 100.0
+    ))
+}
+
 fn is_unambiguous_state_corruption(error: &TorError) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     ["corrupt", "integrity check failed", "invalid arti state", "malformed state"]
         .iter()
         .any(|marker| message.contains(marker))
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn progress_percent(fraction: f32) -> u8 {
+    (fraction * 100.0).round().clamp(0.0, 100.0) as u8
 }
 
 fn quarantine_state_cache(state_root: &std::path::Path) {
@@ -393,5 +482,27 @@ fn quarantine_state_cache(state_root: &std::path::Path) {
         if source.exists() {
             let _ = std::fs::rename(&source, quarantine.join(name));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TorError, is_unambiguous_state_corruption, progress_percent};
+
+    #[test]
+    fn bootstrap_progress_is_bounded_and_rounded() {
+        assert_eq!(progress_percent(-0.5), 0);
+        assert_eq!(progress_percent(0.0), 0);
+        assert_eq!(progress_percent(0.149), 15);
+        assert_eq!(progress_percent(1.0), 100);
+        assert_eq!(progress_percent(1.5), 100);
+    }
+
+    #[test]
+    fn only_explicit_state_corruption_triggers_quarantine() {
+        assert!(is_unambiguous_state_corruption(&TorError("cache integrity check failed".into())));
+        assert!(!is_unambiguous_state_corruption(&TorError(
+            "directory consensus unavailable".into()
+        )));
     }
 }

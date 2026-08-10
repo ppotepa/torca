@@ -20,6 +20,7 @@ use torca_storage_sqlite::{
     ContactSecurityState, SqlCipherMessageStore, SqlCipherSecurityProjection,
     SqlCipherSettingsStore,
 };
+use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
 
 use crate::composition::{NativeCompositionError, spawn_production_engine};
 use crate::json::{
@@ -37,6 +38,11 @@ const NETWORK_MAX_ATTEMPTS: u32 = 3;
 
 type HostStartResult = Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError>;
 
+enum HostStartEvent {
+    Progress(TorBootstrapEvent),
+    Finished(HostStartResult),
+}
+
 pub struct TorcaRuntime {
     engine: EngineHandle,
     bridge: ContractRuntime,
@@ -45,8 +51,21 @@ pub struct TorcaRuntime {
     security: SqlCipherSecurityProjection,
     settings: SqlCipherSettingsStore,
     host: Option<RuntimeOwner>,
-    host_start: Option<Receiver<HostStartResult>>,
+    host_start: Option<Receiver<HostStartEvent>>,
     host_start_started_at: Option<Instant>,
+    host_start_started_at_ms: Option<i64>,
+    host_last_progress_at_ms: Option<i64>,
+    host_progress: u8,
+    host_attempt: u32,
+    host_status_code: Option<String>,
+    host_status_summary: Option<String>,
+    host_onion_started_at_ms: Option<i64>,
+    host_onion_last_progress_at_ms: Option<i64>,
+    host_onion_progress: u8,
+    host_onion_attempt: u32,
+    host_onion_status_code: Option<String>,
+    host_onion_status_summary: Option<String>,
+    host_onion_retry_at: Option<Instant>,
     host_start_deadline: Option<Instant>,
     host_retry_at: Option<Instant>,
     host_failures: u32,
@@ -95,6 +114,19 @@ impl TorcaRuntime {
             host: None,
             host_start: None,
             host_start_started_at: None,
+            host_start_started_at_ms: None,
+            host_last_progress_at_ms: None,
+            host_progress: 0,
+            host_attempt: 0,
+            host_status_code: None,
+            host_status_summary: None,
+            host_onion_started_at_ms: None,
+            host_onion_last_progress_at_ms: None,
+            host_onion_progress: 0,
+            host_onion_attempt: 0,
+            host_onion_status_code: None,
+            host_onion_status_summary: None,
+            host_onion_retry_at: None,
             host_start_deadline: None,
             host_retry_at: None,
             host_failures: 0,
@@ -268,33 +300,61 @@ impl TorcaRuntime {
     }
 
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
-        let (phase, state, code) = match self.host_state_hint {
-            TorState::Starting => {
-                let elapsed =
-                    self.host_start_started_at.map_or(Duration::ZERO, |started| started.elapsed());
-                let code = if elapsed >= Duration::from_secs(120) {
-                    "TOR_BOOTSTRAP_SLOW"
-                } else if elapsed >= Duration::from_secs(60) {
-                    "TOR_BUILDING_CIRCUITS"
-                } else if elapsed >= Duration::from_secs(15) {
-                    "TOR_DOWNLOADING_CONSENSUS"
-                } else {
-                    "TOR_CONNECTING_DIRECTORY"
-                };
-                ("starting", "running", Some(code))
-            }
-            TorState::Degraded | TorState::Failed => {
-                ("failed", "failed", Some("TOR_RUNTIME_FAILED"))
-            }
-            TorState::Stopped => ("idle", "pending", None),
-            TorState::Ready => ("starting", "running", None),
+        snapshot.bootstrap_phase = match self.host_state_hint {
+            TorState::Degraded | TorState::Failed => "failed",
+            TorState::Stopped => "idle",
+            TorState::Starting | TorState::Ready => "starting",
+        }
+        .into();
+        let network_state = if self.host_progress >= 100 {
+            "ready"
+        } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
+            "failed"
+        } else if self.host_retry_at.is_some() {
+            "retrying"
+        } else if self.host_start.is_some() {
+            "running"
+        } else {
+            "pending"
         };
-        snapshot.bootstrap_phase = phase.into();
         if let Some(step) =
             snapshot.bootstrap_steps.iter_mut().find(|step| step.id == "tor_network")
         {
-            step.state = state.into();
-            step.code = code.map(str::to_owned);
+            step.state = network_state.into();
+            step.code = self.host_status_code.clone();
+            step.progress = self.host_progress;
+            step.attempt = self.host_attempt;
+            step.started_at_ms = self.host_start_started_at_ms;
+            step.last_progress_at_ms = self.host_last_progress_at_ms;
+            step.retry_at_ms = self.host_retry_at.and_then(instant_to_unix_ms);
+        }
+        let onion_state = if self.host_progress < 100 {
+            if network_state == "failed" { "blocked" } else { "pending" }
+        } else if self.host_onion_progress >= 100 {
+            "ready"
+        } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
+            "failed"
+        } else if self.host_onion_retry_at.is_some() {
+            "retrying"
+        } else if self.host_onion_attempt > 0 {
+            "running"
+        } else {
+            "pending"
+        };
+        if let Some(step) =
+            snapshot.bootstrap_steps.iter_mut().find(|step| step.id == "onion_service")
+        {
+            step.state = onion_state.into();
+            step.code = if onion_state == "blocked" {
+                Some("TOR_NETWORK_REQUIRED".into())
+            } else {
+                self.host_onion_status_code.clone()
+            };
+            step.progress = self.host_onion_progress;
+            step.attempt = self.host_onion_attempt;
+            step.started_at_ms = self.host_onion_started_at_ms;
+            step.last_progress_at_ms = self.host_onion_last_progress_at_ms;
+            step.retry_at_ms = self.host_onion_retry_at.and_then(instant_to_unix_ms);
         }
     }
 
@@ -379,6 +439,19 @@ impl TorcaRuntime {
         self.host_state_hint = TorState::Stopped;
         self.host_start = None;
         self.host_start_started_at = None;
+        self.host_start_started_at_ms = None;
+        self.host_last_progress_at_ms = None;
+        self.host_progress = 0;
+        self.host_attempt = 0;
+        self.host_status_code = None;
+        self.host_status_summary = None;
+        self.host_onion_started_at_ms = None;
+        self.host_onion_last_progress_at_ms = None;
+        self.host_onion_progress = 0;
+        self.host_onion_attempt = 0;
+        self.host_onion_status_code = None;
+        self.host_onion_status_summary = None;
+        self.host_onion_retry_at = None;
         self.host_start_deadline = None;
         if let Some(host) = self.host.take() {
             if host.shutdown().is_err() {
@@ -598,20 +671,39 @@ impl TorcaRuntime {
             "Starting production network runtime",
         );
         let engine = self.engine.clone();
-        let (sender, receiver) = mpsc::channel::<HostStartResult>();
+        let (sender, receiver) = mpsc::channel::<HostStartEvent>();
         self.host_start = Some(receiver);
         self.host_start_started_at = Some(Instant::now());
+        self.host_start_started_at_ms = unix_time_ms().ok();
+        self.host_last_progress_at_ms = self.host_start_started_at_ms;
+        self.host_progress = 0;
+        self.host_attempt = 1;
+        self.host_status_code = Some("TOR_BOOTSTRAP_STARTING".into());
+        self.host_status_summary = Some("Starting embedded Tor bootstrap".into());
+        self.host_onion_started_at_ms = None;
+        self.host_onion_last_progress_at_ms = None;
+        self.host_onion_progress = 0;
+        self.host_onion_attempt = 0;
+        self.host_onion_status_code = None;
+        self.host_onion_status_summary = None;
+        self.host_onion_retry_at = None;
         self.host_start_deadline = Some(Instant::now() + NETWORK_START_OBSERVE_TIMEOUT);
+        let progress_sender = sender.clone();
+        let observer: TorBootstrapObserver = std::sync::Arc::new(move |progress| {
+            let _ = progress_sender.send(HostStartEvent::Progress(progress));
+        });
         thread::spawn(move || {
-            let result = match catch_unwind(AssertUnwindSafe(|| spawn_production_runtime(engine))) {
-                Ok(result) => result,
-                Err(payload) => Err(NativeCompositionError::new(format!(
-                    "production network runtime worker panicked: {}",
-                    panic_message(payload)
-                ))),
-            };
-            if let Err(send_error) = sender.send(result) {
-                if let Ok((_handle, owner)) = send_error.0 {
+            let result =
+                match catch_unwind(AssertUnwindSafe(|| spawn_production_runtime(engine, observer)))
+                {
+                    Ok(result) => result,
+                    Err(payload) => Err(NativeCompositionError::new(format!(
+                        "production network runtime worker panicked: {}",
+                        panic_message(payload)
+                    ))),
+                };
+            if let Err(send_error) = sender.send(HostStartEvent::Finished(result)) {
+                if let HostStartEvent::Finished(Ok((_handle, owner))) = send_error.0 {
                     let _ = owner.shutdown();
                 }
             }
@@ -626,17 +718,76 @@ impl TorcaRuntime {
         if result.ok { Ok(()) } else { Err(()) }
     }
 
+    fn apply_bootstrap_progress(&mut self, progress: &TorBootstrapEvent) -> bool {
+        let retry_at = progress
+            .retry_after_ms
+            .and_then(|delay_ms| Instant::now().checked_add(Duration::from_millis(delay_ms)));
+        match progress.stage {
+            TorBootstrapStage::Network => {
+                let changed = progress.progress != self.host_progress
+                    || self.host_status_code.as_deref() != Some(progress.code)
+                    || progress.attempt != self.host_attempt
+                    || self.host_status_summary.as_deref() != Some(progress.summary.as_str());
+                if progress.progress > self.host_progress {
+                    self.host_last_progress_at_ms = unix_time_ms().ok();
+                }
+                self.host_progress = self.host_progress.max(progress.progress);
+                self.host_attempt = progress.attempt;
+                self.host_status_code = Some(progress.code.into());
+                self.host_status_summary = Some(progress.summary.clone());
+                self.host_retry_at = retry_at;
+                changed
+            }
+            TorBootstrapStage::OnionService => {
+                let changed = progress.progress != self.host_onion_progress
+                    || self.host_onion_status_code.as_deref() != Some(progress.code)
+                    || progress.attempt != self.host_onion_attempt
+                    || self.host_onion_status_summary.as_deref() != Some(progress.summary.as_str());
+                let now_ms = unix_time_ms().ok();
+                if self.host_onion_started_at_ms.is_none() {
+                    self.host_onion_started_at_ms = now_ms;
+                    self.host_onion_last_progress_at_ms = now_ms;
+                }
+                if progress.progress > self.host_onion_progress {
+                    self.host_onion_last_progress_at_ms = now_ms;
+                }
+                self.host_onion_progress = self.host_onion_progress.max(progress.progress);
+                self.host_onion_attempt = progress.attempt;
+                self.host_onion_status_code = Some(progress.code.into());
+                self.host_onion_status_summary = Some(progress.summary.clone());
+                self.host_onion_retry_at = retry_at;
+                changed
+            }
+        }
+    }
+
     fn advance_runtime_start(&mut self) {
-        let outcome = match self.host_start.as_ref() {
-            Some(receiver) => match receiver.try_recv() {
-                Ok(result) => Some(result),
-                Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => Some(Err(NativeCompositionError::new(
-                    "network runtime startup worker disconnected",
-                ))),
-            },
-            None => None,
-        };
+        let mut outcome = None;
+        loop {
+            let event = match self.host_start.as_ref() {
+                Some(receiver) => receiver.try_recv(),
+                None => break,
+            };
+            match event {
+                Ok(HostStartEvent::Progress(progress)) => {
+                    let changed = self.apply_bootstrap_progress(&progress);
+                    if changed {
+                        self.log("tor", Level::Info, "bootstrap", progress.code, &progress.summary);
+                    }
+                }
+                Ok(HostStartEvent::Finished(result)) => {
+                    outcome = Some(result);
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    outcome = Some(Err(NativeCompositionError::new(
+                        "network runtime startup worker disconnected",
+                    )));
+                    break;
+                }
+            }
+        }
         if let Some(result) = outcome {
             self.host_start = None;
             self.host_start_started_at = None;
@@ -648,6 +799,13 @@ impl TorcaRuntime {
                     self.host_retry_at = None;
                     self.host_failures = 0;
                     self.host_state_hint = TorState::Ready;
+                    self.host_progress = 100;
+                    self.host_attempt = self.host_attempt.max(1);
+                    self.host_status_code = Some("TOR_BOOTSTRAP_READY".into());
+                    self.host_status_summary = Some("Tor network bootstrap completed".into());
+                    self.host_onion_progress = 100;
+                    self.host_onion_status_code = Some("ONION_SERVICE_READY".into());
+                    self.host_onion_status_summary = Some("Private onion service published".into());
                     self.log(
                         "bootstrap",
                         Level::Info,
@@ -658,11 +816,16 @@ impl TorcaRuntime {
                 }
                 Err(error) => {
                     self.host_failures = self.host_failures.saturating_add(1);
-                    self.host_state_hint = if self.host_failures >= NETWORK_MAX_ATTEMPTS {
-                        TorState::Failed
-                    } else {
-                        TorState::Degraded
-                    };
+                    let diagnostic = error.to_string();
+                    let unsafe_to_retry = diagnostic.contains("bootstrap Arti client stalled")
+                        || diagnostic.contains("bootstrap Arti client exhausted")
+                        || diagnostic.contains("onion service exhausted");
+                    self.host_state_hint =
+                        if unsafe_to_retry || self.host_failures >= NETWORK_MAX_ATTEMPTS {
+                            TorState::Failed
+                        } else {
+                            TorState::Degraded
+                        };
                     self.log(
                         "bootstrap",
                         Level::Error,
@@ -670,14 +833,30 @@ impl TorcaRuntime {
                         "RUNTIME_START_FAILED",
                         &format!("Production network runtime start failed: {error}"),
                     );
-                    self.host_retry_at = (self.host_failures < NETWORK_MAX_ATTEMPTS).then(|| {
-                        let delay = match self.host_failures {
-                            1 => Duration::from_secs(5),
-                            2 => Duration::from_secs(15),
-                            _ => NETWORK_RETRY_DELAY,
-                        };
-                        Instant::now() + delay
-                    });
+                    self.host_retry_at = (!unsafe_to_retry
+                        && self.host_failures < NETWORK_MAX_ATTEMPTS)
+                        .then(|| {
+                            let delay = match self.host_failures {
+                                1 => Duration::from_secs(5),
+                                2 => Duration::from_secs(15),
+                                _ => NETWORK_RETRY_DELAY,
+                            };
+                            Instant::now() + delay
+                        });
+                    if unsafe_to_retry {
+                        if self.host_onion_attempt > 0 && self.host_onion_progress < 100 {
+                            self.host_onion_status_code =
+                                Some("ONION_SERVICE_RESTART_REQUIRED".into());
+                            self.host_onion_retry_at = None;
+                        } else {
+                            self.host_status_code = Some("TOR_RESTART_REQUIRED".into());
+                        }
+                    } else if self.host_retry_at.is_some() {
+                        self.host_status_code = Some("TOR_BOOTSTRAP_RETRYING".into());
+                        self.host_last_progress_at_ms = unix_time_ms().ok();
+                    } else {
+                        self.host_status_code = Some("TOR_RUNTIME_FAILED".into());
+                    }
                 }
             }
         } else if self.host_start.is_some()
@@ -761,6 +940,17 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
     } else {
         "non-string panic payload".to_owned()
     }
+}
+
+fn unix_time_ms() -> Result<i64, ()> {
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| ())?;
+    i64::try_from(elapsed.as_millis()).map_err(|_| ())
+}
+
+fn instant_to_unix_ms(deadline: Instant) -> Option<i64> {
+    let remaining = deadline.checked_duration_since(Instant::now()).unwrap_or_default();
+    let remaining_ms = i64::try_from(remaining.as_millis()).ok()?;
+    unix_time_ms().ok()?.checked_add(remaining_ms)
 }
 
 fn command_conversation_id(command: &torca_contract::BridgeCommand) -> Option<ConversationId> {

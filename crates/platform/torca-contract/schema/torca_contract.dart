@@ -1,6 +1,6 @@
 // GENERATED FILE. DO NOT EDIT.
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
-const int torcaContractVersion = 12;
+const int torcaContractVersion = 13;
 const int torcaNativeAbiVersion = 1;
 
 class BridgeResultDto {
@@ -18,9 +18,20 @@ class IdentityDto {
 }
 
 class BootstrapStepDto {
-  const BootstrapStepDto({required this.id, required this.state, this.code});
+  const BootstrapStepDto({
+    required this.id,
+    required this.state,
+    this.code,
+    this.progress = 0,
+    this.attempt = 0,
+    this.startedAtMs,
+    this.lastProgressAtMs,
+    this.retryAtMs,
+  });
   final String id, state;
   final String? code;
+  final int progress, attempt;
+  final int? startedAtMs, lastProgressAtMs, retryAtMs;
 }
 
 class PairingDto {

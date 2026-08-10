@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "contractVersion": 12,
+  "contractVersion": 13,
   "wireVersion": 1,
   "nativeAbi": 1,
   "operations": {

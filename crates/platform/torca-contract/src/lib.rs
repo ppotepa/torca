@@ -23,7 +23,7 @@ use torca_runtime::{
     TorState,
 };
 
-pub const CONTRACT_VERSION: u16 = 12;
+pub const CONTRACT_VERSION: u16 = 13;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -155,6 +155,11 @@ pub struct BridgeBootstrapStep {
     pub id: String,
     pub state: String,
     pub code: Option<String>,
+    pub progress: u8,
+    pub attempt: u32,
+    pub started_at_ms: Option<i64>,
+    pub last_progress_at_ms: Option<i64>,
+    pub retry_at_ms: Option<i64>,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -817,6 +822,11 @@ fn map_snapshot(
                 id: bootstrap_step_id(step.id).into(),
                 state: format!("{:?}", step.state).to_lowercase(),
                 code: step.diagnostic_code,
+                progress: u8::from(step.state == BootstrapStepState::Ready) * 100,
+                attempt: step.attempt,
+                started_at_ms: None,
+                last_progress_at_ms: None,
+                retry_at_ms: None,
             })
             .collect(),
         pairings: snapshot

@@ -2,29 +2,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 
 void main() {
-  test('bridge contract v12 carries bootstrap and nested peer health', () {
-    expect(torcaContractVersion, 12);
+  test(
+    'bridge contract v13 carries bootstrap progress and nested peer health',
+    () {
+      expect(torcaContractVersion, 13);
 
-    const health = PeerHealthDto(
-      state: 'ready',
-      quality: 'good',
-      rttMs: 721,
-      lastSuccessAtMs: 1234,
-      consecutiveFailures: 0,
-      reconnectAttempt: 2,
-    );
-    const contact = ContactDto(
-      id: '00000000000000000000000000000001',
-      onionAddress: 'example.onion',
-      status: 'active',
-      connectionState: 'ready',
-      peerHealth: health,
-    );
+      const bootstrap = BootstrapStepDto(
+        id: 'tor_network',
+        state: 'running',
+        code: 'TOR_DIRECTORY_CONSENSUS',
+        progress: 15,
+        attempt: 1,
+        startedAtMs: 1000,
+        lastProgressAtMs: 2000,
+      );
+      expect(bootstrap.progress, 15);
+      expect(bootstrap.attempt, 1);
 
-    expect(contact.peerHealth.quality, 'good');
-    expect(contact.peerHealth.rttMs, 721);
-    expect(contact.peerHealth.reconnectAttempt, 2);
-  });
+      const health = PeerHealthDto(
+        state: 'ready',
+        quality: 'good',
+        rttMs: 721,
+        lastSuccessAtMs: 1234,
+        consecutiveFailures: 0,
+        reconnectAttempt: 2,
+      );
+      const contact = ContactDto(
+        id: '00000000000000000000000000000001',
+        onionAddress: 'example.onion',
+        status: 'active',
+        connectionState: 'ready',
+        peerHealth: health,
+      );
+
+      expect(contact.peerHealth.quality, 'good');
+      expect(contact.peerHealth.rttMs, 721);
+      expect(contact.peerHealth.reconnectAttempt, 2);
+    },
+  );
 
   test('runtime commands carry user intent only', () {
     const pairing = CreatePairingCommandDto();
