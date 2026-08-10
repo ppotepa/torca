@@ -1,19 +1,29 @@
 # Torca implementation order
 
 This repository implements one Windows/Android baseline: one Flutter presentation, one process Rust
-runtime, one canonical contract, and thin operating-system adapters.
+runtime, one canonical operation contract, and thin operating-system adapters.
 
-## Ordered work
+## Completed foundations
 
-1. Establish source policy and the baseline storage epoch.
-2. Generate the language-neutral request/response contract and verify drift.
-3. Start one bounded single-writer `TorcaRuntime` and process registry.
-4. Compose Windows and Android through `PlatformServices`.
-5. Keep all Arti integration inside `torca-tor`.
-6. Bootstrap storage, identity, embedded Tor, onion service and relay probe.
-7. Expose only `profile.set` for profile creation/update.
-8. Use one Dart worker and the generic invoke ABI.
-9. Add lifecycle, cursor-addressed notifications and Rust deep-link parsing.
-10. Verify manifests, artifact hashes, controlled reset and platform E2E journeys.
+1. Source policy, storage baseline and a single process runtime are in place.
+2. Windows and Android share `PlatformServices`, `torca-tor`, a generic native ABI and one Flutter worker.
+3. Bootstrap, profile creation, relay probing, lifecycle forwarding, bounded command idempotency and
+   state-transition-based snapshot revisions are implemented.
+4. Deploy tooling embeds the relay endpoint and verifies relay protocol health before installation.
 
-Source checks and platform validation are separate gates; neither substitutes for the other.
+## Remaining hardening work
+
+1. Make the contract schema generate complete Rust and Dart payload/type models instead of validating an
+   operation allow-list plus a checked-in Dart template.
+2. Correct the conversation-page cursor contract and propagate query failures instead of decoding them as
+   empty successful pages.
+3. Move blocking peer/Tor delivery waits out of the runtime actor and return typed completion events.
+4. Replace frequent root-snapshot polling with a cursor-addressed runtime event journal or long-poll API.
+5. Move all protocol settings/capabilities, including read-receipt policy, to Rust and expose real
+   diagnostics projections.
+6. Keep root snapshots bounded by removing legacy message/attachment projections and using targeted
+   queries.
+7. Validate artifacts and lifecycle behavior on Windows and Android when platform testing is scheduled.
+
+Source checks, artifact validation and device E2E validation are separate gates. Physical-device E2E is
+not a required local development gate unless explicitly scheduled.

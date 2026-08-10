@@ -18,3 +18,4 @@ Accepted ADRs are not rewritten to reflect later preferences. A new ADR supersed
 - [`0003-parameterized-sql-files.md`](0003-parameterized-sql-files.md)
 - [`0004-main-only-development.md`](0004-main-only-development.md)
 - [`0005-versioned-release-documentation.md`](0005-versioned-release-documentation.md)
+- [`0006-torca-runtime-process-boundary.md`](0006-torca-runtime-process-boundary.md)

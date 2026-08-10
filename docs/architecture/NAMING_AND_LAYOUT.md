@@ -51,4 +51,6 @@ Use only the directories needed by that crate. Public exports are curated in `li
 
 ## Documentation
 
-Every component directory starts with a README describing purpose, ownership, non-responsibilities, dependencies and completion criteria. Implementation-specific details move into source documentation once code exists.
+Component READMEs document stable public boundaries, ownership and non-responsibilities. Details that
+are local to an implementation live in source documentation until that boundary is stable enough to be
+documented independently.

@@ -2,8 +2,8 @@
 
 Torca intentionally exposes only three developer commands:
 
-For the full local deployment workflow use `torca.ps1`. It starts the local
-relay and Tor Hidden Service, preserves the onion identity in `.torca`, detects
+For the full local deployment workflow use `./scripts/torca.ps1`. It starts the local
+relay and Tor onion service, preserves the onion identity in `.torca`, detects
 Windows and Flutter Android devices, and lets the operator choose rebuild,
 installation, and restart policies from a menu.
 
@@ -35,6 +35,11 @@ Full `deploy` defaults to `Ensure`: it preserves the current onion and creates
 one only when none exists. Use `-OnionPolicy Rotate` when a fresh network and a
 new client build are required. `-OnionPolicy Preserve` fails instead of
 creating missing network state.
+
+The interactive wizard asks whether selected client data should be preserved or reset. In
+non-interactive mode any reset requires `-AllowDataReset`; this prevents accidental replacement of the
+local identity and encrypted database. The relay stack is protocol-health checked before a deploy is
+allowed to install artifacts.
 
 Build manifests are stored independently for each target and configuration:
 `.torca/manifests/android-release.json` and
@@ -112,8 +117,8 @@ if Compose cannot start, the script falls back to the process provider and keeps
 that provider for subsequent runs until Docker is explicitly selected:
 
 ```powershell
-.\torca.ps1 stack ensure -StackProvider docker
-.\torca.ps1 stack ensure -StackProvider process
+.\scripts\torca.ps1 stack ensure -StackProvider docker
+.\scripts\torca.ps1 stack ensure -StackProvider process
 ```
 
 `-StackAction rotate` recreates the Docker Tor volume and therefore creates a

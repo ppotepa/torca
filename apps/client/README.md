@@ -15,7 +15,9 @@ apps/client/
 
 Generated platform scaffolds are intentionally ignored by Git. Torca-specific Android system overlays live under `tools/build/overlays/android`; the build tooling applies them after Flutter creates the standard platform project.
 
-The client owns presentation, startup/shutdown and platform composition. It does not own messaging, pairing, contacts, persistence, cryptography, Tor protocol logic or retry state machines.
+The client owns presentation and presentation-worker startup/shutdown. Rust owns process-runtime
+composition, messaging, pairing, contacts, persistence, cryptography, Tor protocol logic and retry
+state machines.
 
 Developer entrypoints from the repository root:
 

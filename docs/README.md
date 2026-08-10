@@ -4,7 +4,8 @@ Torca documentation is separated by purpose so that current delivery work does n
 
 ## Active release documentation
 
-[`0.2`](0.2/IMPLEMENTATION_ORDER.md) contains the current implementation order and release validation gates.
+[`0.2`](0.2/IMPLEMENTATION_ORDER.md) contains current implementation order, known architectural gaps and
+validation gates.
 
 ## Architecture documentation
 

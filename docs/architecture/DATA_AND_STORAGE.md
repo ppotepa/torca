@@ -22,7 +22,7 @@ Each storage module keeps SQL in files:
 ```text
 sql/
   migrations/
-    0001_initial.sql
+    0001_baseline.sql
   commands/
     insert_message.sql
     mark_message_delivered.sql
@@ -54,7 +54,9 @@ External network calls must not occur while a database transaction is held.
 
 ## Migrations
 
-Migrations are append-only after the first distributed test build. Each migration has a monotonic identifier and is tested from an empty database and from every supported prior release schema.
+The current storage epoch begins at `0001_baseline.sql`; legacy 0.1 migrations are intentionally not
+supported. Future migrations are append-only, have monotonic identifiers, and are tested from an empty
+database and every supported prior release schema.
 
 ## Encryption and secrets
 

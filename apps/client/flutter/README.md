@@ -8,9 +8,14 @@ There is no desktop UI implementation and mobile UI implementation to keep in sy
 
 - compact layouts use normal routed screens;
 - wide layouts render a conversation list and the same `ConversationPane` side by side;
-- all commands go through the same `EngineGateway` and all state comes from the same Rust snapshot.
+- all commands go through the same `EngineGateway`; root state comes from bounded Rust snapshots and
+  conversation history comes from paginated Rust queries.
 
 The default production gateway is `FfiEngineGateway`, backed by the shared `torca_native` Rust library. Test-only fakes live under `test/`; production never falls back to an in-memory engine when native startup fails.
+
+`NativeRuntimeWorker` owns the only presentation handle and serializes FFI calls. It currently polls a
+bounded root snapshot and notification cursor; it must not derive business state from cached message
+history. A Rust event-journal transport is planned as a replacement for frequent polling.
 
 ## Platform targets
 

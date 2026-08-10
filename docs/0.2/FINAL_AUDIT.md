@@ -1,24 +1,31 @@
-# Torca final source audit
+# Torca current source audit
 
-The source baseline is complete for the requested unified runtime architecture. Remaining release gates
-are execution on real Windows and Android artifacts.
+This is a current-state audit, not a declaration that the entire target architecture is complete.
 
-Verified source properties:
+## Verified now
 
-- one process runtime with bounded mailbox, immutable revisioned snapshots and explicit shutdown;
-- one generic native ABI and one generated Rust/Dart contract;
-- one embedded Tor library with Arti imports confined to `torca-tor`;
+- one process runtime with a bounded mailbox, generic native ABI and explicit shutdown;
+- command-only bounded idempotency ledger and state-transition-based snapshot revisions;
+- embedded `torca-tor`, with Arti imports confined to that crate;
 - optional profile state and idempotent `profile.set` without sentinel names;
-- current storage schema with explicit epoch reset owned by deploy tooling;
-- shared platform composition with thin Windows/Android adapters;
-- root snapshots contain summaries and health, while history is paginated;
-- notification events are cursor-addressed and redacted;
-- production source policy rejects obsolete names, external Tor binaries and frontend FFI ownership.
+- baseline storage schema and deploy-owned data reset;
+- shared Windows/Android composition with thin platform adapters;
+- root snapshots omit full message history; history is queried in pages;
+- cursor-addressed notification projections using the `createdAtMs` wire field;
+- relay protocol health checks in runtime and deploy-stack preflight; and
+- source policy rejecting obsolete names, external Tor binaries and frontend FFI ownership.
 
-Release validation still required:
+## Known architectural gaps
 
-1. Windows release build and tray lifecycle.
-2. Android release APK, foreground service and Activity recreation.
-3. Clean-data and warm-cache bootstrap journeys on both platforms.
-4. Artifact manifest, native hash, build ID and contract verification after install.
-5. Tor retry/stall, relay degraded recovery and controlled shutdown soak tests.
+1. The contract generator does not yet generate complete payload/type models from the JSON schema.
+2. Conversation pagination still needs an opaque complete cursor and strict query-error propagation.
+3. Some network/delivery adapters can still wait synchronously; those waits must move outside the runtime actor.
+4. Flutter still polls bounded root snapshots; a runtime event journal/long-poll API remains planned.
+5. Read-receipt policy, capabilities and diagnostics need complete Rust-owned contract projections.
+6. Attachment projections need further slimming so root snapshots remain bounded as history grows.
+
+## Validation status
+
+Source and release-artifact checks are distinct from device E2E validation. Keep build metadata, native
+ABI, contract and embedded relay endpoint verification mandatory. Run device lifecycle and soak journeys
+only when the platform-validation phase is explicitly scheduled.
