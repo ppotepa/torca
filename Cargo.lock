@@ -4977,6 +4977,7 @@ name = "torca-contract"
 version = "0.2.0-alpha.0"
 dependencies = [
  "serde",
+ "serde_json",
  "sha2",
  "torca-attachments",
  "torca-bootstrap",

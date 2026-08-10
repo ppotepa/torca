@@ -109,14 +109,10 @@ pub(crate) fn notification_snapshot_json(after_cursor: u64) -> String {
         Some(inner) => inner,
         None => return crate::notification_json::notification_events_json(after_cursor),
     };
-    let request = serde_json::json!({
-        "schema": 1,
-        "requestId": format!("android-notifications-{after_cursor}"),
-        "kind": "query",
-        "name": "notifications.poll",
-        "payload": { "afterCursor": after_cursor },
-    })
-    .to_string();
+    let request = torca_contract::notification_poll_request_json(
+        &format!("android-notifications-{after_cursor}"),
+        after_cursor,
+    );
     let (tx, rx) = mpsc::sync_channel(1);
     if send_with_timeout(
         &inner.sender,

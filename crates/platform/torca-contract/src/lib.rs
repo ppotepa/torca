@@ -26,6 +26,20 @@ use torca_runtime::{
 
 pub const CONTRACT_VERSION: u16 = 15;
 
+/// Serializes the contract-owned notification cursor query used by platform
+/// notification consumers. Native hosts must not hand-assemble ABI requests.
+#[must_use]
+pub fn notification_poll_request_json(request_id: &str, after_cursor: u64) -> String {
+    serde_json::json!({
+        "schema": 1,
+        "requestId": request_id,
+        "kind": "query",
+        "name": "notifications.poll",
+        "payload": { "afterCursor": after_cursor },
+    })
+    .to_string()
+}
+
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BridgeCommand {
