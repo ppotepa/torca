@@ -16,14 +16,14 @@ use torca_identity::{IdentityId, ProfileName, PublicIdentity};
 use torca_messaging::{
     Message, MessageBody, MessageDirection, MessageId, MessageStatus, ReplyReference,
 };
-use torca_pairing::{PairingCode, PairingSessionId};
+use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_runtime::{
     AttachmentSendRequest, AttachmentView, NetworkSnapshot, RuntimeDriverError, RuntimeHandle,
     TorState, TransportActivitySnapshot,
 };
 
-pub const CONTRACT_VERSION: u16 = 14;
+pub const CONTRACT_VERSION: u16 = 15;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,6 +31,7 @@ pub enum BridgeCommand {
     SetNotifications {
         enabled: bool,
     },
+    AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
         at_ms: i64,
@@ -134,6 +135,9 @@ pub struct BridgeSnapshot {
     pub conversations: Vec<BridgeConversation>,
     pub messages: Vec<BridgeMessage>,
     pub attachments: Vec<BridgeAttachment>,
+    pub unread_messages_count: u32,
+    pub new_contacts_count: u32,
+    pub pairing_attention_count: u32,
     pub bootstrap_phase: String,
     pub bootstrap_steps: Vec<BridgeBootstrapStep>,
 }
@@ -212,6 +216,7 @@ pub struct BridgeContact {
     pub peer_health: BridgePeerHealth,
     pub verification_status: String,
     pub verified_at_ms: Option<i64>,
+    pub created_at_ms: i64,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -300,6 +305,7 @@ impl ContractRuntime {
     pub fn execute(&self, command: BridgeCommand) -> BridgeResult {
         let result: Result<&'static str, String> = match command {
             BridgeCommand::SetNotifications { .. } => Ok("notifications_updated"),
+            BridgeCommand::AcknowledgeNewContacts => Ok("contacts_acknowledged"),
             BridgeCommand::UpdateProfile { display_name, at_ms } => self
                 .profile_setup_allowed()
                 .and_then(|()| ProfileName::new(display_name).map_err(string_error))
@@ -789,6 +795,7 @@ fn result_kind(value: &EngineResult) -> &'static str {
         EngineResult::PairingRejected => "pairing_rejected",
         EngineResult::PairingCancelled => "pairing_cancelled",
         EngineResult::PairingCompleted { .. } => "pairing_completed",
+        EngineResult::PairingRemoved => "pairing_removed",
         EngineResult::MessageQueued { .. } => "message_queued",
         EngineResult::MessageUpdated { .. } => "message_updated",
         EngineResult::ReceiptApplied { .. } => "receipt_applied",
@@ -890,6 +897,18 @@ fn map_snapshot(
         pairings: snapshot
             .pairings
             .into_iter()
+            // Pairing history is intentionally not a root-snapshot feature.
+            // Terminal sessions have already been removed from the relay and
+            // are projected to UI through the operation result/toast instead.
+            .filter(|pairing| {
+                !matches!(
+                    pairing.state(),
+                    PairingState::Rejected
+                        | PairingState::Cancelled
+                        | PairingState::Expired
+                        | PairingState::Completed
+                )
+            })
             .map(|pairing| BridgePairing {
                 id: pairing.id().to_string(),
                 code: pairing.code().as_str().to_owned(),
@@ -961,6 +980,7 @@ fn map_snapshot(
                         "unverified".into()
                     },
                     verified_at_ms: verification.verified_at.map(Timestamp::to_unix_millis),
+                    created_at_ms: contact.created_at().to_unix_millis(),
                 }
             })
             .collect(),
@@ -1006,6 +1026,9 @@ fn map_snapshot(
                 offset: attachment.offset,
             })
             .collect(),
+        unread_messages_count: 0,
+        new_contacts_count: 0,
+        pairing_attention_count: 0,
     }
 }
 

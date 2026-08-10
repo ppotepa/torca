@@ -225,6 +225,7 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
             }
             None => output.push_str("null"),
         }
+        let _ = write!(output, ",\"createdAtMs\":{}", contact.created_at_ms);
         output.push_str(",\"peerHealth\":{\"state\":\"");
         push_json_string(&contact.peer_health.state, &mut output);
         output.push_str("\",\"quality\":\"");
@@ -287,7 +288,13 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         push_bridge_message(message, &mut output);
     }
 
-    output.push_str("],\"attachments\":[");
+    let _ = write!(
+        output,
+        "],\"navigationBadges\":{{\"unreadMessages\":{},\"newContacts\":{},\"pairingAttention\":{}}},\"attachments\":[",
+        snapshot.unread_messages_count,
+        snapshot.new_contacts_count,
+        snapshot.pairing_attention_count
+    );
     for (index, attachment) in snapshot.attachments.iter().enumerate() {
         if index != 0 {
             output.push(',');

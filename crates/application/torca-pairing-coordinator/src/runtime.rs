@@ -65,6 +65,7 @@ pub enum PairingRuntimeError {
     InvalidOffer,
     InvalidCompletion,
     UnsupportedAlgorithm,
+    CreatorApprovalRequired,
     SessionNotFound,
 }
 impl core::fmt::Display for PairingRuntimeError {
@@ -168,6 +169,33 @@ where
     }
 
     pub fn approve(
+        &mut self,
+        session_id: PairingSessionId,
+        now: Timestamp,
+    ) -> Result<(), PairingRuntimeError> {
+        let session = self.session(session_id)?;
+        if session.role() != PairingRole::Creator {
+            return Err(PairingRuntimeError::CreatorApprovalRequired);
+        }
+        self.record_local_approval(session_id, now)
+    }
+
+    /// Joining an invitation is the joiner's explicit consent.  It is recorded
+    /// as soon as the creator's authenticated offer has been verified; only the
+    /// creator is subsequently presented with an approval decision.
+    fn approve_joiner_consent(
+        &mut self,
+        session_id: PairingSessionId,
+        now: Timestamp,
+    ) -> Result<(), PairingRuntimeError> {
+        let session = self.session(session_id)?;
+        if session.role() != PairingRole::Joiner {
+            return Err(PairingRuntimeError::CreatorApprovalRequired);
+        }
+        self.record_local_approval(session_id, now)
+    }
+
+    fn record_local_approval(
         &mut self,
         session_id: PairingSessionId,
         now: Timestamp,
@@ -293,6 +321,8 @@ where
                             .cloned()
                             .ok_or(PairingRuntimeError::InvalidOffer)?;
                         self.coordinator.push(session_id, &local)?;
+                    } else {
+                        self.approve_joiner_consent(session_id, now)?;
                     }
                 }
                 PairingPayload::Approval(remote) => {
@@ -465,6 +495,7 @@ where
     }
 
     fn cleanup_terminal(&mut self, session_id: PairingSessionId) {
+        let _ = self.engine.dispatch(EngineCommand::RemovePairing { session_id });
         let _ = self.close_transport(session_id);
     }
 

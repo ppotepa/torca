@@ -17,6 +17,7 @@ pub const MAX_RELAY_FRAME_LEN: usize =
 const RELAY_MAGIC: &[u8; 4] = b"TCRL";
 const REQUEST_DIRECTION: u8 = 1;
 const RESPONSE_DIRECTION: u8 = 2;
+const CROCKFORD_BASE32: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /// Protocol version.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,11 +47,23 @@ pub struct RelaySideToken(pub OpaqueId);
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RelayCode(String);
 impl RelayCode {
-    /// Creates an uppercase alphanumeric code.
+    /// Creates the exact six-character Crockford Base32 invitation code.
     pub fn new(value: impl Into<String>) -> Result<Self, RelayProtocolError> {
-        let value = value.into().to_ascii_uppercase();
-        if !(6..=16).contains(&value.len())
-            || !value.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        let mut value = value
+            .into()
+            .chars()
+            .filter(|character| !matches!(character, '-' | ' '))
+            .collect::<String>()
+            .to_ascii_uppercase();
+        value = value
+            .chars()
+            .map(|character| match character {
+                'O' => '0',
+                'I' | 'L' => '1',
+                other => other,
+            })
+            .collect();
+        if value.len() != 6 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
         {
             return Err(RelayProtocolError::InvalidCode);
         }
@@ -508,7 +521,7 @@ mod tests {
     #[test]
     fn request_round_trips_exactly() {
         let request = RelayRequest::Open {
-            code: RelayCode::new("TORCA1").expect("code"),
+            code: RelayCode::new("T0RCA1").expect("code"),
             expires_at: Timestamp::from_unix_millis(123).expect("timestamp"),
             creator_blob: vec![1, 2, 3],
             slot_capability: RelaySlotCapability(OpaqueId::from_u128(7)),

@@ -518,22 +518,47 @@ class _HomeScreenState extends State<HomeScreen> {
       return AdaptiveAppShell(
         title: snapshot.identity?.displayName ?? 'Torca',
         selectedIndex: _section.index,
-        onDestinationSelected: (index) =>
-            setState(() => _section = _HomeSection.values[index]),
-        destinations: const <NavigationDestination>[
+        onDestinationSelected: (index) {
+          final section = _HomeSection.values[index];
+          setState(() => _section = section);
+          if (section == _HomeSection.contacts) {
+            unawaited(
+              widget.gateway.execute(const AcknowledgeNewContactsCommandDto()),
+            );
+          }
+        },
+        destinations: <NavigationDestination>[
           NavigationDestination(
-            icon: Icon(Icons.forum_outlined),
-            selectedIcon: Icon(Icons.forum),
+            icon: _NavigationIcon(
+              icon: Icons.forum_outlined,
+              count: snapshot.navigationBadges.unreadMessages,
+            ),
+            selectedIcon: _NavigationIcon(
+              icon: Icons.forum,
+              count: snapshot.navigationBadges.unreadMessages,
+            ),
             label: 'Chats',
           ),
           NavigationDestination(
-            icon: Icon(Icons.people_outline),
-            selectedIcon: Icon(Icons.people),
+            icon: _NavigationIcon(
+              icon: Icons.people_outline,
+              count: snapshot.navigationBadges.newContacts,
+            ),
+            selectedIcon: _NavigationIcon(
+              icon: Icons.people,
+              count: snapshot.navigationBadges.newContacts,
+            ),
             label: 'Contacts',
           ),
           NavigationDestination(
-            icon: Icon(Icons.qr_code_2_outlined),
-            selectedIcon: Icon(Icons.qr_code_2),
+            icon: _NavigationIcon(
+              icon: Icons.qr_code_2_outlined,
+              count: snapshot.navigationBadges.pairingAttention,
+            ),
+            selectedIcon: _NavigationIcon(
+              icon: Icons.qr_code_2,
+              count: snapshot.navigationBadges.pairingAttention,
+            ),
             label: 'Invitations',
           ),
         ],
@@ -826,6 +851,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     return conversations.first;
   }
+}
+
+class _NavigationIcon extends StatelessWidget {
+  const _NavigationIcon({required this.icon, required this.count});
+
+  final IconData icon;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Badge.count(
+    isLabelVisible: count > 0,
+    count: count > 99 ? 99 : count,
+    child: Icon(icon),
+  );
 }
 
 class _ConversationList extends StatelessWidget {

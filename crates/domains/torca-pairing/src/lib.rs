@@ -7,6 +7,8 @@ use torca_contacts::ContactRoute;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::PublicIdentity;
 
+const CROCKFORD_BASE32: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
 /// Pairing session ID.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -36,11 +38,29 @@ impl fmt::Display for PairingSessionId {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PairingCode(String);
 impl PairingCode {
-    /// Creates an uppercase alphanumeric code between 6 and 16 bytes.
+    /// Creates the canonical six-character Crockford Base32 invitation code.
+    ///
+    /// Presentation may group a code as `ABC-123`; spaces and separators are
+    /// deliberately ignored here so every entry point (manual input, QR and
+    /// deep links) has one canonical representation.  Ambiguous `O`, `I` and
+    /// `L` are accepted as their human-friendly `0`/`1` equivalents, while the
+    /// generator never emits them.
     pub fn new(value: impl Into<String>) -> Result<Self, PairingError> {
-        let value = value.into().to_ascii_uppercase();
-        if !(6..=16).contains(&value.len())
-            || !value.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        let mut value = value
+            .into()
+            .chars()
+            .filter(|character| !matches!(character, '-' | ' '))
+            .collect::<String>()
+            .to_ascii_uppercase();
+        value = value
+            .chars()
+            .map(|character| match character {
+                'O' => '0',
+                'I' | 'L' => '1',
+                other => other,
+            })
+            .collect();
+        if value.len() != 6 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
         {
             return Err(PairingError::InvalidCode);
         }
@@ -49,6 +69,24 @@ impl PairingCode {
     /// Returns the code.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod pairing_code_tests {
+    use super::{PairingCode, PairingError};
+
+    #[test]
+    fn normalizes_human_friendly_crockford_input() {
+        let code = PairingCode::new("ab-c iol").expect("normalizable code");
+        assert_eq!(code.as_str(), "ABC101");
+    }
+
+    #[test]
+    fn rejects_legacy_and_ambiguous_alphabet_values() {
+        assert_eq!(PairingCode::new("ABCDEFGH"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCDE"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCU12"), Err(PairingError::InvalidCode));
     }
 }
 
@@ -325,6 +363,8 @@ pub trait PairingRepository {
     fn update(&mut self, session: PairingSession) -> Result<(), PairingError>;
     /// Lists sessions.
     fn list(&self) -> Result<Vec<PairingSession>, PairingError>;
+    /// Removes a terminal session. Pairing history is intentionally not retained.
+    fn delete(&mut self, id: PairingSessionId) -> Result<(), PairingError>;
 }
 
 /// In-memory pairing repository.
@@ -352,5 +392,8 @@ impl PairingRepository for InMemoryPairingRepository {
     }
     fn list(&self) -> Result<Vec<PairingSession>, PairingError> {
         Ok(self.sessions.values().cloned().collect())
+    }
+    fn delete(&mut self, id: PairingSessionId) -> Result<(), PairingError> {
+        self.sessions.remove(&id).map(|_| ()).ok_or(PairingError::NotFound)
     }
 }

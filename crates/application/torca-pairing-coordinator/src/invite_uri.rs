@@ -11,7 +11,7 @@ pub fn encode_invite_uri(code: &PairingCode) -> String {
 
 /// Parses exactly the supported invitation URI shape.
 pub fn decode_invite_uri(value: &str) -> Result<PairingCode, PairingCoordinatorError> {
-    if value.len() > PREFIX.len() + 16 {
+    if value.len() > PREFIX.len() + 6 {
         return Err(PairingCoordinatorError::Protocol);
     }
     let code = value.strip_prefix(PREFIX).ok_or(PairingCoordinatorError::Protocol)?;

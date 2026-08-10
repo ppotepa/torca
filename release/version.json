@@ -3,7 +3,7 @@
   "version": "0.2.0-alpha.0",
   "build": 1,
   "channel": "alpha",
-  "contractSchema": 14,
+  "contractSchema": 15,
   "wireVersion": 1,
   "storageEpoch": 2,
   "schemaVersion": 1,

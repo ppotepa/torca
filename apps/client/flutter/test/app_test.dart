@@ -74,7 +74,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Pairing sessions'), findsOneWidget);
-    expect(find.text('TORCA1'), findsOneWidget);
+    expect(find.text('T0R-CA1'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
     expect(find.byType(Scaffold), findsOneWidget);
   });

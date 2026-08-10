@@ -80,6 +80,9 @@ pub enum EngineCommand {
         credential: PeerCredential,
         at: Timestamp,
     },
+    RemovePairing {
+        session_id: PairingSessionId,
+    },
     QueueMessage {
         message_id: MessageId,
         conversation_id: ConversationId,
@@ -118,6 +121,7 @@ pub enum EngineResult {
     PairingRejected,
     PairingCancelled,
     PairingCompleted { contact_id: ContactId, conversation_id: ConversationId },
+    PairingRemoved,
     MessageQueued { message_id: MessageId },
     MessageUpdated { message_id: MessageId },
     ReceiptApplied { message_id: MessageId, changed: bool },
@@ -405,6 +409,10 @@ where
                 self.relationships.insert_pairing_result(contact, conversation, credential)?;
                 let _ = self.pairings.update(session);
                 Ok(EngineResult::PairingCompleted { contact_id, conversation_id })
+            }
+            EngineCommand::RemovePairing { session_id } => {
+                self.pairings.delete(session_id).map_err(map_error)?;
+                Ok(EngineResult::PairingRemoved)
             }
             EngineCommand::QueueMessage { message_id, conversation_id, body, reply_to, at } => {
                 if ConversationRepository::get(&self.relationships, conversation_id)

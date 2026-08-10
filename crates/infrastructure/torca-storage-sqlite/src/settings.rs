@@ -75,6 +75,31 @@ impl SqlCipherSettingsStore {
             .map_err(|_| SettingsError::Write)?;
         Ok(())
     }
+
+    /// Returns the local acknowledgement boundary for the Contacts navigation badge.
+    pub fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, SettingsError> {
+        self.backend
+            .connection()
+            .query_row(
+                "SELECT updated_at_ms FROM runtime_settings WHERE setting_key = 'new_contacts_acknowledged'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|_| SettingsError::Query)
+    }
+
+    /// Marks every contact visible at `updated_at_ms` as acknowledged on this device.
+    pub fn acknowledge_new_contacts(&self, updated_at_ms: i64) -> Result<(), SettingsError> {
+        self.backend
+            .connection()
+            .execute(
+                "INSERT INTO runtime_settings(setting_key, bool_value, updated_at_ms) VALUES ('new_contacts_acknowledged', 1, ?1) ON CONFLICT(setting_key) DO UPDATE SET updated_at_ms = excluded.updated_at_ms",
+                rusqlite::params![updated_at_ms],
+            )
+            .map_err(|_| SettingsError::Write)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -89,5 +114,14 @@ mod tests {
         assert!(store.notifications_enabled().expect("read default"));
         store.set_notifications_enabled(false, 42).expect("write setting");
         assert!(!store.notifications_enabled().expect("read updated"));
+    }
+
+    #[test]
+    fn new_contacts_acknowledgement_is_durable_for_the_connection() {
+        let key = DatabaseKey::new([0x18; 32]);
+        let store = SqlCipherSettingsStore::open_in_memory(&key).expect("settings store");
+        assert_eq!(store.new_contacts_acknowledged_at_ms().expect("read setting"), None);
+        store.acknowledge_new_contacts(42).expect("write setting");
+        assert_eq!(store.new_contacts_acknowledged_at_ms().expect("read setting"), Some(42));
     }
 }

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "contractVersion": 14,
+  "contractVersion": 15,
   "wireVersion": 1,
   "nativeAbi": 1,
   "operations": {
@@ -9,7 +9,7 @@
       "pairing.reject", "pairing.cancel", "contact.rename", "contact.verify",
       "contact.verification.reset", "contact.block", "contact.unblock",
       "contact.remove", "conversation.clear", "message.send", "message.retry",
-      "notifications.set",
+      "notifications.set", "contacts.acknowledge_new",
       "conversation.read", "attachment.queue", "attachment.retry",
       "attachment.cancel", "attachment.export"
     ],

@@ -3,9 +3,17 @@ import 'package:torca_app/generated/torca_contract.dart';
 
 void main() {
   test(
-    'bridge contract v13 carries bootstrap progress and nested peer health',
+    'bridge contract v15 carries bootstrap progress and navigation badges',
     () {
-      expect(torcaContractVersion, 14);
+      expect(torcaContractVersion, 15);
+
+      const badges = NavigationBadgesDto(
+        unreadMessages: 3,
+        newContacts: 1,
+        pairingAttention: 2,
+      );
+      expect(badges.unreadMessages, 3);
+      expect(badges.newContacts, 1);
 
       const bootstrap = BootstrapStepDto(
         id: 'tor_network',

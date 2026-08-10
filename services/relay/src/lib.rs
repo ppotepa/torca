@@ -14,6 +14,8 @@ pub use server::{DEFAULT_MAX_CONNECTIONS, RelayServer, RelayServerConfig, RelayS
 
 /// Default maximum number of simultaneously active ephemeral pairing slots.
 pub const DEFAULT_MAX_ACTIVE_SLOTS: usize = 4096;
+/// The relay clock is authoritative for the short lifetime of a pairing slot.
+pub const PAIRING_SLOT_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 const MAX_QUEUED_BLOBS_PER_SIDE: usize = 32;
 
 #[derive(Clone, Debug)]
@@ -92,7 +94,13 @@ impl RelayBroker {
                     code,
                     Slot {
                         id,
-                        expires_at,
+                        // Never permit a caller to extend a relay slot beyond
+                        // the product's five-minute window.  The local
+                        // snapshot may use a slightly earlier deadline, but
+                        // the relay always owns final expiry and cleanup.
+                        expires_at: now
+                            .checked_add(PAIRING_SLOT_TTL)
+                            .map_or(expires_at, |maximum| expires_at.min(maximum)),
                         creator_blob,
                         slot_capability,
                         creator_token,

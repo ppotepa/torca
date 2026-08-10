@@ -1,6 +1,6 @@
 // GENERATED FILE. DO NOT EDIT.
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
-const int torcaContractVersion = 14;
+const int torcaContractVersion = 15;
 const int torcaNativeAbiVersion = 1;
 
 class BridgeResultDto {
@@ -88,6 +88,15 @@ class TransportStatusDto {
   final TransportIndicatorDto tor, relay;
 }
 
+class NavigationBadgesDto {
+  const NavigationBadgesDto({
+    this.unreadMessages = 0,
+    this.newContacts = 0,
+    this.pairingAttention = 0,
+  });
+  final int unreadMessages, newContacts, pairingAttention;
+}
+
 class ContactDto {
   const ContactDto({
     required this.id,
@@ -167,6 +176,7 @@ class AppSnapshotDto {
     this.identity,
     this.torState = 'stopped',
     this.transport = const TransportStatusDto(),
+    this.navigationBadges = const NavigationBadgesDto(),
     this.onionAddress,
     this.pairings = const [],
     this.contacts = const [],
@@ -182,6 +192,7 @@ class AppSnapshotDto {
   final IdentityDto? identity;
   final String torState;
   final TransportStatusDto transport;
+  final NavigationBadgesDto navigationBadges;
   final String? onionAddress;
   final List<PairingDto> pairings;
   final List<ContactDto> contacts;
@@ -320,6 +331,10 @@ class ExportAttachmentCommandDto extends BridgeCommandDto {
 class SetNotificationsCommandDto extends BridgeCommandDto {
   const SetNotificationsCommandDto({required this.enabled});
   final bool enabled;
+}
+
+class AcknowledgeNewContactsCommandDto extends BridgeCommandDto {
+  const AcknowledgeNewContactsCommandDto();
 }
 
 class RefreshSnapshotCommandDto extends BridgeCommandDto {

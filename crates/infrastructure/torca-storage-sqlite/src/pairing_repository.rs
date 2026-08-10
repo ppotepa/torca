@@ -123,6 +123,17 @@ impl PairingRepository for SqlCipherPairingRepository {
         let rows = statement.query_map([], decode_row).map_err(|_| PairingError::Storage)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|_| PairingError::Storage)
     }
+
+    fn delete(&mut self, id: PairingSessionId) -> Result<(), PairingError> {
+        let changed = self
+            .connection()
+            .execute(
+                "DELETE FROM pairing_sessions WHERE session_id = ?1",
+                params![id.to_opaque().as_bytes().as_slice()],
+            )
+            .map_err(|_| PairingError::Storage)?;
+        if changed == 0 { Err(PairingError::NotFound) } else { Ok(()) }
+    }
 }
 
 struct Encoded {

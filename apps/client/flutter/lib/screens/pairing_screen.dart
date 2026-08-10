@@ -88,7 +88,7 @@ class _PairingScreenState extends State<PairingScreen> {
                         leading: Icon(Icons.restart_alt),
                         title: Text('Pairing invitations are temporary'),
                         subtitle: Text(
-                          'An active invitation is intentionally invalid after Torca restarts. Create a fresh invitation instead of reusing an old code.',
+                          'Each invitation expires after five minutes. You can cancel it at any time; completed, rejected and expired sessions disappear from this list.',
                         ),
                       ),
                     ),
@@ -248,38 +248,84 @@ class _PairingScreenState extends State<PairingScreen> {
     if (invitation != null) await _showSession(invitation);
   }
 
-  Future<void> _showSession(PairingDto pairing) => showDialog<void>(
-    context: context,
-    builder: (_) => AppModal(
-      title: pairing.role == 'creator' ? 'Your invitation' : 'Pairing session',
-      child: _PairingSessionCard(
-        pairing: pairing,
-        busy: _operations.anyWithPrefix('pairing:${pairing.id}:'),
-        expanded: true,
-        onApprove: () => _session(
-          pairing.id,
-          'approve',
-          ApprovePairingCommandDto(sessionIdHex: pairing.id),
-        ),
-        onReject: () => _session(
-          pairing.id,
-          'reject',
-          RejectPairingCommandDto(sessionIdHex: pairing.id),
-        ),
-        onCancel: () => _session(
-          pairing.id,
-          'cancel',
-          CancelPairingCommandDto(sessionIdHex: pairing.id),
-        ),
+  Future<void> _showSession(PairingDto pairing) async {
+    final destination = await showDialog<String>(
+      context: context,
+      builder: (_) => ValueListenableBuilder<AppSnapshotDto>(
+        valueListenable: widget.gateway.snapshots,
+        builder: (context, snapshot, _) {
+          PairingDto? current;
+          for (final session in snapshot.pairings) {
+            if (session.id == pairing.id) {
+              current = session;
+              break;
+            }
+          }
+          if (current == null) {
+            return AppModal(
+              title: 'Pairing finished',
+              height: 320,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Icon(Icons.check_circle_outline, size: 48),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'This temporary invitation is no longer active. If it was approved, your new private conversation is available in Chats.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pop('chats'),
+                    icon: const Icon(Icons.forum_outlined),
+                    label: const Text('Open chats'),
+                  ),
+                ],
+              ),
+            );
+          }
+          return AppModal(
+            title: current.role == 'creator'
+                ? 'Your invitation'
+                : 'Pairing session',
+            child: _PairingSessionCard(
+              pairing: current,
+              busy: _operations.anyWithPrefix('pairing:${current.id}:'),
+              expanded: true,
+              onApprove: () => _session(
+                current!.id,
+                'approve',
+                ApprovePairingCommandDto(sessionIdHex: current.id),
+              ),
+              onReject: () => _session(
+                current!.id,
+                'reject',
+                RejectPairingCommandDto(sessionIdHex: current.id),
+              ),
+              onCancel: () => _session(
+                current!.id,
+                'cancel',
+                CancelPairingCommandDto(sessionIdHex: current.id),
+              ),
+            ),
+          );
+        },
       ),
-    ),
-  );
+    );
+    if (destination == 'chats' && mounted) Navigator.of(context).pop();
+  }
 
   Future<void> _join() async {
-    final code = _extractCode(_code.text);
+    final raw = _code.text.trim();
+    final parser = widget.gateway is PairingUriParser
+        ? widget.gateway as PairingUriParser
+        : null;
+    final code = raw.toLowerCase().startsWith('torca://')
+        ? await parser?.parsePairingUri(raw)
+        : _extractCode(raw);
     if (code == null) {
       setState(
-        () => _error = 'Use a 6–16 character code or a valid Torca QR URI',
+        () => _error = 'Use a six-character code or a valid Torca QR URI',
       );
       return;
     }
@@ -358,8 +404,14 @@ class _PairingScreenState extends State<PairingScreen> {
 
   String? _extractCode(String input) {
     final value = input.trim();
-    final direct = value.toUpperCase();
-    if (RegExp(r'^[A-Z0-9]{6,16}$').hasMatch(direct)) return direct;
+    final direct = value
+        .toUpperCase()
+        .replaceAll(RegExp(r'[\s-]'), '')
+        .replaceAll('O', '0')
+        .replaceAll(RegExp('[IL]'), '1');
+    if (RegExp(r'^[0-9A-HJKMNPQRSTVWXYZ]{6}$').hasMatch(direct)) {
+      return direct;
+    }
     final uri = Uri.tryParse(value);
     if (uri == null ||
         uri.scheme != 'torca' ||
@@ -367,10 +419,8 @@ class _PairingScreenState extends State<PairingScreen> {
         uri.queryParameters['v'] != '1') {
       return null;
     }
-    final code = uri.queryParameters['code']?.toUpperCase();
-    return code != null && RegExp(r'^[A-Z0-9]{6,16}$').hasMatch(code)
-        ? code
-        : null;
+    final code = uri.queryParameters['code'];
+    return code == null ? null : _extractCode(code);
   }
 }
 
@@ -400,6 +450,9 @@ class _PairingSessionCard extends StatelessWidget {
   }.contains(pairing.state);
   String get _uri =>
       'torca://pair?v=1&code=${Uri.encodeQueryComponent(pairing.code)}';
+  String get _displayCode => pairing.code.length == 6
+      ? '${pairing.code.substring(0, 3)}-${pairing.code.substring(3)}'
+      : pairing.code;
 
   @override
   Widget build(BuildContext context) {
@@ -414,8 +467,8 @@ class _PairingSessionCard extends StatelessWidget {
           ),
           title: Text(
             pairing.role == 'creator'
-                ? 'Invitation ${pairing.code}'
-                : 'Joined ${pairing.code}',
+                ? 'Invitation $_displayCode'
+                : 'Joined $_displayCode',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -456,7 +509,7 @@ class _PairingSessionCard extends StatelessWidget {
               children: <Widget>[
                 Expanded(
                   child: SelectableText(
-                    pairing.code,
+                    _displayCode,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -517,10 +570,10 @@ class _PairingSessionCard extends StatelessWidget {
                 ],
               ),
             ],
-            if (canReview) ...<Widget>[
+            if (canReview && pairing.role == 'creator') ...<Widget>[
               const SizedBox(height: 12),
               const Text(
-                'The peer proposal is authenticated and ready for your explicit approval.',
+                'A device joined using your invitation. Review and approve to create the contact on both devices.',
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -535,6 +588,16 @@ class _PairingSessionCard extends StatelessWidget {
                     child: const Text('Reject'),
                   ),
                 ],
+              ),
+            ] else if (canReview) ...<Widget>[
+              const SizedBox(height: 12),
+              const Text(
+                'Your join request was sent. The invitation owner must approve it before either contact is created.',
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: busy ? null : onCancel,
+                child: const Text('Cancel request'),
               ),
             ] else if (!_terminal) ...<Widget>[
               const SizedBox(height: 8),

@@ -201,6 +201,13 @@ impl TorcaRuntime {
                 );
             }
         }
+        if matches!(&command, torca_contract::BridgeCommand::AcknowledgeNewContacts) {
+            let now = unix_time_ms().unwrap_or(0);
+            if self.settings.acknowledge_new_contacts(now).is_err() {
+                self.last_result_json = error_result("contact acknowledgement storage unavailable");
+                return ABI_ERROR;
+            }
+        }
         let is_profile = matches!(&command, torca_contract::BridgeCommand::UpdateProfile { .. });
         if is_profile {
             self.log_profile(request_id, "PROFILE_REQUEST_RECEIVED");
@@ -285,6 +292,7 @@ impl TorcaRuntime {
             self.last_result_json = error_result(error);
             return ABI_ERROR;
         }
+        self.apply_navigation_badges(&mut snapshot);
         if !self.bridge.has_runtime() && snapshot.identity_name.is_some() {
             snapshot.tor_state = format!("{:?}", self.host_state_hint).to_lowercase();
             self.apply_host_state_hint(&mut snapshot);
@@ -514,32 +522,11 @@ impl TorcaRuntime {
     }
 
     pub(crate) fn parse_pairing_uri(&mut self, raw_uri: &str) -> i32 {
-        let Some(query) = raw_uri.strip_prefix("torca://pair?") else {
+        let Ok(code) = torca_pairing_coordinator::decode_invite_uri(raw_uri) else {
             self.query_json = "{}".into();
             return ABI_ERROR;
         };
-        let mut version = None;
-        let mut code = None;
-        for field in query.split('&') {
-            let Some((key, value)) = field.split_once('=') else { continue };
-            match key {
-                "v" => version = Some(value),
-                "code" => code = Some(value),
-                _ => {}
-            }
-        }
-        let Some(code) = code
-            .filter(|_| version == Some("1"))
-            .map(str::to_ascii_uppercase)
-            .filter(|value| (6..=16).contains(&value.len()))
-            .filter(|value| {
-                value.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-            })
-        else {
-            self.query_json = "{}".into();
-            return ABI_ERROR;
-        };
-        self.query_json = serde_json::json!({ "code": code }).to_string();
+        self.query_json = serde_json::json!({ "code": code.as_str() }).to_string();
         ABI_OK
     }
 
@@ -649,6 +636,31 @@ impl TorcaRuntime {
             contact.verified_at_ms = security.verified_at.map(|at| at.to_unix_millis());
         }
         Ok(())
+    }
+
+    fn apply_navigation_badges(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
+        snapshot.unread_messages_count = snapshot
+            .conversations
+            .iter()
+            .fold(0_u32, |total, conversation| total.saturating_add(conversation.unread_count));
+        let acknowledged_at = self.settings.new_contacts_acknowledged_at_ms().ok().flatten();
+        snapshot.new_contacts_count = snapshot
+            .contacts
+            .iter()
+            .filter(|contact| match acknowledged_at {
+                Some(at) => contact.created_at_ms > at,
+                None => true,
+            })
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        snapshot.pairing_attention_count = snapshot
+            .pairings
+            .iter()
+            .filter(|pairing| pairing.role == "creator" && pairing.state == "awaitingapproval")
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
     }
 
     fn query_error(&mut self, error: &str) -> i32 {

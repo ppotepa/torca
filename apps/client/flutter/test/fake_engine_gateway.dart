@@ -57,7 +57,7 @@ class FakeEngineGateway implements EngineGateway, PairingUriParser {
         command is JoinPairingCommandDto) {
       final joining = command is JoinPairingCommandDto;
       final id = _newId();
-      final code = joining ? command.code : 'TORCA1';
+      final code = joining ? command.code : 'T0RCA1';
       final pairing = PairingDto(
         id: id,
         code: code,

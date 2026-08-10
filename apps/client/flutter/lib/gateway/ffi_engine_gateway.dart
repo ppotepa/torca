@@ -690,6 +690,9 @@ Map<String, Object?>? _requestForCommand(BridgeCommandDto command) {
   } else if (command is SetNotificationsCommandDto) {
     name = 'notifications.set';
     payload = {'enabled': command.enabled};
+  } else if (command is AcknowledgeNewContactsCommandDto) {
+    name = 'contacts.acknowledge_new';
+    payload = const {};
   }
   if (command is RefreshSnapshotCommandDto) {
     return _request(kind: 'query', name: 'snapshot.get', payload: const {});
@@ -705,6 +708,9 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
   final identity = value['identity'];
   final transport = value['transport'] is Map<String, dynamic>
       ? value['transport'] as Map<String, dynamic>
+      : const <String, dynamic>{};
+  final navigationBadges = value['navigationBadges'] is Map<String, dynamic>
+      ? value['navigationBadges'] as Map<String, dynamic>
       : const <String, dynamic>{};
   TransportIndicatorDto indicator(
     String name, {
@@ -849,6 +855,11 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
         fallbackState: value['torState'] as String? ?? 'stopped',
       ),
       relay: indicator('relay', fallbackState: 'unknown'),
+    ),
+    navigationBadges: NavigationBadgesDto(
+      unreadMessages: navigationBadges['unreadMessages'] as int? ?? 0,
+      newContacts: navigationBadges['newContacts'] as int? ?? 0,
+      pairingAttention: navigationBadges['pairingAttention'] as int? ?? 0,
     ),
     onionAddress: value['onionAddress'] as String?,
     bootstrapPhase: value['bootstrapPhase'] as String? ?? 'starting',

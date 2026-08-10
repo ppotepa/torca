@@ -610,6 +610,7 @@ fn bridge_command(
                 .and_then(Value::as_bool)
                 .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
         }),
+        "contacts.acknowledge_new" => Ok(BridgeCommand::AcknowledgeNewContacts),
         "profile.set" => {
             Ok(BridgeCommand::UpdateProfile { display_name: text("displayName")?, at_ms: now()? })
         }

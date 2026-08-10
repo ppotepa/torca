@@ -1,5 +1,5 @@
 use torca_foundation::{OpaqueId, Timestamp};
-use torca_relay::RelayBroker;
+use torca_relay::{PAIRING_SLOT_TTL, RelayBroker};
 use torca_relay_protocol::{
     RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken, RelaySlotCapability,
 };
@@ -52,5 +52,40 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
     assert_eq!(
         relay.handle(RelayRequest::Close { slot_id, capability }, now),
         Ok(RelayResponse::Closed)
+    );
+}
+
+#[test]
+fn relay_clock_caps_invitation_lifetime_at_five_minutes() {
+    let now = Timestamp::UNIX_EPOCH;
+    let code = RelayCode::new("ABC123").expect("code");
+    let creator = RelaySideToken(OpaqueId::from_u128(31));
+    let mut relay = RelayBroker::default();
+    let _ = relay
+        .handle(
+            RelayRequest::Open {
+                code: code.clone(),
+                // A client cannot extend a relay-held invitation by supplying
+                // a longer local deadline.
+                expires_at: Timestamp::from_unix_millis(3_600_000).expect("expiry"),
+                creator_blob: vec![1],
+                slot_capability: RelaySlotCapability(OpaqueId::from_u128(32)),
+                creator_token: creator,
+            },
+            now,
+        )
+        .expect("open");
+    let after_ttl = now.checked_add(PAIRING_SLOT_TTL).expect("deadline");
+    let after_ttl = after_ttl.checked_add(std::time::Duration::from_millis(1)).expect("later");
+    assert_eq!(
+        relay.handle(
+            RelayRequest::Join {
+                code,
+                joiner_blob: vec![2],
+                joiner_token: RelaySideToken(OpaqueId::from_u128(33)),
+            },
+            after_ttl,
+        ),
+        Err(RelayProtocolError::SlotNotFound)
     );
 }
