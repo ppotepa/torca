@@ -870,30 +870,45 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(pairing.cancel(id));
         }
         RuntimeCommand::VerifyContact(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_peer(id, now);
             let _ = r.send(communication.verify_contact(id, now));
         }
         RuntimeCommand::ResetContactVerification(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_peer(id, now);
             let _ = r.send(communication.reset_contact_verification(id));
         }
         RuntimeCommand::RenameContact(id, name, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_peer(id, now);
             let _ = r.send(communication.rename_contact(id, name, now));
         }
         RuntimeCommand::BlockContact(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_peer(id, now);
             let _ = r.send(communication.block_contact(id, now));
         }
         RuntimeCommand::UnblockContact(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_peer(id, now);
             let _ = r.send(communication.unblock_contact(id, now));
         }
         RuntimeCommand::RemoveContact(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_peer(id, now);
             let _ = r.send(communication.remove_contact(id));
         }
         RuntimeCommand::ClearConversationHistory(id, r) => {
+            transport_activity.mark_tor(now);
             let _ = r.send(communication.clear_conversation_history(id));
         }
         RuntimeCommand::MarkConversationRead(id, send_receipt, r) => {
+            transport_activity.mark_tor(now);
             let _ = r.send(communication.mark_conversation_read_with_policy(id, now, send_receipt));
         }
         RuntimeCommand::QueueAttachment(request_value, r) => {
+            transport_activity.mark_tor(now);
             let message_id = MessageId::from_opaque(request_value.message_id);
             let body = MessageBody::new(format!("Attachment: {}", request_value.name))
                 .map_err(|_| RuntimeDriverError::Communication);
@@ -928,9 +943,11 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(result);
         }
         RuntimeCommand::RetryAttachment(id, r) => {
+            transport_activity.mark_tor(now);
             let _ = r.send(communication.retry_attachment(id, now));
         }
         RuntimeCommand::CancelAttachment(id, r) => {
+            transport_activity.mark_tor(now);
             let _ = r.send(communication.cancel_attachment(id, now));
         }
         RuntimeCommand::ExportAttachment(id, destination, r) => {
