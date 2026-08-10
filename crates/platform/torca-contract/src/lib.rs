@@ -1077,3 +1077,17 @@ fn update_identity_hash(hash: &mut Sha256, identity: &PublicIdentity) {
 pub fn dart_contract_source() -> &'static str {
     include_str!("../schema/torca_contract.dart")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::generated;
+
+    #[test]
+    fn generated_operation_allowlist_matches_runtime_surface() {
+        assert!(generated::contains("command", "profile.set"));
+        assert!(generated::contains("query", "snapshot.get"));
+        assert!(generated::contains("lifecycle", "foregrounded"));
+        assert!(!generated::contains("command", "operation.unknown"));
+        assert!(!generated::contains("query", "message.history.full"));
+    }
+}
