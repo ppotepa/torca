@@ -69,7 +69,8 @@ $forbiddenFragments = @(
     'tor.exe', 'vendor/tor', 'vendor\\tor', 'torca-runtime-host', 'torca_runtime_host',
     'torca-bridge', 'torca_bridge', 'torca-read-state', 'torca_read_state',
     'torca-tor-driver', 'torca-transport-tor', 'PENDING_PROFILE_NAME',
-    'CreateIdentityCommandDto', 'TORCA_USE_MEMORY_GATEWAY', 'Isolate.run'
+    'CreateIdentityCommandDto', 'TORCA_USE_MEMORY_GATEWAY', 'Isolate.run',
+    'Stop-TorcaOwnedWindowsTor'
 )
 foreach ($root in $sourceRoots) {
     if (-not (Test-Path -LiteralPath $root)) { continue }

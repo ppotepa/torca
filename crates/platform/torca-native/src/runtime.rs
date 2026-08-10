@@ -6,6 +6,7 @@ mod composition;
 mod json;
 mod native_runtime;
 mod notification_json;
+mod platform_selector;
 mod runtime_composition;
 mod torca_runtime;
 

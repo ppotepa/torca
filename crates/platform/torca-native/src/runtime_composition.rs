@@ -12,7 +12,7 @@ use torca_pairing_coordinator::{
     PairingApprovalPort, PairingCoordinator, PairingPeerSecretStore, PairingRuntime,
 };
 use torca_pairing_driver::RuntimePairingDriver;
-use torca_platform::{PlatformServices, RelayEndpoint, SecretNamespace};
+use torca_platform::{PlatformServices, SecretNamespace};
 use torca_rendezvous_client::{RendezvousClient, TorRelayTransport};
 use torca_runtime::{
     OwnedTorDriver, RelayProbe, RuntimeDriverError, RuntimeHandle, RuntimeOwner, SharedTorEndpoint,
@@ -49,56 +49,12 @@ pub(crate) fn spawn_production_runtime(
     engine: EngineHandle,
     bootstrap_observer: TorBootstrapObserver,
 ) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
-    #[cfg(windows)]
-    {
-        use crate::app_paths::windows_app_root;
-        use torca_platform_windows::WindowsPlatformServices;
-        let root = windows_app_root()?;
-        let relay = parse_relay_endpoint(COMPILED_RELAY_ENDPOINT)?;
-        let platform = WindowsPlatformServices::new(
-            root.join("data"),
-            root.join("cache"),
-            root.join("logs"),
-            RelayEndpoint { host: relay.0, port: relay.1 },
-        );
-        return spawn_runtime_for(&platform, engine, bootstrap_observer);
-    }
-    #[cfg(target_os = "android")]
-    {
-        use crate::composition::android::{database_path, log_root_path};
-        use torca_platform_android::AndroidPlatformServices;
-        let database = database_path()
-            .map_err(|_| NativeCompositionError::new("resolve Android database path failed"))?;
-        let data = database.parent().map_or_else(|| database.clone(), std::path::Path::to_path_buf);
-        let relay = parse_relay_endpoint(COMPILED_RELAY_ENDPOINT)?;
-        let platform = AndroidPlatformServices::new(
-            data.clone(),
-            data.join("cache"),
-            log_root_path().unwrap_or_else(|_| data.join("logs")),
-            RelayEndpoint { host: relay.0, port: relay.1 },
-        )
-        .with_secret_store_factory(|namespace| {
-            let name = match namespace {
-                torca_platform::SecretNamespace::Identity => "identity",
-                torca_platform::SecretNamespace::Storage => "database",
-                torca_platform::SecretNamespace::Runtime => "peer",
-            };
-            Box::new(crate::composition::android::AndroidProtectedSecretStore::new(name))
-        });
-        return spawn_runtime_for(&platform, engine, bootstrap_observer);
-    }
-    #[cfg(not(any(windows, target_os = "android")))]
-    {
-        let _ = engine;
-        let _ = bootstrap_observer;
-        Err(NativeCompositionError::new(
-            "production network runtime is not implemented for this platform",
-        ))
-    }
+    let platform = crate::platform_selector::platform_services()?;
+    spawn_runtime_for(platform.as_ref(), engine, bootstrap_observer)
 }
 
-fn spawn_runtime_for<P: PlatformServices>(
-    platform: &P,
+fn spawn_runtime_for(
+    platform: &dyn PlatformServices,
     engine: EngineHandle,
     bootstrap_observer: TorBootstrapObserver,
 ) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
@@ -228,6 +184,10 @@ fn engine_identity(
         .map_err(|_| NativeCompositionError::new("load local identity failed"))?
         .identity
         .ok_or_else(|| NativeCompositionError::new("local identity is not initialized"))
+}
+
+pub(crate) fn compiled_relay_endpoint() -> Result<(String, u16), NativeCompositionError> {
+    parse_relay_endpoint(COMPILED_RELAY_ENDPOINT)
 }
 
 fn parse_relay_endpoint(value: &str) -> Result<(String, u16), NativeCompositionError> {

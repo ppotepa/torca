@@ -276,7 +276,6 @@ function Invoke-TorcaClientRun {
                 }
             }
         }
-        Stop-TorcaOwnedWindowsTor -RepoRoot $RepoRoot
         Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
         Wait-TorcaClientLaunch -Platform windows -ExpectedBuildId $ExpectedBuildId -TimeoutSeconds $HealthTimeoutSeconds
         return
@@ -377,23 +376,6 @@ function Wait-TorcaClientLaunch {
     throw "Runtime launch health check timed out after ${TimeoutSeconds}s: $lastDetail. $hint"
 }
 
-function Stop-TorcaOwnedWindowsTor {
-    param([Parameter(Mandatory = $true)][string]$RepoRoot)
-    $torRoot = Join-Path $RepoRoot 'apps/client/flutter/build/windows/x64/runner/Release/tor'
-    $pids = @(Get-NetTCPConnection -LocalAddress '127.0.0.1' -ErrorAction SilentlyContinue |
-        Where-Object { $_.LocalPort -in @(19050, 19051) -and $_.OwningProcess -gt 0 } |
-        Select-Object -ExpandProperty OwningProcess -Unique)
-    foreach ($pidValue in $pids) {
-        $info = Get-CimInstance Win32_Process -Filter "ProcessId = $pidValue" -ErrorAction SilentlyContinue
-        if (-not $info -or -not $info.ExecutablePath) { continue }
-        $path = [IO.Path]::GetFullPath([string]$info.ExecutablePath)
-        if ($path.StartsWith([IO.Path]::GetFullPath($torRoot), [StringComparison]::OrdinalIgnoreCase)) {
-            Write-Warning "Stopping stale Torca Tor child PID $pidValue before starting the release client."
-            Stop-Process -Id ([int]$pidValue) -Force -ErrorAction Stop
-        }
-    }
-}
-
 function Write-TorcaBuildManifest {
     param([pscustomobject]$Paths, [string]$Endpoint, [string[]]$Targets, [string]$Configuration)
     $manifestTarget = if (@($Targets).Count -eq 1) { @($Targets)[0] } else { ($Targets -join ',') }
@@ -409,4 +391,4 @@ function Write-TorcaBuildManifest {
     })
 }
 
-Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Wait-TorcaClientLaunch, Stop-TorcaOwnedWindowsTor, Write-TorcaBuildManifest
+Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Wait-TorcaClientLaunch, Write-TorcaBuildManifest

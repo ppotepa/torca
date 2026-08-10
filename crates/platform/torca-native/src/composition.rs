@@ -2,7 +2,7 @@ use core::fmt;
 
 use torca_client_engine::{ClientEngine, ClientEngineActor, EngineHandle};
 use torca_crypto::{ManagedIdentityKeys, ProtectedSecretStore, RustCryptoProvider};
-use torca_platform::{PlatformServices, RelayEndpoint, SecretNamespace};
+use torca_platform::{PlatformServices, SecretNamespace};
 use torca_storage_sqlite::{
     SqlCipherMessageStore, SqlCipherPairingRepository, SqlCipherReceiptStore,
     SqlCipherSecurityProjection, SqlCipherSettingsStore, SqlCipherStore,
@@ -40,8 +40,8 @@ pub(crate) const DATABASE_KEY_HANDLE: torca_identity::KeyId =
 /// The only production engine composition. Platform adapters provide paths and
 /// protected-secret implementations; storage, identity and domain actors are
 /// constructed exactly once here for both supported targets.
-fn spawn_production_engine_for<P: PlatformServices>(
-    platform: &P,
+fn spawn_production_engine_for(
+    platform: &dyn PlatformServices,
 ) -> Result<ProductionEngineParts, NativeCompositionError> {
     let paths = platform.app_paths();
     std::fs::create_dir_all(&paths.data)
@@ -90,54 +90,8 @@ fn spawn_production_engine_for<P: PlatformServices>(
 }
 
 pub(crate) fn spawn_production_engine() -> Result<ProductionEngineParts, NativeCompositionError> {
-    #[cfg(windows)]
-    {
-        use crate::app_paths::windows_app_root;
-        use torca_platform_windows::WindowsPlatformServices;
-
-        let root = windows_app_root()?;
-        let platform = WindowsPlatformServices::new(
-            root.join("data"),
-            root.join("cache"),
-            root.join("logs"),
-            RelayEndpoint { host: String::new(), port: 0 },
-        );
-        return spawn_production_engine_for(&platform);
-    }
-
-    #[cfg(target_os = "android")]
-    {
-        use crate::composition::android::{database_path, log_root_path};
-        use torca_platform_android::AndroidPlatformServices;
-
-        let database = database_path().map_err(|error| {
-            NativeCompositionError::new(format!("resolve Android database path failed: {error}"))
-        })?;
-        let data = database.parent().map_or_else(|| database.clone(), std::path::Path::to_path_buf);
-        let logs = log_root_path().unwrap_or_else(|_| data.join("logs"));
-        let platform = AndroidPlatformServices::new(
-            data.clone(),
-            data.join("cache"),
-            logs,
-            RelayEndpoint { host: String::new(), port: 0 },
-        )
-        .with_secret_store_factory(|namespace| {
-            let name = match namespace {
-                torca_platform::SecretNamespace::Identity => "identity",
-                torca_platform::SecretNamespace::Storage => "database",
-                torca_platform::SecretNamespace::Runtime => "peer",
-            };
-            Box::new(crate::composition::android::AndroidProtectedSecretStore::new(name))
-        });
-        return spawn_production_engine_for(&platform);
-    }
-
-    #[cfg(not(any(windows, target_os = "android")))]
-    {
-        Err(NativeCompositionError::new(
-            "production native composition is not implemented for this platform",
-        ))
-    }
+    let platform = crate::platform_selector::platform_services()?;
+    spawn_production_engine_for(platform.as_ref())
 }
 
 pub(crate) fn load_or_create_database_key<C: torca_crypto::CryptoProvider>(
