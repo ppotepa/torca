@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Write-TorcaConsoleHeader {
@@ -59,10 +59,25 @@ function Read-TorcaMenuChoice {
 }
 
 function Get-TorcaInteractiveOptions {
+    $onionPolicy = Read-TorcaMenuChoice -Prompt "Tor network" -Default "1" -Options @(
+        "Ensure - preserve or create",
+        "Restart - restart without changing onion",
+        "Rotate - create new onion"
+    )
+    $installPolicy = Read-TorcaMenuChoice -Prompt "Install" -Default "1" -Options @(
+        "Selected - install on selected",
+        "Always - install on all detected",
+        "Skip - build only"
+    )
+    $runPolicy = Read-TorcaMenuChoice -Prompt "Run" -Default "1" -Options @(
+        "Restart - restart after deploy",
+        "Start - start if stopped",
+        "Skip - do not run"
+    )
     [pscustomobject]@{
-        OnionPolicy = Read-TorcaMenuChoice 'Tor network' @('Ensure - preserve or create', 'Restart - restart without changing onion', 'Rotate - create new onion') '1'
-        InstallPolicy = Read-TorcaMenuChoice 'Install' @('Selected - install on selected', 'Always - install on all detected', 'Skip - build only') '1'
-        RunPolicy = Read-TorcaMenuChoice 'Run' @('Restart - restart after deploy', 'Start - start if stopped', 'Skip - do not run') '1'
+        OnionPolicy = $onionPolicy
+        InstallPolicy = $installPolicy
+        RunPolicy = $runPolicy
     }
 }
 
