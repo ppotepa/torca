@@ -276,8 +276,13 @@ function Invoke-TorcaClientRun {
                 }
             }
         }
-        Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe)
-        Wait-TorcaClientLaunch -Platform windows -ExpectedBuildId $ExpectedBuildId -TimeoutSeconds $HealthTimeoutSeconds
+        # Keep the exact process returned by Start-Process.  A concurrently
+        # running `flutter run -d windows` starts a Debug runner with the same
+        # process name.  Looking up any torca_app here used to make the deploy
+        # health check accidentally validate that Debug process and its
+        # target/debug/torca_native.dll instead of the requested release.
+        $started = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+        Wait-TorcaClientLaunch -Platform windows -ExpectedBuildId $ExpectedBuildId -ExpectedWindowsProcessId $started.Id -ExpectedWindowsExecutable $exe -TimeoutSeconds $HealthTimeoutSeconds
         return
     }
     if ($Installed -and $Device -and (Get-Command adb -ErrorAction SilentlyContinue)) {
@@ -300,6 +305,8 @@ function Wait-TorcaClientLaunch {
         [Parameter(Mandatory = $true)][ValidateSet('windows','android')][string]$Platform,
         [string]$Device,
         [string]$ExpectedBuildId,
+        [int]$ExpectedWindowsProcessId,
+        [string]$ExpectedWindowsExecutable,
         [ValidateRange(5,900)][int]$TimeoutSeconds = 900
     )
     $startedAt = [DateTime]::UtcNow.AddSeconds(-10)
@@ -309,9 +316,31 @@ function Wait-TorcaClientLaunch {
     $processObserved = $false
     do {
         if ($Platform -eq 'windows') {
-            $process = @(Get-Process -Name torca_app -ErrorAction SilentlyContinue)
+            $process = if ($ExpectedWindowsProcessId) {
+                @(Get-Process -Id $ExpectedWindowsProcessId -ErrorAction SilentlyContinue)
+            } else {
+                @(Get-Process -Name torca_app -ErrorAction SilentlyContinue)
+            }
             if ($process.Count -gt 0) {
                 $processObserved = $true
+                if ($ExpectedWindowsExecutable) {
+                    $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $($process[0].Id)" -ErrorAction SilentlyContinue
+                    $actualExecutable = if ($processInfo) { [string]$processInfo.ExecutablePath } else { '' }
+                    $expectedExecutable = [IO.Path]::GetFullPath($ExpectedWindowsExecutable)
+                    if ([string]::IsNullOrWhiteSpace($actualExecutable) -or
+                        -not [string]::Equals([IO.Path]::GetFullPath($actualExecutable), $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) {
+                        throw "Windows release launch resolved to an unexpected executable. Expected=$expectedExecutable Actual=$actualExecutable. Stop any 'flutter run -d windows' session and retry the release deploy."
+                    }
+
+                    $expectedNative = Join-Path (Split-Path $expectedExecutable) 'torca_native.dll'
+                    $nativeModule = @(Get-Process -Id $process[0].Id -Module -ErrorAction SilentlyContinue |
+                        Where-Object { $_.ModuleName -ieq 'torca_native.dll' } |
+                        Select-Object -First 1)
+                    if ($nativeModule.Count -gt 0 -and
+                        -not [string]::Equals([IO.Path]::GetFullPath([string]$nativeModule[0].FileName), [IO.Path]::GetFullPath($expectedNative), [StringComparison]::OrdinalIgnoreCase)) {
+                        throw "Windows release process loaded an unexpected native runtime. Expected=$expectedNative Actual=$($nativeModule[0].FileName). Stop any 'flutter run -d windows' session and retry the release deploy."
+                    }
+                }
                 $logRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Torca/logs/devices' } else { $null }
                 $runStart = if ($logRoot -and (Test-Path -LiteralPath $logRoot)) {
                     Get-ChildItem -LiteralPath $logRoot -Recurse -File -Filter 'run.start.json' -ErrorAction SilentlyContinue |
@@ -346,6 +375,8 @@ function Wait-TorcaClientLaunch {
             }
             elseif ($processObserved) {
                 throw 'Windows torca_app exited before native runtime reached TOR_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident.'
+            } elseif ($ExpectedWindowsProcessId) {
+                throw "Windows release process PID $ExpectedWindowsProcessId exited before native runtime reached TOR_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident."
             } else { $lastDetail = 'Windows torca_app process is not running yet' }
         } else {
             if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required for Android launch verification.' }
