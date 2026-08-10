@@ -4,7 +4,9 @@
 //! target branches below are the one permitted place where the native host
 //! chooses its Windows or Android adapter.
 
-use crate::{app_paths::windows_app_root, composition::NativeCompositionError};
+#[cfg(windows)]
+use crate::app_paths::windows_app_root;
+use crate::composition::NativeCompositionError;
 #[cfg(target_os = "android")]
 use torca_platform::SecretNamespace;
 use torca_platform::{PlatformServices, RelayEndpoint};
