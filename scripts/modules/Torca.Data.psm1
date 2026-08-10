@@ -45,6 +45,14 @@ function Reset-TorcaAndroidClientData {
             Write-Host "Removed Android package and local data on: $DeviceId" -ForegroundColor Yellow
             return
         }
+        # `pm uninstall --user 0` reports this when a previous install/reset
+        # has already removed the package from the primary user.  There is no
+        # app sandbox left to clear, so this is a successful idempotent reset;
+        # the next deploy installs a fresh package.
+        if ($removeOutput -match '(?i)not installed for (user )?0') {
+            Write-Host "Android package was already absent for user 0 on: $DeviceId; local data is already reset." -ForegroundColor Yellow
+            return
+        }
         throw "Android data reset was denied on $DeviceId. pm clear: $clearOutput; package removal fallback: $removeOutput"
     }
 
