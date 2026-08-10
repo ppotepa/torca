@@ -107,7 +107,7 @@ class TorcaForegroundService : Service() {
         val raw = NativeRuntimeBridge.nativeNotificationSnapshotJson(notificationCursor) ?: return
         val snapshot = try { JSONObject(raw) } catch (_: Exception) { return }
         val events = snapshot.optJSONArray("events") ?: return
-        val newEvents = ArrayList<Triple<String, String, String>>()
+        val newEvents = ArrayList<RuntimeNotificationEvent>()
         for (index in 0 until events.length()) {
             val event = events.optJSONObject(index) ?: continue
             val cursor = event.optLong("cursor", 0L)
@@ -117,30 +117,34 @@ class TorcaForegroundService : Service() {
                 .edit().putLong(NOTIFICATION_CURSOR, notificationCursor).apply()
             val eventId = event.optString("eventId")
             val conversationId = event.optString("conversationId")
+            val kind = event.optString("kind")
             if (eventId.isNotEmpty() && conversationId.isNotEmpty()) {
-                newEvents.add(Triple(eventId, conversationId, event.optString("contactDisplayName", "Torca contact")))
+                newEvents.add(
+                    RuntimeNotificationEvent(
+                        eventId = eventId,
+                        conversationId = conversationId,
+                        contactDisplayName = event.optString("contactDisplayName", "Torca contact"),
+                        kind = kind,
+                    ),
+                )
             }
         }
         if (MainActivity.isVisible) return
-        for ((eventId, conversationId, displayName) in newEvents) {
-            showMessageNotification(eventId, conversationId, displayName)
+        for (event in newEvents) {
+            showRuntimeNotification(event)
         }
     }
 
-    private fun showMessageNotification(
-        messageId: String,
-        conversationId: String,
-        displayName: String,
-    ) {
+    private fun showRuntimeNotification(event: RuntimeNotificationEvent) {
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
         val pendingIntent = PendingIntent.getActivity(
             this,
-            messageId.hashCode(),
+            event.eventId.hashCode(),
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
+                putExtra(MainActivity.EXTRA_CONVERSATION_ID, event.conversationId)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -152,15 +156,19 @@ class TorcaForegroundService : Service() {
         }
         val notification = builder
             .setSmallIcon(applicationInfo.icon)
-            .setContentTitle(displayName)
-            .setContentText("New private message")
-            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setContentTitle(event.contactDisplayName)
+            .setContentText(
+                if (event.kind == "contact_added") "New contact added" else "New private message",
+            )
+            .setCategory(
+                if (event.kind == "contact_added") Notification.CATEGORY_SOCIAL else Notification.CATEGORY_MESSAGE,
+            )
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .build()
         getSystemService(NotificationManager::class.java)
-            .notify(messageId.hashCode(), notification)
+            .notify(event.eventId.hashCode(), notification)
     }
 
     private fun createServiceChannel() {
@@ -201,6 +209,13 @@ class TorcaForegroundService : Service() {
         const val RUNTIME_WAIT_MS = 250L
         const val TAG = "TorcaRuntime"
     }
+
+    private data class RuntimeNotificationEvent(
+        val eventId: String,
+        val conversationId: String,
+        val contactDisplayName: String,
+        val kind: String,
+    )
 }
 
 object NativeRuntimeBridge {
