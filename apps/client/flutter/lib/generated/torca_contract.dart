@@ -46,10 +46,13 @@ class PairingDto {
     required this.expiresAtMs,
     required this.localApproved,
     required this.remoteApproved,
+    this.remoteIdentityId,
+    this.remoteFingerprint,
   });
   final String id, code, role, state;
   final int expiresAtMs;
   final bool localApproved, remoteApproved;
+  final String? remoteIdentityId, remoteFingerprint;
 }
 
 class PeerHealthDto {

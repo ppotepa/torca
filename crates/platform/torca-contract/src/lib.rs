@@ -202,6 +202,8 @@ pub struct BridgePairing {
     pub expires_at_ms: i64,
     pub local_approved: bool,
     pub remote_approved: bool,
+    pub remote_identity_id: Option<String>,
+    pub remote_fingerprint: Option<String>,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -931,14 +933,25 @@ fn map_snapshot(
                         | PairingState::Completed
                 )
             })
-            .map(|pairing| BridgePairing {
-                id: pairing.id().to_string(),
-                code: pairing.code().as_str().to_owned(),
-                role: format!("{:?}", pairing.role()).to_lowercase(),
-                state: format!("{:?}", pairing.state()).to_lowercase(),
-                expires_at_ms: pairing.expires_at().to_unix_millis(),
-                local_approved: pairing.local_approved(),
-                remote_approved: pairing.remote_approved(),
+            .map(|pairing| {
+                let remote_identity = pairing.remote_proposal().map(|proposal| {
+                    let identity = &proposal.public_identity;
+                    (
+                        identity.identity_id().to_string(),
+                        fingerprint_for(identity.key().public_key()),
+                    )
+                });
+                BridgePairing {
+                    id: pairing.id().to_string(),
+                    code: pairing.code().as_str().to_owned(),
+                    role: format!("{:?}", pairing.role()).to_lowercase(),
+                    state: format!("{:?}", pairing.state()).to_lowercase(),
+                    expires_at_ms: pairing.expires_at().to_unix_millis(),
+                    local_approved: pairing.local_approved(),
+                    remote_approved: pairing.remote_approved(),
+                    remote_identity_id: remote_identity.as_ref().map(|value| value.0.clone()),
+                    remote_fingerprint: remote_identity.map(|value| value.1),
+                }
             })
             .collect(),
         contacts: snapshot
@@ -1067,6 +1080,13 @@ fn grouped_hex(bytes: &[u8]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn fingerprint_for(public_key: &[u8]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"TORCA-FINGERPRINT-V1");
+    hash.update(public_key);
+    grouped_hex(&hash.finalize())
 }
 fn update_identity_hash(hash: &mut Sha256, identity: &PublicIdentity) {
     hash.update(identity.identity_id().to_opaque().as_bytes());

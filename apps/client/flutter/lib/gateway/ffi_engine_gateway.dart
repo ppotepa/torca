@@ -625,6 +625,8 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
               expiresAtMs: item['expiresAtMs'] as int? ?? 0,
               localApproved: item['localApproved'] as bool? ?? false,
               remoteApproved: item['remoteApproved'] as bool? ?? false,
+              remoteIdentityId: item['remoteIdentityId'] as String?,
+              remoteFingerprint: item['remoteFingerprint'] as String?,
             ),
           )
           .toList(growable: false);

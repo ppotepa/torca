@@ -118,9 +118,9 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Create invitation'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Pairing sessions'), findsOneWidget);
+    expect(find.text('Active invitations'), findsOneWidget);
     expect(find.text('T0R-CA1'), findsOneWidget);
-    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Cancel invitation'), findsOneWidget);
     expect(find.byType(Scaffold), findsOneWidget);
   });
 
