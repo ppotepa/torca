@@ -490,17 +490,17 @@ where
         session_id: PairingSessionId,
         transcript_digest: [u8; 32],
     ) -> Result<(), PairingRuntimeError> {
-        if self.completion_ack_sent.insert(session_id) {
-            self.coordinator.push(
-                session_id,
-                &PairingEnvelope {
-                    pairing_id: session_id.to_opaque(),
-                    payload: PairingPayload::CompletionAck(PairingCompletionAck {
-                        transcript_digest,
-                    }),
-                },
-            )?;
+        if self.completion_ack_sent.contains(&session_id) {
+            return Ok(());
         }
+        self.coordinator.push(
+            session_id,
+            &PairingEnvelope {
+                pairing_id: session_id.to_opaque(),
+                payload: PairingPayload::CompletionAck(PairingCompletionAck { transcript_digest }),
+            },
+        )?;
+        self.completion_ack_sent.insert(session_id);
         Ok(())
     }
 
