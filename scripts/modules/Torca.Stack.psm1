@@ -156,12 +156,21 @@ function Assert-TorcaStackHealth {
             $diagnostics = Get-TorcaDockerRelayDiagnostics -Paths $Paths
             throw "Relay health gate failed (state=$($status.Status), health=$($status.Health), restarts=$($status.RestartCount)).`nRecent relay logs:`n$diagnostics"
         }
+        & docker exec $status.ContainerId /usr/local/bin/torca-relay health-check 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Relay health gate failed: protocol health check did not receive Healthy from the running container.'
+        }
         & docker exec $status.ContainerId sh -c "test -s /var/lib/torca/relay_endpoint.txt && grep -Eq ':228C[[:space:]].*[[:space:]]0A[[:space:]]' /proc/net/tcp /proc/net/tcp6" 2>$null
         if ($LASTEXITCODE -ne 0) {
             throw 'Relay health gate failed: endpoint exists, but the relay server is not listening on container port 8844.'
         }
     } elseif (-not (Test-TorcaPort 8844)) {
         throw 'Relay health gate failed: the local relay server is not listening on port 8844.'
+    } else {
+        & $Paths.RelayExecutable health-check 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Relay health gate failed: local protocol health check did not receive Healthy.'
+        }
     }
     Write-TorcaStackStage -Name 'Relay health gate' -State 'ready' -Detail "provider=$($Stack.Provider), endpoint=$endpoint, listener=8844"
     return $Stack
