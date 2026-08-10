@@ -86,6 +86,16 @@ foreach ($root in $sourceRoots) {
     }
 }
 
+$nativeJson = Join-Path $RepoRoot 'crates/platform/torca-native/src/json.rs'
+if (Test-Path -LiteralPath $nativeJson) {
+    $nativeJsonText = Get-Content -LiteralPath $nativeJson -Raw
+    foreach ($fragment in @('push_json_string', 'push_bridge_message')) {
+        if ($nativeJsonText.Contains($fragment)) {
+            throw "Native bridge must use contract serialization, not manual JSON: $fragment"
+        }
+    }
+}
+
 $rustPlatformBoundary = [IO.Path]::GetFullPath((Join-Path $RepoRoot 'crates/platform'))
 $platformConditionalFragments = @(
     '#[cfg(windows)]', '#[cfg(not(windows))]',

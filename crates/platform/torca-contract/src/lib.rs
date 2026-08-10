@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use torca_attachments::AttachmentId;
 use torca_bootstrap::{BootstrapPhase, BootstrapState, BootstrapStepId, BootstrapStepState};
@@ -122,10 +123,13 @@ pub struct BridgeResult {
     pub error: Option<String>,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeSnapshot {
     pub contract_version: u16,
+    #[serde(skip)]
     pub identity_name: Option<String>,
+    #[serde(skip)]
     pub identity_fingerprint: Option<String>,
     pub tor_state: String,
     pub transport: BridgeTransportStatus,
@@ -135,8 +139,11 @@ pub struct BridgeSnapshot {
     pub conversations: Vec<BridgeConversation>,
     pub messages: Vec<BridgeMessage>,
     pub attachments: Vec<BridgeAttachment>,
+    #[serde(skip)]
     pub unread_messages_count: u32,
+    #[serde(skip)]
     pub new_contacts_count: u32,
+    #[serde(skip)]
     pub pairing_attention_count: u32,
     pub bootstrap_phase: String,
     pub bootstrap_steps: Vec<BridgeBootstrapStep>,
@@ -145,7 +152,8 @@ pub struct BridgeSnapshot {
 /// Cursor-addressed, redacted notification emitted by the process runtime.
 /// Message bodies, keys, onion addresses and safety numbers never cross this type.
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NotificationEvent {
     pub cursor: u64,
     pub event_id: String,
@@ -155,7 +163,8 @@ pub struct NotificationEvent {
     pub created_at_ms: i64,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeBootstrapStep {
     pub id: String,
     pub state: String,
@@ -167,7 +176,8 @@ pub struct BridgeBootstrapStep {
     pub retry_at_ms: Option<i64>,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgePairing {
     pub id: String,
     pub code: String,
@@ -178,7 +188,8 @@ pub struct BridgePairing {
     pub remote_approved: bool,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgePeerHealth {
     pub state: String,
     pub quality: String,
@@ -190,7 +201,8 @@ pub struct BridgePeerHealth {
     pub activity_sequence: u64,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeTransportIndicator {
     pub state: String,
     pub code: String,
@@ -199,13 +211,15 @@ pub struct BridgeTransportIndicator {
     pub activity_sequence: u64,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeTransportStatus {
     pub tor: BridgeTransportIndicator,
     pub relay: BridgeTransportIndicator,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeContact {
     pub id: String,
     pub display_name: String,
@@ -219,7 +233,8 @@ pub struct BridgeContact {
     pub created_at_ms: i64,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeConversation {
     pub id: String,
     pub contact_id: String,
@@ -231,7 +246,8 @@ pub struct BridgeConversation {
     pub last_message_status: Option<String>,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeMessage {
     pub id: String,
     pub conversation_id: String,
@@ -244,13 +260,15 @@ pub struct BridgeMessage {
     pub attempt_count: u32,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeMessagePage {
     pub messages: Vec<BridgeMessage>,
     pub has_more: bool,
 }
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeAttachment {
     pub id: String,
     pub message_id: String,

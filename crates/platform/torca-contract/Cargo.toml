@@ -22,6 +22,7 @@ torca-messaging = { path = "../../domains/torca-messaging" }
 torca-receipts = { path = "../../domains/torca-receipts" }
 torca-runtime = { path = "../../application/torca-runtime" }
 torca-probing = { path = "../../application/torca-probing" }
+serde = { version = "1", features = ["derive"] }
 
 [lints]
 workspace = true

@@ -1,9 +1,5 @@
-use core::fmt::Write as _;
-use std::cmp::Reverse;
-
-use torca_contract::{
-    BridgeMessage, BridgeMessagePage, BridgeResult, BridgeSnapshot, CONTRACT_VERSION,
-};
+use serde_json::{Value, json};
+use torca_contract::{BridgeMessagePage, BridgeResult, BridgeSnapshot, CONTRACT_VERSION};
 
 pub(crate) fn success_result(kind: &str) -> String {
     bridge_result_json(&BridgeResult { ok: true, kind: kind.to_owned(), error: None })
@@ -21,25 +17,10 @@ pub(crate) fn bridge_result_json(result: &BridgeResult) -> String {
     let (kind, error) = if result.ok {
         (result.kind.clone(), None)
     } else {
-        let raw = result.error.as_deref().unwrap_or_default();
-        let code = classify_error(raw);
+        let code = classify_error(result.error.as_deref().unwrap_or_default());
         (format!("error:{code}"), Some(error_message(code)))
     };
-    let mut output = String::from("{\"ok\":");
-    output.push_str(if result.ok { "true" } else { "false" });
-    output.push_str(",\"kind\":\"");
-    push_json_string(&kind, &mut output);
-    output.push_str("\",\"error\":");
-    match error {
-        Some(value) => {
-            output.push('"');
-            push_json_string(value, &mut output);
-            output.push('"');
-        }
-        None => output.push_str("null"),
-    }
-    output.push('}');
-    output
+    json!({ "ok": result.ok, "kind": kind, "error": error }).to_string()
 }
 
 fn classify_error(error: &str) -> &'static str {
@@ -112,294 +93,53 @@ fn error_message(code: &str) -> &'static str {
 }
 
 pub(crate) fn empty_snapshot_json() -> String {
-    let mut output = format!("{{\"contractVersion\":{CONTRACT_VERSION}");
-    output.push_str(
-        r#","identity":null,"torState":"stopped","transport":{"tor":{"state":"stopped","code":"TOR_NOT_READY","latencyMs":null,"lastActivityAtMs":null,"activitySequence":0},"relay":{"state":"unknown","code":"RELAY_UNAVAILABLE","latencyMs":null,"lastActivityAtMs":null,"activitySequence":0}},"onionAddress":null,"bootstrapPhase":"failed","bootstrapSteps":[],"pairings":[],"contacts":[],"conversations":[],"messages":[],"attachments":[],"notificationsEnabled":true}"#,
-    );
-    output
+    json!({
+        "contractVersion": CONTRACT_VERSION,
+        "identity": Value::Null,
+        "torState": "stopped",
+        "transport": {
+            "tor": { "state": "stopped", "code": "TOR_NOT_READY", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0 },
+            "relay": { "state": "unknown", "code": "RELAY_UNAVAILABLE", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0 }
+        },
+        "onionAddress": Value::Null,
+        "bootstrapPhase": "failed",
+        "bootstrapSteps": [], "pairings": [], "contacts": [], "conversations": [],
+        "messages": [], "attachments": [], "navigationBadges": { "unreadMessages": 0, "newContacts": 0, "pairingAttention": 0 },
+        "notificationsEnabled": true
+    }).to_string()
 }
 
 pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
-    let mut output = String::new();
-    let _ = write!(output, "{{\"contractVersion\":{}", snapshot.contract_version);
-    output.push_str(",\"bootstrapPhase\":\"");
-    push_json_string(&snapshot.bootstrap_phase, &mut output);
-    output.push_str("\",\"bootstrapSteps\":[");
-    for (index, step) in snapshot.bootstrap_steps.iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        output.push_str("{\"id\":\"");
-        push_json_string(&step.id, &mut output);
-        output.push_str("\",\"state\":\"");
-        push_json_string(&step.state, &mut output);
-        output.push_str("\",\"code\":");
-        push_optional_string(&step.code, &mut output);
-        let _ = write!(output, ",\"progress\":{},\"attempt\":{}", step.progress, step.attempt);
-        output.push_str(",\"startedAtMs\":");
-        push_optional_i64(step.started_at_ms, &mut output);
-        output.push_str(",\"lastProgressAtMs\":");
-        push_optional_i64(step.last_progress_at_ms, &mut output);
-        output.push_str(",\"retryAtMs\":");
-        push_optional_i64(step.retry_at_ms, &mut output);
-        output.push('}');
-    }
-    output.push(']');
-    output.push_str(",\"identity\":");
-    match (&snapshot.identity_name, &snapshot.identity_fingerprint) {
-        (Some(name), fingerprint) => {
-            output.push_str("{\"displayName\":\"");
-            push_json_string(name, &mut output);
-            output.push_str("\",\"fingerprint\":");
-            push_optional_string(fingerprint, &mut output);
-            output.push('}');
-        }
-        (None, Some(fingerprint)) => {
-            output.push_str("{\"displayName\":null,\"fingerprint\":");
-            push_optional_string(&Some(fingerprint.clone()), &mut output);
-            output.push('}');
-        }
-        (None, None) => output.push_str("null"),
-    }
-    output.push_str(",\"torState\":\"");
-    push_json_string(&snapshot.tor_state, &mut output);
-    output.push('"');
-    output.push_str(",\"transport\":{\"tor\":");
-    push_transport_indicator(&snapshot.transport.tor, &mut output);
-    output.push_str(",\"relay\":");
-    push_transport_indicator(&snapshot.transport.relay, &mut output);
-    output.push('}');
-    output.push_str(",\"onionAddress\":");
-    match &snapshot.onion_address {
-        Some(value) => {
-            output.push('"');
-            push_json_string(value, &mut output);
-            output.push('"');
-        }
-        None => output.push_str("null"),
-    }
-
-    output.push_str(",\"pairings\":[");
-    for (index, pairing) in snapshot.pairings.iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        output.push_str("{\"id\":\"");
-        push_json_string(&pairing.id, &mut output);
-        output.push_str("\",\"code\":\"");
-        push_json_string(&pairing.code, &mut output);
-        output.push_str("\",\"role\":\"");
-        push_json_string(&pairing.role, &mut output);
-        output.push_str("\",\"state\":\"");
-        push_json_string(&pairing.state, &mut output);
-        let _ = write!(
-            output,
-            "\",\"expiresAtMs\":{},\"localApproved\":{},\"remoteApproved\":{}}}",
-            pairing.expires_at_ms, pairing.local_approved, pairing.remote_approved
-        );
-    }
-
-    output.push_str("],\"contacts\":[");
-    for (index, contact) in snapshot.contacts.iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        output.push_str("{\"id\":\"");
-        push_json_string(&contact.id, &mut output);
-        output.push_str("\",\"displayName\":\"");
-        push_json_string(&contact.display_name, &mut output);
-        output.push_str("\",\"onionAddress\":\"");
-        push_json_string(&contact.onion_address, &mut output);
-        output.push_str("\",\"status\":\"");
-        push_json_string(&contact.status, &mut output);
-        output.push_str("\",\"connectionState\":\"");
-        push_json_string(&contact.connection_state, &mut output);
-        output.push_str("\",\"safetyNumber\":\"");
-        push_json_string(&contact.safety_number, &mut output);
-        output.push_str("\",\"verificationStatus\":\"");
-        push_json_string(&contact.verification_status, &mut output);
-        output.push_str("\",\"verifiedAtMs\":");
-        match contact.verified_at_ms {
-            Some(value) => {
-                let _ = write!(output, "{value}");
-            }
-            None => output.push_str("null"),
-        }
-        let _ = write!(output, ",\"createdAtMs\":{}", contact.created_at_ms);
-        output.push_str(",\"peerHealth\":{\"state\":\"");
-        push_json_string(&contact.peer_health.state, &mut output);
-        output.push_str("\",\"quality\":\"");
-        push_json_string(&contact.peer_health.quality, &mut output);
-        output.push_str("\",\"rttMs\":");
-        match contact.peer_health.rtt_ms {
-            Some(value) => {
-                let _ = write!(output, "{value}");
-            }
-            None => output.push_str("null"),
-        }
-        output.push_str(",\"lastSuccessAtMs\":");
-        match contact.peer_health.last_success_at_ms {
-            Some(value) => {
-                let _ = write!(output, "{value}");
-            }
-            None => output.push_str("null"),
-        }
-        let _ = write!(
-            output,
-            ",\"consecutiveFailures\":{},\"reconnectAttempt\":{},\"lastActivityAtMs\":",
-            contact.peer_health.consecutive_failures, contact.peer_health.reconnect_attempt
-        );
-        push_optional_i64(contact.peer_health.last_activity_at_ms, &mut output);
-        let _ =
-            write!(output, ",\"activitySequence\":{}}}}}", contact.peer_health.activity_sequence);
-    }
-
-    output.push_str("],\"conversations\":[");
-    let mut conversations = snapshot.conversations.iter().collect::<Vec<_>>();
-    conversations.sort_by_key(|conversation| Reverse(conversation.last_activity_at_ms));
-    for (index, conversation) in conversations.into_iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        output.push_str("{\"id\":\"");
-        push_json_string(&conversation.id, &mut output);
-        output.push_str("\",\"contactId\":\"");
-        push_json_string(&conversation.contact_id, &mut output);
-        output.push_str("\",\"status\":\"");
-        push_json_string(&conversation.status, &mut output);
-        let _ = write!(
-            output,
-            "\",\"unreadCount\":{},\"lastActivityAtMs\":{},\"lastMessageBody\":",
-            conversation.unread_count, conversation.last_activity_at_ms
-        );
-        push_optional_string(&conversation.last_message_body, &mut output);
-        output.push_str(",\"lastMessageDirection\":");
-        push_optional_string(&conversation.last_message_direction, &mut output);
-        output.push_str(",\"lastMessageStatus\":");
-        push_optional_string(&conversation.last_message_status, &mut output);
-        output.push('}');
-    }
-
-    output.push_str("],\"messages\":[");
-    for (index, message) in snapshot.messages.iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        push_bridge_message(message, &mut output);
-    }
-
-    let _ = write!(
-        output,
-        "],\"navigationBadges\":{{\"unreadMessages\":{},\"newContacts\":{},\"pairingAttention\":{}}},\"attachments\":[",
-        snapshot.unread_messages_count,
-        snapshot.new_contacts_count,
-        snapshot.pairing_attention_count
+    let mut value = serde_json::to_value(snapshot).unwrap_or_else(|_| json!({}));
+    let Some(object) = value.as_object_mut() else { return "{}".into() };
+    object.insert("identity".into(), identity_value(snapshot));
+    object.insert(
+        "navigationBadges".into(),
+        json!({
+            "unreadMessages": snapshot.unread_messages_count,
+            "newContacts": snapshot.new_contacts_count,
+            "pairingAttention": snapshot.pairing_attention_count,
+        }),
     );
-    for (index, attachment) in snapshot.attachments.iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        output.push_str("{\"id\":\"");
-        push_json_string(&attachment.id, &mut output);
-        output.push_str("\",\"messageId\":\"");
-        push_json_string(&attachment.message_id, &mut output);
-        output.push_str("\",\"name\":\"");
-        push_json_string(&attachment.name, &mut output);
-        output.push_str("\",\"mediaType\":\"");
-        push_json_string(&attachment.media_type, &mut output);
-        let _ = write!(output, "\",\"size\":{},\"status\":\"", attachment.size);
-        push_json_string(&attachment.status, &mut output);
-        let _ = write!(output, "\",\"offset\":{}}}", attachment.offset);
+    if let Some(Value::Array(conversations)) = object.get_mut("conversations") {
+        conversations.sort_by_key(|conversation| {
+            std::cmp::Reverse(
+                conversation.get("lastActivityAtMs").and_then(Value::as_i64).unwrap_or_default(),
+            )
+        });
     }
-    output.push_str("]}");
-    output
+    serde_json::to_string(&value).unwrap_or_else(|_| "{}".into())
 }
 
-fn push_transport_indicator(
-    indicator: &torca_contract::BridgeTransportIndicator,
-    output: &mut String,
-) {
-    output.push_str("{\"state\":\"");
-    push_json_string(&indicator.state, output);
-    output.push_str("\",\"code\":\"");
-    push_json_string(&indicator.code, output);
-    output.push_str("\",\"latencyMs\":");
-    match indicator.latency_ms {
-        Some(value) => {
-            let _ = write!(output, "{value}");
+fn identity_value(snapshot: &BridgeSnapshot) -> Value {
+    match (&snapshot.identity_name, &snapshot.identity_fingerprint) {
+        (None, None) => Value::Null,
+        (display_name, fingerprint) => {
+            json!({ "displayName": display_name, "fingerprint": fingerprint })
         }
-        None => output.push_str("null"),
-    }
-    output.push_str(",\"lastActivityAtMs\":");
-    push_optional_i64(indicator.last_activity_at_ms, output);
-    let _ = write!(output, ",\"activitySequence\":{}}}", indicator.activity_sequence);
-}
-
-fn push_optional_i64(value: Option<i64>, output: &mut String) {
-    if let Some(value) = value {
-        let _ = write!(output, "{value}");
-    } else {
-        output.push_str("null");
     }
 }
 
 pub(crate) fn bridge_message_page_json(page: &BridgeMessagePage) -> String {
-    let mut output = String::from("{\"messages\":[");
-    for (index, message) in page.messages.iter().enumerate() {
-        if index != 0 {
-            output.push(',');
-        }
-        push_bridge_message(message, &mut output);
-    }
-    output.push_str("],\"hasMore\":");
-    output.push_str(if page.has_more { "true" } else { "false" });
-    output.push('}');
-    output
-}
-
-fn push_bridge_message(message: &BridgeMessage, output: &mut String) {
-    output.push_str("{\"id\":\"");
-    push_json_string(&message.id, output);
-    output.push_str("\",\"conversationId\":\"");
-    push_json_string(&message.conversation_id, output);
-    output.push_str("\",\"body\":\"");
-    push_json_string(&message.body, output);
-    output.push_str("\",\"direction\":\"");
-    push_json_string(&message.direction, output);
-    output.push_str("\",\"status\":\"");
-    push_json_string(&message.status, output);
-    output.push_str("\",\"replyToMessageId\":");
-    push_optional_string(&message.reply_to_message_id, output);
-    let _ = write!(
-        output,
-        ",\"createdAtMs\":{},\"updatedAtMs\":{},\"attemptCount\":{}}}",
-        message.created_at_ms, message.updated_at_ms, message.attempt_count
-    );
-}
-
-fn push_optional_string(value: &Option<String>, output: &mut String) {
-    match value {
-        Some(value) => {
-            output.push('"');
-            push_json_string(value, output);
-            output.push('"');
-        }
-        None => output.push_str("null"),
-    }
-}
-
-fn push_json_string(value: &str, output: &mut String) {
-    for character in value.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            character if character.is_control() => {
-                let _ = write!(output, "\\u{:04x}", character as u32);
-            }
-            character => output.push(character),
-        }
-    }
+    serde_json::to_string(page).unwrap_or_else(|_| "{\"messages\":[],\"hasMore\":false}".into())
 }
