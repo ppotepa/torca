@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use torca_client_engine::{ClientEngine, ClientEngineActor, EngineCommand};
@@ -166,18 +167,44 @@ impl PairingApprovalPort for TestApproval {
 }
 
 #[derive(Default)]
-struct TestSecrets(u128);
+struct TestSecrets {
+    next: u128,
+    pairing_states: BTreeMap<PairingSessionId, Vec<u8>>,
+}
 impl PairingPeerSecretStore for TestSecrets {
     fn store_peer_secret(
         &mut self,
         _secret: PairingDerivedSecret,
     ) -> Result<OpaqueId, PairingCredentialError> {
-        self.0 += 1;
-        Ok(OpaqueId::from_u128(self.0))
+        self.next += 1;
+        Ok(OpaqueId::from_u128(self.next))
     }
 
     fn delete_peer_secret(&mut self, _handle: OpaqueId) -> Result<bool, PairingCredentialError> {
         Ok(true)
+    }
+
+    fn store_pairing_state(
+        &mut self,
+        session_id: PairingSessionId,
+        state: &[u8],
+    ) -> Result<(), PairingCredentialError> {
+        self.pairing_states.insert(session_id, state.to_vec());
+        Ok(())
+    }
+
+    fn load_pairing_state(
+        &self,
+        session_id: PairingSessionId,
+    ) -> Result<Option<Vec<u8>>, PairingCredentialError> {
+        Ok(self.pairing_states.get(&session_id).cloned())
+    }
+
+    fn delete_pairing_state(
+        &mut self,
+        session_id: PairingSessionId,
+    ) -> Result<bool, PairingCredentialError> {
+        Ok(self.pairing_states.remove(&session_id).is_some())
     }
 }
 
@@ -214,7 +241,7 @@ fn two_runtimes_commit_contacts_only_after_durable_acknowledgements() {
         TestSecrets::default(),
     );
     let mut joiner = PairingRuntime::new(
-        PairingCoordinator::new(SharedRelay(broker), RustPairingCrypto::new()),
+        PairingCoordinator::new(SharedRelay(broker.clone()), RustPairingCrypto::new()),
         joiner_engine.clone(),
         TestApproval,
         TestSecrets::default(),
@@ -223,6 +250,16 @@ fn two_runtimes_commit_contacts_only_after_durable_acknowledgements() {
     let invitation = creator
         .create_invitation(session_id, context(&creator_engine, "Alice"), now)
         .expect("create");
+    // Reconstructing the process runtime must retain the protected ephemeral transport state,
+    // not strand an otherwise valid relay invitation after an Activity/service/process restart.
+    let (_discarded_coordinator, _engine, _approval, creator_secrets) = creator.into_parts();
+    let mut creator = PairingRuntime::new(
+        PairingCoordinator::new(SharedRelay(broker.clone()), RustPairingCrypto::new()),
+        creator_engine.clone(),
+        TestApproval,
+        creator_secrets,
+    );
+    assert_eq!(creator.restore_active_sessions().expect("restore creator"), 1);
     joiner
         .join_invitation(session_id, invitation.code, context(&joiner_engine, "Bob"), now)
         .expect("join");

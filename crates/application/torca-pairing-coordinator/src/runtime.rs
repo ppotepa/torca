@@ -16,8 +16,11 @@ use torca_pairing_protocol::{
 use crate::{
     PairingApprovalError, PairingApprovalPort, PairingCoordinator, PairingCoordinatorError,
     PairingCredentialError, PairingCryptoPort, PairingPeerSecretStore, PairingRendezvousPort,
+    PairingSideToken, PairingSlotCapability, PairingSlotId, PairingTransportSnapshot,
     encode_invite_uri, invitation_expires_at,
 };
+
+const PAIRING_STATE_VERSION: u8 = 1;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +133,61 @@ where
         }
     }
 
+    /// Reconstructs in-flight sessions from the durable engine snapshot and the platform's
+    /// protected-secret store. This is called once while composing the process runtime, before
+    /// its maintenance loop can poll the relay.
+    pub fn restore_active_sessions(&mut self) -> Result<usize, PairingRuntimeError> {
+        let sessions =
+            self.engine.overview_snapshot().map_err(|_| PairingRuntimeError::Engine)?.pairings;
+        let mut restored = 0;
+        for session in sessions {
+            let mut state = match self.peer_secrets.load_pairing_state(session.id())? {
+                Some(state) => state,
+                None => {
+                    self.discard_unrecoverable_session(session.id());
+                    continue;
+                }
+            };
+            let persisted = decode_persisted_state(session.id(), &state);
+            state.fill(0);
+            let persisted = match persisted {
+                Ok(persisted) => persisted,
+                Err(_) => {
+                    let _ = self.peer_secrets.delete_pairing_state(session.id());
+                    self.discard_unrecoverable_session(session.id());
+                    continue;
+                }
+            };
+            if persisted.transport.role != session.role() {
+                let _ = self.peer_secrets.delete_pairing_state(session.id());
+                self.discard_unrecoverable_session(session.id());
+                continue;
+            }
+            if self.coordinator.restore_transport(session.id(), persisted.transport).is_err() {
+                let _ = self.peer_secrets.delete_pairing_state(session.id());
+                self.discard_unrecoverable_session(session.id());
+                continue;
+            }
+            if let Some(offer) = persisted.local_offer {
+                self.local_offers.insert(session.id(), offer);
+            }
+            if let Some(offer) = persisted.remote_offer {
+                self.remote_offers.insert(session.id(), offer);
+            }
+            if persisted.completion_sent {
+                self.completion_sent.insert(session.id());
+            }
+            if persisted.completion_applied {
+                self.completion_applied.insert(session.id());
+            }
+            if persisted.completion_ack_sent {
+                self.completion_ack_sent.insert(session.id());
+            }
+            restored += 1;
+        }
+        Ok(restored)
+    }
+
     pub fn create_invitation(
         &mut self,
         session_id: PairingSessionId,
@@ -150,6 +208,7 @@ where
             return Err(PairingRuntimeError::Engine);
         }
         self.local_offers.insert(session_id, local_offer);
+        self.persist_session(session_id)?;
         Ok(PairingInvitation { session_id, uri: encode_invite_uri(&code), code, expires_at })
     }
 
@@ -171,6 +230,7 @@ where
             return Err(PairingRuntimeError::Engine);
         }
         self.local_offers.insert(session_id, local_offer);
+        self.persist_session(session_id)?;
         Ok(())
     }
 
@@ -233,6 +293,7 @@ where
                 .map_err(|_| PairingRuntimeError::Engine)?;
         }
         self.maybe_send_completion(session_id)?;
+        self.persist_session(session_id)?;
         Ok(())
     }
 
@@ -314,11 +375,15 @@ where
                         return Err(PairingRuntimeError::InvalidOffer);
                     }
                     let proposal = peer_proposal(offer)?;
+                    // The relay delivery is destructive. Record the authenticated offer in the
+                    // protected restart state before advancing the durable domain aggregate so a
+                    // crash cannot consume the only copy of the transcript.
+                    self.remote_offers.insert(session_id, envelope);
+                    self.persist_session(session_id)?;
                     let _ = self
                         .engine
                         .dispatch(EngineCommand::PeerJoined { session_id, proposal, at: now })
                         .map_err(|_| PairingRuntimeError::Engine)?;
-                    self.remote_offers.insert(session_id, envelope);
                     report.offers_applied += 1;
                     if role == PairingRole::Creator {
                         let local = self
@@ -387,6 +452,9 @@ where
                 }
             }
         }
+        if self.local_offers.contains_key(&session_id) {
+            self.persist_session(session_id)?;
+        }
         Ok(report)
     }
 
@@ -399,6 +467,7 @@ where
         self.completion_sent.remove(&session_id);
         self.completion_applied.remove(&session_id);
         self.completion_ack_sent.remove(&session_id);
+        let _ = self.peer_secrets.delete_pairing_state(session_id);
         self.coordinator.close(session_id).map_err(Into::into)
     }
 
@@ -565,7 +634,30 @@ where
         self.completion_sent.remove(&session_id);
         self.completion_applied.remove(&session_id);
         self.completion_ack_sent.remove(&session_id);
+        let _ = self.peer_secrets.delete_pairing_state(session_id);
         let _ = self.coordinator.detach(session_id);
+    }
+
+    fn discard_unrecoverable_session(&mut self, session_id: PairingSessionId) {
+        // A relay slot without its protected transport key cannot be resumed safely. Removing
+        // the local summary is preferable to leaving a permanently pending invitation; the
+        // relay's five-minute TTL removes the counterpart automatically.
+        let _ = self.engine.dispatch(EngineCommand::RemovePairing { session_id });
+    }
+
+    fn persist_session(&mut self, session_id: PairingSessionId) -> Result<(), PairingRuntimeError> {
+        let transport = self.coordinator.export_transport(session_id)?;
+        let mut encoded = encode_persisted_state(
+            transport,
+            self.local_offers.get(&session_id),
+            self.remote_offers.get(&session_id),
+            self.completion_sent.contains(&session_id),
+            self.completion_applied.contains(&session_id),
+            self.completion_ack_sent.contains(&session_id),
+        )?;
+        let stored = self.peer_secrets.store_pairing_state(session_id, &encoded);
+        encoded.fill(0);
+        stored.map_err(Into::into)
     }
 
     fn session(&self, session_id: PairingSessionId) -> Result<PairingSession, PairingRuntimeError> {
@@ -670,4 +762,170 @@ fn peer_proposal(offer: &PairingOffer) -> Result<PeerProposal, PairingRuntimeErr
     let route = ContactRoute::new(offer.onion_address.clone(), offer.capability_id)
         .map_err(|_| PairingRuntimeError::InvalidOffer)?;
     Ok(PeerProposal { public_identity, route })
+}
+
+struct PersistedPairingState {
+    transport: PairingTransportSnapshot,
+    local_offer: Option<PairingEnvelope>,
+    remote_offer: Option<PairingEnvelope>,
+    completion_sent: bool,
+    completion_applied: bool,
+    completion_ack_sent: bool,
+}
+
+fn encode_persisted_state(
+    transport: PairingTransportSnapshot,
+    local_offer: Option<&PairingEnvelope>,
+    remote_offer: Option<&PairingEnvelope>,
+    completion_sent: bool,
+    completion_applied: bool,
+    completion_ack_sent: bool,
+) -> Result<Vec<u8>, PairingRuntimeError> {
+    let PairingTransportSnapshot {
+        role,
+        mut private_key,
+        slot,
+        token,
+        slot_capability,
+        remote_public_key,
+    } = transport;
+    let local = encode_optional_offer(local_offer)?;
+    let remote = encode_optional_offer(remote_offer)?;
+    let mut output = Vec::with_capacity(128 + local.len() + remote.len());
+    output.push(PAIRING_STATE_VERSION);
+    output.push(match role {
+        PairingRole::Creator => 1,
+        PairingRole::Joiner => 2,
+    });
+    output.extend_from_slice(&private_key);
+    private_key.fill(0);
+    output.extend_from_slice(&slot.0.into_bytes());
+    output.extend_from_slice(&token.0.into_bytes());
+    match slot_capability {
+        Some(capability) => {
+            output.push(1);
+            output.extend_from_slice(&capability.0.into_bytes());
+        }
+        None => output.push(0),
+    }
+    match remote_public_key {
+        Some(key) => {
+            output.push(1);
+            output.extend_from_slice(&key);
+        }
+        None => output.push(0),
+    }
+    output.push(u8::from(completion_sent));
+    output.push(u8::from(completion_applied));
+    output.push(u8::from(completion_ack_sent));
+    output.extend_from_slice(&local);
+    output.extend_from_slice(&remote);
+    Ok(output)
+}
+
+fn encode_optional_offer(offer: Option<&PairingEnvelope>) -> Result<Vec<u8>, PairingRuntimeError> {
+    let bytes = match offer {
+        Some(offer) => offer.encode().map_err(|_| PairingRuntimeError::InvalidOffer)?,
+        None => Vec::new(),
+    };
+    let length = u16::try_from(bytes.len()).map_err(|_| PairingRuntimeError::InvalidOffer)?;
+    let mut output = Vec::with_capacity(2 + bytes.len());
+    output.extend_from_slice(&length.to_be_bytes());
+    output.extend_from_slice(&bytes);
+    Ok(output)
+}
+
+fn decode_persisted_state(
+    session_id: PairingSessionId,
+    bytes: &[u8],
+) -> Result<PersistedPairingState, PairingRuntimeError> {
+    let mut input = bytes;
+    if take_u8(&mut input)? != PAIRING_STATE_VERSION {
+        return Err(PairingRuntimeError::InvalidOffer);
+    }
+    let role = match take_u8(&mut input)? {
+        1 => PairingRole::Creator,
+        2 => PairingRole::Joiner,
+        _ => return Err(PairingRuntimeError::InvalidOffer),
+    };
+    let private_key = take_array::<32>(&mut input)?;
+    let slot = PairingSlotId(OpaqueId::from_bytes(take_array::<16>(&mut input)?));
+    let token = PairingSideToken(OpaqueId::from_bytes(take_array::<16>(&mut input)?));
+    let slot_capability = match take_u8(&mut input)? {
+        0 => None,
+        1 => Some(PairingSlotCapability(OpaqueId::from_bytes(take_array::<16>(&mut input)?))),
+        _ => return Err(PairingRuntimeError::InvalidOffer),
+    };
+    let remote_public_key = match take_u8(&mut input)? {
+        0 => None,
+        1 => Some(take_array::<32>(&mut input)?),
+        _ => return Err(PairingRuntimeError::InvalidOffer),
+    };
+    let completion_sent = take_bool(&mut input)?;
+    let completion_applied = take_bool(&mut input)?;
+    let completion_ack_sent = take_bool(&mut input)?;
+    let local_offer = decode_optional_offer(session_id, &mut input)?;
+    let remote_offer = decode_optional_offer(session_id, &mut input)?;
+    if !input.is_empty() {
+        return Err(PairingRuntimeError::InvalidOffer);
+    }
+    Ok(PersistedPairingState {
+        transport: PairingTransportSnapshot {
+            role,
+            private_key,
+            slot,
+            token,
+            slot_capability,
+            remote_public_key,
+        },
+        local_offer,
+        remote_offer,
+        completion_sent,
+        completion_applied,
+        completion_ack_sent,
+    })
+}
+
+fn decode_optional_offer(
+    session_id: PairingSessionId,
+    input: &mut &[u8],
+) -> Result<Option<PairingEnvelope>, PairingRuntimeError> {
+    let length = usize::from(u16::from_be_bytes(take_array::<2>(input)?));
+    if length == 0 {
+        return Ok(None);
+    }
+    let envelope = PairingEnvelope::decode(take(input, length)?)
+        .map_err(|_| PairingRuntimeError::InvalidOffer)?;
+    envelope
+        .validate_pairing_id(session_id.to_opaque())
+        .map_err(|_| PairingRuntimeError::InvalidOffer)?;
+    if !matches!(&envelope.payload, PairingPayload::Offer(_)) {
+        return Err(PairingRuntimeError::InvalidOffer);
+    }
+    Ok(Some(envelope))
+}
+
+fn take_bool(input: &mut &[u8]) -> Result<bool, PairingRuntimeError> {
+    match take_u8(input)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(PairingRuntimeError::InvalidOffer),
+    }
+}
+
+fn take_u8(input: &mut &[u8]) -> Result<u8, PairingRuntimeError> {
+    Ok(take(input, 1)?[0])
+}
+
+fn take_array<const N: usize>(input: &mut &[u8]) -> Result<[u8; N], PairingRuntimeError> {
+    take(input, N)?.try_into().map_err(|_| PairingRuntimeError::InvalidOffer)
+}
+
+fn take<'a>(input: &mut &'a [u8], length: usize) -> Result<&'a [u8], PairingRuntimeError> {
+    if input.len() < length {
+        return Err(PairingRuntimeError::InvalidOffer);
+    }
+    let (head, tail) = input.split_at(length);
+    *input = tail;
+    Ok(head)
 }

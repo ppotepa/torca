@@ -9,7 +9,7 @@ use torca_pairing_coordinator::{
     PairingCoordinatorError, PairingCryptoHandle, PairingCryptoPort, PairingDerivedSecret,
     PairingEphemeralKey,
 };
-use x25519_dalek::{PublicKey as X25519PublicKey, ReusableSecret};
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{Ciphertext, CryptoError, CryptoProvider, Nonce, RustCryptoProvider, SealingKey};
 
@@ -18,7 +18,7 @@ const PEER_SECRET_KDF_LABEL: &[u8] = b"TORCA-PEER-SECRET-V1";
 
 pub struct RustPairingCrypto {
     crypto: RustCryptoProvider,
-    keys: BTreeMap<PairingCryptoHandle, ReusableSecret>,
+    keys: BTreeMap<PairingCryptoHandle, StaticSecret>,
 }
 
 impl Default for RustPairingCrypto {
@@ -35,7 +35,7 @@ impl RustPairingCrypto {
     pub fn generate_key(&mut self) -> Result<PairingEphemeralKey, PairingKeyError> {
         let handle = self.new_handle()?;
         let mut rng = OsRng;
-        let secret = ReusableSecret::random_from_rng(&mut rng);
+        let secret = StaticSecret::random_from_rng(&mut rng);
         let public_key = X25519PublicKey::from(&secret).to_bytes();
         self.keys.insert(handle, secret);
         Ok(PairingEphemeralKey { handle, public_key })
@@ -43,6 +43,22 @@ impl RustPairingCrypto {
 
     pub fn release_key(&mut self, handle: PairingCryptoHandle) -> Result<(), PairingKeyError> {
         self.keys.remove(&handle).map(|_| ()).ok_or(PairingKeyError::NotFound)
+    }
+
+    pub fn export_key(&self, handle: PairingCryptoHandle) -> Result<[u8; 32], PairingKeyError> {
+        self.keys.get(&handle).map(StaticSecret::to_bytes).ok_or(PairingKeyError::NotFound)
+    }
+
+    pub fn import_key(
+        &mut self,
+        mut private_key: [u8; 32],
+    ) -> Result<PairingEphemeralKey, PairingKeyError> {
+        let handle = self.new_handle()?;
+        let secret = StaticSecret::from(private_key);
+        private_key.fill(0);
+        let public_key = X25519PublicKey::from(&secret).to_bytes();
+        self.keys.insert(handle, secret);
+        Ok(PairingEphemeralKey { handle, public_key })
     }
 
     pub fn fill_random(&mut self, output: &mut [u8]) -> Result<(), PairingKeyError> {
@@ -141,6 +157,20 @@ impl PairingCryptoPort for RustPairingCrypto {
         handle: PairingCryptoHandle,
     ) -> Result<(), PairingCoordinatorError> {
         self.release_key(handle).map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    fn export_ephemeral_key(
+        &self,
+        handle: PairingCryptoHandle,
+    ) -> Result<[u8; 32], PairingCoordinatorError> {
+        self.export_key(handle).map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    fn import_ephemeral_key(
+        &mut self,
+        private_key: [u8; 32],
+    ) -> Result<PairingEphemeralKey, PairingCoordinatorError> {
+        self.import_key(private_key).map_err(|_| PairingCoordinatorError::Crypto)
     }
 
     fn fill_random(&mut self, output: &mut [u8]) -> Result<(), PairingCoordinatorError> {

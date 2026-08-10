@@ -1,5 +1,6 @@
 use torca_foundation::OpaqueId;
 use torca_identity::KeyId;
+use torca_pairing::PairingSessionId;
 use torca_pairing_coordinator::{
     PairingCredentialError, PairingDerivedSecret, PairingPeerSecretStore,
 };
@@ -42,6 +43,42 @@ where
     fn delete_peer_secret(&mut self, handle: OpaqueId) -> Result<bool, PairingCredentialError> {
         self.store.delete(KeyId::from_opaque(handle)).map_err(|_| PairingCredentialError::Storage)
     }
+
+    fn store_pairing_state(
+        &mut self,
+        session_id: PairingSessionId,
+        state: &[u8],
+    ) -> Result<(), PairingCredentialError> {
+        let key = pairing_state_key(session_id);
+        if self.store.load(key).map_err(|_| PairingCredentialError::Storage)?.is_some() {
+            self.store.delete(key).map_err(|_| PairingCredentialError::Storage)?;
+        }
+        self.store.insert(key, state).map_err(|_| PairingCredentialError::Storage)
+    }
+
+    fn load_pairing_state(
+        &self,
+        session_id: PairingSessionId,
+    ) -> Result<Option<Vec<u8>>, PairingCredentialError> {
+        self.store.load(pairing_state_key(session_id)).map_err(|_| PairingCredentialError::Storage)
+    }
+
+    fn delete_pairing_state(
+        &mut self,
+        session_id: PairingSessionId,
+    ) -> Result<bool, PairingCredentialError> {
+        self.store
+            .delete(pairing_state_key(session_id))
+            .map_err(|_| PairingCredentialError::Storage)
+    }
+}
+
+fn pairing_state_key(session_id: PairingSessionId) -> KeyId {
+    let mut bytes = session_id.to_opaque().into_bytes();
+    for (byte, domain) in bytes.iter_mut().zip(*b"torca-pair-state") {
+        *byte ^= domain;
+    }
+    KeyId::from_opaque(OpaqueId::from_bytes(bytes))
 }
 
 impl<C, S> ManagedPeerSecrets<C, S>
@@ -126,9 +163,31 @@ pub enum PeerSecretError {
     Crypto,
     Authentication,
 }
+
 impl core::fmt::Display for PeerSecretError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(formatter, "{self:?}")
     }
 }
 impl std::error::Error for PeerSecretError {}
+
+#[cfg(test)]
+mod tests {
+    use torca_foundation::OpaqueId;
+    use torca_pairing::PairingSessionId;
+    use torca_pairing_coordinator::PairingPeerSecretStore;
+
+    use crate::{DeterministicTestCrypto, InMemoryProtectedSecretStore, ManagedPeerSecrets};
+
+    #[test]
+    fn pairing_restart_state_replaces_the_previous_protected_record() {
+        let mut secrets = ManagedPeerSecrets::new(
+            DeterministicTestCrypto::default(),
+            InMemoryProtectedSecretStore::default(),
+        );
+        let id = PairingSessionId::from_opaque(OpaqueId::from_u128(42));
+        secrets.store_pairing_state(id, b"first").expect("first state");
+        secrets.store_pairing_state(id, b"second").expect("replacement state");
+        assert_eq!(secrets.load_pairing_state(id).expect("load state"), Some(b"second".to_vec()));
+    }
+}

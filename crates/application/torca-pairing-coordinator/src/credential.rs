@@ -1,4 +1,5 @@
 use torca_foundation::OpaqueId;
+use torca_pairing::PairingSessionId;
 
 use crate::PairingDerivedSecret;
 
@@ -12,6 +13,32 @@ pub trait PairingPeerSecretStore {
 
     /// Removes a secret created during a failed or rolled-back pairing finalization.
     fn delete_peer_secret(&mut self, handle: OpaqueId) -> Result<bool, PairingCredentialError>;
+
+    /// Saves encrypted transport material for an in-flight pairing. Implementations backed by
+    /// protected storage override this; in-memory test adapters may leave it as a no-op.
+    fn store_pairing_state(
+        &mut self,
+        _session_id: PairingSessionId,
+        _state: &[u8],
+    ) -> Result<(), PairingCredentialError> {
+        Ok(())
+    }
+
+    /// Loads encrypted transport material for one in-flight pairing.
+    fn load_pairing_state(
+        &self,
+        _session_id: PairingSessionId,
+    ) -> Result<Option<Vec<u8>>, PairingCredentialError> {
+        Ok(None)
+    }
+
+    /// Removes transport material after cancellation, expiry or mutual completion.
+    fn delete_pairing_state(
+        &mut self,
+        _session_id: PairingSessionId,
+    ) -> Result<bool, PairingCredentialError> {
+        Ok(false)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

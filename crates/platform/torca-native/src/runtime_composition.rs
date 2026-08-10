@@ -185,7 +185,7 @@ fn spawn_runtime_for<P: PlatformServices>(
             RustCryptoProvider,
             platform.open_secret_store(SecretNamespace::Runtime),
         ),
-    )
+    )?
     .with_contact_metadata(metadata);
     Ok(RuntimeOwner::spawn_with_relay_probe(engine, pairing, communication, tor, Some(relay_probe)))
 }
@@ -202,7 +202,10 @@ fn build_pairing_driver<A, S>(
     relay: (String, u16),
     approval: A,
     peer_secrets: S,
-) -> RuntimePairingDriver<RendezvousClient<TorRelayTransport>, RustPairingCrypto, A, S>
+) -> Result<
+    RuntimePairingDriver<RendezvousClient<TorRelayTransport>, RustPairingCrypto, A, S>,
+    NativeCompositionError,
+>
 where
     A: PairingApprovalPort + Send + 'static,
     S: PairingPeerSecretStore + Send + 'static,
@@ -210,8 +213,11 @@ where
     let transport = TorRelayTransport::new(tor_client, relay.0, relay.1);
     let rendezvous = RendezvousClient::new(transport, NETWORK_TIMEOUT);
     let coordinator = PairingCoordinator::new(rendezvous, RustPairingCrypto::new());
-    let runtime = PairingRuntime::new(coordinator, engine.clone(), approval, peer_secrets);
-    RuntimePairingDriver::new(runtime, engine, endpoint)
+    let mut runtime = PairingRuntime::new(coordinator, engine.clone(), approval, peer_secrets);
+    runtime
+        .restore_active_sessions()
+        .map_err(|_| NativeCompositionError::new("restore active pairing sessions failed"))?;
+    Ok(RuntimePairingDriver::new(runtime, engine, endpoint))
 }
 
 fn engine_identity(

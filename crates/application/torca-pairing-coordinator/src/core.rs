@@ -2,7 +2,7 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use torca_foundation::{OpaqueId, Timestamp};
-use torca_pairing::{PairingCode, PairingSessionId};
+use torca_pairing::{PairingCode, PairingRole, PairingSessionId};
 use torca_pairing_protocol::PairingEnvelope;
 
 #[must_use]
@@ -26,6 +26,38 @@ pub struct PairingSideToken(pub OpaqueId);
 pub struct PairingEphemeralKey {
     pub handle: PairingCryptoHandle,
     pub public_key: [u8; 32],
+}
+
+/// Protected, short-lived transport material needed to resume an active pairing after a
+/// process restart.  It is deliberately not serialisable by the protocol layer and must only
+/// be written through the protected-secret-store boundary.
+#[must_use]
+#[derive(Eq, PartialEq)]
+pub struct PairingTransportSnapshot {
+    pub role: PairingRole,
+    pub private_key: [u8; 32],
+    pub slot: PairingSlotId,
+    pub token: PairingSideToken,
+    pub slot_capability: Option<PairingSlotCapability>,
+    pub remote_public_key: Option<[u8; 32]>,
+}
+impl fmt::Debug for PairingTransportSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PairingTransportSnapshot")
+            .field("role", &self.role)
+            .field("private_key", &"[REDACTED]")
+            .field("slot", &self.slot)
+            .field("token", &"[REDACTED]")
+            .field("slot_capability", &self.slot_capability.as_ref().map(|_| "[REDACTED]"))
+            .field("remote_public_key", &self.remote_public_key)
+            .finish()
+    }
+}
+impl Drop for PairingTransportSnapshot {
+    fn drop(&mut self) {
+        self.private_key.fill(0);
+    }
 }
 
 /// Pairwise secret derived only after the pairing transcript has been verified.
@@ -69,6 +101,17 @@ pub trait PairingCryptoPort {
         &mut self,
         handle: PairingCryptoHandle,
     ) -> Result<(), PairingCoordinatorError>;
+    /// Exports an active ephemeral key only for immediate storage in a platform protected
+    /// secret store.  Callers must zero the returned bytes after writing them.
+    fn export_ephemeral_key(
+        &self,
+        handle: PairingCryptoHandle,
+    ) -> Result<[u8; 32], PairingCoordinatorError>;
+    /// Restores an ephemeral key previously obtained through [`Self::export_ephemeral_key`].
+    fn import_ephemeral_key(
+        &mut self,
+        private_key: [u8; 32],
+    ) -> Result<PairingEphemeralKey, PairingCoordinatorError>;
     fn fill_random(&mut self, output: &mut [u8]) -> Result<(), PairingCoordinatorError>;
     fn seal_for_peer(
         &self,
@@ -374,6 +417,56 @@ where
         let session =
             self.sessions.remove(&session_id).ok_or(PairingCoordinatorError::SessionNotFound)?;
         self.crypto.release_ephemeral_key(session.key.handle)
+    }
+
+    /// Captures the transport material for an active pairing.  The returned value is secret and
+    /// must be persisted only by a protected-storage adapter.
+    pub fn export_transport(
+        &self,
+        session_id: PairingSessionId,
+    ) -> Result<PairingTransportSnapshot, PairingCoordinatorError> {
+        let session =
+            self.sessions.get(&session_id).ok_or(PairingCoordinatorError::SessionNotFound)?;
+        Ok(PairingTransportSnapshot {
+            role: match session.role {
+                LocalRole::Creator => PairingRole::Creator,
+                LocalRole::Joiner => PairingRole::Joiner,
+            },
+            private_key: self.crypto.export_ephemeral_key(session.key.handle)?,
+            slot: session.slot,
+            token: session.token,
+            slot_capability: session.slot_capability,
+            remote_public_key: session.remote_public_key,
+        })
+    }
+
+    /// Restores previously protected transport material.  The matching durable domain session
+    /// is validated by `PairingRuntime` before this method is called.
+    pub fn restore_transport(
+        &mut self,
+        session_id: PairingSessionId,
+        mut snapshot: PairingTransportSnapshot,
+    ) -> Result<(), PairingCoordinatorError> {
+        if self.sessions.contains_key(&session_id) {
+            return Err(PairingCoordinatorError::SessionAlreadyExists);
+        }
+        let private_key = std::mem::take(&mut snapshot.private_key);
+        let key = self.crypto.import_ephemeral_key(private_key)?;
+        self.sessions.insert(
+            session_id,
+            TransportSession {
+                role: match snapshot.role {
+                    PairingRole::Creator => LocalRole::Creator,
+                    PairingRole::Joiner => LocalRole::Joiner,
+                },
+                key,
+                slot: snapshot.slot,
+                token: snapshot.token,
+                slot_capability: snapshot.slot_capability,
+                remote_public_key: snapshot.remote_public_key,
+            },
+        );
+        Ok(())
     }
 
     pub fn into_parts(self) -> (R, C) {
