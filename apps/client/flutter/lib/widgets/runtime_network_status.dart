@@ -205,60 +205,62 @@ class _TransportLightState extends State<_TransportLight>
       message: '${widget.label}: $status$latency (${widget.indicator.code})',
       child: RepaintBoundary(
         child: AnimatedBuilder(
-        animation: Listenable.merge(<Listenable>[_breathing, _pulse]),
-        builder: (context, child) {
-          final glow =
-              (_breathing.value * 0.35) +
-              (_pulse.value < 0.45
-                  ? _pulse.value * 1.4
-                  : (1 - _pulse.value) * 1.1);
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              color: color.withValues(alpha: 0.10 + glow.clamp(0, 0.35)),
-              border: Border.all(
-                color: color.withValues(alpha: 0.38 + glow.clamp(0, 0.45)),
-              ),
-              boxShadow: <BoxShadow>[
-                BoxShadow(
-                  color: color.withValues(alpha: (0.10 + glow * 0.32).clamp(0, 0.42)),
-                  blurRadius: 8 + glow * 10,
-                  spreadRadius: glow * 1.5,
+          animation: Listenable.merge(<Listenable>[_breathing, _pulse]),
+          builder: (context, child) {
+            final glow =
+                (_breathing.value * 0.35) +
+                (_pulse.value < 0.45
+                    ? _pulse.value * 1.4
+                    : (1 - _pulse.value) * 1.1);
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                color: color.withValues(alpha: 0.10 + glow.clamp(0, 0.35)),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.38 + glow.clamp(0, 0.45)),
                 ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Stack(
-                  alignment: Alignment.center,
-                  children: <Widget>[
-                    Icon(widget.icon, size: 17, color: color),
-                    Positioned(
-                      right: -1,
-                      bottom: -1,
-                      child: Container(
-                        width: 7 + (glow * 4),
-                        height: 7 + (glow * 4),
-                        decoration: BoxDecoration(
-                          color: color,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: color.withValues(
+                      alpha: (0.10 + glow * 0.32).clamp(0, 0.42),
                     ),
-                  ],
-                ),
-                if (widget.showLabel) ...<Widget>[
-                  const SizedBox(width: 5),
-                  Text(
-                    widget.label,
-                    style: Theme.of(context).textTheme.labelMedium,
+                    blurRadius: 8 + glow * 10,
+                    spreadRadius: glow * 1.5,
                   ),
                 ],
-              ],
-            ),
-          );
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Stack(
+                    alignment: Alignment.center,
+                    children: <Widget>[
+                      Icon(widget.icon, size: 17, color: color),
+                      Positioned(
+                        right: -1,
+                        bottom: -1,
+                        child: Container(
+                          width: 7 + (glow * 4),
+                          height: 7 + (glow * 4),
+                          decoration: BoxDecoration(
+                            color: color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (widget.showLabel) ...<Widget>[
+                    const SizedBox(width: 5),
+                    Text(
+                      widget.label,
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ],
+                ],
+              ),
+            );
           },
         ),
       ),

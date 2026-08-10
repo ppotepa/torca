@@ -229,9 +229,12 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                     _diagnostic(widget.snapshot),
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
-                                      color: widget.snapshot.bootstrapPhase ==
+                                      color:
+                                          widget.snapshot.bootstrapPhase ==
                                               'degraded'
-                                          ? Theme.of(context).colorScheme.tertiary
+                                          ? Theme.of(
+                                              context,
+                                            ).colorScheme.tertiary
                                           : Theme.of(context).colorScheme.error,
                                     ),
                                   ),
