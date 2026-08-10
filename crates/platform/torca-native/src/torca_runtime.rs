@@ -683,6 +683,7 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeLifecycleEv
     event: jni::sys::jstring,
 ) -> jni::sys::jboolean {
     let Ok(mut env) = (unsafe { jni::JNIEnv::from_raw(env) }) else { return 0 };
+    let event = unsafe { jni::objects::JString::from_raw(event) };
     let Ok(event) = env.get_string(&event) else { return 0 };
     u8::from(dispatch_lifecycle(event.to_string_lossy().as_ref()) == ABI_OK)
 }
