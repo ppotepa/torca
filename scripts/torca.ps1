@@ -180,6 +180,18 @@ switch ($Command) {
             throw "Preflight failed: $($preflightErrors -join '; ')"
         }
         Write-TorcaStage -Name 'Preflight' -State 'ready' -Detail "endpoint=$($stack.Endpoint), endpointHash=$(Get-TorcaSha256Text -Text $stack.Endpoint)"
+        $androidAuthorizationDevices = @($selected | Where-Object { $_.Platform -eq 'android' -and $_.Id -match ':\d+$' })
+        if ($androidAuthorizationDevices.Count -gt 0) {
+            $devicesText = ($androidAuthorizationDevices | ForEach-Object Id) -join ', '
+            Write-TorcaStage -Name 'Android install authorization' -State 'warning' -Detail "Keep $devicesText unlocked; approve ADB installation. HyperOS/MIUI also requires Developer options > USB debugging (Security settings) / Install via USB."
+            if (-not $NonInteractive) {
+                $authorizationChoice = Read-TorcaMenuChoice 'Android Wi-Fi installation authorization' @(
+                    'Continue - device is unlocked and ADB/USB installation is allowed',
+                    'Abort deployment to change Android security settings'
+                ) '1'
+                if ($authorizationChoice -like 'Abort*') { throw 'Deployment cancelled before the selected device data reset.' }
+            }
+        }
         $endpointMismatches = @($selected | ForEach-Object {
             $previous = Get-TorcaDeviceDeploymentManifest -DeviceId $_.Id
             if ($previous -and $previous.PSObject.Properties.Name -contains 'RelayEndpoint' -and

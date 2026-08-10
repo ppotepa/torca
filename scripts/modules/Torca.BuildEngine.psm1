@@ -906,7 +906,7 @@ function Invoke-TorcaDeploy {
                         $installCode = $LASTEXITCODE
                         if ($installCode -ne 0) {
                             if ($installOutput -match 'INSTALL_FAILED_USER_RESTRICTED') {
-                                throw "Android blocked ADB installation on $Device. Enable USB/ADB installation permission on the device and retry. Details: $installOutput"
+                                throw "Android blocked or cancelled ADB installation on $Device. Keep the phone unlocked and approve the system install prompt. On Xiaomi/Redmi/Poco HyperOS/MIUI also enable Developer options > USB debugging (Security settings) / Install via USB; wireless debugging alone is insufficient. Details: $installOutput"
                             }
                             throw "ADB install failed with code $installCode on $Device. Details: $installOutput"
                         }
