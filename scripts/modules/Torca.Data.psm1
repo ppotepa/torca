@@ -28,6 +28,10 @@ function Reset-TorcaAndroidClientData {
     if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required to reset Android client data.' }
     Ensure-TorcaAndroidDeviceOnline -DeviceId $DeviceId
     $packageName = if ($env:TORCA_ANDROID_PACKAGE) { $env:TORCA_ANDROID_PACKAGE } else { 'com.torca.torca_app' }
+    if (-not (Test-TorcaAndroidPackageInstalledForPrimaryUser -DeviceId $DeviceId -PackageName $packageName)) {
+        Write-Host "Android package is already absent for user 0 on: $DeviceId; local data is already reset." -ForegroundColor Yellow
+        return
+    }
     & adb -s $DeviceId shell am force-stop $packageName *> $null
     $clearOutput = (& adb -s $DeviceId shell pm clear $packageName 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -eq 0 -and $clearOutput -match '(?i)^(Success|new data cleared)$') {
@@ -57,7 +61,27 @@ function Reset-TorcaAndroidClientData {
         throw "Android data reset was denied on $DeviceId. pm clear: $clearOutput; package removal fallback: $removeOutput"
     }
 
+    # Some package managers return only `Failed` when the package disappears
+    # concurrently (for example after an earlier reset attempt). Verify the
+    # authoritative user-0 package state before treating that as an error.
+    if (-not (Test-TorcaAndroidPackageInstalledForPrimaryUser -DeviceId $DeviceId -PackageName $packageName)) {
+        Write-Host "Android package is absent for user 0 on: $DeviceId; local data reset is complete." -ForegroundColor Yellow
+        return
+    }
+
     throw "Unable to clear Android data on device $DeviceId. Details: $clearOutput"
+}
+
+function Test-TorcaAndroidPackageInstalledForPrimaryUser {
+    param(
+        [Parameter(Mandatory = $true)][string]$DeviceId,
+        [Parameter(Mandatory = $true)][string]$PackageName
+    )
+    $output = (& adb -s $DeviceId shell pm list packages --user 0 $PackageName 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read Android package state on $DeviceId before data reset. Details: $output"
+    }
+    return ($output -split "`r?`n") -contains "package:$PackageName"
 }
 
 function Ensure-TorcaAndroidDeviceOnline {
@@ -88,9 +112,15 @@ function Reset-TorcaClientData {
     foreach ($device in $Devices) {
         if ($device.Platform -eq 'android') { Ensure-TorcaAndroidDeviceOnline -DeviceId $device.Id }
     }
-    foreach ($device in $Devices) {
-        if ($device.Platform -eq 'windows') { Reset-TorcaWindowsClientData }
-        elseif ($device.Platform -eq 'android') { Reset-TorcaAndroidClientData -DeviceId $device.Id }
+    # Resolve the less reliable remote resets first. Windows data is removed
+    # only after every selected Android target has reached a known clean state,
+    # preventing the partial reset observed when Wi-Fi/OEM package management
+    # failed after the desktop data had already been deleted.
+    foreach ($device in @($Devices | Where-Object Platform -eq 'android')) {
+        Reset-TorcaAndroidClientData -DeviceId $device.Id
+    }
+    foreach ($device in @($Devices | Where-Object Platform -eq 'windows')) {
+        Reset-TorcaWindowsClientData
     }
 }
 
