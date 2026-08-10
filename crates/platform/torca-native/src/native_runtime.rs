@@ -512,16 +512,7 @@ impl TorcaRuntime {
             .notification_events
             .iter()
             .filter(|event| event.cursor > after_cursor)
-            .map(|event| {
-                serde_json::json!({
-                    "cursor": event.cursor,
-                    "eventId": event.event_id,
-                    "kind": event.kind,
-                    "conversationId": event.conversation_id,
-                    "contactDisplayName": event.contact_display_name,
-                    "createdAt": event.created_at_ms,
-                })
-            })
+            .map(notification_event_json)
             .collect::<Vec<_>>();
         self.query_json = serde_json::json!({
             "afterCursor": after_cursor,
@@ -972,6 +963,17 @@ impl TorcaRuntime {
     }
 }
 
+fn notification_event_json(event: &torca_contract::NotificationEvent) -> serde_json::Value {
+    serde_json::json!({
+        "cursor": event.cursor,
+        "eventId": event.event_id,
+        "kind": event.kind,
+        "conversationId": event.conversation_id,
+        "contactDisplayName": event.contact_display_name,
+        "createdAtMs": event.created_at_ms,
+    })
+}
+
 fn snapshot_contact_name(
     snapshot: &torca_contract::BridgeSnapshot,
     contact_names: &HashMap<String, String>,
@@ -1021,5 +1023,25 @@ fn command_conversation_id(command: &torca_contract::BridgeCommand) -> Option<Co
 impl Drop for TorcaRuntime {
     fn drop(&mut self) {
         let _ = self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notification_event_json;
+
+    #[test]
+    fn notification_wire_uses_created_at_ms() {
+        let event = torca_contract::NotificationEvent {
+            cursor: 11,
+            event_id: "event-11".into(),
+            kind: "message_received".into(),
+            conversation_id: "conversation-1".into(),
+            contact_display_name: "Alice".into(),
+            created_at_ms: 1_700_000_000_123,
+        };
+        let value = notification_event_json(&event);
+        assert_eq!(value["createdAtMs"], 1_700_000_000_123_i64);
+        assert!(value.get("createdAt").is_none());
     }
 }

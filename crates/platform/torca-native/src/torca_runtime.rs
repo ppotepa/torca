@@ -1,5 +1,5 @@
 use core::{ptr, slice, str};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -16,6 +16,8 @@ const STORAGE_EPOCH: u16 = 2;
 const MAILBOX_CAPACITY: usize = 256;
 const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+const IDEMPOTENCY_MAX_ENTRIES: usize = 1024;
+const IDEMPOTENCY_TTL: Duration = Duration::from_secs(15 * 60);
 const BUILD_ID: &str = match option_env!("TORCA_BUILD_ID") {
     Some(value) => value,
     None => "dev",
@@ -78,7 +80,65 @@ struct ActorState {
     runtime: TorcaRuntime,
     runtime_id: String,
     revision: u64,
-    completed: HashMap<String, Vec<u8>>,
+    completed: IdempotencyLedger,
+}
+
+struct CompletedCommand {
+    response: Vec<u8>,
+    completed_at: Instant,
+}
+
+struct IdempotencyLedger {
+    entries: HashMap<String, CompletedCommand>,
+    order: VecDeque<String>,
+    max_entries: usize,
+    ttl: Duration,
+}
+
+impl Default for IdempotencyLedger {
+    fn default() -> Self {
+        Self::with_limits(IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_TTL)
+    }
+}
+
+impl IdempotencyLedger {
+    fn with_limits(max_entries: usize, ttl: Duration) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            max_entries: max_entries.max(1),
+            ttl,
+        }
+    }
+
+    fn prune(&mut self, now: Instant) {
+        while let Some(request_id) = self.order.front().cloned() {
+            let expired = self
+                .entries
+                .get(&request_id)
+                .map_or(true, |entry| now.duration_since(entry.completed_at) >= self.ttl);
+            if !expired && self.entries.len() <= self.max_entries {
+                break;
+            }
+            self.order.pop_front();
+            self.entries.remove(&request_id);
+        }
+    }
+
+    fn get(&mut self, request_id: &str, now: Instant) -> Option<Vec<u8>> {
+        self.prune(now);
+        self.entries.get(request_id).map(|entry| entry.response.clone())
+    }
+
+    fn insert(&mut self, request_id: String, response: Vec<u8>, now: Instant) {
+        self.prune(now);
+        if self.entries.contains_key(&request_id) {
+            self.order.retain(|value| value != &request_id);
+        }
+        self.entries.insert(request_id.clone(), CompletedCommand { response, completed_at: now });
+        self.order.push_back(request_id);
+        self.prune(now);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -223,7 +283,12 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                 let _ = ready_tx.send(Ok(()));
                 actor_loop(
                     receiver,
-                    ActorState { runtime, runtime_id, revision: 1, completed: HashMap::new() },
+                    ActorState {
+                        runtime,
+                        runtime_id,
+                        revision: 1,
+                        completed: IdempotencyLedger::default(),
+                    },
                 );
             }
             Err(error) => {
@@ -297,9 +362,6 @@ impl ActorState {
             }
         };
         let request_id = request.get("requestId").and_then(Value::as_str).unwrap_or_default();
-        if let Some(response) = self.completed.get(request_id) {
-            return response.clone();
-        }
         if request.get("schema").and_then(Value::as_u64) != Some(1) {
             return self.error(
                 request_id,
@@ -319,6 +381,17 @@ impl ActorState {
                 false,
             );
         }
+        // requestId is an idempotency key for mutating commands only. Queries
+        // must always observe the current runtime state, even when a caller
+        // retries them with the same transport correlation id.
+        if is_idempotent_command(kind)
+            && !request_id.is_empty()
+            && let Some(response) = self.completed.get(request_id, Instant::now())
+        {
+            return response;
+        }
+        let before_snapshot = self.runtime.snapshot_json.clone();
+        let before_notification_cursor = self.runtime.notification_cursor;
         let code = match (kind, name) {
             ("query", "snapshot.get") => self.runtime.refresh_snapshot(),
             ("query", "conversation.page") => {
@@ -369,7 +442,13 @@ impl ActorState {
         if code != ABI_OK {
             return self.native_error(request_id);
         }
-        self.revision = self.revision.saturating_add(1);
+        let counts_for_revision = operation_counts_for_revision(kind, name);
+        let state_changed = counts_for_revision
+            && (self.runtime.snapshot_json != before_snapshot
+                || self.runtime.notification_cursor != before_notification_cursor);
+        if state_changed {
+            self.revision = self.revision.saturating_add(1);
+        }
         let mut snapshot: Value = if name == "conversation.page"
             || name == "conversation.search"
             || name == "notifications.poll"
@@ -398,8 +477,8 @@ impl ActorState {
             "runtimeId": self.runtime_id, "revision": self.revision, "snapshot": snapshot,
             "error": Value::Null, "timing": { "queuedMs": 0, "executionMs": started.elapsed().as_millis() }
         })).expect("runtime response is serializable");
-        if !request_id.is_empty() {
-            self.completed.insert(request_id.to_owned(), response.clone());
+        if is_idempotent_command(kind) && !request_id.is_empty() {
+            self.completed.insert(request_id.to_owned(), response.clone(), Instant::now());
         }
         response
     }
@@ -766,6 +845,14 @@ fn now_ms() -> Result<i64, ()> {
     i64::try_from(value).map_err(|_| ())
 }
 
+fn is_idempotent_command(kind: &str) -> bool {
+    kind == "command"
+}
+
+fn operation_counts_for_revision(kind: &str, name: &str) -> bool {
+    kind == "command" || kind == "lifecycle" || name == "snapshot.get"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,5 +876,43 @@ mod tests {
         let snapshot = extract_notification_snapshot(response).expect("notification snapshot");
         assert_eq!(snapshot["runtimeId"], "runtime-a");
         assert_eq!(snapshot["afterCursor"], 4);
+    }
+
+    #[test]
+    fn command_ledger_is_bounded_and_expires_entries() {
+        let now = Instant::now();
+        let mut ledger = IdempotencyLedger::with_limits(2, Duration::from_secs(10));
+        ledger.insert("a".into(), b"a".to_vec(), now);
+        ledger.insert("b".into(), b"b".to_vec(), now);
+        ledger.insert("c".into(), b"c".to_vec(), now);
+        assert!(ledger.get("a", now).is_none());
+        assert_eq!(ledger.get("b", now), Some(b"b".to_vec()));
+        assert_eq!(ledger.get("c", now), Some(b"c".to_vec()));
+        assert!(ledger.get("b", now + Duration::from_secs(11)).is_none());
+    }
+
+    #[test]
+    fn query_request_ids_are_not_command_ledger_entries() {
+        let now = Instant::now();
+        let mut ledger = IdempotencyLedger::default();
+        assert!(is_idempotent_command("command"));
+        assert!(!is_idempotent_command("query"));
+        assert!(!is_idempotent_command("lifecycle"));
+        // Query paths intentionally never call insert, even when they reuse a
+        // transport request id. A later poll must execute against new state.
+        assert!(ledger.get("notifications-poll-10", now).is_none());
+        ledger.insert("command-1".into(), b"command".to_vec(), now);
+        assert!(ledger.get("notifications-poll-10", now).is_none());
+    }
+
+    #[test]
+    fn queries_do_not_count_as_revision_transitions() {
+        // snapshot.get may publish a bootstrap/transport transition observed
+        // while refreshing the projection, but a stable snapshot does not.
+        assert!(operation_counts_for_revision("query", "snapshot.get"));
+        assert!(!operation_counts_for_revision("query", "notifications.poll"));
+        assert!(!operation_counts_for_revision("query", "conversation.page"));
+        assert!(operation_counts_for_revision("command", "profile.set"));
+        assert!(operation_counts_for_revision("lifecycle", "foregrounded"));
     }
 }

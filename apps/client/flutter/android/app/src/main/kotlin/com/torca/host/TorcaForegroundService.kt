@@ -33,8 +33,10 @@ class TorcaForegroundService : Service() {
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) = notifyNetworkChanged()
         override fun onLost(network: Network) = notifyNetworkChanged()
-        override fun onCapabilitiesChanged(network: Network, capabilities: android.net.NetworkCapabilities) =
-            notifyNetworkChanged()
+        override fun onCapabilitiesChanged(
+            network: Network,
+            capabilities: android.net.NetworkCapabilities,
+        ) = notifyNetworkChanged()
     }
     private val notificationPoller = object : Runnable {
         override fun run() {

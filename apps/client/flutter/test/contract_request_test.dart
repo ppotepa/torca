@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:torca_app/gateway/engine_gateway.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 
 void main() {
@@ -68,5 +69,18 @@ void main() {
       expect(wire['name'], isNotEmpty);
       expect(wire['payload'], isA<Map<String, dynamic>>());
     }
+  });
+
+  test('notification event decodes the millisecond timestamp field', () {
+    final event = RuntimeEventDto.fromJson(<String, dynamic>{
+      'cursor': 11,
+      'eventId': 'event-11',
+      'kind': 'message_received',
+      'conversationId': 'conversation-1',
+      'contactDisplayName': 'Alice',
+      'createdAtMs': 1700000000123,
+      'createdAt': 1,
+    });
+    expect(event.createdAtMs, 1700000000123);
   });
 }

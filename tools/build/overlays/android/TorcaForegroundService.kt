@@ -9,6 +9,9 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -26,6 +29,15 @@ class TorcaForegroundService : Service() {
     private lateinit var notificationHandler: Handler
     private var notificationCursor = 0L
     private var notificationRuntimeId = ""
+    private lateinit var connectivityManager: ConnectivityManager
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = notifyNetworkChanged()
+        override fun onLost(network: Network) = notifyNetworkChanged()
+        override fun onCapabilitiesChanged(
+            network: Network,
+            capabilities: android.net.NetworkCapabilities,
+        ) = notifyNetworkChanged()
+    }
     private val notificationPoller = object : Runnable {
         override fun run() {
             if (!NativeRuntimeBridge.nativeRuntimeAvailable()) {
@@ -46,6 +58,15 @@ class TorcaForegroundService : Service() {
         notificationRuntimeId = getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
             .getString(NOTIFICATION_RUNTIME_ID, "") ?: ""
         AndroidKeystoreBridge.initialize(applicationContext)
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
+        runCatching {
+            connectivityManager.registerNetworkCallback(
+                NetworkRequest.Builder()
+                    .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build(),
+                networkCallback,
+            )
+        }.onFailure { Log.w(TAG, "Could not register network callback", it) }
         createServiceChannel()
         createMessageChannel()
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -89,6 +110,11 @@ class TorcaForegroundService : Service() {
                 val available = NativeRuntimeBridge.nativeEnsureRuntime()
                 if (!available) {
                     Log.e(TAG, "Native Torca runtime reported unavailable")
+                } else {
+                    // Re-arm relay probing against the network that actually
+                    // exists after service startup (Wi-Fi may have changed
+                    // while the process was being restored).
+                    notifyNetworkChanged()
                 }
             } catch (error: Throwable) {
                 Log.e(TAG, "Native Torca runtime startup failed", error)
@@ -101,9 +127,16 @@ class TorcaForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         notificationHandler.removeCallbacks(notificationPoller)
         notificationThread.quitSafely()
         super.onDestroy()
+    }
+
+    private fun notifyNetworkChanged() {
+        if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+            NativeRuntimeBridge.nativeLifecycleEvent("network_changed")
+        }
     }
 
     private fun pollMessageNotifications() {
@@ -240,5 +273,6 @@ object NativeRuntimeBridge {
     init { System.loadLibrary("torca_native") }
     @JvmStatic external fun nativeEnsureRuntime(): Boolean
     @JvmStatic external fun nativeRuntimeAvailable(): Boolean
+    @JvmStatic external fun nativeLifecycleEvent(event: String): Boolean
     @JvmStatic external fun nativeNotificationSnapshotJson(afterCursor: Long): String?
 }
