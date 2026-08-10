@@ -5,7 +5,14 @@ import 'package:torca_app/generated/torca_contract.dart';
 class FakeEngineGateway implements EngineGateway, PairingUriParser {
   final ValueNotifier<AppSnapshotDto> _snapshots =
       ValueNotifier<AppSnapshotDto>(
-        const AppSnapshotDto(torState: 'ready', bootstrapPhase: 'ready'),
+        const AppSnapshotDto(
+          torState: 'ready',
+          transport: TransportStatusDto(
+            tor: TransportIndicatorDto(state: 'ready'),
+            relay: TransportIndicatorDto(state: 'healthy'),
+          ),
+          bootstrapPhase: 'ready',
+        ),
       );
   int _sequence = 1;
 
@@ -423,6 +430,7 @@ class FakeEngineGateway implements EngineGateway, PairingUriParser {
   }) => AppSnapshotDto(
     identity: identity ?? current.identity,
     torState: current.torState,
+    transport: current.transport,
     onionAddress: current.onionAddress,
     pairings: pairings ?? current.pairings,
     contacts: contacts ?? current.contacts,

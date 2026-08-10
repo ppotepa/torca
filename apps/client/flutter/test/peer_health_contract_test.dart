@@ -5,7 +5,7 @@ void main() {
   test(
     'bridge contract v13 carries bootstrap progress and nested peer health',
     () {
-      expect(torcaContractVersion, 13);
+      expect(torcaContractVersion, 14);
 
       const bootstrap = BootstrapStepDto(
         id: 'tor_network',
