@@ -91,16 +91,14 @@ class FfiEngineGateway
       isAvailable ? null : 'native runtime unavailable';
 
   Future<BridgeResultDto> initialize() async {
-    final response = await _worker.invoke(
-      _request(kind: 'query', name: 'snapshot.get', payload: const {}),
-    );
+    final response = await _worker.invoke(RuntimeRequestDto.snapshot);
     return _applyResponse(response);
   }
 
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     if (_disposed) return _unavailable();
-    final request = _requestForCommand(command);
+    final request = RuntimeRequestDto.command(command);
     if (request == null) {
       return const BridgeResultDto(
         ok: false,
@@ -126,20 +124,14 @@ class FfiEngineGateway
   @override
   Future<void> sendLifecycle(String event) async {
     if (_disposed) return;
-    await _worker.invoke(
-      _request(kind: 'lifecycle', name: event, payload: const {}),
-    );
+    await _worker.invoke(RuntimeRequestDto.lifecycle(event));
   }
 
   @override
   Future<String?> parsePairingUri(String rawUri) async {
     if (_disposed) return null;
     final response = await _worker.invoke(
-      _request(
-        kind: 'query',
-        name: 'pairing.parse',
-        payload: <String, Object?>{'uri': rawUri},
-      ),
+      RuntimeRequestDto.pairingParse(rawUri),
     );
     final value = jsonDecode(response);
     if (value is! Map<String, dynamic> || value['status'] != 'succeeded') {
@@ -156,14 +148,10 @@ class FfiEngineGateway
     int limit = 100,
   }) async {
     final response = await _worker.invoke(
-      _request(
-        kind: 'query',
-        name: 'conversation.page',
-        payload: <String, Object?>{
-          'conversationId': conversationId,
-          'beforeMessageId': before?.id,
-          'limit': limit.clamp(1, 200),
-        },
+      RuntimeRequestDto.conversationPage(
+        conversationId,
+        beforeMessageId: before?.id,
+        limit: limit.clamp(1, 200),
       ),
     );
     return _decodePage(response);
@@ -179,14 +167,10 @@ class FfiEngineGateway
       return const ConversationPageDto(messages: [], hasMore: false);
     }
     final response = await _worker.invoke(
-      _request(
-        kind: 'query',
-        name: 'conversation.search',
-        payload: <String, Object?>{
-          'conversationId': conversationId,
-          'query': query,
-          'limit': limit.clamp(1, 200),
-        },
+      RuntimeRequestDto.conversationSearch(
+        conversationId,
+        query: query,
+        limit: limit.clamp(1, 200),
       ),
     );
     return _decodePage(response);
@@ -288,7 +272,7 @@ class NativeRuntimeWorker {
       _events.where((value) => value is String).cast<String>();
   bool get isAlive => !_disposed;
 
-  Future<String> invoke(Map<String, Object?> request) async {
+  Future<String> invoke(RuntimeRequestDto request) async {
     if (_disposed) throw StateError('native worker disposed');
     final requestId = 'flutter-${++_requestCounter}';
     final queued = _requestTail.then<String>((_) async {
@@ -307,14 +291,10 @@ class NativeRuntimeWorker {
     return queued;
   }
 
-  Future<String> _invokeNow(
-    Map<String, Object?> request,
-    String requestId,
-  ) async {
+  Future<String> _invokeNow(RuntimeRequestDto request, String requestId) async {
     final reply = ReceivePort();
-    final withId = <String, Object?>{...request, 'requestId': requestId};
     _commandPort.send(<String, Object?>{
-      'invoke': jsonEncode(withId),
+      'invoke': request.encode(requestId),
       'reply': reply.sendPort,
     });
     final value = await reply.first;
@@ -413,14 +393,9 @@ void _workerMainImpl(List<Object?> arguments) {
         try {
           final raw = bindings.invoke(
             handle,
-            jsonEncode(<String, Object?>{
-              'schema': 1,
-              'requestId':
-                  'worker-poll-${DateTime.now().microsecondsSinceEpoch}',
-              'kind': 'query',
-              'name': 'snapshot.get',
-              'payload': const <String, Object?>{},
-            }),
+            RuntimeRequestDto.snapshot.encode(
+              'worker-poll-${DateTime.now().microsecondsSinceEpoch}',
+            ),
             5000,
           );
           final decoded = jsonDecode(raw);
@@ -434,14 +409,9 @@ void _workerMainImpl(List<Object?> arguments) {
           }
           final notificationRaw = bindings.invoke(
             handle,
-            jsonEncode(<String, Object?>{
-              'schema': 1,
-              'requestId':
-                  'worker-events-${DateTime.now().microsecondsSinceEpoch}',
-              'kind': 'query',
-              'name': 'notifications.poll',
-              'payload': <String, Object?>{'afterCursor': notificationCursor},
-            }),
+            RuntimeRequestDto.notificationEvents(
+              notificationCursor,
+            ).encode('worker-events-${DateTime.now().microsecondsSinceEpoch}'),
             5000,
           );
           final notificationDecoded = jsonDecode(notificationRaw);
@@ -593,113 +563,6 @@ class _WorkerBindings {
       _free(pointer, bytes.length);
     }
   }
-}
-
-Map<String, Object?> _request({
-  required String kind,
-  required String name,
-  required Map<String, Object?> payload,
-}) => <String, Object?>{
-  'schema': 1,
-  'kind': kind,
-  'name': name,
-  'payload': payload,
-};
-
-Map<String, Object?>? _requestForCommand(BridgeCommandDto command) {
-  String? name;
-  Map<String, Object?> payload = <String, Object?>{};
-  if (command is UpdateProfileCommandDto) {
-    name = 'profile.set';
-    payload = {'displayName': command.displayName};
-  } else if (command is CreatePairingCommandDto) {
-    name = 'pairing.create';
-  } else if (command is JoinPairingCommandDto) {
-    name = 'pairing.join';
-    payload = {'code': command.code};
-  } else if (command is ApprovePairingCommandDto) {
-    name = 'pairing.approve';
-    payload = {'sessionIdHex': command.sessionIdHex};
-  } else if (command is RejectPairingCommandDto) {
-    name = 'pairing.reject';
-    payload = {'sessionIdHex': command.sessionIdHex};
-  } else if (command is CancelPairingCommandDto) {
-    name = 'pairing.cancel';
-    payload = {'sessionIdHex': command.sessionIdHex};
-  } else if (command is RenameContactCommandDto) {
-    name = 'contact.rename';
-    payload = {
-      'contactIdHex': command.contactIdHex,
-      'displayName': command.displayName,
-    };
-  } else if (command is VerifyContactCommandDto) {
-    name = 'contact.verify';
-    payload = {'contactIdHex': command.contactIdHex};
-  } else if (command is ResetContactVerificationCommandDto) {
-    name = 'contact.verification.reset';
-    payload = {'contactIdHex': command.contactIdHex};
-  } else if (command is BlockContactCommandDto) {
-    name = 'contact.block';
-    payload = {'contactIdHex': command.contactIdHex};
-  } else if (command is UnblockContactCommandDto) {
-    name = 'contact.unblock';
-    payload = {'contactIdHex': command.contactIdHex};
-  } else if (command is RemoveContactCommandDto) {
-    name = 'contact.remove';
-    payload = {'contactIdHex': command.contactIdHex};
-  } else if (command is ClearConversationHistoryCommandDto) {
-    name = 'conversation.clear';
-    payload = {'conversationIdHex': command.conversationIdHex};
-  } else if (command is QueueMessageCommandDto) {
-    name = 'message.send';
-    payload = {
-      'conversationIdHex': command.conversationIdHex,
-      'body': command.body,
-      'replyToMessageIdHex': command.replyToMessageId,
-    };
-  } else if (command is RetryMessageCommandDto) {
-    name = 'message.retry';
-    payload = {'messageIdHex': command.messageIdHex};
-  } else if (command is MarkConversationReadCommandDto) {
-    name = 'conversation.read';
-    payload = {
-      'conversationIdHex': command.conversationIdHex,
-      'sendReceipt': command.sendReceipt,
-    };
-  } else if (command is QueueAttachmentCommandDto) {
-    name = 'attachment.queue';
-    payload = {
-      'conversationIdHex': command.conversationIdHex,
-      'sourcePath': command.sourcePath,
-      'name': command.name,
-      'mediaType': command.mediaType,
-      'size': command.size,
-    };
-  } else if (command is RetryAttachmentCommandDto) {
-    name = 'attachment.retry';
-    payload = {'attachmentIdHex': command.attachmentIdHex};
-  } else if (command is CancelAttachmentCommandDto) {
-    name = 'attachment.cancel';
-    payload = {'attachmentIdHex': command.attachmentIdHex};
-  } else if (command is ExportAttachmentCommandDto) {
-    name = 'attachment.export';
-    payload = {
-      'attachmentIdHex': command.attachmentIdHex,
-      'destinationPath': command.destinationPath,
-    };
-  } else if (command is SetNotificationsCommandDto) {
-    name = 'notifications.set';
-    payload = {'enabled': command.enabled};
-  } else if (command is AcknowledgeNewContactsCommandDto) {
-    name = 'contacts.acknowledge_new';
-    payload = const {};
-  }
-  if (command is RefreshSnapshotCommandDto) {
-    return _request(kind: 'query', name: 'snapshot.get', payload: const {});
-  }
-  return name == null
-      ? null
-      : _request(kind: 'command', name: name, payload: payload);
 }
 
 AppSnapshotDto? _decodeSnapshot(String raw) {

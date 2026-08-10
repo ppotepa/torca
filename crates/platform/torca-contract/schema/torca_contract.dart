@@ -1,5 +1,8 @@
 // GENERATED FILE. DO NOT EDIT.
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
+
+import 'dart:convert';
+
 const int torcaContractVersion = 15;
 const int torcaNativeAbiVersion = 1;
 
@@ -339,4 +342,195 @@ class AcknowledgeNewContactsCommandDto extends BridgeCommandDto {
 
 class RefreshSnapshotCommandDto extends BridgeCommandDto {
   const RefreshSnapshotCommandDto();
+}
+
+/// Generated wire encoder for the only supported native ABI operation.
+///
+/// Keeping the command-to-wire mapping here makes the canonical contract the
+/// sole owner of operation names and payload keys. Presentation code supplies
+/// typed DTOs only; it does not hand-assemble native JSON.
+class RuntimeRequestDto {
+  const RuntimeRequestDto._({
+    required this.kind,
+    required this.name,
+    required this.payload,
+  });
+
+  factory RuntimeRequestDto.lifecycle(String event) => RuntimeRequestDto._(
+    kind: 'lifecycle',
+    name: event,
+    payload: const <String, Object?>{},
+  );
+
+  factory RuntimeRequestDto.pairingParse(String rawUri) => RuntimeRequestDto._(
+    kind: 'query',
+    name: 'pairing.parse',
+    payload: <String, Object?>{'uri': rawUri},
+  );
+
+  factory RuntimeRequestDto.conversationPage(
+    String conversationId, {
+    String? beforeMessageId,
+    required int limit,
+  }) => RuntimeRequestDto._(
+    kind: 'query',
+    name: 'conversation.page',
+    payload: <String, Object?>{
+      'conversationId': conversationId,
+      'beforeMessageId': beforeMessageId,
+      'limit': limit,
+    },
+  );
+
+  factory RuntimeRequestDto.conversationSearch(
+    String conversationId, {
+    required String query,
+    required int limit,
+  }) => RuntimeRequestDto._(
+    kind: 'query',
+    name: 'conversation.search',
+    payload: <String, Object?>{
+      'conversationId': conversationId,
+      'query': query,
+      'limit': limit,
+    },
+  );
+
+  factory RuntimeRequestDto.notificationEvents(int afterCursor) =>
+      RuntimeRequestDto._(
+        kind: 'query',
+        name: 'notifications.poll',
+        payload: <String, Object?>{'afterCursor': afterCursor},
+      );
+
+  static const RuntimeRequestDto snapshot = RuntimeRequestDto._(
+    kind: 'query',
+    name: 'snapshot.get',
+    payload: <String, Object?>{},
+  );
+
+  final String kind;
+  final String name;
+  final Map<String, Object?> payload;
+
+  static RuntimeRequestDto? command(BridgeCommandDto command) {
+    if (command is RefreshSnapshotCommandDto) return snapshot;
+    if (command is UpdateProfileCommandDto) {
+      return _command('profile.set', <String, Object?>{
+        'displayName': command.displayName,
+      });
+    }
+    if (command is CreatePairingCommandDto) {
+      return _command('pairing.create', const <String, Object?>{});
+    }
+    if (command is JoinPairingCommandDto) {
+      return _command('pairing.join', <String, Object?>{'code': command.code});
+    }
+    if (command is ApprovePairingCommandDto) {
+      return _session('pairing.approve', command.sessionIdHex);
+    }
+    if (command is RejectPairingCommandDto) {
+      return _session('pairing.reject', command.sessionIdHex);
+    }
+    if (command is CancelPairingCommandDto) {
+      return _session('pairing.cancel', command.sessionIdHex);
+    }
+    if (command is RenameContactCommandDto) {
+      return _command('contact.rename', <String, Object?>{
+        'contactIdHex': command.contactIdHex,
+        'displayName': command.displayName,
+      });
+    }
+    if (command is VerifyContactCommandDto) {
+      return _contact('contact.verify', command.contactIdHex);
+    }
+    if (command is ResetContactVerificationCommandDto) {
+      return _contact('contact.verification.reset', command.contactIdHex);
+    }
+    if (command is BlockContactCommandDto) {
+      return _contact('contact.block', command.contactIdHex);
+    }
+    if (command is UnblockContactCommandDto) {
+      return _contact('contact.unblock', command.contactIdHex);
+    }
+    if (command is RemoveContactCommandDto) {
+      return _contact('contact.remove', command.contactIdHex);
+    }
+    if (command is ClearConversationHistoryCommandDto) {
+      return _command('conversation.clear', <String, Object?>{
+        'conversationIdHex': command.conversationIdHex,
+      });
+    }
+    if (command is QueueMessageCommandDto) {
+      return _command('message.send', <String, Object?>{
+        'conversationIdHex': command.conversationIdHex,
+        'body': command.body,
+        'replyToMessageIdHex': command.replyToMessageId,
+      });
+    }
+    if (command is RetryMessageCommandDto) {
+      return _command('message.retry', <String, Object?>{
+        'messageIdHex': command.messageIdHex,
+      });
+    }
+    if (command is MarkConversationReadCommandDto) {
+      return _command('conversation.read', <String, Object?>{
+        'conversationIdHex': command.conversationIdHex,
+        'sendReceipt': command.sendReceipt,
+      });
+    }
+    if (command is QueueAttachmentCommandDto) {
+      return _command('attachment.queue', <String, Object?>{
+        'conversationIdHex': command.conversationIdHex,
+        'sourcePath': command.sourcePath,
+        'name': command.name,
+        'mediaType': command.mediaType,
+        'size': command.size,
+      });
+    }
+    if (command is RetryAttachmentCommandDto) {
+      return _command('attachment.retry', <String, Object?>{
+        'attachmentIdHex': command.attachmentIdHex,
+      });
+    }
+    if (command is CancelAttachmentCommandDto) {
+      return _command('attachment.cancel', <String, Object?>{
+        'attachmentIdHex': command.attachmentIdHex,
+      });
+    }
+    if (command is ExportAttachmentCommandDto) {
+      return _command('attachment.export', <String, Object?>{
+        'attachmentIdHex': command.attachmentIdHex,
+        'destinationPath': command.destinationPath,
+      });
+    }
+    if (command is SetNotificationsCommandDto) {
+      return _command('notifications.set', <String, Object?>{
+        'enabled': command.enabled,
+      });
+    }
+    if (command is AcknowledgeNewContactsCommandDto) {
+      return _command('contacts.acknowledge_new', const <String, Object?>{});
+    }
+    return null;
+  }
+
+  static RuntimeRequestDto _command(
+    String name,
+    Map<String, Object?> payload,
+  ) => RuntimeRequestDto._(kind: 'command', name: name, payload: payload);
+
+  static RuntimeRequestDto _session(String name, String sessionIdHex) =>
+      _command(name, <String, Object?>{'sessionIdHex': sessionIdHex});
+
+  static RuntimeRequestDto _contact(String name, String contactIdHex) =>
+      _command(name, <String, Object?>{'contactIdHex': contactIdHex});
+
+  String encode(String requestId) => jsonEncode(<String, Object?>{
+    'schema': 1,
+    'requestId': requestId,
+    'kind': kind,
+    'name': name,
+    'payload': payload,
+  });
 }
