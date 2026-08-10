@@ -64,6 +64,41 @@ pub struct PeerHealthSnapshot {
     pub consecutive_failures: u32,
     pub reconnect_attempt: u32,
 }
+
+/// Redacted transport activity used only to animate presentation indicators.
+/// It intentionally carries no payload, address, key or message content.
+#[must_use]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TransportActivitySnapshot {
+    pub last_activity_at: Option<Timestamp>,
+    pub sequence: u64,
+}
+
+#[derive(Default)]
+struct TransportActivityLedger {
+    tor: TransportActivitySnapshot,
+    relay: TransportActivitySnapshot,
+    peers: BTreeMap<ContactId, TransportActivitySnapshot>,
+}
+
+impl TransportActivityLedger {
+    fn mark_tor(&mut self, now: Timestamp) {
+        Self::mark(&mut self.tor, now);
+    }
+
+    fn mark_relay(&mut self, now: Timestamp) {
+        Self::mark(&mut self.relay, now);
+    }
+
+    fn mark_peer(&mut self, contact_id: ContactId, now: Timestamp) {
+        Self::mark(self.peers.entry(contact_id).or_default(), now);
+    }
+
+    fn mark(activity: &mut TransportActivitySnapshot, now: Timestamp) {
+        activity.last_activity_at = Some(now);
+        activity.sequence = activity.sequence.saturating_add(1);
+    }
+}
 impl PeerHealthSnapshot {
     pub const fn from_connection_state(state: PeerConnectionState) -> Self {
         Self {
@@ -101,6 +136,9 @@ pub struct NetworkSnapshot {
     pub peer_health: BTreeMap<ContactId, PeerHealthSnapshot>,
     pub contact_names: BTreeMap<ContactId, String>,
     pub contact_verifications: BTreeMap<ContactId, ContactVerificationSnapshot>,
+    pub tor_activity: TransportActivitySnapshot,
+    pub relay_activity: TransportActivitySnapshot,
+    pub peer_activity: BTreeMap<ContactId, TransportActivitySnapshot>,
     pub probes: Vec<ProbeResult>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -545,6 +583,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut communication_failed = false;
     let mut probes = ProbeSupervisor::default();
     let mut relay = RelayProbeState::new(relay_probe);
+    let mut transport_activity = TransportActivityLedger::default();
     loop {
         match receiver.recv_timeout(RUNTIME_TICK) {
             Ok(RuntimeCommand::Shutdown(response)) => {
@@ -560,6 +599,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     communication,
                     tor,
                     &probes,
+                    &mut transport_activity,
                     diagnostics,
                     now,
                 );
@@ -568,7 +608,14 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             Err(RecvTimeoutError::Disconnected) => break,
         }
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+        let relay_before = (relay.status, relay.code, relay.latency_ms, relay.failures);
         relay.tick();
+        if relay_before != (relay.status, relay.code, relay.latency_ms, relay.failures) {
+            // A relay probe always traverses embedded Tor, so both indicators
+            // receive the same redacted transport observation.
+            transport_activity.mark_tor(now);
+            transport_activity.mark_relay(now);
+        }
         observe_maintenance(
             tor.maintenance(now),
             &mut tor_failed,
@@ -600,6 +647,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         );
         if last_tor_state != Some(tor_state) {
             last_tor_state = Some(tor_state);
+            transport_activity.mark_tor(now);
             record(
                 diagnostics,
                 sequence,
@@ -630,6 +678,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             for id in contacts {
                 let state = communication.connection_state(id);
                 if last_peer_states.get(&id) != Some(&state) {
+                    transport_activity.mark_tor(now);
+                    transport_activity.mark_peer(id, now);
                     record(
                         diagnostics,
                         sequence,
@@ -739,23 +789,34 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     communication: &mut C,
     tor: &T,
     probes: &ProbeSupervisor,
+    transport_activity: &mut TransportActivityLedger,
     diagnostics: &mut DiagnosticBuffer,
     now: Timestamp,
 ) {
     match command {
         RuntimeCommand::CreatePairing(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_relay(now);
             let _ = r.send(pairing.create(id, now));
         }
         RuntimeCommand::JoinPairing(id, code, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_relay(now);
             let _ = r.send(pairing.join(id, code, now));
         }
         RuntimeCommand::ApprovePairing(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_relay(now);
             let _ = r.send(pairing.approve(id, now));
         }
         RuntimeCommand::RejectPairing(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_relay(now);
             let _ = r.send(pairing.reject(id));
         }
         RuntimeCommand::CancelPairing(id, r) => {
+            transport_activity.mark_tor(now);
+            transport_activity.mark_relay(now);
             let _ = r.send(pairing.cancel(id));
         }
         RuntimeCommand::VerifyContact(id, r) => {
@@ -850,6 +911,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     peer_health,
                     contact_names,
                     contact_verifications,
+                    tor_activity: transport_activity.tor,
+                    relay_activity: transport_activity.relay,
+                    peer_activity: transport_activity.peers.clone(),
                     probes: probes.latest(),
                 })
             })();
@@ -951,5 +1015,24 @@ const fn map_peer_health(state: PeerConnectionState) -> HealthState {
         PeerConnectionState::Connecting
         | PeerConnectionState::Handshaking
         | PeerConnectionState::Reconnecting => HealthState::Starting,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transport_activity_is_monotonic_and_redacted() {
+        let at = Timestamp::from_unix_millis(1).expect("valid timestamp");
+        let mut ledger = TransportActivityLedger::default();
+        ledger.mark_tor(at);
+        ledger.mark_relay(at);
+        ledger.mark_tor(at);
+
+        assert_eq!(ledger.tor.sequence, 2);
+        assert_eq!(ledger.relay.sequence, 1);
+        assert_eq!(ledger.tor.last_activity_at, Some(at));
+        assert_eq!(ledger.relay.last_activity_at, Some(at));
     }
 }

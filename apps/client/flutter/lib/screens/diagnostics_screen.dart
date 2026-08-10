@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../widgets/diagnostics_overview.dart';
+import '../widgets/runtime_network_status.dart';
 
 class DiagnosticsScreen extends StatefulWidget {
   const DiagnosticsScreen({required this.gateway, super.key});
@@ -144,7 +145,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: RuntimeAppBar(
       title: const Text('Diagnostics'),
       actions: <Widget>[
         IconButton(

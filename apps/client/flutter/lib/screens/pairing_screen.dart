@@ -10,6 +10,7 @@ import '../widgets/async_action_button.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/pairing_progress.dart';
+import '../widgets/runtime_network_status.dart';
 
 enum _PairingMode { create, join }
 
@@ -52,154 +53,179 @@ class _PairingScreenState extends State<PairingScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Pair contact')),
+    appBar: const RuntimeAppBar(title: Text('Pair contact')),
     body: ValueListenableBuilder<AppSnapshotDto>(
       valueListenable: widget.gateway.snapshots,
-      builder: (context, snapshot, _) => ListView(
-        padding: const EdgeInsets.all(24),
-        children: <Widget>[
-          Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Card(
-                    child: ListTile(
-                      leading: Icon(Icons.restart_alt),
-                      title: Text('Pairing invitations are temporary'),
-                      subtitle: Text(
-                        'An active invitation is intentionally invalid after Torca restarts. Create a fresh invitation instead of reusing an old code.',
+      builder: (context, snapshot, _) {
+        final relayReady = snapshot.transport.relay.isUsable;
+        final relayState = snapshot.transport.relay.state;
+        return ListView(
+          padding: const EdgeInsets.all(24),
+          children: <Widget>[
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    if (!relayReady) ...<Widget>[
+                      Card(
+                        color: Theme.of(context).colorScheme.errorContainer,
+                        child: ListTile(
+                          leading: const Icon(Icons.hub_outlined),
+                          title: const Text('Secure relay is not connected'),
+                          subtitle: Text(
+                            relayState == 'checking'
+                                ? 'Torca is verifying the relay through Tor. Creating or joining invitations will unlock automatically when it succeeds.'
+                                : 'Creating and joining invitations are paused until the relay is reachable through Tor.',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    const Card(
+                      child: ListTile(
+                        leading: Icon(Icons.restart_alt),
+                        title: Text('Pairing invitations are temporary'),
+                        subtitle: Text(
+                          'An active invitation is intentionally invalid after Torca restarts. Create a fresh invitation instead of reusing an old code.',
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  SegmentedButton<_PairingMode>(
-                    segments: const <ButtonSegment<_PairingMode>>[
-                      ButtonSegment(
-                        value: _PairingMode.create,
-                        icon: Icon(Icons.qr_code_2),
-                        label: Text('Create invitation'),
+                    const SizedBox(height: 16),
+                    SegmentedButton<_PairingMode>(
+                      segments: const <ButtonSegment<_PairingMode>>[
+                        ButtonSegment(
+                          value: _PairingMode.create,
+                          icon: Icon(Icons.qr_code_2),
+                          label: Text('Create invitation'),
+                        ),
+                        ButtonSegment(
+                          value: _PairingMode.join,
+                          icon: Icon(Icons.qr_code_scanner),
+                          label: Text('Join invitation'),
+                        ),
+                      ],
+                      selected: <_PairingMode>{_mode},
+                      onSelectionChanged: _primaryBusy || !relayReady
+                          ? null
+                          : (value) => setState(() {
+                              _mode = value.single;
+                              _error = null;
+                            }),
+                    ),
+                    const SizedBox(height: 20),
+                    if (_mode == _PairingMode.create) ...<Widget>[
+                      const Text(
+                        'Create a short-lived invitation. The secure Rust runtime owns its ID, code and expiry.',
                       ),
-                      ButtonSegment(
-                        value: _PairingMode.join,
-                        icon: Icon(Icons.qr_code_scanner),
-                        label: Text('Join invitation'),
+                      const SizedBox(height: 12),
+                      AsyncActionButton(
+                        onPressed: _primaryBusy || !relayReady ? null : _create,
+                        busy: _operations.isActive('pairing:create'),
+                        icon: Icons.add_link,
+                        label: 'Create invitation',
+                      ),
+                    ] else ...<Widget>[
+                      TextField(
+                        controller: _code,
+                        enabled: !_primaryBusy && relayReady,
+                        textCapitalization: TextCapitalization.characters,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        decoration: InputDecoration(
+                          labelText: 'Pairing code or Torca QR URI',
+                          helperText:
+                              'Enter the code or scan the QR shown by your contact.',
+                          errorText: _error,
+                          suffixIcon: IconButton(
+                            tooltip: 'Scan QR',
+                            onPressed: _primaryBusy || !relayReady
+                                ? null
+                                : _scan,
+                            icon: _operations.isActive('pairing:scan')
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.qr_code_scanner),
+                          ),
+                        ),
+                        onSubmitted: _primaryBusy || !relayReady
+                            ? null
+                            : (_) => _join(),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _primaryBusy || !relayReady ? null : _join,
+                        icon: _operations.isActive('pairing:join')
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.link),
+                        label: Text(
+                          _operations.isActive('pairing:join')
+                              ? 'Joining…'
+                              : 'Join invitation',
+                        ),
                       ),
                     ],
-                    selected: <_PairingMode>{_mode},
-                    onSelectionChanged: _primaryBusy
-                        ? null
-                        : (value) => setState(() {
-                            _mode = value.single;
-                            _error = null;
-                          }),
-                  ),
-                  const SizedBox(height: 20),
-                  if (_mode == _PairingMode.create) ...<Widget>[
-                    const Text(
-                      'Create a short-lived invitation. The secure Rust runtime owns its ID, code and expiry.',
-                    ),
-                    const SizedBox(height: 12),
-                    AsyncActionButton(
-                      onPressed: _primaryBusy ? null : _create,
-                      busy: _operations.isActive('pairing:create'),
-                      icon: Icons.add_link,
-                      label: 'Create invitation',
-                    ),
-                  ] else ...<Widget>[
-                    TextField(
-                      controller: _code,
-                      enabled: !_primaryBusy,
-                      textCapitalization: TextCapitalization.characters,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      decoration: InputDecoration(
-                        labelText: 'Pairing code or Torca QR URI',
-                        helperText:
-                            'Enter the code or scan the QR shown by your contact.',
-                        errorText: _error,
-                        suffixIcon: IconButton(
-                          tooltip: 'Scan QR',
-                          onPressed: _primaryBusy ? null : _scan,
-                          icon: _operations.isActive('pairing:scan')
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.qr_code_scanner),
+                    if (_error != null &&
+                        _mode == _PairingMode.create) ...<Widget>[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
                         ),
                       ),
-                      onSubmitted: _primaryBusy ? null : (_) => _join(),
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: _primaryBusy ? null : _join,
-                      icon: _operations.isActive('pairing:join')
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.link),
-                      label: Text(
-                        _operations.isActive('pairing:join')
-                            ? 'Joining…'
-                            : 'Join invitation',
+                    ],
+                    if (snapshot.pairings.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 32),
+                      Text(
+                        'Pairing sessions',
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      ...snapshot.pairings.reversed.map(
+                        (pairing) => _PairingSessionCard(
+                          pairing: pairing,
+                          busy: _operations.anyWithPrefix(
+                            'pairing:${pairing.id}:',
+                          ),
+                          onOpen: () => _showSession(pairing),
+                          onApprove: () => _session(
+                            pairing.id,
+                            'approve',
+                            ApprovePairingCommandDto(sessionIdHex: pairing.id),
+                          ),
+                          onReject: () => _session(
+                            pairing.id,
+                            'reject',
+                            RejectPairingCommandDto(sessionIdHex: pairing.id),
+                          ),
+                          onCancel: () => _session(
+                            pairing.id,
+                            'cancel',
+                            CancelPairingCommandDto(sessionIdHex: pairing.id),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
-                  if (_error != null &&
-                      _mode == _PairingMode.create) ...<Widget>[
-                    const SizedBox(height: 12),
-                    Text(
-                      _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ],
-                  if (snapshot.pairings.isNotEmpty) ...<Widget>[
-                    const SizedBox(height: 32),
-                    Text(
-                      'Pairing sessions',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 12),
-                    ...snapshot.pairings.reversed.map(
-                      (pairing) => _PairingSessionCard(
-                        pairing: pairing,
-                        busy: _operations.anyWithPrefix(
-                          'pairing:${pairing.id}:',
-                        ),
-                        onOpen: () => _showSession(pairing),
-                        onApprove: () => _session(
-                          pairing.id,
-                          'approve',
-                          ApprovePairingCommandDto(sessionIdHex: pairing.id),
-                        ),
-                        onReject: () => _session(
-                          pairing.id,
-                          'reject',
-                          RejectPairingCommandDto(sessionIdHex: pairing.id),
-                        ),
-                        onCancel: () => _session(
-                          pairing.id,
-                          'cancel',
-                          CancelPairingCommandDto(sessionIdHex: pairing.id),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     ),
   );
 

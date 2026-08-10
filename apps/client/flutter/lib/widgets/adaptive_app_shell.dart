@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'runtime_network_status.dart';
+
 /// Shared responsive navigation frame for every authenticated Torca surface.
 class AdaptiveAppShell extends StatelessWidget {
   const AdaptiveAppShell({
@@ -56,7 +58,7 @@ class AdaptiveAppShell extends StatelessWidget {
             .toList(growable: false),
       );
       final content = Scaffold(
-        appBar: AppBar(title: Text(title), actions: actions),
+        appBar: RuntimeAppBar(title: Text(title), actions: actions),
         body: body,
         floatingActionButton: floatingActionButton,
         bottomNavigationBar: mobile

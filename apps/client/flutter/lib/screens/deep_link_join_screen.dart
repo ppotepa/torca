@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../widgets/runtime_network_status.dart';
 import 'pairing_screen.dart';
 
 class DeepLinkJoinScreen extends StatefulWidget {
@@ -22,7 +23,7 @@ class _DeepLinkJoinScreenState extends State<DeepLinkJoinScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Join Torca invitation')),
+    appBar: const RuntimeAppBar(title: Text('Join Torca invitation')),
     body: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),

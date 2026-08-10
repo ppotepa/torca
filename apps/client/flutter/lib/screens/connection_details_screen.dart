@@ -4,6 +4,7 @@ import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../widgets/connection_state_presenter.dart';
 import '../widgets/peer_health_indicator.dart';
+import '../widgets/runtime_network_status.dart';
 
 class ConnectionDetailsScreen extends StatelessWidget {
   const ConnectionDetailsScreen({
@@ -21,8 +22,8 @@ class ConnectionDetailsScreen extends StatelessWidget {
     builder: (context, snapshot, _) {
       final contact = _contact(snapshot);
       if (contact == null) {
-        return Scaffold(
-          appBar: AppBar(title: const Text('Connection details')),
+        return const Scaffold(
+          appBar: const RuntimeAppBar(title: Text('Connection details')),
           body: const Center(
             child: Text('This contact is no longer available.'),
           ),
@@ -34,7 +35,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
         blocked: blocked,
       );
       return Scaffold(
-        appBar: AppBar(title: const Text('Connection details')),
+        appBar: const RuntimeAppBar(title: Text('Connection details')),
         body: ListView(
           padding: const EdgeInsets.all(20),
           children: <Widget>[

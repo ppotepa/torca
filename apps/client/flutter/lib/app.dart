@@ -16,6 +16,7 @@ import 'screens/settings_screen.dart';
 import 'settings/local_preferences.dart';
 import 'settings/preferences_scope.dart';
 import 'theme/app_theme.dart';
+import 'widgets/runtime_network_status.dart';
 
 class TorcaApp extends StatefulWidget {
   const TorcaApp({
@@ -181,51 +182,54 @@ class _TorcaAppState extends State<TorcaApp> {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: AppTheme.materialMode(widget.preferences.themeMode),
-      builder: (context, child) => PreferencesScope(
-        preferences: widget.preferences,
-        child: Shortcuts(
-          shortcuts: const <ShortcutActivator, Intent>{
-            SingleActivator(LogicalKeyboardKey.keyN, control: true):
-                _NewPairingIntent(),
-            SingleActivator(LogicalKeyboardKey.comma, control: true):
-                _SettingsIntent(),
-            SingleActivator(
-              LogicalKeyboardKey.keyD,
-              control: true,
-              shift: true,
-            ): _DiagnosticsIntent(),
-            SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
-          },
-          child: Actions(
-            actions: <Type, Action<Intent>>{
-              _NewPairingIntent: CallbackAction<_NewPairingIntent>(
-                onInvoke: (_) {
-                  _openPairing();
-                  return null;
-                },
-              ),
-              _SettingsIntent: CallbackAction<_SettingsIntent>(
-                onInvoke: (_) {
-                  _openSettings();
-                  return null;
-                },
-              ),
-              _DiagnosticsIntent: CallbackAction<_DiagnosticsIntent>(
-                onInvoke: (_) {
-                  _openDiagnostics();
-                  return null;
-                },
-              ),
-              _DismissIntent: CallbackAction<_DismissIntent>(
-                onInvoke: (_) {
-                  _dismissTopRoute();
-                  return null;
-                },
-              ),
+      builder: (context, child) => RuntimeStatusScope(
+        gateway: widget.gateway,
+        child: PreferencesScope(
+          preferences: widget.preferences,
+          child: Shortcuts(
+            shortcuts: const <ShortcutActivator, Intent>{
+              SingleActivator(LogicalKeyboardKey.keyN, control: true):
+                  _NewPairingIntent(),
+              SingleActivator(LogicalKeyboardKey.comma, control: true):
+                  _SettingsIntent(),
+              SingleActivator(
+                LogicalKeyboardKey.keyD,
+                control: true,
+                shift: true,
+              ): _DiagnosticsIntent(),
+              SingleActivator(LogicalKeyboardKey.escape): _DismissIntent(),
             },
-            child: FocusTraversalGroup(
-              policy: ReadingOrderTraversalPolicy(),
-              child: child ?? const SizedBox.shrink(),
+            child: Actions(
+              actions: <Type, Action<Intent>>{
+                _NewPairingIntent: CallbackAction<_NewPairingIntent>(
+                  onInvoke: (_) {
+                    _openPairing();
+                    return null;
+                  },
+                ),
+                _SettingsIntent: CallbackAction<_SettingsIntent>(
+                  onInvoke: (_) {
+                    _openSettings();
+                    return null;
+                  },
+                ),
+                _DiagnosticsIntent: CallbackAction<_DiagnosticsIntent>(
+                  onInvoke: (_) {
+                    _openDiagnostics();
+                    return null;
+                  },
+                ),
+                _DismissIntent: CallbackAction<_DismissIntent>(
+                  onInvoke: (_) {
+                    _dismissTopRoute();
+                    return null;
+                  },
+                ),
+              },
+              child: FocusTraversalGroup(
+                policy: ReadingOrderTraversalPolicy(),
+                child: child ?? const SizedBox.shrink(),
+              ),
             ),
           ),
         ),

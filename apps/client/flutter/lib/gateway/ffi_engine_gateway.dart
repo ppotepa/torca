@@ -703,6 +703,25 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
   final value = jsonDecode(raw);
   if (value is! Map<String, dynamic>) return null;
   final identity = value['identity'];
+  final transport = value['transport'] is Map<String, dynamic>
+      ? value['transport'] as Map<String, dynamic>
+      : const <String, dynamic>{};
+  TransportIndicatorDto indicator(
+    String name, {
+    required String fallbackState,
+  }) {
+    final item = transport[name] is Map<String, dynamic>
+        ? transport[name] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    return TransportIndicatorDto(
+      state: item['state'] as String? ?? fallbackState,
+      code: item['code'] as String? ?? 'UNAVAILABLE',
+      latencyMs: item['latencyMs'] as int?,
+      lastActivityAtMs: item['lastActivityAtMs'] as int?,
+      activitySequence: item['activitySequence'] as int? ?? 0,
+    );
+  }
+
   final bootstrapSteps =
       (value['bootstrapSteps'] is List<Object?>
               ? value['bootstrapSteps'] as List<Object?>
@@ -764,6 +783,8 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
                 lastSuccessAtMs: health['lastSuccessAtMs'] as int?,
                 consecutiveFailures: health['consecutiveFailures'] as int? ?? 0,
                 reconnectAttempt: health['reconnectAttempt'] as int? ?? 0,
+                lastActivityAtMs: health['lastActivityAtMs'] as int?,
+                activitySequence: health['activitySequence'] as int? ?? 0,
               ),
             );
           })
@@ -822,6 +843,13 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
           )
         : null,
     torState: value['torState'] as String? ?? 'stopped',
+    transport: TransportStatusDto(
+      tor: indicator(
+        'tor',
+        fallbackState: value['torState'] as String? ?? 'stopped',
+      ),
+      relay: indicator('relay', fallbackState: 'unknown'),
+    ),
     onionAddress: value['onionAddress'] as String?,
     bootstrapPhase: value['bootstrapPhase'] as String? ?? 'starting',
     bootstrapSteps: bootstrapSteps,

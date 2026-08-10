@@ -20,10 +20,10 @@ use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_runtime::{
     AttachmentSendRequest, AttachmentView, NetworkSnapshot, RuntimeDriverError, RuntimeHandle,
-    TorState,
+    TorState, TransportActivitySnapshot,
 };
 
-pub const CONTRACT_VERSION: u16 = 13;
+pub const CONTRACT_VERSION: u16 = 14;
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,6 +127,7 @@ pub struct BridgeSnapshot {
     pub identity_name: Option<String>,
     pub identity_fingerprint: Option<String>,
     pub tor_state: String,
+    pub transport: BridgeTransportStatus,
     pub onion_address: Option<String>,
     pub pairings: Vec<BridgePairing>,
     pub contacts: Vec<BridgeContact>,
@@ -181,6 +182,23 @@ pub struct BridgePeerHealth {
     pub last_success_at_ms: Option<i64>,
     pub consecutive_failures: u32,
     pub reconnect_attempt: u32,
+    pub last_activity_at_ms: Option<i64>,
+    pub activity_sequence: u64,
+}
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeTransportIndicator {
+    pub state: String,
+    pub code: String,
+    pub latency_ms: Option<u64>,
+    pub last_activity_at_ms: Option<i64>,
+    pub activity_sequence: u64,
+}
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeTransportStatus {
+    pub tor: BridgeTransportIndicator,
+    pub relay: BridgeTransportIndicator,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -474,6 +492,9 @@ impl ContractRuntime {
                     peer_health: BTreeMap::new(),
                     contact_names: BTreeMap::new(),
                     contact_verifications: BTreeMap::new(),
+                    tor_activity: TransportActivitySnapshot::default(),
+                    relay_activity: TransportActivitySnapshot::default(),
+                    peer_activity: BTreeMap::new(),
                     probes: Vec::new(),
                 },
                 Vec::new(),
@@ -500,6 +521,9 @@ impl ContractRuntime {
                 peer_health: BTreeMap::new(),
                 contact_names: BTreeMap::new(),
                 contact_verifications: BTreeMap::new(),
+                tor_activity: TransportActivitySnapshot::default(),
+                relay_activity: TransportActivitySnapshot::default(),
+                peer_activity: BTreeMap::new(),
                 probes: Vec::new(),
             },
         };
@@ -796,6 +820,14 @@ fn map_snapshot(
         Vec::new()
     };
     let tor_state = format!("{:?}", network.tor).to_lowercase();
+    let relay_probe = network.probes.iter().find(|probe| probe.target == ProbeTarget::Relay);
+    let relay_state = relay_probe
+        .map(|probe| format!("{:?}", probe.status).to_lowercase())
+        .unwrap_or_else(|| "unknown".into());
+    let relay_code = relay_probe
+        .map(|probe| probe.diagnostic_code.clone())
+        .unwrap_or_else(|| "RELAY_UNAVAILABLE".into());
+    let relay_latency_ms = relay_probe.and_then(|probe| probe.latency_ms);
     let bootstrap_snapshot = bootstrap.snapshot();
     let bootstrap_phase = bootstrap_phase_name(bootstrap_snapshot.phase);
     BridgeSnapshot {
@@ -803,6 +835,32 @@ fn map_snapshot(
         identity_name,
         identity_fingerprint,
         tor_state: tor_state.clone(),
+        transport: BridgeTransportStatus {
+            tor: BridgeTransportIndicator {
+                state: tor_state.clone(),
+                code: if tor_state == "ready" {
+                    "TOR_READY".into()
+                } else {
+                    "TOR_NOT_READY".into()
+                },
+                latency_ms: None,
+                last_activity_at_ms: network
+                    .tor_activity
+                    .last_activity_at
+                    .map(Timestamp::to_unix_millis),
+                activity_sequence: network.tor_activity.sequence,
+            },
+            relay: BridgeTransportIndicator {
+                state: relay_state,
+                code: relay_code,
+                latency_ms: relay_latency_ms,
+                last_activity_at_ms: network
+                    .relay_activity
+                    .last_activity_at
+                    .map(Timestamp::to_unix_millis),
+                activity_sequence: network.relay_activity.sequence,
+            },
+        },
         onion_address: network.onion_address,
         bootstrap_phase: bootstrap_phase.into(),
         bootstrap_steps: bootstrap_snapshot
@@ -858,6 +916,8 @@ fn map_snapshot(
                         last_success_at_ms: None,
                         consecutive_failures: 0,
                         reconnect_attempt: 0,
+                        last_activity_at_ms: None,
+                        activity_sequence: 0,
                     },
                     |health| BridgePeerHealth {
                         state: format!("{:?}", health.state).to_lowercase(),
@@ -866,6 +926,15 @@ fn map_snapshot(
                         last_success_at_ms: health.last_success_at.map(Timestamp::to_unix_millis),
                         consecutive_failures: health.consecutive_failures,
                         reconnect_attempt: health.reconnect_attempt,
+                        last_activity_at_ms: network
+                            .peer_activity
+                            .get(&contact.id())
+                            .and_then(|activity| activity.last_activity_at)
+                            .map(Timestamp::to_unix_millis),
+                        activity_sequence: network
+                            .peer_activity
+                            .get(&contact.id())
+                            .map_or(0, |activity| activity.sequence),
                     },
                 );
                 let safety_number = local_public.as_ref().map_or_else(String::new, |local| {

@@ -10,7 +10,7 @@ import '../widgets/app_overflow_menu.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_actions.dart';
 import '../widgets/conversation_summary_tile.dart';
-import '../widgets/tor_status_indicator.dart';
+import '../widgets/runtime_network_status.dart';
 import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
 import 'diagnostics_screen.dart';
@@ -31,49 +31,61 @@ class _BootstrapFailureScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(
-                  Icons.lock_outline,
-                  size: 64,
-                  color: Theme.of(context).colorScheme.error,
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  'Secure runtime is not ready',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Torca could not prepare the local encrypted runtime. '
-                  'Your identity has not been changed.',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  reason,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                if (onRetry != null) ...<Widget>[
-                  const SizedBox(height: 22),
-                  FilledButton.icon(
-                    onPressed: onRetry,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Retry'),
+      child: Column(
+        children: <Widget>[
+          const Padding(
+            padding: EdgeInsets.only(top: 8, right: 12),
+            child: RuntimeNetworkHeader(),
+          ),
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(
+                        Icons.lock_outline,
+                        size: 64,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'Secure runtime is not ready',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Torca could not prepare the local encrypted runtime. '
+                        'Your identity has not been changed.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        reason,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      if (onRetry != null) ...<Widget>[
+                        const SizedBox(height: 22),
+                        FilledButton.icon(
+                          onPressed: onRetry,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-              ],
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ),
     ),
   );
@@ -145,92 +157,110 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
           ),
         ),
         child: SafeArea(
-          child: SingleChildScrollView(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 620),
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Card(
-                    elevation: 0,
-                    color: color.surface.withValues(alpha: 0.92),
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          CircleAvatar(
-                            radius: 30,
-                            backgroundColor: color.primaryContainer,
-                            foregroundColor: color.onPrimaryContainer,
-                            child: const Icon(Icons.shield_outlined, size: 32),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Preparing your private space',
-                            style: Theme.of(context).textTheme.headlineSmall,
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Setting up encrypted storage and a private Tor connection. You can safely leave this screen open.',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 22),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(99),
-                            child: LinearProgressIndicator(
-                              value: progress.clamp(0, 1),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '$ready of ${steps.length} secure checks complete  •  ${_formatDuration(elapsed)}',
-                          ),
-                          const SizedBox(height: 16),
-                          for (final step in projectedSteps)
-                            _BootstrapStepTile(
-                              step: step,
-                              label: _bootstrapLabel(step.id),
-                              elapsed: _elapsedFor(step),
-                              retryRemaining: _retryRemaining(step),
-                            ),
-                          if (widget.snapshot.bootstrapPhase == 'failed' ||
-                              widget.snapshot.bootstrapPhase ==
-                                  'degraded') ...<Widget>[
-                            const SizedBox(height: 12),
-                            Text(
-                              _diagnostic(widget.snapshot),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.error,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
+          child: Column(
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.only(top: 8, right: 12),
+                child: RuntimeNetworkHeader(),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 620),
+                      child: Padding(
+                        padding: const EdgeInsets.all(28),
+                        child: Card(
+                          elevation: 0,
+                          color: color.surface.withValues(alpha: 0.92),
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
-                                FilledButton(
-                                  onPressed: restartRequired
-                                      ? null
-                                      : widget.onRetry,
-                                  child: Text(
-                                    restartRequired
-                                        ? 'Restart application'
-                                        : 'Retry',
+                                CircleAvatar(
+                                  radius: 30,
+                                  backgroundColor: color.primaryContainer,
+                                  foregroundColor: color.onPrimaryContainer,
+                                  child: const Icon(
+                                    Icons.shield_outlined,
+                                    size: 32,
                                   ),
                                 ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Preparing your private space',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.headlineSmall,
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Setting up encrypted storage and a private Tor connection. You can safely leave this screen open.',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 22),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(99),
+                                  child: LinearProgressIndicator(
+                                    value: progress.clamp(0, 1),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  '$ready of ${steps.length} secure checks complete  •  ${_formatDuration(elapsed)}',
+                                ),
+                                const SizedBox(height: 16),
+                                for (final step in projectedSteps)
+                                  _BootstrapStepTile(
+                                    step: step,
+                                    label: _bootstrapLabel(step.id),
+                                    elapsed: _elapsedFor(step),
+                                    retryRemaining: _retryRemaining(step),
+                                  ),
+                                if (widget.snapshot.bootstrapPhase ==
+                                        'failed' ||
+                                    widget.snapshot.bootstrapPhase ==
+                                        'degraded') ...<Widget>[
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _diagnostic(widget.snapshot),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.error,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: <Widget>[
+                                      FilledButton(
+                                        onPressed: restartRequired
+                                            ? null
+                                            : widget.onRetry,
+                                        child: Text(
+                                          restartRequired
+                                              ? 'Restart application'
+                                              : 'Retry',
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
-                          ],
-                        ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -508,10 +538,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
         actions: <Widget>[
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: TorStatusIndicator(state: snapshot.torState),
-          ),
           AppOverflowMenu(
             hasIdentity: snapshot.identity != null,
             onSelected: (action) => _handleAppAction(action, snapshot),

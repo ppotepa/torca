@@ -15,6 +15,7 @@ import '../widgets/conversation_header.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/operation_tracker.dart';
+import '../widgets/runtime_network_status.dart';
 import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
 
@@ -33,7 +34,7 @@ class ConversationScreen extends StatelessWidget {
     builder: (context, snapshot, _) {
       final contact = _contactFor(snapshot, conversation);
       return Scaffold(
-        appBar: AppBar(
+        appBar: RuntimeAppBar(
           titleSpacing: 0,
           title: ConversationHeader(
             contact: contact,

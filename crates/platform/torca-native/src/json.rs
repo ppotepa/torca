@@ -112,9 +112,11 @@ fn error_message(code: &str) -> &'static str {
 }
 
 pub(crate) fn empty_snapshot_json() -> String {
-    format!(
-        "{{\"contractVersion\":{CONTRACT_VERSION},\"identity\":null,\"torState\":\"stopped\",\"onionAddress\":null,\"bootstrapPhase\":\"failed\",\"bootstrapSteps\":[],\"pairings\":[],\"contacts\":[],\"conversations\":[],\"messages\":[],\"attachments\":[],\"notificationsEnabled\":true}}"
-    )
+    let mut output = format!("{{\"contractVersion\":{CONTRACT_VERSION}");
+    output.push_str(
+        r#","identity":null,"torState":"stopped","transport":{"tor":{"state":"stopped","code":"TOR_NOT_READY","latencyMs":null,"lastActivityAtMs":null,"activitySequence":0},"relay":{"state":"unknown","code":"RELAY_UNAVAILABLE","latencyMs":null,"lastActivityAtMs":null,"activitySequence":0}},"onionAddress":null,"bootstrapPhase":"failed","bootstrapSteps":[],"pairings":[],"contacts":[],"conversations":[],"messages":[],"attachments":[],"notificationsEnabled":true}"#,
+    );
+    output
 }
 
 pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
@@ -162,6 +164,11 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
     output.push_str(",\"torState\":\"");
     push_json_string(&snapshot.tor_state, &mut output);
     output.push('"');
+    output.push_str(",\"transport\":{\"tor\":");
+    push_transport_indicator(&snapshot.transport.tor, &mut output);
+    output.push_str(",\"relay\":");
+    push_transport_indicator(&snapshot.transport.relay, &mut output);
+    output.push('}');
     output.push_str(",\"onionAddress\":");
     match &snapshot.onion_address {
         Some(value) => {
@@ -238,9 +245,12 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
         }
         let _ = write!(
             output,
-            ",\"consecutiveFailures\":{},\"reconnectAttempt\":{}}}}}",
+            ",\"consecutiveFailures\":{},\"reconnectAttempt\":{},\"lastActivityAtMs\":",
             contact.peer_health.consecutive_failures, contact.peer_health.reconnect_attempt
         );
+        push_optional_i64(contact.peer_health.last_activity_at_ms, &mut output);
+        let _ =
+            write!(output, ",\"activitySequence\":{}}}}}", contact.peer_health.activity_sequence);
     }
 
     output.push_str("],\"conversations\":[");
@@ -296,6 +306,26 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
     }
     output.push_str("]}");
     output
+}
+
+fn push_transport_indicator(
+    indicator: &torca_contract::BridgeTransportIndicator,
+    output: &mut String,
+) {
+    output.push_str("{\"state\":\"");
+    push_json_string(&indicator.state, output);
+    output.push_str("\",\"code\":\"");
+    push_json_string(&indicator.code, output);
+    output.push_str("\",\"latencyMs\":");
+    match indicator.latency_ms {
+        Some(value) => {
+            let _ = write!(output, "{value}");
+        }
+        None => output.push_str("null"),
+    }
+    output.push_str(",\"lastActivityAtMs\":");
+    push_optional_i64(indicator.last_activity_at_ms, output);
+    let _ = write!(output, ",\"activitySequence\":{}}}", indicator.activity_sequence);
 }
 
 fn push_optional_i64(value: Option<i64>, output: &mut String) {

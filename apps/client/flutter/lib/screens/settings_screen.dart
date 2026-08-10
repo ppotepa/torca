@@ -7,6 +7,7 @@ import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
 import '../settings/local_preferences.dart';
 import '../theme/app_theme_mode.dart';
+import '../widgets/runtime_network_status.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({required this.preferences, super.key});
@@ -17,7 +18,7 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = context.strings;
     return Scaffold(
-      appBar: AppBar(title: Text(strings.settings)),
+      appBar: RuntimeAppBar(title: Text(strings.settings)),
       body: ListenableBuilder(
         listenable: preferences,
         builder: (context, _) {

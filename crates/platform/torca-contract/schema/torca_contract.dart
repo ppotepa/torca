@@ -1,6 +1,6 @@
 // GENERATED FILE. DO NOT EDIT.
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
-const int torcaContractVersion = 13;
+const int torcaContractVersion = 14;
 const int torcaNativeAbiVersion = 1;
 
 class BridgeResultDto {
@@ -57,10 +57,35 @@ class PeerHealthDto {
     this.lastSuccessAtMs,
     this.consecutiveFailures = 0,
     this.reconnectAttempt = 0,
+    this.lastActivityAtMs,
+    this.activitySequence = 0,
   });
   final String state, quality;
-  final int? rttMs, lastSuccessAtMs;
-  final int consecutiveFailures, reconnectAttempt;
+  final int? rttMs, lastSuccessAtMs, lastActivityAtMs;
+  final int consecutiveFailures, reconnectAttempt, activitySequence;
+}
+
+class TransportIndicatorDto {
+  const TransportIndicatorDto({
+    this.state = 'unknown',
+    this.code = 'UNAVAILABLE',
+    this.latencyMs,
+    this.lastActivityAtMs,
+    this.activitySequence = 0,
+  });
+  final String state, code;
+  final int? latencyMs, lastActivityAtMs;
+  final int activitySequence;
+
+  bool get isUsable => state == 'healthy' || state == 'ready';
+}
+
+class TransportStatusDto {
+  const TransportStatusDto({
+    this.tor = const TransportIndicatorDto(state: 'stopped'),
+    this.relay = const TransportIndicatorDto(),
+  });
+  final TransportIndicatorDto tor, relay;
 }
 
 class ContactDto {
@@ -141,6 +166,7 @@ class AppSnapshotDto {
     this.notificationsEnabled = true,
     this.identity,
     this.torState = 'stopped',
+    this.transport = const TransportStatusDto(),
     this.onionAddress,
     this.pairings = const [],
     this.contacts = const [],
@@ -155,6 +181,7 @@ class AppSnapshotDto {
   final bool notificationsEnabled;
   final IdentityDto? identity;
   final String torState;
+  final TransportStatusDto transport;
   final String? onionAddress;
   final List<PairingDto> pairings;
   final List<ContactDto> contacts;

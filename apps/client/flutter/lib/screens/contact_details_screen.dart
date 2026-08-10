@@ -7,6 +7,7 @@ import '../generated/torca_contract.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/connection_indicator.dart';
 import '../widgets/operation_tracker.dart';
+import '../widgets/runtime_network_status.dart';
 import 'connection_details_screen.dart';
 
 class ContactDetailsScreen extends StatefulWidget {
@@ -53,7 +54,7 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
       final verified = contact.verificationStatus == 'verified';
       final verificationUri = _verificationUri(contact);
       return Scaffold(
-        appBar: AppBar(title: Text(contact.displayName)),
+        appBar: RuntimeAppBar(title: Text(contact.displayName)),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
           children: <Widget>[
@@ -471,7 +472,7 @@ class IdentityDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Your identity')),
+    appBar: const RuntimeAppBar(title: Text('Your identity')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
