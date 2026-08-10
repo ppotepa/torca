@@ -131,6 +131,15 @@ impl BootstrapState {
         self.block_dependents(id);
     }
 
+    /// Records a non-blocking degradation. Degraded steps remain eligible for
+    /// recovery and do not block profile setup or the main application.
+    pub fn degrade(&mut self, id: BootstrapStepId, code: impl Into<String>) {
+        if let Some(step) = self.steps.get_mut(&id) {
+            step.state = BootstrapStepState::Degraded;
+            step.diagnostic_code = Some(code.into());
+        }
+    }
+
     fn block_dependents(&mut self, failed: BootstrapStepId) {
         let blocked: BTreeSet<BootstrapStepId> = match failed {
             BootstrapStepId::Preferences => self.steps.keys().copied().collect(),
@@ -220,10 +229,9 @@ impl BootstrapState {
             .steps
             .get(&BootstrapStepId::UserProfile)
             .is_some_and(|s| s.state == BootstrapStepState::Ready);
-        let relay_degraded = self
-            .steps
-            .get(&BootstrapStepId::Relay)
-            .is_some_and(|s| s.state == BootstrapStepState::Failed);
+        let relay_degraded = self.steps.get(&BootstrapStepId::Relay).is_some_and(|s| {
+            matches!(s.state, BootstrapStepState::Failed | BootstrapStepState::Degraded)
+        });
         let phase =
             if required_failed {
                 BootstrapPhase::Failed
@@ -252,7 +260,7 @@ impl BootstrapState {
 
 #[cfg(test)]
 mod tests {
-    use super::{BootstrapPhase, BootstrapState, BootstrapStepId};
+    use super::{BootstrapPhase, BootstrapState, BootstrapStepId, BootstrapStepState};
 
     #[test]
     fn identity_and_transport_unlock_profile_setup() {
@@ -280,5 +288,34 @@ mod tests {
         let snapshot = state.snapshot();
         assert_eq!(snapshot.phase, BootstrapPhase::Failed);
         assert!(snapshot.can_retry);
+    }
+
+    #[test]
+    fn degraded_relay_keeps_profile_route_available() {
+        let mut state = BootstrapState::new();
+        for step in [
+            BootstrapStepId::Preferences,
+            BootstrapStepId::NativeBridge,
+            BootstrapStepId::Contract,
+            BootstrapStepId::SecureStorage,
+            BootstrapStepId::Database,
+            BootstrapStepId::DeviceIdentity,
+            BootstrapStepId::Tor,
+            BootstrapStepId::OnionService,
+        ] {
+            state.complete(step);
+        }
+        state.begin(BootstrapStepId::Relay);
+        state.degrade(BootstrapStepId::Relay, "RELAY_UNREACHABLE");
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, BootstrapPhase::ReadyForProfile);
+        assert_eq!(
+            snapshot
+                .steps
+                .iter()
+                .find(|step| step.id == BootstrapStepId::Relay)
+                .map(|step| step.state),
+            Some(BootstrapStepState::Degraded)
+        );
     }
 }

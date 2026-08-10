@@ -620,11 +620,11 @@ impl ContractRuntime {
                         }
                         ProbeStatus::Failed | ProbeStatus::Unreachable | ProbeStatus::Degraded => {
                             if step_state(&bootstrap, BootstrapStepId::Relay)
-                                != Some(BootstrapStepState::Failed)
+                                != Some(BootstrapStepState::Degraded)
                             {
                                 bootstrap.begin(BootstrapStepId::Relay);
-                                bootstrap.fail(BootstrapStepId::Relay, "RELAY_UNREACHABLE");
                             }
+                            bootstrap.degrade(BootstrapStepId::Relay, "RELAY_UNREACHABLE");
                         }
                         ProbeStatus::Checking | ProbeStatus::Unknown | ProbeStatus::Disabled => {
                             if matches!(

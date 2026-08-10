@@ -307,7 +307,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
 
   String _diagnostic(AppSnapshotDto snapshot) {
     final failed = snapshot.bootstrapSteps.where(
-      (step) => step.state == 'failed',
+      (step) => step.state == 'failed' || step.state == 'degraded',
     );
     final step = failed.isEmpty ? null : failed.first;
     if (step == null || step.code == null || step.code!.isEmpty) {
@@ -383,7 +383,9 @@ class _BootstrapStepTile extends StatelessWidget {
         ),
         title: Text(
           step.attempt > 0 &&
-                  (step.id == 'tor_network' || step.id == 'onion_service')
+                  (step.id == 'tor_network' ||
+                      step.id == 'onion_service' ||
+                      step.id == 'secure_relay')
               ? '$label  •  attempt ${step.attempt} of 3'
               : label,
         ),
