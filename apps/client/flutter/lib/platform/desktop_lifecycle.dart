@@ -56,7 +56,7 @@ class DesktopLifecycle with WindowListener, TrayListener {
   void _runtimeEvent(RuntimeEventDto event) {
     if (!Platform.isWindows || _quitting) return;
     unawaited(_updateTrayMenu());
-    if (preferences.notificationsEnabled) unawaited(_notify());
+    if (preferences.notificationsEnabled) unawaited(_notify(event));
   }
 
   Future<void> _updateTrayMenu() async {
@@ -83,14 +83,20 @@ class DesktopLifecycle with WindowListener, TrayListener {
     );
   }
 
-  Future<void> _notify() async {
+  Future<void> _notify(RuntimeEventDto event) async {
     if (!preferences.notificationsEnabled || await windowManager.isFocused())
       return;
+    final contactAdded = event.kind == 'contact_added';
     final notification = LocalNotification(
-      title: 'Torca',
-      body: 'New private message',
+      title: event.contactDisplayName.isEmpty
+          ? 'Torca'
+          : event.contactDisplayName,
+      body: contactAdded ? 'New contact added' : 'New private message',
     );
     notification.onClick = () {
+      if (event.conversationId.isNotEmpty) {
+        navigation.openConversation(event.conversationId);
+      }
       unawaited(_showWindow());
     };
     await notification.show();
