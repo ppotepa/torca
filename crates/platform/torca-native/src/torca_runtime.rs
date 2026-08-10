@@ -130,13 +130,19 @@ pub(crate) fn notification_snapshot_json(after_cursor: u64) -> String {
     let Ok(response) = rx.recv_timeout(DEFAULT_QUERY_TIMEOUT) else {
         return crate::notification_json::notification_events_json(after_cursor);
     };
-    serde_json::from_slice::<Value>(&response)
-        .ok()
-        .and_then(|value| value.get("snapshot").cloned())
-        .map_or_else(
-            || crate::notification_json::notification_events_json(after_cursor),
-            |value| value.to_string(),
-        )
+    extract_notification_snapshot(&response).map_or_else(
+        || crate::notification_json::notification_events_json(after_cursor),
+        |value| value.to_string(),
+    )
+}
+
+#[cfg(any(target_os = "android", test))]
+fn extract_notification_snapshot(response: &[u8]) -> Option<Value> {
+    let response = serde_json::from_slice::<Value>(response).ok()?;
+    let runtime_id = response.get("runtimeId")?.as_str()?.to_owned();
+    let mut snapshot = response.get("snapshot")?.clone();
+    snapshot.as_object_mut()?.insert("runtimeId".into(), Value::String(runtime_id));
+    Some(snapshot)
 }
 
 #[unsafe(no_mangle)]
@@ -724,5 +730,16 @@ mod tests {
         assert_eq!(value["contractSchema"], CONTRACT_VERSION);
         assert!(value["buildId"].is_string());
         assert!(value["sourceFingerprint"].is_string());
+    }
+
+    #[test]
+    fn notification_snapshot_carries_the_process_runtime_identifier() {
+        let response = br#"{
+            "runtimeId":"runtime-a",
+            "snapshot":{"afterCursor":4,"events":[]}
+        }"#;
+        let snapshot = extract_notification_snapshot(response).expect("notification snapshot");
+        assert_eq!(snapshot["runtimeId"], "runtime-a");
+        assert_eq!(snapshot["afterCursor"], 4);
     }
 }

@@ -25,6 +25,7 @@ class TorcaForegroundService : Service() {
     private val notificationThread = HandlerThread("TorcaNotificationPoller")
     private lateinit var notificationHandler: Handler
     private var notificationCursor = 0L
+    private var notificationRuntimeId = ""
     private val notificationPoller = object : Runnable {
         override fun run() {
             if (!NativeRuntimeBridge.nativeRuntimeAvailable()) {
@@ -42,6 +43,8 @@ class TorcaForegroundService : Service() {
         notificationHandler = Handler(notificationThread.looper)
         notificationCursor = getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
             .getLong(NOTIFICATION_CURSOR, 0L)
+        notificationRuntimeId = getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
+            .getString(NOTIFICATION_RUNTIME_ID, "") ?: ""
         AndroidKeystoreBridge.initialize(applicationContext)
         createServiceChannel()
         createMessageChannel()
@@ -106,6 +109,20 @@ class TorcaForegroundService : Service() {
     private fun pollMessageNotifications() {
         val raw = NativeRuntimeBridge.nativeNotificationSnapshotJson(notificationCursor) ?: return
         val snapshot = try { JSONObject(raw) } catch (_: Exception) { return }
+        val runtimeId = snapshot.optString("runtimeId")
+        if (runtimeId.isNotEmpty() && runtimeId != notificationRuntimeId) {
+            // Native notification cursors are scoped to one process runtime. Retaining a cursor
+            // from a previous runtime would otherwise discard every new event until it exceeded
+            // the old value.
+            notificationRuntimeId = runtimeId
+            notificationCursor = 0L
+            getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
+                .edit()
+                .putString(NOTIFICATION_RUNTIME_ID, runtimeId)
+                .putLong(NOTIFICATION_CURSOR, notificationCursor)
+                .apply()
+            return
+        }
         val events = snapshot.optJSONArray("events") ?: return
         val newEvents = ArrayList<RuntimeNotificationEvent>()
         for (index in 0 until events.length()) {
@@ -205,6 +222,7 @@ class TorcaForegroundService : Service() {
         const val SERVICE_NOTIFICATION_ID = 1001
         const val NOTIFICATION_CURSOR_PREFERENCES = "torca_notification_cursor"
         const val NOTIFICATION_CURSOR = "cursor"
+        const val NOTIFICATION_RUNTIME_ID = "runtime_id"
         const val NOTIFICATION_POLL_MS = 1500L
         const val RUNTIME_WAIT_MS = 250L
         const val TAG = "TorcaRuntime"
