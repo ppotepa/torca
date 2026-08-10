@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/app.dart';
 import 'package:torca_app/gateway/engine_gateway.dart';
+import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/navigation/app_navigation_controller.dart';
 import 'package:torca_app/settings/local_preferences.dart';
 import 'fake_engine_gateway.dart';
@@ -63,7 +64,51 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(_app(FakeEngineGateway()));
+    const profileReady = AppSnapshotDto(
+      identity: IdentityDto(displayName: 'Alice'),
+      torState: 'ready',
+      transport: TransportStatusDto(
+        tor: TransportIndicatorDto(state: 'ready'),
+        relay: TransportIndicatorDto(state: 'healthy'),
+      ),
+      bootstrapPhase: 'ready',
+    );
+    const invitationCreated = AppSnapshotDto(
+      identity: IdentityDto(displayName: 'Alice'),
+      torState: 'ready',
+      transport: TransportStatusDto(
+        tor: TransportIndicatorDto(state: 'ready'),
+        relay: TransportIndicatorDto(state: 'healthy'),
+      ),
+      pairings: <PairingDto>[
+        PairingDto(
+          id: '00000000000000000000000000000001',
+          code: 'T0RCA1',
+          role: 'creator',
+          state: 'open',
+          expiresAtMs: 4102444800000,
+          localApproved: false,
+          remoteApproved: false,
+        ),
+      ],
+      bootstrapPhase: 'ready',
+    );
+    await tester.pumpWidget(
+      _app(
+        FakeEngineGateway(
+          responses: <FakeGatewayResponse>[
+            FakeGatewayResponse.success(
+              kind: 'profile_updated',
+              snapshot: profileReady,
+            ),
+            FakeGatewayResponse.success(
+              kind: 'pairing_started',
+              snapshot: invitationCreated,
+            ),
+          ],
+        ),
+      ),
+    );
     await tester.enterText(find.byType(TextField), 'Alice');
     await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
     await tester.pumpAndSettle();
