@@ -5245,15 +5245,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "torca-projections"
-version = "0.2.0-alpha.0"
-dependencies = [
- "torca-contacts",
- "torca-conversations",
- "torca-messaging",
-]
-
-[[package]]
 name = "torca-receipts"
 version = "0.2.0-alpha.0"
 dependencies = [
