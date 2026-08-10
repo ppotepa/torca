@@ -131,9 +131,10 @@ where
         now: Timestamp,
     ) -> Result<PairingInvitation, PairingRuntimeError> {
         let code = self.coordinator.generate_pairing_code()?;
-        let expires_at = invitation_expires_at(now)?;
+        let requested_expires_at = invitation_expires_at(now)?;
         let local_offer = self.local_offer(session_id, local)?;
-        let _ = self.coordinator.open_creator(session_id, &code, expires_at)?;
+        let (_, expires_at) =
+            self.coordinator.open_creator(session_id, &code, requested_expires_at)?;
         if self
             .engine
             .dispatch(EngineCommand::StartPairing { session_id, code: code.clone(), expires_at })
@@ -153,9 +154,8 @@ where
         local: LocalPairingContext,
         now: Timestamp,
     ) -> Result<(), PairingRuntimeError> {
-        let expires_at = invitation_expires_at(now)?;
         let local_offer = self.local_offer(session_id, local)?;
-        let _ = self.coordinator.join(session_id, &code, &local_offer)?;
+        let (_, expires_at) = self.coordinator.join(session_id, &code, &local_offer)?;
         if self
             .engine
             .dispatch(EngineCommand::JoinPairing { session_id, code, expires_at })

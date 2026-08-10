@@ -16,6 +16,8 @@ pub use server::{DEFAULT_MAX_CONNECTIONS, RelayServer, RelayServerConfig, RelayS
 pub const DEFAULT_MAX_ACTIVE_SLOTS: usize = 4096;
 /// The relay clock is authoritative for the short lifetime of a pairing slot.
 pub const PAIRING_SLOT_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// Global ceiling for unsuccessful code lookups in a relay-clock minute.
+pub const MAX_FAILED_JOINS_PER_MINUTE: u32 = 60;
 const MAX_QUEUED_BLOBS_PER_SIDE: usize = 32;
 
 #[derive(Clone, Debug)]
@@ -49,6 +51,8 @@ pub struct RelayBroker {
     slots: BTreeMap<RelayCode, Slot>,
     next_id: u128,
     max_slots: usize,
+    failed_join_window_started_at: Option<Timestamp>,
+    failed_join_attempts: u32,
 }
 impl Default for RelayBroker {
     fn default() -> Self {
@@ -59,7 +63,13 @@ impl Default for RelayBroker {
 impl RelayBroker {
     /// Creates a bounded broker. A zero capacity is normalized to one slot.
     pub fn with_max_slots(max_slots: usize) -> Self {
-        Self { slots: BTreeMap::new(), next_id: 1, max_slots: max_slots.max(1) }
+        Self {
+            slots: BTreeMap::new(),
+            next_id: 1,
+            max_slots: max_slots.max(1),
+            failed_join_window_started_at: None,
+            failed_join_attempts: 0,
+        }
     }
 
     /// Applies one request at a trusted clock value.
@@ -90,17 +100,16 @@ impl RelayBroker {
                 let id = RelaySlotId(OpaqueId::from_u128(self.next_id));
                 self.next_id =
                     self.next_id.checked_add(1).ok_or(RelayProtocolError::InvalidOperation)?;
+                let relay_expires_at = now
+                    .checked_add(PAIRING_SLOT_TTL)
+                    .ok_or(RelayProtocolError::InvalidOperation)?;
                 self.slots.insert(
                     code,
                     Slot {
                         id,
-                        // Never permit a caller to extend a relay slot beyond
-                        // the product's five-minute window.  The local
-                        // snapshot may use a slightly earlier deadline, but
-                        // the relay always owns final expiry and cleanup.
-                        expires_at: now
-                            .checked_add(PAIRING_SLOT_TTL)
-                            .map_or(expires_at, |maximum| expires_at.min(maximum)),
+                        // The server owns expiry. The client-provided value
+                        // only rejects already-expired requests above.
+                        expires_at: relay_expires_at,
                         creator_blob,
                         slot_capability,
                         creator_token,
@@ -109,10 +118,16 @@ impl RelayBroker {
                         to_joiner: VecDeque::new(),
                     },
                 );
-                Ok(RelayResponse::Opened { slot_id: id })
+                Ok(RelayResponse::Opened { slot_id: id, expires_at: relay_expires_at })
             }
             RelayRequest::Join { code, joiner_blob, joiner_token } => {
                 validate_blob(&joiner_blob)?;
+                if !self.slots.contains_key(&code) {
+                    self.record_failed_join(now)?;
+                    // Never distinguish invalid, expired and already-cleaned
+                    // invitation codes to unauthenticated joiners.
+                    return Err(RelayProtocolError::SlotNotFound);
+                }
                 let slot = self.slots.get_mut(&code).ok_or(RelayProtocolError::SlotNotFound)?;
                 if slot.joiner_token.is_some() {
                     return Err(RelayProtocolError::SlotAlreadyJoined);
@@ -124,6 +139,7 @@ impl RelayBroker {
                 slot.to_creator.push_back(joiner_blob);
                 Ok(RelayResponse::Joined {
                     slot_id: slot.id,
+                    expires_at: slot.expires_at,
                     creator_blob: slot.creator_blob.clone(),
                 })
             }
@@ -184,5 +200,21 @@ impl RelayBroker {
 
     fn find_mut(&mut self, id: RelaySlotId) -> Result<&mut Slot, RelayProtocolError> {
         self.slots.values_mut().find(|slot| slot.id == id).ok_or(RelayProtocolError::SlotNotFound)
+    }
+
+    fn record_failed_join(&mut self, now: Timestamp) -> Result<(), RelayProtocolError> {
+        let fresh_window = self.failed_join_window_started_at.map_or(true, |started_at| {
+            now.duration_since(started_at)
+                .map_or(true, |elapsed| elapsed >= std::time::Duration::from_secs(60))
+        });
+        if fresh_window {
+            self.failed_join_window_started_at = Some(now);
+            self.failed_join_attempts = 0;
+        }
+        if self.failed_join_attempts >= MAX_FAILED_JOINS_PER_MINUTE {
+            return Err(RelayProtocolError::QueueFull);
+        }
+        self.failed_join_attempts = self.failed_join_attempts.saturating_add(1);
+        Ok(())
     }
 }

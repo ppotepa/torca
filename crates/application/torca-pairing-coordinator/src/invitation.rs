@@ -6,7 +6,7 @@ use crate::{
 
 /// Crockford Base32 avoids visual ambiguity in a code that users may type.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const GENERATED_CODE_LEN: usize = 6;
+const GENERATED_CODE_LEN: usize = 5;
 
 impl<R, C> PairingCoordinator<R, C>
 where

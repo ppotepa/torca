@@ -1,5 +1,5 @@
 use torca_foundation::{OpaqueId, Timestamp};
-use torca_relay::{PAIRING_SLOT_TTL, RelayBroker};
+use torca_relay::{MAX_FAILED_JOINS_PER_MINUTE, PAIRING_SLOT_TTL, RelayBroker};
 use torca_relay_protocol::{
     RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken, RelaySlotCapability,
 };
@@ -8,7 +8,7 @@ use torca_relay_protocol::{
 fn slot_id_alone_does_not_authorize_poll_or_close() {
     let now = Timestamp::UNIX_EPOCH;
     let expires_at = Timestamp::from_unix_millis(60_000).expect("expiry");
-    let code = RelayCode::new("ABC123").expect("code");
+    let code = RelayCode::new("ABC12").expect("code");
     let creator = RelaySideToken(OpaqueId::from_u128(11));
     let joiner = RelaySideToken(OpaqueId::from_u128(12));
     let attacker = RelaySideToken(OpaqueId::from_u128(13));
@@ -29,7 +29,7 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
         )
         .expect("open")
     {
-        RelayResponse::Opened { slot_id } => slot_id,
+        RelayResponse::Opened { slot_id, .. } => slot_id,
         other => panic!("unexpected response: {other:?}"),
     };
 
@@ -58,10 +58,10 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
 #[test]
 fn relay_clock_caps_invitation_lifetime_at_five_minutes() {
     let now = Timestamp::UNIX_EPOCH;
-    let code = RelayCode::new("ABC123").expect("code");
+    let code = RelayCode::new("ABC12").expect("code");
     let creator = RelaySideToken(OpaqueId::from_u128(31));
     let mut relay = RelayBroker::default();
-    let _ = relay
+    let opened = relay
         .handle(
             RelayRequest::Open {
                 code: code.clone(),
@@ -75,6 +75,10 @@ fn relay_clock_caps_invitation_lifetime_at_five_minutes() {
             now,
         )
         .expect("open");
+    assert!(matches!(
+        opened,
+        RelayResponse::Opened { expires_at, .. } if expires_at == now.checked_add(PAIRING_SLOT_TTL).expect("deadline")
+    ));
     let after_ttl = now.checked_add(PAIRING_SLOT_TTL).expect("deadline");
     let after_ttl = after_ttl.checked_add(std::time::Duration::from_millis(1)).expect("later");
     assert_eq!(
@@ -85,6 +89,48 @@ fn relay_clock_caps_invitation_lifetime_at_five_minutes() {
                 joiner_token: RelaySideToken(OpaqueId::from_u128(33)),
             },
             after_ttl,
+        ),
+        Err(RelayProtocolError::SlotNotFound)
+    );
+}
+
+#[test]
+fn failed_code_lookups_are_rate_limited_by_the_relay_clock() {
+    let now = Timestamp::UNIX_EPOCH;
+    let mut relay = RelayBroker::default();
+    for value in 0..MAX_FAILED_JOINS_PER_MINUTE {
+        assert_eq!(
+            relay.handle(
+                RelayRequest::Join {
+                    code: RelayCode::new(format!("A{value:04}")).expect("code"),
+                    joiner_blob: vec![1],
+                    joiner_token: RelaySideToken(OpaqueId::from_u128(u128::from(value) + 1)),
+                },
+                now,
+            ),
+            Err(RelayProtocolError::SlotNotFound)
+        );
+    }
+    assert_eq!(
+        relay.handle(
+            RelayRequest::Join {
+                code: RelayCode::new("ZZZZZ").expect("code"),
+                joiner_blob: vec![1],
+                joiner_token: RelaySideToken(OpaqueId::from_u128(999)),
+            },
+            now,
+        ),
+        Err(RelayProtocolError::QueueFull)
+    );
+    let next_minute = now.checked_add(std::time::Duration::from_secs(60)).expect("later");
+    assert_eq!(
+        relay.handle(
+            RelayRequest::Join {
+                code: RelayCode::new("ZZZZZ").expect("code"),
+                joiner_blob: vec![1],
+                joiner_token: RelaySideToken(OpaqueId::from_u128(1_000)),
+            },
+            next_minute,
         ),
         Err(RelayProtocolError::SlotNotFound)
     );

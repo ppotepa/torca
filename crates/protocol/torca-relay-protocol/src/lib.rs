@@ -24,7 +24,7 @@ const CROCKFORD_BASE32: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 pub struct RelayProtocolVersion(pub u16);
 impl RelayProtocolVersion {
     /// Capability-authenticated rendezvous protocol.
-    pub const V2: Self = Self(2);
+    pub const V3: Self = Self(3);
 }
 
 /// Relay slot ID. It is an address, not an authorization secret.
@@ -47,7 +47,7 @@ pub struct RelaySideToken(pub OpaqueId);
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RelayCode(String);
 impl RelayCode {
-    /// Creates the exact six-character Crockford Base32 invitation code.
+    /// Creates the exact five-character Crockford Base32 invitation code.
     pub fn new(value: impl Into<String>) -> Result<Self, RelayProtocolError> {
         let mut value = value
             .into()
@@ -63,7 +63,7 @@ impl RelayCode {
                 other => other,
             })
             .collect();
-        if value.len() != 6 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
+        if value.len() != 5 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
         {
             return Err(RelayProtocolError::InvalidCode);
         }
@@ -110,9 +110,14 @@ pub enum RelaySide {
 pub enum RelayResponse {
     Opened {
         slot_id: RelaySlotId,
+        /// Relay-clock deadline. Clients project this value instead of trusting
+        /// their own wall clock for invitation expiry.
+        expires_at: Timestamp,
     },
     Joined {
         slot_id: RelaySlotId,
+        /// Relay-clock deadline shared with the joining client.
+        expires_at: Timestamp,
         creator_blob: Vec<u8>,
     },
     Accepted,
@@ -252,12 +257,14 @@ impl RelayCodec {
     pub fn encode_response(response: &RelayResponse) -> Result<Vec<u8>, RelayCodecError> {
         let mut payload = Vec::new();
         let kind = match response {
-            RelayResponse::Opened { slot_id } => {
+            RelayResponse::Opened { slot_id, expires_at } => {
                 payload.extend_from_slice(slot_id.0.as_bytes());
+                payload.extend_from_slice(&expires_at.to_unix_millis().to_be_bytes());
                 1
             }
-            RelayResponse::Joined { slot_id, creator_blob } => {
+            RelayResponse::Joined { slot_id, expires_at, creator_blob } => {
                 payload.extend_from_slice(slot_id.0.as_bytes());
+                payload.extend_from_slice(&expires_at.to_unix_millis().to_be_bytes());
                 put_blob(creator_blob, &mut payload)?;
                 2
             }
@@ -291,9 +298,13 @@ impl RelayCodec {
         }
         let mut cursor = Cursor::new(payload);
         let response = match kind {
-            1 => RelayResponse::Opened { slot_id: RelaySlotId(cursor.id()?) },
+            1 => RelayResponse::Opened {
+                slot_id: RelaySlotId(cursor.id()?),
+                expires_at: cursor.timestamp()?,
+            },
             2 => RelayResponse::Joined {
                 slot_id: RelaySlotId(cursor.id()?),
+                expires_at: cursor.timestamp()?,
                 creator_blob: cursor.blob()?,
             },
             3 => RelayResponse::Accepted,
@@ -353,7 +364,7 @@ fn encode_frame(direction: u8, kind: u8, payload: &[u8]) -> Result<Vec<u8>, Rela
     }
     let mut output = Vec::with_capacity(frame_len);
     output.extend_from_slice(RELAY_MAGIC);
-    output.extend_from_slice(&RelayProtocolVersion::V2.0.to_be_bytes());
+    output.extend_from_slice(&RelayProtocolVersion::V3.0.to_be_bytes());
     output.push(direction);
     output.push(kind);
     output.extend_from_slice(&payload_len.to_be_bytes());
@@ -383,7 +394,7 @@ fn validate_header_prefix(header: &[u8; RELAY_HEADER_LEN]) -> Result<(), RelayCo
     }
     let version =
         u16::from_be_bytes(header[4..6].try_into().map_err(|_| RelayCodecError::Truncated)?);
-    if version != RelayProtocolVersion::V2.0 {
+    if version != RelayProtocolVersion::V3.0 {
         return Err(RelayCodecError::UnsupportedVersion(version));
     }
     if !matches!(header[6], REQUEST_DIRECTION | RESPONSE_DIRECTION) {
@@ -521,7 +532,7 @@ mod tests {
     #[test]
     fn request_round_trips_exactly() {
         let request = RelayRequest::Open {
-            code: RelayCode::new("T0RCA1").expect("code"),
+            code: RelayCode::new("T0RCA").expect("code"),
             expires_at: Timestamp::from_unix_millis(123).expect("timestamp"),
             creator_blob: vec![1, 2, 3],
             slot_capability: RelaySlotCapability(OpaqueId::from_u128(7)),
@@ -542,6 +553,7 @@ mod tests {
     fn joined_response_preserves_creator_blob() {
         let response = RelayResponse::Joined {
             slot_id: RelaySlotId(OpaqueId::from_u128(11)),
+            expires_at: Timestamp::from_unix_millis(1_700_000_000_000).expect("timestamp"),
             creator_blob: vec![9; 32],
         };
         let encoded = RelayCodec::encode_response(&response).expect("encode");

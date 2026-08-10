@@ -57,7 +57,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     let _ = engine
         .dispatch(EngineCommand::StartPairing {
             session_id: pairing_id,
-            code: PairingCode::new("ORCA42").expect("pairing code is valid"),
+            code: PairingCode::new("RCA42").expect("pairing code is valid"),
             expires_at: ts(10_000),
         })
         .expect("pairing starts");

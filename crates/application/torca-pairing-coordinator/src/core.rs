@@ -102,13 +102,13 @@ pub trait PairingRendezvousPort {
         creator_blob: Vec<u8>,
         capability: PairingSlotCapability,
         creator_token: PairingSideToken,
-    ) -> Result<PairingSlotId, PairingCoordinatorError>;
+    ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError>;
     fn join(
         &mut self,
         code: &PairingCode,
         joiner_blob: Vec<u8>,
         joiner_token: PairingSideToken,
-    ) -> Result<(PairingSlotId, Vec<u8>), PairingCoordinatorError>;
+    ) -> Result<(PairingSlotId, Timestamp, Vec<u8>), PairingCoordinatorError>;
     fn push(
         &mut self,
         slot: PairingSlotId,
@@ -180,7 +180,7 @@ where
         session_id: PairingSessionId,
         code: &PairingCode,
         expires_at: Timestamp,
-    ) -> Result<PairingSlotId, PairingCoordinatorError> {
+    ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
         if self.sessions.contains_key(&session_id) {
             return Err(PairingCoordinatorError::SessionAlreadyExists);
         }
@@ -188,16 +188,16 @@ where
         let setup = (|| {
             let capability = PairingSlotCapability(self.random_id()?);
             let token = PairingSideToken(self.random_id()?);
-            let slot = self.rendezvous.open(
+            let (slot, relay_expires_at) = self.rendezvous.open(
                 code,
                 expires_at,
                 key.public_key.to_vec(),
                 capability,
                 token,
             )?;
-            Ok::<_, PairingCoordinatorError>((slot, capability, token))
+            Ok::<_, PairingCoordinatorError>((slot, relay_expires_at, capability, token))
         })();
-        let (slot, capability, token) = match setup {
+        let (slot, relay_expires_at, capability, token) = match setup {
             Ok(value) => value,
             Err(error) => {
                 let _ = self.crypto.release_ephemeral_key(key.handle);
@@ -215,7 +215,7 @@ where
                 remote_public_key: None,
             },
         );
-        Ok(slot)
+        Ok((slot, relay_expires_at))
     }
 
     pub fn join(
@@ -223,7 +223,7 @@ where
         session_id: PairingSessionId,
         code: &PairingCode,
         local_offer: &PairingEnvelope,
-    ) -> Result<PairingSlotId, PairingCoordinatorError> {
+    ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
         if self.sessions.contains_key(&session_id) {
             return Err(PairingCoordinatorError::SessionAlreadyExists);
         }
@@ -233,16 +233,16 @@ where
         let key = self.crypto.generate_ephemeral_key()?;
         let setup = (|| {
             let token = PairingSideToken(self.random_id()?);
-            let (slot, creator_blob) =
+            let (slot, relay_expires_at, creator_blob) =
                 self.rendezvous.join(code, key.public_key.to_vec(), token)?;
             let creator_public_key: [u8; 32] =
                 creator_blob.try_into().map_err(|_| PairingCoordinatorError::InvalidBlob)?;
             let encrypted =
                 self.encrypt_envelope(session_id, &key, creator_public_key, local_offer)?;
             self.rendezvous.push(slot, token, encode_encrypted(&encrypted))?;
-            Ok::<_, PairingCoordinatorError>((slot, token, creator_public_key))
+            Ok::<_, PairingCoordinatorError>((slot, relay_expires_at, token, creator_public_key))
         })();
-        let (slot, token, creator_public_key) = match setup {
+        let (slot, relay_expires_at, token, creator_public_key) = match setup {
             Ok(value) => value,
             Err(error) => {
                 let _ = self.crypto.release_ephemeral_key(key.handle);
@@ -260,7 +260,7 @@ where
                 remote_public_key: Some(creator_public_key),
             },
         );
-        Ok(slot)
+        Ok((slot, relay_expires_at))
     }
 
     pub fn poll(

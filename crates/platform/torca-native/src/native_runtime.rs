@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -75,6 +75,9 @@ pub struct TorcaRuntime {
     pub(crate) query_json: String,
     logger: Option<Logger>,
     notification_seen: HashMap<String, u32>,
+    /// Contacts present when this process attached are not new notifications.
+    /// Newly completed pairings are emitted exactly once during this runtime run.
+    contact_notification_seen: HashSet<String>,
     pub(crate) notification_cursor: u64,
     notification_events: Vec<torca_contract::NotificationEvent>,
     notifications_enabled: bool,
@@ -105,6 +108,10 @@ impl TorcaRuntime {
                 None
             }
         };
+        let contact_notification_seen = bridge
+            .snapshot()
+            .map(|snapshot| snapshot.contacts.into_iter().map(|contact| contact.id).collect())
+            .unwrap_or_default();
         let mut runtime = Self {
             engine,
             bridge,
@@ -136,6 +143,7 @@ impl TorcaRuntime {
             query_json: "{\"messages\":[],\"hasMore\":false}".into(),
             logger,
             notification_seen: HashMap::new(),
+            contact_notification_seen,
             notification_cursor: 0,
             notification_events: Vec::new(),
             notifications_enabled: parts.settings.notifications_enabled().unwrap_or(true),
@@ -541,6 +549,27 @@ impl TorcaRuntime {
             .iter()
             .map(|contact| (contact.id.clone(), contact.display_name.clone()))
             .collect::<HashMap<_, _>>();
+        for contact in &snapshot.contacts {
+            if !self.contact_notification_seen.insert(contact.id.clone()) {
+                continue;
+            }
+            self.notification_cursor = self.notification_cursor.saturating_add(1);
+            let event_id = crate::torca_runtime::secure_id_hex()
+                .unwrap_or_else(|_| format!("notification-{}", self.notification_cursor));
+            let conversation_id = snapshot
+                .conversations
+                .iter()
+                .find(|conversation| conversation.contact_id == contact.id)
+                .map_or_else(String::new, |conversation| conversation.id.clone());
+            self.notification_events.push(torca_contract::NotificationEvent {
+                cursor: self.notification_cursor,
+                event_id,
+                kind: "contact_added".into(),
+                conversation_id,
+                contact_display_name: contact.display_name.clone(),
+                created_at_ms: contact.created_at_ms,
+            });
+        }
         for (conversation_id, summary) in summaries {
             let key = conversation_id.to_string();
             let unread = summary.unread_count;

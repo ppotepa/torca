@@ -11,6 +11,7 @@ import '../widgets/bridge_error_presenter.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/pairing_progress.dart';
 import '../widgets/runtime_network_status.dart';
+import 'conversation_screen.dart';
 
 enum _PairingMode { create, join }
 
@@ -249,6 +250,9 @@ class _PairingScreenState extends State<PairingScreen> {
   }
 
   Future<void> _showSession(PairingDto pairing) async {
+    final knownConversationIds = widget.gateway.snapshots.value.conversations
+        .map((conversation) => conversation.id)
+        .toSet();
     final destination = await showDialog<String>(
       context: context,
       builder: (_) => ValueListenableBuilder<AppSnapshotDto>(
@@ -262,23 +266,42 @@ class _PairingScreenState extends State<PairingScreen> {
             }
           }
           if (current == null) {
+            ConversationDto? completedConversation;
+            for (final conversation in snapshot.conversations) {
+              if (!knownConversationIds.contains(conversation.id)) {
+                completedConversation = conversation;
+                break;
+              }
+            }
+            final completed = completedConversation != null;
             return AppModal(
-              title: 'Pairing finished',
+              title: completed ? 'Contact added' : 'Pairing finished',
               height: 320,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  const Icon(Icons.check_circle_outline, size: 48),
+                  Icon(
+                    completed
+                        ? Icons.mark_chat_unread_outlined
+                        : Icons.check_circle_outline,
+                    size: 48,
+                  ),
                   const SizedBox(height: 14),
-                  const Text(
-                    'This temporary invitation is no longer active. If it was approved, your new private conversation is available in Chats.',
+                  Text(
+                    completed
+                        ? 'Your contact was added securely. Open the new private conversation now.'
+                        : 'This temporary invitation is no longer active.',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 20),
                   FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop('chats'),
+                    onPressed: () => Navigator.of(context).pop(
+                      completed
+                          ? 'conversation:${completedConversation!.id}'
+                          : 'close',
+                    ),
                     icon: const Icon(Icons.forum_outlined),
-                    label: const Text('Open chats'),
+                    label: Text(completed ? 'Open conversation' : 'Close'),
                   ),
                 ],
               ),
@@ -312,7 +335,26 @@ class _PairingScreenState extends State<PairingScreen> {
         },
       ),
     );
-    if (destination == 'chats' && mounted) Navigator.of(context).pop();
+    if (!mounted || destination == null) return;
+    const prefix = 'conversation:';
+    if (!destination.startsWith(prefix)) return;
+    final conversationId = destination.substring(prefix.length);
+    ConversationDto? conversation;
+    for (final item in widget.gateway.snapshots.value.conversations) {
+      if (item.id == conversationId) {
+        conversation = item;
+        break;
+      }
+    }
+    if (conversation == null) return;
+    await Navigator.of(context).pushReplacement<void, void>(
+      MaterialPageRoute(
+        builder: (_) => ConversationScreen(
+          gateway: widget.gateway,
+          conversation: conversation!,
+        ),
+      ),
+    );
   }
 
   Future<void> _join() async {
@@ -325,7 +367,7 @@ class _PairingScreenState extends State<PairingScreen> {
         : _extractCode(raw);
     if (code == null) {
       setState(
-        () => _error = 'Use a six-character code or a valid Torca QR URI',
+        () => _error = 'Use a five-character code or a valid Torca QR URI',
       );
       return;
     }
@@ -409,7 +451,7 @@ class _PairingScreenState extends State<PairingScreen> {
         .replaceAll(RegExp(r'[\s-]'), '')
         .replaceAll('O', '0')
         .replaceAll(RegExp('[IL]'), '1');
-    if (RegExp(r'^[0-9A-HJKMNPQRSTVWXYZ]{6}$').hasMatch(direct)) {
+    if (RegExp(r'^[0-9A-HJKMNPQRSTVWXYZ]{5}$').hasMatch(direct)) {
       return direct;
     }
     final uri = Uri.tryParse(value);

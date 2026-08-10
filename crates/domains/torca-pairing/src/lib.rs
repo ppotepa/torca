@@ -38,9 +38,9 @@ impl fmt::Display for PairingSessionId {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PairingCode(String);
 impl PairingCode {
-    /// Creates the canonical six-character Crockford Base32 invitation code.
+    /// Creates the canonical five-character Crockford Base32 invitation code.
     ///
-    /// Presentation may group a code as `ABC-123`; spaces and separators are
+    /// Presentation may group a code as `ABC-12`; spaces and separators are
     /// deliberately ignored here so every entry point (manual input, QR and
     /// deep links) has one canonical representation.  Ambiguous `O`, `I` and
     /// `L` are accepted as their human-friendly `0`/`1` equivalents, while the
@@ -60,7 +60,7 @@ impl PairingCode {
                 other => other,
             })
             .collect();
-        if value.len() != 6 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
+        if value.len() != 5 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
         {
             return Err(PairingError::InvalidCode);
         }
@@ -78,15 +78,15 @@ mod pairing_code_tests {
 
     #[test]
     fn normalizes_human_friendly_crockford_input() {
-        let code = PairingCode::new("ab-c iol").expect("normalizable code");
-        assert_eq!(code.as_str(), "ABC101");
+        let code = PairingCode::new("ab-ciO").expect("normalizable code");
+        assert_eq!(code.as_str(), "ABC10");
     }
 
     #[test]
     fn rejects_legacy_and_ambiguous_alphabet_values() {
-        assert_eq!(PairingCode::new("ABCDEFGH"), Err(PairingError::InvalidCode));
-        assert_eq!(PairingCode::new("ABCDE"), Err(PairingError::InvalidCode));
-        assert_eq!(PairingCode::new("ABCU12"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCDEF"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCD"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCU1"), Err(PairingError::InvalidCode));
     }
 }
 

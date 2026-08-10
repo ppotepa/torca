@@ -313,7 +313,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let key = DatabaseKey::new([7_u8; 32]);
         let id = PairingSessionId::from_opaque(OpaqueId::from_u128(9));
-        let code = PairingCode::new("ABC123").expect("valid code");
+        let code = PairingCode::new("ABC12").expect("valid code");
         let session = PairingSession::creator(
             id,
             code,
@@ -346,7 +346,7 @@ mod tests {
         };
         let session = PairingSession::joiner(
             PairingSessionId::from_u128(14),
-            PairingCode::new("JOIN42").expect("code"),
+            PairingCode::new("J0N42").expect("code"),
             Timestamp::from_unix_millis(20_000).expect("timestamp"),
             proposal,
         );

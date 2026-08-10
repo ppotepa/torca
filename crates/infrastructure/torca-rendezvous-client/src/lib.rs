@@ -91,7 +91,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         creator_blob: Vec<u8>,
         slot_capability: RelaySlotCapability,
         creator_token: RelaySideToken,
-    ) -> Result<RelaySlotId, RendezvousClientError> {
+    ) -> Result<(RelaySlotId, torca_foundation::Timestamp), RendezvousClientError> {
         let response = self.exchange(RelayRequest::Open {
             code,
             expires_at,
@@ -100,7 +100,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
             creator_token,
         })?;
         match response {
-            RelayResponse::Opened { slot_id } => Ok(slot_id),
+            RelayResponse::Opened { slot_id, expires_at } => Ok((slot_id, expires_at)),
             _ => Err(RendezvousClientError::UnexpectedResponse),
         }
     }
@@ -110,10 +110,12 @@ impl<T: RelayTransport> RendezvousClient<T> {
         code: RelayCode,
         joiner_blob: Vec<u8>,
         joiner_token: RelaySideToken,
-    ) -> Result<(RelaySlotId, Vec<u8>), RendezvousClientError> {
+    ) -> Result<(RelaySlotId, torca_foundation::Timestamp, Vec<u8>), RendezvousClientError> {
         let response = self.exchange(RelayRequest::Join { code, joiner_blob, joiner_token })?;
         match response {
-            RelayResponse::Joined { slot_id, creator_blob } => Ok((slot_id, creator_blob)),
+            RelayResponse::Joined { slot_id, expires_at, creator_blob } => {
+                Ok((slot_id, expires_at, creator_blob))
+            }
             _ => Err(RendezvousClientError::UnexpectedResponse),
         }
     }
