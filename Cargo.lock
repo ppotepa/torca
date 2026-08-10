@@ -5080,7 +5080,11 @@ dependencies = [
  "torca-identity",
  "torca-messaging",
  "torca-pairing",
+ "torca-pairing-coordinator",
+ "torca-pairing-protocol",
  "torca-receipts",
+ "torca-relay",
+ "torca-relay-protocol",
  "torca-storage-sqlite",
 ]
 

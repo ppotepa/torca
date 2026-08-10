@@ -73,15 +73,28 @@ fn primary_journey_is_deterministic_across_bounded_components() {
 
     let contact_id = ContactId::from_u128(3);
     let conversation_id = ConversationId::from_u128(4);
+    let pairing_credential = credential(contact_id);
     let _ = engine
         .dispatch(EngineCommand::CompletePairing {
             session_id: pairing_id,
             contact_id,
             conversation_id,
-            credential: credential(contact_id),
+            credential: pairing_credential,
             at: ts(5),
         })
         .expect("pairing completes");
+    assert_eq!(
+        engine
+            .dispatch(EngineCommand::CompletePairing {
+                session_id: pairing_id,
+                contact_id,
+                conversation_id,
+                credential: pairing_credential,
+                at: ts(5),
+            })
+            .expect("retrying a committed pairing is idempotent"),
+        EngineResult::PairingCompleted { contact_id, conversation_id }
+    );
 
     let message_id = MessageId::from_u128(5);
     let _ = engine

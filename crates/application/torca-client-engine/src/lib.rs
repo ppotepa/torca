@@ -381,21 +381,32 @@ where
                         "peer credential contact does not match pairing".into(),
                     ));
                 }
-                if ContactRepository::get(&self.relationships, contact_id)
-                    .map_err(map_error)?
-                    .is_some()
-                    || ConversationRepository::get(&self.relationships, conversation_id)
-                        .map_err(map_error)?
-                        .is_some()
-                    || ConversationRepository::for_contact(&self.relationships, contact_id)
-                        .map_err(map_error)?
-                        .is_some()
-                    || PeerCredentialRepository::credential_for_contact(
-                        &self.relationships,
-                        contact_id,
-                    )
-                    .map_err(map_error)?
-                    .is_some()
+                let existing_contact =
+                    ContactRepository::get(&self.relationships, contact_id).map_err(map_error)?;
+                let existing_conversation =
+                    ConversationRepository::get(&self.relationships, conversation_id)
+                        .map_err(map_error)?;
+                let existing_for_contact =
+                    ConversationRepository::for_contact(&self.relationships, contact_id)
+                        .map_err(map_error)?;
+                let existing_credential = PeerCredentialRepository::credential_for_contact(
+                    &self.relationships,
+                    contact_id,
+                )
+                .map_err(map_error)?;
+                if existing_contact.is_some()
+                    && existing_conversation
+                        .as_ref()
+                        .is_some_and(|conversation| conversation.contact_id() == contact_id)
+                    && existing_for_contact.is_some()
+                    && existing_credential.is_some()
+                {
+                    return Ok(EngineResult::PairingCompleted { contact_id, conversation_id });
+                }
+                if existing_contact.is_some()
+                    || existing_conversation.is_some()
+                    || existing_for_contact.is_some()
+                    || existing_credential.is_some()
                 {
                     return Err(EngineError(
                         "contact, conversation or peer credential already exists".into(),

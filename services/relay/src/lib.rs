@@ -203,9 +203,9 @@ impl RelayBroker {
     }
 
     fn record_failed_join(&mut self, now: Timestamp) -> Result<(), RelayProtocolError> {
-        let fresh_window = self.failed_join_window_started_at.map_or(true, |started_at| {
+        let fresh_window = self.failed_join_window_started_at.is_none_or(|started_at| {
             now.duration_since(started_at)
-                .map_or(true, |elapsed| elapsed >= std::time::Duration::from_secs(60))
+                .is_none_or(|elapsed| elapsed >= std::time::Duration::from_secs(60))
         });
         if fresh_window {
             self.failed_join_window_started_at = Some(now);

@@ -75,10 +75,7 @@ where
                 .filter(|s| {
                     !matches!(
                         s.state(),
-                        PairingState::Rejected
-                            | PairingState::Cancelled
-                            | PairingState::Expired
-                            | PairingState::Completed
+                        PairingState::Rejected | PairingState::Cancelled | PairingState::Expired
                     )
                 })
                 .map(|s| s.id())

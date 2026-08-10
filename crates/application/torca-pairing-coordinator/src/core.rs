@@ -274,9 +274,21 @@ where
             .ok_or(PairingCoordinatorError::SessionNotFound)?;
         let blobs = self.rendezvous.poll(session.slot, session.token)?;
         let mut envelopes = Vec::with_capacity(blobs.len());
+        let mut remote_public_key = session.remote_public_key;
         for blob in blobs {
+            // The rendezvous service delivers the joiner's ephemeral public key to the creator
+            // exactly once as the join operation is accepted. It is transport setup material,
+            // not an encrypted protocol envelope.
+            if remote_public_key.is_none() && blob.len() == 32 {
+                let key = blob.try_into().map_err(|_| PairingCoordinatorError::InvalidBlob)?;
+                remote_public_key = Some(key);
+                if let Some(stored) = self.sessions.get_mut(&session_id) {
+                    stored.remote_public_key = Some(key);
+                }
+                continue;
+            }
             let encrypted = decode_encrypted(&blob)?;
-            let remote = match session.remote_public_key {
+            let remote = match remote_public_key {
                 Some(expected) if expected != encrypted.sender_public_key => {
                     return Err(PairingCoordinatorError::InvalidBlob);
                 }
@@ -296,7 +308,8 @@ where
                 .validate_pairing_id(session_id.to_opaque())
                 .map_err(|_| PairingCoordinatorError::Protocol)?;
             envelopes.push(envelope);
-            if session.remote_public_key.is_none() {
+            if remote_public_key.is_none() {
+                remote_public_key = Some(remote);
                 if let Some(stored) = self.sessions.get_mut(&session_id) {
                     stored.remote_public_key = Some(remote);
                 }
@@ -350,6 +363,17 @@ where
         let release_result = self.crypto.release_ephemeral_key(session.key.handle);
         relay_result?;
         release_result
+    }
+
+    /// Releases local ephemeral material without closing the relay slot.
+    ///
+    /// Completion acknowledgements are bidirectional. The creator must leave the slot available
+    /// long enough for the joiner to fetch the final acknowledgement; the slot then expires on
+    /// the relay's authoritative short TTL.
+    pub fn detach(&mut self, session_id: PairingSessionId) -> Result<(), PairingCoordinatorError> {
+        let session =
+            self.sessions.remove(&session_id).ok_or(PairingCoordinatorError::SessionNotFound)?;
+        self.crypto.release_ephemeral_key(session.key.handle)
     }
 
     pub fn into_parts(self) -> (R, C) {

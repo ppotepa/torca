@@ -9,8 +9,8 @@ use torca_pairing::{
     PairingCode, PairingRole, PairingSession, PairingSessionId, PairingState, PeerProposal,
 };
 use torca_pairing_protocol::{
-    PairingApproval, PairingCancellation, PairingCompletion, PairingEnvelope, PairingOffer,
-    PairingPayload, PairingRejection,
+    PairingApproval, PairingCancellation, PairingCompletion, PairingCompletionAck, PairingEnvelope,
+    PairingOffer, PairingPayload, PairingRejection,
 };
 
 use crate::{
@@ -41,6 +41,7 @@ pub struct PairingInvitation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingCompletedContact {
     pub contact_id: ContactId,
+    pub conversation_id: ConversationId,
     pub display_name: String,
 }
 
@@ -50,6 +51,7 @@ pub struct PairingPollReport {
     pub offers_applied: usize,
     pub approvals_applied: usize,
     pub completions_applied: usize,
+    pub completion_acks_applied: usize,
     pub rejections_applied: usize,
     pub cancellations_applied: usize,
     pub completed_contact: Option<PairingCompletedContact>,
@@ -98,6 +100,8 @@ pub struct PairingRuntime<R, C, A, S> {
     local_offers: BTreeMap<PairingSessionId, PairingEnvelope>,
     remote_offers: BTreeMap<PairingSessionId, PairingEnvelope>,
     completion_sent: BTreeSet<PairingSessionId>,
+    completion_applied: BTreeSet<PairingSessionId>,
+    completion_ack_sent: BTreeSet<PairingSessionId>,
 }
 
 impl<R, C, A, S> PairingRuntime<R, C, A, S>
@@ -121,6 +125,8 @@ where
             local_offers: BTreeMap::new(),
             remote_offers: BTreeMap::new(),
             completion_sent: BTreeSet::new(),
+            completion_applied: BTreeSet::new(),
+            completion_ack_sent: BTreeSet::new(),
         }
     }
 
@@ -152,7 +158,7 @@ where
         session_id: PairingSessionId,
         code: PairingCode,
         local: LocalPairingContext,
-        now: Timestamp,
+        _now: Timestamp,
     ) -> Result<(), PairingRuntimeError> {
         let local_offer = self.local_offer(session_id, local)?;
         let (_, expires_at) = self.coordinator.join(session_id, &code, &local_offer)?;
@@ -346,8 +352,13 @@ where
                 }
                 PairingPayload::Completion(completion) => {
                     let completed = self.apply_completion(session_id, *completion, now)?;
+                    self.send_completion_ack(session_id, completion.transcript_digest)?;
                     report.completions_applied += 1;
                     report.completed_contact = Some(completed);
+                }
+                PairingPayload::CompletionAck(ack) => {
+                    self.apply_completion_ack(session_id, *ack)?;
+                    report.completion_acks_applied += 1;
                     break;
                 }
                 PairingPayload::Rejection(_) => {
@@ -386,6 +397,8 @@ where
         self.local_offers.remove(&session_id);
         self.remote_offers.remove(&session_id);
         self.completion_sent.remove(&session_id);
+        self.completion_applied.remove(&session_id);
+        self.completion_ack_sent.remove(&session_id);
         self.coordinator.close(session_id).map_err(Into::into)
     }
 
@@ -425,18 +438,31 @@ where
         now: Timestamp,
     ) -> Result<PairingCompletedContact, PairingRuntimeError> {
         let session = self.session(session_id)?;
-        if !session.can_complete(now) {
-            return Err(PairingRuntimeError::InvalidCompletion);
-        }
         let digest = self.transcript_digest(session_id, session.role())?;
         if completion.transcript_digest != digest {
             return Err(PairingRuntimeError::InvalidCompletion);
         }
         let display_name = self.remote_display_name(session_id)?;
-        let secret = self.coordinator.derive_peer_secret(session_id, digest)?;
-        let secret_handle = self.peer_secrets.store_peer_secret(secret)?;
         let contact_id = ContactId::from_opaque(session_id.to_opaque());
         let conversation_id = ConversationId::from_opaque(session_id.to_opaque());
+        if self.completion_applied.contains(&session_id) {
+            return Ok(PairingCompletedContact { contact_id, conversation_id, display_name });
+        }
+        let overview = self.engine.overview_snapshot().map_err(|_| PairingRuntimeError::Engine)?;
+        let already_completed = overview.contacts.iter().any(|contact| contact.id() == contact_id)
+            && overview
+                .conversations
+                .iter()
+                .any(|conversation| conversation.id() == conversation_id);
+        if already_completed {
+            self.completion_applied.insert(session_id);
+            return Ok(PairingCompletedContact { contact_id, conversation_id, display_name });
+        }
+        if !session.can_complete(now) {
+            return Err(PairingRuntimeError::InvalidCompletion);
+        }
+        let secret = self.coordinator.derive_peer_secret(session_id, digest)?;
+        let secret_handle = self.peer_secrets.store_peer_secret(secret)?;
         let local_capability_id = self.local_capability_id(session_id)?;
         let credential = PeerCredential::new(contact_id, local_capability_id, secret_handle)
             .map_err(|_| PairingRuntimeError::InvalidCompletion)?;
@@ -449,14 +475,47 @@ where
         });
         match durable {
             Ok(EngineResult::PairingCompleted { .. }) => {
-                self.cleanup_terminal(session_id);
-                Ok(PairingCompletedContact { contact_id, display_name })
+                self.completion_applied.insert(session_id);
+                Ok(PairingCompletedContact { contact_id, conversation_id, display_name })
             }
             Ok(_) | Err(_) => {
                 let _ = self.peer_secrets.delete_peer_secret(secret_handle);
                 Err(PairingRuntimeError::Engine)
             }
         }
+    }
+
+    fn send_completion_ack(
+        &mut self,
+        session_id: PairingSessionId,
+        transcript_digest: [u8; 32],
+    ) -> Result<(), PairingRuntimeError> {
+        if self.completion_ack_sent.insert(session_id) {
+            self.coordinator.push(
+                session_id,
+                &PairingEnvelope {
+                    pairing_id: session_id.to_opaque(),
+                    payload: PairingPayload::CompletionAck(PairingCompletionAck {
+                        transcript_digest,
+                    }),
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    fn apply_completion_ack(
+        &mut self,
+        session_id: PairingSessionId,
+        ack: PairingCompletionAck,
+    ) -> Result<(), PairingRuntimeError> {
+        let session = self.session(session_id)?;
+        let digest = self.transcript_digest(session_id, session.role())?;
+        if ack.transcript_digest != digest || !self.completion_applied.contains(&session_id) {
+            return Err(PairingRuntimeError::InvalidCompletion);
+        }
+        self.cleanup_completed(session_id);
+        Ok(())
     }
 
     fn transcript_digest(
@@ -497,6 +556,16 @@ where
     fn cleanup_terminal(&mut self, session_id: PairingSessionId) {
         let _ = self.engine.dispatch(EngineCommand::RemovePairing { session_id });
         let _ = self.close_transport(session_id);
+    }
+
+    fn cleanup_completed(&mut self, session_id: PairingSessionId) {
+        let _ = self.engine.dispatch(EngineCommand::RemovePairing { session_id });
+        self.local_offers.remove(&session_id);
+        self.remote_offers.remove(&session_id);
+        self.completion_sent.remove(&session_id);
+        self.completion_applied.remove(&session_id);
+        self.completion_ack_sent.remove(&session_id);
+        let _ = self.coordinator.detach(session_id);
     }
 
     fn session(&self, session_id: PairingSessionId) -> Result<PairingSession, PairingRuntimeError> {

@@ -9,7 +9,7 @@ pub const MAX_DISPLAY_NAME_LEN: usize = 256;
 pub const MAX_ONION_ADDRESS_LEN: usize = 255;
 pub const MAX_APPROVAL_PROOF_LEN: usize = 512;
 const MAGIC: &[u8; 4] = b"TRCP";
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -19,6 +19,7 @@ pub enum PairingPayloadKind {
     Completion = 3,
     Rejection = 4,
     Cancellation = 5,
+    CompletionAck = 6,
 }
 
 #[must_use]
@@ -79,6 +80,12 @@ impl PairingApproval {
 pub struct PairingCompletion {
     pub transcript_digest: [u8; 32],
 }
+/// Confirms that the recipient durably created its contact and conversation.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PairingCompletionAck {
+    pub transcript_digest: [u8; 32],
+}
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PairingRejection;
@@ -93,6 +100,7 @@ pub enum PairingPayload {
     Completion(PairingCompletion),
     Rejection(PairingRejection),
     Cancellation(PairingCancellation),
+    CompletionAck(PairingCompletionAck),
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,6 +116,7 @@ impl PairingEnvelope {
             PairingPayload::Completion(_) => PairingPayloadKind::Completion,
             PairingPayload::Rejection(_) => PairingPayloadKind::Rejection,
             PairingPayload::Cancellation(_) => PairingPayloadKind::Cancellation,
+            PairingPayload::CompletionAck(_) => PairingPayloadKind::CompletionAck,
         }
     }
     pub fn validate_pairing_id(&self, expected: OpaqueId) -> Result<(), PairingProtocolError> {
@@ -123,7 +132,8 @@ impl PairingEnvelope {
             PairingPayload::Approval(a) => a.validate()?,
             PairingPayload::Completion(_)
             | PairingPayload::Rejection(_)
-            | PairingPayload::Cancellation(_) => {}
+            | PairingPayload::Cancellation(_)
+            | PairingPayload::CompletionAck(_) => {}
         }
         let mut out = Vec::with_capacity(320);
         out.extend_from_slice(MAGIC);
@@ -134,6 +144,7 @@ impl PairingEnvelope {
             PairingPayload::Offer(o) => encode_offer(o, &mut out)?,
             PairingPayload::Approval(a) => encode_approval(a, &mut out)?,
             PairingPayload::Completion(c) => out.extend_from_slice(&c.transcript_digest),
+            PairingPayload::CompletionAck(ack) => out.extend_from_slice(&ack.transcript_digest),
             PairingPayload::Rejection(_) | PairingPayload::Cancellation(_) => {}
         }
         if out.len() > MAX_PAIRING_PAYLOAD_LEN {
@@ -161,6 +172,9 @@ impl PairingEnvelope {
             3 => PairingPayload::Completion(PairingCompletion { transcript_digest: c.array_32()? }),
             4 => PairingPayload::Rejection(PairingRejection),
             5 => PairingPayload::Cancellation(PairingCancellation),
+            6 => PairingPayload::CompletionAck(PairingCompletionAck {
+                transcript_digest: c.array_32()?,
+            }),
             _ => return Err(PairingProtocolError::UnknownPayloadKind(kind)),
         };
         if !c.is_empty() {
@@ -304,7 +318,7 @@ impl fmt::Display for PairingProtocolError {
 impl std::error::Error for PairingProtocolError {}
 #[cfg(test)]
 mod tests {
-    use super::{PairingEnvelope, PairingOffer, PairingPayload};
+    use super::{PairingCompletionAck, PairingEnvelope, PairingOffer, PairingPayload};
     use torca_foundation::OpaqueId;
     fn offer(pairing: u128) -> PairingEnvelope {
         PairingEnvelope {
@@ -330,5 +344,17 @@ mod tests {
         assert_eq!(decoded, e);
         assert!(decoded.validate_pairing_id(OpaqueId::from_u128(1)).is_ok());
         assert!(decoded.validate_pairing_id(OpaqueId::from_u128(99)).is_err());
+    }
+
+    #[test]
+    fn completion_ack_round_trips_exactly() {
+        let envelope = PairingEnvelope {
+            pairing_id: OpaqueId::from_u128(1),
+            payload: PairingPayload::CompletionAck(PairingCompletionAck {
+                transcript_digest: [7; 32],
+            }),
+        };
+        let encoded = envelope.encode().expect("encode");
+        assert_eq!(PairingEnvelope::decode(&encoded).expect("decode"), envelope);
     }
 }
