@@ -1,0 +1,17 @@
+[package]
+name = "saturating-time"
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "A trait for limits and saturations on types inside std::time"
+repository = "https://codeberg.org/cve/saturating-time"
+
+[features]
+nightly = []
+
+[lib]
+name = "saturating_time"
+path = "src/lib.rs"
+
+[workspace]
