@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,6 +14,7 @@ use torca_pairing_coordinator::{
 };
 use torca_pairing_driver::RuntimePairingDriver;
 use torca_platform::{PlatformServices, SecretNamespace};
+use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayRequest, RelayResponse};
 use torca_rendezvous_client::{RendezvousClient, TorRelayTransport};
 use torca_runtime::{
     OwnedTorDriver, RelayProbe, RuntimeDriverError, RuntimeHandle, RuntimeOwner, SharedTorEndpoint,
@@ -37,12 +39,35 @@ struct TorRelayProbe {
 
 impl RelayProbe for TorRelayProbe {
     fn probe(&self) -> Result<(), RuntimeDriverError> {
-        let stream = self
+        let mut stream = self
             .tor
             .connect_onion_with_timeout(&self.host, self.port, Duration::from_secs(15))
             .map_err(|_| RuntimeDriverError::Communication)?;
-        stream.peer_addr().map_err(|_| RuntimeDriverError::Communication)?;
-        Ok(())
+        stream
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .map_err(|_| RuntimeDriverError::Communication)?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(15)))
+            .map_err(|_| RuntimeDriverError::Communication)?;
+        let frame = RelayCodec::encode_request(&RelayRequest::Health)
+            .map_err(|_| RuntimeDriverError::Communication)?;
+        stream.write_all(&frame).map_err(|_| RuntimeDriverError::Communication)?;
+        let mut header = [0_u8; RELAY_HEADER_LEN];
+        stream.read_exact(&mut header).map_err(|_| RuntimeDriverError::Communication)?;
+        let frame_len = RelayCodec::frame_len_from_header(&header)
+            .map_err(|_| RuntimeDriverError::Communication)?;
+        let mut response = Vec::with_capacity(frame_len);
+        response.extend_from_slice(&header);
+        response.resize(frame_len, 0);
+        stream
+            .read_exact(&mut response[RELAY_HEADER_LEN..])
+            .map_err(|_| RuntimeDriverError::Communication)?;
+        match RelayCodec::decode_response(&response)
+            .map_err(|_| RuntimeDriverError::Communication)?
+        {
+            RelayResponse::Healthy => Ok(()),
+            _ => Err(RuntimeDriverError::Communication),
+        }
     }
 }
 pub(crate) fn spawn_production_runtime(

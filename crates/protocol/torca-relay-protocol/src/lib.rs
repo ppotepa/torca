@@ -79,6 +79,8 @@ impl RelayCode {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayRequest {
+    /// Unauthenticated protocol-level health check.
+    Health,
     /// Opens a short-lived slot. All capabilities are generated client-side with a CSPRNG.
     Open {
         code: RelayCode,
@@ -108,6 +110,7 @@ pub enum RelaySide {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayResponse {
+    Healthy,
     Opened {
         slot_id: RelaySlotId,
         /// Relay-clock deadline. Clients project this value instead of trusting
@@ -174,6 +177,7 @@ impl RelayCodec {
     pub fn encode_request(request: &RelayRequest) -> Result<Vec<u8>, RelayCodecError> {
         let mut payload = Vec::new();
         let kind = match request {
+            RelayRequest::Health => 0,
             RelayRequest::Open {
                 code,
                 expires_at,
@@ -222,6 +226,7 @@ impl RelayCodec {
         }
         let mut cursor = Cursor::new(payload);
         let request = match kind {
+            0 => RelayRequest::Health,
             1 => RelayRequest::Open {
                 code: cursor.code()?,
                 expires_at: cursor.timestamp()?,
@@ -257,6 +262,7 @@ impl RelayCodec {
     pub fn encode_response(response: &RelayResponse) -> Result<Vec<u8>, RelayCodecError> {
         let mut payload = Vec::new();
         let kind = match response {
+            RelayResponse::Healthy => 7,
             RelayResponse::Opened { slot_id, expires_at } => {
                 payload.extend_from_slice(slot_id.0.as_bytes());
                 payload.extend_from_slice(&expires_at.to_unix_millis().to_be_bytes());
@@ -298,6 +304,7 @@ impl RelayCodec {
         }
         let mut cursor = Cursor::new(payload);
         let response = match kind {
+            7 => RelayResponse::Healthy,
             1 => RelayResponse::Opened {
                 slot_id: RelaySlotId(cursor.id()?),
                 expires_at: cursor.timestamp()?,
@@ -540,6 +547,14 @@ mod tests {
         };
         let encoded = RelayCodec::encode_request(&request).expect("encode");
         assert_eq!(RelayCodec::decode_request(&encoded).expect("decode"), request);
+    }
+
+    #[test]
+    fn health_check_round_trips_exactly() {
+        let encoded = RelayCodec::encode_request(&RelayRequest::Health).expect("encode");
+        assert_eq!(RelayCodec::decode_request(&encoded).expect("decode"), RelayRequest::Health);
+        let encoded = RelayCodec::encode_response(&RelayResponse::Healthy).expect("encode");
+        assert_eq!(RelayCodec::decode_response(&encoded).expect("decode"), RelayResponse::Healthy);
     }
 
     #[test]

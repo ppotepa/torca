@@ -5124,6 +5124,7 @@ dependencies = [
  "torca-platform",
  "torca-platform-android",
  "torca-platform-windows",
+ "torca-relay-protocol",
  "torca-rendezvous-client",
  "torca-runtime",
  "torca-storage-sqlite",

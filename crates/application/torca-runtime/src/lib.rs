@@ -359,6 +359,20 @@ impl RelayProbeState {
         ProbeStatus::Degraded
     }
 
+    fn reset_for_network_change(&mut self) {
+        // Drop an in-flight worker result; a new probe must represent the new
+        // network, not a socket created on the previous route.
+        self.result_rx = None;
+        self.started_at = None;
+        self.failures = 0;
+        self.latency_ms = None;
+        self.next_retry_at = std::time::Instant::now();
+        self.status =
+            if self.probe.is_some() { ProbeStatus::Checking } else { ProbeStatus::Unknown };
+        self.code =
+            if self.probe.is_some() { "RELAY_NETWORK_CHANGED" } else { "RELAY_PROBE_UNCONFIGURED" };
+    }
+
     fn result(&self, now: Timestamp) -> ProbeResult {
         ProbeResult {
             target: ProbeTarget::Relay,
@@ -392,6 +406,7 @@ enum RuntimeCommand {
     AttachmentSnapshot(Sender<Result<Vec<AttachmentView>, RuntimeDriverError>>),
     NetworkSnapshot(Sender<Result<NetworkSnapshot, RuntimeDriverError>>),
     Diagnostics(Sender<String>),
+    NetworkChanged,
     Wake,
     Shutdown(Sender<()>),
 }
@@ -484,6 +499,12 @@ impl RuntimeHandle {
     pub fn wake_delivery(&self) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::Wake);
     }
+
+    /// Notify the actor that the platform network changed. This resets the
+    /// relay supervisor immediately instead of waiting for its backoff timer.
+    pub fn network_changed(&self) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::NetworkChanged);
+    }
 }
 
 pub struct RuntimeOwner {
@@ -564,6 +585,10 @@ impl RuntimeOwner {
         }
         Ok(())
     }
+
+    pub fn network_changed(&self) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::NetworkChanged);
+    }
 }
 
 fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
@@ -590,6 +615,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             Ok(RuntimeCommand::Shutdown(response)) => {
                 let _ = response.send(());
                 break;
+            }
+            Ok(RuntimeCommand::NetworkChanged) => {
+                relay.reset_for_network_change();
+                let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+                transport_activity.mark_tor(now);
+                transport_activity.mark_relay(now);
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Relay,
+                    HealthState::Starting,
+                    "RELAY_NETWORK_CHANGED",
+                );
             }
             Ok(command) => {
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
@@ -934,6 +973,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(diagnostics.export_json());
         }
         RuntimeCommand::Wake => {}
+        RuntimeCommand::NetworkChanged => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),
     }
 }

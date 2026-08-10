@@ -29,6 +29,7 @@ torca-pairing-driver = { path = "../../infrastructure/torca-pairing-driver" }
 torca-platform = { path = "../torca-platform" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
+torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
 torca-runtime = { path = "../../application/torca-runtime" }
 torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
 torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor" }

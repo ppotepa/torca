@@ -70,6 +70,7 @@ pub struct TorcaRuntime {
     host_retry_at: Option<Instant>,
     host_failures: u32,
     host_state_hint: TorState,
+    network_changed_pending: bool,
     pub(crate) last_result_json: String,
     pub(crate) snapshot_json: String,
     pub(crate) query_json: String,
@@ -138,6 +139,7 @@ impl TorcaRuntime {
             host_retry_at: None,
             host_failures: 0,
             host_state_hint: TorState::Stopped,
+            network_changed_pending: false,
             last_result_json: success_result("initialized"),
             snapshot_json: empty_snapshot_json(),
             query_json: "{\"messages\":[],\"hasMore\":false}".into(),
@@ -612,6 +614,13 @@ impl TorcaRuntime {
             return ABI_ERROR;
         }
         self.log("runtime", Level::Info, "lifecycle", "LIFECYCLE_EVENT", event);
+        if event == "network_changed" {
+            if let Some(host) = &self.host {
+                host.network_changed();
+            } else {
+                self.network_changed_pending = true;
+            }
+        }
         if event == "terminating" { self.close() } else { ABI_OK }
     }
 
@@ -835,6 +844,10 @@ impl TorcaRuntime {
             self.host_start_deadline = None;
             match result {
                 Ok((handle, owner)) => {
+                    if self.network_changed_pending {
+                        handle.network_changed();
+                        self.network_changed_pending = false;
+                    }
                     self.bridge.attach_runtime(handle);
                     self.host = Some(owner);
                     self.host_retry_at = None;

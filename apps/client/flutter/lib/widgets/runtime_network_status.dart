@@ -202,8 +202,9 @@ class _TransportLightState extends State<_TransportLight>
         ? ''
         : ' · ${widget.indicator.latencyMs} ms';
     return Tooltip(
-      message: '${widget.label}: $status$latency',
-      child: AnimatedBuilder(
+      message: '${widget.label}: $status$latency (${widget.indicator.code})',
+      child: RepaintBoundary(
+        child: AnimatedBuilder(
         animation: Listenable.merge(<Listenable>[_breathing, _pulse]),
         builder: (context, child) {
           final glow =
@@ -219,6 +220,13 @@ class _TransportLightState extends State<_TransportLight>
               border: Border.all(
                 color: color.withValues(alpha: 0.38 + glow.clamp(0, 0.45)),
               ),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: color.withValues(alpha: (0.10 + glow * 0.32).clamp(0, 0.42)),
+                  blurRadius: 8 + glow * 10,
+                  spreadRadius: glow * 1.5,
+                ),
+              ],
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -251,7 +259,8 @@ class _TransportLightState extends State<_TransportLight>
               ],
             ),
           );
-        },
+          },
+        ),
       ),
     );
   }
@@ -275,5 +284,5 @@ Color _color(BuildContext context, String state) => switch (state) {
   'connecting' => context.semanticColors.connectionConnecting,
   'degraded' => context.semanticColors.warning,
   'failed' || 'unreachable' => context.semanticColors.connectionOffline,
-  _ => context.semanticColors.connectionOffline,
+  _ => context.semanticColors.connectionConnecting,
 };

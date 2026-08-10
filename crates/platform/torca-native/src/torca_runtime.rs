@@ -49,8 +49,18 @@ static METADATA: OnceLock<Vec<u8>> = OnceLock::new();
 static INITIALIZATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 enum ActorMessage {
-    Invoke { request: String, response: SyncSender<Vec<u8>> },
-    Shutdown { response: SyncSender<()> },
+    Invoke {
+        request: String,
+        response: SyncSender<Vec<u8>>,
+    },
+    #[allow(dead_code)]
+    Lifecycle {
+        event: String,
+        response: SyncSender<i32>,
+    },
+    Shutdown {
+        response: SyncSender<()>,
+    },
 }
 
 struct RuntimeHandleInner {
@@ -241,6 +251,9 @@ fn actor_loop(receiver: Receiver<ActorMessage>, mut state: ActorState) {
             ActorMessage::Invoke { request, response } => {
                 let _ = response.send(state.invoke(&request));
             }
+            ActorMessage::Lifecycle { event, response } => {
+                let _ = response.send(state.runtime.lifecycle(&event));
+            }
             ActorMessage::Shutdown { response } => {
                 let _ = state.runtime.close();
                 let _ = response.send(());
@@ -248,6 +261,25 @@ fn actor_loop(receiver: Receiver<ActorMessage>, mut state: ActorState) {
             }
         }
     }
+}
+
+#[allow(dead_code)]
+fn dispatch_lifecycle(event: &str) -> i32 {
+    let registry = REGISTRY.get_or_init(|| Mutex::new(None));
+    let Some(inner) = registry.lock().ok().and_then(|guard| guard.as_ref().cloned()) else {
+        return -1;
+    };
+    let (tx, rx) = mpsc::sync_channel(1);
+    if send_with_timeout(
+        &inner.sender,
+        ActorMessage::Lifecycle { event: event.to_owned(), response: tx },
+        Duration::from_secs(2),
+    )
+    .is_err()
+    {
+        return -1;
+    }
+    rx.recv_timeout(DEFAULT_QUERY_TIMEOUT).unwrap_or(-1)
 }
 
 impl ActorState {
@@ -562,6 +594,18 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeRuntimeAvai
     registry.lock().map_or(0, |guard| {
         u8::from(guard.as_ref().is_some_and(|value| value.startup_error.is_none()))
     })
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeLifecycleEvent(
+    env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    event: jni::sys::jstring,
+) -> jni::sys::jboolean {
+    let Ok(mut env) = (unsafe { jni::JNIEnv::from_raw(env) }) else { return 0 };
+    let Ok(event) = env.get_string(&event) else { return 0 };
+    u8::from(dispatch_lifecycle(event.to_string_lossy().as_ref()) == ABI_OK)
 }
 
 #[cfg(target_os = "android")]

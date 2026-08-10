@@ -80,6 +80,7 @@ impl RelayBroker {
     ) -> Result<RelayResponse, RelayProtocolError> {
         self.expire(now);
         match request {
+            RelayRequest::Health => Ok(RelayResponse::Healthy),
             RelayRequest::Open {
                 code,
                 expires_at,
