@@ -1,14 +1,17 @@
 # Infrastructure libraries
 
-Infrastructure libraries implement ports required by domains and application workflows.
+Infrastructure crates provide concrete implementations of application/domain ports.
 
-Planned components:
+This layer owns SQLCipher persistence, production cryptographic adapters, in-process Tor/Arti integration, peer/network IO, rendezvous access, encrypted file/attachment handling and concrete communication composition.
 
-- [`torca-storage-sqlite`](torca-storage-sqlite/README.md)
-- [`torca-crypto`](torca-crypto/README.md)
-- [`torca-peer`](torca-peer/README.md)
-- Tor transport and peer framing are owned by [`torca-tor`](torca-tor/README.md).
-- [`torca-rendezvous-client`](torca-rendezvous-client/README.md)
-- [`torca-file-storage`](torca-file-storage/README.md)
+Important ownership rules:
 
-Concrete adapters are selected only in deployable compositions. Infrastructure types must not leak into domain public APIs.
+- Arti imports belong only to `torca-tor`;
+- operational SQL belongs to storage infrastructure;
+- cryptographic primitives and protected-secret handling stay out of presentation/contract code;
+- concrete adapters may depend inward on application/domain interfaces, not the reverse;
+- logging/observability should remain redacted or payload-free where possible.
+
+Infrastructure implementation details change frequently, so individual APIs are documented in source/Rustdoc rather than duplicated in per-crate README files.
+
+See [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) and [`../../SECURITY.md`](../../SECURITY.md).

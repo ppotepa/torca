@@ -1,12 +1,14 @@
 # Platform libraries
 
-Platform libraries expose stable application contracts to Flutter and native hosts.
+Platform crates form Torca's outer boundary with Flutter/native hosts and operating systems.
 
-Current components:
+- `torca-contract` maps presentation-safe commands/read models to the public application facade and owns deterministic contract serialization.
+- `torca-native` composes the production application/infrastructure graph and exposes the process-owned runtime through native host interfaces.
+- `torca-platform` defines shared platform services such as paths, protected secret namespaces, relay configuration, device/install identity and lifecycle capabilities.
+- Windows/Android crates implement genuine OS-specific services.
 
-- [`torca-contract`](torca-contract/README.md): canonical operation metadata and contract-drift checks.
-- `torca-native`: the process runtime registry, minimal C ABI and Android JNI boundary.
-- `torca-platform`, `torca-platform-windows`, `torca-platform-android`: operating-system services and
-  protected-secret/path adapters.
+The contract is a serialization/compatibility boundary, not a second application layer. Business/security policy should remain in domains/application.
 
-Platform code is an adapter. It must not reimplement pairing, messaging, retries or persistence.
+Platform-specific conditional compilation belongs under this layer. Flutter platform behavior belongs under `apps/client/flutter/lib/platform`.
+
+See [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) and [`../../SECURITY.md`](../../SECURITY.md).

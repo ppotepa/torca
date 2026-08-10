@@ -1,104 +1,120 @@
 # Torca
 
-Torca is a privacy-focused 1:1 messenger built around local identities, Tor onion services, encrypted
-local storage and explicit contact pairing. Windows and Android use the same responsive Flutter client
-and the same Rust runtime; platform code is limited to operating-system integration.
+Torca is an experimental privacy-focused messenger built around local identities, direct peer-to-peer communication over Tor, encrypted local state, and explicit contact pairing.
 
-The previous [`ppotepa/tOrca`](https://github.com/ppotepa/tOrca) repository is a requirements/reference
-source, not a second active implementation.
+The project is under active alpha development. The codebase changes quickly, so this README and the linked architecture/security documents describe stable responsibilities and design direction rather than every type, protocol field, timeout, or release-specific migration.
 
-## Current engineering state
+## Product direction
 
-The active code line is the unified baseline and is being hardened incrementally. Source validation and
-platform artifact validation are separate gates; neither is a claim that every planned architecture
-improvement is complete. Start with [`0.2_PROGRESS.md`](0.2_PROGRESS.md) for the current scope and known
-gaps.
+Torca aims to become a practical everyday private messenger without turning normal conversations into traffic through a central message service.
 
-The baseline provides a reliable daily-use 1:1 messenger:
+The current direction is:
 
-- local installation identity and encrypted SQLCipher persistence;
-- short-lived pairing codes/QR with explicit approval;
-- direct authenticated peer delivery through Tor onion services;
-- durable message retry, delivered/read receipts and reply-to;
-- paged/searchable conversation history and conversation summaries;
-- encrypted/resumable attachments;
-- per-contact peer health and redacted diagnostics;
-- local Safety Number verification with identity-change send blocking;
-- notification privacy and host-level screen-capture protection; and
-- one shared responsive Flutter application for Windows and Android.
+- one responsive Flutter client shared across supported desktop and mobile targets;
+- one Rust application/runtime implementation for identity, pairing, messaging, persistence, security, Tor connectivity, delivery and background work;
+- direct authenticated peer communication through Tor onion services after contacts are paired;
+- local encrypted history and durable offline/retry state;
+- explicit trust and contact verification instead of a central account directory;
+- a small untrusted rendezvous relay used for pairing, not for normal messages or message history;
+- platform-specific code only for genuine operating-system capabilities such as protected secrets, lifecycle, notifications, window integration and secure display behavior;
+- architecture rules that are simple enough to maintain and strict enough to prevent mobile/desktop business logic from diverging.
 
-Calls, groups, multi-device sync, public discovery, cloud backup and Linux production composition are
-outside this baseline.
+Torca is not trying to reproduce every Telegram or WhatsApp feature at once. Reliability, privacy, predictable behavior and maintainable cross-platform development come first.
 
-## Security scope
-
-Torca authenticates peers and encrypts peer payloads with a protected pairwise secret established during
-pairing. It does **not** currently implement MLS or a Double Ratchet-style per-message key schedule, so
-forward secrecy and post-compromise security are not claimed for message history. See
-[`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md).
-
-## Architecture
+## System shape
 
 ```text
-responsive Flutter UI
-        |
-EngineGateway / generated DTOs
-        |
-torca-native C ABI
-        |
-process-owned TorcaRuntime actor
-        |
-SQLCipher / crypto / peer link / embedded torca-tor
+Flutter UI
+    |
+    v
+EngineGateway
+    |
+    v
+Torca presentation contract
+    |
+    v
+native C / platform boundary
+    |
+    v
+Client application facade
+    |
+    +--> single-writer client engine
+    +--> process runtime
+            |
+            +--> embedded Tor (Arti)
+            +--> pairing / rendezvous
+            +--> authenticated peer links
+            +--> durable message/control delivery
+            +--> attachments
+            +--> connectivity, probes and diagnostics
+    |
+    v
+SQLCipher repositories + protected secret stores
 ```
 
-Important rules:
+Flutter owns presentation, navigation and local UI preferences. Rust owns durable application state, identifiers, security-sensitive workflows, network state and background work. The platform contract exposes presentation-safe commands and read models; private key material and peer secrets do not belong in Flutter DTOs.
 
-- Flutter renders state and submits typed user intent; Rust owns identifiers, timestamps, durable state,
-  networking and security rules.
-- Business SQL lives in parameterized `.sql` files owned by storage crates.
-- Pairing may use the untrusted ephemeral relay; normal contact traffic is direct over Tor.
-- Production never silently falls back to the memory gateway.
-- Long-running network work is being isolated from the runtime actor; it must not prevent access to local
-  encrypted history.
-- Normal UI snapshots do not load the complete message history; conversation history uses bounded
-  SQLCipher paging/search.
+Tor runs in-process through Arti. Normal peer traffic is carried directly between onion endpoints. The relay exists only to help two active clients establish an explicitly approved relationship.
 
-## Repository layout
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the medium-depth system description.
+
+## Repository map
 
 ```text
-apps/client/flutter/      single responsive application client
-crates/foundation/        dependency-light primitives
-crates/domains/           domain vocabulary and invariants
-crates/application/       engine/runtime/application orchestration
-crates/infrastructure/    SQLCipher, crypto, files, peer and Tor adapters
-crates/protocol/          wire/pairing/relay/peer protocols
-crates/platform/          contract, native ABI and platform adapters
-services/relay/           ephemeral pairing rendezvous broker
-tests/torca-integration/  cross-crate integration journeys
-scripts/modules/          private build/source-policy/platform implementation
-tools/build/overlays/     required platform templates
-docs/0.2/                 current source track and audit
+apps/client/flutter/      shared responsive client UI
+crates/foundation/        stable low-level primitives
+crates/domains/           business/domain models and invariants
+crates/protocol/          bounded network/wire contracts
+crates/application/       use cases, runtime coordination and read models
+crates/infrastructure/    storage, crypto, Tor and concrete adapters
+crates/platform/          presentation contract, native ABI and OS adapters
+services/relay/           ephemeral pairing rendezvous service
+scripts/                  public development/build/deploy entrypoints
+tools/                    build support and generated-contract tooling
+tests/                    cross-component integration tests
+third_party/              narrowly scoped vendored/upstream patches
 ```
 
-## Developer workflow
+The root `Cargo.toml` is the source of truth for active Rust workspace members.
 
-Public entrypoints remain deliberately small:
+## Development
+
+Public workflows are intentionally small:
 
 ```powershell
-./scripts/build.ps1
-./scripts/run.ps1
-./scripts/deploy.ps1
+# Source, Rust and Flutter validation path
+./scripts/build.ps1 -Target check
+
+# Run the shared client
+./scripts/run.ps1 -Target windows
+./scripts/run.ps1 -Target android
+
+# Build/install/run through the deployment orchestrator
+./scripts/deploy.ps1 -Target windows
+./scripts/deploy.ps1 -Target android
 ```
 
-`build.ps1` starts with a cheap source-policy gate that rejects obsolete source roots, frontend-owned
-native mutation ABI and contract drift before expensive tooling runs.
+Native builds require the configured Torca stack/relay endpoint used by the build orchestration. Platform assets and generated contracts are handled by the scripts rather than by manual per-platform procedures.
 
-## Canonical documents
+Before contributing, read [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- [`0.2_PROGRESS.md`](0.2_PROGRESS.md): live status and validation handoff.
-- [`docs/0.2/IMPLEMENTATION_ORDER.md`](docs/0.2/IMPLEMENTATION_ORDER.md): ordered current work.
-- [`docs/0.2/FINAL_AUDIT.md`](docs/0.2/FINAL_AUDIT.md): current source audit and known gaps.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): system boundaries.
-- [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md):
-  security guarantees and non-guarantees.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): development rules.
+## Documentation
+
+The maintained documentation is deliberately small:
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — system boundaries and major flows;
+- [SECURITY.md](SECURITY.md) — security posture, guarantees and non-guarantees;
+- [docs/security/threat-model.md](docs/security/threat-model.md) — assets, trust boundaries and threats;
+- [CONTRIBUTING.md](CONTRIBUTING.md) — development and architecture rules;
+- [ROADMAP.md](ROADMAP.md) — product/engineering direction, not a release checklist;
+- [docs/README.md](docs/README.md) — documentation policy and index.
+
+Historical implementation plans and version-specific audits live in Git history rather than acting as parallel sources of truth.
+
+## Security status
+
+Torca is security-sensitive alpha software and has not been independently audited. Current code uses encrypted local storage, protected secret stores, authenticated application encryption and Tor for network routing, but the present peer-message key scheme does **not** claim Signal-style forward secrecy or post-compromise security. See [SECURITY.md](SECURITY.md) before making security claims or deploying Torca for high-risk use.
+
+## License
+
+Torca is licensed under AGPL-3.0-or-later.
