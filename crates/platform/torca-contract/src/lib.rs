@@ -14,9 +14,7 @@ use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityId, ProfileName, PublicIdentity};
-use torca_messaging::{
-    Message, MessageBody, MessageDirection, MessageId, MessageStatus, ReplyReference,
-};
+use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_runtime::{
@@ -503,18 +501,11 @@ impl ContractRuntime {
     }
 
     pub fn snapshot(&self) -> Result<BridgeSnapshot, EngineError> {
-        self.snapshot_internal(false)
-    }
-    pub fn full_snapshot(&self) -> Result<BridgeSnapshot, EngineError> {
-        self.snapshot_internal(true)
+        self.snapshot_internal()
     }
 
-    fn snapshot_internal(&self, include_messages: bool) -> Result<BridgeSnapshot, EngineError> {
-        let app = if include_messages {
-            self.engine.snapshot()?
-        } else {
-            self.engine.overview_snapshot()?
-        };
+    fn snapshot_internal(&self) -> Result<BridgeSnapshot, EngineError> {
+        let app = self.engine.overview_snapshot()?;
         let (network, attachments) = match &self.runtime {
             Some(runtime) => (
                 runtime
@@ -540,7 +531,7 @@ impl ContractRuntime {
         };
         let bootstrap =
             self.bootstrap.lock().map_err(|_| EngineError("bootstrap state unavailable".into()))?;
-        Ok(map_snapshot(app, network, attachments, include_messages, &bootstrap))
+        Ok(map_snapshot(app, network, attachments, &bootstrap))
     }
 
     /// Applies externally observed bootstrap facts. The native runtime actor
@@ -838,7 +829,6 @@ fn map_snapshot(
     snapshot: ClientSnapshot,
     network: NetworkSnapshot,
     attachments: Vec<AttachmentView>,
-    include_messages: bool,
     bootstrap: &BootstrapState,
 ) -> BridgeSnapshot {
     let local_public = snapshot.identity.as_ref().map(|identity| identity.public().clone());
@@ -851,13 +841,9 @@ fn map_snapshot(
         hash.update(identity.public().key().public_key());
         grouped_hex(&hash.finalize())
     });
-    let summaries =
-        if include_messages { summarize_messages(&snapshot.messages) } else { BTreeMap::new() };
-    let messages = if include_messages {
-        snapshot.messages.into_iter().map(bridge_message_from_domain).collect()
-    } else {
-        Vec::new()
-    };
+    // Root snapshots deliberately omit message history. Conversation page and
+    // search queries are the only history transport exposed to presentation.
+    let messages = Vec::new();
     let tor_state = format!("{:?}", network.tor).to_lowercase();
     let relay_probe = network.probes.iter().find(|probe| probe.target == ProbeTarget::Relay);
     let relay_state = relay_probe
@@ -1019,30 +1005,15 @@ fn map_snapshot(
         conversations: snapshot
             .conversations
             .into_iter()
-            .map(|conversation| {
-                let summary = summaries.get(&conversation.id());
-                BridgeConversation {
-                    id: conversation.id().to_string(),
-                    contact_id: conversation.contact_id().to_string(),
-                    status: format!("{:?}", conversation.status()).to_lowercase(),
-                    unread_count: summary.map_or(0, |value| value.0),
-                    last_activity_at_ms: summary.map_or(0, |value| value.1),
-                    last_message_body: summary.and_then(|value| {
-                        value.2.as_ref().map(|message| message.body().as_str().to_owned())
-                    }),
-                    last_message_direction: summary.and_then(|value| {
-                        value
-                            .2
-                            .as_ref()
-                            .map(|message| format!("{:?}", message.direction()).to_lowercase())
-                    }),
-                    last_message_status: summary.and_then(|value| {
-                        value
-                            .2
-                            .as_ref()
-                            .map(|message| format!("{:?}", message.status()).to_lowercase())
-                    }),
-                }
+            .map(|conversation| BridgeConversation {
+                id: conversation.id().to_string(),
+                contact_id: conversation.contact_id().to_string(),
+                status: format!("{:?}", conversation.status()).to_lowercase(),
+                unread_count: 0,
+                last_activity_at_ms: 0,
+                last_message_body: None,
+                last_message_direction: None,
+                last_message_status: None,
             })
             .collect(),
         messages,
@@ -1062,27 +1033,6 @@ fn map_snapshot(
         new_contacts_count: 0,
         pairing_attention_count: 0,
     }
-}
-
-fn summarize_messages(
-    messages: &[Message],
-) -> BTreeMap<ConversationId, (u32, i64, Option<Message>)> {
-    let mut values = BTreeMap::new();
-    for message in messages {
-        let entry = values.entry(message.conversation_id()).or_insert((0_u32, 0_i64, None));
-        if message.direction() == MessageDirection::Inbound
-            && message.status() == MessageStatus::Delivered
-        {
-            entry.0 = entry.0.saturating_add(1);
-        }
-        let activity =
-            message.updated_at().to_unix_millis().max(message.created_at().to_unix_millis());
-        if entry.2.is_none() || activity >= entry.1 {
-            entry.1 = activity;
-            entry.2 = Some(message.clone());
-        }
-    }
-    values
 }
 fn fallback_contact_name(id: ContactId) -> String {
     let value = id.to_string();
