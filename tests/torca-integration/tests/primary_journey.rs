@@ -29,7 +29,7 @@ fn peer() -> PeerProposal {
     let public_identity = PublicIdentity::new(IdentityId::from_u128(41), key, 0);
     let route = ContactRoute::new("peerexample.onion", OpaqueId::from_u128(42))
         .expect("peer route is valid");
-    PeerProposal { public_identity, route }
+    PeerProposal { public_identity, display_name: "Remote device".to_owned(), route }
 }
 
 fn credential(contact_id: ContactId) -> PeerCredential {
@@ -57,7 +57,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     let _ = engine
         .dispatch(EngineCommand::StartPairing {
             session_id: pairing_id,
-            code: PairingCode::new("RCA42").expect("pairing code is valid"),
+            code: PairingCode::new("RCA422").expect("pairing code is valid"),
             expires_at: ts(10_000),
         })
         .expect("pairing starts");

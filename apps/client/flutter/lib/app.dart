@@ -16,6 +16,7 @@ import 'screens/settings_screen.dart';
 import 'settings/local_preferences.dart';
 import 'settings/preferences_scope.dart';
 import 'theme/app_theme.dart';
+import 'widgets/incoming_pairing_dialog.dart';
 import 'widgets/runtime_network_status.dart';
 
 class TorcaApp extends StatefulWidget {
@@ -39,6 +40,8 @@ class TorcaApp extends StatefulWidget {
 class _TorcaAppState extends State<TorcaApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   int _handledPairingRequest = 0;
+  final Set<String> _pairingPromptsShown = <String>{};
+  bool _pairingPromptOpen = false;
 
   @override
   void initState() {
@@ -46,10 +49,12 @@ class _TorcaAppState extends State<TorcaApp> {
     widget.navigation.conversationRequest.addListener(_conversationRequested);
     widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
     widget.navigation.newPairingRequest.addListener(_newPairingRequested);
+    widget.gateway.snapshots.addListener(_pairingSnapshotChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _conversationRequested();
       _pairingRequested();
       _newPairingRequested();
+      _pairingSnapshotChanged();
     });
   }
 
@@ -65,6 +70,8 @@ class _TorcaAppState extends State<TorcaApp> {
     widget.navigation.conversationRequest.addListener(_conversationRequested);
     widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
     widget.navigation.newPairingRequest.addListener(_newPairingRequested);
+    oldWidget.gateway.snapshots.removeListener(_pairingSnapshotChanged);
+    widget.gateway.snapshots.addListener(_pairingSnapshotChanged);
     _handledPairingRequest = widget.navigation.newPairingRequest.value;
   }
 
@@ -75,6 +82,7 @@ class _TorcaAppState extends State<TorcaApp> {
     );
     widget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
     widget.navigation.newPairingRequest.removeListener(_newPairingRequested);
+    widget.gateway.snapshots.removeListener(_pairingSnapshotChanged);
     super.dispose();
   }
 
@@ -137,6 +145,50 @@ class _TorcaAppState extends State<TorcaApp> {
     _openPairing();
   }
 
+  bool _needsPairingDecision(PairingDto pairing) =>
+      pairing.typedRole == PairingRole.creator &&
+      (pairing.typedState == PairingState.peerJoined ||
+          pairing.typedState == PairingState.awaitingApproval);
+
+  void _pairingSnapshotChanged() {
+    if (!mounted || _pairingPromptOpen) return;
+    PairingDto? candidate;
+    for (final pairing in widget.gateway.snapshots.value.pairings) {
+      if (_needsPairingDecision(pairing) &&
+          !_pairingPromptsShown.contains(pairing.id)) {
+        candidate = pairing;
+        break;
+      }
+    }
+    if (candidate == null) return;
+    _pairingPromptsShown.add(candidate.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showIncomingPairing(candidate!);
+    });
+  }
+
+  Future<void> _showIncomingPairing(PairingDto pairing) async {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showIncomingPairing(pairing);
+      });
+      return;
+    }
+    _pairingPromptOpen = true;
+    try {
+      await showDialog<void>(
+        context: navigator.context,
+        barrierDismissible: false,
+        builder: (_) =>
+            IncomingPairingDialog(gateway: widget.gateway, pairing: pairing),
+      );
+    } finally {
+      _pairingPromptOpen = false;
+      _pairingSnapshotChanged();
+    }
+  }
+
   void _openPairing() {
     _navigatorKey.currentState?.push<void>(
       MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)),
@@ -179,8 +231,8 @@ class _TorcaAppState extends State<TorcaApp> {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
+      theme: AppTheme.light(widget.preferences.appearance),
+      darkTheme: AppTheme.dark(widget.preferences.appearance),
       themeMode: AppTheme.materialMode(widget.preferences.themeMode),
       builder: (context, child) => RuntimeStatusScope(
         gateway: widget.gateway,

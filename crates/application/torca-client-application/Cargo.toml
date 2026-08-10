@@ -1,0 +1,26 @@
+[package]
+name = "torca-client-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-connectivity = { path = "../torca-connectivity" }
+torca-client-engine = { path = "../torca-client-engine" }
+torca-bootstrap = { path = "../torca-bootstrap" }
+torca-runtime = { path = "../torca-runtime" }
+torca-probing = { path = "../torca-probing" }
+torca-attachments = { path = "../../domains/torca-attachments" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-conversations = { path = "../../domains/torca-conversations" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-identity = { path = "../../domains/torca-identity" }
+torca-messaging = { path = "../../domains/torca-messaging" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+
+[lints]
+workspace = true

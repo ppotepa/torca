@@ -3,15 +3,26 @@
 
 import 'dart:convert';
 
-const int torcaContractVersion = 15;
+const int torcaContractVersion = 16;
 const int torcaNativeAbiVersion = 1;
 
 class BridgeResultDto {
-  const BridgeResultDto({required this.ok, required this.kind, this.error});
+  const BridgeResultDto({
+    required this.ok,
+    required this.kind,
+    this.error,
+    String? errorCode,
+    this.resourceId,
+    this.inviteUri,
+  }) : _wireErrorCode = errorCode;
   final bool ok;
   final String kind;
   final String? error;
-  String? get errorCode => kind.startsWith('error:') ? kind.substring(6) : null;
+  final String? resourceId;
+  final String? inviteUri;
+  final String? _wireErrorCode;
+  String? get errorCode =>
+      _wireErrorCode ?? (kind.startsWith('error:') ? kind.substring(6) : null);
 }
 
 class IdentityDto {
@@ -37,22 +48,56 @@ class BootstrapStepDto {
   final int? startedAtMs, lastProgressAtMs, retryAtMs;
 }
 
+enum PairingRole { creator, joiner, unknown }
+
+enum PairingState {
+  open,
+  peerJoined,
+  awaitingApproval,
+  approved,
+  completed,
+  rejected,
+  cancelled,
+  expired,
+  unknown,
+}
+
 class PairingDto {
   const PairingDto({
     required this.id,
     required this.code,
+    required this.inviteUri,
     required this.role,
     required this.state,
     required this.expiresAtMs,
     required this.localApproved,
     required this.remoteApproved,
     this.remoteIdentityId,
+    this.remoteDisplayName,
     this.remoteFingerprint,
   });
-  final String id, code, role, state;
+  final String id, code, inviteUri, role, state;
   final int expiresAtMs;
   final bool localApproved, remoteApproved;
-  final String? remoteIdentityId, remoteFingerprint;
+  final String? remoteIdentityId, remoteDisplayName, remoteFingerprint;
+
+  PairingRole get typedRole => switch (role) {
+    'creator' => PairingRole.creator,
+    'joiner' => PairingRole.joiner,
+    _ => PairingRole.unknown,
+  };
+
+  PairingState get typedState => switch (state) {
+    'open' => PairingState.open,
+    'peerjoined' => PairingState.peerJoined,
+    'awaitingapproval' => PairingState.awaitingApproval,
+    'approved' => PairingState.approved,
+    'completed' => PairingState.completed,
+    'rejected' => PairingState.rejected,
+    'cancelled' => PairingState.cancelled,
+    'expired' => PairingState.expired,
+    _ => PairingState.unknown,
+  };
 }
 
 class PeerHealthDto {
@@ -78,10 +123,14 @@ class TransportIndicatorDto {
     this.latencyMs,
     this.lastActivityAtMs,
     this.activitySequence = 0,
+    this.txSequence = 0,
+    this.rxSequence = 0,
+    this.inFlight = 0,
+    this.queued = 0,
   });
   final String state, code;
   final int? latencyMs, lastActivityAtMs;
-  final int activitySequence;
+  final int activitySequence, txSequence, rxSequence, inFlight, queued;
 
   bool get isUsable => state == 'healthy' || state == 'ready';
 }
@@ -90,8 +139,12 @@ class TransportStatusDto {
   const TransportStatusDto({
     this.tor = const TransportIndicatorDto(state: 'stopped'),
     this.relay = const TransportIndicatorDto(),
+    this.peer = const TransportIndicatorDto(state: 'disconnected'),
+    this.peersReady = 0,
+    this.peersTotal = 0,
   });
-  final TransportIndicatorDto tor, relay;
+  final TransportIndicatorDto tor, relay, peer;
+  final int peersReady, peersTotal;
 }
 
 class NavigationBadgesDto {
@@ -223,8 +276,9 @@ class CreatePairingCommandDto extends BridgeCommandDto {
 }
 
 class JoinPairingCommandDto extends BridgeCommandDto {
-  const JoinPairingCommandDto({required this.code});
+  const JoinPairingCommandDto({required this.code, this.ticket});
   final String code;
+  final String? ticket;
 }
 
 class ApprovePairingCommandDto extends BridgeCommandDto {
@@ -275,6 +329,11 @@ class RemoveContactCommandDto extends BridgeCommandDto {
   final String contactIdHex;
 }
 
+class StartConversationCommandDto extends BridgeCommandDto {
+  const StartConversationCommandDto({required this.contactIdHex});
+  final String contactIdHex;
+}
+
 class ClearConversationHistoryCommandDto extends BridgeCommandDto {
   const ClearConversationHistoryCommandDto({required this.conversationIdHex});
   final String conversationIdHex;
@@ -296,12 +355,8 @@ class RetryMessageCommandDto extends BridgeCommandDto {
 }
 
 class MarkConversationReadCommandDto extends BridgeCommandDto {
-  const MarkConversationReadCommandDto({
-    required this.conversationIdHex,
-    this.sendReceipt = true,
-  });
+  const MarkConversationReadCommandDto({required this.conversationIdHex});
   final String conversationIdHex;
-  final bool sendReceipt;
 }
 
 class QueueAttachmentCommandDto extends BridgeCommandDto {
@@ -371,9 +426,16 @@ class RuntimeRequestDto {
     payload: <String, Object?>{'uri': rawUri},
   );
 
+  factory RuntimeRequestDto.pairingEncode(String code) => RuntimeRequestDto._(
+    kind: 'query',
+    name: 'pairing.encode',
+    payload: <String, Object?>{'code': code},
+  );
+
   factory RuntimeRequestDto.conversationPage(
     String conversationId, {
     String? beforeMessageId,
+    int? beforeAtMs,
     required int limit,
   }) => RuntimeRequestDto._(
     kind: 'query',
@@ -381,6 +443,7 @@ class RuntimeRequestDto {
     payload: <String, Object?>{
       'conversationId': conversationId,
       'beforeMessageId': beforeMessageId,
+      'beforeAtMs': beforeAtMs,
       'limit': limit,
     },
   );
@@ -431,7 +494,10 @@ class RuntimeRequestDto {
       return _command('pairing.create', const <String, Object?>{});
     }
     if (command is JoinPairingCommandDto) {
-      return _command('pairing.join', <String, Object?>{'code': command.code});
+      return _command('pairing.join', <String, Object?>{
+        'code': command.code,
+        if (command.ticket != null) 'ticket': command.ticket,
+      });
     }
     if (command is ApprovePairingCommandDto) {
       return _session('pairing.approve', command.sessionIdHex);
@@ -463,6 +529,9 @@ class RuntimeRequestDto {
     if (command is RemoveContactCommandDto) {
       return _contact('contact.remove', command.contactIdHex);
     }
+    if (command is StartConversationCommandDto) {
+      return _contact('conversation.start', command.contactIdHex);
+    }
     if (command is ClearConversationHistoryCommandDto) {
       return _command('conversation.clear', <String, Object?>{
         'conversationIdHex': command.conversationIdHex,
@@ -483,7 +552,6 @@ class RuntimeRequestDto {
     if (command is MarkConversationReadCommandDto) {
       return _command('conversation.read', <String, Object?>{
         'conversationIdHex': command.conversationIdHex,
-        'sendReceipt': command.sendReceipt,
       });
     }
     if (command is QueueAttachmentCommandDto) {

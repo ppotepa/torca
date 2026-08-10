@@ -10,6 +10,11 @@ mod tor;
 
 use core::fmt;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
+use torca_connectivity::{
+    ConnectivityObserver, OperationPhase, TransportDirection, TransportLayer, TransportOperation,
+};
+use torca_foundation::Timestamp;
 
 use torca_relay_protocol::{
     RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken,
@@ -70,10 +75,16 @@ impl From<RelayProtocolError> for RendezvousClientError {
 pub struct RendezvousClient<T> {
     transport: T,
     timeout: Duration,
+    connectivity: Option<ConnectivityObserver>,
 }
 impl<T> RendezvousClient<T> {
     pub const fn new(transport: T, timeout: Duration) -> Self {
-        Self { transport, timeout }
+        Self { transport, timeout, connectivity: None }
+    }
+    #[must_use]
+    pub fn with_connectivity(mut self, connectivity: ConnectivityObserver) -> Self {
+        self.connectivity = Some(connectivity);
+        self
     }
     pub const fn timeout(&self) -> Duration {
         self.timeout
@@ -91,6 +102,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         creator_blob: Vec<u8>,
         slot_capability: RelaySlotCapability,
         creator_token: RelaySideToken,
+        ticket: [u8; 16],
     ) -> Result<(RelaySlotId, torca_foundation::Timestamp), RendezvousClientError> {
         let response = self.exchange(RelayRequest::Open {
             code,
@@ -98,6 +110,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
             creator_blob,
             slot_capability,
             creator_token,
+            ticket: torca_relay_protocol::RelayJoinTicket(ticket),
         })?;
         match response {
             RelayResponse::Opened { slot_id, expires_at } => Ok((slot_id, expires_at)),
@@ -110,8 +123,14 @@ impl<T: RelayTransport> RendezvousClient<T> {
         code: RelayCode,
         joiner_blob: Vec<u8>,
         joiner_token: RelaySideToken,
+        ticket: Option<[u8; 16]>,
     ) -> Result<(RelaySlotId, torca_foundation::Timestamp, Vec<u8>), RendezvousClientError> {
-        let response = self.exchange(RelayRequest::Join { code, joiner_blob, joiner_token })?;
+        let response = self.exchange(RelayRequest::Join {
+            code,
+            joiner_blob,
+            joiner_token,
+            ticket: ticket.map(torca_relay_protocol::RelayJoinTicket),
+        })?;
         match response {
             RelayResponse::Joined { slot_id, expires_at, creator_blob } => {
                 Ok((slot_id, expires_at, creator_blob))
@@ -158,7 +177,8 @@ impl<T: RelayTransport> RendezvousClient<T> {
     }
 
     fn exchange(&mut self, request: RelayRequest) -> Result<RelayResponse, RendezvousClientError> {
-        match self.transport.exchange(&request, self.timeout) {
+        self.observe(Some(TransportDirection::Tx), OperationPhase::Started);
+        let result = match self.transport.exchange(&request, self.timeout) {
             Ok(response) => checked_response(response),
             Err(error) if error.request_was_sent => {
                 let _ = self.transport.reconnect();
@@ -176,6 +196,36 @@ impl<T: RelayTransport> RendezvousClient<T> {
                     })?;
                 checked_response(response)
             }
+        };
+        self.observe(
+            Some(TransportDirection::Tx),
+            if result.is_ok() { OperationPhase::Completed } else { OperationPhase::Failed },
+        );
+        if result.is_ok() {
+            self.observe(Some(TransportDirection::Rx), OperationPhase::Completed);
+        }
+        result
+    }
+
+    fn observe(&self, direction: Option<TransportDirection>, phase: OperationPhase) {
+        let Some(observer) = &self.connectivity else { return };
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else { return };
+        let Ok(at) =
+            Timestamp::from_unix_millis(i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        else {
+            return;
+        };
+        for layer in [TransportLayer::Relay, TransportLayer::Tor] {
+            observer.record(
+                layer,
+                direction,
+                TransportOperation::Request,
+                phase,
+                None,
+                at,
+                None,
+                None,
+            );
         }
     }
 }

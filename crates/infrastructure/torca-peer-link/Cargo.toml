@@ -9,6 +9,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+torca-connectivity = { path = "../../application/torca-connectivity" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-crypto = { path = "../torca-crypto" }
 torca-foundation = { path = "../../foundation/torca-foundation" }

@@ -3,10 +3,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::{application_envelope, application_peer_state, peer_envelope};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_communication_driver::{
-    CommunicationError, ControlDeliveryRuntime, InboundMessagingRuntime, PeerLinkRuntime,
-    RECEIPT_MESSAGE_KIND, ReadStateRuntime, TEXT_MESSAGE_KIND, TextDeliveryRuntime,
+    CommunicationError, ControlDeliveryRuntime, InboundEnvelope, InboundMessagingRuntime,
+    PeerConnectionStatus, PeerLinkRuntime, RECEIPT_MESSAGE_KIND, ReadStateRuntime,
+    TEXT_MESSAGE_KIND, TextDeliveryRuntime, plan_read_receipts,
 };
 use torca_contacts::{
     Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
@@ -24,7 +26,7 @@ use torca_delivery::{
 };
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
-use torca_peer_link::{InboundPeerEnvelope, LinkAck, PeerConnectionState, PeerLinkError};
+use torca_peer_link::{LinkAck, PeerLinkError};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
 use torca_receipts::{Receipt, ReceiptId, ReceiptKind};
@@ -71,15 +73,18 @@ where
         self.link.maintenance(contacts, now).map(|_| ()).map_err(|_| CommunicationError::Peer)
     }
 
-    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
-        self.link.connection_state(contact_id)
+    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
+        application_peer_state(self.link.connection_state(contact_id))
     }
 
-    fn take_inbound(&mut self) -> Result<Option<InboundPeerEnvelope>, CommunicationError> {
-        self.link.take_inbound().map_err(|_| CommunicationError::Peer)
+    fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError> {
+        self.link
+            .take_inbound()
+            .map_err(|_| CommunicationError::Peer)
+            .map(|envelope| envelope.map(application_envelope))
     }
 
-    fn reject(&mut self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError> {
+    fn reject(&mut self, envelope: &InboundEnvelope) -> Result<(), CommunicationError> {
         self.link
             .send_ack(envelope.contact_id, envelope.envelope_id, AckStatus::Rejected)
             .map_err(|_| CommunicationError::Peer)
@@ -185,8 +190,13 @@ impl ReadStateRuntime for ReadStateAdapter {
         conversation_id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
+        let candidates = self
+            .read_state
+            .read_candidates(conversation_id)
+            .map_err(|_| CommunicationError::ReadState)?;
+        let jobs = plan_read_receipts(&candidates, now)?;
         self.read_state
-            .mark_conversation_read(conversation_id, now)
+            .commit_mark_read(conversation_id, now, &jobs)
             .map(|_| ())
             .map_err(|_| CommunicationError::ReadState)
     }
@@ -365,7 +375,7 @@ where
 {
     fn process(
         &mut self,
-        envelope: InboundPeerEnvelope,
+        envelope: InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
         let contact = load_contact(&self.relationships, envelope.contact_id)?;
@@ -396,7 +406,11 @@ where
                     .persist_inbound(envelope.envelope_id, message)
                     .map_err(|_| CommunicationError::Inbound)?;
                 let receipt = ReceiptPayload {
-                    receipt_id: derived_receipt_id(envelope.envelope_id, 0xD1),
+                    receipt_id: ReceiptId::deterministic_for(
+                        MessageId::from_opaque(envelope.envelope_id),
+                        ReceiptKind::Delivered,
+                    )
+                    .to_opaque(),
                     message_id: envelope.envelope_id,
                     contact_id: contact.id().to_opaque(),
                     kind: DeliveryReceiptKind::Delivered,
@@ -441,8 +455,9 @@ where
     S: ContactRepository + PeerCredentialRepository,
     K: HandshakeSigner,
 {
-    fn reject(&self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError> {
-        let _ = self.link.send_ack(envelope.contact_id, envelope.envelope_id, AckStatus::Rejected);
+    fn reject(&self, envelope: &InboundEnvelope) -> Result<(), CommunicationError> {
+        let peer = peer_envelope(envelope);
+        let _ = self.link.send_ack(peer.contact_id, peer.envelope_id, AckStatus::Rejected);
         Err(CommunicationError::Inbound)
     }
 }
@@ -568,13 +583,6 @@ fn map_ack(ack: LinkAck) -> DeliveryAck {
         LinkAck::Accepted => DeliveryAck::Accepted,
         LinkAck::Duplicate => DeliveryAck::Duplicate,
     }
-}
-
-fn derived_receipt_id(message_id: OpaqueId, tag: u8) -> OpaqueId {
-    let mut bytes = message_id.into_bytes();
-    bytes[15] ^= tag;
-    let value = OpaqueId::from_bytes(bytes);
-    if value.is_nil() { OpaqueId::from_u128(u128::from(tag) + 1) } else { value }
 }
 
 #[allow(dead_code)]

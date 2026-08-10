@@ -2,34 +2,42 @@
 /target/
 **/*.rs.bk
 
-# Flutter / Dart
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.packages
-.pub-cache/
-build/
-apps/client/flutter/.metadata
-apps/client/flutter/windows/
-apps/client/flutter/android/
+# Dart / Flutter generated files
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/.pub-cache/
+**/.pub/
+**/build/
+**/coverage/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+**/app.*.symbols
+**/app.*.map.json
 
-# Android
-.gradle/
-local.properties
+# Android build state and signing material
+**/.gradle/
+**/local.properties
 **/key.properties
 **/*.jks
 **/*.keystore
 
-# Windows / IDE
+# IDE and editor files
 .vs/
 .vscode/
 .idea/
+*.iml
+*.ipr
+*.iws
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
+*.swp
+*~
 
-# Runtime data and secrets
+# Runtime data, generated output, and secrets
 *.db
 *.db-shm
 *.db-wal
@@ -39,12 +47,28 @@ local.properties
 .env
 .env.*
 !.env.example
-secrets/
-runtime/
-artifacts/
-.torca/
+**/secrets/
+**/runtime/
+**/artifacts/
+**/.torca/
 /logs/
 
-# OS
+# Local tooling state
+/.codegraph/
+/concat.txt
+/.codex/
+/.cache/
+
+# Temporary files and crash output
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.stackdump
+*.dmp
+
+# Operating systems
 .DS_Store
 Thumbs.db
+Desktop.ini

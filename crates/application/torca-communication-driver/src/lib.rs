@@ -8,10 +8,17 @@ use std::time::Duration;
 use torca_attachments::AttachmentId;
 use torca_client_engine::EngineHandle;
 use torca_contacts::ContactId;
+use torca_control_delivery::{ControlKind, PendingControlJob, ReadCandidate};
 use torca_conversations::ConversationId;
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_delivery::{
+    ApplicationPayload, ApplicationPayloadCodec, DeliveryReceiptKind, ReceiptPayload,
+};
+use torca_foundation::{
+    ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
+};
 use torca_messaging::Message;
-use torca_peer_link::{InboundPeerEnvelope, PeerConnectionState};
+use torca_receipts::{ReceiptId, ReceiptKind};
+pub use torca_runtime::PeerConnectionStatus;
 use torca_runtime::{
     AttachmentSendRequest, AttachmentView, CommunicationDriver, ContactVerificationSnapshot,
     RuntimeDriverError,
@@ -27,24 +34,60 @@ const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
 const ATTACHMENT_BATCH: usize = 2;
 
+/// Provider-neutral inbound envelope owned by the application boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InboundEnvelope {
+    pub contact_id: ContactId,
+    pub envelope_id: OpaqueId,
+    pub message_kind: u16,
+    pub ciphertext: Vec<u8>,
+}
+
 pub fn classify_peer_health(
     rtt_ms: Option<u64>,
     consecutive_failures: u32,
     sample_age: Option<Duration>,
 ) -> PeerHealthQuality {
-    if consecutive_failures >= 2 || sample_age.is_some_and(|age| age > Duration::from_secs(90)) {
-        return PeerHealthQuality::Poor;
+    match torca_presence::classify_health(rtt_ms, consecutive_failures, sample_age) {
+        torca_presence::PresenceQuality::Unknown => PeerHealthQuality::Unknown,
+        torca_presence::PresenceQuality::Excellent => PeerHealthQuality::Excellent,
+        torca_presence::PresenceQuality::Good => PeerHealthQuality::Good,
+        torca_presence::PresenceQuality::Fair => PeerHealthQuality::Fair,
+        torca_presence::PresenceQuality::Poor => PeerHealthQuality::Poor,
     }
-    if consecutive_failures == 1 {
-        return PeerHealthQuality::Fair;
-    }
-    match rtt_ms {
-        Some(0..=500) => PeerHealthQuality::Excellent,
-        Some(501..=1000) => PeerHealthQuality::Good,
-        Some(1001..=2000) => PeerHealthQuality::Fair,
-        Some(_) => PeerHealthQuality::Poor,
-        None => PeerHealthQuality::Unknown,
-    }
+}
+
+/// Application policy that turns read candidates into durable control jobs.
+/// Storage receives the resulting jobs and never decides whether a receipt is required.
+pub fn plan_read_receipts(
+    candidates: &[ReadCandidate],
+    at: Timestamp,
+) -> Result<Vec<PendingControlJob>, CommunicationError> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let message_id = torca_messaging::MessageId::from_opaque(candidate.message_id);
+            let receipt_id =
+                ReceiptId::deterministic_for(message_id, ReceiptKind::Read).to_opaque();
+            let payload =
+                ApplicationPayloadCodec::encode(&ApplicationPayload::Receipt(ReceiptPayload {
+                    receipt_id,
+                    message_id: candidate.message_id,
+                    contact_id: candidate.contact_id,
+                    kind: DeliveryReceiptKind::Read,
+                    at,
+                }))
+                .map_err(|_| CommunicationError::ReadState)?;
+            Ok(PendingControlJob {
+                job_id: receipt_id,
+                contact_id: candidate.contact_id,
+                message_id: Some(candidate.message_id),
+                kind: ControlKind::Receipt,
+                payload,
+                next_attempt_at: at,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,15 +108,47 @@ impl fmt::Display for CommunicationError {
 }
 impl std::error::Error for CommunicationError {}
 
+impl ClassifiedError for CommunicationError {
+    fn descriptor(&self) -> ErrorDescriptor {
+        let (code, category, retry) = match self {
+            Self::Peer => {
+                ("communication.peer_unavailable", ErrorCategory::Unavailable, RetryAdvice::Backoff)
+            }
+            Self::Text => {
+                ("communication.text_failed", ErrorCategory::Unavailable, RetryAdvice::Backoff)
+            }
+            Self::Control => {
+                ("communication.control_failed", ErrorCategory::Unavailable, RetryAdvice::Backoff)
+            }
+            Self::Inbound => {
+                ("communication.inbound_invalid", ErrorCategory::InvalidInput, RetryAdvice::Never)
+            }
+            Self::Attachment => {
+                ("communication.attachment_failed", ErrorCategory::Internal, RetryAdvice::Never)
+            }
+            Self::ReadState => {
+                ("communication.read_state_failed", ErrorCategory::Internal, RetryAdvice::Never)
+            }
+            Self::Relationship => {
+                ("communication.relationship_failed", ErrorCategory::Conflict, RetryAdvice::Never)
+            }
+            Self::Engine => {
+                ("communication.engine_failed", ErrorCategory::Internal, RetryAdvice::Never)
+            }
+        };
+        ErrorDescriptor::new(ErrorCode::new(code), category, retry)
+    }
+}
+
 pub trait PeerLinkRuntime: Send {
     fn maintenance(
         &mut self,
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
-    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState;
-    fn take_inbound(&mut self) -> Result<Option<InboundPeerEnvelope>, CommunicationError>;
-    fn reject(&mut self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError>;
+    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
+    fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError>;
+    fn reject(&mut self, envelope: &InboundEnvelope) -> Result<(), CommunicationError>;
     fn shutdown(&mut self);
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
@@ -83,7 +158,7 @@ pub trait PeerLinkRuntime: Send {
     }
     fn accept_probe(
         &mut self,
-        _envelope: &InboundPeerEnvelope,
+        _envelope: &InboundEnvelope,
         _now: Timestamp,
     ) -> Result<(), CommunicationError> {
         Err(CommunicationError::Peer)
@@ -101,7 +176,7 @@ pub trait ControlDeliveryRuntime: Send {
 pub trait InboundMessagingRuntime: Send {
     fn process(
         &mut self,
-        envelope: InboundPeerEnvelope,
+        envelope: InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
 }
@@ -122,7 +197,7 @@ pub trait AttachmentRuntime: Send {
     }
     fn process_inbound(
         &mut self,
-        envelope: InboundPeerEnvelope,
+        envelope: InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
     fn maintenance_outgoing(
@@ -146,14 +221,6 @@ pub trait ReadStateRuntime: Send {
         conversation_id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
-    fn mark_conversation_read_with_policy(
-        &mut self,
-        conversation_id: OpaqueId,
-        now: Timestamp,
-        _send_receipt: bool,
-    ) -> Result<(), CommunicationError> {
-        self.mark_conversation_read(conversation_id, now)
-    }
 }
 pub trait RelationshipAdminRuntime: Send {
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, CommunicationError>;
@@ -268,7 +335,7 @@ impl CommunicationDriver for TorcaCommunicationDriver {
         Ok(())
     }
 
-    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
+    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
         self.peer.connection_state(contact_id)
     }
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
@@ -319,16 +386,6 @@ impl CommunicationDriver for TorcaCommunicationDriver {
     ) -> Result<(), RuntimeDriverError> {
         self.read_state.mark_conversation_read(id, now).map_err(map_runtime)
     }
-    fn mark_conversation_read_with_policy(
-        &mut self,
-        id: OpaqueId,
-        now: Timestamp,
-        send_receipt: bool,
-    ) -> Result<(), RuntimeDriverError> {
-        self.read_state
-            .mark_conversation_read_with_policy(id, now, send_receipt)
-            .map_err(map_runtime)
-    }
     fn prepare_attachment(
         &mut self,
         request: &AttachmentSendRequest,
@@ -368,4 +425,26 @@ impl CommunicationDriver for TorcaCommunicationDriver {
 
 fn map_runtime(_: CommunicationError) -> RuntimeDriverError {
     RuntimeDriverError::Communication
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plan_read_receipts;
+    use torca_control_delivery::ReadCandidate;
+    use torca_foundation::{OpaqueId, Timestamp};
+
+    #[test]
+    fn read_receipt_planner_creates_one_idempotent_job_per_candidate() {
+        let jobs = plan_read_receipts(
+            &[ReadCandidate {
+                contact_id: OpaqueId::from_u128(1),
+                message_id: OpaqueId::from_u128(2),
+            }],
+            Timestamp::from_unix_millis(10).expect("timestamp"),
+        )
+        .expect("planner");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].message_id, Some(OpaqueId::from_u128(2)));
+        assert!(!jobs[0].payload.is_empty());
+    }
 }

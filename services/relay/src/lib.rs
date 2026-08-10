@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, VecDeque};
 
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_relay_protocol::{
-    RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySide, RelaySideToken,
-    RelaySlotCapability, RelaySlotId, validate_blob,
+    RelayCode, RelayJoinTicket, RelayProtocolError, RelayRequest, RelayResponse, RelaySide,
+    RelaySideToken, RelaySlotCapability, RelaySlotId, validate_blob,
 };
 
 pub use server::{DEFAULT_MAX_CONNECTIONS, RelayServer, RelayServerConfig, RelayServerError};
@@ -28,6 +28,7 @@ struct Slot {
     creator_blob: Vec<u8>,
     slot_capability: RelaySlotCapability,
     creator_token: RelaySideToken,
+    ticket: RelayJoinTicket,
     joiner_token: Option<RelaySideToken>,
     to_creator: VecDeque<Vec<u8>>,
     to_joiner: VecDeque<Vec<u8>>,
@@ -87,6 +88,7 @@ impl RelayBroker {
                 creator_blob,
                 slot_capability,
                 creator_token,
+                ticket,
             } => {
                 validate_blob(&creator_blob)?;
                 if expires_at <= now {
@@ -114,6 +116,7 @@ impl RelayBroker {
                         creator_blob,
                         slot_capability,
                         creator_token,
+                        ticket,
                         joiner_token: None,
                         to_creator: VecDeque::new(),
                         to_joiner: VecDeque::new(),
@@ -121,7 +124,7 @@ impl RelayBroker {
                 );
                 Ok(RelayResponse::Opened { slot_id: id, expires_at: relay_expires_at })
             }
-            RelayRequest::Join { code, joiner_blob, joiner_token } => {
+            RelayRequest::Join { code, joiner_blob, joiner_token, ticket } => {
                 validate_blob(&joiner_blob)?;
                 if !self.slots.contains_key(&code) {
                     self.record_failed_join(now)?;
@@ -135,6 +138,11 @@ impl RelayBroker {
                 }
                 if joiner_token == slot.creator_token {
                     return Err(RelayProtocolError::Unauthorized);
+                }
+                if let Some(ticket) = ticket {
+                    if ticket != slot.ticket {
+                        return Err(RelayProtocolError::Unauthorized);
+                    }
                 }
                 slot.joiner_token = Some(joiner_token);
                 slot.to_creator.push_back(joiner_blob);

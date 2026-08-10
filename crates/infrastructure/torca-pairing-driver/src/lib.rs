@@ -8,9 +8,9 @@ use torca_pairing_coordinator::{
     LocalPairingContext, PairingApprovalPort, PairingCryptoPort, PairingPeerSecretStore,
     PairingRendezvousPort, PairingRuntime,
 };
-use torca_runtime::SharedTorEndpoint;
 use torca_runtime::{PairingDriver, PairingInvitationView, RuntimeDriverError};
 use torca_storage_sqlite::SqlCipherRelationshipAdmin;
+use torca_tor::SharedTorEndpoint;
 
 pub struct RuntimePairingDriver<R, C, A, S> {
     runtime: PairingRuntime<R, C, A, S>,
@@ -111,11 +111,12 @@ where
         &mut self,
         session_id: PairingSessionId,
         code: PairingCode,
+        ticket: Option<[u8; 16]>,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
         let context = self.context()?;
         self.runtime
-            .join_invitation(session_id, code, context, now)
+            .join_invitation(session_id, code, context, now, ticket)
             .map_err(|_| RuntimeDriverError::Pairing)
     }
     fn approve(

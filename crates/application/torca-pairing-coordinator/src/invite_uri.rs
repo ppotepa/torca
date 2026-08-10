@@ -1,19 +1,26 @@
 use torca_pairing::PairingCode;
+use torca_pairing_protocol::{
+    PairingInviteTicket, decode_invite_uri as decode_protocol_invite_uri,
+    encode_invite_uri as encode_protocol_invite_uri,
+};
 
 use crate::PairingCoordinatorError;
 
-const PREFIX: &str = "torca://pair?v=1&code=";
-
 /// Encodes a QR-safe invitation URI containing no capability or key material.
-pub fn encode_invite_uri(code: &PairingCode) -> String {
-    format!("{PREFIX}{}", code.as_str())
+///
+/// # Panics
+///
+/// Panics only if the pairing domain accepts a code that the matching protocol rejects.
+pub fn encode_invite_uri(code: &PairingCode, ticket: Option<&PairingInviteTicket>) -> String {
+    encode_protocol_invite_uri(code.as_str(), ticket)
+        .expect("domain pairing code is valid protocol input")
 }
 
 /// Parses exactly the supported invitation URI shape.
-pub fn decode_invite_uri(value: &str) -> Result<PairingCode, PairingCoordinatorError> {
-    if value.len() > PREFIX.len() + 6 {
-        return Err(PairingCoordinatorError::Protocol);
-    }
-    let code = value.strip_prefix(PREFIX).ok_or(PairingCoordinatorError::Protocol)?;
-    PairingCode::new(code).map_err(|_| PairingCoordinatorError::Protocol)
+pub fn decode_invite_uri(
+    value: &str,
+) -> Result<(PairingCode, Option<PairingInviteTicket>), PairingCoordinatorError> {
+    let (code, ticket) =
+        decode_protocol_invite_uri(value).map_err(|_| PairingCoordinatorError::Protocol)?;
+    Ok((PairingCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?, ticket))
 }

@@ -15,7 +15,7 @@ use torca_pairing_coordinator::{
 use torca_pairing_protocol::PairingEnvelope;
 use torca_relay::RelayBroker;
 use torca_relay_protocol::{
-    RelayCode, RelayRequest, RelayResponse, RelaySideToken as WireRelaySideToken,
+    RelayCode, RelayJoinTicket, RelayRequest, RelayResponse, RelaySideToken as WireRelaySideToken,
     RelaySlotCapability as WireRelaySlotCapability, RelaySlotId as WireRelaySlotId,
 };
 
@@ -39,6 +39,7 @@ impl PairingRendezvousPort for SharedRelay {
         creator_blob: Vec<u8>,
         capability: PairingSlotCapability,
         token: PairingSideToken,
+        ticket: [u8; 16],
     ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
         let relay_code =
             RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
@@ -48,6 +49,7 @@ impl PairingRendezvousPort for SharedRelay {
             creator_blob,
             slot_capability: WireRelaySlotCapability(capability.0),
             creator_token: WireRelaySideToken(token.0),
+            ticket: RelayJoinTicket(ticket),
         })? {
             RelayResponse::Opened { slot_id, expires_at } => {
                 Ok((PairingSlotId(slot_id.0), expires_at))
@@ -61,6 +63,7 @@ impl PairingRendezvousPort for SharedRelay {
         code: &PairingCode,
         joiner_blob: Vec<u8>,
         token: PairingSideToken,
+        ticket: Option<[u8; 16]>,
     ) -> Result<(PairingSlotId, Timestamp, Vec<u8>), PairingCoordinatorError> {
         let relay_code =
             RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
@@ -68,6 +71,7 @@ impl PairingRendezvousPort for SharedRelay {
             code: relay_code,
             joiner_blob,
             joiner_token: WireRelaySideToken(token.0),
+            ticket: ticket.map(RelayJoinTicket),
         })? {
             RelayResponse::Joined { slot_id, expires_at, creator_blob } => {
                 Ok((PairingSlotId(slot_id.0), expires_at, creator_blob))
@@ -149,7 +153,7 @@ impl PairingApprovalPort for TestApproval {
     fn sign_approval(
         &self,
         _key_id: torca_identity::KeyId,
-        _session_id: PairingSessionId,
+        _context_id: OpaqueId,
         digest: [u8; 32],
     ) -> Result<Vec<u8>, PairingApprovalError> {
         Ok(digest.to_vec())
@@ -158,7 +162,7 @@ impl PairingApprovalPort for TestApproval {
     fn verify_approval(
         &self,
         _remote: &torca_identity::PublicIdentity,
-        _session_id: PairingSessionId,
+        _context_id: OpaqueId,
         digest: [u8; 32],
         proof: &[u8],
     ) -> Result<(), PairingApprovalError> {
@@ -233,7 +237,8 @@ fn two_runtimes_commit_contacts_only_after_durable_acknowledgements() {
             .expect("identity");
     }
     let broker = Rc::new(RefCell::new(RelayBroker::default()));
-    let session_id = PairingSessionId::from_u128(77);
+    let creator_session_id = PairingSessionId::from_u128(77);
+    let joiner_session_id = PairingSessionId::from_u128(88);
     let mut creator = PairingRuntime::new(
         PairingCoordinator::new(SharedRelay(broker.clone()), RustPairingCrypto::new()),
         creator_engine.clone(),
@@ -248,7 +253,7 @@ fn two_runtimes_commit_contacts_only_after_durable_acknowledgements() {
     );
 
     let invitation = creator
-        .create_invitation(session_id, context(&creator_engine, "Alice"), now)
+        .create_invitation(creator_session_id, context(&creator_engine, "Alice"), now)
         .expect("create");
     // Reconstructing the process runtime must retain the protected ephemeral transport state,
     // not strand an otherwise valid relay invitation after an Activity/service/process restart.
@@ -261,15 +266,23 @@ fn two_runtimes_commit_contacts_only_after_durable_acknowledgements() {
     );
     assert_eq!(creator.restore_active_sessions().expect("restore creator"), 1);
     joiner
-        .join_invitation(session_id, invitation.code, context(&joiner_engine, "Bob"), now)
+        .join_invitation(
+            joiner_session_id,
+            invitation.code,
+            context(&joiner_engine, "Bob"),
+            now,
+            Some(*invitation.ticket.as_bytes()),
+        )
         .expect("join");
-    let _ = creator.poll(session_id, now).expect("creator offer exchange");
-    let _ = joiner.poll(session_id, now).expect("joiner offer and approval");
-    let _ = creator.poll(session_id, now).expect("creator receives approval");
-    creator.approve(session_id, now).expect("creator approval");
-    let _ = joiner.poll(session_id, now).expect("joiner commits and acknowledges");
-    let _ = creator.poll(session_id, now).expect("creator commits and receives acknowledgement");
-    let _ = joiner.poll(session_id, now).expect("joiner receives acknowledgement");
+    let _ = creator.poll(creator_session_id, now).expect("creator offer exchange");
+    let _ = joiner.poll(joiner_session_id, now).expect("joiner offer and approval");
+    let _ = creator.poll(creator_session_id, now).expect("creator receives approval");
+    creator.approve(creator_session_id, now).expect("creator approval");
+    let _ = joiner.poll(joiner_session_id, now).expect("joiner commits and acknowledges");
+    let _ = creator
+        .poll(creator_session_id, now)
+        .expect("creator commits and receives acknowledgement");
+    let _ = joiner.poll(joiner_session_id, now).expect("joiner receives acknowledgement");
 
     for engine in [&creator_engine, &joiner_engine] {
         let snapshot = engine.overview_snapshot().expect("snapshot");

@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
 use torca_communication_adapters::{ProductionCommunicationInputs, build_production_communication};
+use torca_connectivity::ConnectivityObserver;
 use torca_crypto::{
     ManagedIdentityKeys, ManagedPeerSecrets, OwnedHandshakeSigner, RustCryptoProvider,
     RustPairingCrypto,
@@ -16,10 +17,9 @@ use torca_pairing_driver::RuntimePairingDriver;
 use torca_platform::{PlatformServices, SecretNamespace};
 use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayRequest, RelayResponse};
 use torca_rendezvous_client::{RendezvousClient, TorRelayTransport};
-use torca_runtime::{
-    OwnedTorDriver, RelayProbe, RuntimeDriverError, RuntimeHandle, RuntimeOwner, SharedTorEndpoint,
-};
+use torca_runtime::{RelayProbe, RuntimeDriverError, RuntimeHandle, RuntimeOwner};
 use torca_storage_sqlite::SqlCipherRelationshipAdmin;
+use torca_tor::{OwnedTorDriver, SharedTorEndpoint};
 use torca_tor::{PeerListener, TorBootstrapObserver, TorService};
 
 use crate::composition::{NativeCompositionError, load_or_create_database_key};
@@ -124,6 +124,7 @@ fn spawn_runtime_for(
         ),
         key_id,
     );
+    let connectivity = ConnectivityObserver::default();
     let communication = build_production_communication(
         engine.clone(),
         &database_path,
@@ -139,6 +140,7 @@ fn spawn_runtime_for(
             listener,
             tor_client: tor_client.clone(),
             local_identity_id: identity_id,
+            connectivity: connectivity.clone(),
         },
     )
     .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
@@ -166,9 +168,17 @@ fn spawn_runtime_for(
             RustCryptoProvider,
             platform.open_secret_store(SecretNamespace::Runtime),
         ),
+        connectivity.clone(),
     )?
     .with_contact_metadata(metadata);
-    Ok(RuntimeOwner::spawn_with_relay_probe(engine, pairing, communication, tor, Some(relay_probe)))
+    Ok(RuntimeOwner::spawn_with_connectivity(
+        engine,
+        pairing,
+        communication,
+        tor,
+        Some(relay_probe),
+        connectivity,
+    ))
 }
 
 fn bind_peer_listener() -> Result<PeerListener, NativeCompositionError> {
@@ -183,6 +193,7 @@ fn build_pairing_driver<A, S>(
     relay: (String, u16),
     approval: A,
     peer_secrets: S,
+    connectivity: ConnectivityObserver,
 ) -> Result<
     RuntimePairingDriver<RendezvousClient<TorRelayTransport>, RustPairingCrypto, A, S>,
     NativeCompositionError,
@@ -192,7 +203,8 @@ where
     S: PairingPeerSecretStore + Send + 'static,
 {
     let transport = TorRelayTransport::new(tor_client, relay.0, relay.1);
-    let rendezvous = RendezvousClient::new(transport, NETWORK_TIMEOUT);
+    let rendezvous =
+        RendezvousClient::new(transport, NETWORK_TIMEOUT).with_connectivity(connectivity);
     let coordinator = PairingCoordinator::new(rendezvous, RustPairingCrypto::new());
     let mut runtime = PairingRuntime::new(coordinator, engine.clone(), approval, peer_secrets);
     runtime

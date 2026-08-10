@@ -13,9 +13,10 @@ mod runtime;
 
 pub use approval::{PairingApprovalError, PairingApprovalPort};
 pub use core::{
-    EncryptedPairingPayload, PairingCoordinator, PairingCoordinatorError, PairingCryptoHandle,
-    PairingCryptoPort, PairingDerivedSecret, PairingEphemeralKey, PairingRendezvousPort,
-    PairingSideToken, PairingSlotCapability, PairingSlotId, PairingTransportSnapshot,
+    EncryptedPairingPayload, PairingContextId, PairingCoordinator, PairingCoordinatorError,
+    PairingCryptoHandle, PairingCryptoPort, PairingDerivedSecret, PairingEphemeralKey,
+    PairingRendezvousPort, PairingSideToken, PairingSlotCapability, PairingSlotId,
+    PairingTransportSnapshot,
 };
 pub use credential::{PairingCredentialError, PairingPeerSecretStore};
 pub use invite_uri::{decode_invite_uri, encode_invite_uri};

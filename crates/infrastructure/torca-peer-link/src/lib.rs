@@ -10,6 +10,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use torca_connectivity::{
+    ConnectivityObserver, OperationPhase, TransportDirection, TransportLayer, TransportOperation,
+};
 use torca_contacts::{
     Contact, ContactError, ContactId, ContactRepository, PeerCredentialRepository,
 };
@@ -29,6 +32,10 @@ const MAX_INBOUND_EVENTS: usize = 256;
 const RECONNECT_BASE_MS: u64 = 1_000;
 const RECONNECT_MAX_MS: u64 = 60_000;
 const POLL_SLEEP: Duration = Duration::from_millis(10);
+// A delivery attempt must never monopolize the process-owned PeerLink mutex.
+// Durable workers retry the same envelope id, so a short cooperative slice is
+// safe: a late ACK is consumed by maintenance and a retransmit is deduplicated.
+const MAX_ACK_WAIT_SLICE: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PeerConnectionState {
@@ -111,6 +118,7 @@ pub struct PeerLink<S, K> {
     outgoing: BTreeMap<ContactId, OutgoingSession>,
     reconnect: BTreeMap<ContactId, ReconnectEntry>,
     inbound: VecDeque<InboundPeerEnvelope>,
+    connectivity: Option<ConnectivityObserver>,
 }
 
 impl<S, K> PeerLink<S, K>
@@ -137,7 +145,14 @@ where
             outgoing: BTreeMap::new(),
             reconnect: BTreeMap::new(),
             inbound: VecDeque::new(),
+            connectivity: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_connectivity(mut self, connectivity: ConnectivityObserver) -> Self {
+        self.connectivity = Some(connectivity);
+        self
     }
 
     pub fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
@@ -204,14 +219,50 @@ where
             let _ = self.ensure_connected(contact_id, now);
             return Err(PeerLinkError::NotReady);
         }
-        self.send_data(contact_id, envelope_id, message_kind, ciphertext)?;
-        let deadline = Instant::now().checked_add(timeout).ok_or(PeerLinkError::AckTimeout)?;
+        let started_at = system_timestamp()?;
+        self.observe(
+            contact_id,
+            Some(TransportDirection::Tx),
+            TransportOperation::Envelope,
+            OperationPhase::Started,
+            Some(envelope_id),
+            started_at,
+        );
+        if let Err(error) = self.send_data(contact_id, envelope_id, message_kind, ciphertext) {
+            self.observe(
+                contact_id,
+                Some(TransportDirection::Tx),
+                TransportOperation::Envelope,
+                OperationPhase::Failed,
+                Some(envelope_id),
+                started_at,
+            );
+            return Err(error);
+        }
+        self.observe(
+            contact_id,
+            Some(TransportDirection::Tx),
+            TransportOperation::Envelope,
+            OperationPhase::Completed,
+            Some(envelope_id),
+            started_at,
+        );
+        let wait_slice = timeout.min(MAX_ACK_WAIT_SLICE);
+        let deadline = Instant::now().checked_add(wait_slice).ok_or(PeerLinkError::AckTimeout)?;
         loop {
             let now = system_timestamp()?;
             match self.poll_contact(contact_id, now) {
                 Ok(Some(PeerMessage::Ack { envelope_id: received, status }))
                     if received == envelope_id =>
                 {
+                    self.observe(
+                        contact_id,
+                        Some(TransportDirection::Rx),
+                        TransportOperation::Ack,
+                        OperationPhase::Completed,
+                        Some(envelope_id),
+                        now,
+                    );
                     return match status {
                         AckStatus::Accepted => Ok(LinkAck::Accepted),
                         AckStatus::Duplicate => Ok(LinkAck::Duplicate),
@@ -219,6 +270,14 @@ where
                     };
                 }
                 Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
+                    self.observe(
+                        contact_id,
+                        Some(TransportDirection::Rx),
+                        TransportOperation::Envelope,
+                        OperationPhase::Completed,
+                        Some(envelope_id),
+                        now,
+                    );
                     self.queue_inbound(InboundPeerEnvelope {
                         contact_id,
                         envelope_id,
@@ -233,12 +292,53 @@ where
                 }
             }
             if Instant::now() >= deadline {
-                self.mark_disconnected(contact_id);
-                self.schedule_reconnect(contact_id, now)?;
+                self.observe(
+                    contact_id,
+                    Some(TransportDirection::Rx),
+                    TransportOperation::Ack,
+                    OperationPhase::TimedOut,
+                    Some(envelope_id),
+                    now,
+                );
+                if timeout <= MAX_ACK_WAIT_SLICE {
+                    self.mark_disconnected(contact_id);
+                    self.schedule_reconnect(contact_id, now)?;
+                }
                 return Err(PeerLinkError::AckTimeout);
             }
             thread::sleep(POLL_SLEEP);
         }
+    }
+
+    pub fn send_keepalive_and_wait_ack(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        message_kind: u16,
+        ciphertext: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<LinkAck, PeerLinkError> {
+        let started_at = system_timestamp()?;
+        self.observe(
+            contact_id,
+            Some(TransportDirection::Tx),
+            TransportOperation::Keepalive,
+            OperationPhase::Started,
+            Some(envelope_id),
+            started_at,
+        );
+        let result =
+            self.send_and_wait_ack(contact_id, envelope_id, message_kind, ciphertext, timeout);
+        let finished_at = system_timestamp().unwrap_or(started_at);
+        self.observe(
+            contact_id,
+            Some(TransportDirection::Rx),
+            TransportOperation::Keepalive,
+            if result.is_ok() { OperationPhase::Completed } else { OperationPhase::TimedOut },
+            Some(envelope_id),
+            finished_at,
+        );
+        result
     }
 
     pub fn send_ack(
@@ -249,12 +349,16 @@ where
     ) -> Result<(), PeerLinkError> {
         if let Some(session) = self.outgoing.get_mut(&contact_id) {
             if session.state() == PeerSessionState::Ready {
-                return session.send_ack(envelope_id, status).map_err(map_session);
+                let result = session.send_ack(envelope_id, status).map_err(map_session);
+                self.observe_send_ack(contact_id, envelope_id, &result);
+                return result;
             }
         }
         if let Some(session) = self.incoming.get_mut(&contact_id) {
             if session.state() == PeerSessionState::Ready {
-                return session.send_ack(envelope_id, status).map_err(map_session);
+                let result = session.send_ack(envelope_id, status).map_err(map_session);
+                self.observe_send_ack(contact_id, envelope_id, &result);
+                return result;
             }
         }
         Err(PeerLinkError::NotReady)
@@ -372,6 +476,14 @@ where
         session.send_handshake_ack(ack).map_err(map_session)?;
         let contact_id = contact.id();
         self.incoming.insert(contact_id, session);
+        self.observe(
+            contact_id,
+            Some(TransportDirection::Rx),
+            TransportOperation::Handshake,
+            OperationPhase::Completed,
+            None,
+            now,
+        );
         Ok(AuthOutcome::Authenticated(contact_id))
     }
 
@@ -411,9 +523,78 @@ where
             &self.signer,
         )
         .map_err(|_| PeerLinkError::Protocol)?;
-        session.connect(hello).map_err(map_session)?;
+        self.observe(
+            contact_id,
+            None,
+            TransportOperation::Connect,
+            OperationPhase::Started,
+            None,
+            now,
+        );
+        if let Err(error) = session.connect(hello).map_err(map_session) {
+            self.observe(
+                contact_id,
+                None,
+                TransportOperation::Connect,
+                OperationPhase::Failed,
+                None,
+                now,
+            );
+            return Err(error);
+        }
         self.outgoing.insert(contact_id, session);
         Ok(())
+    }
+
+    fn observe(
+        &self,
+        contact_id: ContactId,
+        direction: Option<TransportDirection>,
+        operation: TransportOperation,
+        phase: OperationPhase,
+        correlation_id: Option<OpaqueId>,
+        at: Timestamp,
+    ) {
+        if let Some(observer) = &self.connectivity {
+            observer.record(
+                TransportLayer::Peer(Some(contact_id.to_opaque())),
+                direction,
+                operation,
+                phase,
+                correlation_id,
+                at,
+                None,
+                None,
+            );
+            observer.record(
+                TransportLayer::Tor,
+                direction,
+                operation,
+                phase,
+                correlation_id,
+                at,
+                None,
+                None,
+            );
+        }
+    }
+
+    fn observe_send_ack(
+        &self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        result: &Result<(), PeerLinkError>,
+    ) {
+        if let Ok(now) = system_timestamp() {
+            self.observe(
+                contact_id,
+                Some(TransportDirection::Tx),
+                TransportOperation::Ack,
+                if result.is_ok() { OperationPhase::Completed } else { OperationPhase::Failed },
+                Some(envelope_id),
+                now,
+            );
+        }
     }
 
     fn poll_sessions(
@@ -440,6 +621,14 @@ where
                 Ok(_) => {
                     if !was_ready && self.is_ready(contact_id) {
                         self.reconnect.remove(&contact_id);
+                        self.observe(
+                            contact_id,
+                            Some(TransportDirection::Rx),
+                            TransportOperation::Handshake,
+                            OperationPhase::Completed,
+                            None,
+                            now,
+                        );
                         report.became_ready += 1;
                     }
                 }
@@ -593,6 +782,14 @@ where
             self.reconnect.get(&contact_id).map_or(1, |entry| entry.failures.saturating_add(1));
         let delay = self.reconnect_delay(failures)?;
         let next_attempt_at = now.checked_add(delay).ok_or(PeerLinkError::Clock)?;
+        self.observe(
+            contact_id,
+            None,
+            TransportOperation::Reconnect,
+            OperationPhase::Started,
+            None,
+            now,
+        );
         self.reconnect
             .insert(contact_id, ReconnectEntry { failures, next_attempt_at, in_progress: false });
         Ok(())

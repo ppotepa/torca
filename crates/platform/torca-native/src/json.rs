@@ -2,7 +2,14 @@ use serde_json::{Value, json};
 use torca_contract::{BridgeMessagePage, BridgeResult, BridgeSnapshot, CONTRACT_VERSION};
 
 pub(crate) fn success_result(kind: &str) -> String {
-    bridge_result_json(&BridgeResult { ok: true, kind: kind.to_owned(), error: None })
+    bridge_result_json(&BridgeResult {
+        ok: true,
+        kind: kind.to_owned(),
+        error: None,
+        error_code: None,
+        resource_id: None,
+        invite_uri: None,
+    })
 }
 
 pub(crate) fn error_result(error: &str) -> String {
@@ -10,6 +17,9 @@ pub(crate) fn error_result(error: &str) -> String {
         ok: false,
         kind: "error".into(),
         error: Some(error.to_owned()),
+        error_code: Some("operation_failed".into()),
+        resource_id: None,
+        invite_uri: None,
     })
 }
 
@@ -17,55 +27,18 @@ pub(crate) fn bridge_result_json(result: &BridgeResult) -> String {
     let (kind, error) = if result.ok {
         (result.kind.clone(), None)
     } else {
-        let code = classify_error(result.error.as_deref().unwrap_or_default());
+        let code = result.error_code.as_deref().unwrap_or("operation_failed");
         (format!("error:{code}"), Some(error_message(code)))
     };
-    json!({ "ok": result.ok, "kind": kind, "error": error }).to_string()
-}
-
-fn classify_error(error: &str) -> &'static str {
-    let value = error.to_ascii_lowercase();
-    if value.contains("profile_not_ready") {
-        "profile_not_ready"
-    } else if value.contains("profile_snapshot_inconsistent") {
-        "profile_snapshot_inconsistent"
-    } else if value.contains("relay_degraded") {
-        "relay_degraded"
-    } else if value.contains("relay_not_ready") {
-        "relay_not_ready"
-    } else if value.contains("identity changed") || value.contains("re-verification") {
-        "identity_changed"
-    } else if value.contains("expired") {
-        "pairing_expired"
-    } else if value.contains("already") || value.contains("exists") {
-        "already_exists"
-    } else if value.contains("not found") || value.contains("missing") {
-        "not_found"
-    } else if value.contains("invalid") || value.contains("empty") || value.contains("utf-8") {
-        "invalid_input"
-    } else if value.contains("storage") || value.contains("database") || value.contains("sql") {
-        "storage_failure"
-    } else if value.contains("attachment") {
-        "attachment_failure"
-    } else if value.contains("tor")
-        || value.contains("peer")
-        || value.contains("connection")
-        || value.contains("network")
-    {
-        "network_unavailable"
-    } else if value.contains("not ready")
-        || value.contains("unavailable")
-        || value.contains("closed")
-    {
-        "runtime_unavailable"
-    } else if value.contains("transition")
-        || value.contains("blocked")
-        || value.contains("conflict")
-    {
-        "operation_conflict"
-    } else {
-        "operation_failed"
-    }
+    json!({
+        "ok": result.ok,
+        "kind": kind,
+        "error": error,
+        "errorCode": result.error_code,
+        "resourceId": result.resource_id,
+        "inviteUri": result.invite_uri,
+    })
+    .to_string()
 }
 
 fn error_message(code: &str) -> &'static str {

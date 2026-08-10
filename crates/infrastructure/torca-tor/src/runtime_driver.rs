@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use crate::{RuntimeDriverError, TorDriver, TorState};
+use crate::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage, TorService};
 use torca_foundation::Timestamp;
-use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage, TorService};
+use torca_runtime::{RuntimeDriverError, TorDriver, TorState};
 
 const RESTART_BACKOFF: [Duration; 3] =
     [Duration::from_secs(5), Duration::from_secs(15), Duration::from_secs(30)];

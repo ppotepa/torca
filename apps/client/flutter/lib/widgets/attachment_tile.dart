@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
 
@@ -35,7 +36,10 @@ class AttachmentTile extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(context.torcaTokens.radiusMedium),
+        border: context.torcaTokens.terminal
+            ? Border.all(color: Theme.of(context).colorScheme.outline)
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

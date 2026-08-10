@@ -17,6 +17,21 @@ impl ReceiptId {
     pub const fn to_opaque(self) -> OpaqueId {
         self.0
     }
+
+    /// Derives the idempotency identifier for one receipt kind of a message.
+    ///
+    /// The derivation is deliberately owned by the receipt domain so storage and transport use
+    /// the same stable identifier when they independently persist or send a receipt.
+    pub fn deterministic_for(message_id: MessageId, kind: ReceiptKind) -> Self {
+        let tag = match kind {
+            ReceiptKind::Delivered => 0xD1,
+            ReceiptKind::Read => 0xA1,
+        };
+        let mut bytes = message_id.to_opaque().into_bytes();
+        bytes[15] ^= tag;
+        let value = OpaqueId::from_bytes(bytes);
+        Self(if value.is_nil() { OpaqueId::from_u128(u128::from(tag) + 1) } else { value })
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ReceiptKind {
@@ -80,5 +95,24 @@ impl ReceiptRepository for InMemoryReceiptRepository {
             .iter()
             .filter_map(|((id, _), receipt)| (*id == message_id).then_some(*receipt))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReceiptId, ReceiptKind};
+    use torca_messaging::MessageId;
+
+    #[test]
+    fn deterministic_ids_are_stable_and_separate_kinds() {
+        let message = MessageId::from_u128(42);
+        assert_eq!(
+            ReceiptId::deterministic_for(message, ReceiptKind::Delivered),
+            ReceiptId::deterministic_for(message, ReceiptKind::Delivered)
+        );
+        assert_ne!(
+            ReceiptId::deterministic_for(message, ReceiptKind::Delivered),
+            ReceiptId::deterministic_for(message, ReceiptKind::Read)
+        );
     }
 }

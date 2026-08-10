@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../localization/app_locale_mode.dart';
 import '../theme/app_theme_mode.dart';
@@ -11,11 +12,16 @@ class LocalPreferences extends ChangeNotifier {
   final _PreferencesStore _store;
 
   static const _themeModeKey = 'appearance.theme_mode';
+  static const _themeFamilyKey = 'appearance.theme_family';
+  static const _themeVariantKey = 'appearance.theme_variant';
+  static const _themeDensityKey = 'appearance.theme_density';
+  static const _reduceMotionKey = 'appearance.reduce_motion';
   static const _localeModeKey = 'appearance.locale_mode';
   static const _readReceiptsKey = 'privacy.read_receipts';
   static const _closeToTrayKey = 'desktop.close_to_tray';
 
   AppThemeMode _themeMode = AppThemeMode.system;
+  TorcaAppearance _appearance = const TorcaAppearance();
   // English is the safe pre-load presentation; load() applies the persisted/system choice.
   AppLocaleMode _localeMode = AppLocaleMode.english;
   bool _notificationsEnabled = true;
@@ -24,6 +30,7 @@ class LocalPreferences extends ChangeNotifier {
   Future<void> Function(bool enabled)? _runtimeNotificationSetter;
 
   AppThemeMode get themeMode => _themeMode;
+  TorcaAppearance get appearance => _appearance;
   AppLocaleMode get localeMode => _localeMode;
   bool get notificationsEnabled => _notificationsEnabled;
   bool get readReceiptsEnabled => _readReceiptsEnabled;
@@ -45,6 +52,25 @@ class LocalPreferences extends ChangeNotifier {
 
   Future<void> load() async {
     _themeMode = AppThemeMode.parse(await _store.getString(_themeModeKey));
+    final family = TorcaAppearance.parseFamily(
+      await _store.getString(_themeFamilyKey),
+    );
+    var variant = TorcaThemeVariant.parse(
+      await _store.getString(_themeVariantKey),
+    );
+    if (variant.family != family) {
+      variant = TorcaThemeVariant.values.firstWhere(
+        (value) => value.family == family,
+      );
+    }
+    _appearance = TorcaAppearance(
+      family: family,
+      variant: variant,
+      density: TorcaAppearance.parseDensity(
+        await _store.getString(_themeDensityKey),
+      ),
+      reduceMotion: await _store.getBool(_reduceMotionKey) ?? false,
+    );
     _localeMode = parseAppLocaleMode(await _store.getString(_localeModeKey));
     _readReceiptsEnabled = await _store.getBool(_readReceiptsKey) ?? true;
     _closeToTrayEnabled = await _store.getBool(_closeToTrayKey) ?? true;
@@ -56,6 +82,37 @@ class LocalPreferences extends ChangeNotifier {
     _themeMode = value;
     notifyListeners();
     await _store.setString(_themeModeKey, value.storageValue);
+  }
+
+  Future<void> setThemeFamily(TorcaThemeFamily value) async {
+    final next = _appearance.copyWith(family: value);
+    if (_appearance == next) return;
+    _appearance = next;
+    notifyListeners();
+    await _store.setString(_themeFamilyKey, value.name);
+    await _store.setString(_themeVariantKey, next.variant.name);
+  }
+
+  Future<void> setThemeVariant(TorcaThemeVariant value) async {
+    if (_appearance.variant == value) return;
+    _appearance = _appearance.copyWith(family: value.family, variant: value);
+    notifyListeners();
+    await _store.setString(_themeFamilyKey, value.family.name);
+    await _store.setString(_themeVariantKey, value.name);
+  }
+
+  Future<void> setThemeDensity(TorcaDensity value) async {
+    if (_appearance.density == value) return;
+    _appearance = _appearance.copyWith(density: value);
+    notifyListeners();
+    await _store.setString(_themeDensityKey, value.name);
+  }
+
+  Future<void> setReduceMotion(bool value) async {
+    if (_appearance.reduceMotion == value) return;
+    _appearance = _appearance.copyWith(reduceMotion: value);
+    notifyListeners();
+    await _store.setBool(_reduceMotionKey, value);
   }
 
   Future<void> setLocaleMode(AppLocaleMode value) async {

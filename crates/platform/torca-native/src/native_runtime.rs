@@ -8,18 +8,20 @@ use std::{
 };
 
 use serde_json::json;
-use torca_client_engine::{ClientEngineActor, EngineHandle};
-use torca_contract::{BridgeMessagePage, ContractRuntime, bridge_message_from_domain};
+use torca_client_application::{
+    ApplicationError, ApplicationReadModels, ClientApplicationRuntime, ContactSecurityState,
+};
+use torca_client_engine::ClientEngineActor;
+use torca_contract::{
+    BridgeMessagePage, bridge_message_from_domain, bridge_result_from_application,
+    bridge_snapshot_from_application, decode_application_command,
+};
 use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_logging::{Level, Logger, default_root};
 use torca_messaging::MessageDirection;
 use torca_messaging::MessageId;
 use torca_runtime::{RuntimeHandle, RuntimeOwner, TorState};
-use torca_storage_sqlite::{
-    ContactSecurityState, SqlCipherMessageStore, SqlCipherSecurityProjection,
-    SqlCipherSettingsStore,
-};
 use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
 
 use crate::composition::{NativeCompositionError, spawn_production_engine};
@@ -44,12 +46,8 @@ enum HostStartEvent {
 }
 
 pub struct TorcaRuntime {
-    engine: EngineHandle,
-    bridge: ContractRuntime,
+    application_runtime: ClientApplicationRuntime,
     actor: Option<ClientEngineActor>,
-    history: SqlCipherMessageStore,
-    security: SqlCipherSecurityProjection,
-    settings: SqlCipherSettingsStore,
     host: Option<RuntimeOwner>,
     host_start: Option<Receiver<HostStartEvent>>,
     host_start_started_at: Option<Instant>,
@@ -85,11 +83,22 @@ pub struct TorcaRuntime {
 }
 
 impl TorcaRuntime {
+    fn read_models(&self) -> &ApplicationReadModels {
+        self.application_runtime
+            .read_models()
+            .expect("production composition always installs application read-model ports")
+    }
+
     pub(crate) fn new() -> Result<Self, String> {
         let parts = spawn_production_engine()
             .map_err(|error| format!("native engine composition failed: {error}"))?;
-        let engine = parts.engine;
-        let bridge = ContractRuntime::new(engine.clone());
+        let application = parts.application.clone();
+        let mut application_runtime = ClientApplicationRuntime::new(application.clone());
+        application_runtime.attach_read_models(parts.read_models);
+        let notifications_enabled = application_runtime
+            .read_models()
+            .and_then(|models| models.settings.notifications_enabled().ok())
+            .unwrap_or(true);
         #[cfg(target_os = "android")]
         let log_root =
             crate::composition::android::log_root_path().unwrap_or_else(|_| default_root());
@@ -109,16 +118,14 @@ impl TorcaRuntime {
                 None
             }
         };
-        let contact_notification_seen = bridge
-            .snapshot()
+        let contact_notification_seen = application_runtime
+            .snapshot_context()
+            .map(bridge_snapshot_from_application)
             .map(|snapshot| snapshot.contacts.into_iter().map(|contact| contact.id).collect())
             .unwrap_or_default();
         let mut runtime = Self {
-            engine,
-            bridge,
+            application_runtime,
             actor: Some(parts.actor),
-            history: parts.history,
-            security: parts.security,
             host: None,
             host_start: None,
             host_start_started_at: None,
@@ -148,8 +155,7 @@ impl TorcaRuntime {
             contact_notification_seen,
             notification_cursor: 0,
             notification_events: Vec::new(),
-            notifications_enabled: parts.settings.notifications_enabled().unwrap_or(true),
-            settings: parts.settings,
+            notifications_enabled,
         };
         runtime.log(
             "runtime",
@@ -205,7 +211,7 @@ impl TorcaRuntime {
         if let torca_contract::BridgeCommand::SetNotifications { enabled } = &command {
             self.notifications_enabled = *enabled;
             if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                let _ = self.settings.set_notifications_enabled(
+                let _ = self.read_models().settings.set_notifications_enabled(
                     *enabled,
                     i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX),
                 );
@@ -213,7 +219,7 @@ impl TorcaRuntime {
         }
         if matches!(&command, torca_contract::BridgeCommand::AcknowledgeNewContacts) {
             let now = unix_time_ms().unwrap_or(0);
-            if self.settings.acknowledge_new_contacts(now).is_err() {
+            if self.read_models().settings.acknowledge_new_contacts(now).is_err() {
                 self.last_result_json = error_result("contact acknowledgement storage unavailable");
                 return ABI_ERROR;
             }
@@ -222,8 +228,9 @@ impl TorcaRuntime {
         if is_profile {
             self.log_profile(request_id, "PROFILE_REQUEST_RECEIVED");
             let ready = self
-                .bridge
-                .snapshot()
+                .application_runtime
+                .snapshot_context()
+                .map(bridge_snapshot_from_application)
                 .map(|snapshot| {
                     matches!(snapshot.bootstrap_phase.as_str(), "ready_for_profile" | "ready")
                 })
@@ -237,7 +244,7 @@ impl TorcaRuntime {
             self.log_profile(request_id, "PROFILE_STORAGE_STARTED");
         }
         if let Some(conversation_id) = command_conversation_id(&command) {
-            match self.security.requires_reverification(conversation_id) {
+            match self.read_models().security.requires_reverification(conversation_id) {
                 Ok(true) => {
                     self.last_result_json = error_result(
                         "contact identity changed; safety number re-verification required",
@@ -251,7 +258,10 @@ impl TorcaRuntime {
                 }
             }
         }
-        let result = self.bridge.execute(command);
+        let result = bridge_result_from_application(match decode_application_command(command) {
+            Ok(command) => self.application_runtime.execute(command),
+            Err(error) => Err(ApplicationError::invalid_input(error)),
+        });
         if !result.ok {
             if is_profile {
                 self.log_profile(request_id, "PROFILE_STORAGE_FAILED");
@@ -283,17 +293,19 @@ impl TorcaRuntime {
             return ABI_CLOSED;
         }
         self.advance_runtime_start();
-        if let Err(error) = self.bridge.advance_bootstrap() {
+        if let Err(error) = self.application_runtime.advance_bootstrap() {
             self.last_result_json = error_result(&error.to_string());
             return ABI_ERROR;
         }
-        let mut snapshot = match self.bridge.snapshot() {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                self.last_result_json = error_result(&error.to_string());
-                return ABI_ERROR;
-            }
-        };
+        let mut snapshot =
+            match self.application_runtime.snapshot_context().map(bridge_snapshot_from_application)
+            {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    self.last_result_json = error_result(&error.to_string());
+                    return ABI_ERROR;
+                }
+            };
         if let Err(error) = self.apply_history_summaries(&mut snapshot) {
             self.last_result_json = error_result(error);
             return ABI_ERROR;
@@ -303,7 +315,7 @@ impl TorcaRuntime {
             return ABI_ERROR;
         }
         self.apply_navigation_badges(&mut snapshot);
-        if !self.bridge.has_runtime() && snapshot.identity_name.is_some() {
+        if !self.application_runtime.has_runtime() && snapshot.identity_name.is_some() {
             snapshot.tor_state = format!("{:?}", self.host_state_hint).to_lowercase();
             self.apply_host_state_hint(&mut snapshot);
         }
@@ -405,7 +417,7 @@ impl TorcaRuntime {
             (None, None) => None,
             _ => return self.query_error("incomplete page cursor"),
         };
-        match self.history.page_for_conversation(conversation_id, before, limit) {
+        match self.read_models().history.page_for_conversation(conversation_id, before, limit) {
             Ok(page) => {
                 let page = BridgeMessagePage {
                     messages: page.messages.into_iter().map(bridge_message_from_domain).collect(),
@@ -414,7 +426,7 @@ impl TorcaRuntime {
                 self.query_json = bridge_message_page_json(&page);
                 ABI_OK
             }
-            Err(error) => self.query_error(&error.to_string()),
+            Err(_) => self.query_error("conversation history unavailable"),
         }
     }
 
@@ -431,7 +443,7 @@ impl TorcaRuntime {
             Ok(value) => ConversationId::from_opaque(value),
             Err(_) => return self.query_error("invalid conversation id"),
         };
-        match self.history.search_conversation(conversation_id, query, limit) {
+        match self.read_models().history.search_conversation(conversation_id, query, limit) {
             Ok(messages) => {
                 let page = BridgeMessagePage {
                     messages: messages.into_iter().map(bridge_message_from_domain).collect(),
@@ -440,7 +452,7 @@ impl TorcaRuntime {
                 self.query_json = bridge_message_page_json(&page);
                 ABI_OK
             }
-            Err(error) => self.query_error(&error.to_string()),
+            Err(_) => self.query_error("conversation search unavailable"),
         }
     }
 
@@ -523,11 +535,31 @@ impl TorcaRuntime {
     }
 
     pub(crate) fn parse_pairing_uri(&mut self, raw_uri: &str) -> i32 {
-        let Ok(code) = torca_pairing_coordinator::decode_invite_uri(raw_uri) else {
+        let parsed =
+            torca_pairing_coordinator::decode_invite_uri(raw_uri).map(Some).or_else(|_| {
+                torca_pairing::PairingCode::new(raw_uri).map(|code| (code, None)).map(Some)
+            });
+        let Ok(Some((code, ticket))) = parsed else {
             self.query_json = "{}".into();
             return ABI_ERROR;
         };
-        self.query_json = serde_json::json!({ "code": code.as_str() }).to_string();
+        self.query_json = serde_json::json!({
+            "code": code.as_str(),
+            "ticket": ticket.as_ref().map(|value| value.as_hex()),
+        })
+        .to_string();
+        ABI_OK
+    }
+
+    pub(crate) fn encode_pairing_uri(&mut self, raw_code: &str) -> i32 {
+        let Ok(code) = torca_pairing::PairingCode::new(raw_code) else {
+            self.query_json = "{}".into();
+            return ABI_ERROR;
+        };
+        self.query_json = serde_json::json!({
+            "uri": torca_pairing_coordinator::encode_invite_uri(&code, None),
+        })
+        .to_string();
         ABI_OK
     }
 
@@ -535,8 +567,12 @@ impl TorcaRuntime {
         if !self.notifications_enabled {
             return Ok(());
         }
-        let summaries = self.history.conversation_summaries().map_err(|_| ())?;
-        let snapshot = self.bridge.snapshot().map_err(|_| ())?;
+        let summaries = self.read_models().history.conversation_summaries().map_err(|_| ())?;
+        let snapshot = self
+            .application_runtime
+            .snapshot_context()
+            .map(bridge_snapshot_from_application)
+            .map_err(|_| ())?;
         let contact_names = snapshot
             .contacts
             .iter()
@@ -554,6 +590,13 @@ impl TorcaRuntime {
                 .iter()
                 .find(|conversation| conversation.contact_id == contact.id)
                 .map_or_else(String::new, |conversation| conversation.id.clone());
+            let intent = torca_notifications::notification_intent(
+                torca_notifications::NotificationEvent::ContactAdded {
+                    contact_id: OpaqueId::from_u128(self.notification_cursor as u128),
+                },
+                torca_notifications::NotificationPrivacy::Redacted,
+                None,
+            );
             self.notification_events.push(torca_contract::NotificationEvent {
                 cursor: self.notification_cursor,
                 event_id,
@@ -561,6 +604,8 @@ impl TorcaRuntime {
                 conversation_id,
                 contact_display_name: contact.display_name.clone(),
                 created_at_ms: contact.created_at_ms,
+                title: intent.as_ref().map_or_else(|| "Torca".into(), |value| value.title.clone()),
+                body: intent.as_ref().map_or_else(String::new, |value| value.body.clone()),
             });
         }
         for (conversation_id, summary) in summaries {
@@ -575,6 +620,14 @@ impl TorcaRuntime {
             let contact_display_name = snapshot_contact_name(&snapshot, &contact_names, &key);
             let event_id = crate::torca_runtime::secure_id_hex()
                 .unwrap_or_else(|_| format!("notification-{}", self.notification_cursor));
+            let intent = torca_notifications::notification_intent(
+                torca_notifications::NotificationEvent::IncomingMessage {
+                    contact_id: OpaqueId::from_u128(self.notification_cursor as u128),
+                    conversation_id: OpaqueId::from_u128(self.notification_cursor as u128),
+                },
+                torca_notifications::NotificationPrivacy::Redacted,
+                None,
+            );
             self.notification_events.push(torca_contract::NotificationEvent {
                 cursor: self.notification_cursor,
                 event_id,
@@ -582,6 +635,8 @@ impl TorcaRuntime {
                 conversation_id: key,
                 contact_display_name,
                 created_at_ms: message.created_at().to_unix_millis(),
+                title: intent.as_ref().map_or_else(|| "Torca".into(), |value| value.title.clone()),
+                body: intent.as_ref().map_or_else(String::new, |value| value.body.clone()),
             });
         }
         if self.notification_events.len() > 256 {
@@ -620,6 +675,7 @@ impl TorcaRuntime {
         snapshot: &mut torca_contract::BridgeSnapshot,
     ) -> Result<(), &'static str> {
         let summaries = self
+            .read_models()
             .history
             .conversation_summaries()
             .map_err(|_| "conversation summaries unavailable")?;
@@ -647,8 +703,11 @@ impl TorcaRuntime {
         &self,
         snapshot: &mut torca_contract::BridgeSnapshot,
     ) -> Result<(), &'static str> {
-        let states =
-            self.security.contact_states().map_err(|_| "contact security state unavailable")?;
+        let states = self
+            .read_models()
+            .security
+            .contact_states()
+            .map_err(|_| "contact security state unavailable")?;
         for contact in &mut snapshot.contacts {
             let id = contact
                 .id
@@ -672,7 +731,8 @@ impl TorcaRuntime {
             .conversations
             .iter()
             .fold(0_u32, |total, conversation| total.saturating_add(conversation.unread_count));
-        let acknowledged_at = self.settings.new_contacts_acknowledged_at_ms().ok().flatten();
+        let acknowledged_at =
+            self.read_models().settings.new_contacts_acknowledged_at_ms().ok().flatten();
         snapshot.new_contacts_count = snapshot
             .contacts
             .iter()
@@ -711,7 +771,7 @@ impl TorcaRuntime {
             "TOR_STARTING",
             "Starting production network runtime",
         );
-        let engine = self.engine.clone();
+        let engine = self.application_runtime.handle().engine_handle();
         let (sender, receiver) = mpsc::channel::<HostStartEvent>();
         self.host_start = Some(receiver);
         self.host_start_started_at = Some(Instant::now());
@@ -755,8 +815,8 @@ impl TorcaRuntime {
         let identity_id_hex = crate::torca_runtime::secure_id_hex().map_err(|_| ())?;
         let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| ())?;
         let at_ms = i64::try_from(elapsed.as_millis()).map_err(|_| ())?;
-        let result = self.bridge.bootstrap_identity(&identity_id_hex, at_ms);
-        if result.ok { Ok(()) } else { Err(()) }
+        let identity_id = identity_id_hex.parse::<OpaqueId>().map_err(|_| ())?;
+        self.application_runtime.bootstrap_identity(identity_id, at_ms).map(|_| ()).map_err(|_| ())
     }
 
     fn apply_bootstrap_progress(&mut self, progress: &TorBootstrapEvent) -> bool {
@@ -839,7 +899,7 @@ impl TorcaRuntime {
                         handle.network_changed();
                         self.network_changed_pending = false;
                     }
-                    self.bridge.attach_runtime(handle);
+                    self.application_runtime.attach_runtime(handle);
                     self.host = Some(owner);
                     self.host_retry_at = None;
                     self.host_failures = 0;
@@ -930,7 +990,11 @@ impl TorcaRuntime {
     }
 
     fn has_identity(&self) -> Result<bool, ()> {
-        self.engine.overview_snapshot().map(|snapshot| snapshot.identity.is_some()).map_err(|_| ())
+        self.application_runtime
+            .handle()
+            .overview()
+            .map(|snapshot| snapshot.identity.is_some())
+            .map_err(|_| ())
     }
 
     fn is_closed(&self) -> bool {
@@ -1039,6 +1103,8 @@ mod tests {
             conversation_id: "conversation-1".into(),
             contact_display_name: "Alice".into(),
             created_at_ms: 1_700_000_000_123,
+            title: "New message".into(),
+            body: "Private message received".into(),
         };
         let value = notification_event_json(&event);
         assert_eq!(value["createdAtMs"], 1_700_000_000_123_i64);

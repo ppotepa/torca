@@ -1,19 +1,19 @@
 use std::fs::File;
 use std::io::Read;
 
+use crate::peer_envelope;
 use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
 use torca_attachment_transfer::AttachmentTransfer;
 use torca_attachments::{
     Attachment, AttachmentId, AttachmentName, AttachmentRepository, AttachmentStatus,
     MAX_ATTACHMENT_BYTES, MediaType,
 };
-use torca_communication_driver::{AttachmentRuntime, CommunicationError};
+use torca_communication_driver::{AttachmentRuntime, CommunicationError, InboundEnvelope};
 use torca_contacts::{ContactRepository, PeerCredentialRepository};
 use torca_conversations::ConversationRepository;
 use torca_crypto::{CryptoProvider, ProtectedSecretStore};
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageId, MessageRepository};
-use torca_peer_link::InboundPeerEnvelope;
 use torca_peer_protocol::HandshakeSigner;
 use torca_runtime::{AttachmentSendRequest, AttachmentView};
 
@@ -150,11 +150,11 @@ where
 
     fn process_inbound(
         &mut self,
-        envelope: InboundPeerEnvelope,
+        envelope: InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
         self.transfer
-            .process_inbound(envelope, now)
+            .process_inbound(peer_envelope(&envelope), now)
             .map(|_| ())
             .map_err(|_| CommunicationError::Attachment)
     }

@@ -12,11 +12,11 @@ void main() {
       ),
     );
 
-    expect(find.text('Invitation'), findsOneWidget);
-    expect(find.text('Peer joined'), findsOneWidget);
-    expect(find.text('Verify'), findsOneWidget);
-    expect(find.text('Approved'), findsOneWidget);
-    expect(find.text('P2P ready'), findsOneWidget);
-    expect(find.byIcon(Icons.check_circle), findsNWidgets(3));
+    expect(find.byIcon(Icons.qr_code_2), findsOneWidget);
+    expect(find.byIcon(Icons.link), findsOneWidget);
+    expect(find.byIcon(Icons.verified_user_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
+    expect(find.byIcon(Icons.hub_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_forward), findsNWidgets(4));
   });
 }

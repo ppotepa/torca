@@ -13,6 +13,14 @@ class PairingProgress extends StatelessWidget {
     'P2P ready',
   ];
 
+  static const _icons = <IconData>[
+    Icons.qr_code_2,
+    Icons.link,
+    Icons.verified_user_outlined,
+    Icons.check_circle_outline,
+    Icons.hub_outlined,
+  ];
+
   @override
   Widget build(BuildContext context) {
     final current = _stage(state);
@@ -25,38 +33,32 @@ class PairingProgress extends StatelessWidget {
       label: terminalFailure
           ? 'Pairing ${state.toLowerCase()}'
           : 'Pairing step ${current + 1} of ${_steps.length}: ${_steps[current]}',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          LinearProgressIndicator(
-            value: terminalFailure ? 0 : (current + 1) / _steps.length,
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 10,
-            runSpacing: 6,
-            children: List<Widget>.generate(_steps.length, (index) {
-              final reached = !terminalFailure && index <= current;
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(
-                    reached ? Icons.check_circle : Icons.circle_outlined,
-                    size: 15,
-                    color: reached
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.outline,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    _steps[index],
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
-                ],
-              );
-            }),
-          ),
-        ],
+      child: Row(
+        children: List<Widget>.generate(_steps.length * 2 - 1, (position) {
+          if (position.isOdd) {
+            return Expanded(
+              child: Icon(
+                Icons.arrow_forward,
+                size: 18,
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            );
+          }
+          final index = position ~/ 2;
+          final reached = !terminalFailure && index <= current;
+          return Expanded(
+            child: Tooltip(
+              message: _steps[index],
+              child: Icon(
+                _icons[index],
+                size: 28,
+                color: reached
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          );
+        }),
       ),
     );
   }

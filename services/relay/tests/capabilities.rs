@@ -1,14 +1,15 @@
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_relay::{MAX_FAILED_JOINS_PER_MINUTE, PAIRING_SLOT_TTL, RelayBroker};
 use torca_relay_protocol::{
-    RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken, RelaySlotCapability,
+    RelayCode, RelayJoinTicket, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken,
+    RelaySlotCapability,
 };
 
 #[test]
 fn slot_id_alone_does_not_authorize_poll_or_close() {
     let now = Timestamp::UNIX_EPOCH;
     let expires_at = Timestamp::from_unix_millis(60_000).expect("expiry");
-    let code = RelayCode::new("ABC12").expect("code");
+    let code = RelayCode::new("ABC123").expect("code");
     let creator = RelaySideToken(OpaqueId::from_u128(11));
     let joiner = RelaySideToken(OpaqueId::from_u128(12));
     let attacker = RelaySideToken(OpaqueId::from_u128(13));
@@ -24,6 +25,7 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
                 creator_blob: vec![1, 2, 3],
                 slot_capability: capability,
                 creator_token: creator,
+                ticket: RelayJoinTicket([0; 16]),
             },
             now,
         )
@@ -34,7 +36,15 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
     };
 
     let _ = relay
-        .handle(RelayRequest::Join { code, joiner_blob: vec![4, 5, 6], joiner_token: joiner }, now)
+        .handle(
+            RelayRequest::Join {
+                code,
+                joiner_blob: vec![4, 5, 6],
+                joiner_token: joiner,
+                ticket: None,
+            },
+            now,
+        )
         .expect("join");
 
     assert_eq!(
@@ -58,7 +68,7 @@ fn slot_id_alone_does_not_authorize_poll_or_close() {
 #[test]
 fn relay_clock_caps_invitation_lifetime_at_five_minutes() {
     let now = Timestamp::UNIX_EPOCH;
-    let code = RelayCode::new("ABC12").expect("code");
+    let code = RelayCode::new("ABC123").expect("code");
     let creator = RelaySideToken(OpaqueId::from_u128(31));
     let mut relay = RelayBroker::default();
     let opened = relay
@@ -71,6 +81,7 @@ fn relay_clock_caps_invitation_lifetime_at_five_minutes() {
                 creator_blob: vec![1],
                 slot_capability: RelaySlotCapability(OpaqueId::from_u128(32)),
                 creator_token: creator,
+                ticket: RelayJoinTicket([0; 16]),
             },
             now,
         )
@@ -87,6 +98,7 @@ fn relay_clock_caps_invitation_lifetime_at_five_minutes() {
                 code,
                 joiner_blob: vec![2],
                 joiner_token: RelaySideToken(OpaqueId::from_u128(33)),
+                ticket: None,
             },
             after_ttl,
         ),
@@ -102,9 +114,10 @@ fn failed_code_lookups_are_rate_limited_by_the_relay_clock() {
         assert_eq!(
             relay.handle(
                 RelayRequest::Join {
-                    code: RelayCode::new(format!("A{value:04}")).expect("code"),
+                    code: RelayCode::new(format!("A{value:05}")).expect("code"),
                     joiner_blob: vec![1],
                     joiner_token: RelaySideToken(OpaqueId::from_u128(u128::from(value) + 1)),
+                    ticket: None,
                 },
                 now,
             ),
@@ -114,9 +127,10 @@ fn failed_code_lookups_are_rate_limited_by_the_relay_clock() {
     assert_eq!(
         relay.handle(
             RelayRequest::Join {
-                code: RelayCode::new("ZZZZZ").expect("code"),
+                code: RelayCode::new("ZZZZZZ").expect("code"),
                 joiner_blob: vec![1],
                 joiner_token: RelaySideToken(OpaqueId::from_u128(999)),
+                ticket: None,
             },
             now,
         ),
@@ -126,12 +140,59 @@ fn failed_code_lookups_are_rate_limited_by_the_relay_clock() {
     assert_eq!(
         relay.handle(
             RelayRequest::Join {
-                code: RelayCode::new("ZZZZZ").expect("code"),
+                code: RelayCode::new("ZZZZZZ").expect("code"),
                 joiner_blob: vec![1],
                 joiner_token: RelaySideToken(OpaqueId::from_u128(1_000)),
+                ticket: None,
             },
             next_minute,
         ),
         Err(RelayProtocolError::SlotNotFound)
     );
+}
+
+#[test]
+fn qr_ticket_is_required_when_present_and_manual_join_remains_fallback() {
+    let now = Timestamp::UNIX_EPOCH;
+    let code = RelayCode::new("TICKET").expect("code");
+    let creator = RelaySideToken(OpaqueId::from_u128(41));
+    let ticket = RelayJoinTicket([7; 16]);
+    let capability = RelaySlotCapability(OpaqueId::from_u128(42));
+    let mut relay = RelayBroker::default();
+    let _ = relay
+        .handle(
+            RelayRequest::Open {
+                code: code.clone(),
+                expires_at: now.checked_add(PAIRING_SLOT_TTL).expect("expiry"),
+                creator_blob: vec![1],
+                slot_capability: capability,
+                creator_token: creator,
+                ticket,
+            },
+            now,
+        )
+        .expect("open");
+    assert_eq!(
+        relay.handle(
+            RelayRequest::Join {
+                code: code.clone(),
+                joiner_blob: vec![2],
+                joiner_token: RelaySideToken(OpaqueId::from_u128(43)),
+                ticket: Some(RelayJoinTicket([8; 16])),
+            },
+            now,
+        ),
+        Err(RelayProtocolError::Unauthorized)
+    );
+    let _ = relay
+        .handle(
+            RelayRequest::Join {
+                code,
+                joiner_blob: vec![2],
+                joiner_token: RelaySideToken(OpaqueId::from_u128(44)),
+                ticket: None,
+            },
+            now,
+        )
+        .expect("manual fallback");
 }

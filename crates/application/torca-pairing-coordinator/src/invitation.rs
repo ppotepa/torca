@@ -1,4 +1,5 @@
 use torca_pairing::PairingCode;
+use torca_pairing_protocol::PairingInviteTicket;
 
 use crate::{
     PairingCoordinator, PairingCoordinatorError, PairingCryptoPort, PairingRendezvousPort,
@@ -6,7 +7,7 @@ use crate::{
 
 /// Crockford Base32 avoids visual ambiguity in a code that users may type.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const GENERATED_CODE_LEN: usize = 5;
+const GENERATED_CODE_LEN: usize = 6;
 
 impl<R, C> PairingCoordinator<R, C>
 where
@@ -24,5 +25,13 @@ where
             output.push(char::from(CODE_ALPHABET[index]));
         }
         PairingCode::new(output).map_err(|_| PairingCoordinatorError::Crypto)
+    }
+
+    pub fn generate_pairing_ticket(
+        &mut self,
+    ) -> Result<PairingInviteTicket, PairingCoordinatorError> {
+        let mut bytes = [0_u8; 16];
+        self.crypto.fill_random(&mut bytes)?;
+        Ok(PairingInviteTicket::new(bytes))
     }
 }

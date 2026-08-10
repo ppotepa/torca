@@ -9,19 +9,12 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-sha2 = "0.10"
-torca-attachments = { path = "../../domains/torca-attachments" }
-torca-bootstrap = { path = "../../application/torca-bootstrap" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
-torca-client-engine = { path = "../../application/torca-client-engine" }
-torca-identity = { path = "../../domains/torca-identity" }
+torca-client-application = { path = "../../application/torca-client-application" }
 torca-contacts = { path = "../../domains/torca-contacts" }
-torca-conversations = { path = "../../domains/torca-conversations" }
 torca-pairing = { path = "../../domains/torca-pairing" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
 torca-messaging = { path = "../../domains/torca-messaging" }
-torca-receipts = { path = "../../domains/torca-receipts" }
-torca-runtime = { path = "../../application/torca-runtime" }
-torca-probing = { path = "../../application/torca-probing" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

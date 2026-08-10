@@ -1,9 +1,7 @@
 use std::path::Path;
 
 use rusqlite::params;
-use torca_delivery::{
-    ApplicationPayload, ApplicationPayloadCodec, DeliveryReceiptKind, ReceiptPayload,
-};
+use torca_control_delivery::{ControlKind, PendingControlJob, ReadCandidate};
 use torca_foundation::{OpaqueId, Timestamp};
 
 use crate::{DatabaseKey, SqlCipherBackend, StorageBackend, StorageKernel};
@@ -36,20 +34,10 @@ impl SqlCipherReadState {
         Ok(Self { backend: kernel.into_backend() })
     }
 
-    pub fn mark_conversation_read(
+    pub fn read_candidates(
         &mut self,
         conversation_id: OpaqueId,
-        at: Timestamp,
-    ) -> Result<usize, ReadStateError> {
-        self.mark_conversation_read_with_policy(conversation_id, at, true)
-    }
-
-    pub fn mark_conversation_read_with_policy(
-        &mut self,
-        conversation_id: OpaqueId,
-        at: Timestamp,
-        send_receipt: bool,
-    ) -> Result<usize, ReadStateError> {
+    ) -> Result<Vec<ReadCandidate>, ReadStateError> {
         let conversation = conversation_id.into_bytes();
         let candidates = {
             let mut statement = self
@@ -64,15 +52,33 @@ impl SqlCipherReadState {
                 .map_err(|_| ReadStateError::Storage)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(|_| ReadStateError::Storage)?
         };
+        candidates
+            .into_iter()
+            .map(|(contact, message)| {
+                Ok(ReadCandidate {
+                    contact_id: OpaqueId::from_bytes(fixed16(contact)?),
+                    message_id: OpaqueId::from_bytes(fixed16(message)?),
+                })
+            })
+            .collect()
+    }
+
+    pub fn commit_mark_read(
+        &mut self,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+        jobs: &[PendingControlJob],
+    ) -> Result<usize, ReadStateError> {
+        let candidates = self.read_candidates(conversation_id)?;
         if candidates.is_empty() {
             return Ok(0);
         }
         self.backend.begin().map_err(|_| ReadStateError::Storage)?;
         let result = (|| {
             let mut changed = 0_usize;
-            for (contact, message) in candidates {
-                let contact_id = OpaqueId::from_bytes(fixed16(contact)?);
-                let message_id = OpaqueId::from_bytes(fixed16(message)?);
+            let mut changed_messages = Vec::new();
+            for candidate in candidates {
+                let message_id = candidate.message_id;
                 let message_bytes = message_id.into_bytes();
                 let updated = self
                     .backend
@@ -83,34 +89,27 @@ impl SqlCipherReadState {
                     continue;
                 }
 
-                if send_receipt {
-                    let receipt_id = derived_receipt_id(message_id);
-                    let payload = ApplicationPayloadCodec::encode(&ApplicationPayload::Receipt(
-                        ReceiptPayload {
-                            receipt_id,
-                            message_id,
-                            contact_id,
-                            kind: DeliveryReceiptKind::Read,
-                            at,
-                        },
-                    ))
-                    .map_err(|_| ReadStateError::Protocol)?;
-                    let receipt_bytes = receipt_id.into_bytes();
-                    let contact_bytes = contact_id.into_bytes();
-                    self.backend
-                        .connection()
-                        .execute(
-                            INSERT_RECEIPT_SQL,
-                            params![
-                                receipt_bytes.as_slice(),
-                                contact_bytes.as_slice(),
-                                payload,
-                                at.to_unix_millis(),
-                            ],
-                        )
-                        .map_err(|_| ReadStateError::Storage)?;
-                }
+                changed_messages.push(message_id);
                 changed += 1;
+            }
+            for job in jobs.iter().filter(|job| {
+                job.kind == ControlKind::Receipt
+                    && job.message_id.is_some_and(|message| changed_messages.contains(&message))
+            }) {
+                let receipt_bytes = job.job_id.into_bytes();
+                let contact_bytes = job.contact_id.into_bytes();
+                self.backend
+                    .connection()
+                    .execute(
+                        INSERT_RECEIPT_SQL,
+                        params![
+                            receipt_bytes.as_slice(),
+                            contact_bytes.as_slice(),
+                            &job.payload,
+                            job.next_attempt_at.to_unix_millis(),
+                        ],
+                    )
+                    .map_err(|_| ReadStateError::Storage)?;
             }
             Ok::<usize, ReadStateError>(changed)
         })();
@@ -125,14 +124,16 @@ impl SqlCipherReadState {
             }
         }
     }
+
+    pub fn mark_conversation_read(
+        &mut self,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<usize, ReadStateError> {
+        self.commit_mark_read(conversation_id, at, &[])
+    }
 }
 
 fn fixed16(value: Vec<u8>) -> Result<[u8; 16], ReadStateError> {
     value.try_into().map_err(|_| ReadStateError::InvalidStoredId)
-}
-fn derived_receipt_id(message_id: OpaqueId) -> OpaqueId {
-    let mut bytes = message_id.into_bytes();
-    bytes[15] ^= 0xA1;
-    let value = OpaqueId::from_bytes(bytes);
-    if value.is_nil() { OpaqueId::from_u128(0xA2) } else { value }
 }

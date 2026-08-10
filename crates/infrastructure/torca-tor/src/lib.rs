@@ -18,9 +18,11 @@ use tor_rtcompat::PreferredRuntime;
 
 mod listener;
 mod peer_transport;
+mod runtime_driver;
 
 pub use listener::PeerListener;
 pub use peer_transport::TorPeerTransport;
+pub use runtime_driver::{OwnedTorDriver, SharedTorEndpoint};
 
 pub const TOR_PEER_VIRTUAL_PORT: u16 = 17491;
 const BOOTSTRAP_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);

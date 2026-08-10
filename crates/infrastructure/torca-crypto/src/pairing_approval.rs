@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
+use torca_foundation::OpaqueId;
 use torca_identity::{KeyAlgorithm, KeyId, PublicIdentity};
-use torca_pairing::PairingSessionId;
 use torca_pairing_coordinator::{PairingApprovalError, PairingApprovalPort};
 use torca_pairing_protocol::PairingEnvelope;
 
@@ -45,10 +45,10 @@ where
     fn sign_approval(
         &self,
         key_id: KeyId,
-        session_id: PairingSessionId,
+        context_id: OpaqueId,
         transcript_digest: [u8; 32],
     ) -> Result<Vec<u8>, PairingApprovalError> {
-        let canonical = approval_bytes(session_id, transcript_digest);
+        let canonical = approval_bytes(context_id, transcript_digest);
         self.sign(key_id, &canonical)
             .map(|signature| signature.0.to_vec())
             .map_err(|_| PairingApprovalError::Crypto)
@@ -57,7 +57,7 @@ where
     fn verify_approval(
         &self,
         remote_identity: &PublicIdentity,
-        session_id: PairingSessionId,
+        context_id: OpaqueId,
         transcript_digest: [u8; 32],
         proof: &[u8],
     ) -> Result<(), PairingApprovalError> {
@@ -74,17 +74,17 @@ where
         RustCryptoProvider
             .verify(
                 &PublicKey(public),
-                &approval_bytes(session_id, transcript_digest),
+                &approval_bytes(context_id, transcript_digest),
                 &Signature(signature),
             )
             .map_err(|_| PairingApprovalError::InvalidProof)
     }
 }
 
-fn approval_bytes(session_id: PairingSessionId, transcript_digest: [u8; 32]) -> Vec<u8> {
+fn approval_bytes(context_id: OpaqueId, transcript_digest: [u8; 32]) -> Vec<u8> {
     let mut output = Vec::with_capacity(APPROVAL_LABEL.len() + 16 + 32);
     output.extend_from_slice(APPROVAL_LABEL);
-    output.extend_from_slice(session_id.to_opaque().as_bytes());
+    output.extend_from_slice(context_id.as_bytes());
     output.extend_from_slice(&transcript_digest);
     output
 }

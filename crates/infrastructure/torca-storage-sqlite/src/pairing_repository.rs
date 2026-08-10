@@ -44,8 +44,8 @@ impl PairingRepository for SqlCipherPairingRepository {
             .execute(
                 "INSERT INTO pairing_sessions(session_id, code, role, state, expires_at_ms, local_approved, remote_approved,
                  remote_identity_id, remote_key_id, remote_key_algorithm, remote_public_key, remote_key_generation,
-                 remote_onion_address, remote_capability_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                 remote_display_name, remote_onion_address, remote_capability_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     values.id,
                     values.code,
@@ -59,6 +59,7 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_key_algorithm,
                     values.remote_public_key,
                     values.remote_key_generation,
+                    values.remote_display_name,
                     values.remote_onion_address,
                     values.remote_capability_id,
                 ],
@@ -72,7 +73,7 @@ impl PairingRepository for SqlCipherPairingRepository {
             .query_row(
                 "SELECT session_id, code, role, state, expires_at_ms, local_approved, remote_approved,
                  remote_identity_id, remote_key_id, remote_key_algorithm, remote_public_key, remote_key_generation,
-                 remote_onion_address, remote_capability_id FROM pairing_sessions WHERE session_id = ?1",
+                 remote_display_name, remote_onion_address, remote_capability_id FROM pairing_sessions WHERE session_id = ?1",
                 params![id.to_opaque().as_bytes().as_slice()],
                 decode_row,
             )
@@ -87,7 +88,7 @@ impl PairingRepository for SqlCipherPairingRepository {
             .execute(
                 "UPDATE pairing_sessions SET code=?2, role=?3, state=?4, expires_at_ms=?5, local_approved=?6,
                  remote_approved=?7, remote_identity_id=?8, remote_key_id=?9, remote_key_algorithm=?10,
-                 remote_public_key=?11, remote_key_generation=?12, remote_onion_address=?13, remote_capability_id=?14
+                 remote_public_key=?11, remote_key_generation=?12, remote_display_name=?13, remote_onion_address=?14, remote_capability_id=?15
                  WHERE session_id=?1",
                 params![
                     values.id,
@@ -102,6 +103,7 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_key_algorithm,
                     values.remote_public_key,
                     values.remote_key_generation,
+                    values.remote_display_name,
                     values.remote_onion_address,
                     values.remote_capability_id,
                 ],
@@ -118,7 +120,7 @@ impl PairingRepository for SqlCipherPairingRepository {
             .connection()
             .prepare("SELECT session_id, code, role, state, expires_at_ms, local_approved, remote_approved,
                       remote_identity_id, remote_key_id, remote_key_algorithm, remote_public_key, remote_key_generation,
-                      remote_onion_address, remote_capability_id FROM pairing_sessions ORDER BY session_id")
+                      remote_display_name, remote_onion_address, remote_capability_id FROM pairing_sessions ORDER BY session_id")
             .map_err(|_| PairingError::Storage)?;
         let rows = statement.query_map([], decode_row).map_err(|_| PairingError::Storage)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|_| PairingError::Storage)
@@ -149,6 +151,7 @@ struct Encoded {
     remote_key_algorithm: Option<i64>,
     remote_public_key: Option<Vec<u8>>,
     remote_key_generation: Option<i64>,
+    remote_display_name: Option<String>,
     remote_onion_address: Option<String>,
     remote_capability_id: Option<Vec<u8>>,
 }
@@ -161,6 +164,7 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_key_algorithm,
         remote_public_key,
         remote_key_generation,
+        remote_display_name,
         remote_onion_address,
         remote_capability_id,
     ) = if let Some(proposal) = proposal {
@@ -173,11 +177,12 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
             Some(key_algorithm),
             Some(proposal.public_identity.key().public_key().to_vec()),
             Some(i64::from(proposal.public_identity.generation())),
+            Some(proposal.display_name.clone()),
             Some(proposal.route.onion_address().to_owned()),
             Some(proposal.route.capability_id().into_bytes().to_vec()),
         )
     } else {
-        (None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None)
     };
     Ok(Encoded {
         id: session.id().to_opaque().into_bytes().to_vec(),
@@ -192,6 +197,7 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_key_algorithm,
         remote_public_key,
         remote_key_generation,
+        remote_display_name,
         remote_onion_address,
         remote_capability_id,
     })
@@ -214,7 +220,8 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
         row.get::<_, Option<Vec<u8>>>(10)?,
         row.get::<_, Option<i64>>(11)?,
         row.get::<_, Option<String>>(12)?,
-        row.get::<_, Option<Vec<u8>>>(13)?,
+        row.get::<_, Option<String>>(13)?,
+        row.get::<_, Option<Vec<u8>>>(14)?,
     ) {
         (
             Some(identity_id),
@@ -222,6 +229,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
             Some(algorithm),
             Some(public_key),
             Some(generation),
+            display_name,
             Some(onion),
             Some(capability),
         ) => {
@@ -241,9 +249,13 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
             );
             let route = ContactRoute::new(onion, OpaqueId::from_bytes(blob16(capability)?))
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
-            Some(PeerProposal { public_identity: identity, route })
+            Some(PeerProposal {
+                public_identity: identity,
+                display_name: display_name.unwrap_or_else(|| "New device".to_owned()),
+                route,
+            })
         }
-        (None, None, None, None, None, None, None) => None,
+        (None, None, None, None, None, None, None, None) => None,
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     PairingSession::restore(
@@ -313,7 +325,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let key = DatabaseKey::new([7_u8; 32]);
         let id = PairingSessionId::from_opaque(OpaqueId::from_u128(9));
-        let code = PairingCode::new("ABC12").expect("valid code");
+        let code = PairingCode::new("ABC123").expect("valid code");
         let session = PairingSession::creator(
             id,
             code,
@@ -341,12 +353,13 @@ mod tests {
                     .expect("public key"),
                 2,
             ),
+            display_name: "Remote Alice".to_owned(),
             route: ContactRoute::new("a".repeat(56) + ".onion", OpaqueId::from_u128(13))
                 .expect("route"),
         };
         let session = PairingSession::joiner(
             PairingSessionId::from_u128(14),
-            PairingCode::new("J0N42").expect("code"),
+            PairingCode::new("J0N422").expect("code"),
             Timestamp::from_unix_millis(20_000).expect("timestamp"),
             proposal,
         );
