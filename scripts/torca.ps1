@@ -308,13 +308,17 @@ switch ($Command) {
         }
         $buildDetail = if ($BuildPolicy -eq 'Rebuild') { 'Rebuild selected; endpoint and source fingerprint will be embedded' } else { 'Verified artifact reuse selected' }
         Write-TorcaStage -Name 'Build decision' -State 'ready' -Detail $buildDetail
-        if ($ClientDataPolicy -ne 'Preserve') { Reset-TorcaClientData -Devices $selected }
         if ($BuildPolicy -eq 'Rebuild' -or ($BuildPolicy -eq 'IfRequired' -and $required)) {
             Write-TorcaStage -Name 'Application build' -State 'running' -Detail "$buildTarget / $Configuration"
             Invoke-TorcaClientBuild -RepoRoot $root -Target $buildTarget -Configuration $Configuration -Endpoint $stack.Endpoint
             Write-TorcaBuildManifest -Paths $paths -Endpoint $stack.Endpoint -Targets @($buildTarget) -Configuration $Configuration
             Write-TorcaStage -Name 'Application build' -State 'ready' -Detail 'Artifact manifest verified'
         } else { Write-TorcaStage -Name 'Application build' -State 'ready' -Detail 'Reused existing verified artifacts' }
+        if ($ClientDataPolicy -ne 'Preserve') {
+            Write-TorcaStage -Name 'Client data reset' -State 'running' -Detail 'Build succeeded; resetting selected devices immediately before installation'
+            Reset-TorcaClientData -Devices $selected
+            Write-TorcaStage -Name 'Client data reset' -State 'ready' -Detail 'Selected application data reset completed'
+        }
         if ($Configuration -eq 'release') {
             $packageDevice = if ($InstallPolicy -eq 'Skip') { $null } else { ($selected | Where-Object Platform -eq 'android' | Select-Object -First 1).Id }
             Write-TorcaStage -Name 'Release package' -State 'running' -Detail 'Checking artifact and native library hashes'
@@ -328,14 +332,17 @@ switch ($Command) {
             }
         }
         if ($RunPolicy -ne 'Skip') {
-            $runDevice = ($selected | Select-Object -First 1).Id
-            if ($Configuration -eq 'release') {
-                Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration -Installed -ExpectedBuildId $expectedBuildId
-            } else {
-                Invoke-TorcaClientRun -RepoRoot $root -Target (Resolve-TorcaTarget $Target) -Device $runDevice -Configuration $Configuration -ExpectedBuildId $expectedBuildId
+            foreach ($item in $selected) {
+                Write-TorcaStage -Name "$($item.Platform) launch" -State 'running' -Detail $item.Name
+                if ($Configuration -eq 'release') {
+                    Invoke-TorcaClientRun -RepoRoot $root -Target $item.Platform -Device $item.Id -Configuration $Configuration -Installed -ExpectedBuildId $expectedBuildId
+                } else {
+                    Invoke-TorcaClientRun -RepoRoot $root -Target $item.Platform -Device $item.Id -Configuration $Configuration -ExpectedBuildId $expectedBuildId
+                }
+                Write-TorcaStage -Name "$($item.Platform) launch" -State 'ready' -Detail 'Process, native runtime and TOR_READY verified'
             }
             Write-TorcaStage -Name 'Application launch' -State 'ready' -Detail 'Launch command issued'
-            Write-TorcaStage -Name 'Launch health' -State 'ready' -Detail "Process and native startup handoff verified; incident logs: $(Join-Path $root 'logs/collected')"
+            Write-TorcaStage -Name 'Launch health' -State 'ready' -Detail "All selected clients reached TOR_READY; incident logs: $(Join-Path $root 'logs/collected')"
         }
         if ($InstallPolicy -ne 'Skip' -or $RunPolicy -ne 'Skip') {
             foreach ($item in $selected) { Write-TorcaDeviceDeploymentManifest -Device $item -Release $release -Endpoint $stack.Endpoint -BuildId $expectedBuildId }

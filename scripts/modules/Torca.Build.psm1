@@ -236,7 +236,7 @@ function Invoke-TorcaClientRun {
         [ValidateSet('debug','release')][string]$Configuration = 'debug',
         [switch]$Installed,
         [string]$ExpectedBuildId,
-        [ValidateRange(5,120)][int]$HealthTimeoutSeconds = 30
+        [ValidateRange(5,900)][int]$HealthTimeoutSeconds = 300
     )
     if ($Installed -and $Target -eq 'windows') {
         $exe = Join-Path $RepoRoot 'apps/client/flutter/build/windows/x64/runner/Release/torca_app.exe'
@@ -293,17 +293,22 @@ function Wait-TorcaClientLaunch {
         [Parameter(Mandatory = $true)][ValidateSet('windows','android')][string]$Platform,
         [string]$Device,
         [string]$ExpectedBuildId,
-        [ValidateRange(5,120)][int]$TimeoutSeconds = 30
+        [ValidateRange(5,900)][int]$TimeoutSeconds = 300
     )
+    $startedAt = [DateTime]::UtcNow.AddSeconds(-10)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $lastDetail = ''
+    $lastReported = ''
+    $processObserved = $false
     do {
         if ($Platform -eq 'windows') {
             $process = @(Get-Process -Name torca_app -ErrorAction SilentlyContinue)
             if ($process.Count -gt 0) {
+                $processObserved = $true
                 $logRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Torca/logs/devices' } else { $null }
                 $runStart = if ($logRoot -and (Test-Path -LiteralPath $logRoot)) {
                     Get-ChildItem -LiteralPath $logRoot -Recurse -File -Filter 'run.start.json' -ErrorAction SilentlyContinue |
+                        Where-Object LastWriteTimeUtc -ge $startedAt |
                         Sort-Object LastWriteTime -Descending | Select-Object -First 1
                 } else { $null }
                 if ($runStart) {
@@ -312,25 +317,48 @@ function Wait-TorcaClientLaunch {
                         if ($ExpectedBuildId -and [string]$run.build_id -and [string]$run.build_id -ne $ExpectedBuildId) {
                             throw "Windows runtime build ID mismatch. Expected=$ExpectedBuildId Actual=$($run.build_id). Diagnostic: $($runStart.FullName)"
                         }
-                        Write-Host "Windows runtime launch verified: PID $($process[0].Id), build=$($run.build_id)" -ForegroundColor Green
+                        $bootstrapLog = Join-Path $runStart.DirectoryName 'bootstrap.log'
+                        $bootstrap = if (Test-Path -LiteralPath $bootstrapLog) { Get-Content -LiteralPath $bootstrapLog -Tail 80 -ErrorAction SilentlyContinue } else { @() }
+                        $events = @($bootstrap | ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } | Where-Object { $_ })
+                        $failure = $events | Where-Object { $_.code -eq 'RUNTIME_START_FAILED' } | Select-Object -Last 1
+                        $ready = $events | Where-Object { $_.code -eq 'TOR_READY' } | Select-Object -Last 1
+                        if ($ready) {
+                            Write-Host "Windows runtime health verified: PID $($process[0].Id), build=$($run.build_id), state=TOR_READY" -ForegroundColor Green
+                            return
+                        }
+                        if ($failure) { $lastDetail = "Windows Tor startup: $($failure.message)" }
+                        else { $lastEvent = $events | Select-Object -Last 1; $lastDetail = if ($lastEvent) { "Windows runtime event: $($lastEvent.code)" } else { 'Windows runtime log is initializing' } }
                     } catch {
                         if ($_.Exception.Message -like 'Windows runtime build ID mismatch*') { throw }
                         Write-Warning "Windows process is running but startup metadata could not be read: $($runStart.FullName)"
                     }
-                } else {
-                    Write-Host "Windows process is running: PID $($process[0].Id) (runtime log is still initializing)" -ForegroundColor Green
-                }
-                return
+                } else { $lastDetail = "Windows process PID $($process[0].Id) is running; waiting for a fresh runtime log" }
             }
-            $lastDetail = 'Windows torca_app process is not running yet'
+            elseif ($processObserved) {
+                throw 'Windows torca_app exited before native runtime reached TOR_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident.'
+            } else { $lastDetail = 'Windows torca_app process is not running yet' }
         } else {
             if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required for Android launch verification.' }
             $pid = (& adb -s $Device shell pidof com.torca.torca_app 2>&1 | Out-String).Trim()
             if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($pid)) {
-                Write-Host "Android runtime launch verified on ${Device}: PID $pid" -ForegroundColor Green
-                return
+                $processObserved = $true
+                $logFiles = (& adb -s $Device shell find /sdcard/Android/data/com.torca.torca_app/files/torca/logs -type f -name bootstrap.log 2>$null | Out-String).Trim() -split "`r?`n" | Where-Object { $_ }
+                $remoteLog = $logFiles | Select-Object -Last 1
+                $events = if ($remoteLog) { (& adb -s $Device shell tail -n 80 $remoteLog 2>$null | Out-String) } else { '' }
+                if ($events -match '"code"\s*:\s*"TOR_READY"') {
+                    Write-Host "Android runtime health verified on ${Device}: PID $pid, state=TOR_READY" -ForegroundColor Green
+                    return
+                }
+                $failure = [Regex]::Matches($events, '"code"\s*:\s*"RUNTIME_START_FAILED"[^\r\n]*') | Select-Object -Last 1
+                $lastDetail = if ($failure) { "Android Tor startup: $($failure.Value)" } elseif ($remoteLog) { "Android process PID $pid is running; waiting for TOR_READY" } else { "Android process PID $pid is running; waiting for runtime bootstrap log" }
             }
-            $lastDetail = "Android package process is not running on $Device yet"
+            elseif ($processObserved) {
+                throw "Android package process exited on $Device before native runtime reached TOR_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat."
+            } else { $lastDetail = "Android package process is not running on $Device yet" }
+        }
+        if ($lastDetail -ne $lastReported) {
+            Write-TorcaStage -Name "$Platform runtime health" -State 'running' -Detail $lastDetail
+            $lastReported = $lastDetail
         }
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)

@@ -19,7 +19,7 @@ services:
     volumes:
       - ./../../.torca/stack:/var/lib/torca
     healthcheck:
-      test: ["CMD-SHELL", "test -s /var/lib/torca/relay_endpoint.txt"]
+      test: ["CMD-SHELL", "test -s /var/lib/torca/relay_endpoint.txt && grep -Eq ':228C[[:space:]].*[[:space:]]0A[[:space:]]' /proc/net/tcp /proc/net/tcp6"]
       interval: 2s
       timeout: 2s
       retries: 30

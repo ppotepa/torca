@@ -144,6 +144,28 @@ function Wait-TorcaDockerRelayReady {
     $diagnostics = Get-TorcaDockerRelayDiagnostics -Paths $Paths
     throw "Docker relay did not become ready within $TimeoutSeconds seconds (state=$($final.Status), health=$($final.Health), restarts=$($final.RestartCount)).`nRecent relay logs:`n$diagnostics"
 }
+function Assert-TorcaStackHealth {
+    param($Paths, [Parameter(Mandatory = $true)]$Stack)
+    $endpoint = Read-TorcaEndpoint $Paths
+    if ([string]$Stack.Endpoint -ne $endpoint) {
+        throw "Relay endpoint state mismatch. Runtime=$($Stack.Endpoint) File=$endpoint"
+    }
+    if ($Stack.Provider -eq 'docker') {
+        $status = Get-TorcaDockerRelayStatus -Paths $Paths
+        if ($status.Status -ne 'running' -or $status.Health -ne 'healthy' -or $status.RestartCount -ne 0) {
+            $diagnostics = Get-TorcaDockerRelayDiagnostics -Paths $Paths
+            throw "Relay health gate failed (state=$($status.Status), health=$($status.Health), restarts=$($status.RestartCount)).`nRecent relay logs:`n$diagnostics"
+        }
+        & docker exec $status.ContainerId sh -c "test -s /var/lib/torca/relay_endpoint.txt && grep -Eq ':228C[[:space:]].*[[:space:]]0A[[:space:]]' /proc/net/tcp /proc/net/tcp6" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Relay health gate failed: endpoint exists, but the relay server is not listening on container port 8844.'
+        }
+    } elseif (-not (Test-TorcaPort 8844)) {
+        throw 'Relay health gate failed: the local relay server is not listening on port 8844.'
+    }
+    Write-TorcaStackStage -Name 'Relay health gate' -State 'ready' -Detail "provider=$($Stack.Provider), endpoint=$endpoint, listener=8844"
+    return $Stack
+}
 function Start-TorcaStack {
     param($Paths, [ValidateSet('Ensure','Preserve','Restart','Rotate')][string]$OnionPolicy = 'Ensure')
     Initialize-TorcaPaths $Paths
@@ -182,7 +204,8 @@ function Start-TorcaStack {
     if (-not $endpoint) { throw 'In-process Tor relay did not publish an endpoint.' }
     Write-TorcaStackStage -Name 'Relay endpoint' -State 'ready' -Detail $endpoint
     $state.Endpoint = $endpoint; $state.UpdatedAt = [DateTime]::UtcNow.ToString('o'); Set-TorcaRuntimeState $Paths $state
-    [pscustomobject]@{ Endpoint = $endpoint; OnionHost = ($endpoint -split ':')[0]; Provider = $state.Provider; RelayPid = $state.RelayPid; RelayPort = 8844 }
+    $stack = [pscustomobject]@{ Endpoint = $endpoint; OnionHost = ($endpoint -split ':')[0]; Provider = $state.Provider; RelayPid = $state.RelayPid; RelayPort = 8844 }
+    Assert-TorcaStackHealth -Paths $Paths -Stack $stack
 }
 function Stop-TorcaStack { param($Paths)
     $state = Get-TorcaRuntimeState $Paths
@@ -197,4 +220,4 @@ function Get-TorcaStackStatus { param($Paths)
     $processRelay = [bool]($state.RelayPid -and (Get-Process -Id ([int]$state.RelayPid) -ErrorAction SilentlyContinue))
     [pscustomobject]@{ Provider = $state.Provider; RelayRunning = [bool]($dockerRelay -or $processRelay); Endpoint = $state.Endpoint; RelayPortOpen = if ($state.Provider -eq 'docker') { $dockerRelay } else { Test-TorcaPort 8844 }; ContainerState = if ($dockerStatus) { $dockerStatus.Status } else { $null }; ContainerHealth = if ($dockerStatus) { $dockerStatus.Health } else { $null }; RestartCount = if ($dockerStatus) { $dockerStatus.RestartCount } else { $null } }
 }
-Export-ModuleMember -Function Start-TorcaStack, Stop-TorcaStack, Get-TorcaStackStatus, Get-TorcaDockerRelayStatus, Get-TorcaDockerRelayDiagnostics
+Export-ModuleMember -Function Start-TorcaStack, Stop-TorcaStack, Get-TorcaStackStatus, Get-TorcaDockerRelayStatus, Get-TorcaDockerRelayDiagnostics, Assert-TorcaStackHealth
