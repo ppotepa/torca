@@ -22,6 +22,10 @@ use torca_runtime::{
     TorState, TransportActivitySnapshot,
 };
 
+pub mod generated {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/generated_contract.rs"));
+}
+
 pub const CONTRACT_VERSION: u16 = 15;
 
 /// Serializes the contract-owned notification cursor query used by platform

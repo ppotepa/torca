@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
-use torca_contract::{BridgeCommand, CONTRACT_VERSION};
+use torca_contract::{BridgeCommand, CONTRACT_VERSION, generated};
 use torca_crypto::{CryptoProvider, RustCryptoProvider};
 
 use crate::native_runtime::{ABI_OK, TorcaRuntime};
@@ -279,6 +279,14 @@ impl ActorState {
         let name = request.get("name").and_then(Value::as_str).unwrap_or_default();
         let payload = request.get("payload").cloned().unwrap_or_else(|| json!({}));
         let kind = request.get("kind").and_then(Value::as_str).unwrap_or_default();
+        if !generated::contains(kind, name) {
+            return self.error(
+                request_id,
+                "CONTRACT_OPERATION_UNKNOWN",
+                "contract.operation.unknown",
+                false,
+            );
+        }
         let code = match (kind, name) {
             ("query", "snapshot.get") => self.runtime.refresh_snapshot(),
             ("query", "conversation.page") => {

@@ -60,10 +60,39 @@ fn main() {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
+    let rust_path = PathBuf::from("crates/platform/torca-contract/src/generated_contract.rs");
+    let rust_expected = format!(
+        concat!(
+            "// GENERATED FILE. DO NOT EDIT.\n",
+            "// Generated from: crates/platform/torca-contract/schema/torca_contract.json\n\n",
+            "pub const SCHEMA_VERSION: u16 = {schema_version};\n",
+            "pub const CONTRACT_VERSION: u16 = {contract_version};\n",
+            "pub const COMMANDS: &[&str] = &[{commands}];\n",
+            "pub const QUERIES: &[&str] = &[{queries}];\n\n",
+            "pub fn contains(kind: &str, name: &str) -> bool {{\n",
+            "    match kind {{\n",
+            "        \"command\" => COMMANDS.contains(&name),\n",
+            "        \"query\" => QUERIES.contains(&name),\n",
+            "        \"lifecycle\" => matches!(name, \"host_started\" | \"foregrounded\" | \"backgrounded\" | \"network_changed\" | \"low_memory\" | \"terminating\"),\n",
+            "        _ => false,\n",
+            "    }}\n",
+            "}}\n",
+        ),
+        schema_version = schema_version.unwrap(),
+        contract_version = contract_version.unwrap(),
+        commands =
+            commands.iter().map(|value| format!("\"{value}\"")).collect::<Vec<_>>().join(", "),
+        queries = queries.iter().map(|value| format!("\"{value}\"")).collect::<Vec<_>>().join(", "),
+    );
     if check {
         let actual = fs::read_to_string(&path).unwrap_or_default();
         if actual != expected {
             eprintln!("generated contract is stale: {}", path.display());
+            std::process::exit(1);
+        }
+        let actual_rust = fs::read_to_string(&rust_path).unwrap_or_default();
+        if actual_rust != rust_expected {
+            eprintln!("generated Rust contract is stale: {}", rust_path.display());
             std::process::exit(1);
         }
     } else {
@@ -71,5 +100,6 @@ fn main() {
             fs::create_dir_all(parent).expect("create output directory");
         }
         fs::write(&path, expected).expect("write generated contract");
+        fs::write(&rust_path, rust_expected).expect("write generated Rust contract");
     }
 }
