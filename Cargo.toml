@@ -15,7 +15,6 @@ members = [
     "crates/application/torca-client-engine",
     "crates/application/torca-delivery",
     "crates/application/torca-pairing-coordinator",
-    "crates/application/torca-projections",
     "crates/application/torca-diagnostics",
     "crates/application/torca-probing",
     "crates/application/torca-bootstrap",
