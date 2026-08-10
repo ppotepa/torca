@@ -413,6 +413,10 @@ class RuntimeRequestDto {
   final String name;
   final Map<String, Object?> payload;
 
+  /// Contract timeout for a single ABI wait. The native actor independently
+  /// bounds mailbox admission for network work to two seconds.
+  int get timeoutMs => kind == 'query' ? 5000 : 10000;
+
   static RuntimeRequestDto? command(BridgeCommandDto command) {
     if (command is RefreshSnapshotCommandDto) return snapshot;
     if (command is UpdateProfileCommandDto) {

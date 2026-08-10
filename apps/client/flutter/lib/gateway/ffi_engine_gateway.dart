@@ -295,6 +295,7 @@ class NativeRuntimeWorker {
     final reply = ReceivePort();
     _commandPort.send(<String, Object?>{
       'invoke': request.encode(requestId),
+      'timeoutMs': request.timeoutMs,
       'reply': reply.sendPort,
     });
     final value = await reply.first;
@@ -456,8 +457,9 @@ void _workerMainImpl(List<Object?> arguments) {
     }
     final raw = message['invoke'] as String?;
     if (raw == null || reply == null) return;
+    final timeoutMs = message['timeoutMs'] as int? ?? 10000;
     try {
-      final result = bindings.invoke(handle, raw, 10000);
+      final result = bindings.invoke(handle, raw, timeoutMs);
       reply.send(result);
     } on Object catch (error) {
       final requestId =
