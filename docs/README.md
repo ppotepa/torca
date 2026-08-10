@@ -4,7 +4,7 @@ Torca documentation is separated by purpose so that current delivery work does n
 
 ## Active release documentation
 
-[`0.1`](0.1/README.md) contains the exact scope, ordered roadmap, implementation checklist, and completion criteria for the current release.
+[`0.2`](0.2/IMPLEMENTATION_ORDER.md) contains the current implementation order and release validation gates.
 
 ## Architecture documentation
 

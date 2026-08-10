@@ -1,4 +1,4 @@
-# ADR 0004: Main-only development during 0.1
+# ADR 0004: Main-only development
 
 - Status: accepted
 - Date: 2026-08-06
@@ -9,7 +9,7 @@ The repository starts empty and is being built in dependency order. Long-lived b
 
 ## Decision
 
-During 0.1 development, `main` is the only active development branch. Work lands in small coherent commits directly on `main`.
+The Torca baseline uses `main` as the active development branch. Work lands in small coherent commits directly on `main`.
 
 ## Consequences
 

@@ -4,7 +4,7 @@
 
 The user-facing and new source name is **Torca**. New Rust crates use the `torca-` prefix. Historical `torchat-*` names are not carried into the clean repository unless required temporarily by an imported protocol test vector.
 
-## Planned layout
+## Current layout
 
 ```text
 apps/
@@ -19,7 +19,7 @@ crates/
 services/
   relay/
 docs/
-  0.1/
+  0.2/
   architecture/
   decisions/
 ```
@@ -27,7 +27,7 @@ docs/
 ## Crate naming
 
 - domain: `torca-identity`, `torca-messaging`;
-- application: `torca-client-engine`, `torca-projections`;
+- application: `torca-client-engine`, `torca-runtime`;
 - infrastructure: `torca-storage-sqlite`, `torca-tor`;
 - protocol: `torca-wire`, `torca-peer-protocol`;
 - platform: `torca-contract`.
