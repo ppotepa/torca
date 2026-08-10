@@ -58,10 +58,31 @@ function Get-TorcaDevices {
                         Architecture = if ($sdk) { "android-api-$sdk" } else { '' }
                         CanInstall = $online; CanRun = $online
                     }
+                    # An unplugged/stale USB serial can remain in `adb devices`
+                    # as offline while the same phone is connected through
+                    # wireless debugging.  Prefer the live endpoint and do not
+                    # surface the stale serial as a second logical device.
+                    if ($reportedSerial -and $androidDevicesByIdentity.ContainsKey($id)) {
+                        $stale = $androidDevicesByIdentity[$id]
+                        if ($stale.State -ne 'device') {
+                            $devices.Remove($stale) | Out-Null
+                            $androidDevicesByIdentity.Remove($id)
+                        }
+                    }
                     if ($androidDevicesByIdentity.ContainsKey($identity)) {
                         $existing = $androidDevicesByIdentity[$identity]
-                        if ($connectionRank -ge $existing.ConnectionRank) { continue }
-                        $devices.Remove($existing) | Out-Null
+                        $existingOnline = $existing.State -eq 'device'
+                        # Online state always wins over connection transport.
+                        # An offline USB entry must never replace an active
+                        # Wi-Fi debugging endpoint for the same serial.
+                        if ($existingOnline -and -not $online) { continue }
+                        if ($online -and -not $existingOnline) {
+                            $devices.Remove($existing) | Out-Null
+                        } elseif ($connectionRank -ge $existing.ConnectionRank) {
+                            continue
+                        } else {
+                            $devices.Remove($existing) | Out-Null
+                        }
                     }
                     Add-Member -InputObject $candidate -NotePropertyName ConnectionRank -NotePropertyValue $connectionRank
                     $androidDevicesByIdentity[$identity] = $candidate

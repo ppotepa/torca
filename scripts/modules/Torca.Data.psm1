@@ -26,6 +26,7 @@ function Reset-TorcaWindowsClientData {
 function Reset-TorcaAndroidClientData {
     param([Parameter(Mandatory = $true)][string]$DeviceId)
     if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required to reset Android client data.' }
+    Ensure-TorcaAndroidDeviceOnline -DeviceId $DeviceId
     $packageName = if ($env:TORCA_ANDROID_PACKAGE) { $env:TORCA_ANDROID_PACKAGE } else { 'com.torca.torca_app' }
     & adb -s $DeviceId shell am force-stop $packageName *> $null
     $clearOutput = (& adb -s $DeviceId shell pm clear $packageName 2>&1 | Out-String).Trim()
@@ -59,8 +60,34 @@ function Reset-TorcaAndroidClientData {
     throw "Unable to clear Android data on device $DeviceId. Details: $clearOutput"
 }
 
+function Ensure-TorcaAndroidDeviceOnline {
+    param([Parameter(Mandatory = $true)][string]$DeviceId)
+    $state = (& adb -s $DeviceId get-state 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and $state -eq 'device') { return }
+
+    # Wireless-debug endpoints can expire between device selection and reset.
+    # Reconnect once and use a bounded readiness wait; never wait forever nor
+    # clear any other device by falling back to an unqualified adb command.
+    if ($DeviceId -match ':\d+$') {
+        Write-Host "Android endpoint $DeviceId is $state; reconnecting wireless debugging." -ForegroundColor Yellow
+        & adb connect $DeviceId 2>&1 | Out-Null
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        do {
+            Start-Sleep -Milliseconds 500
+            $state = (& adb -s $DeviceId get-state 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $state -eq 'device') { return }
+        } while ([DateTime]::UtcNow -lt $deadline)
+    }
+    throw "Android device $DeviceId is not ready for a data reset (adb state: $state). Reconnect/authorize wireless debugging and retry; no selected device data was changed."
+}
+
 function Reset-TorcaClientData {
     param([Parameter(Mandatory = $true)][object[]]$Devices)
+    # Verify every Android target before changing any local data.  This avoids
+    # a partially reset multi-device deployment when Wi-Fi debugging drops.
+    foreach ($device in $Devices) {
+        if ($device.Platform -eq 'android') { Ensure-TorcaAndroidDeviceOnline -DeviceId $device.Id }
+    }
     foreach ($device in $Devices) {
         if ($device.Platform -eq 'windows') { Reset-TorcaWindowsClientData }
         elseif ($device.Platform -eq 'android') { Reset-TorcaAndroidClientData -DeviceId $device.Id }
