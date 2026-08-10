@@ -322,7 +322,7 @@ switch ($Command) {
         if ($Configuration -eq 'release') {
             $packageDevice = if ($InstallPolicy -eq 'Skip') { $null } else { ($selected | Where-Object Platform -eq 'android' | Select-Object -First 1).Id }
             Write-TorcaStage -Name 'Release package' -State 'running' -Detail 'Checking artifact and native library hashes'
-            Invoke-TorcaClientReleaseDeploy -RepoRoot $root -Target $buildTarget -Device $packageDevice -Endpoint $stack.Endpoint
+            Invoke-TorcaClientReleaseDeploy -RepoRoot $root -Target $buildTarget -Device $packageDevice -Endpoint $stack.Endpoint -SkipLaunch
             Write-TorcaStage -Name 'Release package' -State 'ready' -Detail 'Package verification completed'
         }
         if ($InstallPolicy -ne 'Skip') {

@@ -46,6 +46,7 @@ pub struct TorcaRuntime {
     settings: SqlCipherSettingsStore,
     host: Option<RuntimeOwner>,
     host_start: Option<Receiver<HostStartResult>>,
+    host_start_started_at: Option<Instant>,
     host_start_deadline: Option<Instant>,
     host_retry_at: Option<Instant>,
     host_failures: u32,
@@ -93,6 +94,7 @@ impl TorcaRuntime {
             security: parts.security,
             host: None,
             host_start: None,
+            host_start_started_at: None,
             host_start_deadline: None,
             host_retry_at: None,
             host_failures: 0,
@@ -267,7 +269,20 @@ impl TorcaRuntime {
 
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
         let (phase, state, code) = match self.host_state_hint {
-            TorState::Starting => ("starting", "running", None),
+            TorState::Starting => {
+                let elapsed =
+                    self.host_start_started_at.map_or(Duration::ZERO, |started| started.elapsed());
+                let code = if elapsed >= Duration::from_secs(120) {
+                    "TOR_BOOTSTRAP_SLOW"
+                } else if elapsed >= Duration::from_secs(60) {
+                    "TOR_BUILDING_CIRCUITS"
+                } else if elapsed >= Duration::from_secs(15) {
+                    "TOR_DOWNLOADING_CONSENSUS"
+                } else {
+                    "TOR_CONNECTING_DIRECTORY"
+                };
+                ("starting", "running", Some(code))
+            }
             TorState::Degraded | TorState::Failed => {
                 ("failed", "failed", Some("TOR_RUNTIME_FAILED"))
             }
@@ -363,6 +378,7 @@ impl TorcaRuntime {
         self.host_failures = 0;
         self.host_state_hint = TorState::Stopped;
         self.host_start = None;
+        self.host_start_started_at = None;
         self.host_start_deadline = None;
         if let Some(host) = self.host.take() {
             if host.shutdown().is_err() {
@@ -584,6 +600,7 @@ impl TorcaRuntime {
         let engine = self.engine.clone();
         let (sender, receiver) = mpsc::channel::<HostStartResult>();
         self.host_start = Some(receiver);
+        self.host_start_started_at = Some(Instant::now());
         self.host_start_deadline = Some(Instant::now() + NETWORK_START_OBSERVE_TIMEOUT);
         thread::spawn(move || {
             let result = match catch_unwind(AssertUnwindSafe(|| spawn_production_runtime(engine))) {
@@ -622,6 +639,7 @@ impl TorcaRuntime {
         };
         if let Some(result) = outcome {
             self.host_start = None;
+            self.host_start_started_at = None;
             self.host_start_deadline = None;
             match result {
                 Ok((handle, owner)) => {

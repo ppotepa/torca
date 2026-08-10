@@ -817,7 +817,8 @@ function Invoke-TorcaDeploy {
     param(
         [ValidateSet('auto', 'windows', 'android', 'all')][string]$Target = 'auto',
         [string]$Device,
-        [switch]$ReuseBuild
+        [switch]$ReuseBuild,
+        [switch]$SkipLaunch
     )
 
     Push-Location $script:RepoRoot
@@ -930,17 +931,21 @@ function Invoke-TorcaDeploy {
                             throw "Installed Android APK hash mismatch on $Device. Local=$installedHash Remote=$remoteHash"
                         }
                         Write-Host "Android release artifact verified on ${Device}: $installedHash" -ForegroundColor Green
-                        $activityOutput = (& adb -s $Device shell am start -W -n com.torca.torca_app/com.torca.app.MainActivity 2>&1 | Out-String).Trim()
-                        if ($activityOutput -notmatch '(?m)^Status:\s*ok\s*$') {
-                            throw "Android MainActivity failed to start on $Device. Details: $activityOutput"
+                        if (-not $SkipLaunch) {
+                            $activityOutput = (& adb -s $Device shell am start -W -n com.torca.torca_app/com.torca.app.MainActivity 2>&1 | Out-String).Trim()
+                            if ($activityOutput -notmatch '(?m)^Status:\s*ok\s*$') {
+                                throw "Android MainActivity failed to start on $Device. Details: $activityOutput"
+                            }
+                            Start-Sleep -Seconds 2
+                            $activityPid = (& adb -s $Device shell pidof com.torca.torca_app 2>&1 | Out-String).Trim()
+                            if ([string]::IsNullOrWhiteSpace($activityPid)) {
+                                $crashLog = (& adb -s $Device logcat -b crash -d -t 120 2>&1 | Out-String).Trim()
+                                throw "Android process exited after MainActivity start on $Device. Crash log: $crashLog"
+                            }
+                            Write-Host "Android MainActivity is running on ${Device}: PID $activityPid" -ForegroundColor Green
+                        } else {
+                            Write-Host "Android release installed on ${Device}; launch deferred to the sequential runtime health phase." -ForegroundColor Green
                         }
-                        Start-Sleep -Seconds 2
-                        $activityPid = (& adb -s $Device shell pidof com.torca.torca_app 2>&1 | Out-String).Trim()
-                        if ([string]::IsNullOrWhiteSpace($activityPid)) {
-                            $crashLog = (& adb -s $Device logcat -b crash -d -t 120 2>&1 | Out-String).Trim()
-                            throw "Android process exited after MainActivity start on $Device. Crash log: $crashLog"
-                        }
-                        Write-Host "Android MainActivity is running on ${Device}: PID $activityPid" -ForegroundColor Green
                     }
                 } finally {
                     Pop-Location

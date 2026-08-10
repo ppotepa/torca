@@ -218,12 +218,20 @@ function Get-TorcaFileSha256 {
 }
 
 function Invoke-TorcaClientReleaseDeploy {
-    param([string]$RepoRoot, [string]$Target, [string]$Device, [string]$Endpoint)
+    param(
+        [string]$RepoRoot,
+        [string]$Target,
+        [string]$Device,
+        [string]$Endpoint,
+        [switch]$SkipLaunch
+    )
     $old = $env:TORCA_RELAY_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED
     try {
         $env:TORCA_RELAY_ENDPOINT = $Endpoint
         $env:TORCA_ORCHESTRATED = '1'
-        & (Join-Path $RepoRoot 'scripts/deploy.ps1') -Target $Target -Device $Device -ReuseBuild
+        $arguments = @{ Target = $Target; Device = $Device; ReuseBuild = $true }
+        if ($SkipLaunch) { $arguments.SkipLaunch = $true }
+        & (Join-Path $RepoRoot 'scripts/deploy.ps1') @arguments
         if ($LASTEXITCODE -ne 0) { throw "Release deploy failed with code $LASTEXITCODE." }
     } finally { $env:TORCA_RELAY_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated }
 }

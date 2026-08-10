@@ -20,7 +20,8 @@ param(
     [switch]$NonInteractive,
     [switch]$Confirm,
     [switch]$AllowDataReset,
-    [switch]$ReuseBuild
+    [switch]$ReuseBuild,
+    [switch]$SkipLaunch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,4 +65,5 @@ $module = Join-Path $root 'scripts/modules/Torca.BuildEngine.psm1'
 Import-Module $module -Force -WarningAction SilentlyContinue -Verbose:$false
 $deployArguments = @{ Target = $Target; Device = $Device }
 if ($ReuseBuild) { $deployArguments.ReuseBuild = $true }
+if ($SkipLaunch) { $deployArguments.SkipLaunch = $true }
 Invoke-TorcaDeploy @deployArguments

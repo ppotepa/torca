@@ -139,7 +139,12 @@ impl TorService {
 
             let mut events = client.bootstrap_events();
             {
-                let bootstrap = client.bootstrap();
+                // Poll Arti on its own runtime task.  On Windows a single poll
+                // can monopolize its worker while negotiating directory
+                // channels.  The watchdog must therefore run on a different
+                // worker instead of wrapping that future in the same select.
+                let bootstrap_client = client.clone();
+                let bootstrap = tokio::spawn(async move { bootstrap_client.bootstrap().await });
                 let deadline = tokio::time::sleep(timeout);
                 let mut stall_tick = tokio::time::interval(std::time::Duration::from_secs(1));
                 let mut last_progress = Instant::now();
@@ -158,17 +163,21 @@ impl TorService {
                     // stream prevent the safety deadlines below from being
                     // observed.
                     if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
+                        bootstrap.abort();
                         return Err(TorError(format!(
                             "bootstrap Arti client stalled at {:.0}%",
                             last_fraction * 100.0
                         )));
                     }
                     if bootstrap_started.elapsed() >= timeout {
+                        bootstrap.abort();
                         return Err(TorError("bootstrap Arti client timed out".into()));
                     }
                     tokio::select! {
                         result = &mut bootstrap => {
-                            result.map_err(|error| TorError(format!("bootstrap Arti client: {error}")))?;
+                            result
+                                .map_err(|error| TorError(format!("join Arti bootstrap task: {error}")))?
+                                .map_err(|error| TorError(format!("bootstrap Arti client: {error}")))?;
                             break;
                         }
                         status = events.next(), if events_open => {
@@ -194,13 +203,17 @@ impl TorService {
                         }
                         _ = stall_tick.tick() => {
                             if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
+                                bootstrap.abort();
                                 return Err(TorError(format!(
                                     "bootstrap Arti client stalled at {:.0}%",
                                     last_fraction * 100.0
                                 )));
                             }
                         }
-                        () = &mut deadline => return Err(TorError("bootstrap Arti client timed out".into())),
+                        () = &mut deadline => {
+                            bootstrap.abort();
+                            return Err(TorError("bootstrap Arti client timed out".into()));
+                        },
                     }
                 }
             }
@@ -209,6 +222,9 @@ impl TorService {
         let client = match bootstrap_result {
             Ok(client) => client,
             Err(error) => {
+                // A cancelled task may still be returning from platform I/O.
+                // Never let Runtime::drop wait indefinitely during retry.
+                runtime.shutdown_timeout(std::time::Duration::from_secs(2));
                 if is_unambiguous_state_corruption(&error) {
                     quarantine_state_cache(&state_root);
                 }

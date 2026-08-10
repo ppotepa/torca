@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../gateway/engine_gateway.dart';
@@ -77,11 +79,30 @@ class _BootstrapFailureScreen extends StatelessWidget {
   );
 }
 
-class _BootstrapProgressScreen extends StatelessWidget {
+class _BootstrapProgressScreen extends StatefulWidget {
   const _BootstrapProgressScreen({required this.snapshot, this.onRetry});
 
   final AppSnapshotDto snapshot;
   final VoidCallback? onRetry;
+
+  @override
+  State<_BootstrapProgressScreen> createState() =>
+      _BootstrapProgressScreenState();
+}
+
+class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
+  late final DateTime _startedAt = DateTime.now();
+  late final Timer _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+    if (mounted) setState(() {});
+  });
+
+  Duration get _elapsed => DateTime.now().difference(_startedAt);
+
+  @override
+  void dispose() {
+    _clock.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +115,7 @@ class _BootstrapProgressScreen extends StatelessWidget {
       'secure_relay',
     ];
     final ready = steps
-        .where((id) => _stateFor(snapshot, id) == 'ready')
+        .where((id) => _stateFor(widget.snapshot, id) == 'ready')
         .length;
     return Scaffold(
       body: DecoratedBox(
@@ -106,76 +127,82 @@ class _BootstrapProgressScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Card(
-                  elevation: 0,
-                  color: color.surface.withValues(alpha: 0.92),
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        CircleAvatar(
-                          radius: 30,
-                          backgroundColor: color.primaryContainer,
-                          foregroundColor: color.onPrimaryContainer,
-                          child: const Icon(Icons.shield_outlined, size: 32),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Preparing your private space',
-                          style: Theme.of(context).textTheme.headlineSmall,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Setting up encrypted storage and a private Tor connection. You can safely leave this screen open.',
-                          style: Theme.of(context).textTheme.bodyMedium,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 22),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(99),
-                          child: LinearProgressIndicator(
-                            value: ready / steps.length,
+          child: SingleChildScrollView(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 620),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Card(
+                    elevation: 0,
+                    color: color.surface.withValues(alpha: 0.92),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          CircleAvatar(
+                            radius: 30,
+                            backgroundColor: color.primaryContainer,
+                            foregroundColor: color.onPrimaryContainer,
+                            child: const Icon(Icons.shield_outlined, size: 32),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '$ready of ${steps.length} secure checks complete',
-                        ),
-                        const SizedBox(height: 16),
-                        for (final id in steps)
-                          _BootstrapStepTile(
-                            label: _bootstrapLabel(id),
-                            state: _stateFor(snapshot, id),
-                          ),
-                        if (snapshot.bootstrapPhase == 'failed' ||
-                            snapshot.bootstrapPhase == 'degraded') ...<Widget>[
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 16),
                           Text(
-                            _diagnostic(snapshot),
+                            'Preparing your private space',
+                            style: Theme.of(context).textTheme.headlineSmall,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.error,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Setting up encrypted storage and a private Tor connection. You can safely leave this screen open.',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 22),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(99),
+                            child: LinearProgressIndicator(
+                              value: ready / steps.length,
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: <Widget>[
-                              FilledButton(
-                                onPressed: onRetry,
-                                child: const Text('Retry'),
-                              ),
-                            ],
+                          const SizedBox(height: 8),
+                          Text(
+                            '$ready of ${steps.length} secure checks complete  •  ${_formatDuration(_elapsed)}',
                           ),
+                          const SizedBox(height: 16),
+                          for (final id in steps)
+                            _BootstrapStepTile(
+                              id: id,
+                              label: _bootstrapLabel(id),
+                              state: _stateFor(widget.snapshot, id),
+                              code: _codeFor(widget.snapshot, id),
+                              elapsed: _elapsed,
+                            ),
+                          if (widget.snapshot.bootstrapPhase == 'failed' ||
+                              widget.snapshot.bootstrapPhase ==
+                                  'degraded') ...<Widget>[
+                            const SizedBox(height: 12),
+                            Text(
+                              _diagnostic(widget.snapshot),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: <Widget>[
+                                FilledButton(
+                                  onPressed: widget.onRetry,
+                                  child: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -194,6 +221,11 @@ class _BootstrapProgressScreen extends StatelessWidget {
   String _stateForId(AppSnapshotDto snapshot, String id) {
     final match = snapshot.bootstrapSteps.where((step) => step.id == id);
     return match.isEmpty ? 'pending' : match.first.state;
+  }
+
+  String? _codeFor(AppSnapshotDto snapshot, String id) {
+    final match = snapshot.bootstrapSteps.where((step) => step.id == id);
+    return match.isEmpty ? null : match.first.code;
   }
 
   String _diagnostic(AppSnapshotDto snapshot) {
@@ -215,12 +247,27 @@ class _BootstrapProgressScreen extends StatelessWidget {
     'secure_relay' => 'Secure relay',
     _ => id,
   };
+
+  String _formatDuration(Duration value) {
+    final minutes = value.inMinutes.toString().padLeft(2, '0');
+    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
 }
 
 class _BootstrapStepTile extends StatelessWidget {
-  const _BootstrapStepTile({required this.label, required this.state});
+  const _BootstrapStepTile({
+    required this.id,
+    required this.label,
+    required this.state,
+    this.code,
+    required this.elapsed,
+  });
+  final String id;
   final String label;
   final String state;
+  final String? code;
+  final Duration elapsed;
 
   @override
   Widget build(BuildContext context) {
@@ -258,27 +305,73 @@ class _BootstrapStepTile extends StatelessWidget {
               : null,
         ),
         title: Text(label),
-        subtitle: Text(_stateDescription(state)),
+        subtitle: Text(_stateDescription(id, state, code, elapsed)),
         trailing: running
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(_formatDuration(elapsed)),
+                  const SizedBox(width: 10),
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
               )
             : null,
       ),
     );
   }
 
-  String _stateDescription(String value) => switch (value) {
-    'ready' => 'Protected and ready',
-    'running' => 'Working securely…',
-    'verifying' => 'Verifying connection…',
-    'retrying' => 'Retrying in the background…',
-    'degraded' => 'Temporarily unavailable; retrying',
-    'failed' => 'Needs attention',
-    _ => 'Waiting to begin',
-  };
+  String _stateDescription(
+    String id,
+    String value,
+    String? code,
+    Duration elapsed,
+  ) {
+    if (value == 'running' || value == 'verifying') {
+      if (id == 'tor_network') {
+        return switch (code) {
+          'TOR_CONNECTING_DIRECTORY' =>
+            'Opening secure channels to the Tor directory…',
+          'TOR_DOWNLOADING_CONSENSUS' =>
+            'Downloading network consensus and selecting guards…',
+          'TOR_BUILDING_CIRCUITS' => 'Building the first private Tor circuits…',
+          'TOR_BOOTSTRAP_SLOW' =>
+            'Tor is taking longer than usual; the watchdog is monitoring progress…',
+          _ => 'Preparing the embedded Tor client…',
+        };
+      }
+      return switch (id) {
+        'local_storage' => 'Opening encrypted storage and checking its schema…',
+        'device_identity' => 'Loading device keys and calculating fingerprint…',
+        'onion_service' => 'Publishing this device’s private onion service…',
+        'secure_relay' => 'Testing the embedded relay endpoint through Tor…',
+        _ => 'Working securely…',
+      };
+    }
+    return switch (value) {
+      'ready' => switch (id) {
+        'local_storage' => 'Encrypted database is open',
+        'device_identity' => 'Device identity is protected and ready',
+        'tor_network' => 'Tor circuits are available',
+        'onion_service' => 'Private onion service is published',
+        'secure_relay' => 'Secure relay is reachable',
+        _ => 'Protected and ready',
+      },
+      'retrying' => 'Retrying in the background…',
+      'degraded' => 'Temporarily unavailable; retrying',
+      'failed' => 'Needs attention',
+      _ => 'Waiting for the previous secure check',
+    };
+  }
+
+  String _formatDuration(Duration value) {
+    final minutes = value.inMinutes.toString().padLeft(2, '0');
+    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
 }
 
 class HomeScreen extends StatefulWidget {
