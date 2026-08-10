@@ -86,12 +86,9 @@ class DesktopLifecycle with WindowListener, TrayListener {
   Future<void> _notify(RuntimeEventDto event) async {
     if (!preferences.notificationsEnabled || await windowManager.isFocused())
       return;
-    final contactAdded = event.kind == 'contact_added';
     final notification = LocalNotification(
-      title: event.contactDisplayName.isEmpty
-          ? 'Torca'
-          : event.contactDisplayName,
-      body: contactAdded ? 'New contact added' : 'New private message',
+      title: event.title,
+      body: event.body,
     );
     notification.onClick = () {
       if (event.conversationId.isNotEmpty) {

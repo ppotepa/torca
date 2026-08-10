@@ -8,7 +8,6 @@ publish = false
 
 [dependencies]
 torca-attachments = { path = "../../domains/torca-attachments" }
-torca-attachment-transfer = { path = "../../infrastructure/torca-attachment-transfer" }
 torca-client-engine = { path = "../torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-control-delivery = { path = "../torca-control-delivery" }
@@ -16,6 +15,6 @@ torca-conversations = { path = "../../domains/torca-conversations" }
 torca-delivery = { path = "../torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-messaging = { path = "../../domains/torca-messaging" }
-torca-peer-link = { path = "../../infrastructure/torca-peer-link" }
-torca-peer-shared = { path = "../../infrastructure/torca-peer-shared" }
 torca-runtime = { path = "../torca-runtime" }
+torca-receipts = { path = "../../domains/torca-receipts" }
+torca-presence = { path = "../../domains/torca-presence" }

@@ -4,6 +4,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'Torca.ArchitecturePolicy.ps1') -RepoRoot $RepoRoot
+$contractManifest = Join-Path $RepoRoot 'crates/platform/torca-contract/Cargo.toml'
+if ((Get-Content -LiteralPath $contractManifest -Raw).Contains('sha2')) {
+    throw 'torca-contract must not own security hashing; use the identity domain projection.'
+}
+$readStatePath = Join-Path $RepoRoot 'crates/infrastructure/torca-storage-sqlite/src/read_state.rs'
+if ((Get-Content -LiteralPath $readStatePath -Raw).Contains('ApplicationPayloadCodec')) {
+    throw 'SQL read-state storage must execute pending jobs, not encode application payloads.'
+}
 $forbiddenFiles = @(
     'crates/application/torca-pairing-coordinator/src/final_runtime.rs',
     'crates/infrastructure/torca-storage-sqlite/src/migration_v2.rs',
@@ -89,7 +98,7 @@ foreach ($root in $sourceRoots) {
 $nativeJson = Join-Path $RepoRoot 'crates/platform/torca-native/src/json.rs'
 if (Test-Path -LiteralPath $nativeJson) {
     $nativeJsonText = Get-Content -LiteralPath $nativeJson -Raw
-    foreach ($fragment in @('push_json_string', 'push_bridge_message')) {
+    foreach ($fragment in @('push_json_string', 'push_bridge_message', 'classify_error')) {
         if ($nativeJsonText.Contains($fragment)) {
             throw "Native bridge must use contract serialization, not manual JSON: $fragment"
         }

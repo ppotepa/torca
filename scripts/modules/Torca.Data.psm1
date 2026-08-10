@@ -19,8 +19,11 @@ function Reset-TorcaWindowsClientData {
     }
     $root = Join-Path $env:LOCALAPPDATA 'Torca'
     if (-not (Test-Path -LiteralPath $root)) { return }
-    Remove-Item -LiteralPath $root -Recurse -Force
-    Write-Host "Removed Windows client data: $root" -ForegroundColor Yellow
+    $backupRoot = Join-Path $env:LOCALAPPDATA 'Torca-backups'
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    $backup = Join-Path $backupRoot (Get-Date -Format 'yyyyMMdd-HHmmss')
+    Move-Item -LiteralPath $root -Destination $backup -Force
+    Write-Host "Reset Windows client data; recoverable backup: $backup" -ForegroundColor Yellow
 }
 
 function Reset-TorcaAndroidClientData {

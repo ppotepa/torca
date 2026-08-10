@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "contractVersion": 15,
+  "contractVersion": 16,
   "wireVersion": 1,
   "nativeAbi": 1,
   "operations": {
@@ -8,12 +8,12 @@
       "profile.set", "pairing.create", "pairing.join", "pairing.approve",
       "pairing.reject", "pairing.cancel", "contact.rename", "contact.verify",
       "contact.verification.reset", "contact.block", "contact.unblock",
-      "contact.remove", "conversation.clear", "message.send", "message.retry",
+      "contact.remove", "conversation.start", "conversation.clear", "message.send", "message.retry",
       "notifications.set", "contacts.acknowledge_new",
       "conversation.read", "attachment.queue", "attachment.retry",
       "attachment.cancel", "attachment.export"
     ],
-    "queries": ["snapshot.get", "conversation.page", "conversation.search", "notifications.poll", "pairing.parse"]
+    "queries": ["snapshot.get", "conversation.page", "conversation.search", "notifications.poll", "pairing.parse", "pairing.encode"]
   },
   "error": {
     "code": "stable-machine-code",

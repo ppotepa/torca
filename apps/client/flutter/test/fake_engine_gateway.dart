@@ -71,8 +71,11 @@ class FakeEngineGateway implements EngineGateway, PairingUriParser {
 class FakeGatewayResponse {
   const FakeGatewayResponse({required this.result, this.snapshot});
 
-  FakeGatewayResponse.success({required String kind, this.snapshot})
-    : result = BridgeResultDto(ok: true, kind: kind);
+  FakeGatewayResponse.success({
+    required String kind,
+    String? resourceId,
+    this.snapshot,
+  }) : result = BridgeResultDto(ok: true, kind: kind, resourceId: resourceId);
 
   final BridgeResultDto result;
   final AppSnapshotDto? snapshot;

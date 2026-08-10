@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
 import '../theme/app_semantic_colors.dart';
@@ -33,11 +34,17 @@ class MessageBubble extends StatelessWidget {
         ? context.semanticColors.messageOutbound
         : context.semanticColors.messageInbound;
     final alignment = outbound ? Alignment.centerRight : Alignment.centerLeft;
+    final normalRadius = context.torcaTokens.radiusLarge;
+    final tailRadius = context.torcaTokens.radiusSmall;
     final radius = BorderRadius.only(
-      topLeft: Radius.circular(compactTop && !outbound ? 6 : 16),
-      topRight: Radius.circular(compactTop && outbound ? 6 : 16),
-      bottomLeft: Radius.circular(outbound ? 16 : 4),
-      bottomRight: Radius.circular(outbound ? 4 : 16),
+      topLeft: Radius.circular(
+        compactTop && !outbound ? tailRadius : normalRadius,
+      ),
+      topRight: Radius.circular(
+        compactTop && outbound ? tailRadius : normalRadius,
+      ),
+      bottomLeft: Radius.circular(outbound ? normalRadius : tailRadius),
+      bottomRight: Radius.circular(outbound ? tailRadius : normalRadius),
     );
 
     return Align(

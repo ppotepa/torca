@@ -4906,6 +4906,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "torca-client-application"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "torca-attachments",
+ "torca-bootstrap",
+ "torca-client-engine",
+ "torca-connectivity",
+ "torca-contacts",
+ "torca-conversations",
+ "torca-foundation",
+ "torca-identity",
+ "torca-messaging",
+ "torca-pairing",
+ "torca-probing",
+ "torca-runtime",
+]
+
+[[package]]
 name = "torca-client-engine"
 version = "0.2.0-alpha.0"
 dependencies = [
@@ -4928,6 +4946,7 @@ dependencies = [
  "torca-attachments",
  "torca-client-engine",
  "torca-communication-driver",
+ "torca-connectivity",
  "torca-contacts",
  "torca-control-delivery",
  "torca-conversations",
@@ -4950,7 +4969,6 @@ dependencies = [
 name = "torca-communication-driver"
 version = "0.2.0-alpha.0"
 dependencies = [
- "torca-attachment-transfer",
  "torca-attachments",
  "torca-client-engine",
  "torca-contacts",
@@ -4959,9 +4977,17 @@ dependencies = [
  "torca-delivery",
  "torca-foundation",
  "torca-messaging",
- "torca-peer-link",
- "torca-peer-shared",
+ "torca-presence",
+ "torca-receipts",
  "torca-runtime",
+]
+
+[[package]]
+name = "torca-connectivity"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+ "torca-probing",
 ]
 
 [[package]]
@@ -4978,19 +5004,12 @@ version = "0.2.0-alpha.0"
 dependencies = [
  "serde",
  "serde_json",
- "sha2",
- "torca-attachments",
- "torca-bootstrap",
- "torca-client-engine",
+ "torca-client-application",
  "torca-contacts",
- "torca-conversations",
  "torca-foundation",
- "torca-identity",
  "torca-messaging",
  "torca-pairing",
- "torca-probing",
- "torca-receipts",
- "torca-runtime",
+ "torca-pairing-protocol",
 ]
 
 [[package]]
@@ -5065,6 +5084,7 @@ version = "0.2.0-alpha.0"
 name = "torca-identity"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "sha2",
  "torca-foundation",
 ]
 
@@ -5108,8 +5128,10 @@ version = "0.2.0-alpha.0"
 dependencies = [
  "jni",
  "serde_json",
+ "torca-client-application",
  "torca-client-engine",
  "torca-communication-adapters",
+ "torca-connectivity",
  "torca-contacts",
  "torca-contract",
  "torca-conversations",
@@ -5118,6 +5140,7 @@ dependencies = [
  "torca-identity",
  "torca-logging",
  "torca-messaging",
+ "torca-notifications",
  "torca-pairing",
  "torca-pairing-coordinator",
  "torca-pairing-driver",
@@ -5129,6 +5152,13 @@ dependencies = [
  "torca-runtime",
  "torca-storage-sqlite",
  "torca-tor",
+]
+
+[[package]]
+name = "torca-notifications"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "torca-foundation",
 ]
 
 [[package]]
@@ -5164,6 +5194,7 @@ dependencies = [
  "torca-pairing-coordinator",
  "torca-runtime",
  "torca-storage-sqlite",
+ "torca-tor",
 ]
 
 [[package]]
@@ -5185,6 +5216,7 @@ dependencies = [
 name = "torca-peer-link"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "torca-connectivity",
  "torca-contacts",
  "torca-crypto",
  "torca-foundation",
@@ -5239,6 +5271,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "torca-presence"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+]
+
+[[package]]
 name = "torca-probing"
 version = "0.2.0-alpha.0"
 dependencies = [
@@ -5273,6 +5312,7 @@ dependencies = [
 name = "torca-rendezvous-client"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "torca-connectivity",
  "torca-foundation",
  "torca-pairing",
  "torca-pairing-coordinator",
@@ -5286,16 +5326,15 @@ version = "0.2.0-alpha.0"
 dependencies = [
  "torca-attachments",
  "torca-client-engine",
+ "torca-connectivity",
  "torca-contacts",
  "torca-conversations",
- "torca-crypto",
  "torca-diagnostics",
  "torca-foundation",
  "torca-messaging",
  "torca-pairing",
- "torca-peer-link",
+ "torca-presence",
  "torca-probing",
- "torca-tor",
 ]
 
 [[package]]
@@ -5330,6 +5369,7 @@ dependencies = [
  "torca-foundation",
  "torca-peer",
  "torca-peer-protocol",
+ "torca-runtime",
  "torca-wire",
 ]
 

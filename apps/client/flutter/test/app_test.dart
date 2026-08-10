@@ -5,6 +5,7 @@ import 'package:torca_app/app.dart';
 import 'package:torca_app/gateway/engine_gateway.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/navigation/app_navigation_controller.dart';
+import 'package:torca_app/screens/pairing_screen.dart';
 import 'package:torca_app/settings/local_preferences.dart';
 import 'fake_engine_gateway.dart';
 
@@ -15,6 +16,35 @@ TorcaApp _app(EngineGateway gateway) => TorcaApp(
 );
 
 void main() {
+  testWidgets('invitation code stays editable while relay is degraded', (
+    WidgetTester tester,
+  ) async {
+    const snapshot = AppSnapshotDto(
+      identity: IdentityDto(displayName: 'Alice'),
+      torState: 'ready',
+      transport: TransportStatusDto(
+        tor: TransportIndicatorDto(state: 'ready'),
+        relay: TransportIndicatorDto(state: 'degraded'),
+      ),
+      bootstrapPhase: 'ready',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PairingScreen(
+          gateway: FakeEngineGateway(initialSnapshot: snapshot),
+        ),
+      ),
+    );
+    final field = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Invitation code'),
+    );
+    expect(field.enabled, isTrue);
+    expect(
+      find.widgetWithText(FilledButton, 'Generate Invitation'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('profile setup is the initial recoverable route', (
     WidgetTester tester,
   ) async {
@@ -84,6 +114,7 @@ void main() {
         PairingDto(
           id: '00000000000000000000000000000001',
           code: 'T0RCA1',
+          inviteUri: 'torca://pair?v=2&code=T0RCA1',
           role: 'creator',
           state: 'open',
           expiresAtMs: 4102444800000,
@@ -103,6 +134,7 @@ void main() {
             ),
             FakeGatewayResponse.success(
               kind: 'pairing_started',
+              resourceId: '00000000000000000000000000000001',
               snapshot: invitationCreated,
             ),
           ],
@@ -115,13 +147,57 @@ void main() {
 
     await tester.tap(find.byTooltip('Pair contact'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Create invitation'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Generate Invitation'));
     await tester.pumpAndSettle();
 
     expect(find.text('Active invitations'), findsOneWidget);
     expect(find.text('T0R-CA1'), findsOneWidget);
     expect(find.text('Cancel invitation'), findsOneWidget);
     expect(find.byType(Scaffold), findsOneWidget);
+  });
+
+  testWidgets('incoming pairing opens a global approval modal', (
+    WidgetTester tester,
+  ) async {
+    const incoming = AppSnapshotDto(
+      identity: IdentityDto(displayName: 'Alice'),
+      torState: 'ready',
+      transport: TransportStatusDto(
+        tor: TransportIndicatorDto(state: 'ready'),
+        relay: TransportIndicatorDto(state: 'healthy'),
+      ),
+      pairings: <PairingDto>[
+        PairingDto(
+          id: '00000000000000000000000000000002',
+          code: 'JOIN2',
+          inviteUri: 'torca://pair?v=2&code=JOIN22',
+          role: 'creator',
+          state: 'peerjoined',
+          expiresAtMs: 4102444800000,
+          localApproved: false,
+          remoteApproved: false,
+          remoteIdentityId: 'remote-identity',
+          remoteDisplayName: 'Bob',
+          remoteFingerprint: 'AA BB CC DD',
+        ),
+      ],
+      bootstrapPhase: 'ready',
+    );
+    await tester.pumpWidget(
+      TorcaApp(
+        gateway: FakeEngineGateway(initialSnapshot: incoming),
+        navigation: AppNavigationController(),
+        preferences: LocalPreferences(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('New pairing request'), findsOneWidget);
+    expect(find.text('Bob'), findsOneWidget);
+    expect(find.text('AA BB CC DD'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Accept'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Reject'), findsOneWidget);
   });
 
   testWidgets(

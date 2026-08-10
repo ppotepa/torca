@@ -90,7 +90,15 @@ function Test-TorcaBuildRequired {
         if (-not (Test-Path (Join-Path $flutterRoot "build/windows/x64/runner/$name/torca_app.exe"))) { return $true }
     }
     if ($Target -in @('android','all')) {
-        if (-not (Test-Path (Join-Path $flutterRoot "build/app/outputs/flutter-apk/app-$Configuration.apk"))) { return $true }
+        $apkOutput = Join-Path $flutterRoot 'build/app/outputs/flutter-apk'
+        $universalApk = Join-Path $apkOutput "app-$Configuration.apk"
+        $requiredSplitApks = @(
+            (Join-Path $apkOutput "app-arm64-v8a-$Configuration.apk"),
+            (Join-Path $apkOutput "app-x86_64-$Configuration.apk")
+        )
+        $hasUniversalApk = Test-Path -LiteralPath $universalApk
+        $hasRequiredSplitApks = @($requiredSplitApks | Where-Object { Test-Path -LiteralPath $_ }).Count -eq $requiredSplitApks.Count
+        if (-not $hasUniversalApk -and -not $hasRequiredSplitApks) { return $true }
     }
     return $false
 }
@@ -316,10 +324,10 @@ function Wait-TorcaClientLaunch {
     $processObserved = $false
     do {
         if ($Platform -eq 'windows') {
-            $process = if ($ExpectedWindowsProcessId) {
-                @(Get-Process -Id $ExpectedWindowsProcessId -ErrorAction SilentlyContinue)
+            if ($ExpectedWindowsProcessId) {
+                $process = @(Get-Process -Id $ExpectedWindowsProcessId -ErrorAction SilentlyContinue)
             } else {
-                @(Get-Process -Name torca_app -ErrorAction SilentlyContinue)
+                $process = @(Get-Process -Name torca_app -ErrorAction SilentlyContinue)
             }
             if ($process.Count -gt 0) {
                 $processObserved = $true

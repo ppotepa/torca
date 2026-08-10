@@ -10,6 +10,8 @@ class RuntimeEventDto {
     required this.conversationId,
     required this.contactDisplayName,
     required this.createdAtMs,
+    required this.title,
+    required this.body,
   });
 
   factory RuntimeEventDto.fromJson(Map<String, dynamic> value) =>
@@ -20,6 +22,8 @@ class RuntimeEventDto {
         conversationId: value['conversationId'] as String? ?? '',
         contactDisplayName: value['contactDisplayName'] as String? ?? '',
         createdAtMs: (value['createdAtMs'] as num?)?.toInt() ?? 0,
+        title: value['title'] as String? ?? 'Torca',
+        body: value['body'] as String? ?? '',
       );
 
   final int cursor;
@@ -28,6 +32,8 @@ class RuntimeEventDto {
   final String conversationId;
   final String contactDisplayName;
   final int createdAtMs;
+  final String title;
+  final String body;
 }
 
 abstract interface class EngineGateway {
@@ -46,6 +52,10 @@ abstract interface class GatewayAvailability {
 
 abstract interface class PairingUriParser {
   Future<String?> parsePairingUri(String rawUri);
+}
+
+abstract interface class PairingUriEncoder {
+  Future<String?> encodePairingUri(String code);
 }
 
 class AppCapabilities {

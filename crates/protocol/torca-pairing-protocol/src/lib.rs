@@ -1,5 +1,11 @@
 //! Versioned plaintext payloads encrypted before crossing the rendezvous relay.
 
+mod invite_uri;
+
+pub use invite_uri::{
+    InviteUriError, PairingInviteCode, PairingInviteTicket, decode_invite_uri, encode_invite_uri,
+};
+
 use core::fmt;
 use torca_foundation::OpaqueId;
 

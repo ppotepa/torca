@@ -1,15 +1,17 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use crate::{application_envelope, application_peer_state};
 use torca_communication_driver::{
-    CommunicationError, PROBE_MESSAGE_KIND, PeerHealthQuality, PeerHealthSnapshot, PeerLinkRuntime,
-    classify_peer_health,
+    CommunicationError, InboundEnvelope, PROBE_MESSAGE_KIND, PeerHealthQuality, PeerHealthSnapshot,
+    PeerLinkRuntime, classify_peer_health,
 };
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
 use torca_foundation::{OpaqueId, Timestamp};
-use torca_peer_link::{InboundPeerEnvelope, PeerConnectionState, PeerLinkError};
+use torca_peer_link::{PeerConnectionState, PeerLinkError};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
+use torca_runtime::PeerConnectionStatus;
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const PROBE_RETRY: Duration = Duration::from_secs(10);
@@ -47,7 +49,7 @@ where
         for contact_id in contacts {
             let state = self.link.connection_state(*contact_id);
             let entry = self.health.entry(*contact_id).or_insert_with(|| HealthEntry {
-                snapshot: PeerHealthSnapshot::from_connection_state(state),
+                snapshot: PeerHealthSnapshot::from_connection_state(map_peer_state(state)),
                 previous_state: state,
                 next_probe_at: now,
             });
@@ -57,7 +59,7 @@ where
                 entry.snapshot.reconnect_attempt =
                     entry.snapshot.reconnect_attempt.saturating_add(1);
             }
-            entry.snapshot.state = state;
+            entry.snapshot.state = map_peer_state(state);
             if state != PeerConnectionState::Ready {
                 entry.snapshot.quality = if entry.snapshot.consecutive_failures > 0 {
                     PeerHealthQuality::Poor
@@ -88,7 +90,7 @@ where
 
     fn next_probe(&self, now: Timestamp) -> Option<ContactId> {
         self.health.iter().find_map(|(contact_id, entry)| {
-            (entry.snapshot.state == PeerConnectionState::Ready
+            (entry.snapshot.state == PeerConnectionStatus::Ready
                 && now >= entry.next_probe_at
                 && self.should_initiate_probe(*contact_id))
             .then_some(*contact_id)
@@ -103,7 +105,7 @@ where
     ) {
         let state = self.link.connection_state(contact_id);
         let Some(entry) = self.health.get_mut(&contact_id) else { return };
-        entry.snapshot.state = state;
+        entry.snapshot.state = map_peer_state(state);
         match result {
             Ok(elapsed) => {
                 let rtt_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
@@ -144,15 +146,18 @@ where
         Ok(())
     }
 
-    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
-        self.link.connection_state(contact_id)
+    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
+        application_peer_state(self.link.connection_state(contact_id))
     }
 
-    fn take_inbound(&mut self) -> Result<Option<InboundPeerEnvelope>, CommunicationError> {
-        self.link.take_inbound().map_err(|_| CommunicationError::Peer)
+    fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError> {
+        self.link
+            .take_inbound()
+            .map_err(|_| CommunicationError::Peer)
+            .map(|envelope| envelope.map(application_envelope))
     }
 
-    fn reject(&mut self, envelope: &InboundPeerEnvelope) -> Result<(), CommunicationError> {
+    fn reject(&mut self, envelope: &InboundEnvelope) -> Result<(), CommunicationError> {
         self.link
             .send_ack(envelope.contact_id, envelope.envelope_id, AckStatus::Rejected)
             .map_err(|_| CommunicationError::Peer)
@@ -160,7 +165,11 @@ where
 
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         self.health.get(&contact_id).map_or_else(
-            || PeerHealthSnapshot::from_connection_state(self.link.connection_state(contact_id)),
+            || {
+                PeerHealthSnapshot::from_connection_state(map_peer_state(
+                    self.link.connection_state(contact_id),
+                ))
+            },
             |entry| entry.snapshot,
         )
     }
@@ -177,7 +186,7 @@ where
         let started = Instant::now();
         let result = self
             .link
-            .send_and_wait_ack(
+            .send_keepalive_and_wait_ack(
                 contact_id,
                 probe_id,
                 PROBE_MESSAGE_KIND,
@@ -191,7 +200,7 @@ where
 
     fn accept_probe(
         &mut self,
-        envelope: &InboundPeerEnvelope,
+        envelope: &InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError> {
         if envelope.ciphertext.len() != 8 {
@@ -205,11 +214,11 @@ where
         );
         let state = self.link.connection_state(envelope.contact_id);
         let entry = self.health.entry(envelope.contact_id).or_insert_with(|| HealthEntry {
-            snapshot: PeerHealthSnapshot::from_connection_state(state),
+            snapshot: PeerHealthSnapshot::from_connection_state(map_peer_state(state)),
             previous_state: state,
             next_probe_at: now.checked_add(PROBE_INTERVAL).unwrap_or(now),
         });
-        entry.snapshot.state = state;
+        entry.snapshot.state = map_peer_state(state);
         entry.snapshot.last_success_at = Some(now);
         entry.snapshot.consecutive_failures = 0;
         if reported != u64::MAX {
@@ -224,5 +233,16 @@ where
     fn shutdown(&mut self) {
         self.health.clear();
         self.link.shutdown();
+    }
+}
+
+const fn map_peer_state(state: PeerConnectionState) -> PeerConnectionStatus {
+    match state {
+        PeerConnectionState::Disconnected => PeerConnectionStatus::Disconnected,
+        PeerConnectionState::Connecting => PeerConnectionStatus::Connecting,
+        PeerConnectionState::Handshaking => PeerConnectionStatus::Handshaking,
+        PeerConnectionState::Ready => PeerConnectionStatus::Ready,
+        PeerConnectionState::Reconnecting => PeerConnectionStatus::Reconnecting,
+        PeerConnectionState::Failed => PeerConnectionStatus::Failed,
     }
 }

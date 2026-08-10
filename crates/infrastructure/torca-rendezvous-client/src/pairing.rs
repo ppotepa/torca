@@ -15,6 +15,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         creator_blob: Vec<u8>,
         capability: PairingSlotCapability,
         creator_token: PairingSideToken,
+        ticket: [u8; 16],
     ) -> Result<(PairingSlotId, torca_foundation::Timestamp), PairingCoordinatorError> {
         let relay_code =
             RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
@@ -25,6 +26,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
             creator_blob,
             RelaySlotCapability(capability.0),
             RelaySideToken(creator_token.0),
+            ticket,
         )
         .map(|(slot, expires_at)| (PairingSlotId(slot.0), expires_at))
         .map_err(|_| PairingCoordinatorError::Rendezvous)
@@ -35,15 +37,20 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         code: &PairingCode,
         joiner_blob: Vec<u8>,
         joiner_token: PairingSideToken,
+        ticket: Option<[u8; 16]>,
     ) -> Result<(PairingSlotId, torca_foundation::Timestamp, Vec<u8>), PairingCoordinatorError>
     {
         let relay_code =
             RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
-        RendezvousClient::join(self, relay_code, joiner_blob, RelaySideToken(joiner_token.0))
-            .map(|(slot, expires_at, creator_blob)| {
-                (PairingSlotId(slot.0), expires_at, creator_blob)
-            })
-            .map_err(|_| PairingCoordinatorError::Rendezvous)
+        RendezvousClient::join(
+            self,
+            relay_code,
+            joiner_blob,
+            RelaySideToken(joiner_token.0),
+            ticket,
+        )
+        .map(|(slot, expires_at, creator_blob)| (PairingSlotId(slot.0), expires_at, creator_blob))
+        .map_err(|_| PairingCoordinatorError::Rendezvous)
     }
 
     fn push(

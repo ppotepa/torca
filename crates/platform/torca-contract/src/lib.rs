@@ -1,32 +1,21 @@
 //! Stable typed boundary between Flutter and the process-owned Rust runtime.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
-use std::path::PathBuf;
-use std::sync::Mutex;
-
 use serde::Serialize;
-use sha2::{Digest, Sha256};
-use torca_attachments::AttachmentId;
-use torca_bootstrap::{BootstrapPhase, BootstrapState, BootstrapStepId, BootstrapStepState};
-use torca_client_engine::{ClientSnapshot, EngineCommand, EngineError, EngineHandle, EngineResult};
-use torca_contacts::ContactId;
-use torca_conversations::ConversationId;
-use torca_foundation::{OpaqueId, Timestamp};
-use torca_identity::{IdentityId, ProfileName, PublicIdentity};
-use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
-use torca_pairing::{PairingCode, PairingSessionId, PairingState};
-use torca_probing::{ProbeStatus, ProbeTarget};
-use torca_runtime::{
-    AttachmentSendRequest, AttachmentView, NetworkSnapshot, RuntimeDriverError, RuntimeHandle,
-    TorState, TransportActivitySnapshot,
+use torca_client_application::{
+    ApplicationCommand, ApplicationError, ApplicationSnapshotContext, BootstrapPhase,
+    BootstrapStepId, BootstrapStepState, ProbeTarget,
 };
+use torca_contacts::ContactId;
+use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
+use torca_messaging::Message;
+use torca_pairing::PairingState;
+use torca_pairing_protocol::encode_invite_uri;
 
 pub mod generated {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/generated_contract.rs"));
 }
 
-pub const CONTRACT_VERSION: u16 = 15;
+pub const CONTRACT_VERSION: u16 = 16;
 
 /// Serializes the contract-owned notification cursor query used by platform
 /// notification consumers. Native hosts must not hand-assemble ABI requests.
@@ -59,6 +48,7 @@ pub enum BridgeCommand {
     JoinPairing {
         session_id_hex: String,
         code: String,
+        ticket: Option<String>,
     },
     ApprovePairing {
         session_id_hex: String,
@@ -88,6 +78,9 @@ pub enum BridgeCommand {
     RemoveContact {
         contact_id_hex: String,
     },
+    StartConversation {
+        contact_id_hex: String,
+    },
     ClearConversationHistory {
         conversation_id_hex: String,
     },
@@ -104,10 +97,6 @@ pub enum BridgeCommand {
     },
     MarkConversationRead {
         conversation_id_hex: String,
-    },
-    MarkConversationReadWithPolicy {
-        conversation_id_hex: String,
-        send_receipt: bool,
     },
     QueueAttachment {
         attachment_id_hex: String,
@@ -137,6 +126,10 @@ pub struct BridgeResult {
     pub ok: bool,
     pub kind: String,
     pub error: Option<String>,
+    /// Stable machine-readable code; never inferred from the diagnostic message.
+    pub error_code: Option<String>,
+    pub resource_id: Option<String>,
+    pub invite_uri: Option<String>,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -177,6 +170,8 @@ pub struct NotificationEvent {
     pub conversation_id: String,
     pub contact_display_name: String,
     pub created_at_ms: i64,
+    pub title: String,
+    pub body: String,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -197,12 +192,14 @@ pub struct BridgeBootstrapStep {
 pub struct BridgePairing {
     pub id: String,
     pub code: String,
+    pub invite_uri: String,
     pub role: String,
     pub state: String,
     pub expires_at_ms: i64,
     pub local_approved: bool,
     pub remote_approved: bool,
     pub remote_identity_id: Option<String>,
+    pub remote_display_name: Option<String>,
     pub remote_fingerprint: Option<String>,
 }
 #[must_use]
@@ -227,6 +224,10 @@ pub struct BridgeTransportIndicator {
     pub latency_ms: Option<u64>,
     pub last_activity_at_ms: Option<i64>,
     pub activity_sequence: u64,
+    pub tx_sequence: u64,
+    pub rx_sequence: u64,
+    pub in_flight: u32,
+    pub queued: u32,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -234,6 +235,9 @@ pub struct BridgeTransportIndicator {
 pub struct BridgeTransportStatus {
     pub tor: BridgeTransportIndicator,
     pub relay: BridgeTransportIndicator,
+    pub peer: BridgeTransportIndicator,
+    pub peers_ready: u32,
+    pub peers_total: u32,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -297,434 +301,139 @@ pub struct BridgeAttachment {
     pub offset: u64,
 }
 
-pub struct ContractRuntime {
-    engine: EngineHandle,
-    runtime: Option<RuntimeHandle>,
-    bootstrap: Mutex<BootstrapState>,
+pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationCommand, String> {
+    Ok(match command {
+        BridgeCommand::SetNotifications { enabled } => {
+            ApplicationCommand::SetNotifications { enabled }
+        }
+        BridgeCommand::AcknowledgeNewContacts => ApplicationCommand::AcknowledgeNewContacts,
+        BridgeCommand::UpdateProfile { display_name, at_ms } => {
+            ApplicationCommand::UpdateProfile { display_name, at_ms }
+        }
+        BridgeCommand::CreatePairing { session_id_hex } => {
+            ApplicationCommand::CreatePairing { session_id: parse_id(&session_id_hex)? }
+        }
+        BridgeCommand::JoinPairing { session_id_hex, code, ticket } => {
+            ApplicationCommand::JoinPairing {
+                session_id: parse_id(&session_id_hex)?,
+                code,
+                ticket: ticket.map(|value| parse_ticket(&value)).transpose()?,
+            }
+        }
+        BridgeCommand::ApprovePairing { session_id_hex } => {
+            ApplicationCommand::ApprovePairing { session_id: parse_id(&session_id_hex)? }
+        }
+        BridgeCommand::RejectPairing { session_id_hex } => {
+            ApplicationCommand::RejectPairing { session_id: parse_id(&session_id_hex)? }
+        }
+        BridgeCommand::CancelPairing { session_id_hex } => {
+            ApplicationCommand::CancelPairing { session_id: parse_id(&session_id_hex)? }
+        }
+        BridgeCommand::RenameContact { contact_id_hex, display_name } => {
+            ApplicationCommand::RenameContact {
+                contact_id: parse_id(&contact_id_hex)?,
+                display_name,
+            }
+        }
+        BridgeCommand::VerifyContact { contact_id_hex } => {
+            ApplicationCommand::VerifyContact { contact_id: parse_id(&contact_id_hex)? }
+        }
+        BridgeCommand::ResetContactVerification { contact_id_hex } => {
+            ApplicationCommand::ResetContactVerification { contact_id: parse_id(&contact_id_hex)? }
+        }
+        BridgeCommand::BlockContact { contact_id_hex } => {
+            ApplicationCommand::BlockContact { contact_id: parse_id(&contact_id_hex)? }
+        }
+        BridgeCommand::UnblockContact { contact_id_hex } => {
+            ApplicationCommand::UnblockContact { contact_id: parse_id(&contact_id_hex)? }
+        }
+        BridgeCommand::RemoveContact { contact_id_hex } => {
+            ApplicationCommand::RemoveContact { contact_id: parse_id(&contact_id_hex)? }
+        }
+        BridgeCommand::StartConversation { contact_id_hex } => {
+            ApplicationCommand::StartConversation { contact_id: parse_id(&contact_id_hex)? }
+        }
+        BridgeCommand::ClearConversationHistory { conversation_id_hex } => {
+            ApplicationCommand::ClearConversationHistory {
+                conversation_id: parse_id(&conversation_id_hex)?,
+            }
+        }
+        BridgeCommand::QueueMessage {
+            message_id_hex,
+            conversation_id_hex,
+            body,
+            reply_to_message_id_hex,
+            at_ms,
+        } => ApplicationCommand::QueueMessage {
+            message_id: parse_id(&message_id_hex)?,
+            conversation_id: parse_id(&conversation_id_hex)?,
+            body,
+            reply_to_message_id: reply_to_message_id_hex
+                .map(|value| parse_id(&value))
+                .transpose()?,
+            at_ms,
+        },
+        BridgeCommand::RetryMessage { message_id_hex, at_ms } => {
+            ApplicationCommand::RetryMessage { message_id: parse_id(&message_id_hex)?, at_ms }
+        }
+        BridgeCommand::MarkConversationRead { conversation_id_hex } => {
+            ApplicationCommand::MarkConversationRead {
+                conversation_id: parse_id(&conversation_id_hex)?,
+            }
+        }
+        BridgeCommand::QueueAttachment {
+            attachment_id_hex,
+            message_id_hex,
+            conversation_id_hex,
+            source_path,
+            name,
+            media_type,
+            size,
+        } => ApplicationCommand::QueueAttachment {
+            attachment_id: parse_id(&attachment_id_hex)?,
+            message_id: parse_id(&message_id_hex)?,
+            conversation_id: parse_id(&conversation_id_hex)?,
+            source_path,
+            name,
+            media_type,
+            size,
+        },
+        BridgeCommand::RetryAttachment { attachment_id_hex } => {
+            ApplicationCommand::RetryAttachment { attachment_id: parse_id(&attachment_id_hex)? }
+        }
+        BridgeCommand::CancelAttachment { attachment_id_hex } => {
+            ApplicationCommand::CancelAttachment { attachment_id: parse_id(&attachment_id_hex)? }
+        }
+        BridgeCommand::ExportAttachment { attachment_id_hex, destination_path } => {
+            ApplicationCommand::ExportAttachment {
+                attachment_id: parse_id(&attachment_id_hex)?,
+                destination_path,
+            }
+        }
+        BridgeCommand::RefreshSnapshot => ApplicationCommand::RefreshSnapshot,
+    })
 }
-impl ContractRuntime {
-    pub fn new(engine: EngineHandle) -> Self {
-        Self { engine, runtime: None, bootstrap: Mutex::new(BootstrapState::new()) }
-    }
-    pub fn attach_runtime(&mut self, runtime: RuntimeHandle) {
-        self.runtime = Some(runtime);
-    }
-    pub const fn has_runtime(&self) -> bool {
-        self.runtime.is_some()
-    }
 
-    /// Creates the durable bootstrap identity. This is runtime-internal and is
-    /// intentionally not represented as a wire command.
-    pub fn bootstrap_identity(&self, identity_id_hex: &str, at_ms: i64) -> BridgeResult {
-        let result = parse_id(identity_id_hex)
-            .and_then(|id| timestamp(at_ms).map(|at| (id, at)))
-            .and_then(|(id, at)| {
-                self.engine
-                    .dispatch(EngineCommand::CreateIdentity {
-                        identity_id: IdentityId::from_opaque(id),
-                        profile: None,
-                        at,
-                    })
-                    .map_err(string_error)
-            })
-            .map(|value| result_kind(&value).to_owned());
-        match result {
-            Ok(kind) => BridgeResult { ok: true, kind, error: None },
-            Err(error) => BridgeResult {
-                ok: false,
-                kind: "identity_bootstrap_failed".into(),
-                error: Some(error),
-            },
-        }
-    }
-
-    pub fn execute(&self, command: BridgeCommand) -> BridgeResult {
-        let result: Result<&'static str, String> = match command {
-            BridgeCommand::SetNotifications { .. } => Ok("notifications_updated"),
-            BridgeCommand::AcknowledgeNewContacts => Ok("contacts_acknowledged"),
-            BridgeCommand::UpdateProfile { display_name, at_ms } => self
-                .profile_setup_allowed()
-                .and_then(|()| ProfileName::new(display_name).map_err(string_error))
-                .and_then(|display_name| timestamp(at_ms).map(|at| (display_name, at)))
-                .and_then(|(display_name, at)| {
-                    self.engine
-                        .dispatch(EngineCommand::UpdateProfile { display_name, at })
-                        .map_err(string_error)
-                })
-                .map(|value| result_kind(&value)),
-            BridgeCommand::CreatePairing { session_id_hex } => self
-                .pairing_creation_allowed()
-                .and_then(|()| parse_pairing_id(&session_id_hex))
-                .and_then(|id| runtime_command(self.runtime()?.create_pairing(id)))
-                .map(|_| "pairing_started"),
-            BridgeCommand::JoinPairing { session_id_hex, code } => self
-                .pairing_creation_allowed()
-                .and_then(|()| parse_pairing_id(&session_id_hex))
-                .and_then(|id| PairingCode::new(code).map_err(string_error).map(|code| (id, code)))
-                .and_then(|(id, code)| runtime_command(self.runtime()?.join_pairing(id, code)))
-                .map(|_| "pairing_joined"),
-            BridgeCommand::ApprovePairing { session_id_hex } => parse_pairing_id(&session_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.approve_pairing(id)))
-                .map(|_| "pairing_updated"),
-            BridgeCommand::RejectPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.reject_pairing(id)))
-                .map(|_| "pairing_rejected"),
-            BridgeCommand::CancelPairing { session_id_hex } => parse_pairing_id(&session_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.cancel_pairing(id)))
-                .map(|_| "pairing_cancelled"),
-            BridgeCommand::RenameContact { contact_id_hex, display_name } => {
-                parse_contact_id(&contact_id_hex)
-                    .and_then(|id| {
-                        runtime_command(self.runtime()?.rename_contact(id, display_name))
-                    })
-                    .map(|_| "contact_renamed")
-            }
-            BridgeCommand::VerifyContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.verify_contact(id)))
-                .map(|_| "contact_verified"),
-            BridgeCommand::ResetContactVerification { contact_id_hex } => {
-                parse_contact_id(&contact_id_hex)
-                    .and_then(|id| runtime_command(self.runtime()?.reset_contact_verification(id)))
-                    .map(|_| "contact_verification_reset")
-            }
-            BridgeCommand::BlockContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.block_contact(id)))
-                .map(|_| "contact_blocked"),
-            BridgeCommand::UnblockContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.unblock_contact(id)))
-                .map(|_| "contact_unblocked"),
-            BridgeCommand::RemoveContact { contact_id_hex } => parse_contact_id(&contact_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.remove_contact(id)))
-                .map(|_| "contact_removed"),
-            BridgeCommand::ClearConversationHistory { conversation_id_hex } => {
-                parse_conversation_id(&conversation_id_hex)
-                    .and_then(|id| runtime_command(self.runtime()?.clear_conversation_history(id)))
-                    .map(|_| "conversation_history_cleared")
-            }
-            BridgeCommand::QueueMessage {
-                message_id_hex,
-                conversation_id_hex,
-                body,
-                reply_to_message_id_hex,
-                at_ms,
-            } => self.runtime().and_then(|runtime| {
-                let message_id = parse_id(&message_id_hex)?;
-                let conversation_id = parse_id(&conversation_id_hex)?;
-                let body = MessageBody::new(body).map_err(string_error)?;
-                let reply_to = match reply_to_message_id_hex {
-                    Some(value) => Some(ReplyReference {
-                        message_id: MessageId::from_opaque(parse_id(&value)?),
-                    }),
-                    None => None,
-                };
-                let at = timestamp(at_ms)?;
-                self.engine
-                    .dispatch(EngineCommand::QueueMessage {
-                        message_id: MessageId::from_opaque(message_id),
-                        conversation_id: ConversationId::from_opaque(conversation_id),
-                        body,
-                        reply_to,
-                        at,
-                    })
-                    .map_err(string_error)
-                    .map(|value| {
-                        runtime.wake_delivery();
-                        result_kind(&value)
-                    })
-            }),
-            BridgeCommand::RetryMessage { message_id_hex, at_ms } => {
-                self.runtime().and_then(|runtime| {
-                    let message_id = MessageId::from_opaque(parse_id(&message_id_hex)?);
-                    let at = timestamp(at_ms)?;
-                    self.engine
-                        .dispatch(EngineCommand::RetryMessage { message_id, at })
-                        .map_err(string_error)
-                        .map(|value| {
-                            runtime.wake_delivery();
-                            result_kind(&value)
-                        })
-                })
-            }
-            BridgeCommand::MarkConversationRead { conversation_id_hex } => {
-                parse_id(&conversation_id_hex)
-                    .and_then(|id| runtime_command(self.runtime()?.mark_conversation_read(id)))
-                    .map(|_| "conversation_read")
-            }
-            BridgeCommand::MarkConversationReadWithPolicy { conversation_id_hex, send_receipt } => {
-                parse_id(&conversation_id_hex)
-                    .and_then(|id| {
-                        runtime_command(
-                            self.runtime()?.mark_conversation_read_with_policy(id, send_receipt),
-                        )
-                    })
-                    .map(|_| "conversation_read")
-            }
-            BridgeCommand::QueueAttachment {
-                attachment_id_hex,
-                message_id_hex,
-                conversation_id_hex,
-                source_path,
-                name,
-                media_type,
-                size,
-            } => parse_attachment_request(
-                attachment_id_hex,
-                message_id_hex,
-                conversation_id_hex,
-                source_path,
-                name,
-                media_type,
-                size,
-            )
-            .and_then(|request| runtime_command(self.runtime()?.queue_attachment(request)))
-            .map(|_| "attachment_queued"),
-            BridgeCommand::RetryAttachment { attachment_id_hex } => parse_id(&attachment_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.retry_attachment(id)))
-                .map(|_| "attachment_retried"),
-            BridgeCommand::CancelAttachment { attachment_id_hex } => parse_id(&attachment_id_hex)
-                .and_then(|id| runtime_command(self.runtime()?.cancel_attachment(id)))
-                .map(|_| "attachment_cancelled"),
-            BridgeCommand::ExportAttachment { attachment_id_hex, destination_path } => {
-                parse_id(&attachment_id_hex)
-                    .and_then(|id| {
-                        self.runtime()?
-                            .export_attachment(
-                                AttachmentId::from_opaque(id),
-                                PathBuf::from(destination_path),
-                            )
-                            .map_err(string_error)
-                    })
-                    .map(|_| "attachment_exported")
-            }
-            BridgeCommand::RefreshSnapshot => {
-                self.snapshot().map(|_| "snapshot").map_err(string_error)
-            }
-        };
-        match result {
-            Ok(kind) => BridgeResult { ok: true, kind: kind.into(), error: None },
-            Err(error) => BridgeResult { ok: false, kind: "error".into(), error: Some(error) },
-        }
-    }
-
-    pub fn snapshot(&self) -> Result<BridgeSnapshot, EngineError> {
-        self.snapshot_internal()
-    }
-
-    fn snapshot_internal(&self) -> Result<BridgeSnapshot, EngineError> {
-        let app = self.engine.overview_snapshot()?;
-        let (network, attachments) = match &self.runtime {
-            Some(runtime) => (
-                runtime
-                    .network_snapshot()
-                    .map_err(|_| EngineError("network snapshot unavailable".into()))?,
-                runtime.attachment_snapshot().unwrap_or_default(),
-            ),
-            None => (
-                NetworkSnapshot {
-                    tor: TorState::Stopped,
-                    onion_address: None,
-                    peers: BTreeMap::new(),
-                    peer_health: BTreeMap::new(),
-                    contact_names: BTreeMap::new(),
-                    contact_verifications: BTreeMap::new(),
-                    tor_activity: TransportActivitySnapshot::default(),
-                    relay_activity: TransportActivitySnapshot::default(),
-                    peer_activity: BTreeMap::new(),
-                    probes: Vec::new(),
-                },
-                Vec::new(),
-            ),
-        };
-        let bootstrap =
-            self.bootstrap.lock().map_err(|_| EngineError("bootstrap state unavailable".into()))?;
-        Ok(map_snapshot(app, network, attachments, &bootstrap))
-    }
-
-    /// Applies externally observed bootstrap facts. The native runtime actor
-    /// calls this before projecting a snapshot; `snapshot()` itself is strictly
-    /// read-only so polling can never advance attempts or mutate the state.
-    pub fn advance_bootstrap(&self) -> Result<(), EngineError> {
-        let app = self.engine.overview_snapshot()?;
-        let network = match &self.runtime {
-            Some(runtime) => runtime
-                .network_snapshot()
-                .map_err(|_| EngineError("network snapshot unavailable".into()))?,
-            None => NetworkSnapshot {
-                tor: TorState::Stopped,
-                onion_address: None,
-                peers: BTreeMap::new(),
-                peer_health: BTreeMap::new(),
-                contact_names: BTreeMap::new(),
-                contact_verifications: BTreeMap::new(),
-                tor_activity: TransportActivitySnapshot::default(),
-                relay_activity: TransportActivitySnapshot::default(),
-                peer_activity: BTreeMap::new(),
-                probes: Vec::new(),
-            },
-        };
-        let has_identity = app.identity.is_some();
-        let has_profile = app.identity.as_ref().and_then(|identity| identity.profile()).is_some();
-        let tor_state = format!("{:?}", network.tor).to_lowercase();
-        let has_onion = network.onion_address.is_some();
-        let relay_status = network
-            .probes
-            .iter()
-            .find(|probe| probe.target == ProbeTarget::Relay)
-            .map(|probe| probe.status)
-            .unwrap_or(ProbeStatus::Unknown);
-        let Ok(mut bootstrap) = self.bootstrap.lock() else {
-            return Err(EngineError("bootstrap state unavailable".into()));
-        };
-
-        for step in [
-            BootstrapStepId::Preferences,
-            BootstrapStepId::NativeBridge,
-            BootstrapStepId::Contract,
-            BootstrapStepId::SecureStorage,
-            BootstrapStepId::Database,
-        ] {
-            if step_state(&bootstrap, step) != Some(BootstrapStepState::Ready) {
-                bootstrap.begin(step);
-                bootstrap.complete(step);
-            }
-        }
-        if has_identity
-            && step_state(&bootstrap, BootstrapStepId::DeviceIdentity)
-                != Some(BootstrapStepState::Ready)
-        {
-            bootstrap.begin(BootstrapStepId::DeviceIdentity);
-            bootstrap.complete(BootstrapStepId::DeviceIdentity);
-        }
-        if has_identity {
-            match tor_state.as_str() {
-                "ready" => {
-                    if step_state(&bootstrap, BootstrapStepId::Tor)
-                        != Some(BootstrapStepState::Ready)
-                    {
-                        bootstrap.begin(BootstrapStepId::Tor);
-                        bootstrap.complete(BootstrapStepId::Tor);
-                    }
-                    if has_onion
-                        && step_state(&bootstrap, BootstrapStepId::OnionService)
-                            != Some(BootstrapStepState::Ready)
-                    {
-                        bootstrap.begin(BootstrapStepId::OnionService);
-                        bootstrap.complete(BootstrapStepId::OnionService);
-                    }
-                    match relay_status {
-                        ProbeStatus::Healthy => {
-                            if step_state(&bootstrap, BootstrapStepId::Relay)
-                                != Some(BootstrapStepState::Ready)
-                            {
-                                bootstrap.begin(BootstrapStepId::Relay);
-                                bootstrap.complete(BootstrapStepId::Relay);
-                            }
-                        }
-                        ProbeStatus::Failed | ProbeStatus::Unreachable | ProbeStatus::Degraded => {
-                            if step_state(&bootstrap, BootstrapStepId::Relay)
-                                != Some(BootstrapStepState::Degraded)
-                            {
-                                bootstrap.begin(BootstrapStepId::Relay);
-                            }
-                            bootstrap.degrade(BootstrapStepId::Relay, "RELAY_UNREACHABLE");
-                        }
-                        ProbeStatus::Checking | ProbeStatus::Unknown | ProbeStatus::Disabled => {
-                            if matches!(
-                                step_state(&bootstrap, BootstrapStepId::Relay),
-                                Some(BootstrapStepState::Pending | BootstrapStepState::Blocked)
-                            ) {
-                                bootstrap.begin(BootstrapStepId::Relay);
-                                bootstrap.verify(BootstrapStepId::Relay);
-                            }
-                        }
-                    }
-                }
-                "failed" | "degraded" => {
-                    let code = if tor_state == "failed" {
-                        "TOR_RUNTIME_FAILED"
-                    } else {
-                        "TOR_RUNTIME_DEGRADED"
-                    };
-                    if step_state(&bootstrap, BootstrapStepId::Tor)
-                        != Some(BootstrapStepState::Failed)
-                    {
-                        bootstrap.begin(BootstrapStepId::Tor);
-                        bootstrap.fail(BootstrapStepId::Tor, code);
-                    }
-                }
-                _ => {
-                    if matches!(
-                        step_state(&bootstrap, BootstrapStepId::Tor),
-                        Some(BootstrapStepState::Pending | BootstrapStepState::Blocked)
-                    ) {
-                        bootstrap.begin(BootstrapStepId::Tor);
-                        bootstrap.verify(BootstrapStepId::Tor);
-                    }
-                }
-            }
-        }
-        if has_profile
-            && step_state(&bootstrap, BootstrapStepId::UserProfile)
-                != Some(BootstrapStepState::Ready)
-        {
-            bootstrap.begin(BootstrapStepId::UserProfile);
-            bootstrap.complete(BootstrapStepId::UserProfile);
-        }
-        Ok(())
-    }
-
-    pub fn diagnostics_json(&self) -> Result<String, EngineError> {
-        match &self.runtime {
-            Some(runtime) => runtime
-                .diagnostics_json()
-                .map_err(|_| EngineError("diagnostics unavailable".into())),
-            None => Ok("{\"events\":[]}".into()),
-        }
-    }
-    fn runtime(&self) -> Result<&RuntimeHandle, String> {
-        self.runtime.as_ref().ok_or_else(|| "secure network runtime is not ready".into())
-    }
-
-    fn pairing_creation_allowed(&self) -> Result<(), String> {
-        let relay = self
-            .runtime()?
-            .network_snapshot()
-            .map_err(|_| "relay health is unavailable".to_owned())?
-            .probes
-            .into_iter()
-            .find(|probe| probe.target == ProbeTarget::Relay);
-        match relay.map(|probe| probe.status) {
-            Some(ProbeStatus::Healthy) => Ok(()),
-            Some(ProbeStatus::Degraded | ProbeStatus::Failed | ProbeStatus::Unreachable) => {
-                Err("RELAY_DEGRADED".into())
-            }
-            _ => Err("RELAY_NOT_READY".into()),
-        }
-    }
-
-    fn profile_setup_allowed(&self) -> Result<(), String> {
-        let network = self.runtime().and_then(|runtime| {
-            runtime.network_snapshot().map_err(|_| "network readiness is unavailable".to_owned())
-        })?;
-        if network.tor != TorState::Ready || network.onion_address.is_none() {
-            return Err("PROFILE_NOT_READY".into());
-        }
-        let relay = network
-            .probes
-            .into_iter()
-            .find(|probe| probe.target == ProbeTarget::Relay)
-            .map(|probe| probe.status);
-        match relay {
-            Some(
-                ProbeStatus::Healthy
-                | ProbeStatus::Degraded
-                | ProbeStatus::Failed
-                | ProbeStatus::Unreachable,
-            ) => Ok(()),
-            Some(ProbeStatus::Checking | ProbeStatus::Unknown | ProbeStatus::Disabled) | None => {
-                Err("PROFILE_NOT_READY".into())
-            }
-        }
+pub fn bridge_result_from_application(
+    result: Result<torca_client_application::ApplicationCommandResult, ApplicationError>,
+) -> BridgeResult {
+    match result {
+        Ok(result) => BridgeResult {
+            ok: true,
+            kind: result.kind.into(),
+            error: None,
+            error_code: None,
+            resource_id: result.resource_id.map(|id| id.to_string()),
+            invite_uri: result.invite_uri,
+        },
+        Err(error) => BridgeResult {
+            ok: false,
+            kind: "error".into(),
+            error: Some(error.to_string()),
+            error_code: Some(error.descriptor().code().to_string()),
+            resource_id: None,
+            invite_uri: None,
+        },
     }
 }
 
@@ -742,45 +451,20 @@ pub fn bridge_message_from_domain(message: Message) -> BridgeMessage {
     }
 }
 
-fn runtime_command<T>(result: Result<T, RuntimeDriverError>) -> Result<(), String> {
-    match result {
-        Ok(_) | Err(RuntimeDriverError::Pending) => Ok(()),
-        Err(error) => Err(string_error(error)),
-    }
-}
-fn parse_attachment_request(
-    attachment_id_hex: String,
-    message_id_hex: String,
-    conversation_id_hex: String,
-    source_path: String,
-    name: String,
-    media_type: String,
-    size: u64,
-) -> Result<AttachmentSendRequest, String> {
-    Ok(AttachmentSendRequest {
-        attachment_id: parse_id(&attachment_id_hex)?,
-        message_id: parse_id(&message_id_hex)?,
-        conversation_id: parse_id(&conversation_id_hex)?,
-        source_path,
-        name,
-        media_type,
-        size,
-    })
-}
-fn parse_pairing_id(value: &str) -> Result<PairingSessionId, String> {
-    parse_id(value).map(PairingSessionId::from_opaque)
-}
-fn parse_contact_id(value: &str) -> Result<ContactId, String> {
-    parse_id(value).map(ContactId::from_opaque)
-}
-fn parse_conversation_id(value: &str) -> Result<ConversationId, String> {
-    parse_id(value).map(ConversationId::from_opaque)
-}
 fn parse_id(value: &str) -> Result<OpaqueId, String> {
     value.parse::<OpaqueId>().map_err(string_error)
 }
-fn timestamp(value: i64) -> Result<Timestamp, String> {
-    Timestamp::from_unix_millis(value).map_err(string_error)
+
+fn parse_ticket(value: &str) -> Result<[u8; 16], String> {
+    if value.len() != 32 {
+        return Err("invalid pairing ticket".into());
+    }
+    let mut out = [0_u8; 16];
+    for (i, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let s = core::str::from_utf8(chunk).map_err(|_| "invalid pairing ticket")?;
+        out[i] = u8::from_str_radix(s, 16).map_err(|_| "invalid pairing ticket")?;
+    }
+    Ok(out)
 }
 fn string_error(error: impl core::fmt::Display) -> String {
     error.to_string()
@@ -794,10 +478,6 @@ fn bootstrap_phase_name(phase: BootstrapPhase) -> &'static str {
         BootstrapPhase::Degraded => "degraded",
         BootstrapPhase::Failed => "failed",
     }
-}
-
-fn step_state(bootstrap: &BootstrapState, id: BootstrapStepId) -> Option<BootstrapStepState> {
-    bootstrap.snapshot().steps.into_iter().find(|step| step.id == id).map(|step| step.state)
 }
 
 fn bootstrap_step_id(id: BootstrapStepId) -> &'static str {
@@ -814,38 +494,22 @@ fn bootstrap_step_id(id: BootstrapStepId) -> &'static str {
         BootstrapStepId::UserProfile => "profile",
     }
 }
-fn result_kind(value: &EngineResult) -> &'static str {
-    match value {
-        EngineResult::IdentityCreated => "identity_created",
-        EngineResult::ProfileUpdated => "profile_updated",
-        EngineResult::PairingStarted => "pairing_started",
-        EngineResult::PairingJoined => "pairing_joined",
-        EngineResult::PairingUpdated => "pairing_updated",
-        EngineResult::PairingRejected => "pairing_rejected",
-        EngineResult::PairingCancelled => "pairing_cancelled",
-        EngineResult::PairingCompleted { .. } => "pairing_completed",
-        EngineResult::PairingRemoved => "pairing_removed",
-        EngineResult::MessageQueued { .. } => "message_queued",
-        EngineResult::MessageUpdated { .. } => "message_updated",
-        EngineResult::ReceiptApplied { .. } => "receipt_applied",
-    }
-}
 
-fn map_snapshot(
-    snapshot: ClientSnapshot,
-    network: NetworkSnapshot,
-    attachments: Vec<AttachmentView>,
-    bootstrap: &BootstrapState,
-) -> BridgeSnapshot {
-    let local_public = snapshot.identity.as_ref().map(|identity| identity.public().clone());
+/// Pure wire projection: application owns the snapshot context and this
+/// function only converts it to contract DTOs. No use-case or readiness policy
+/// belongs here.
+pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> BridgeSnapshot {
+    let ApplicationSnapshotContext {
+        application: snapshot,
+        network,
+        attachments,
+        bootstrap,
+        identity_fingerprint,
+        identity_fingerprints,
+        safety_numbers,
+    } = context;
     let identity_name = snapshot.identity.as_ref().and_then(|identity| {
         identity.profile().map(|profile| profile.display_name().as_str().to_owned())
-    });
-    let identity_fingerprint = snapshot.identity.as_ref().map(|identity| {
-        let mut hash = Sha256::new();
-        hash.update(b"TORCA-FINGERPRINT-V1");
-        hash.update(identity.public().key().public_key());
-        grouped_hex(&hash.finalize())
     });
     // Root snapshots deliberately omit message history. Conversation page and
     // search queries are the only history transport exposed to presentation.
@@ -859,7 +523,7 @@ fn map_snapshot(
         .map(|probe| probe.diagnostic_code.clone())
         .unwrap_or_else(|| "RELAY_UNAVAILABLE".into());
     let relay_latency_ms = relay_probe.and_then(|probe| probe.latency_ms);
-    let bootstrap_snapshot = bootstrap.snapshot();
+    let bootstrap_snapshot = bootstrap.clone();
     let bootstrap_phase = bootstrap_phase_name(bootstrap_snapshot.phase);
     BridgeSnapshot {
         contract_version: CONTRACT_VERSION,
@@ -879,7 +543,11 @@ fn map_snapshot(
                     .tor_activity
                     .last_activity_at
                     .map(Timestamp::to_unix_millis),
-                activity_sequence: network.tor_activity.sequence,
+                activity_sequence: network.connectivity.event_cursor,
+                tx_sequence: network.connectivity.tor.tx_sequence,
+                rx_sequence: network.connectivity.tor.rx_sequence,
+                in_flight: network.connectivity.tor.in_flight,
+                queued: network.connectivity.tor.queued,
             },
             relay: BridgeTransportIndicator {
                 state: relay_state,
@@ -889,8 +557,46 @@ fn map_snapshot(
                     .relay_activity
                     .last_activity_at
                     .map(Timestamp::to_unix_millis),
-                activity_sequence: network.relay_activity.sequence,
+                activity_sequence: network.connectivity.event_cursor,
+                tx_sequence: network.connectivity.relay.tx_sequence,
+                rx_sequence: network.connectivity.relay.rx_sequence,
+                in_flight: network.connectivity.relay.in_flight,
+                queued: network.connectivity.relay.queued,
             },
+            peer: BridgeTransportIndicator {
+                state: if network.connectivity.peers_total == 0 {
+                    "inactive"
+                } else if network.connectivity.peers_ready > 0 {
+                    "ready"
+                } else {
+                    "disconnected"
+                }
+                .into(),
+                code: if network.connectivity.peers_total == 0 {
+                    "PEER_INACTIVE"
+                } else if network.connectivity.peers_ready > 0 {
+                    "PEER_READY"
+                } else {
+                    "PEER_DISCONNECTED"
+                }
+                .into(),
+                latency_ms: network.connectivity.peer.latency_ms,
+                last_activity_at_ms: network
+                    .connectivity
+                    .peer
+                    .last_tx_at
+                    .into_iter()
+                    .chain(network.connectivity.peer.last_rx_at)
+                    .max()
+                    .map(Timestamp::to_unix_millis),
+                activity_sequence: network.connectivity.event_cursor,
+                tx_sequence: network.connectivity.peer.tx_sequence,
+                rx_sequence: network.connectivity.peer.rx_sequence,
+                in_flight: network.connectivity.peer.in_flight,
+                queued: network.connectivity.peer.queued,
+            },
+            peers_ready: network.connectivity.peers_ready,
+            peers_total: network.connectivity.peers_total,
         },
         onion_address: network.onion_address,
         bootstrap_phase: bootstrap_phase.into(),
@@ -938,18 +644,26 @@ fn map_snapshot(
                     let identity = &proposal.public_identity;
                     (
                         identity.identity_id().to_string(),
-                        fingerprint_for(identity.key().public_key()),
+                        identity_fingerprints
+                            .get(&identity.identity_id().to_opaque())
+                            .cloned()
+                            .unwrap_or_default(),
                     )
                 });
                 BridgePairing {
                     id: pairing.id().to_string(),
                     code: pairing.code().as_str().to_owned(),
+                    invite_uri: encode_invite_uri(pairing.code().as_str(), None)
+                        .unwrap_or_default(),
                     role: format!("{:?}", pairing.role()).to_lowercase(),
                     state: format!("{:?}", pairing.state()).to_lowercase(),
                     expires_at_ms: pairing.expires_at().to_unix_millis(),
                     local_approved: pairing.local_approved(),
                     remote_approved: pairing.remote_approved(),
                     remote_identity_id: remote_identity.as_ref().map(|value| value.0.clone()),
+                    remote_display_name: pairing
+                        .remote_proposal()
+                        .map(|proposal| proposal.display_name.clone()),
                     remote_fingerprint: remote_identity.map(|value| value.1),
                 }
             })
@@ -991,9 +705,7 @@ fn map_snapshot(
                             .map_or(0, |activity| activity.sequence),
                     },
                 );
-                let safety_number = local_public.as_ref().map_or_else(String::new, |local| {
-                    safety_number(local, contact.remote_identity())
-                });
+                let safety_number = safety_numbers.get(&contact.id()).cloned().unwrap_or_default();
                 let display_name = network
                     .contact_names
                     .get(&contact.id())
@@ -1055,44 +767,6 @@ fn fallback_contact_name(id: ContactId) -> String {
     let value = id.to_string();
     let short = value.get(..8).unwrap_or(&value);
     format!("Contact {short}")
-}
-fn safety_number(local: &PublicIdentity, remote: &PublicIdentity) -> String {
-    let (first, second) = if local.identity_id().to_opaque() <= remote.identity_id().to_opaque() {
-        (local, remote)
-    } else {
-        (remote, local)
-    };
-    let mut hash = Sha256::new();
-    hash.update(b"TORCA-SAFETY-NUMBER-V1");
-    update_identity_hash(&mut hash, first);
-    update_identity_hash(&mut hash, second);
-    grouped_hex(&hash.finalize())
-}
-fn grouped_hex(bytes: &[u8]) -> String {
-    bytes
-        .chunks(4)
-        .map(|chunk| {
-            let mut value = String::with_capacity(chunk.len() * 2);
-            for byte in chunk {
-                let _ = write!(value, "{byte:02X}");
-            }
-            value
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn fingerprint_for(public_key: &[u8]) -> String {
-    let mut hash = Sha256::new();
-    hash.update(b"TORCA-FINGERPRINT-V1");
-    hash.update(public_key);
-    grouped_hex(&hash.finalize())
-}
-fn update_identity_hash(hash: &mut Sha256, identity: &PublicIdentity) {
-    hash.update(identity.identity_id().to_opaque().as_bytes());
-    let key = identity.key().public_key();
-    hash.update(u32::try_from(key.len()).unwrap_or(u32::MAX).to_be_bytes());
-    hash.update(key);
 }
 pub fn dart_contract_source() -> &'static str {
     include_str!("../schema/torca_contract.dart")

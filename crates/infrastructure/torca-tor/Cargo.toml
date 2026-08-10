@@ -19,6 +19,7 @@ tor-rtcompat = { version = "0.45", features = ["tokio", "rustls"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-peer = { path = "../torca-peer" }
+torca-runtime = { path = "../../application/torca-runtime" }
 torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
 torca-wire = { path = "../../protocol/torca-wire" }
 

@@ -399,11 +399,12 @@ impl ActorState {
                     payload.get("conversationId").and_then(Value::as_str).unwrap_or_default();
                 let before =
                     payload.get("beforeMessageId").and_then(Value::as_str).unwrap_or_default();
+                let before_at_ms = payload.get("beforeAtMs").and_then(Value::as_i64);
                 let limit =
                     payload.get("limit").and_then(Value::as_u64).unwrap_or(100).clamp(1, 200)
                         as u32;
                 let cursor = if before.is_empty() { None } else { Some(before) };
-                self.runtime.conversation_page(conversation, None, cursor, limit as usize)
+                self.runtime.conversation_page(conversation, before_at_ms, cursor, limit as usize)
             }
             ("query", "conversation.search") => {
                 let conversation =
@@ -421,6 +422,10 @@ impl ActorState {
             ("query", "pairing.parse") => {
                 let uri = payload.get("uri").and_then(Value::as_str).unwrap_or_default();
                 self.runtime.parse_pairing_uri(uri)
+            }
+            ("query", "pairing.encode") => {
+                let code = payload.get("code").and_then(Value::as_str).unwrap_or_default();
+                self.runtime.encode_pairing_uri(code)
             }
             ("command", _) => {
                 let command = match bridge_command(name, &payload) {
@@ -453,6 +458,7 @@ impl ActorState {
             || name == "conversation.search"
             || name == "notifications.poll"
             || name == "pairing.parse"
+            || name == "pairing.encode"
         {
             serde_json::from_str(&self.runtime.query_json).unwrap_or(Value::Null)
         } else {
@@ -471,9 +477,19 @@ impl ActorState {
                 );
             }
         }
+        let operation_result =
+            serde_json::from_str::<Value>(&self.runtime.last_result_json).unwrap_or(Value::Null);
+        let result_kind = operation_result
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or(if name == "profile.set" { "profile_updated" } else { "snapshot" });
+        let resource_id = operation_result.get("resourceId").cloned().unwrap_or(Value::Null);
+        let invite_uri = operation_result.get("inviteUri").cloned().unwrap_or(Value::Null);
         let response = serde_json::to_vec(&json!({
             "schema": 1, "requestId": request_id, "status": "succeeded",
-            "resultKind": if name == "profile.set" { "profile_updated" } else { "snapshot" },
+            "resultKind": result_kind,
+            "resourceId": resource_id,
+            "inviteUri": invite_uri,
             "runtimeId": self.runtime_id, "revision": self.revision, "snapshot": snapshot,
             "error": Value::Null, "timing": { "queuedMs": 0, "executionMs": started.elapsed().as_millis() }
         })).expect("runtime response is serializable");
@@ -749,9 +765,11 @@ fn bridge_command(
             Ok(BridgeCommand::UpdateProfile { display_name: text("displayName")?, at_ms: now()? })
         }
         "pairing.create" => Ok(BridgeCommand::CreatePairing { session_id_hex: generated()? }),
-        "pairing.join" => {
-            Ok(BridgeCommand::JoinPairing { session_id_hex: generated()?, code: text("code")? })
-        }
+        "pairing.join" => Ok(BridgeCommand::JoinPairing {
+            session_id_hex: generated()?,
+            code: text("code")?,
+            ticket: payload.get("ticket").and_then(Value::as_str).map(str::to_owned),
+        }),
         "pairing.approve" => {
             Ok(BridgeCommand::ApprovePairing { session_id_hex: text("sessionIdHex")? })
         }
@@ -780,6 +798,9 @@ fn bridge_command(
         "contact.remove" => {
             Ok(BridgeCommand::RemoveContact { contact_id_hex: text("contactIdHex")? })
         }
+        "conversation.start" => {
+            Ok(BridgeCommand::StartConversation { contact_id_hex: text("contactIdHex")? })
+        }
         "conversation.clear" => Ok(BridgeCommand::ClearConversationHistory {
             conversation_id_hex: text("conversationIdHex")?,
         }),
@@ -799,14 +820,7 @@ fn bridge_command(
         }
         "conversation.read" => {
             let conversation_id_hex = text("conversationIdHex")?;
-            if payload.get("sendReceipt").and_then(Value::as_bool).unwrap_or(true) {
-                Ok(BridgeCommand::MarkConversationReadWithPolicy {
-                    conversation_id_hex,
-                    send_receipt: true,
-                })
-            } else {
-                Ok(BridgeCommand::MarkConversationRead { conversation_id_hex })
-            }
+            Ok(BridgeCommand::MarkConversationRead { conversation_id_hex })
         }
         "attachment.queue" => Ok(BridgeCommand::QueueAttachment {
             attachment_id_hex: generated()?,

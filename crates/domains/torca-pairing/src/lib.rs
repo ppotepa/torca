@@ -38,7 +38,7 @@ impl fmt::Display for PairingSessionId {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PairingCode(String);
 impl PairingCode {
-    /// Creates the canonical five-character Crockford Base32 invitation code.
+    /// Creates the canonical six-character Crockford Base32 invitation code.
     ///
     /// Presentation may group a code as `ABC-12`; spaces and separators are
     /// deliberately ignored here so every entry point (manual input, QR and
@@ -60,7 +60,7 @@ impl PairingCode {
                 other => other,
             })
             .collect();
-        if value.len() != 5 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
+        if value.len() != 6 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
         {
             return Err(PairingError::InvalidCode);
         }
@@ -78,15 +78,15 @@ mod pairing_code_tests {
 
     #[test]
     fn normalizes_human_friendly_crockford_input() {
-        let code = PairingCode::new("ab-ciO").expect("normalizable code");
-        assert_eq!(code.as_str(), "ABC10");
+        let code = PairingCode::new("ab c-iO2").expect("normalizable code");
+        assert_eq!(code.as_str(), "ABC102");
     }
 
     #[test]
     fn rejects_legacy_and_ambiguous_alphabet_values() {
-        assert_eq!(PairingCode::new("ABCDEF"), Err(PairingError::InvalidCode));
-        assert_eq!(PairingCode::new("ABCD"), Err(PairingError::InvalidCode));
-        assert_eq!(PairingCode::new("ABCU1"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCDE"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCDEFG"), Err(PairingError::InvalidCode));
+        assert_eq!(PairingCode::new("ABCU1!"), Err(PairingError::InvalidCode));
     }
 }
 
@@ -114,6 +114,7 @@ pub enum PairingState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeerProposal {
     pub public_identity: PublicIdentity,
+    pub display_name: String,
     pub route: ContactRoute,
 }
 

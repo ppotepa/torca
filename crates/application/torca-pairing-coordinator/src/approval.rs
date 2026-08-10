@@ -1,5 +1,5 @@
+use torca_foundation::OpaqueId;
 use torca_identity::{KeyId, PublicIdentity};
-use torca_pairing::PairingSessionId;
 use torca_pairing_protocol::PairingEnvelope;
 
 /// Cryptographic operations for explicit human approval after both public offers are known.
@@ -15,7 +15,7 @@ pub trait PairingApprovalPort {
     fn sign_approval(
         &self,
         key_id: KeyId,
-        session_id: PairingSessionId,
+        context_id: OpaqueId,
         transcript_digest: [u8; 32],
     ) -> Result<Vec<u8>, PairingApprovalError>;
 
@@ -23,7 +23,7 @@ pub trait PairingApprovalPort {
     fn verify_approval(
         &self,
         remote_identity: &PublicIdentity,
-        session_id: PairingSessionId,
+        context_id: OpaqueId,
         transcript_digest: [u8; 32],
         proof: &[u8],
     ) -> Result<(), PairingApprovalError>;

@@ -9,6 +9,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+sha2 = "0.10"
 torca-foundation = { path = "../../foundation/torca-foundation" }
 
 [lints]

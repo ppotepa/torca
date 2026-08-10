@@ -1,9 +1,7 @@
 //! Single background owner for Tor, pairing, peer sessions and durable delivery.
 
 mod attachments;
-mod tor_driver;
 pub use attachments::{AttachmentSendRequest, AttachmentView};
-pub use tor_driver::{OwnedTorDriver, SharedTorEndpoint};
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,15 +11,17 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
 use torca_client_engine::{EngineCommand, EngineHandle};
+use torca_connectivity::{ConnectivityObserver, ConnectivitySnapshot};
 use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationId;
 use torca_diagnostics::{
     Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState,
 };
-use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
+use torca_foundation::{
+    ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
+};
 use torca_messaging::{MessageBody, MessageId};
 use torca_pairing::{PairingCode, PairingSessionId};
-use torca_peer_link::PeerConnectionState;
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
 
 const RUNTIME_TICK: Duration = Duration::from_millis(100);
@@ -46,6 +46,16 @@ pub enum TorState {
     Degraded,
     Failed,
 }
+/// Application-owned peer session state. Infrastructure adapters map their provider state here.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PeerConnectionStatus {
+    Disconnected,
+    Connecting,
+    Handshaking,
+    Ready,
+    Reconnecting,
+    Failed,
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PeerHealthQuality {
     Unknown,
@@ -57,7 +67,7 @@ pub enum PeerHealthQuality {
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PeerHealthSnapshot {
-    pub state: PeerConnectionState,
+    pub state: PeerConnectionStatus,
     pub quality: PeerHealthQuality,
     pub rtt_ms: Option<u64>,
     pub last_success_at: Option<Timestamp>,
@@ -100,7 +110,7 @@ impl TransportActivityLedger {
     }
 }
 impl PeerHealthSnapshot {
-    pub const fn from_connection_state(state: PeerConnectionState) -> Self {
+    pub const fn from_connection_state(state: PeerConnectionStatus) -> Self {
         Self {
             state,
             quality: PeerHealthQuality::Unknown,
@@ -132,7 +142,7 @@ pub struct PairingInvitationView {
 pub struct NetworkSnapshot {
     pub tor: TorState,
     pub onion_address: Option<String>,
-    pub peers: BTreeMap<ContactId, PeerConnectionState>,
+    pub peers: BTreeMap<ContactId, PeerConnectionStatus>,
     pub peer_health: BTreeMap<ContactId, PeerHealthSnapshot>,
     pub contact_names: BTreeMap<ContactId, String>,
     pub contact_verifications: BTreeMap<ContactId, ContactVerificationSnapshot>,
@@ -140,6 +150,7 @@ pub struct NetworkSnapshot {
     pub relay_activity: TransportActivitySnapshot,
     pub peer_activity: BTreeMap<ContactId, TransportActivitySnapshot>,
     pub probes: Vec<ProbeResult>,
+    pub connectivity: ConnectivitySnapshot,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeDriverError {
@@ -156,6 +167,29 @@ impl core::fmt::Display for RuntimeDriverError {
 }
 impl std::error::Error for RuntimeDriverError {}
 
+impl ClassifiedError for RuntimeDriverError {
+    fn descriptor(&self) -> ErrorDescriptor {
+        let (code, category, retry) = match self {
+            Self::Pairing => {
+                ("runtime.pairing_failed", ErrorCategory::Conflict, RetryAdvice::Never)
+            }
+            Self::Communication => (
+                "runtime.communication_unavailable",
+                ErrorCategory::Unavailable,
+                RetryAdvice::Backoff,
+            ),
+            Self::Tor => {
+                ("runtime.tor_unavailable", ErrorCategory::Unavailable, RetryAdvice::Backoff)
+            }
+            Self::Engine => ("runtime.engine_failed", ErrorCategory::Internal, RetryAdvice::Never),
+            Self::Pending => {
+                ("runtime.pending", ErrorCategory::Unavailable, RetryAdvice::Immediate)
+            }
+        };
+        ErrorDescriptor::new(ErrorCode::new(code), category, retry)
+    }
+}
+
 pub trait PairingDriver: Send + 'static {
     fn create(
         &mut self,
@@ -166,6 +200,7 @@ pub trait PairingDriver: Send + 'static {
         &mut self,
         session_id: PairingSessionId,
         code: PairingCode,
+        ticket: Option<[u8; 16]>,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
     fn approve(
@@ -185,7 +220,7 @@ pub trait CommunicationDriver: Send + 'static {
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
-    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState;
+    fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
     }
@@ -228,14 +263,6 @@ pub trait CommunicationDriver: Send + 'static {
         conversation_id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
-    fn mark_conversation_read_with_policy(
-        &mut self,
-        conversation_id: OpaqueId,
-        now: Timestamp,
-        _send_receipt: bool,
-    ) -> Result<(), RuntimeDriverError> {
-        self.mark_conversation_read(conversation_id, now)
-    }
     fn prepare_attachment(
         &mut self,
         request: &AttachmentSendRequest,
@@ -387,7 +414,12 @@ impl RelayProbeState {
 
 enum RuntimeCommand {
     CreatePairing(PairingSessionId, Sender<Result<PairingInvitationView, RuntimeDriverError>>),
-    JoinPairing(PairingSessionId, PairingCode, Sender<Result<(), RuntimeDriverError>>),
+    JoinPairing(
+        PairingSessionId,
+        PairingCode,
+        Option<[u8; 16]>,
+        Sender<Result<(), RuntimeDriverError>>,
+    ),
     ApprovePairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
     RejectPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
     CancelPairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
@@ -398,7 +430,7 @@ enum RuntimeCommand {
     UnblockContact(ContactId, Sender<Result<(), RuntimeDriverError>>),
     RemoveContact(ContactId, Sender<Result<(), RuntimeDriverError>>),
     ClearConversationHistory(ConversationId, Sender<Result<(), RuntimeDriverError>>),
-    MarkConversationRead(OpaqueId, bool, Sender<Result<(), RuntimeDriverError>>),
+    MarkConversationRead(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>),
     RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
@@ -427,7 +459,16 @@ impl RuntimeHandle {
         id: PairingSessionId,
         code: PairingCode,
     ) -> Result<(), RuntimeDriverError> {
-        request_command(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, r))
+        request_command(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, None, r))
+    }
+
+    pub fn join_pairing_with_ticket(
+        &self,
+        id: PairingSessionId,
+        code: PairingCode,
+        ticket: Option<[u8; 16]>,
+    ) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, ticket, r))
     }
     pub fn approve_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> {
         request_command(&self.sender, |r| RuntimeCommand::ApprovePairing(id, r))
@@ -460,14 +501,7 @@ impl RuntimeHandle {
         request_command(&self.sender, |r| RuntimeCommand::ClearConversationHistory(id, r))
     }
     pub fn mark_conversation_read(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
-        self.mark_conversation_read_with_policy(id, true)
-    }
-    pub fn mark_conversation_read_with_policy(
-        &self,
-        id: OpaqueId,
-        send_receipt: bool,
-    ) -> Result<(), RuntimeDriverError> {
-        request_command(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, send_receipt, r))
+        request_command(&self.sender, |r| RuntimeCommand::MarkConversationRead(id, r))
     }
     pub fn queue_attachment(&self, value: AttachmentSendRequest) -> Result<(), RuntimeDriverError> {
         request_command(&self.sender, |r| RuntimeCommand::QueueAttachment(value, r))
@@ -518,15 +552,40 @@ impl RuntimeOwner {
         communication: C,
         tor: T,
     ) -> (RuntimeHandle, Self) {
-        Self::spawn_with_relay_probe(engine, pairing, communication, tor, None)
+        Self::spawn_with_connectivity(
+            engine,
+            pairing,
+            communication,
+            tor,
+            None,
+            ConnectivityObserver::default(),
+        )
     }
 
     pub fn spawn_with_relay_probe<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
+        engine: EngineHandle,
+        pairing: P,
+        communication: C,
+        tor: T,
+        relay_probe: Option<Arc<dyn RelayProbe>>,
+    ) -> (RuntimeHandle, Self) {
+        Self::spawn_with_connectivity(
+            engine,
+            pairing,
+            communication,
+            tor,
+            relay_probe,
+            ConnectivityObserver::default(),
+        )
+    }
+
+    pub fn spawn_with_connectivity<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         engine: EngineHandle,
         mut pairing: P,
         mut communication: C,
         mut tor: T,
         relay_probe: Option<Arc<dyn RelayProbe>>,
+        connectivity: ConnectivityObserver,
     ) -> (RuntimeHandle, Self) {
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
         let handle = RuntimeHandle { sender: sender.clone() };
@@ -569,6 +628,7 @@ impl RuntimeOwner {
                 &mut diagnostics,
                 &mut sequence,
                 relay_probe,
+                connectivity,
             );
             communication.shutdown();
             pairing.shutdown();
@@ -600,9 +660,10 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
     relay_probe: Option<Arc<dyn RelayProbe>>,
+    connectivity: ConnectivityObserver,
 ) {
     let mut last_tor_state = None;
-    let mut last_peer_states = BTreeMap::<ContactId, PeerConnectionState>::new();
+    let mut last_peer_states = BTreeMap::<ContactId, PeerConnectionStatus>::new();
     let mut last_peer_successes = BTreeMap::<ContactId, Option<Timestamp>>::new();
     let mut tor_failed = false;
     let mut pairing_failed = false;
@@ -640,6 +701,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     tor,
                     &probes,
                     &mut transport_activity,
+                    &connectivity,
                     diagnostics,
                     now,
                 );
@@ -685,6 +747,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             relay.result(now),
             now,
         );
+        for probe in probes.latest() {
+            connectivity.record_probe(&probe);
+        }
         if last_tor_state != Some(tor_state) {
             last_tor_state = Some(tor_state);
             transport_activity.mark_tor(now);
@@ -738,6 +803,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     transport_activity.mark_peer(id, now);
                 }
                 current.insert(id, state);
+                connectivity.set_peer_ready(id.to_opaque(), state == PeerConnectionStatus::Ready);
                 current_successes.insert(id, health.last_success_at);
             }
             last_peer_states = current;
@@ -840,6 +906,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     tor: &T,
     probes: &ProbeSupervisor,
     transport_activity: &mut TransportActivityLedger,
+    connectivity: &ConnectivityObserver,
     diagnostics: &mut DiagnosticBuffer,
     now: Timestamp,
 ) {
@@ -849,10 +916,10 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             transport_activity.mark_relay(now);
             let _ = r.send(pairing.create(id, now));
         }
-        RuntimeCommand::JoinPairing(id, code, r) => {
+        RuntimeCommand::JoinPairing(id, code, ticket, r) => {
             transport_activity.mark_tor(now);
             transport_activity.mark_relay(now);
-            let _ = r.send(pairing.join(id, code, now));
+            let _ = r.send(pairing.join(id, code, ticket, now));
         }
         RuntimeCommand::ApprovePairing(id, r) => {
             transport_activity.mark_tor(now);
@@ -903,9 +970,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             transport_activity.mark_tor(now);
             let _ = r.send(communication.clear_conversation_history(id));
         }
-        RuntimeCommand::MarkConversationRead(id, send_receipt, r) => {
+        RuntimeCommand::MarkConversationRead(id, r) => {
             transport_activity.mark_tor(now);
-            let _ = r.send(communication.mark_conversation_read_with_policy(id, now, send_receipt));
+            let _ = r.send(communication.mark_conversation_read(id, now));
         }
         RuntimeCommand::QueueAttachment(request_value, r) => {
             transport_activity.mark_tor(now);
@@ -982,6 +1049,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     relay_activity: transport_activity.relay,
                     peer_activity: transport_activity.peers.clone(),
                     probes: probes.latest(),
+                    connectivity: connectivity.snapshot(),
                 })
             })();
             let _ = r.send(result);
@@ -1075,14 +1143,14 @@ const fn map_health(state: TorState) -> HealthState {
         TorState::Failed => HealthState::Failed,
     }
 }
-const fn map_peer_health(state: PeerConnectionState) -> HealthState {
+const fn map_peer_health(state: PeerConnectionStatus) -> HealthState {
     match state {
-        PeerConnectionState::Ready => HealthState::Ready,
-        PeerConnectionState::Failed => HealthState::Failed,
-        PeerConnectionState::Disconnected => HealthState::Stopped,
-        PeerConnectionState::Connecting
-        | PeerConnectionState::Handshaking
-        | PeerConnectionState::Reconnecting => HealthState::Starting,
+        PeerConnectionStatus::Ready => HealthState::Ready,
+        PeerConnectionStatus::Failed => HealthState::Failed,
+        PeerConnectionStatus::Disconnected => HealthState::Stopped,
+        PeerConnectionStatus::Connecting
+        | PeerConnectionStatus::Handshaking
+        | PeerConnectionStatus::Reconnecting => HealthState::Starting,
     }
 }
 

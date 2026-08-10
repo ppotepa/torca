@@ -60,6 +60,23 @@ where
         )
     }
 
+    pub fn send_keepalive_and_wait_ack(
+        &self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        message_kind: u16,
+        ciphertext: Vec<u8>,
+        timeout: Duration,
+    ) -> Result<LinkAck, PeerLinkError> {
+        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.send_keepalive_and_wait_ack(
+            contact_id,
+            envelope_id,
+            message_kind,
+            ciphertext,
+            timeout,
+        )
+    }
+
     pub fn send_ack(
         &self,
         contact_id: ContactId,

@@ -13,6 +13,102 @@ import '../widgets/pairing_progress.dart';
 import '../widgets/runtime_network_status.dart';
 import 'conversation_screen.dart';
 
+/// Opens one invitation in place without navigating away from the current screen.
+Future<void> showPairingSessionModal(
+  BuildContext context,
+  EngineGateway gateway,
+  PairingDto pairing,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (_) => _PairingSessionModal(gateway: gateway, pairing: pairing),
+  );
+}
+
+class _PairingSessionModal extends StatefulWidget {
+  const _PairingSessionModal({required this.gateway, required this.pairing});
+  final EngineGateway gateway;
+  final PairingDto pairing;
+
+  @override
+  State<_PairingSessionModal> createState() => _PairingSessionModalState();
+}
+
+class _PairingSessionModalState extends State<_PairingSessionModal> {
+  bool _busy = false;
+  String? _error;
+
+  PairingDto? _current(AppSnapshotDto snapshot) {
+    for (final pairing in snapshot.pairings) {
+      if (pairing.id == widget.pairing.id) return pairing;
+    }
+    return null;
+  }
+
+  Future<void> _run(BridgeCommandDto command) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final result = await widget.gateway.execute(command);
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() {
+        _busy = false;
+        _error = result.error ?? 'Pairing operation failed';
+      });
+      return;
+    }
+    setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
+    valueListenable: widget.gateway.snapshots,
+    builder: (context, snapshot, _) {
+      final pairing = _current(snapshot);
+      return AppModal(
+        title: pairing?.typedRole == PairingRole.creator
+            ? 'Invitation'
+            : 'Join request',
+        height: 500,
+        scrollable: false,
+        child: pairing == null
+            ? _TerminalPairingContent(
+                completed: widget.pairing.typedState == PairingState.approved,
+                onClose: () => Navigator.of(context).pop(),
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (_error != null) ...<Widget>[
+                    Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  _PairingSessionDetails(
+                    pairing: pairing,
+                    busy: _busy,
+                    onApprove: () => _run(
+                      ApprovePairingCommandDto(sessionIdHex: pairing.id),
+                    ),
+                    onReject: () =>
+                        _run(RejectPairingCommandDto(sessionIdHex: pairing.id)),
+                    onCancel: () =>
+                        _run(CancelPairingCommandDto(sessionIdHex: pairing.id)),
+                  ),
+                ],
+              ),
+      );
+    },
+  );
+}
+
 /// One place for creating, joining and reviewing invitations.
 class PairingScreen extends StatefulWidget {
   const PairingScreen({required this.gateway, super.key});
@@ -25,21 +121,17 @@ class PairingScreen extends StatefulWidget {
 class _PairingScreenState extends State<PairingScreen> {
   final TextEditingController _code = TextEditingController();
   final OperationTracker _operations = OperationTracker();
-  final Set<String> _reviewPromptsShown = <String>{};
   String? _error;
-  bool _dialogOpen = false;
 
   @override
   void initState() {
     super.initState();
     _operations.addListener(_operationChanged);
-    widget.gateway.snapshots.addListener(_snapshotChanged);
   }
 
   @override
   void dispose() {
     _operations.removeListener(_operationChanged);
-    widget.gateway.snapshots.removeListener(_snapshotChanged);
     _operations.dispose();
     _code.dispose();
     super.dispose();
@@ -49,33 +141,28 @@ class _PairingScreenState extends State<PairingScreen> {
     if (mounted) setState(() {});
   }
 
-  void _snapshotChanged() {
-    if (!mounted || _dialogOpen) return;
-    PairingDto? review;
-    for (final pairing in widget.gateway.snapshots.value.pairings) {
-      if (_needsReview(pairing) && !_reviewPromptsShown.contains(pairing.id)) {
-        review = pairing;
-        break;
-      }
-    }
-    if (review == null) return;
-    _reviewPromptsShown.add(review.id);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _showSession(review!);
-    });
-  }
-
   bool get _busy =>
       _operations.isActive('pairing:create') ||
       _operations.isActive('pairing:join') ||
       _operations.isActive('pairing:scan');
 
   bool _needsReview(PairingDto pairing) =>
-      pairing.role == 'creator' &&
-      (pairing.state == 'awaitingapproval' ||
-          pairing.state == 'awaiting_approval' ||
-          pairing.state == 'peerjoined' ||
-          pairing.state == 'peer_joined');
+      pairing.typedRole == PairingRole.creator &&
+      (pairing.typedState == PairingState.awaitingApproval ||
+          pairing.typedState == PairingState.peerJoined);
+
+  bool _isVisible(PairingDto pairing) {
+    if (const {
+      PairingState.rejected,
+      PairingState.cancelled,
+      PairingState.expired,
+      PairingState.completed,
+    }.contains(pairing.typedState)) {
+      return false;
+    }
+    return pairing.expiresAtMs > DateTime.now().millisecondsSinceEpoch ||
+        pairing.typedState == PairingState.approved;
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -84,8 +171,10 @@ class _PairingScreenState extends State<PairingScreen> {
       valueListenable: widget.gateway.snapshots,
       builder: (context, snapshot, _) {
         final relayReady = snapshot.transport.relay.isUsable;
-        final review = snapshot.pairings.where(_needsReview).toList().reversed;
-        final active = snapshot.pairings
+        final torReady = snapshot.transport.tor.isUsable;
+        final visible = snapshot.pairings.where(_isVisible).toList();
+        final review = visible.where(_needsReview).toList().reversed;
+        final active = visible
             .where((pairing) => !_needsReview(pairing))
             .toList()
             .reversed;
@@ -100,26 +189,26 @@ class _PairingScreenState extends State<PairingScreen> {
                   children: <Widget>[
                     _PairingIntroCard(relayReady: relayReady),
                     const SizedBox(height: 14),
-                    _JoinCard(
-                      controller: _code,
-                      enabled: relayReady && !_busy,
-                      busy: _operations.isActive('pairing:join'),
-                      scanBusy: _operations.isActive('pairing:scan'),
-                      error: _error,
-                      onJoin: _join,
-                      onScan: _scan,
-                    ),
-                    const SizedBox(height: 14),
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),
                         child: AsyncActionButton(
                           onPressed: relayReady && !_busy ? _create : null,
                           busy: _operations.isActive('pairing:create'),
-                          icon: Icons.add_link,
-                          label: 'Create invitation',
+                          icon: Icons.qr_code_2,
+                          label: 'Generate Invitation',
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 14),
+                    _JoinCard(
+                      controller: _code,
+                      enabled: torReady && !_busy,
+                      busy: _operations.isActive('pairing:join'),
+                      scanBusy: _operations.isActive('pairing:scan'),
+                      error: _error,
+                      onJoin: _join,
+                      onScan: _scan,
                     ),
                     if (!relayReady) ...<Widget>[
                       const SizedBox(height: 14),
@@ -147,7 +236,7 @@ class _PairingScreenState extends State<PairingScreen> {
                       const SizedBox(height: 8),
                       ...active.map(_sessionTile),
                     ],
-                    if (snapshot.pairings.isEmpty) ...<Widget>[
+                    if (visible.isEmpty) ...<Widget>[
                       const SizedBox(height: 24),
                       const _EmptyInvitationsCard(),
                     ],
@@ -188,12 +277,14 @@ class _PairingScreenState extends State<PairingScreen> {
       const CreatePairingCommandDto(),
     );
     if (result?.ok != true || !mounted) return;
-    final pairings = widget.gateway.snapshots.value.pairings.reversed;
-    for (final pairing in pairings) {
-      if (pairing.role == 'creator') {
-        await _showSession(pairing);
-        return;
-      }
+    final sessionId = result!.resourceId;
+    if (sessionId == null) return;
+    final candidates = widget.gateway.snapshots.value.pairings;
+    final pairing = candidates
+        .where((value) => value.id == sessionId)
+        .firstOrNull;
+    if (pairing != null) {
+      await _showSession(pairing, inviteUri: result.inviteUri);
     }
   }
 
@@ -202,34 +293,32 @@ class _PairingScreenState extends State<PairingScreen> {
     final parser = widget.gateway is PairingUriParser
         ? widget.gateway as PairingUriParser
         : null;
-    final code = raw.toLowerCase().startsWith('torca://')
-        ? await parser?.parsePairingUri(raw)
-        : _extractCode(raw);
+    final code = parser == null ? raw : await parser.parsePairingUri(raw);
     if (code == null) {
-      setState(
-        () => _error = 'Enter a five-character code or scan a Torca QR.',
-      );
+      setState(() => _error = 'Enter a six-character code or scan a Torca QR.');
       return;
     }
     final result = await _run(
       'pairing:join',
-      JoinPairingCommandDto(code: code),
+      JoinPairingCommandDto(code: code, ticket: _extractTicket(raw)),
     );
     if (result?.ok != true || !mounted) return;
     _code.clear();
-    for (final pairing in widget.gateway.snapshots.value.pairings.reversed) {
-      if (pairing.role == 'joiner') {
-        await _showSession(pairing);
-        return;
-      }
-    }
+    final sessionId = result!.resourceId;
+    if (sessionId == null) return;
+    final candidates = widget.gateway.snapshots.value.pairings;
+    final pairing = candidates
+        .where((value) => value.id == sessionId)
+        .firstOrNull;
+    if (pairing != null) await _showSession(pairing);
   }
 
-  Future<void> _showSession(PairingDto pairing) async {
-    _dialogOpen = true;
-    final knownConversationIds = widget.gateway.snapshots.value.conversations
-        .map((conversation) => conversation.id)
-        .toSet();
+  String? _extractTicket(String value) {
+    final match = RegExp(r'[?&]ticket=([0-9a-fA-F]{32})').firstMatch(value);
+    return match?.group(1)?.toLowerCase();
+  }
+
+  Future<void> _showSession(PairingDto pairing, {String? inviteUri}) async {
     final destination = await showDialog<String>(
       context: context,
       builder: (_) => ValueListenableBuilder<AppSnapshotDto>(
@@ -243,37 +332,28 @@ class _PairingScreenState extends State<PairingScreen> {
             }
           }
           if (current == null) {
-            ConversationDto? completedConversation;
-            for (final conversation in snapshot.conversations) {
-              if (!knownConversationIds.contains(conversation.id)) {
-                completedConversation = conversation;
-                break;
-              }
-            }
-            final completed = completedConversation != null;
             return AppModal(
-              title: completed ? 'Contact added' : 'Invitation closed',
+              title: 'Invitation closed',
               height: 360,
+              scrollable: false,
               child: _TerminalPairingContent(
-                completed: completed,
-                onClose: () => Navigator.of(context).pop(
-                  completed
-                      ? 'conversation:${completedConversation!.id}'
-                      : 'close',
-                ),
+                completed: false,
+                onClose: () => Navigator.of(context).pop('close'),
               ),
             );
           }
           final session = current;
           return AppModal(
-            title: session.role == 'creator'
+            title: session.typedRole == PairingRole.creator
                 ? (_needsReview(session)
                       ? 'Review new contact'
                       : 'Your invitation')
                 : 'Your join request',
-            height: session.remoteFingerprint == null ? 580 : 650,
+            height: session.remoteFingerprint == null ? 500 : 520,
+            scrollable: false,
             child: _PairingSessionDetails(
               pairing: session,
+              inviteUri: inviteUri,
               busy: _operations.anyWithPrefix('pairing:${session.id}:'),
               onApprove: () => _session(
                 session.id,
@@ -295,7 +375,6 @@ class _PairingScreenState extends State<PairingScreen> {
         },
       ),
     );
-    _dialogOpen = false;
     if (!mounted ||
         destination == null ||
         !destination.startsWith('conversation:')) {
@@ -331,7 +410,7 @@ class _PairingScreenState extends State<PairingScreen> {
                   onDetect: (capture) {
                     for (final barcode in capture.barcodes) {
                       final value = barcode.rawValue;
-                      if (value != null && _extractCode(value) != null) {
+                      if (value != null && value.trim().isNotEmpty) {
                         Navigator.of(context).pop(value);
                         return;
                       }
@@ -352,7 +431,7 @@ class _PairingScreenState extends State<PairingScreen> {
           ),
         ),
       );
-      if (scanned != null && mounted) _code.text = _extractCode(scanned) ?? '';
+      if (scanned != null && mounted) _code.text = scanned;
     });
     if (_code.text.isNotEmpty && mounted) await _join();
   }
@@ -380,25 +459,6 @@ class _PairingScreenState extends State<PairingScreen> {
     BridgeCommandDto command,
   ) async {
     await _run('pairing:$sessionId:$action', command);
-  }
-
-  String? _extractCode(String input) {
-    final value = input.trim();
-    final direct = value
-        .toUpperCase()
-        .replaceAll(RegExp(r'[\s-]'), '')
-        .replaceAll('O', '0')
-        .replaceAll(RegExp('[IL]'), '1');
-    if (RegExp(r'^[0-9A-HJKMNPQRSTVWXYZ]{5}$').hasMatch(direct)) return direct;
-    final uri = Uri.tryParse(value);
-    if (uri == null ||
-        uri.scheme != 'torca' ||
-        uri.host != 'pair' ||
-        uri.queryParameters['v'] != '1') {
-      return null;
-    }
-    final code = uri.queryParameters['code'];
-    return code == null ? null : _extractCode(code);
   }
 }
 
@@ -492,7 +552,7 @@ class _JoinCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Paste the five-character code or scan the QR shown on the other device.',
+            'Paste the six-character code or scan the QR shown on the other device.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -505,7 +565,7 @@ class _JoinCard extends StatelessWidget {
             textInputAction: TextInputAction.join,
             decoration: InputDecoration(
               labelText: 'Invitation code',
-              hintText: 'ABC12',
+              hintText: 'ABC123',
               errorText: error,
               prefixIcon: const Icon(Icons.vpn_key_outlined),
               suffixIcon: IconButton(
@@ -557,8 +617,8 @@ class _RelayBlockedCard extends StatelessWidget {
       ),
       subtitle: Text(
         checking
-            ? 'Invitations unlock automatically when the Tor connection is verified.'
-            : 'Creating and joining invitations are paused until the relay is reachable.',
+            ? 'Relay verification is running. You can still enter a code; the request will report the authoritative result.'
+            : 'Creating invitations is paused. You can still enter a code to retry the relay directly.',
       ),
     ),
   );
@@ -675,8 +735,8 @@ class _PairingSessionCard extends StatelessWidget {
 
   static String _stateLabel(String state) => switch (state) {
     'open' => 'Waiting',
-    'peerjoined' || 'peer_joined' => 'Review',
-    'awaitingapproval' || 'awaiting_approval' => 'Review',
+    'peerjoined' => 'Review',
+    'awaitingapproval' => 'Review',
     'approved' => 'Approved',
     'completed' => 'Connected',
     'rejected' => 'Rejected',
@@ -693,10 +753,7 @@ class _PairingSessionCard extends StatelessWidget {
 
   static Color _stateColor(BuildContext context, String state) =>
       switch (state) {
-        'awaitingapproval' ||
-        'awaiting_approval' ||
-        'peerjoined' ||
-        'peer_joined' => Colors.orange.shade800,
+        'awaitingapproval' || 'peerjoined' => Colors.orange.shade800,
         'approved' || 'completed' => Colors.green.shade700,
         'rejected' ||
         'cancelled' ||
@@ -716,31 +773,28 @@ class _PairingSessionCard extends StatelessWidget {
 class _PairingSessionDetails extends StatelessWidget {
   const _PairingSessionDetails({
     required this.pairing,
+    this.inviteUri,
     required this.busy,
     required this.onApprove,
     required this.onReject,
     required this.onCancel,
   });
   final PairingDto pairing;
+  final String? inviteUri;
   final bool busy;
   final VoidCallback onApprove, onReject, onCancel;
 
   bool get _canReview =>
-      pairing.role == 'creator' &&
-      (pairing.state == 'awaitingapproval' ||
-          pairing.state == 'awaiting_approval' ||
-          pairing.state == 'peerjoined' ||
-          pairing.state == 'peer_joined');
+      pairing.typedRole == PairingRole.creator &&
+      (pairing.typedState == PairingState.awaitingApproval ||
+          pairing.typedState == PairingState.peerJoined);
 
-  String get _uri =>
-      'torca://pair?v=1&code=${Uri.encodeQueryComponent(pairing.code)}';
+  String get _uri => inviteUri ?? pairing.inviteUri;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
-      _StatusBanner(pairing: pairing),
-      const SizedBox(height: 14),
       if (pairing.remoteFingerprint != null) ...<Widget>[
         Container(
           padding: const EdgeInsets.all(14),
@@ -755,6 +809,14 @@ class _PairingSessionDetails extends StatelessWidget {
                 'Remote identity',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
+              if (pairing.remoteDisplayName != null &&
+                  pairing.remoteDisplayName!.trim().isNotEmpty) ...<Widget>[
+                const SizedBox(height: 5),
+                Text(
+                  pairing.remoteDisplayName!,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
               const SizedBox(height: 8),
               SelectableText(
                 pairing.remoteFingerprint!,
@@ -817,10 +879,6 @@ class _PairingSessionDetails extends StatelessWidget {
           label: const Text('Cancel request'),
         ),
       ] else if (pairing.state == 'open') ...<Widget>[
-        const Text(
-          'Share this invitation with the other device before it expires.',
-        ),
-        const SizedBox(height: 12),
         OutlinedButton.icon(
           onPressed: busy ? null : onCancel,
           icon: const Icon(Icons.cancel_outlined),
@@ -828,35 +886,6 @@ class _PairingSessionDetails extends StatelessWidget {
         ),
       ],
     ],
-  );
-}
-
-class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({required this.pairing});
-  final PairingDto pairing;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Row(
-      children: <Widget>[
-        const Icon(Icons.shield_outlined),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            pairing.state == 'open'
-                ? 'Invitation is active for five minutes.'
-                : pairing.remoteFingerprint != null
-                ? 'Identity received. Review it before accepting.'
-                : 'Pairing is being synchronized securely.',
-          ),
-        ),
-      ],
-    ),
   );
 }
 
@@ -869,10 +898,10 @@ class _QrInvitationCard extends StatelessWidget {
     children: <Widget>[
       Container(
         color: Colors.white,
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(10),
         child: QrImageView(
           data: uri,
-          size: 190,
+          size: 140,
           backgroundColor: Colors.white,
           semanticsLabel: 'Torca pairing invitation QR code',
         ),

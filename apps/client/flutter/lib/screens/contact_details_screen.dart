@@ -14,11 +14,13 @@ class ContactDetailsScreen extends StatefulWidget {
   const ContactDetailsScreen({
     required this.gateway,
     required this.contact,
+    this.onStartConversation,
     super.key,
   });
 
   final EngineGateway gateway;
   final ContactDto contact;
+  final VoidCallback? onStartConversation;
 
   @override
   State<ContactDetailsScreen> createState() => _ContactDetailsScreenState();
@@ -87,6 +89,16 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
               ),
             ),
             const SizedBox(height: 12),
+            if (widget.onStartConversation != null) ...<Widget>[
+              FilledButton.icon(
+                onPressed: contact.status == 'blocked'
+                    ? null
+                    : widget.onStartConversation,
+                icon: const Icon(Icons.chat_bubble_outline),
+                label: const Text('Start conversation'),
+              ),
+              const SizedBox(height: 12),
+            ],
             _DetailsCard(
               title: 'Connection',
               children: <Widget>[

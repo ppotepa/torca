@@ -15,6 +15,7 @@ path = "src/runtime.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+torca-client-application = { path = "../../application/torca-client-application" }
 torca-contract = { path = "../torca-contract" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-communication-adapters = { path = "../../infrastructure/torca-communication-adapters" }
@@ -31,8 +32,10 @@ torca-messaging = { path = "../../domains/torca-messaging" }
 torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
 torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
 torca-runtime = { path = "../../application/torca-runtime" }
+torca-connectivity = { path = "../../application/torca-connectivity" }
 torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
 torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor" }
+torca-notifications = { path = "../../domains/torca-notifications" }
 torca-logging = { path = "../../infrastructure/torca-logging" }
 serde_json = "1"
 

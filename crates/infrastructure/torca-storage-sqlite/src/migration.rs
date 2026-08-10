@@ -12,11 +12,18 @@ pub const fn migrations() -> &'static [Migration] {
     &MIGRATIONS
 }
 
-const MIGRATIONS: [Migration; 1] = [Migration {
-    version: 1,
-    name: "baseline",
-    sql: include_str!("../sql/migrations/0001_baseline.sql"),
-}];
+const MIGRATIONS: [Migration; 2] = [
+    Migration {
+        version: 1,
+        name: "baseline",
+        sql: include_str!("../sql/migrations/0001_baseline.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "pairing_display_name",
+        sql: include_str!("../sql/migrations/0002_pairing_display_name.sql"),
+    },
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MigrationError {

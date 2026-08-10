@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -536,33 +537,33 @@ class _HomeScreenState extends State<HomeScreen> {
         destinations: <NavigationDestination>[
           NavigationDestination(
             icon: _NavigationIcon(
-              icon: Icons.forum_outlined,
+              icon: context.torcaIcons.chats,
               count: snapshot.navigationBadges.unreadMessages,
             ),
             selectedIcon: _NavigationIcon(
-              icon: Icons.forum,
+              icon: context.torcaIcons.chats,
               count: snapshot.navigationBadges.unreadMessages,
             ),
             label: 'Chats',
           ),
           NavigationDestination(
             icon: _NavigationIcon(
-              icon: Icons.people_outline,
+              icon: context.torcaIcons.contacts,
               count: snapshot.navigationBadges.newContacts,
             ),
             selectedIcon: _NavigationIcon(
-              icon: Icons.people,
+              icon: context.torcaIcons.contacts,
               count: snapshot.navigationBadges.newContacts,
             ),
             label: 'Contacts',
           ),
           NavigationDestination(
             icon: _NavigationIcon(
-              icon: Icons.qr_code_2_outlined,
+              icon: context.torcaIcons.invitations,
               count: snapshot.navigationBadges.pairingAttention,
             ),
             selectedIcon: _NavigationIcon(
-              icon: Icons.qr_code_2,
+              icon: context.torcaIcons.invitations,
               count: snapshot.navigationBadges.pairingAttention,
             ),
             label: 'Invitations',
@@ -580,12 +581,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 fingerprint: snapshot.identity?.fingerprint,
               )
             : _sectionBody(snapshot),
-        floatingActionButton: profileMissing
+        floatingActionButton:
+            profileMissing ||
+                _section == _HomeSection.invitations ||
+                (_section == _HomeSection.chats &&
+                    _visibleConversations(snapshot).isNotEmpty)
             ? null
             : FloatingActionButton(
                 tooltip: 'Pair contact',
                 onPressed: _openPairing,
-                child: const Icon(Icons.person_add_alt_1),
+                child: Icon(context.torcaIcons.addContact),
               ),
       );
     },
@@ -596,18 +601,20 @@ class _HomeScreenState extends State<HomeScreen> {
     _HomeSection.contacts => _ContactsSection(
       contacts: snapshot.contacts,
       selectedContactId: _selectedContactId,
-      onSelected: (contact) => setState(() => _selectedContactId = contact.id),
       onOpenDetails: _openContactDetails,
+      onOpenConversation: _openConversationForContact,
     ),
     _HomeSection.invitations => _InvitationsSection(
       pairings: snapshot.pairings,
       onOpen: _openPairing,
+      onOpenInvitation: (pairing) =>
+          showPairingSessionModal(context, widget.gateway, pairing),
     ),
   };
 
   Widget _chats(AppSnapshotDto snapshot) => LayoutBuilder(
     builder: (context, constraints) {
-      final conversations = snapshot.conversations;
+      final conversations = _visibleConversations(snapshot);
       if (constraints.maxWidth < _wideLayoutBreakpoint) {
         return _ConversationList(
           conversations: conversations,
@@ -668,6 +675,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     },
   );
+
+  List<ConversationDto> _visibleConversations(AppSnapshotDto snapshot) =>
+      snapshot.conversations
+          .where((conversation) => conversation.lastMessageBody != null)
+          .toList(growable: false);
 
   ContactDto? _contactFor(List<ContactDto> contacts, String id) {
     for (final contact in contacts) {
@@ -838,10 +850,70 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openContactDetails(ContactDto contact) =>
       Navigator.of(context).push<void>(
         MaterialPageRoute(
-          builder: (_) =>
-              ContactDetailsScreen(gateway: widget.gateway, contact: contact),
+          builder: (_) => ContactDetailsScreen(
+            gateway: widget.gateway,
+            contact: contact,
+            onStartConversation: () {
+              Navigator.of(context).pop();
+              _openConversationForContact(contact);
+            },
+          ),
         ),
       );
+
+  void _openConversationForContact(ContactDto contact) {
+    unawaited(_ensureAndOpenConversation(contact));
+  }
+
+  Future<void> _ensureAndOpenConversation(ContactDto contact) async {
+    ConversationDto? conversation;
+    for (final candidate in widget.gateway.snapshots.value.conversations) {
+      if (candidate.contactId == contact.id) {
+        conversation = candidate;
+        break;
+      }
+    }
+    if (conversation == null) {
+      final result = await widget.gateway.execute(
+        StartConversationCommandDto(contactIdHex: contact.id),
+      );
+      if (!result.ok) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Could not start conversation with ${contact.displayName}.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      final conversationId = result.resourceId;
+      if (conversationId == null || conversationId.isEmpty) return;
+      conversation = ConversationDto(
+        id: conversationId,
+        contactId: contact.id,
+        status: 'active',
+      );
+    }
+    if (MediaQuery.sizeOf(context).width < _wideLayoutBreakpoint) {
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => ConversationScreen(
+            gateway: widget.gateway,
+            conversation: conversation!,
+          ),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _section = _HomeSection.chats;
+      _selectedConversationId = conversation!.id;
+      _selectedContactId = contact.id;
+    });
+  }
 
   void _openPairing() => Navigator.of(context).push<void>(
     MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)),
@@ -961,14 +1033,14 @@ class _ContactsSection extends StatelessWidget {
   const _ContactsSection({
     required this.contacts,
     required this.selectedContactId,
-    required this.onSelected,
     required this.onOpenDetails,
+    required this.onOpenConversation,
   });
 
   final List<ContactDto> contacts;
   final String? selectedContactId;
-  final ValueChanged<ContactDto> onSelected;
   final ValueChanged<ContactDto> onOpenDetails;
+  final ValueChanged<ContactDto> onOpenConversation;
 
   @override
   Widget build(BuildContext context) {
@@ -1004,8 +1076,7 @@ class _ContactsSection extends StatelessWidget {
                 clipBehavior: Clip.antiAlias,
                 child: ListTile(
                   selected: wide && contact.id == active.id,
-                  onTap: () =>
-                      wide ? onSelected(contact) : onOpenDetails(contact),
+                  onTap: () => onOpenDetails(contact),
                   leading: CircleAvatar(
                     child: Text(_initial(contact.displayName)),
                   ),
@@ -1013,7 +1084,21 @@ class _ContactsSection extends StatelessWidget {
                   subtitle: Text(
                     '${contact.verificationStatus} · ${contact.connectionState}',
                   ),
-                  trailing: const Icon(Icons.chevron_right),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      IconButton(
+                        tooltip: 'Open chat',
+                        onPressed: () => onOpenConversation(contact),
+                        icon: Icon(context.torcaIcons.chats),
+                      ),
+                      IconButton(
+                        tooltip: 'Contact information',
+                        onPressed: () => onOpenDetails(contact),
+                        icon: Icon(context.torcaIcons.contactInfo),
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ],
@@ -1037,10 +1122,15 @@ class _ContactsSection extends StatelessWidget {
 }
 
 class _InvitationsSection extends StatelessWidget {
-  const _InvitationsSection({required this.pairings, required this.onOpen});
+  const _InvitationsSection({
+    required this.pairings,
+    required this.onOpen,
+    required this.onOpenInvitation,
+  });
 
   final List<PairingDto> pairings;
   final VoidCallback onOpen;
+  final Future<void> Function(PairingDto pairing) onOpenInvitation;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -1052,8 +1142,8 @@ class _InvitationsSection extends StatelessWidget {
       const SizedBox(height: 20),
       FilledButton.icon(
         onPressed: onOpen,
-        icon: const Icon(Icons.add_link),
-        label: const Text('Create or join invitation'),
+        icon: Icon(context.torcaIcons.invitations),
+        label: const Text('Generate Invitation'),
       ),
       const SizedBox(height: 24),
       if (pairings.isEmpty)
@@ -1064,7 +1154,10 @@ class _InvitationsSection extends StatelessWidget {
               'Your active invitations and pairing requests will appear here.',
         )
       else ...<Widget>[
-        Text('Recent sessions', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          'Recent invitations',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 8),
         for (final pairing in pairings.reversed)
           Card(
@@ -1079,7 +1172,7 @@ class _InvitationsSection extends StatelessWidget {
               ),
               subtitle: Text('Code ${pairing.code}'),
               trailing: Chip(label: Text(pairing.state)),
-              onTap: onOpen,
+              onTap: () => onOpenInvitation(pairing),
             ),
           ),
       ],

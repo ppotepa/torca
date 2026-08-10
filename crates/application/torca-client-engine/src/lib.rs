@@ -13,7 +13,9 @@ use torca_conversations::{
     ConversationError, ConversationId, ConversationRepository, DirectConversation,
     InMemoryConversationRepository,
 };
-use torca_foundation::{ErrorCode, Timestamp};
+use torca_foundation::{
+    ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, RetryAdvice, Timestamp,
+};
 use torca_identity::{
     CreateIdentity, DeterministicKeyProvider, Identity, IdentityId, IdentityKeyProvider,
     IdentityRepository, IdentityService, InMemoryIdentityRepository, Profile, ProfileName,
@@ -80,6 +82,11 @@ pub enum EngineCommand {
         credential: PeerCredential,
         at: Timestamp,
     },
+    EnsureConversation {
+        contact_id: ContactId,
+        conversation_id: ConversationId,
+        at: Timestamp,
+    },
     RemovePairing {
         session_id: PairingSessionId,
     },
@@ -121,6 +128,7 @@ pub enum EngineResult {
     PairingRejected,
     PairingCancelled,
     PairingCompleted { contact_id: ContactId, conversation_id: ConversationId },
+    ConversationStarted { conversation_id: ConversationId },
     PairingRemoved,
     MessageQueued { message_id: MessageId },
     MessageUpdated { message_id: MessageId },
@@ -145,6 +153,16 @@ impl fmt::Display for EngineError {
     }
 }
 impl std::error::Error for EngineError {}
+
+impl ClassifiedError for EngineError {
+    fn descriptor(&self) -> ErrorDescriptor {
+        ErrorDescriptor::new(
+            ErrorCode::new("application.engine_failed"),
+            ErrorCategory::Internal,
+            RetryAdvice::Never,
+        )
+    }
+}
 
 pub trait RelationshipRepository:
     ContactRepository + ConversationRepository + PeerCredentialRepository
@@ -424,6 +442,34 @@ where
             EngineCommand::RemovePairing { session_id } => {
                 self.pairings.delete(session_id).map_err(map_error)?;
                 Ok(EngineResult::PairingRemoved)
+            }
+            EngineCommand::EnsureConversation { contact_id, conversation_id, at } => {
+                if ContactRepository::get(&self.relationships, contact_id)
+                    .map_err(map_error)?
+                    .is_none()
+                {
+                    return Err(EngineError("contact not found".into()));
+                }
+                if let Some(existing) =
+                    ConversationRepository::for_contact(&self.relationships, contact_id)
+                        .map_err(map_error)?
+                {
+                    return Ok(EngineResult::ConversationStarted {
+                        conversation_id: existing.id(),
+                    });
+                }
+                if ConversationRepository::get(&self.relationships, conversation_id)
+                    .map_err(map_error)?
+                    .is_some()
+                {
+                    return Err(EngineError("conversation id already exists".into()));
+                }
+                ConversationRepository::insert(
+                    &mut self.relationships,
+                    DirectConversation::new(conversation_id, contact_id, at),
+                )
+                .map_err(map_error)?;
+                Ok(EngineResult::ConversationStarted { conversation_id })
             }
             EngineCommand::QueueMessage { message_id, conversation_id, body, reply_to, at } => {
                 if ConversationRepository::get(&self.relationships, conversation_id)

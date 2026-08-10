@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../platform/platform_capabilities.dart';
-import '../settings/preferences_scope.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_header.dart';
@@ -119,6 +120,10 @@ class _ConversationPaneState extends State<ConversationPane>
 
   Future<void> _initializeTimeline() async {
     await _timeline.initialize();
+    // The runtime may persist an inbound message while the first page is
+    // loading. Refresh once more after the initial read so a snapshot event
+    // that raced with initialization cannot leave the pane stale.
+    await _timeline.refreshLatest();
     if (!mounted) return;
     _captureUnreadBoundary();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -237,7 +242,7 @@ class _ConversationPaneState extends State<ConversationPane>
   void _snapshotChanged() {
     final summary = _conversationSummary();
     final activity = summary?.lastActivityAtMs ?? 0;
-    if (activity == _lastActivityAtMs) return;
+    final activityChanged = activity != _lastActivityAtMs;
     _lastActivityAtMs = activity;
     final follow = _nearBottom();
     final beforeCount = _timeline.messages.length;
@@ -245,7 +250,9 @@ class _ConversationPaneState extends State<ConversationPane>
       await _timeline.refreshLatest();
       if (!mounted) return;
       final count = _timeline.messages.length;
-      if (count > beforeCount && _unreadBoundaryMessageId == null) {
+      if (activityChanged &&
+          count > beforeCount &&
+          _unreadBoundaryMessageId == null) {
         _captureUnreadBoundary();
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -300,14 +307,11 @@ class _ConversationPaneState extends State<ConversationPane>
           message.direction == 'inbound' && message.status == 'delivered',
     );
     if (!hasDelivered) return;
-    final sendReceipt =
-        PreferencesScope.maybeOf(context)?.readReceiptsEnabled ?? true;
     _markingRead = true;
     try {
       await widget.gateway.execute(
         MarkConversationReadCommandDto(
           conversationIdHex: widget.conversation.id,
-          sendReceipt: sendReceipt,
         ),
       );
     } finally {
@@ -528,7 +532,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Icon(Icons.attach_file),
+                            : Icon(context.torcaIcons.attachment),
                       ),
                       const SizedBox(width: 4),
                       Expanded(
@@ -549,7 +553,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Icon(Icons.send),
+                            : Icon(context.torcaIcons.send),
                       ),
                     ],
                   ),
@@ -571,7 +575,7 @@ class _ConversationPaneState extends State<ConversationPane>
           child: IconButton(
             tooltip: 'Search messages',
             onPressed: () => setState(() => _searching = true),
-            icon: const Icon(Icons.search),
+            icon: Icon(context.torcaIcons.search),
           ),
         ),
       );
@@ -584,10 +588,10 @@ class _ConversationPaneState extends State<ConversationPane>
             child: TextField(
               controller: _searchController,
               autofocus: true,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
                 hintText: 'Search this conversation',
-                prefixIcon: Icon(Icons.search),
+                prefixIcon: Icon(context.torcaIcons.search),
               ),
               onChanged: _searchChanged,
             ),

@@ -35,6 +35,26 @@ pub struct ControlJob {
     pub attempts: u32,
 }
 
+/// Application-created control job waiting for one atomic persistence commit.
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingControlJob {
+    pub job_id: OpaqueId,
+    pub contact_id: OpaqueId,
+    pub message_id: Option<OpaqueId>,
+    pub kind: ControlKind,
+    pub payload: Vec<u8>,
+    pub next_attempt_at: Timestamp,
+}
+
+/// Candidate inbound message supplied to application read/receipt policy.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadCandidate {
+    pub contact_id: OpaqueId,
+    pub message_id: OpaqueId,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlDeliveryError {
     Backend,

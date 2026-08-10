@@ -41,6 +41,7 @@ class FfiEngineGateway
     implements
         EngineGateway,
         PairingUriParser,
+        PairingUriEncoder,
         GatewayAvailability,
         AttachmentCapabilitiesProvider,
         ConversationHistoryProvider,
@@ -142,6 +143,19 @@ class FfiEngineGateway
   }
 
   @override
+  Future<String?> encodePairingUri(String code) async {
+    if (_disposed) return null;
+    final response = await _worker.invoke(
+      RuntimeRequestDto.pairingEncode(code),
+    );
+    final value = jsonDecode(response);
+    if (value is! Map<String, dynamic> || value['status'] != 'succeeded')
+      return null;
+    final snapshot = value['snapshot'];
+    return snapshot is Map ? snapshot['uri'] as String? : null;
+  }
+
+  @override
   Future<ConversationPageDto> loadConversationPage(
     String conversationId, {
     MessageDto? before,
@@ -151,6 +165,7 @@ class FfiEngineGateway
       RuntimeRequestDto.conversationPage(
         conversationId,
         beforeMessageId: before?.id,
+        beforeAtMs: before?.createdAtMs,
         limit: limit.clamp(1, 200),
       ),
     );
@@ -207,6 +222,8 @@ class FfiEngineGateway
       return BridgeResultDto(
         ok: true,
         kind: value['resultKind'] as String? ?? 'succeeded',
+        resourceId: value['resourceId'] as String?,
+        inviteUri: value['inviteUri'] as String?,
       );
     }
     final error = value['error'];
@@ -215,26 +232,14 @@ class FfiEngineGateway
       ok: false,
       kind: 'error:${code ?? 'runtime.operation.failed'}',
       error: error is Map ? error['messageKey'] as String? : null,
+      errorCode: code,
+      resourceId: value['resourceId'] as String?,
+      inviteUri: value['inviteUri'] as String?,
     );
   }
 
-  ConversationPageDto _decodePage(String raw) {
-    final value = jsonDecode(raw);
-    if (value is! Map<String, dynamic>) {
-      return const ConversationPageDto(messages: [], hasMore: false);
-    }
-    final messages =
-        (value['messages'] is List<Object?>
-                ? value['messages'] as List<Object?>
-                : const <Object?>[])
-            .whereType<Map<String, dynamic>>()
-            .map(_decodeMessage)
-            .toList(growable: false);
-    return ConversationPageDto(
-      messages: messages,
-      hasMore: value['hasMore'] == true,
-    );
-  }
+  ConversationPageDto _decodePage(String raw) =>
+      decodeConversationPageResponse(raw);
 
   BridgeResultDto _unavailable() => const BridgeResultDto(
     ok: false,
@@ -403,10 +408,9 @@ void _workerMainImpl(List<Object?> arguments) {
           if (decoded is Map && decoded['snapshot'] is Map) {
             final snapshot = decoded['snapshot'] as Map;
             target.send(jsonEncode(snapshot));
-            if (snapshot['bootstrapPhase'] == 'ready' ||
-                snapshot['bootstrapPhase'] == 'ready_for_profile') {
-              next = const Duration(seconds: 1);
-            }
+            // Keep the process-wide transport monitor responsive after
+            // bootstrap too. The native projection is payload-free and cheap.
+            next = const Duration(milliseconds: 250);
           }
           final notificationRaw = bindings.invoke(
             handle,
@@ -590,6 +594,10 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
       latencyMs: item['latencyMs'] as int?,
       lastActivityAtMs: item['lastActivityAtMs'] as int?,
       activitySequence: item['activitySequence'] as int? ?? 0,
+      txSequence: item['txSequence'] as int? ?? 0,
+      rxSequence: item['rxSequence'] as int? ?? 0,
+      inFlight: item['inFlight'] as int? ?? 0,
+      queued: item['queued'] as int? ?? 0,
     );
   }
 
@@ -620,12 +628,14 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
             (item) => PairingDto(
               id: item['id'] as String? ?? '',
               code: item['code'] as String? ?? '',
+              inviteUri: item['inviteUri'] as String? ?? '',
               role: item['role'] as String? ?? '',
               state: item['state'] as String? ?? '',
               expiresAtMs: item['expiresAtMs'] as int? ?? 0,
               localApproved: item['localApproved'] as bool? ?? false,
               remoteApproved: item['remoteApproved'] as bool? ?? false,
               remoteIdentityId: item['remoteIdentityId'] as String?,
+              remoteDisplayName: item['remoteDisplayName'] as String?,
               remoteFingerprint: item['remoteFingerprint'] as String?,
             ),
           )
@@ -722,6 +732,9 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
         fallbackState: value['torState'] as String? ?? 'stopped',
       ),
       relay: indicator('relay', fallbackState: 'unknown'),
+      peer: indicator('peer', fallbackState: 'disconnected'),
+      peersReady: transport['peersReady'] as int? ?? 0,
+      peersTotal: transport['peersTotal'] as int? ?? 0,
     ),
     navigationBadges: NavigationBadgesDto(
       unreadMessages: navigationBadges['unreadMessages'] as int? ?? 0,
@@ -736,6 +749,27 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
     conversations: conversations,
     messages: messages,
     attachments: attachments,
+  );
+}
+
+@visibleForTesting
+ConversationPageDto decodeConversationPageResponse(String raw) {
+  final value = jsonDecode(raw);
+  if (value is! Map<String, dynamic>) {
+    return const ConversationPageDto(messages: [], hasMore: false);
+  }
+  final snapshot = value['snapshot'];
+  final page = snapshot is Map<String, dynamic> ? snapshot : value;
+  final messages =
+      (page['messages'] is List<Object?>
+              ? page['messages'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(_decodeMessage)
+          .toList(growable: false);
+  return ConversationPageDto(
+    messages: messages,
+    hasMore: page['hasMore'] == true,
   );
 }
 

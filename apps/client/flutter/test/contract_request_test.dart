@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/gateway/engine_gateway.dart';
+import 'package:torca_app/gateway/ffi_engine_gateway.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 
 void main() {
@@ -56,7 +57,7 @@ void main() {
     final requests = <RuntimeRequestDto>[
       RuntimeRequestDto.snapshot,
       RuntimeRequestDto.lifecycle('foregrounded'),
-      RuntimeRequestDto.pairingParse('torca://pair?v=1&code=ABC123'),
+      RuntimeRequestDto.pairingParse('torca://pair?v=2&code=ABC123'),
       RuntimeRequestDto.conversationPage('03', limit: 100),
       RuntimeRequestDto.conversationSearch('03', query: 'hello', limit: 100),
       RuntimeRequestDto.notificationEvents(7),
@@ -69,6 +70,47 @@ void main() {
       expect(wire['name'], isNotEmpty);
       expect(wire['payload'], isA<Map<String, dynamic>>());
     }
+  });
+
+  test('conversation page cursor includes message id and timestamp', () {
+    final request = RuntimeRequestDto.conversationPage(
+      '03',
+      beforeMessageId: '04',
+      beforeAtMs: 1700000000123,
+      limit: 50,
+    );
+    final wire =
+        jsonDecode(request.encode('request-page')) as Map<String, dynamic>;
+    final payload = wire['payload'] as Map<String, dynamic>;
+    expect(payload['beforeMessageId'], '04');
+    expect(payload['beforeAtMs'], 1700000000123);
+    expect(payload['limit'], 50);
+  });
+
+  test('conversation page decoder unwraps the native response snapshot', () {
+    final page = decodeConversationPageResponse(
+      jsonEncode(<String, Object?>{
+        'status': 'succeeded',
+        'snapshot': <String, Object?>{
+          'messages': <Object?>[
+            <String, Object?>{
+              'id': '04',
+              'conversationId': '03',
+              'body': 'hello',
+              'direction': 'inbound',
+              'status': 'delivered',
+              'createdAtMs': 1700000000123,
+              'updatedAtMs': 1700000000124,
+              'attemptCount': 0,
+            },
+          ],
+          'hasMore': true,
+        },
+      }),
+    );
+    expect(page.messages, hasLength(1));
+    expect(page.messages.single.body, 'hello');
+    expect(page.hasMore, isTrue);
   });
 
   test('notification event decodes the millisecond timestamp field', () {

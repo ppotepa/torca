@@ -7,6 +7,7 @@ use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachment
 use torca_attachment_transfer::AttachmentTransfer;
 use torca_client_engine::EngineHandle;
 use torca_communication_driver::TorcaCommunicationDriver;
+use torca_connectivity::ConnectivityObserver;
 use torca_control_delivery::ControlDeliveryWorker;
 use torca_crypto::{ManagedPeerSecrets, ProtectedSecretStore, RustCryptoProvider};
 use torca_delivery::DeliveryWorker;
@@ -58,6 +59,7 @@ pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
     pub listener: PeerListener,
     pub tor_client: Arc<TorService>,
     pub local_identity_id: OpaqueId,
+    pub connectivity: ConnectivityObserver,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -80,13 +82,16 @@ where
         .map_err(|_| CommunicationBuildError::Storage)?;
     let health_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
-    let link = SharedPeerLink::new(PeerLink::new(
-        inputs.listener,
-        ActiveRelationshipStore::new(peer_relationships),
-        inputs.signer,
-        inputs.local_identity_id,
-        inputs.tor_client,
-    ));
+    let link = SharedPeerLink::new(
+        PeerLink::new(
+            inputs.listener,
+            ActiveRelationshipStore::new(peer_relationships),
+            inputs.signer,
+            inputs.local_identity_id,
+            inputs.tor_client,
+        )
+        .with_connectivity(inputs.connectivity),
+    );
     let shared_crypto = SharedPeerCrypto::new(ManagedPeerSecrets::new(
         RustCryptoProvider,
         inputs.peer_secret_store,

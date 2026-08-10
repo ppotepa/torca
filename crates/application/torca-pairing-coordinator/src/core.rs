@@ -13,6 +13,11 @@ pub struct PairingCryptoHandle(pub OpaqueId);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PairingSlotId(pub OpaqueId);
 
+/// Relay-assigned cryptographic context shared by both devices.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PairingContextId(pub OpaqueId);
+
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PairingSlotCapability(pub OpaqueId);
@@ -35,6 +40,7 @@ pub struct PairingEphemeralKey {
 #[derive(Eq, PartialEq)]
 pub struct PairingTransportSnapshot {
     pub role: PairingRole,
+    pub context: PairingContextId,
     pub private_key: [u8; 32],
     pub slot: PairingSlotId,
     pub token: PairingSideToken,
@@ -46,6 +52,7 @@ impl fmt::Debug for PairingTransportSnapshot {
         formatter
             .debug_struct("PairingTransportSnapshot")
             .field("role", &self.role)
+            .field("context", &self.context)
             .field("private_key", &"[REDACTED]")
             .field("slot", &self.slot)
             .field("token", &"[REDACTED]")
@@ -145,12 +152,14 @@ pub trait PairingRendezvousPort {
         creator_blob: Vec<u8>,
         capability: PairingSlotCapability,
         creator_token: PairingSideToken,
+        ticket: [u8; 16],
     ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError>;
     fn join(
         &mut self,
         code: &PairingCode,
         joiner_blob: Vec<u8>,
         joiner_token: PairingSideToken,
+        ticket: Option<[u8; 16]>,
     ) -> Result<(PairingSlotId, Timestamp, Vec<u8>), PairingCoordinatorError>;
     fn push(
         &mut self,
@@ -196,6 +205,7 @@ enum LocalRole {
 #[derive(Clone, Debug)]
 struct TransportSession {
     role: LocalRole,
+    context: PairingContextId,
     key: PairingEphemeralKey,
     slot: PairingSlotId,
     token: PairingSideToken,
@@ -223,6 +233,7 @@ where
         session_id: PairingSessionId,
         code: &PairingCode,
         expires_at: Timestamp,
+        ticket: [u8; 16],
     ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
         if self.sessions.contains_key(&session_id) {
             return Err(PairingCoordinatorError::SessionAlreadyExists);
@@ -237,6 +248,7 @@ where
                 key.public_key.to_vec(),
                 capability,
                 token,
+                ticket,
             )?;
             Ok::<_, PairingCoordinatorError>((slot, relay_expires_at, capability, token))
         })();
@@ -251,6 +263,7 @@ where
             session_id,
             TransportSession {
                 role: LocalRole::Creator,
+                context: PairingContextId(slot.0),
                 key,
                 slot,
                 token,
@@ -265,24 +278,18 @@ where
         &mut self,
         session_id: PairingSessionId,
         code: &PairingCode,
-        local_offer: &PairingEnvelope,
+        ticket: Option<[u8; 16]>,
     ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
         if self.sessions.contains_key(&session_id) {
             return Err(PairingCoordinatorError::SessionAlreadyExists);
         }
-        local_offer
-            .validate_pairing_id(session_id.to_opaque())
-            .map_err(|_| PairingCoordinatorError::Protocol)?;
         let key = self.crypto.generate_ephemeral_key()?;
         let setup = (|| {
             let token = PairingSideToken(self.random_id()?);
             let (slot, relay_expires_at, creator_blob) =
-                self.rendezvous.join(code, key.public_key.to_vec(), token)?;
+                self.rendezvous.join(code, key.public_key.to_vec(), token, ticket)?;
             let creator_public_key: [u8; 32] =
                 creator_blob.try_into().map_err(|_| PairingCoordinatorError::InvalidBlob)?;
-            let encrypted =
-                self.encrypt_envelope(session_id, &key, creator_public_key, local_offer)?;
-            self.rendezvous.push(slot, token, encode_encrypted(&encrypted))?;
             Ok::<_, PairingCoordinatorError>((slot, relay_expires_at, token, creator_public_key))
         })();
         let (slot, relay_expires_at, token, creator_public_key) = match setup {
@@ -296,6 +303,7 @@ where
             session_id,
             TransportSession {
                 role: LocalRole::Joiner,
+                context: PairingContextId(slot.0),
                 key,
                 slot,
                 token,
@@ -342,13 +350,13 @@ where
                 session.key.handle,
                 remote,
                 encrypted.nonce,
-                &associated_data(session_id),
+                &associated_data(session.context),
                 &encrypted.ciphertext,
             )?;
             let envelope = PairingEnvelope::decode(&plaintext)
                 .map_err(|_| PairingCoordinatorError::Protocol)?;
             envelope
-                .validate_pairing_id(session_id.to_opaque())
+                .validate_pairing_id(session.context.0)
                 .map_err(|_| PairingCoordinatorError::Protocol)?;
             envelopes.push(envelope);
             if remote_public_key.is_none() {
@@ -366,16 +374,16 @@ where
         session_id: PairingSessionId,
         envelope: &PairingEnvelope,
     ) -> Result<(), PairingCoordinatorError> {
-        envelope
-            .validate_pairing_id(session_id.to_opaque())
-            .map_err(|_| PairingCoordinatorError::Protocol)?;
         let session = self
             .sessions
             .get(&session_id)
             .cloned()
             .ok_or(PairingCoordinatorError::SessionNotFound)?;
+        envelope
+            .validate_pairing_id(session.context.0)
+            .map_err(|_| PairingCoordinatorError::Protocol)?;
         let remote = session.remote_public_key.ok_or(PairingCoordinatorError::InvalidBlob)?;
-        let encrypted = self.encrypt_envelope(session_id, &session.key, remote, envelope)?;
+        let encrypted = self.encrypt_envelope(session.context, &session.key, remote, envelope)?;
         self.rendezvous.push(session.slot, session.token, encode_encrypted(&encrypted))
     }
 
@@ -432,6 +440,7 @@ where
                 LocalRole::Creator => PairingRole::Creator,
                 LocalRole::Joiner => PairingRole::Joiner,
             },
+            context: session.context,
             private_key: self.crypto.export_ephemeral_key(session.key.handle)?,
             slot: session.slot,
             token: session.token,
@@ -459,6 +468,7 @@ where
                     PairingRole::Creator => LocalRole::Creator,
                     PairingRole::Joiner => LocalRole::Joiner,
                 },
+                context: snapshot.context,
                 key,
                 slot: snapshot.slot,
                 token: snapshot.token,
@@ -473,9 +483,19 @@ where
         (self.rendezvous, self.crypto)
     }
 
+    pub fn context(
+        &self,
+        session_id: PairingSessionId,
+    ) -> Result<PairingContextId, PairingCoordinatorError> {
+        self.sessions
+            .get(&session_id)
+            .map(|session| session.context)
+            .ok_or(PairingCoordinatorError::SessionNotFound)
+    }
+
     fn encrypt_envelope(
         &mut self,
-        session_id: PairingSessionId,
+        context: PairingContextId,
         local_key: &PairingEphemeralKey,
         remote_public_key: [u8; 32],
         envelope: &PairingEnvelope,
@@ -487,7 +507,7 @@ where
             local_key.handle,
             remote_public_key,
             nonce,
-            &associated_data(session_id),
+            &associated_data(context),
             &plaintext,
         )?;
         Ok(EncryptedPairingPayload { sender_public_key: local_key.public_key, nonce, ciphertext })
@@ -506,8 +526,8 @@ where
     }
 }
 
-fn associated_data(session_id: PairingSessionId) -> [u8; 16] {
-    session_id.to_opaque().into_bytes()
+fn associated_data(context: PairingContextId) -> [u8; 16] {
+    context.0.into_bytes()
 }
 
 fn encode_encrypted(payload: &EncryptedPairingPayload) -> Vec<u8> {

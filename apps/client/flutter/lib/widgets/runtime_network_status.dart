@@ -71,8 +71,8 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-/// Compact Tor and relay state.  It breathes while verifying and flashes only
-/// after a redacted runtime transport activity observation.
+/// Process-wide Tor, relay and P2P monitor. Payloads never enter this widget;
+/// only monotonic TX/RX counters and health projections cross the ABI.
 class RuntimeNetworkStatus extends StatelessWidget {
   const RuntimeNetworkStatus({required this.snapshot, super.key});
 
@@ -83,7 +83,7 @@ class RuntimeNetworkStatus extends StatelessWidget {
     final wide = MediaQuery.sizeOf(context).width >= 700;
     return Semantics(
       label:
-          'Network status: Tor ${snapshot.transport.tor.state}, relay ${snapshot.transport.relay.state}',
+          'Network status: Tor ${snapshot.transport.tor.state}, relay ${snapshot.transport.relay.state}, P2P ${snapshot.transport.peer.state}',
       child: Padding(
         padding: const EdgeInsets.only(right: 4),
         child: Row(
@@ -94,6 +94,14 @@ class RuntimeNetworkStatus extends StatelessWidget {
               label: 'Tor',
               icon: Icons.shield_outlined,
               indicator: snapshot.transport.tor,
+              showLabel: wide,
+            ),
+            const SizedBox(width: 4),
+            _TransportLight(
+              key: const ValueKey<String>('peer-status-light'),
+              label: 'P2P',
+              icon: Icons.lan_outlined,
+              indicator: snapshot.transport.peer,
               showLabel: wide,
             ),
             const SizedBox(width: 4),
@@ -156,9 +164,13 @@ class _TransportLightState extends State<_TransportLight>
     vsync: this,
     duration: const Duration(milliseconds: 1200),
   );
-  late final AnimationController _pulse = AnimationController(
+  late final AnimationController _txPulse = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 720),
+    duration: const Duration(milliseconds: 240),
+  );
+  late final AnimationController _rxPulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
   );
 
   @override
@@ -170,16 +182,21 @@ class _TransportLightState extends State<_TransportLight>
   @override
   void didUpdateWidget(covariant _TransportLight oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.indicator.activitySequence !=
-            widget.indicator.activitySequence &&
-        widget.indicator.activitySequence > 0) {
-      _pulse.forward(from: 0);
-    }
+    if (oldWidget.indicator.txSequence != widget.indicator.txSequence &&
+        widget.indicator.txSequence > 0)
+      _txPulse.forward(from: 0);
+    if (oldWidget.indicator.rxSequence != widget.indicator.rxSequence &&
+        widget.indicator.rxSequence > 0)
+      _rxPulse.forward(from: 0);
     _syncBreathing();
+    if (oldWidget.indicator.state != widget.indicator.state &&
+        _isAlarmState(widget.indicator.state)) {
+      _breathing.forward(from: 0);
+    }
   }
 
   void _syncBreathing() {
-    if (_isVerifying(widget.indicator.state)) {
+    if (_isPulsingLink(widget.indicator.state)) {
       if (!_breathing.isAnimating) _breathing.repeat(reverse: true);
     } else {
       _breathing.stop();
@@ -190,7 +207,8 @@ class _TransportLightState extends State<_TransportLight>
   @override
   void dispose() {
     _breathing.dispose();
-    _pulse.dispose();
+    _txPulse.dispose();
+    _rxPulse.dispose();
     super.dispose();
   }
 
@@ -201,17 +219,24 @@ class _TransportLightState extends State<_TransportLight>
     final latency = widget.indicator.latencyMs == null
         ? ''
         : ' · ${widget.indicator.latencyMs} ms';
+    final pressure =
+        widget.indicator.inFlight == 0 && widget.indicator.queued == 0
+        ? ''
+        : ' · ${widget.indicator.inFlight} active, ${widget.indicator.queued} queued';
     return Tooltip(
-      message: '${widget.label}: $status$latency (${widget.indicator.code})',
+      message:
+          '${widget.label}: $status$latency$pressure (${widget.indicator.code})',
       child: RepaintBoundary(
         child: AnimatedBuilder(
-          animation: Listenable.merge(<Listenable>[_breathing, _pulse]),
+          animation: Listenable.merge(<Listenable>[
+            _breathing,
+            _txPulse,
+            _rxPulse,
+          ]),
           builder: (context, child) {
             final glow =
                 (_breathing.value * 0.35) +
-                (_pulse.value < 0.45
-                    ? _pulse.value * 1.4
-                    : (1 - _pulse.value) * 1.1);
+                ((_txPulse.value + _rxPulse.value) * 0.35);
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
               decoration: BoxDecoration(
@@ -258,6 +283,24 @@ class _TransportLightState extends State<_TransportLight>
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                   ],
+                  const SizedBox(width: 5),
+                  _EthernetLed(
+                    label: 'LINK',
+                    active: _linkActive(widget.indicator.state),
+                    color: color,
+                  ),
+                  const SizedBox(width: 3),
+                  _EthernetLed(
+                    label: 'TX',
+                    active: _txPulse.isAnimating,
+                    color: const Color(0xFF76FF03),
+                  ),
+                  const SizedBox(width: 3),
+                  _EthernetLed(
+                    label: 'RX',
+                    active: _rxPulse.isAnimating,
+                    color: const Color(0xFFFFC107),
+                  ),
                 ],
               ),
             );
@@ -268,14 +311,56 @@ class _TransportLightState extends State<_TransportLight>
   }
 }
 
+class _EthernetLed extends StatelessWidget {
+  const _EthernetLed({
+    required this.label,
+    required this.active,
+    required this.color,
+  });
+
+  final String label;
+  final bool active;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: '$label ${active ? 'activity' : 'idle'}',
+    child: Container(
+      width: 5,
+      height: 9,
+      decoration: BoxDecoration(
+        color: active ? color : const Color(0xFF171A18),
+        borderRadius: BorderRadius.circular(1),
+        boxShadow: active
+            ? <BoxShadow>[
+                BoxShadow(color: color.withValues(alpha: 0.72), blurRadius: 5),
+              ]
+            : null,
+      ),
+    ),
+  );
+}
+
 bool _isVerifying(String state) =>
     state == 'starting' || state == 'checking' || state == 'connecting';
+
+bool _isPulsingLink(String state) => _isVerifying(state);
+
+bool _isAlarmState(String state) =>
+    state == 'degraded' ||
+    state == 'failed' ||
+    state == 'unreachable' ||
+    state == 'disconnected';
+
+bool _linkActive(String state) => state != 'inactive' && state != 'stopped';
 
 String _statusLabel(String state) => switch (state) {
   'ready' || 'healthy' => 'connected',
   'starting' || 'checking' || 'connecting' => 'verifying connection',
   'degraded' => 'degraded',
   'failed' || 'unreachable' => 'unavailable',
+  'inactive' => 'inactive',
+  'disconnected' => 'disconnected',
   _ => 'offline',
 };
 
@@ -286,5 +371,7 @@ Color _color(BuildContext context, String state) => switch (state) {
   'connecting' => context.semanticColors.connectionConnecting,
   'degraded' => context.semanticColors.warning,
   'failed' || 'unreachable' => context.semanticColors.connectionOffline,
+  'inactive' || 'stopped' => const Color(0xFF343A36),
+  'disconnected' => context.semanticColors.connectionOffline,
   _ => context.semanticColors.connectionConnecting,
 };

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/theme/app_semantic_colors.dart';
 import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/theme/app_theme_mode.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 void main() {
   test('theme mode storage values are stable', () {
@@ -24,5 +25,18 @@ void main() {
     expect(AppTheme.materialMode(AppThemeMode.system), ThemeMode.system);
     expect(AppTheme.materialMode(AppThemeMode.light), ThemeMode.light);
     expect(AppTheme.materialMode(AppThemeMode.dark), ThemeMode.dark);
+  });
+
+  test('app theme exposes modern and terminal appearance variants', () {
+    final modern = AppTheme.dark();
+    final terminal = AppTheme.dark(
+      const TorcaAppearance(
+        family: TorcaThemeFamily.terminal,
+        variant: TorcaThemeVariant.terminalDracula,
+      ),
+    );
+    expect(modern.extension<TorcaTokens>()!.terminal, isFalse);
+    expect(terminal.extension<TorcaTokens>()!.terminal, isTrue);
+    expect(terminal.extension<TorcaIconSet>(), isNotNull);
   });
 }

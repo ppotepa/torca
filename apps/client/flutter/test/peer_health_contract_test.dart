@@ -3,9 +3,9 @@ import 'package:torca_app/generated/torca_contract.dart';
 
 void main() {
   test(
-    'bridge contract v15 carries bootstrap progress and navigation badges',
+    'bridge contract v16 carries bootstrap progress and navigation badges',
     () {
-      expect(torcaContractVersion, 15);
+      expect(torcaContractVersion, 16);
 
       const badges = NavigationBadgesDto(
         unreadMessages: 3,

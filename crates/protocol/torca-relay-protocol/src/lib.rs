@@ -42,12 +42,15 @@ pub struct RelaySlotCapability(pub OpaqueId);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RelaySideToken(pub OpaqueId);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelayJoinTicket(pub [u8; 16]);
+
 /// Validated rendezvous code independent from the pairing domain model.
 #[must_use]
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RelayCode(String);
 impl RelayCode {
-    /// Creates the exact five-character Crockford Base32 invitation code.
+    /// Creates the exact six-character Crockford Base32 invitation code.
     pub fn new(value: impl Into<String>) -> Result<Self, RelayProtocolError> {
         let mut value = value
             .into()
@@ -63,7 +66,7 @@ impl RelayCode {
                 other => other,
             })
             .collect();
-        if value.len() != 5 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
+        if value.len() != 6 || !value.chars().all(|character| CROCKFORD_BASE32.contains(character))
         {
             return Err(RelayProtocolError::InvalidCode);
         }
@@ -88,9 +91,15 @@ pub enum RelayRequest {
         creator_blob: Vec<u8>,
         slot_capability: RelaySlotCapability,
         creator_token: RelaySideToken,
+        ticket: RelayJoinTicket,
     },
     /// Joins a slot and installs the joiner's client-generated side token.
-    Join { code: RelayCode, joiner_blob: Vec<u8>, joiner_token: RelaySideToken },
+    Join {
+        code: RelayCode,
+        joiner_blob: Vec<u8>,
+        joiner_token: RelaySideToken,
+        ticket: Option<RelayJoinTicket>,
+    },
     /// Pushes an opaque blob to the opposite side. Side is inferred from the capability.
     Push { slot_id: RelaySlotId, token: RelaySideToken, blob: Vec<u8> },
     /// Polls queued blobs for the authenticated side.
@@ -184,18 +193,24 @@ impl RelayCodec {
                 creator_blob,
                 slot_capability,
                 creator_token,
+                ticket,
             } => {
                 put_code(code, &mut payload)?;
                 payload.extend_from_slice(&expires_at.to_unix_millis().to_be_bytes());
                 put_blob(creator_blob, &mut payload)?;
                 payload.extend_from_slice(slot_capability.0.as_bytes());
                 payload.extend_from_slice(creator_token.0.as_bytes());
+                payload.extend_from_slice(&ticket.0);
                 1
             }
-            RelayRequest::Join { code, joiner_blob, joiner_token } => {
+            RelayRequest::Join { code, joiner_blob, joiner_token, ticket } => {
                 put_code(code, &mut payload)?;
                 put_blob(joiner_blob, &mut payload)?;
                 payload.extend_from_slice(joiner_token.0.as_bytes());
+                payload.push(u8::from(ticket.is_some()));
+                if let Some(ticket) = ticket {
+                    payload.extend_from_slice(&ticket.0);
+                }
                 2
             }
             RelayRequest::Push { slot_id, token, blob } => {
@@ -233,11 +248,17 @@ impl RelayCodec {
                 creator_blob: cursor.blob()?,
                 slot_capability: RelaySlotCapability(cursor.id()?),
                 creator_token: RelaySideToken(cursor.id()?),
+                ticket: RelayJoinTicket(cursor.fixed16()?),
             },
             2 => RelayRequest::Join {
                 code: cursor.code()?,
                 joiner_blob: cursor.blob()?,
                 joiner_token: RelaySideToken(cursor.id()?),
+                ticket: match cursor.byte()? {
+                    0 => None,
+                    1 => Some(RelayJoinTicket(cursor.fixed16()?)),
+                    _ => return Err(RelayCodecError::InvalidField),
+                },
             },
             3 => RelayRequest::Push {
                 slot_id: RelaySlotId(cursor.id()?),
@@ -471,6 +492,14 @@ impl<'a> Cursor<'a> {
         Ok(self.take(1)?[0])
     }
 
+    fn byte(&mut self) -> Result<u8, RelayCodecError> {
+        self.u8()
+    }
+
+    fn fixed16(&mut self) -> Result<[u8; 16], RelayCodecError> {
+        self.take(16)?.try_into().map_err(|_| RelayCodecError::Truncated)
+    }
+
     fn u16(&mut self) -> Result<u16, RelayCodecError> {
         Ok(u16::from_be_bytes(self.take(2)?.try_into().map_err(|_| RelayCodecError::Truncated)?))
     }
@@ -532,18 +561,19 @@ mod tests {
     use torca_foundation::{OpaqueId, Timestamp};
 
     use super::{
-        RelayCode, RelayCodec, RelayRequest, RelayResponse, RelaySideToken, RelaySlotCapability,
-        RelaySlotId,
+        RelayCode, RelayCodec, RelayJoinTicket, RelayRequest, RelayResponse, RelaySideToken,
+        RelaySlotCapability, RelaySlotId,
     };
 
     #[test]
     fn request_round_trips_exactly() {
         let request = RelayRequest::Open {
-            code: RelayCode::new("T0RCA").expect("code"),
+            code: RelayCode::new("T0RCA2").expect("code"),
             expires_at: Timestamp::from_unix_millis(123).expect("timestamp"),
             creator_blob: vec![1, 2, 3],
             slot_capability: RelaySlotCapability(OpaqueId::from_u128(7)),
             creator_token: RelaySideToken(OpaqueId::from_u128(8)),
+            ticket: RelayJoinTicket([9; 16]),
         };
         let encoded = RelayCodec::encode_request(&request).expect("encode");
         assert_eq!(RelayCodec::decode_request(&encoded).expect("decode"), request);
