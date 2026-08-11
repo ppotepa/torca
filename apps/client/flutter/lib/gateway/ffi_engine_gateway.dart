@@ -773,6 +773,7 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
     revision: value['revision'] as int? ?? 0,
     notificationCursor: value['notificationCursor'] as int? ?? 0,
     notificationsEnabled: value['notificationsEnabled'] as bool? ?? true,
+    readReceiptsEnabled: value['readReceiptsEnabled'] as bool? ?? true,
     identity: identity is Map<String, dynamic>
         ? IdentityDto(
             displayName: identity['displayName'] as String?,

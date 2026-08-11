@@ -274,6 +274,7 @@ class AppSnapshotDto {
     this.revision = 0,
     this.notificationCursor = 0,
     this.notificationsEnabled = true,
+    this.readReceiptsEnabled = true,
     this.identity,
     this.torState = 'stopped',
     this.transport = const TransportStatusDto(),
@@ -290,7 +291,7 @@ class AppSnapshotDto {
   });
   final String runtimeId;
   final int revision, notificationCursor;
-  final bool notificationsEnabled;
+  final bool notificationsEnabled, readReceiptsEnabled;
   final IdentityDto? identity;
   final String torState;
   final TransportStatusDto transport;
@@ -435,6 +436,11 @@ class ExportAttachmentCommandDto extends BridgeCommandDto {
 
 class SetNotificationsCommandDto extends BridgeCommandDto {
   const SetNotificationsCommandDto({required this.enabled});
+  final bool enabled;
+}
+
+class SetReadReceiptsEnabledCommandDto extends BridgeCommandDto {
+  const SetReadReceiptsEnabledCommandDto({required this.enabled});
   final bool enabled;
 }
 
@@ -631,6 +637,11 @@ class RuntimeRequestDto {
     }
     if (command is SetNotificationsCommandDto) {
       return _command('notifications.set', <String, Object?>{
+        'enabled': command.enabled,
+      });
+    }
+    if (command is SetReadReceiptsEnabledCommandDto) {
+      return _command('privacy.read_receipts.set', <String, Object?>{
         'enabled': command.enabled,
       });
     }

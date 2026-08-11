@@ -37,6 +37,9 @@ pub enum BridgeCommand {
     SetNotifications {
         enabled: bool,
     },
+    SetReadReceipts {
+        enabled: bool,
+    },
     AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
@@ -341,6 +344,9 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
     Ok(match command {
         BridgeCommand::SetNotifications { enabled } => {
             ApplicationCommand::SetNotifications { enabled }
+        }
+        BridgeCommand::SetReadReceipts { enabled } => {
+            ApplicationCommand::SetReadReceipts { enabled }
         }
         BridgeCommand::AcknowledgeNewContacts => ApplicationCommand::AcknowledgeNewContacts,
         BridgeCommand::UpdateProfile { display_name, at_ms } => {

@@ -26,6 +26,9 @@ pub enum ApplicationCommand {
     SetNotifications {
         enabled: bool,
     },
+    SetReadReceipts {
+        enabled: bool,
+    },
     AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
@@ -464,6 +467,7 @@ impl ClientApplicationRuntime {
         let mut invite_uri = None;
         let kind = match command {
             ApplicationCommand::SetNotifications { .. } => "notifications_updated",
+            ApplicationCommand::SetReadReceipts { .. } => "read_receipts_updated",
             ApplicationCommand::AcknowledgeNewContacts => "contacts_acknowledged",
             ApplicationCommand::UpdateProfile { display_name, at_ms } => {
                 let display_name = ProfileName::new(display_name).map_err(string_error)?;

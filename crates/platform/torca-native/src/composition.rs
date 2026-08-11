@@ -143,6 +143,18 @@ impl RuntimeSettingsPort for SqliteSettings {
             .set_notifications_enabled(enabled, at)
             .map_err(|_| ApplicationQueryError::Unavailable)
     }
+    fn read_receipts_enabled(&self) -> Result<bool, ApplicationQueryError> {
+        self.0.read_receipts_enabled().map_err(|_| ApplicationQueryError::Unavailable)
+    }
+    fn set_read_receipts_enabled(
+        &self,
+        enabled: bool,
+        at: i64,
+    ) -> Result<(), ApplicationQueryError> {
+        self.0
+            .set_read_receipts_enabled(enabled, at)
+            .map_err(|_| ApplicationQueryError::Unavailable)
+    }
     fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError> {
         self.0.new_contacts_acknowledged_at_ms().map_err(|_| ApplicationQueryError::Unavailable)
     }

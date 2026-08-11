@@ -17,7 +17,6 @@ class LocalPreferences extends ChangeNotifier {
   static const _themeDensityKey = 'appearance.theme_density';
   static const _reduceMotionKey = 'appearance.reduce_motion';
   static const _localeModeKey = 'appearance.locale_mode';
-  static const _readReceiptsKey = 'privacy.read_receipts';
   static const _closeToTrayKey = 'desktop.close_to_tray';
 
   AppThemeMode _themeMode = AppThemeMode.system;
@@ -28,6 +27,7 @@ class LocalPreferences extends ChangeNotifier {
   bool _readReceiptsEnabled = true;
   bool _closeToTrayEnabled = true;
   Future<void> Function(bool enabled)? _runtimeNotificationSetter;
+  Future<void> Function(bool enabled)? _runtimeReadReceiptSetter;
 
   AppThemeMode get themeMode => _themeMode;
   TorcaAppearance get appearance => _appearance;
@@ -42,11 +42,25 @@ class LocalPreferences extends ChangeNotifier {
     _runtimeNotificationSetter = setter;
   }
 
+  void attachRuntimeReadReceiptSetting(
+    Future<void> Function(bool enabled) setter,
+  ) {
+    _runtimeReadReceiptSetter = setter;
+  }
+
   /// Mirrors the process-runtime setting for presentation and host notification rendering.
   /// Rust/SQLite remains the source of truth; this value is never persisted in Flutter.
   void syncNotificationsEnabled(bool value) {
     if (_notificationsEnabled == value) return;
     _notificationsEnabled = value;
+    notifyListeners();
+  }
+
+  /// Mirrors the encrypted runtime privacy setting. Flutter does not persist a
+  /// second copy, avoiding disagreement between the switch and delivery policy.
+  void syncReadReceiptsEnabled(bool value) {
+    if (_readReceiptsEnabled == value) return;
+    _readReceiptsEnabled = value;
     notifyListeners();
   }
 
@@ -72,7 +86,6 @@ class LocalPreferences extends ChangeNotifier {
       reduceMotion: await _store.getBool(_reduceMotionKey) ?? false,
     );
     _localeMode = parseAppLocaleMode(await _store.getString(_localeModeKey));
-    _readReceiptsEnabled = await _store.getBool(_readReceiptsKey) ?? true;
     _closeToTrayEnabled = await _store.getBool(_closeToTrayKey) ?? true;
     notifyListeners();
   }
@@ -133,7 +146,7 @@ class LocalPreferences extends ChangeNotifier {
     if (_readReceiptsEnabled == value) return;
     _readReceiptsEnabled = value;
     notifyListeners();
-    await _store.setBool(_readReceiptsKey, value);
+    await _runtimeReadReceiptSetter?.call(value);
   }
 
   Future<void> setCloseToTrayEnabled(bool value) async {

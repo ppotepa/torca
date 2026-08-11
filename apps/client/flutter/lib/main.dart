@@ -65,8 +65,28 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
         preferences.syncNotificationsEnabled(
           gateway.snapshots.value.notificationsEnabled,
         );
+        preferences.syncReadReceiptsEnabled(
+          gateway.snapshots.value.readReceiptsEnabled,
+        );
         preferences.attachRuntimeNotificationSetting((enabled) async {
-          await gateway.execute(SetNotificationsCommandDto(enabled: enabled));
+          try {
+            await gateway.execute(SetNotificationsCommandDto(enabled: enabled));
+          } finally {
+            preferences.syncNotificationsEnabled(
+              gateway.snapshots.value.notificationsEnabled,
+            );
+          }
+        });
+        preferences.attachRuntimeReadReceiptSetting((enabled) async {
+          try {
+            await gateway.execute(
+              SetReadReceiptsEnabledCommandDto(enabled: enabled),
+            );
+          } finally {
+            preferences.syncReadReceiptsEnabled(
+              gateway.snapshots.value.readReceiptsEnabled,
+            );
+          }
         });
       }
       final navigation = AppNavigationController();

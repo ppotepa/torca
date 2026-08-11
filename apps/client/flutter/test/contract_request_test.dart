@@ -38,6 +38,7 @@ void main() {
         destinationPath: '/tmp/out',
       ),
       const SetNotificationsCommandDto(enabled: true),
+      const SetReadReceiptsEnabledCommandDto(enabled: false),
       const AcknowledgeNewContactsCommandDto(),
       const RefreshSnapshotCommandDto(),
     ];
