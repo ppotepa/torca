@@ -26,8 +26,9 @@ use torca_foundation::OpaqueId;
 use torca_identity::{fingerprint_for, safety_number};
 pub use torca_probing::{ProbeStatus, ProbeTarget};
 pub use torca_runtime::{
-    AttachmentSendRequest, AttachmentView, NetworkSnapshot, RelayServiceInfo, RuntimeDriverError,
-    RuntimeHandle, TorState, TransportActivitySnapshot,
+    AttachmentSendRequest, AttachmentView, NetworkSnapshot, PeerConnectionStatus,
+    PeerHealthQuality, RelayServiceInfo, RuntimeDriverError, RuntimeHandle, TorState,
+    TransportActivitySnapshot,
 };
 
 /// Process-safe handle to the application consistency boundary.
@@ -159,8 +160,8 @@ mod tests {
 
     #[test]
     fn application_errors_keep_machine_readable_descriptors() {
-        let error = ApplicationError::from_message("RELAY_DEGRADED".into());
-        assert_eq!(error.descriptor().code().as_str(), "relay.degraded");
+        let error = ApplicationError::operation_failed("storage failed".into());
+        assert_eq!(error.descriptor().code().as_str(), "application.operation_failed");
     }
 
     #[test]

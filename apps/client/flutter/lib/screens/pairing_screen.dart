@@ -11,6 +11,7 @@ import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../widgets/app_modal.dart';
 import '../widgets/async_action_button.dart';
+import '../widgets/bridge_error_presenter.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/pairing_modal_registry.dart';
 import '../widgets/pairing_progress.dart';
@@ -417,7 +418,10 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
     if (!result.ok) {
       setState(() {
         _busy = false;
-        _error = result.error ?? 'Pairing operation failed';
+        _error = BridgeErrorPresenter.message(
+          result,
+          fallback: 'Pairing operation failed',
+        );
       });
       return;
     }

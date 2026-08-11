@@ -26,4 +26,16 @@ void main() {
       'The operation could not be completed.',
     );
   });
+
+  test('localization keys are never rendered as user-facing text', () {
+    const result = BridgeResultDto(
+      ok: false,
+      kind: 'error:RELAY_NOT_READY',
+      messageKey: 'relay.not_ready',
+    );
+    expect(
+      BridgeErrorPresenter.message(result),
+      'Pairing is unavailable until the secure relay is ready.',
+    );
+  });
 }

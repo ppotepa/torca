@@ -3,6 +3,7 @@ import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import 'bridge_error_presenter.dart';
 
 /// Global approval surface for a remote device that joined an invitation.
 class IncomingPairingDialog extends StatefulWidget {
@@ -42,7 +43,10 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
     if (!result.ok) {
       setState(() {
         _busy = false;
-        _error = result.error ?? 'Pairing operation failed';
+        _error = BridgeErrorPresenter.message(
+          result,
+          fallback: 'Pairing operation failed',
+        );
       });
       return;
     }

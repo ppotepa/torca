@@ -6,18 +6,41 @@ import 'dart:convert';
 const int torcaContractVersion = 17;
 const int torcaNativeAbiVersion = 1;
 
+class ContractDecodeException extends FormatException {
+  const ContractDecodeException(super.message);
+}
+
+String _requiredString(Map<String, dynamic> value, String key) {
+  final field = value[key];
+  if (field is String) return field;
+  throw ContractDecodeException('Missing or invalid contract field: $key');
+}
+
+int _integer(Object? value, [int fallback = 0]) =>
+    value is num ? value.toInt() : fallback;
+
+List<Map<String, dynamic>> _objects(Object? value) => value is List
+    ? value.whereType<Map<String, dynamic>>().toList(growable: false)
+    : const <Map<String, dynamic>>[];
+
 class BridgeResultDto {
   const BridgeResultDto({
     required this.ok,
     required this.kind,
     this.error,
     String? errorCode,
+    this.messageKey,
+    this.diagnosticId,
+    this.retryable = false,
     this.resourceId,
     this.inviteUri,
   }) : _wireErrorCode = errorCode;
   final bool ok;
   final String kind;
   final String? error;
+  final String? messageKey;
+  final String? diagnosticId;
+  final bool retryable;
   final String? resourceId;
   final String? inviteUri;
   final String? _wireErrorCode;
@@ -27,6 +50,10 @@ class BridgeResultDto {
 
 class IdentityDto {
   const IdentityDto({this.displayName, this.fingerprint});
+  factory IdentityDto.fromJson(Map<String, dynamic> value) => IdentityDto(
+    displayName: value['displayName'] as String?,
+    fingerprint: value['fingerprint'] as String?,
+  );
   final String? displayName;
   final String? fingerprint;
 }
@@ -42,10 +69,32 @@ class BootstrapStepDto {
     this.lastProgressAtMs,
     this.retryAtMs,
   });
+  factory BootstrapStepDto.fromJson(Map<String, dynamic> value) =>
+      BootstrapStepDto(
+        id: _requiredString(value, 'id'),
+        state: _requiredString(value, 'state'),
+        code: value['code'] as String?,
+        progress: _integer(value['progress']),
+        attempt: _integer(value['attempt']),
+        startedAtMs: (value['startedAtMs'] as num?)?.toInt(),
+        lastProgressAtMs: (value['lastProgressAtMs'] as num?)?.toInt(),
+        retryAtMs: (value['retryAtMs'] as num?)?.toInt(),
+      );
   final String id, state;
   final String? code;
   final int progress, attempt;
   final int? startedAtMs, lastProgressAtMs, retryAtMs;
+
+  BootstrapStepState get typedState => switch (state) {
+    'pending' => BootstrapStepState.pending,
+    'running' => BootstrapStepState.running,
+    'verifying' => BootstrapStepState.verifying,
+    'ready' => BootstrapStepState.ready,
+    'degraded' => BootstrapStepState.degraded,
+    'failed' => BootstrapStepState.failed,
+    'blocked' => BootstrapStepState.blocked,
+    _ => BootstrapStepState.unknown,
+  };
 }
 
 enum PairingRole { creator, joiner, unknown }
@@ -62,6 +111,68 @@ enum PairingState {
   unknown,
 }
 
+enum BootstrapStepState {
+  pending,
+  running,
+  verifying,
+  ready,
+  degraded,
+  failed,
+  blocked,
+  unknown,
+}
+
+enum BootstrapPhase { idle, starting, readyForProfile, ready, degraded, failed, unknown }
+
+enum TransportState {
+  stopped,
+  starting,
+  checking,
+  healthy,
+  ready,
+  degraded,
+  unreachable,
+  failed,
+  disabled,
+  inactive,
+  disconnected,
+  connecting,
+  handshaking,
+  reconnecting,
+  unknown,
+}
+
+enum PeerHealthQuality { excellent, good, fair, poor, unknown }
+
+enum ContactStatus { active, blocked, removed, unknown }
+
+enum PresenceState { online, offline, unknown }
+
+enum VerificationStatus { verified, unverified, identityChanged, unknown }
+
+enum ConversationStatus { active, archived, unknown }
+
+enum MessageDirection { outbound, inbound, unknown }
+
+enum MessageStatus { queued, sending, sent, delivered, read, failed, cancelled, unknown }
+
+enum AttachmentDirection { outbound, inbound, unknown }
+
+enum AttachmentStatus {
+  prepared,
+  encrypting,
+  queued,
+  transferring,
+  available,
+  failed,
+  cancelled,
+  unknown,
+}
+
+enum PendingOperationState { queued, retrying, unknown }
+
+enum PendingOperationDependency { torOnionAndRelay, relay, runtime, network, unknown }
+
 class PairingDto {
   const PairingDto({
     required this.id,
@@ -76,6 +187,19 @@ class PairingDto {
     this.remoteDisplayName,
     this.remoteFingerprint,
   });
+  factory PairingDto.fromJson(Map<String, dynamic> value) => PairingDto(
+    id: _requiredString(value, 'id'),
+    code: _requiredString(value, 'code'),
+    inviteUri: value['inviteUri'] as String? ?? '',
+    role: _requiredString(value, 'role'),
+    state: _requiredString(value, 'state'),
+    expiresAtMs: _integer(value['expiresAtMs']),
+    localApproved: value['localApproved'] as bool? ?? false,
+    remoteApproved: value['remoteApproved'] as bool? ?? false,
+    remoteIdentityId: value['remoteIdentityId'] as String?,
+    remoteDisplayName: value['remoteDisplayName'] as String?,
+    remoteFingerprint: value['remoteFingerprint'] as String?,
+  );
   final String id, code, inviteUri, role, state;
   final int expiresAtMs;
   final bool localApproved, remoteApproved;
@@ -111,9 +235,28 @@ class PeerHealthDto {
     this.lastActivityAtMs,
     this.activitySequence = 0,
   });
+  factory PeerHealthDto.fromJson(Map<String, dynamic> value) => PeerHealthDto(
+    state: value['state'] as String? ?? 'disconnected',
+    quality: value['quality'] as String? ?? 'unknown',
+    rttMs: (value['rttMs'] as num?)?.toInt(),
+    lastSuccessAtMs: (value['lastSuccessAtMs'] as num?)?.toInt(),
+    consecutiveFailures: _integer(value['consecutiveFailures']),
+    reconnectAttempt: _integer(value['reconnectAttempt']),
+    lastActivityAtMs: (value['lastActivityAtMs'] as num?)?.toInt(),
+    activitySequence: _integer(value['activitySequence']),
+  );
   final String state, quality;
   final int? rttMs, lastSuccessAtMs, lastActivityAtMs;
   final int consecutiveFailures, reconnectAttempt, activitySequence;
+
+  TransportState get typedState => _transportState(state);
+  PeerHealthQuality get typedQuality => switch (quality) {
+    'excellent' => PeerHealthQuality.excellent,
+    'good' => PeerHealthQuality.good,
+    'fair' => PeerHealthQuality.fair,
+    'poor' => PeerHealthQuality.poor,
+    _ => PeerHealthQuality.unknown,
+  };
 }
 
 class TransportIndicatorDto {
@@ -128,11 +271,27 @@ class TransportIndicatorDto {
     this.inFlight = 0,
     this.queued = 0,
   });
+  factory TransportIndicatorDto.fromJson(
+    Map<String, dynamic> value, {
+    String fallbackState = 'unknown',
+  }) => TransportIndicatorDto(
+    state: value['state'] as String? ?? fallbackState,
+    code: value['code'] as String? ?? 'UNAVAILABLE',
+    latencyMs: (value['latencyMs'] as num?)?.toInt(),
+    lastActivityAtMs: (value['lastActivityAtMs'] as num?)?.toInt(),
+    activitySequence: _integer(value['activitySequence']),
+    txSequence: _integer(value['txSequence']),
+    rxSequence: _integer(value['rxSequence']),
+    inFlight: _integer(value['inFlight']),
+    queued: _integer(value['queued']),
+  );
   final String state, code;
   final int? latencyMs, lastActivityAtMs;
   final int activitySequence, txSequence, rxSequence, inFlight, queued;
 
-  bool get isUsable => state == 'healthy' || state == 'ready';
+  TransportState get typedState => _transportState(state);
+  bool get isUsable =>
+      typedState == TransportState.healthy || typedState == TransportState.ready;
 }
 
 class TransportStatusDto {
@@ -144,6 +303,28 @@ class TransportStatusDto {
     this.peersTotal = 0,
     this.relayInfo,
   });
+  factory TransportStatusDto.fromJson(Map<String, dynamic> value) {
+    final tor = value['tor'];
+    final relay = value['relay'];
+    final peer = value['peer'];
+    final relayInfo = value['relayInfo'];
+    return TransportStatusDto(
+      tor: tor is Map<String, dynamic>
+          ? TransportIndicatorDto.fromJson(tor, fallbackState: 'stopped')
+          : const TransportIndicatorDto(state: 'stopped'),
+      relay: relay is Map<String, dynamic>
+          ? TransportIndicatorDto.fromJson(relay)
+          : const TransportIndicatorDto(),
+      peer: peer is Map<String, dynamic>
+          ? TransportIndicatorDto.fromJson(peer, fallbackState: 'disconnected')
+          : const TransportIndicatorDto(state: 'disconnected'),
+      peersReady: _integer(value['peersReady']),
+      peersTotal: _integer(value['peersTotal']),
+      relayInfo: relayInfo is Map<String, dynamic>
+          ? RelayInfoDto.fromJson(relayInfo)
+          : null,
+    );
+  }
   final TransportIndicatorDto tor, relay, peer;
   final int peersReady, peersTotal;
   final RelayInfoDto? relayInfo;
@@ -156,6 +337,12 @@ class RelayInfoDto {
     required this.sourceCommit,
     required this.protocolVersion,
   });
+  factory RelayInfoDto.fromJson(Map<String, dynamic> value) => RelayInfoDto(
+    productVersion: _requiredString(value, 'productVersion'),
+    buildId: _requiredString(value, 'buildId'),
+    sourceCommit: _requiredString(value, 'sourceCommit'),
+    protocolVersion: _integer(value['protocolVersion']),
+  );
   final String productVersion, buildId, sourceCommit;
   final int protocolVersion;
 }
@@ -166,6 +353,12 @@ class NavigationBadgesDto {
     this.newContacts = 0,
     this.pairingAttention = 0,
   });
+  factory NavigationBadgesDto.fromJson(Map<String, dynamic> value) =>
+      NavigationBadgesDto(
+        unreadMessages: _integer(value['unreadMessages']),
+        newContacts: _integer(value['newContacts']),
+        pairingAttention: _integer(value['pairingAttention']),
+      );
   final int unreadMessages, newContacts, pairingAttention;
 }
 
@@ -183,6 +376,25 @@ class ContactDto {
     this.verificationStatus = 'unverified',
     this.verifiedAtMs,
   });
+  factory ContactDto.fromJson(Map<String, dynamic> value) {
+    final peerHealth = value['peerHealth'];
+    return ContactDto(
+      id: _requiredString(value, 'id'),
+      displayName: value['displayName'] as String? ?? 'Contact',
+      onionAddress: _requiredString(value, 'onionAddress'),
+      status: _requiredString(value, 'status'),
+      connectionState: _requiredString(value, 'connectionState'),
+      presenceState: value['presenceState'] as String? ?? 'unknown',
+      lastSeenAtMs: (value['lastSeenAtMs'] as num?)?.toInt(),
+      safetyNumber: value['safetyNumber'] as String?,
+      peerHealth: peerHealth is Map<String, dynamic>
+          ? PeerHealthDto.fromJson(peerHealth)
+          : const PeerHealthDto(),
+      verificationStatus:
+          value['verificationStatus'] as String? ?? 'unverified',
+      verifiedAtMs: (value['verifiedAtMs'] as num?)?.toInt(),
+    );
+  }
   final String id,
       displayName,
       onionAddress,
@@ -194,6 +406,25 @@ class ContactDto {
   final PeerHealthDto peerHealth;
   final int? verifiedAtMs;
   final int? lastSeenAtMs;
+
+  ContactStatus get typedStatus => switch (status) {
+    'active' => ContactStatus.active,
+    'blocked' => ContactStatus.blocked,
+    'removed' => ContactStatus.removed,
+    _ => ContactStatus.unknown,
+  };
+  TransportState get typedConnectionState => _transportState(connectionState);
+  PresenceState get typedPresenceState => switch (presenceState) {
+    'online' => PresenceState.online,
+    'offline' => PresenceState.offline,
+    _ => PresenceState.unknown,
+  };
+  VerificationStatus get typedVerificationStatus => switch (verificationStatus) {
+    'verified' => VerificationStatus.verified,
+    'unverified' => VerificationStatus.unverified,
+    'identity_changed' => VerificationStatus.identityChanged,
+    _ => VerificationStatus.unknown,
+  };
 }
 
 class ConversationDto {
@@ -207,9 +438,30 @@ class ConversationDto {
     this.lastMessageDirection,
     this.lastMessageStatus,
   });
+  factory ConversationDto.fromJson(Map<String, dynamic> value) =>
+      ConversationDto(
+        id: _requiredString(value, 'id'),
+        contactId: _requiredString(value, 'contactId'),
+        status: _requiredString(value, 'status'),
+        unreadCount: _integer(value['unreadCount']),
+        lastActivityAtMs: _integer(value['lastActivityAtMs']),
+        lastMessageBody: value['lastMessageBody'] as String?,
+        lastMessageDirection: value['lastMessageDirection'] as String?,
+        lastMessageStatus: value['lastMessageStatus'] as String?,
+      );
   final String id, contactId, status;
   final int unreadCount, lastActivityAtMs;
   final String? lastMessageBody, lastMessageDirection, lastMessageStatus;
+
+  ConversationStatus get typedStatus => switch (status) {
+    'active' => ConversationStatus.active,
+    'archived' => ConversationStatus.archived,
+    _ => ConversationStatus.unknown,
+  };
+  MessageDirection? get typedLastMessageDirection =>
+      lastMessageDirection == null ? null : _messageDirection(lastMessageDirection!);
+  MessageStatus? get typedLastMessageStatus =>
+      lastMessageStatus == null ? null : _messageStatus(lastMessageStatus!);
 }
 
 class MessageDto {
@@ -227,10 +479,27 @@ class MessageDto {
     this.readAtMs,
     this.attemptCount = 0,
   });
+  factory MessageDto.fromJson(Map<String, dynamic> value) => MessageDto(
+    id: _requiredString(value, 'id'),
+    conversationId: _requiredString(value, 'conversationId'),
+    body: _requiredString(value, 'body'),
+    direction: _requiredString(value, 'direction'),
+    status: _requiredString(value, 'status'),
+    replyToMessageId: value['replyToMessageId'] as String?,
+    createdAtMs: _integer(value['createdAtMs']),
+    updatedAtMs: _integer(value['updatedAtMs']),
+    sentAtMs: (value['sentAtMs'] as num?)?.toInt(),
+    deliveredAtMs: (value['deliveredAtMs'] as num?)?.toInt(),
+    readAtMs: (value['readAtMs'] as num?)?.toInt(),
+    attemptCount: _integer(value['attemptCount']),
+  );
   final String id, conversationId, body, direction, status;
   final String? replyToMessageId;
   final int createdAtMs, updatedAtMs, attemptCount;
   final int? sentAtMs, deliveredAtMs, readAtMs;
+
+  MessageDirection get typedDirection => _messageDirection(direction);
+  MessageStatus get typedStatus => _messageStatus(status);
 }
 
 class AttachmentDto {
@@ -246,9 +515,37 @@ class AttachmentDto {
     this.updatedAtMs = 0,
     this.direction = 'outbound',
   });
+  factory AttachmentDto.fromJson(Map<String, dynamic> value) => AttachmentDto(
+    id: _requiredString(value, 'id'),
+    messageId: _requiredString(value, 'messageId'),
+    name: _requiredString(value, 'name'),
+    mediaType: _requiredString(value, 'mediaType'),
+    size: _integer(value['size']),
+    status: _requiredString(value, 'status'),
+    offset: _integer(value['offset']),
+    attemptCount: _integer(value['attemptCount']),
+    updatedAtMs: _integer(value['updatedAtMs']),
+    direction: value['direction'] as String? ?? 'outbound',
+  );
   final String id, messageId, name, mediaType, status;
   final int size, offset, attemptCount, updatedAtMs;
   final String direction;
+
+  AttachmentDirection get typedDirection => switch (direction) {
+    'outbound' => AttachmentDirection.outbound,
+    'inbound' => AttachmentDirection.inbound,
+    _ => AttachmentDirection.unknown,
+  };
+  AttachmentStatus get typedStatus => switch (status) {
+    'prepared' => AttachmentStatus.prepared,
+    'encrypting' => AttachmentStatus.encrypting,
+    'queued' => AttachmentStatus.queued,
+    'transferring' => AttachmentStatus.transferring,
+    'available' => AttachmentStatus.available,
+    'failed' => AttachmentStatus.failed,
+    'cancelled' => AttachmentStatus.cancelled,
+    _ => AttachmentStatus.unknown,
+  };
 }
 
 class PendingOperationDto {
@@ -263,9 +560,34 @@ class PendingOperationDto {
     required this.createdAtMs,
     this.lastError,
   });
+  factory PendingOperationDto.fromJson(Map<String, dynamic> value) =>
+      PendingOperationDto(
+        id: _requiredString(value, 'id'),
+        resourceId: _requiredString(value, 'resourceId'),
+        kind: _requiredString(value, 'kind'),
+        state: _requiredString(value, 'state'),
+        dependency: _requiredString(value, 'dependency'),
+        attempts: _integer(value['attempts']),
+        nextAttemptAtMs: _integer(value['nextAttemptAtMs']),
+        createdAtMs: _integer(value['createdAtMs']),
+        lastError: value['lastError'] as String?,
+      );
   final String id, resourceId, kind, state, dependency;
   final int attempts, nextAttemptAtMs, createdAtMs;
   final String? lastError;
+
+  PendingOperationState get typedState => switch (state) {
+    'queued' => PendingOperationState.queued,
+    'retrying' => PendingOperationState.retrying,
+    _ => PendingOperationState.unknown,
+  };
+  PendingOperationDependency get typedDependency => switch (dependency) {
+    'tor_onion_and_relay' => PendingOperationDependency.torOnionAndRelay,
+    'relay' => PendingOperationDependency.relay,
+    'runtime' => PendingOperationDependency.runtime,
+    'network' => PendingOperationDependency.network,
+    _ => PendingOperationDependency.unknown,
+  };
 }
 
 class AppSnapshotDto {
@@ -289,6 +611,51 @@ class AppSnapshotDto {
     this.bootstrapPhase = 'failed',
     this.bootstrapSteps = const [],
   });
+  factory AppSnapshotDto.fromJson(Map<String, dynamic> value) {
+    final identity = value['identity'];
+    final transport = value['transport'];
+    final navigationBadges = value['navigationBadges'];
+    return AppSnapshotDto(
+      runtimeId: value['runtimeId'] as String? ?? '',
+      revision: _integer(value['revision']),
+      notificationCursor: _integer(value['notificationCursor']),
+      notificationsEnabled: value['notificationsEnabled'] as bool? ?? true,
+      readReceiptsEnabled: value['readReceiptsEnabled'] as bool? ?? true,
+      identity: identity is Map<String, dynamic>
+          ? IdentityDto.fromJson(identity)
+          : null,
+      torState: value['torState'] as String? ?? 'stopped',
+      transport: transport is Map<String, dynamic>
+          ? TransportStatusDto.fromJson(transport)
+          : const TransportStatusDto(),
+      navigationBadges: navigationBadges is Map<String, dynamic>
+          ? NavigationBadgesDto.fromJson(navigationBadges)
+          : const NavigationBadgesDto(),
+      onionAddress: value['onionAddress'] as String?,
+      pairings: _objects(value['pairings'])
+          .map(PairingDto.fromJson)
+          .toList(growable: false),
+      contacts: _objects(value['contacts'])
+          .map(ContactDto.fromJson)
+          .toList(growable: false),
+      conversations: _objects(value['conversations'])
+          .map(ConversationDto.fromJson)
+          .toList(growable: false),
+      messages: _objects(value['messages'])
+          .map(MessageDto.fromJson)
+          .toList(growable: false),
+      attachments: _objects(value['attachments'])
+          .map(AttachmentDto.fromJson)
+          .toList(growable: false),
+      pendingOperations: _objects(value['pendingOperations'])
+          .map(PendingOperationDto.fromJson)
+          .toList(growable: false),
+      bootstrapPhase: value['bootstrapPhase'] as String? ?? 'failed',
+      bootstrapSteps: _objects(value['bootstrapSteps'])
+          .map(BootstrapStepDto.fromJson)
+          .toList(growable: false),
+    );
+  }
   final String runtimeId;
   final int revision, notificationCursor;
   final bool notificationsEnabled, readReceiptsEnabled;
@@ -305,7 +672,52 @@ class AppSnapshotDto {
   final List<PendingOperationDto> pendingOperations;
   final String bootstrapPhase;
   final List<BootstrapStepDto> bootstrapSteps;
+
+  BootstrapPhase get typedBootstrapPhase => switch (bootstrapPhase) {
+    'idle' => BootstrapPhase.idle,
+    'starting' => BootstrapPhase.starting,
+    'ready_for_profile' => BootstrapPhase.readyForProfile,
+    'ready' => BootstrapPhase.ready,
+    'degraded' => BootstrapPhase.degraded,
+    'failed' => BootstrapPhase.failed,
+    _ => BootstrapPhase.unknown,
+  };
 }
+
+TransportState _transportState(String value) => switch (value) {
+  'stopped' => TransportState.stopped,
+  'starting' => TransportState.starting,
+  'checking' => TransportState.checking,
+  'healthy' => TransportState.healthy,
+  'ready' => TransportState.ready,
+  'degraded' => TransportState.degraded,
+  'unreachable' => TransportState.unreachable,
+  'failed' => TransportState.failed,
+  'disabled' => TransportState.disabled,
+  'inactive' => TransportState.inactive,
+  'disconnected' => TransportState.disconnected,
+  'connecting' => TransportState.connecting,
+  'handshaking' => TransportState.handshaking,
+  'reconnecting' => TransportState.reconnecting,
+  _ => TransportState.unknown,
+};
+
+MessageDirection _messageDirection(String value) => switch (value) {
+  'outbound' => MessageDirection.outbound,
+  'inbound' => MessageDirection.inbound,
+  _ => MessageDirection.unknown,
+};
+
+MessageStatus _messageStatus(String value) => switch (value) {
+  'queued' => MessageStatus.queued,
+  'sending' => MessageStatus.sending,
+  'sent' => MessageStatus.sent,
+  'delivered' => MessageStatus.delivered,
+  'read' => MessageStatus.read,
+  'failed' => MessageStatus.failed,
+  'cancelled' => MessageStatus.cancelled,
+  _ => MessageStatus.unknown,
+};
 
 sealed class BridgeCommandDto {
   const BridgeCommandDto();

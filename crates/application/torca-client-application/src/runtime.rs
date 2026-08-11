@@ -138,40 +138,15 @@ impl ApplicationError {
         }
     }
 
-    pub fn from_message(message: String) -> Self {
-        let descriptor = match message.as_str() {
-            "RELAY_NOT_READY" => ErrorDescriptor::new(
-                ErrorCode::new("relay.not_ready"),
-                ErrorCategory::Unavailable,
-                RetryAdvice::Backoff,
-            ),
-            "RELAY_DEGRADED" => ErrorDescriptor::new(
-                ErrorCode::new("relay.degraded"),
-                ErrorCategory::Unavailable,
-                RetryAdvice::Backoff,
-            ),
-            "PROFILE_NOT_READY" => ErrorDescriptor::new(
-                ErrorCode::new("profile.not_ready"),
-                ErrorCategory::Conflict,
-                RetryAdvice::Never,
-            ),
-            "secure network runtime is not ready" => ErrorDescriptor::new(
-                ErrorCode::new("runtime.not_ready"),
-                ErrorCategory::Unavailable,
-                RetryAdvice::Backoff,
-            ),
-            "network readiness is unavailable" => ErrorDescriptor::new(
-                ErrorCode::new("network.unavailable"),
-                ErrorCategory::Unavailable,
-                RetryAdvice::Backoff,
-            ),
-            _ => ErrorDescriptor::new(
+    pub fn operation_failed(message: String) -> Self {
+        Self {
+            message,
+            descriptor: ErrorDescriptor::new(
                 ErrorCode::new("application.operation_failed"),
                 ErrorCategory::Internal,
                 RetryAdvice::Never,
             ),
-        };
-        Self { message, descriptor }
+        }
     }
 }
 
@@ -448,7 +423,7 @@ impl ClientApplicationRuntime {
         &self,
         command: ApplicationCommand,
     ) -> Result<ApplicationCommandResult, ApplicationError> {
-        self.execute_inner(command).map_err(ApplicationError::from_message)
+        self.execute_inner(command).map_err(ApplicationError::operation_failed)
     }
 
     fn execute_inner(
@@ -866,19 +841,19 @@ impl ClientApplicationRuntime {
         // as an explicit command.  Health projection is observational only:
         // it can be stale or use a different Tor stream and therefore cannot
         // veto recovery of a queued pairing operation.
-        let now_ms = current_timestamp().map_err(ApplicationError::from_message)?.to_unix_millis();
+        let now_ms = current_timestamp().map_err(ApplicationError::operation_failed)?.to_unix_millis();
         let operations = self
             .pending
             .lock()
             .map_err(|_| {
-                ApplicationError::from_message("pending operation store is unavailable".into())
+                ApplicationError::operation_failed("pending operation store is unavailable".into())
             })?
             .due(now_ms, 1)
             .map_err(|_| {
-                ApplicationError::from_message("pending operations could not be loaded".into())
+                ApplicationError::operation_failed("pending operations could not be loaded".into())
             })?;
         let application = self.application.overview().map_err(|error| {
-            ApplicationError::from_message(format!(
+            ApplicationError::operation_failed(format!(
                 "pending operation reconciliation failed: {error}"
             ))
         })?;
@@ -906,13 +881,13 @@ impl ClientApplicationRuntime {
                 self.pending
                     .lock()
                     .map_err(|_| {
-                        ApplicationError::from_message(
+                        ApplicationError::operation_failed(
                             "pending operation store is unavailable".into(),
                         )
                     })?
                     .complete(operation.id)
                     .map_err(|_| {
-                        ApplicationError::from_message(
+                        ApplicationError::operation_failed(
                             "pending operation completion could not be saved".into(),
                         )
                     })?;
@@ -969,7 +944,7 @@ impl ClientApplicationRuntime {
             };
             let is_cancel = matches!(&operation.kind, PendingOperationKind::CancelPairing);
             let mut store = self.pending.lock().map_err(|_| {
-                ApplicationError::from_message("pending operation store is unavailable".into())
+                ApplicationError::operation_failed("pending operation store is unavailable".into())
             })?;
             match result {
                 Ok(()) => {
@@ -979,17 +954,17 @@ impl ClientApplicationRuntime {
                             .dispatch(EngineCommand::RemoveContact {
                                 contact_id: ContactId::from_opaque(operation.resource_id),
                             })
-                            .map_err(|error| ApplicationError::from_message(error.to_string()))?;
+                            .map_err(|error| ApplicationError::operation_failed(error.to_string()))?;
                     }
                     store.complete(operation.id).map_err(|_| {
-                        ApplicationError::from_message(
+                        ApplicationError::operation_failed(
                             "pending operation completion could not be saved".into(),
                         )
                     })?;
                     if is_cancel {
                         drop(store);
                         self.clear_pairing_pending(operation.resource_id)
-                            .map_err(ApplicationError::from_message)?;
+                            .map_err(ApplicationError::operation_failed)?;
                     }
                     completed += 1;
                 }
@@ -1000,14 +975,14 @@ impl ClientApplicationRuntime {
                         // longer advertise a misleading "waiting for network"
                         // operation.
                         store.complete(operation.id).map_err(|_| {
-                            ApplicationError::from_message(
+                            ApplicationError::operation_failed(
                                 "terminal pending operation could not be removed".into(),
                             )
                         })?;
                         if is_cancel {
                             drop(store);
                             self.clear_pairing_pending(operation.resource_id)
-                                .map_err(ApplicationError::from_message)?;
+                                .map_err(ApplicationError::operation_failed)?;
                         }
                         continue;
                     }
@@ -1022,7 +997,7 @@ impl ClientApplicationRuntime {
                             &error.to_string(),
                         )
                         .map_err(|_| {
-                            ApplicationError::from_message(
+                            ApplicationError::operation_failed(
                                 "pending operation retry could not be saved".into(),
                             )
                         })?;

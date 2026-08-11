@@ -341,7 +341,7 @@ impl TorcaRuntime {
             && (!self.application_runtime.has_runtime() || !self.network_ready_logged)
         {
             if !self.application_runtime.has_runtime() {
-                snapshot.tor_state = format!("{:?}", self.host_state_hint).to_lowercase();
+                snapshot.tor_state = torca_contract::tor_state_name(self.host_state_hint).into();
             }
             self.apply_host_state_hint(&mut snapshot);
         }
@@ -788,9 +788,9 @@ impl TorcaRuntime {
             if let Some(message) = &summary.last_message {
                 conversation.last_message_body = Some(message.body().as_str().to_owned());
                 conversation.last_message_direction =
-                    Some(format!("{:?}", message.direction()).to_lowercase());
+                    Some(torca_contract::message_direction_name(message.direction()).into());
                 conversation.last_message_status =
-                    Some(format!("{:?}", message.status()).to_lowercase());
+                    Some(torca_contract::message_status_name(message.status()).into());
             }
         }
         Ok(())

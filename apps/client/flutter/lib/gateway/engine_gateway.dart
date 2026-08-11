@@ -61,6 +61,7 @@ class ClientBuildInfo {
     required this.targetArchitecture,
     required this.contractSchema,
     required this.wireVersion,
+    this.capabilities = const ClientCapabilitiesDto(),
   });
 
   factory ClientBuildInfo.fromJson(Map<String, dynamic> value) =>
@@ -75,6 +76,11 @@ class ClientBuildInfo {
         targetArchitecture: value['targetArchitecture'] as String? ?? 'unknown',
         contractSchema: value['contractSchema'] as int? ?? 0,
         wireVersion: value['wireVersion'] as int? ?? 0,
+        capabilities: ClientCapabilitiesDto.fromJson(
+          value['capabilities'] is Map<String, dynamic>
+              ? value['capabilities'] as Map<String, dynamic>
+              : const <String, dynamic>{},
+        ),
       );
 
   final String productVersion;
@@ -86,6 +92,7 @@ class ClientBuildInfo {
   final String targetArchitecture;
   final int contractSchema;
   final int wireVersion;
+  final ClientCapabilitiesDto capabilities;
 }
 
 abstract interface class BuildInfoProvider {
@@ -100,19 +107,39 @@ abstract interface class PairingUriEncoder {
   Future<String?> encodePairingUri(String code);
 }
 
-class AppCapabilities {
-  const AppCapabilities({required this.maxAttachmentBytes});
+class ClientCapabilitiesDto {
+  const ClientCapabilitiesDto({
+    this.maxAttachmentBytes = 16 * 1024 * 1024,
+    this.maxVideoAttachmentBytes = 5 * 1024 * 1024,
+    this.maxQueuedAttachments = 5,
+    this.maxAttachmentSourceBytes = 64 * 1024 * 1024,
+  });
+
+  factory ClientCapabilitiesDto.fromJson(Map<String, dynamic> value) =>
+      ClientCapabilitiesDto(
+        maxAttachmentBytes:
+            value['maxAttachmentBytes'] as int? ?? 16 * 1024 * 1024,
+        maxVideoAttachmentBytes:
+            value['maxVideoAttachmentBytes'] as int? ?? 5 * 1024 * 1024,
+        maxQueuedAttachments: value['maxQueuedAttachments'] as int? ?? 5,
+        maxAttachmentSourceBytes:
+            value['maxAttachmentSourceBytes'] as int? ?? 64 * 1024 * 1024,
+      );
+
   final int maxAttachmentBytes;
+  final int maxVideoAttachmentBytes;
+  final int maxQueuedAttachments;
+  final int maxAttachmentSourceBytes;
 }
 
 abstract interface class AttachmentCapabilitiesProvider {
-  AppCapabilities get capabilities;
+  ClientCapabilitiesDto get capabilities;
 }
 
-AppCapabilities capabilitiesFor(EngineGateway gateway) =>
+ClientCapabilitiesDto capabilitiesFor(EngineGateway gateway) =>
     gateway is AttachmentCapabilitiesProvider
     ? (gateway as AttachmentCapabilitiesProvider).capabilities
-    : const AppCapabilities(maxAttachmentBytes: 16 * 1024 * 1024);
+    : const ClientCapabilitiesDto();
 
 class ConversationPageDto {
   const ConversationPageDto({required this.messages, required this.hasMore});

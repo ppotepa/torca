@@ -902,9 +902,10 @@ class _ConversationPaneState extends State<ConversationPane>
         withData: false,
       );
       if (picked == null || picked.files.isEmpty || !mounted) return;
-      final maxBytes = capabilitiesFor(widget.gateway).maxAttachmentBytes;
-      const maximumFiles = 5;
-      const maximumVideoBytes = 5 * 1024 * 1024;
+      final capabilities = capabilitiesFor(widget.gateway);
+      final maxBytes = capabilities.maxAttachmentBytes;
+      final maximumFiles = capabilities.maxQueuedAttachments;
+      final maximumVideoBytes = capabilities.maxVideoAttachmentBytes;
       final remainingSlots = maximumFiles - _pendingAttachments.length;
       if (remainingSlots <= 0) {
         _showError('You can queue at most $maximumFiles attachments.');
@@ -924,13 +925,28 @@ class _ConversationPaneState extends State<ConversationPane>
           _showError('${file.name}: the selected file is empty');
           continue;
         }
+        if (file.size > capabilities.maxAttachmentSourceBytes) {
+          _showError(
+            '${file.name}: maximum source size is '
+            '${formatBytes(capabilities.maxAttachmentSourceBytes)}',
+          );
+          continue;
+        }
         PreparedAttachment prepared;
         try {
           prepared = await _attachmentProcessor.prepare(
             sourcePath: path,
             originalName: file.name,
             extension: file.extension,
+            maximumBytes: maxBytes,
+            maximumVideoBytes: maximumVideoBytes,
           );
+        } on AttachmentSizeException catch (error) {
+          _showError(
+            '${file.name}: maximum size is '
+            '${formatBytes(error.maximumBytes)}',
+          );
+          continue;
         } on AttachmentSelectionException catch (error) {
           _showError('${file.name}: ${error.message}');
           continue;

@@ -3,12 +3,14 @@
 use serde::Serialize;
 use torca_client_application::{
     ApplicationCommand, ApplicationError, ApplicationSnapshotContext, BootstrapPhase,
-    BootstrapStepId, BootstrapStepState, PendingOperationKind, ProbeTarget,
+    BootstrapStepId, BootstrapStepState, PeerConnectionStatus, PeerHealthQuality,
+    PendingOperationKind, ProbeStatus, ProbeTarget, TorState,
 };
-use torca_contacts::ContactId;
+use torca_contacts::{ContactId, ContactStatus};
+use torca_conversations::ConversationStatus;
 use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
-use torca_messaging::Message;
-use torca_pairing::PairingState;
+use torca_messaging::{Message, MessageDirection, MessageStatus};
+use torca_pairing::{PairingRole, PairingState};
 use torca_pairing_protocol::encode_invite_uri;
 
 pub mod generated {
@@ -486,8 +488,8 @@ pub fn bridge_message_from_domain(message: Message) -> BridgeMessage {
         id: message.id().to_string(),
         conversation_id: message.conversation_id().to_string(),
         body: message.body().as_str().to_owned(),
-        direction: format!("{:?}", message.direction()).to_lowercase(),
-        status: format!("{:?}", message.status()).to_lowercase(),
+        direction: message_direction_name(message.direction()).into(),
+        status: message_status_name(message.status()).into(),
         reply_to_message_id: message.reply_to().map(|reply| reply.message_id.to_string()),
         created_at_ms: message.created_at().to_unix_millis(),
         updated_at_ms: message.updated_at().to_unix_millis(),
@@ -495,6 +497,118 @@ pub fn bridge_message_from_domain(message: Message) -> BridgeMessage {
         delivered_at_ms: message.delivered_at().map(Timestamp::to_unix_millis),
         read_at_ms: message.read_at().map(Timestamp::to_unix_millis),
         attempt_count: u32::try_from(message.attempts().len()).unwrap_or(u32::MAX),
+    }
+}
+
+#[must_use]
+pub const fn message_direction_name(value: MessageDirection) -> &'static str {
+    match value {
+        MessageDirection::Outbound => "outbound",
+        MessageDirection::Inbound => "inbound",
+    }
+}
+
+#[must_use]
+pub const fn message_status_name(value: MessageStatus) -> &'static str {
+    match value {
+        MessageStatus::Queued => "queued",
+        MessageStatus::Sending => "sending",
+        MessageStatus::Sent => "sent",
+        MessageStatus::Delivered => "delivered",
+        MessageStatus::Read => "read",
+        MessageStatus::Failed => "failed",
+        MessageStatus::Cancelled => "cancelled",
+    }
+}
+
+#[must_use]
+pub const fn tor_state_name(value: TorState) -> &'static str {
+    match value {
+        TorState::Stopped => "stopped",
+        TorState::Starting => "starting",
+        TorState::Ready => "ready",
+        TorState::Degraded => "degraded",
+        TorState::Failed => "failed",
+    }
+}
+
+const fn probe_status_name(value: ProbeStatus) -> &'static str {
+    match value {
+        ProbeStatus::Unknown => "unknown",
+        ProbeStatus::Checking => "checking",
+        ProbeStatus::Healthy => "healthy",
+        ProbeStatus::Degraded => "degraded",
+        ProbeStatus::Unreachable => "unreachable",
+        ProbeStatus::Failed => "failed",
+        ProbeStatus::Disabled => "disabled",
+    }
+}
+
+const fn bootstrap_step_state_name(value: BootstrapStepState) -> &'static str {
+    match value {
+        BootstrapStepState::Pending => "pending",
+        BootstrapStepState::Running => "running",
+        BootstrapStepState::Verifying => "verifying",
+        BootstrapStepState::Ready => "ready",
+        BootstrapStepState::Degraded => "degraded",
+        BootstrapStepState::Failed => "failed",
+        BootstrapStepState::Blocked => "blocked",
+    }
+}
+
+const fn pairing_role_name(value: PairingRole) -> &'static str {
+    match value {
+        PairingRole::Creator => "creator",
+        PairingRole::Joiner => "joiner",
+    }
+}
+
+const fn pairing_state_name(value: PairingState) -> &'static str {
+    match value {
+        PairingState::Open => "open",
+        PairingState::PeerJoined => "peerjoined",
+        PairingState::AwaitingApproval => "awaitingapproval",
+        PairingState::Approved => "approved",
+        PairingState::Rejected => "rejected",
+        PairingState::Cancelled => "cancelled",
+        PairingState::Expired => "expired",
+        PairingState::Completed => "completed",
+    }
+}
+
+const fn peer_connection_status_name(value: PeerConnectionStatus) -> &'static str {
+    match value {
+        PeerConnectionStatus::Disconnected => "disconnected",
+        PeerConnectionStatus::Connecting => "connecting",
+        PeerConnectionStatus::Handshaking => "handshaking",
+        PeerConnectionStatus::Ready => "ready",
+        PeerConnectionStatus::Reconnecting => "reconnecting",
+        PeerConnectionStatus::Failed => "failed",
+    }
+}
+
+const fn peer_health_quality_name(value: PeerHealthQuality) -> &'static str {
+    match value {
+        PeerHealthQuality::Unknown => "unknown",
+        PeerHealthQuality::Excellent => "excellent",
+        PeerHealthQuality::Good => "good",
+        PeerHealthQuality::Fair => "fair",
+        PeerHealthQuality::Poor => "poor",
+    }
+}
+
+const fn contact_status_name(value: ContactStatus) -> &'static str {
+    match value {
+        ContactStatus::Active => "active",
+        ContactStatus::Blocked => "blocked",
+        ContactStatus::Removed => "removed",
+    }
+}
+
+const fn conversation_status_name(value: ConversationStatus) -> &'static str {
+    match value {
+        ConversationStatus::Active => "active",
+        ConversationStatus::Archived => "archived",
     }
 }
 
@@ -562,10 +676,10 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     // Root snapshots deliberately omit message history. Conversation page and
     // search queries are the only history transport exposed to presentation.
     let messages = Vec::new();
-    let tor_state = format!("{:?}", network.tor).to_lowercase();
+    let tor_state = tor_state_name(network.tor).to_owned();
     let relay_probe = network.probes.iter().find(|probe| probe.target == ProbeTarget::Relay);
     let relay_state = relay_probe
-        .map(|probe| format!("{:?}", probe.status).to_lowercase())
+        .map(|probe| probe_status_name(probe.status).to_owned())
         .unwrap_or_else(|| "unknown".into());
     let relay_code = relay_probe
         .map(|probe| probe.diagnostic_code.clone())
@@ -689,7 +803,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             })
             .map(|step| BridgeBootstrapStep {
                 id: bootstrap_step_id(step.id).into(),
-                state: format!("{:?}", step.state).to_lowercase(),
+                state: bootstrap_step_state_name(step.state).into(),
                 code: step.diagnostic_code,
                 progress: u8::from(step.state == BootstrapStepState::Ready) * 100,
                 attempt: step.attempt,
@@ -729,8 +843,8 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     code: pairing.code().as_str().to_owned(),
                     invite_uri: encode_invite_uri(pairing.code().as_str(), None)
                         .unwrap_or_default(),
-                    role: format!("{:?}", pairing.role()).to_lowercase(),
-                    state: format!("{:?}", pairing.state()).to_lowercase(),
+                    role: pairing_role_name(pairing.role()).into(),
+                    state: pairing_state_name(pairing.state()).into(),
                     expires_at_ms: pairing.expires_at().to_unix_millis(),
                     local_approved: pairing.local_approved(),
                     remote_approved: pairing.remote_approved(),
@@ -748,7 +862,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             .map(|contact| {
                 let connection_state = network.peers.get(&contact.id()).map_or_else(
                     || "disconnected".to_owned(),
-                    |state| format!("{state:?}").to_lowercase(),
+                    |state| peer_connection_status_name(*state).to_owned(),
                 );
                 let peer_health = network.peer_health.get(&contact.id()).map_or_else(
                     || BridgePeerHealth {
@@ -762,8 +876,8 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                         activity_sequence: 0,
                     },
                     |health| BridgePeerHealth {
-                        state: format!("{:?}", health.state).to_lowercase(),
-                        quality: format!("{:?}", health.quality).to_lowercase(),
+                        state: peer_connection_status_name(health.state).into(),
+                        quality: peer_health_quality_name(health.quality).into(),
                         rtt_ms: health.rtt_ms,
                         last_success_at_ms: health.last_success_at.map(Timestamp::to_unix_millis),
                         consecutive_failures: health.consecutive_failures,
@@ -791,7 +905,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     id: contact.id().to_string(),
                     display_name,
                     onion_address: contact.route().onion_address().to_owned(),
-                    status: format!("{:?}", contact.status()).to_lowercase(),
+                    status: contact_status_name(contact.status()).into(),
                     connection_state: peer_health.state.clone(),
                     presence_state: if peer_health.state == "ready" {
                         "online".into()
@@ -819,7 +933,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             .map(|conversation| BridgeConversation {
                 id: conversation.id().to_string(),
                 contact_id: conversation.contact_id().to_string(),
-                status: format!("{:?}", conversation.status()).to_lowercase(),
+                status: conversation_status_name(conversation.status()).into(),
                 unread_count: 0,
                 last_activity_at_ms: 0,
                 last_message_body: None,

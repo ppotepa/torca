@@ -28,6 +28,13 @@ class AttachmentSelectionException implements Exception {
   String toString() => message;
 }
 
+class AttachmentSizeException extends AttachmentSelectionException {
+  const AttachmentSizeException({required this.maximumBytes})
+    : super('Attachment exceeds the configured size limit.');
+
+  final int maximumBytes;
+}
+
 class AttachmentProcessingPolicy {
   const AttachmentProcessingPolicy({
     this.targetImageBytes = 50 * 1024,
@@ -90,6 +97,8 @@ class AttachmentProcessor {
     required String sourcePath,
     required String originalName,
     String? extension,
+    int? maximumBytes,
+    int? maximumVideoBytes,
   }) async {
     final sourceFile = File(sourcePath);
     final size = await sourceFile.length();
@@ -101,6 +110,14 @@ class AttachmentProcessor {
       prefix,
       extension ?? _extension(originalName),
     );
+    final selectedLimit = inspection.kind == AttachmentMediaKind.video
+        ? maximumVideoBytes
+        : maximumBytes;
+    if (inspection.kind != AttachmentMediaKind.image &&
+        selectedLimit != null &&
+        size > selectedLimit) {
+      throw AttachmentSizeException(maximumBytes: selectedLimit);
+    }
     final normalizedExtension = (extension ?? _extension(originalName) ?? '')
         .replaceFirst('.', '')
         .toLowerCase();

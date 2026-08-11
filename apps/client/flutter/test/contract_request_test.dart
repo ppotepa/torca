@@ -73,6 +73,17 @@ void main() {
     }
   });
 
+  test('generated decoders reject missing required fields', () {
+    expect(
+      () => MessageDto.fromJson(<String, dynamic>{'id': 'message'}),
+      throwsA(isA<ContractDecodeException>()),
+    );
+    expect(
+      AppSnapshotDto.fromJson(const <String, dynamic>{}).typedBootstrapPhase,
+      BootstrapPhase.failed,
+    );
+  });
+
   test('conversation page cursor includes message id and timestamp', () {
     final request = RuntimeRequestDto.conversationPage(
       '03',

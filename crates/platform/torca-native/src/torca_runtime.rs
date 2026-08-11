@@ -169,6 +169,12 @@ fn metadata() -> &'static [u8] {
             "relayEndpointHash": RELAY_ENDPOINT_HASH,
             "targetPlatform": std::env::consts::OS,
             "targetArchitecture": std::env::consts::ARCH,
+            "capabilities": {
+                "maxAttachmentBytes": torca_attachments::MAX_ATTACHMENT_BYTES,
+                "maxVideoAttachmentBytes": 5 * 1024 * 1024,
+                "maxQueuedAttachments": 5,
+                "maxAttachmentSourceBytes": 64 * 1024 * 1024,
+            },
         }))
         .expect("static runtime metadata is serializable")
     })
@@ -910,6 +916,11 @@ mod tests {
         assert_eq!(value["nativeAbi"], NATIVE_ABI);
         assert_eq!(value["storageEpoch"], STORAGE_EPOCH);
         assert_eq!(value["contractSchema"], CONTRACT_VERSION);
+        assert_eq!(
+            value["capabilities"]["maxAttachmentBytes"],
+            torca_attachments::MAX_ATTACHMENT_BYTES
+        );
+        assert_eq!(value["capabilities"]["maxQueuedAttachments"], 5);
         assert!(value["buildId"].is_string());
         assert!(value["sourceFingerprint"].is_string());
     }

@@ -806,10 +806,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       case AppOverflowAction.about:
+        final buildInfo = widget.gateway is BuildInfoProvider
+            ? (widget.gateway as BuildInfoProvider).buildInfo
+            : null;
         showAboutDialog(
           context: context,
           applicationName: 'Torca',
-          applicationVersion: '0.2 alpha',
+          applicationVersion: buildInfo?.productVersion ?? 'development',
           applicationLegalese: 'Private 1:1 messaging over Tor.',
         );
     }

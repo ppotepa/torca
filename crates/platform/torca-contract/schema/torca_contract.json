@@ -9,7 +9,7 @@
       "pairing.reject", "pairing.cancel", "contact.rename", "contact.verify",
       "contact.verification.reset", "contact.block", "contact.unblock",
       "contact.remove", "conversation.start", "conversation.clear", "message.send", "message.retry",
-      "notifications.set", "contacts.acknowledge_new",
+      "notifications.set", "privacy.read_receipts.set", "contacts.acknowledge_new",
       "conversation.read", "attachment.queue", "attachment.retry",
       "attachment.cancel", "attachment.export"
     ],
