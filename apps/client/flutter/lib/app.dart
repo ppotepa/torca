@@ -18,6 +18,7 @@ import 'settings/local_preferences.dart';
 import 'settings/preferences_scope.dart';
 import 'theme/app_theme.dart';
 import 'widgets/incoming_pairing_dialog.dart';
+import 'widgets/pairing_modal_registry.dart';
 import 'widgets/runtime_network_status.dart';
 
 class TorcaApp extends StatefulWidget {
@@ -191,6 +192,7 @@ class _TorcaAppState extends State<TorcaApp> {
     PairingDto? candidate;
     for (final pairing in pairings) {
       if (_needsPairingDecision(pairing) &&
+          !PairingModalRegistry.instance.owns(pairing.id) &&
           !_pairingPromptsShown.contains(pairing.id)) {
         candidate = pairing;
         break;

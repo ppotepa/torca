@@ -100,6 +100,11 @@ pub enum EngineCommand {
         reply_to: Option<ReplyReference>,
         at: Timestamp,
     },
+    /// Cancels a locally queued message before delivery can claim it.
+    CancelMessage {
+        message_id: MessageId,
+        at: Timestamp,
+    },
     BeginMessageSend {
         message_id: MessageId,
         at: Timestamp,
@@ -508,6 +513,16 @@ where
                     .insert(Message::outbound(message_id, conversation_id, body, reply_to, at))
                     .map_err(map_error)?;
                 Ok(EngineResult::MessageQueued { message_id })
+            }
+            EngineCommand::CancelMessage { message_id, at } => {
+                let mut message = self
+                    .messages
+                    .get(message_id)
+                    .map_err(map_error)?
+                    .ok_or_else(|| EngineError("message not found".into()))?;
+                message.cancel(at).map_err(map_error)?;
+                self.messages.update(message).map_err(map_error)?;
+                Ok(EngineResult::MessageUpdated { message_id })
             }
             EngineCommand::BeginMessageSend { message_id, at } => {
                 let mut message = self.load_message(message_id)?;

@@ -1059,10 +1059,10 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let body = MessageBody::new(format!("Attachment: {}", request_value.name))
                 .map_err(|_| RuntimeDriverError::Communication);
             let result = body.and_then(|body| {
-                // Stage the encrypted attachment before exposing the message.
-                // A rejected/unreadable source must never leave a misleading
-                // `Attachment: name` text message in the conversation.
-                communication.prepare_attachment(&request_value, now)?;
+                // `attachments.message_id` is a foreign key. The companion
+                // message must be durable before attachment metadata can be
+                // committed; this actor cannot run delivery maintenance until
+                // the command returns, so the message is not sent in between.
                 if engine
                     .dispatch(EngineCommand::QueueMessage {
                         message_id,
@@ -1073,10 +1073,14 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     })
                     .is_err()
                 {
-                    // The cache was prepared, but there is no message that can
-                    // own it. Keep the durable row out of the transfer queue.
-                    let _ = communication.cancel_attachment(request_value.attachment_id, now);
                     return Err(RuntimeDriverError::Engine);
+                }
+                if let Err(error) = communication.prepare_attachment(&request_value, now) {
+                    // A failed local attachment must not leave a deliverable
+                    // placeholder message behind. Cancelling also prevents the
+                    // durable outbox from transmitting it on a later tick.
+                    let _ = engine.dispatch(EngineCommand::CancelMessage { message_id, at: now });
+                    return Err(error);
                 }
                 Ok(())
             });

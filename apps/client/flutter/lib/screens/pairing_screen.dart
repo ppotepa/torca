@@ -12,6 +12,7 @@ import '../generated/torca_contract.dart';
 import '../widgets/app_modal.dart';
 import '../widgets/async_action_button.dart';
 import '../widgets/operation_tracker.dart';
+import '../widgets/pairing_modal_registry.dart';
 import '../widgets/pairing_progress.dart';
 import '../widgets/runtime_network_status.dart';
 import 'conversation_screen.dart';
@@ -22,11 +23,11 @@ Future<void> showPairingSessionModal(
   EngineGateway gateway,
   PairingDto pairing,
 ) async {
-await showDialog<void>(
-context: context,
-requestFocus: true,
-builder: (_) => _PairingSessionModal(gateway: gateway, pairing: pairing),
-);
+  await showDialog<void>(
+    context: context,
+    requestFocus: true,
+    builder: (_) => _PairingSessionModal(gateway: gateway, pairing: pairing),
+  );
 }
 
 /// Opens the creator flow from the Invitations section. Joining is deliberately
@@ -99,6 +100,9 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
 
   @override
   void dispose() {
+    if (widget.mode == _PairingComposerMode.create) {
+      PairingModalRegistry.instance.release(_createdSessionId);
+    }
     _operations
       ..removeListener(_changed)
       ..dispose();
@@ -140,6 +144,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
         _queued = true;
         _createdSessionId = result.resourceId;
       });
+      PairingModalRegistry.instance.claim(result.resourceId ?? '');
       return;
     }
     setState(() {
@@ -147,6 +152,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       _createdPairing = _pairingFor(result.resourceId);
       _inviteUri = result.inviteUri;
     });
+    PairingModalRegistry.instance.claim(result.resourceId ?? '');
   }
 
   Future<void> _scan() async {
@@ -275,6 +281,9 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
                     'pairing:${pairing.id}:cancel',
                     CancelPairingCommandDto(sessionIdHex: pairing.id),
                   ),
+                  onDone: pairing.typedState == PairingState.completed
+                      ? () => Navigator.of(context).pop()
+                      : null,
                 );
               }
               return _InvitationGenerationPlaceholder(
@@ -453,6 +462,9 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
                         _run(RejectPairingCommandDto(sessionIdHex: pairing.id)),
                     onCancel: () =>
                         _run(CancelPairingCommandDto(sessionIdHex: pairing.id)),
+                    onDone: pairing.typedState == PairingState.completed
+                        ? () => Navigator.of(context).pop()
+                        : null,
                   ),
                 ],
               ),
@@ -567,15 +579,16 @@ class _PairingScreenState extends State<PairingScreen> {
                       ...pending.map(
                         (operation) => _PendingPairingCard(
                           operation,
-                          onCancel: operation.kind == 'pairing.create' ||
+                          onCancel:
+                              operation.kind == 'pairing.create' ||
                                   operation.kind == 'pairing.join'
                               ? () => _session(
-                                    operation.resourceId,
-                                    'cancel',
-                                    CancelPairingCommandDto(
-                                      sessionIdHex: operation.resourceId,
-                                    ),
-                                  )
+                                  operation.resourceId,
+                                  'cancel',
+                                  CancelPairingCommandDto(
+                                    sessionIdHex: operation.resourceId,
+                                  ),
+                                )
                               : null,
                         ),
                       ),
@@ -687,6 +700,9 @@ class _PairingScreenState extends State<PairingScreen> {
                 'cancel',
                 CancelPairingCommandDto(sessionIdHex: session.id),
               ),
+              onDone: session.typedState == PairingState.completed
+                  ? () => Navigator.of(context).pop()
+                  : null,
             ),
           );
         },
@@ -1118,11 +1134,13 @@ class _PairingSessionDetails extends StatelessWidget {
     required this.onApprove,
     required this.onReject,
     required this.onCancel,
+    this.onDone,
   });
   final PairingDto pairing;
   final String? inviteUri;
   final bool busy;
   final VoidCallback onApprove, onReject, onCancel;
+  final VoidCallback? onDone;
 
   bool get _canReview =>
       pairing.typedRole == PairingRole.creator &&
@@ -1181,63 +1199,82 @@ class _PairingSessionDetails extends StatelessWidget {
       ],
       PairingProgress(state: pairing.state),
       const SizedBox(height: 12),
-      if (pairing.role == 'creator' && pairing.state == 'open') ...<Widget>[
-        _QrInvitationCard(
-          uri: _uri,
-          code: pairing.code,
-          expiresAtMs: pairing.expiresAtMs,
-        ),
-        const SizedBox(height: 12),
-      ],
-      if (_canReview) ...<Widget>[
+      if (pairing.typedState == PairingState.completed) ...<Widget>[
         Text(
-          'A device joined this invitation. Verify the fingerprint before accepting the contact.',
-          style: Theme.of(context).textTheme.bodyMedium,
+          'Contact connected',
+          style: Theme.of(context).textTheme.titleMedium,
+          textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 14),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: busy ? null : onApprove,
-                icon: Icon(context.torcaIcons.confirm),
-                label: const Text('Accept'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: busy ? null : onReject,
-                icon: Icon(context.torcaIcons.close),
-                label: const Text('Reject'),
-              ),
-            ),
-          ],
-        ),
-      ] else if (pairing.role == 'joiner' && !_canReview) ...<Widget>[
+        const SizedBox(height: 8),
         const Text(
-          'Your request is waiting for the invitation owner to verify and accept it.',
+          'The invitation was accepted and this contact is ready to chat.',
+          textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: busy ? null : onCancel,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error,
-            side: BorderSide(color: Theme.of(context).colorScheme.error),
+        const SizedBox(height: 18),
+        FilledButton.icon(
+          onPressed: onDone,
+          icon: Icon(context.torcaIcons.success),
+          label: const Text('Done'),
+        ),
+      ] else ...<Widget>[
+        if (pairing.role == 'creator' && pairing.state == 'open') ...<Widget>[
+          _QrInvitationCard(
+            uri: _uri,
+            code: pairing.code,
+            expiresAtMs: pairing.expiresAtMs,
           ),
-          icon: Icon(context.torcaIcons.cancelled),
-          label: const Text('Cancel request'),
-        ),
-      ] else if (pairing.state == 'open') ...<Widget>[
-        OutlinedButton.icon(
-          onPressed: busy ? null : onCancel,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error,
-            side: BorderSide(color: Theme.of(context).colorScheme.error),
+          const SizedBox(height: 12),
+        ],
+        if (_canReview) ...<Widget>[
+          Text(
+            'A device joined this invitation. Verify the fingerprint before accepting the contact.',
+            style: Theme.of(context).textTheme.bodyMedium,
           ),
-          icon: Icon(context.torcaIcons.cancelled),
-          label: const Text('Cancel invitation'),
-        ),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: busy ? null : onApprove,
+                  icon: Icon(context.torcaIcons.confirm),
+                  label: const Text('Accept'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: busy ? null : onReject,
+                  icon: Icon(context.torcaIcons.close),
+                  label: const Text('Reject'),
+                ),
+              ),
+            ],
+          ),
+        ] else if (pairing.role == 'joiner' && !_canReview) ...<Widget>[
+          const Text(
+            'Your request is waiting for the invitation owner to verify and accept it.',
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: busy ? null : onCancel,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+              side: BorderSide(color: Theme.of(context).colorScheme.error),
+            ),
+            icon: Icon(context.torcaIcons.cancelled),
+            label: const Text('Cancel request'),
+          ),
+        ] else if (pairing.state == 'open') ...<Widget>[
+          OutlinedButton.icon(
+            onPressed: busy ? null : onCancel,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+              side: BorderSide(color: Theme.of(context).colorScheme.error),
+            ),
+            icon: Icon(context.torcaIcons.cancelled),
+            label: const Text('Cancel invitation'),
+          ),
+        ],
       ],
     ],
   );
@@ -1282,7 +1319,10 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
   String get _countdown {
     if (_remaining.isNegative) return 'Expired';
     final minutes = _remaining.inMinutes.toString().padLeft(2, '0');
-    final seconds = _remaining.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final seconds = _remaining.inSeconds
+        .remainder(60)
+        .toString()
+        .padLeft(2, '0');
     return 'Expires in $minutes:$seconds';
   }
 
@@ -1291,7 +1331,9 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
     final expired = _remaining.isNegative;
     final warning = !expired && _remaining.inSeconds <= 60;
     final scheme = Theme.of(context).colorScheme;
-    final displayCode = widget.code.replaceAll(RegExp(r'\s+'), '').toUpperCase();
+    final displayCode = widget.code
+        .replaceAll(RegExp(r'\s+'), '')
+        .toUpperCase();
     return Column(
       children: <Widget>[
         Container(
