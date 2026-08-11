@@ -9,10 +9,12 @@ class AndroidNotificationRouter {
 
   static const MethodChannel _channel = MethodChannel('torca/notifications');
   final AppNavigationController navigation;
+  bool _disposed = false;
 
   Future<void> initialize() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid || _disposed) return;
     _channel.setMethodCallHandler((call) async {
+      if (_disposed) return;
       if (call.method != 'openConversation') return;
       final conversationId = call.arguments as String?;
       if (conversationId != null && conversationId.isNotEmpty) {
@@ -22,13 +24,14 @@ class AndroidNotificationRouter {
     final initial = await _channel.invokeMethod<String>(
       'takeInitialConversation',
     );
-    if (initial != null && initial.isNotEmpty) {
+    if (!_disposed && initial != null && initial.isNotEmpty) {
       navigation.openConversation(initial);
     }
   }
 
   void dispose() {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid || _disposed) return;
+    _disposed = true;
     _channel.setMethodCallHandler(null);
   }
 }

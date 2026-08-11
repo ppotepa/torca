@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'app.dart';
 import 'gateway/engine_gateway.dart';
@@ -15,22 +14,8 @@ import 'platform/platform_capabilities.dart';
 import 'platform/runtime_lifecycle.dart';
 import 'settings/local_preferences.dart';
 
-DesktopLifecycle? _desktopLifecycle;
-DeepLinkRouter? _deepLinkRouter;
-AndroidNotificationRouter? _androidNotificationRouter;
-
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  if (isTorcaAndroid) {
-    // Keep Android's navigation controls transient. A swipe from an edge
-    // reveals them temporarily, so system navigation remains accessible.
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    SystemChrome.setSystemUIChangeCallback((systemOverlaysAreVisible) async {
-      if (!systemOverlaysAreVisible) return;
-      await Future<void>.delayed(const Duration(seconds: 2));
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    });
-  }
   runApp(const _TorcaBootstrap());
 }
 
@@ -44,8 +29,14 @@ class _TorcaBootstrap extends StatefulWidget {
 class _TorcaBootstrapState extends State<_TorcaBootstrap> {
   Widget? _application;
   EngineGateway? _gateway;
+  LocalPreferences? _preferences;
+  AppNavigationController? _navigation;
+  DesktopLifecycle? _desktopLifecycle;
+  DeepLinkRouter? _deepLinkRouter;
+  AndroidNotificationRouter? _androidNotificationRouter;
   bool _initializing = false;
   RuntimeLifecycleObserver? _runtimeLifecycleObserver;
+  String? _startupFailure;
 
   @override
   void initState() {
@@ -58,9 +49,18 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
     _initializing = true;
     try {
       final preferences = LocalPreferences();
+      _preferences = preferences;
       await preferences.load();
+      if (!mounted) {
+        await _disposeRuntimeComposition();
+        return;
+      }
       final EngineGateway gateway = await _openNativeGateway();
       _gateway = gateway;
+      if (!mounted) {
+        await _disposeRuntimeComposition();
+        return;
+      }
       if (gateway is FfiEngineGateway) {
         preferences.syncNotificationsEnabled(
           gateway.snapshots.value.notificationsEnabled,
@@ -90,6 +90,7 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
         });
       }
       final navigation = AppNavigationController();
+      _navigation = navigation;
       _deepLinkRouter = DeepLinkRouter(navigation, gateway);
       try {
         await _deepLinkRouter!.initialize();
@@ -109,6 +110,10 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
         _desktopLifecycle = DesktopLifecycle(gateway, preferences, navigation);
         await _desktopLifecycle!.initialize();
       }
+      if (!mounted) {
+        await _disposeRuntimeComposition();
+        return;
+      }
       final application = TorcaApp(
         gateway: gateway,
         navigation: navigation,
@@ -117,7 +122,20 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
             ? _retryStartup
             : null,
       );
-      if (mounted) setState(() => _application = application);
+      if (mounted) {
+        setState(() {
+          _startupFailure = null;
+          _application = application;
+        });
+      }
+    } on Object catch (error) {
+      await _disposeRuntimeComposition();
+      if (mounted) {
+        setState(() {
+          _application = null;
+          _startupFailure = _formatNativeGatewayFailure(error);
+        });
+      }
     } finally {
       _initializing = false;
     }
@@ -125,44 +143,99 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
 
   Future<void> _retryStartup() async {
     if (_initializing || !mounted) return;
-    final failedGateway = _gateway;
-    _gateway = null;
-    setState(() => _application = null);
-    await failedGateway?.dispose();
+    setState(() {
+      _application = null;
+      _startupFailure = null;
+    });
+    await _disposeRuntimeComposition();
     await _initialize();
+  }
+
+  Future<void> _disposeRuntimeComposition() async {
+    final runtimeLifecycleObserver = _runtimeLifecycleObserver;
+    final androidNotificationRouter = _androidNotificationRouter;
+    final deepLinkRouter = _deepLinkRouter;
+    final desktopLifecycle = _desktopLifecycle;
+    final navigation = _navigation;
+    final gateway = _gateway;
+    final preferences = _preferences;
+
+    _runtimeLifecycleObserver = null;
+    _androidNotificationRouter = null;
+    _deepLinkRouter = null;
+    _desktopLifecycle = null;
+    _navigation = null;
+    _gateway = null;
+    _preferences = null;
+
+    runtimeLifecycleObserver?.detach();
+    androidNotificationRouter?.dispose();
+    await _bestEffort(
+      () => deepLinkRouter?.dispose() ?? Future<void>.value(),
+    );
+    await _bestEffort(
+      () => desktopLifecycle?.dispose() ?? Future<void>.value(),
+    );
+    navigation?.dispose();
+    preferences?.dispose();
+    await _bestEffort(() => gateway?.dispose() ?? Future<void>.value());
+  }
+
+  Future<void> _bestEffort(Future<void> Function() action) async {
+    try {
+      await action();
+    } on Object {
+      // Teardown continues so one platform integration cannot leak the rest.
+    }
   }
 
   @override
   void dispose() {
-    _runtimeLifecycleObserver?.detach();
+    unawaited(_disposeRuntimeComposition());
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => _application ?? const _StartupScreen();
+  Widget build(BuildContext context) =>
+      _application ??
+      _StartupScreen(failure: _startupFailure, onRetry: _retryStartup);
 }
 
 class _StartupScreen extends StatelessWidget {
-  const _StartupScreen();
+  const _StartupScreen({required this.failure, required this.onRetry});
+
+  final String? failure;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: ThemeData.dark(useMaterial3: true),
-    home: const Scaffold(
+    home: Scaffold(
       body: SafeArea(
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Text(
+              const Text(
                 'Torca',
                 style: TextStyle(fontSize: 32, fontWeight: FontWeight.w600),
               ),
-              SizedBox(height: 24),
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Starting secure network…'),
+              const SizedBox(height: 24),
+              if (failure == null) ...const <Widget>[
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Starting secure network…'),
+              ] else ...<Widget>[
+                const Icon(Icons.error_outline, size: 40),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Text(failure!, textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 20),
+                FilledButton(onPressed: onRetry, child: const Text('Retry')),
+              ],
             ],
           ),
         ),

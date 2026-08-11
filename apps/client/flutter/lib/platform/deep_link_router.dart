@@ -13,8 +13,10 @@ class DeepLinkRouter {
   final AppLinks _links = AppLinks();
   StreamSubscription<String>? _subscription;
   Timer? _windowsPoller;
+  bool _disposed = false;
 
   Future<void> initialize() async {
+    if (_disposed) return;
     final initial = await _links.getInitialLink();
     if (initial != null) _accept(initial.toString());
     _subscription = _links.uriLinkStream
@@ -30,13 +32,14 @@ class DeepLinkRouter {
   }
 
   void _accept(String rawUri) {
+    if (_disposed) return;
     final parser = gateway is PairingUriParser
         ? gateway as PairingUriParser
         : null;
     if (parser == null) return;
     unawaited(
       parser.parsePairingUri(rawUri).then((code) {
-        if (code != null) navigation.openPairing(code);
+        if (!_disposed && code != null) navigation.openPairing(code);
       }),
     );
   }
@@ -58,7 +61,11 @@ class DeepLinkRouter {
   }
 
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     _windowsPoller?.cancel();
+    _windowsPoller = null;
     await _subscription?.cancel();
+    _subscription = null;
   }
 }

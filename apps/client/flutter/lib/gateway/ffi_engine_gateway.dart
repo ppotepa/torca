@@ -270,23 +270,36 @@ class NativeRuntimeWorker {
 
   static Future<NativeRuntimeWorker> start() async {
     final ready = ReceivePort();
-    final isolate = await Isolate.spawn(_workerMain, <Object?>[
-      ready.sendPort,
-    ], debugName: 'torca-native-runtime-worker');
-    final ports = await ready.first.timeout(const Duration(seconds: 15)) as Map;
-    if (ports['error'] != null) {
-      throw StateError(ports['error'] as String);
+    Isolate? isolate;
+    ReceivePort? eventPort;
+    try {
+      isolate = await Isolate.spawn(_workerMain, <Object?>[
+        ready.sendPort,
+      ], debugName: 'torca-native-runtime-worker');
+      final value = await ready.first.timeout(const Duration(seconds: 15));
+      if (value is! Map) {
+        throw StateError('native runtime worker returned an invalid handshake');
+      }
+      if (value['error'] != null) {
+        throw StateError(value['error'] as String);
+      }
+      final commandPort = value['commandPort'] as SendPort;
+      eventPort = ReceivePort();
+      commandPort.send(<String, Object?>{'attachEvents': eventPort.sendPort});
+      final metadata = Map<String, dynamic>.from(value['metadata'] as Map);
+      ready.close();
+      return NativeRuntimeWorker._(
+        commandPort,
+        eventPort,
+        isolate,
+        ClientBuildInfo.fromJson(metadata),
+      );
+    } on Object {
+      ready.close();
+      eventPort?.close();
+      isolate?.kill(priority: Isolate.immediate);
+      rethrow;
     }
-    final commandPort = ports['commandPort'] as SendPort;
-    final eventPort = ReceivePort();
-    commandPort.send(<String, Object?>{'attachEvents': eventPort.sendPort});
-    final metadata = Map<String, dynamic>.from(ports['metadata'] as Map);
-    return NativeRuntimeWorker._(
-      commandPort,
-      eventPort,
-      isolate,
-      ClientBuildInfo.fromJson(metadata),
-    );
   }
 
   final SendPort _commandPort;
@@ -322,14 +335,19 @@ class NativeRuntimeWorker {
 
   Future<String> _invokeNow(RuntimeRequestDto request, String requestId) async {
     final reply = ReceivePort();
-    _commandPort.send(<String, Object?>{
-      'invoke': request.encode(requestId),
-      'timeoutMs': request.timeoutMs,
-      'reply': reply.sendPort,
-    });
-    final value = await reply.first;
-    reply.close();
-    return value as String;
+    try {
+      _commandPort.send(<String, Object?>{
+        'invoke': request.encode(requestId),
+        'timeoutMs': request.timeoutMs,
+        'reply': reply.sendPort,
+      });
+      final value = await reply.first.timeout(
+        Duration(milliseconds: request.timeoutMs + 2000),
+      );
+      return value as String;
+    } finally {
+      reply.close();
+    }
   }
 
   bool _isRetryableTimeout(String raw) {
@@ -346,12 +364,15 @@ class NativeRuntimeWorker {
     if (_disposed) return;
     final queued = _requestTail.then((_) async {
       final reply = ReceivePort();
-      _commandPort.send(<String, Object?>{
-        'shutdown': true,
-        'reply': reply.sendPort,
-      });
-      await reply.first;
-      reply.close();
+      try {
+        _commandPort.send(<String, Object?>{
+          'shutdown': true,
+          'reply': reply.sendPort,
+        });
+        await reply.first.timeout(const Duration(seconds: 17));
+      } finally {
+        reply.close();
+      }
     });
     _requestTail = queued.then<void>(
       (_) {},
@@ -363,22 +384,25 @@ class NativeRuntimeWorker {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    final queued = _requestTail.then((_) async {
+    try {
+      await _requestTail.timeout(const Duration(seconds: 12));
       final reply = ReceivePort();
-      _commandPort.send(<String, Object?>{
-        'dispose': true,
-        'reply': reply.sendPort,
-      });
-      await reply.first;
-      reply.close();
-    });
-    _requestTail = queued.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    await queued;
-    _events.close();
-    _isolate.kill(priority: Isolate.immediate);
+      try {
+        _commandPort.send(<String, Object?>{
+          'dispose': true,
+          'reply': reply.sendPort,
+        });
+        await reply.first.timeout(const Duration(seconds: 3));
+      } finally {
+        reply.close();
+      }
+    } on Object {
+      // A failed isolate cannot acknowledge disposal; killing it is the final
+      // bounded cleanup path.
+    } finally {
+      _events.close();
+      _isolate.kill(priority: Isolate.immediate);
+    }
   }
 }
 
@@ -411,6 +435,7 @@ void _workerMainImpl(List<Object?> arguments) {
   SendPort? eventsPort;
   Timer? snapshotTimer;
   var notificationCursor = 0;
+  String? lastSnapshotJson;
   ready.send(<String, Object?>{
     'commandPort': commandPort.sendPort,
     'metadata': metadata,
@@ -422,7 +447,7 @@ void _workerMainImpl(List<Object?> arguments) {
       void pollSnapshot() {
         final target = eventsPort;
         if (target == null) return;
-        var next = const Duration(milliseconds: 250);
+        var next = const Duration(seconds: 1);
         try {
           final raw = bindings.invoke(
             handle,
@@ -434,10 +459,17 @@ void _workerMainImpl(List<Object?> arguments) {
           final decoded = jsonDecode(raw);
           if (decoded is Map && decoded['snapshot'] is Map) {
             final snapshot = decoded['snapshot'] as Map;
-            target.send(jsonEncode(snapshot));
-            // Keep the process-wide transport monitor responsive after
-            // bootstrap too. The native projection is payload-free and cheap.
-            next = const Duration(milliseconds: 250);
+            final encoded = jsonEncode(snapshot);
+            if (encoded != lastSnapshotJson) {
+              lastSnapshotJson = encoded;
+              target.send(encoded);
+            }
+            final phase = snapshot['bootstrapPhase'];
+            final pending = snapshot['pendingOperations'];
+            final settled = phase == 'ready' || phase == 'degraded';
+            if (!settled || (pending is List && pending.isNotEmpty)) {
+              next = const Duration(milliseconds: 250);
+            }
           }
           final notificationRaw = bindings.invoke(
             handle,

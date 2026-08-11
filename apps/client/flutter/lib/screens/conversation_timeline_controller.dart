@@ -20,6 +20,7 @@ class ConversationTimelineController extends ChangeNotifier {
   bool _loading = false;
   bool _refreshing = false;
   bool _refreshPending = false;
+  bool _disposed = false;
   int _generation = 0;
 
   List<MessageDto> get messages => _messages;
@@ -33,23 +34,30 @@ class ConversationTimelineController extends ChangeNotifier {
     required EngineGateway gateway,
     required String conversationId,
   }) async {
+    if (_disposed) return;
     _generation++;
     _gateway = gateway;
     _conversationId = conversationId;
     _messages = const <MessageDto>[];
     _hasMore = true;
     _loading = false;
-    notifyListeners();
+    _notifyChanged();
     await _loadLatest(replace: true);
   }
 
   Future<void> refreshLatest() => _loadLatest(replace: false);
 
   Future<int> loadOlder() async {
-    if (_loading || _refreshing || !_hasMore || _messages.isEmpty) return 0;
+    if (_disposed ||
+        _loading ||
+        _refreshing ||
+        !_hasMore ||
+        _messages.isEmpty) {
+      return 0;
+    }
     final generation = _generation;
     _loading = true;
-    notifyListeners();
+    _notifyChanged();
     try {
       final page = await conversationPageFor(
         _gateway,
@@ -57,7 +65,7 @@ class ConversationTimelineController extends ChangeNotifier {
         before: _messages.first,
         limit: pageSize,
       );
-      if (generation != _generation) return 0;
+      if (_disposed || generation != _generation) return 0;
       final previousCount = _messages.length;
       _messages = _merge(page.messages, _messages);
       _hasMore = page.hasMore;
@@ -65,7 +73,7 @@ class ConversationTimelineController extends ChangeNotifier {
     } finally {
       if (generation == _generation) {
         _loading = false;
-        notifyListeners();
+        _notifyChanged();
       }
     }
   }
@@ -74,6 +82,7 @@ class ConversationTimelineController extends ChangeNotifier {
       searchConversationFor(_gateway, _conversationId, query, limit: limit);
 
   Future<void> _loadLatest({required bool replace}) async {
+    if (_disposed) return;
     if (_loading || _refreshing) {
       _refreshPending = true;
       return;
@@ -91,7 +100,7 @@ class ConversationTimelineController extends ChangeNotifier {
         final initialLoad = replaceCurrent && _messages.isEmpty;
         if (initialLoad) {
           _loading = true;
-          notifyListeners();
+          _notifyChanged();
         }
         try {
           final page = await conversationPageFor(
@@ -99,7 +108,7 @@ class ConversationTimelineController extends ChangeNotifier {
             _conversationId,
             limit: pageSize,
           );
-          if (generation != _generation) return;
+          if (_disposed || generation != _generation) return;
           if (replaceCurrent || _messages.isEmpty || page.messages.isEmpty) {
             _messages = page.messages;
           } else {
@@ -110,18 +119,31 @@ class ConversationTimelineController extends ChangeNotifier {
               page.messages.isEmpty) {
             _hasMore = page.hasMore;
           }
-          notifyListeners();
+          _notifyChanged();
         } finally {
           if (generation == _generation && initialLoad) {
             _loading = false;
-            notifyListeners();
+            _notifyChanged();
           }
         }
         replaceCurrent = false;
-      } while (generation == _generation && _refreshPending);
+      } while (!_disposed && generation == _generation && _refreshPending);
     } finally {
       _refreshing = false;
     }
+  }
+
+  void _notifyChanged() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _generation++;
+    _refreshPending = false;
+    super.dispose();
   }
 
   List<MessageDto> _merge(List<MessageDto> first, List<MessageDto> second) {
