@@ -1,11 +1,9 @@
 # Applications
 
-This directory contains user-facing deployable compositions. Applications assemble libraries; they do not define domain rules.
+Torca currently has one product client: [`client/flutter`](client/flutter).
 
-## Planned application
+Windows and Android are platform hosts of the same Flutter/Rust application. Responsive UI differences belong in the shared widget tree; product workflows, durable state, networking and security stay in Rust.
 
-- [`client`](client/README.md) — shared Flutter client with Windows and Android hosts.
+Platform-specific host code is limited to real OS capabilities such as lifecycle, protected secrets, notifications, deep links, secure-window behavior and installation/device integration.
 
-Application code starts the Flutter presentation worker and forwards platform lifecycle. Native runtime
-composition, durable state, networking and logging are owned by Rust crates. Reusable logic belongs in
-crates or shared Flutter packages.
+See the root [README](../README.md) and [ARCHITECTURE](../ARCHITECTURE.md) documents for the maintained system description.

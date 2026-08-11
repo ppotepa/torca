@@ -1,28 +1,47 @@
-# Documentation
+# Torca documentation
 
-Torca documentation is separated by purpose so that current delivery work does not blur long-lived architecture rules.
+Torca keeps a deliberately small set of maintained documentation because the implementation is changing quickly. The purpose of these documents is to preserve stable product intent, ownership and trust boundaries without duplicating the source tree.
 
-## Active release documentation
+## Maintained documents
 
-[`0.2`](0.2/IMPLEMENTATION_ORDER.md) contains current implementation order, known architectural gaps and
-validation gates.
+- [`../README.md`](../README.md) — product overview, system shape and development entrypoints.
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — medium-depth architecture and ownership model.
+- [`../SECURITY.md`](../SECURITY.md) — current security posture and explicit non-guarantees.
+- [`security/threat-model.md`](security/threat-model.md) — assets, trust boundaries, threats and review triggers.
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — placement rules, workflows and documentation policy.
+- [`../ROADMAP.md`](../ROADMAP.md) — product/engineering direction rather than release bookkeeping.
 
-## Architecture documentation
+Short README files at major repository roots (`apps`, `crates`, `services`, `tests`) are navigation aids only. They should point toward the same central model rather than introduce alternative architecture descriptions.
 
-[`architecture`](architecture/README.md) contains stable rules for domains, dependencies, commands, events, storage, transport, security, testing, and repository layout.
+## What belongs in documentation
 
-## Architecture decisions
+Document stable facts such as:
 
-[`decisions`](decisions/README.md) contains accepted Architecture Decision Records (ADRs). ADRs are immutable after acceptance except for small corrections. A later ADR supersedes an earlier one.
+- what Torca is trying to become;
+- which layer owns a responsibility;
+- which trust boundary is crossed;
+- why the client/relay split exists;
+- what a contributor should use as a public workflow;
+- security guarantees and non-guarantees;
+- long-lived product/non-goal direction.
 
-## Authority order
+## What should stay in code/history
 
-When documents disagree, use this order:
+Avoid maintaining prose copies of:
 
-1. accepted ADR relevant to the decision;
-2. active version-specific document;
-3. long-lived architecture document;
-4. package README;
-5. historical notes.
+- exact contract or wire version numbers;
+- exact database migration counts;
+- timeout/retry constants;
+- generated command/DTO field lists;
+- individual class/method inventories;
+- temporary refactor/batch names;
+- implementation progress percentages;
+- release-specific source audits after their work is merged.
 
-An inconsistency should be fixed rather than worked around in code.
+These details are better represented by source, generated schemas, tests, release metadata and Git history.
+
+## History
+
+Older version plans, batch trackers, source audits and ADRs were useful while their changes were being implemented but became misleading once the architecture moved on. They are retained by Git history rather than kept in the active tree as competing sources of truth.
+
+If historical reasoning becomes relevant again, recover it from the commit that introduced the behavior and rewrite the still-valid principle into the appropriate evergreen document.

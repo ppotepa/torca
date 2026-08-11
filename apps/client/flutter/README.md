@@ -1,41 +1,17 @@
-# Torca Flutter client
+# Shared Flutter client
 
-This directory is the single Torca application client.
+This directory contains the single Torca presentation client used by the supported Windows and Android hosts.
 
-## Responsive composition
+Flutter owns responsive layout, navigation, interaction state and presentation preferences. It communicates with the Rust application through `EngineGateway` and the generated Torca contract. Production startup opens the native runtime; it does not silently replace it with an in-memory business implementation.
 
-There is no desktop UI implementation and mobile UI implementation to keep in sync. The shared widget tree adapts by available width:
+Keep platform detection/integration under `lib/platform` and native dynamic-library handling in the FFI gateway boundary. Do not move persistence, Tor, retry/outbox, pairing cryptography or secret ownership into Dart.
 
-- compact layouts use normal routed screens;
-- wide layouts render a conversation list and the same `ConversationPane` side by side;
-- all commands go through the same `EngineGateway`; root state comes from bounded Rust snapshots and
-  conversation history comes from paginated Rust queries.
-
-The default production gateway is `FfiEngineGateway`, backed by the shared `torca_native` Rust library. Test-only fakes live under `test/`; production never falls back to an in-memory engine when native startup fails.
-
-`NativeRuntimeWorker` owns the only presentation handle and serializes FFI calls. It currently polls a
-bounded root snapshot and notification cursor; it must not derive business state from cached message
-history. A Rust event-journal transport is planned as a replacement for frequent polling.
-
-## Platform targets
-
-`windows/` and `android/` are standard Flutter platform scaffolds generated automatically when required by `build.ps1`, `run.ps1` or `deploy.ps1`. They are build products rather than alternative application source trees.
-
-Android-specific security/lifecycle overlays are applied from `tools/build/overlays/android` after the standard Flutter scaffold is generated.
-
-## Supported SDK
-
-- CI Flutter baseline: `3.44.7`
-- local minimum Flutter: `3.44.0`
-- Dart minimum: `3.12.0`
-
-## Workflow
-
-From the repository root:
+Use the root workflows rather than manual per-platform build recipes:
 
 ```powershell
-./scripts/build.ps1
 ./scripts/run.ps1 -Target windows
-./scripts/run.ps1 -Target android -Device emulator-5554
-./scripts/deploy.ps1 -Target all
+./scripts/run.ps1 -Target android
+./scripts/build.ps1 -Target check
 ```
+
+See [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md) for ownership rules and [`../../../CONTRIBUTING.md`](../../../CONTRIBUTING.md) before changing cross-layer behavior.

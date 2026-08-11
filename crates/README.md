@@ -1,13 +1,18 @@
-# Rust libraries
+# Rust workspace
 
-Torca uses focused Rust libraries grouped by architectural role.
+Torca is a modular Rust application organized by architectural role rather than by operating system.
 
-- [`foundation`](foundation/README.md): stable low-level value types.
-- [`domains`](domains/README.md): mini-domain models and invariants.
-- [`application`](application/README.md): workflows, runtime coordination and projections.
-- [`infrastructure`](infrastructure/README.md): concrete adapters.
-- [`protocol`](protocol/README.md): versioned wire contracts.
-- [`platform`](platform/README.md): contract, native ABI and platform adapters.
+```text
+foundation/       stable low-level primitives
+domains/          product models and invariants
+protocol/         bounded wire/protocol contracts
+application/      use cases, ports, runtime coordination and read models
+infrastructure/   SQLCipher, crypto, Arti, files and network adapters
+platform/         presentation contract, native composition and OS services
+```
 
-A new crate requires a clear owner, public contract, dependency direction and independent reason to
-change. Do not introduce crates named `common`, `helpers`, `misc`, `manager` or `new-runtime`.
+The root [`Cargo.toml`](../Cargo.toml) is the source of truth for active workspace members. Directory README files describe only layer responsibilities; individual crate APIs should be documented in source/Rustdoc to avoid maintaining a second copy of rapidly changing implementation details.
+
+Dependency direction is checked by `scripts/modules/Torca.ArchitecturePolicy.ps1`. In particular, domains/protocols do not depend on upper implementation layers, and application code does not depend on infrastructure/platform implementations.
+
+See [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for the maintained system model.

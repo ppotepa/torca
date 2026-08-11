@@ -1,9 +1,7 @@
 # Services
 
-This directory contains server-side deployable units.
+Torca currently contains one server-side component: the [`relay`](relay) rendezvous service used during contact pairing.
 
-Version 0.1 has one service:
+The client remains the owner of user identity, conversation history and normal message delivery. Services must not gradually become an implicit central account, presence, mailbox or message-routing layer without an explicit product/architecture decision.
 
-- [`relay`](relay/README.md) — ephemeral rendezvous broker for pairing.
-
-Services must remain independent from client application internals and use shared protocol crates only where a wire contract is required.
+See the root [`ARCHITECTURE.md`](../ARCHITECTURE.md) for the client/relay boundary.

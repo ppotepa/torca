@@ -1,15 +1,11 @@
-# Mini-domain libraries
+# Domain libraries
 
-Each directory below represents a planned independent domain library.
+Domain crates define Torca's product concepts and invariants independently from persistence, networking and UI.
 
-- [`torca-identity`](torca-identity/README.md)
-- [`torca-contacts`](torca-contacts/README.md)
-- [`torca-pairing`](torca-pairing/README.md)
-- [`torca-conversations`](torca-conversations/README.md)
-- [`torca-messaging`](torca-messaging/README.md)
-- [`torca-receipts`](torca-receipts/README.md)
-- [`torca-attachments`](torca-attachments/README.md)
-- [`torca-presence`](torca-presence/README.md)
-- [`torca-notifications`](torca-notifications/README.md)
+The active domains cover identity, contacts, conversations, pairing, messaging, receipts, attachments, presence and notification intent. Each domain should own its valid states/transitions and the ports required by those semantics.
 
-A domain crate owns vocabulary, invariants, transitions, commands, events, errors and required ports. It must remain testable without SQLite, Tor, Flutter or operating-system services.
+Domains must not depend on SQLCipher, Arti, sockets, Flutter, native ABI or OS APIs. This boundary is enforced by the repository architecture policy.
+
+Presence is derived from observed peer/activity facts rather than a central presence service. Notification domain code decides privacy-safe notification intent; platform code performs OS delivery.
+
+See [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) for cross-layer flows. Individual domain APIs are documented in their Rust source rather than maintained as parallel per-crate READMEs.
