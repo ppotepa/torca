@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -73,44 +76,94 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
 
 /// Process-wide Tor, relay and P2P monitor. Payloads never enter this widget;
 /// only monotonic TX/RX counters and health projections cross the ABI.
-class RuntimeNetworkStatus extends StatelessWidget {
+class RuntimeNetworkStatus extends StatefulWidget {
   const RuntimeNetworkStatus({required this.snapshot, super.key});
 
   final AppSnapshotDto snapshot;
 
   @override
+  State<RuntimeNetworkStatus> createState() => _RuntimeNetworkStatusState();
+}
+
+class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
+  static const _staleAfterTicks = 3;
+  var _ticksSinceObservation = 0;
+  Timer? _freshnessTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _freshnessTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _ticksSinceObservation += 1);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant RuntimeNetworkStatus oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.snapshot, widget.snapshot)) {
+      _ticksSinceObservation = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _freshnessTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 700;
+    final stale = _ticksSinceObservation >= _staleAfterTicks;
     return Semantics(
       label:
-          'Network status: Tor ${snapshot.transport.tor.state}, relay ${snapshot.transport.relay.state}, P2P ${snapshot.transport.peer.state}',
+          'Network status: Tor ${widget.snapshot.transport.tor.state}, relay ${widget.snapshot.transport.relay.state}, P2P ${widget.snapshot.transport.peer.state}${stale ? ', monitoring stale' : ''}',
       child: Padding(
         padding: const EdgeInsets.only(right: 4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
+            if (widget.snapshot.pendingOperations.isNotEmpty) ...<Widget>[
+              Tooltip(
+                message:
+                    '${widget.snapshot.pendingOperations.length} operation(s) waiting for connectivity',
+                child: Badge(
+                  label: Text('${widget.snapshot.pendingOperations.length}'),
+                  child: Icon(
+                    context.torcaIcons.reconnect,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.tertiary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 7),
+            ],
             _TransportLight(
               key: const ValueKey<String>('tor-status-light'),
               label: 'Tor',
-              icon: Icons.shield_outlined,
-              indicator: snapshot.transport.tor,
+              icon: context.torcaIcons.identity,
+              indicator: widget.snapshot.transport.tor,
               showLabel: wide,
+              stale: stale,
             ),
             const SizedBox(width: 4),
             _TransportLight(
               key: const ValueKey<String>('peer-status-light'),
               label: 'P2P',
-              icon: Icons.lan_outlined,
-              indicator: snapshot.transport.peer,
+              icon: context.torcaIcons.online,
+              indicator: widget.snapshot.transport.peer,
               showLabel: wide,
+              stale: stale,
             ),
             const SizedBox(width: 4),
             _TransportLight(
               key: const ValueKey<String>('relay-status-light'),
               label: 'Relay',
-              icon: Icons.hub_outlined,
-              indicator: snapshot.transport.relay,
+              icon: context.torcaIcons.link,
+              indicator: widget.snapshot.transport.relay,
               showLabel: wide,
+              stale: stale,
             ),
           ],
         ),
@@ -146,6 +199,7 @@ class _TransportLight extends StatefulWidget {
     required this.icon,
     required this.indicator,
     required this.showLabel,
+    required this.stale,
     super.key,
   });
 
@@ -153,6 +207,7 @@ class _TransportLight extends StatefulWidget {
   final IconData icon;
   final TransportIndicatorDto indicator;
   final bool showLabel;
+  final bool stale;
 
   @override
   State<_TransportLight> createState() => _TransportLightState();
@@ -182,12 +237,21 @@ class _TransportLightState extends State<_TransportLight>
   @override
   void didUpdateWidget(covariant _TransportLight oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.indicator.txSequence != widget.indicator.txSequence &&
-        widget.indicator.txSequence > 0)
+    final txChanged =
+        oldWidget.indicator.txSequence != widget.indicator.txSequence &&
+        widget.indicator.txSequence > 0;
+    final rxChanged =
+        oldWidget.indicator.rxSequence != widget.indicator.rxSequence &&
+        widget.indicator.rxSequence > 0;
+    if (txChanged) {
       _txPulse.forward(from: 0);
-    if (oldWidget.indicator.rxSequence != widget.indicator.rxSequence &&
-        widget.indicator.rxSequence > 0)
+    }
+    if (rxChanged) {
+      // RX is an independent direction. Do not delay it behind TX: a single
+      // snapshot may legitimately contain both directions, and the LEDs must
+      // reflect the observed counters rather than an inferred request order.
       _rxPulse.forward(from: 0);
+    }
     _syncBreathing();
     if (oldWidget.indicator.state != widget.indicator.state &&
         _isAlarmState(widget.indicator.state)) {
@@ -214,8 +278,15 @@ class _TransportLightState extends State<_TransportLight>
 
   @override
   Widget build(BuildContext context) {
-    final color = _color(context, widget.indicator.state);
-    final status = _statusLabel(widget.indicator.state);
+    final stateColor = widget.stale
+        ? Theme.of(context).colorScheme.outline
+        : _color(context, widget.indicator.state);
+    final iconColor = widget.stale
+        ? Theme.of(context).colorScheme.outline
+        : Theme.of(context).colorScheme.onSurface;
+    final status = widget.stale
+        ? 'monitoring stale'
+        : _statusLabel(widget.indicator.state);
     final latency = widget.indicator.latencyMs == null
         ? ''
         : ' · ${widget.indicator.latencyMs} ms';
@@ -234,48 +305,18 @@ class _TransportLightState extends State<_TransportLight>
             _rxPulse,
           ]),
           builder: (context, child) {
-            final glow =
-                (_breathing.value * 0.35) +
-                ((_txPulse.value + _rxPulse.value) * 0.35);
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                color: color.withValues(alpha: 0.10 + glow.clamp(0, 0.35)),
-                border: Border.all(
-                  color: color.withValues(alpha: 0.38 + glow.clamp(0, 0.45)),
-                ),
-                boxShadow: <BoxShadow>[
-                  BoxShadow(
-                    color: color.withValues(
-                      alpha: (0.10 + glow * 0.32).clamp(0, 0.42),
-                    ),
-                    blurRadius: 8 + glow * 10,
-                    spreadRadius: glow * 1.5,
-                  ),
-                ],
-              ),
+            final connecting =
+                !widget.stale && _isPulsingLink(widget.indicator.state);
+            final failed =
+                !widget.stale && _isAlarmState(widget.indicator.state);
+            final linkActive =
+                !widget.stale && _linkActive(widget.indicator.state);
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Stack(
-                    alignment: Alignment.center,
-                    children: <Widget>[
-                      Icon(widget.icon, size: 17, color: color),
-                      Positioned(
-                        right: -1,
-                        bottom: -1,
-                        child: Container(
-                          width: 7 + (glow * 4),
-                          height: 7 + (glow * 4),
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  Icon(widget.icon, size: 17, color: iconColor),
                   if (widget.showLabel) ...<Widget>[
                     const SizedBox(width: 5),
                     Text(
@@ -285,18 +326,24 @@ class _TransportLightState extends State<_TransportLight>
                   ],
                   const SizedBox(width: 5),
                   _EthernetLed(
+                    key: ValueKey<String>('${widget.label}-link-led'),
                     label: 'LINK',
-                    active: _linkActive(widget.indicator.state),
-                    color: color,
+                    active:
+                        linkActive ||
+                        failed ||
+                        (connecting && _breathing.value > 0.52),
+                    color: stateColor,
                   ),
                   const SizedBox(width: 3),
                   _EthernetLed(
+                    key: ValueKey<String>('${widget.label}-tx-led'),
                     label: 'TX',
                     active: _txPulse.isAnimating,
                     color: const Color(0xFF76FF03),
                   ),
                   const SizedBox(width: 3),
                   _EthernetLed(
+                    key: ValueKey<String>('${widget.label}-rx-led'),
                     label: 'RX',
                     active: _rxPulse.isAnimating,
                     color: const Color(0xFFFFC107),
@@ -316,6 +363,7 @@ class _EthernetLed extends StatelessWidget {
     required this.label,
     required this.active,
     required this.color,
+    super.key,
   });
 
   final String label;
@@ -330,7 +378,9 @@ class _EthernetLed extends StatelessWidget {
       height: 9,
       decoration: BoxDecoration(
         color: active ? color : const Color(0xFF171A18),
-        borderRadius: BorderRadius.circular(1),
+        borderRadius: BorderRadius.circular(
+          context.torcaTokens.terminal ? 0 : 1,
+        ),
         boxShadow: active
             ? <BoxShadow>[
                 BoxShadow(color: color.withValues(alpha: 0.72), blurRadius: 5),
@@ -352,11 +402,11 @@ bool _isAlarmState(String state) =>
     state == 'unreachable' ||
     state == 'disconnected';
 
-bool _linkActive(String state) => state != 'inactive' && state != 'stopped';
+bool _linkActive(String state) => state == 'ready' || state == 'healthy';
 
 String _statusLabel(String state) => switch (state) {
   'ready' || 'healthy' => 'connected',
-  'starting' || 'checking' || 'connecting' => 'verifying connection',
+  'starting' || 'checking' || 'connecting' => 'connecting',
   'degraded' => 'degraded',
   'failed' || 'unreachable' => 'unavailable',
   'inactive' => 'inactive',

@@ -139,6 +139,15 @@ pub trait ConversationRepository {
 pub struct InMemoryConversationRepository {
     conversations: BTreeMap<ConversationId, DirectConversation>,
 }
+impl InMemoryConversationRepository {
+    /// Removes the conversation belonging to a deleted local relationship.
+    pub fn remove_for_contact(&mut self, contact_id: ContactId) -> Option<DirectConversation> {
+        let id = self.conversations.iter().find_map(|(id, conversation)| {
+            (conversation.contact_id() == contact_id).then_some(*id)
+        })?;
+        self.conversations.remove(&id)
+    }
+}
 impl ConversationRepository for InMemoryConversationRepository {
     fn insert(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
         if self.conversations.contains_key(&conversation.id()) {

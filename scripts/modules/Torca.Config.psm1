@@ -7,6 +7,7 @@ function Get-TorcaPaths {
     [pscustomobject]@{
         RepoRoot = $RepoRoot; RuntimeRoot = $runtime
         StateFile = Join-Path $runtime 'state.json'
+        LastDeployFile = Join-Path $runtime 'last-deploy.json'
         BuildManifestRoot = Join-Path $runtime 'manifests'
         DeviceManifestRoot = Join-Path $runtime 'devices'
         ManifestFile = Join-Path $runtime 'build-manifest.json'
@@ -14,6 +15,7 @@ function Get-TorcaPaths {
         RelayLog = Join-Path $runtime 'logs/relay.log'
         RelayErrorLog = Join-Path $runtime 'logs/relay.error.log'
         RelayEndpoint = Join-Path $runtime 'stack/relay_endpoint.txt'
+        RelayReady = Join-Path $runtime 'stack/relay_ready.txt'
         ArtifactsRoot = Join-Path $RepoRoot 'artifacts'
         RelayExecutable = Join-Path $RepoRoot 'target/release/torca-relay.exe'
         DockerCompose = Join-Path $RepoRoot 'infra/docker/compose.yml'
@@ -43,7 +45,7 @@ function Get-TorcaDeviceManifestPath {
 }
 
 function Get-TorcaDefaultOptions {
-    [pscustomobject]@{ OnionPolicy = 'Ensure'; ClientDataPolicy = 'Preserve'; BuildPolicy = 'IfRequired'; InstallPolicy = 'Selected'; RunPolicy = 'Restart'; Readiness = 'Strict' }
+    [pscustomobject]@{ DeploymentScope = 'ClientsAndRelay'; OnionPolicy = 'Ensure'; RelayBuildPolicy = 'IfRequired'; ClientDataPolicy = 'Preserve'; BuildPolicy = 'IfRequired'; InstallPolicy = 'Selected'; RunPolicy = 'Restart'; Readiness = 'Strict' }
 }
 
 Export-ModuleMember -Function Get-TorcaPaths, Initialize-TorcaPaths, Get-TorcaBuildManifestPath, Get-TorcaDeviceManifestPath, Get-TorcaDefaultOptions

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('status','start','restart','rotate','stop')]
+    [ValidateSet('status','start','restart','repair','rotate','stop')]
     [string]$Action = 'status',
     [ValidateSet('auto','docker','process')]
     [string]$Provider = 'auto'

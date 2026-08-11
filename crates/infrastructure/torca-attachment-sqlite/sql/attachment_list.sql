@@ -1,4 +1,6 @@
-SELECT attachment_id, message_id, name, media_type, size_bytes, status,
-       created_at_ms, updated_at_ms, attempt_count, transfer_offset
-FROM attachments
-ORDER BY updated_at_ms, attachment_id;
+SELECT a.attachment_id, a.message_id, a.name, a.media_type, a.size_bytes, a.status,
+       a.created_at_ms, a.updated_at_ms, a.attempt_count, a.transfer_offset,
+       m.direction
+FROM attachments AS a
+JOIN messages AS m ON m.message_id = a.message_id
+ORDER BY a.updated_at_ms, a.attachment_id;

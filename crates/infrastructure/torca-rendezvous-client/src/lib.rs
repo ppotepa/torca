@@ -14,15 +14,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use torca_connectivity::{
     ConnectivityObserver, OperationPhase, TransportDirection, TransportLayer, TransportOperation,
 };
-use torca_foundation::Timestamp;
+use torca_foundation::{OpaqueId, Timestamp};
 
 use torca_relay_protocol::{
-    RelayCode, RelayProtocolError, RelayRequest, RelayResponse, RelaySideToken,
-    RelaySlotCapability, RelaySlotId,
+    RelayCode, RelayDelivery, RelayMessageId, RelayOperationId, RelayProtocolError, RelayRequest,
+    RelayResponse, RelaySequence, RelaySideToken, RelaySlotCapability, RelaySlotId,
 };
 
 pub use tcp::TcpRelayTransport;
-pub use tor::TorRelayTransport;
+pub use tor::{SharedTorRelayTransport, TorRelayTransport};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelayTransportFailureKind {
@@ -45,6 +45,7 @@ impl fmt::Display for RelayTransportError {
 impl std::error::Error for RelayTransportError {}
 
 pub trait RelayTransport {
+    fn invalidate(&mut self);
     fn reconnect(&mut self) -> Result<(), RelayTransportError>;
     fn exchange(
         &mut self,
@@ -95,6 +96,9 @@ impl<T> RendezvousClient<T> {
 }
 
 impl<T: RelayTransport> RendezvousClient<T> {
+    pub fn network_changed(&mut self) {
+        self.transport.invalidate();
+    }
     pub fn open(
         &mut self,
         code: RelayCode,
@@ -105,6 +109,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         ticket: [u8; 16],
     ) -> Result<(RelaySlotId, torca_foundation::Timestamp), RendezvousClientError> {
         let response = self.exchange(RelayRequest::Open {
+            operation_id: RelayOperationId(slot_capability.0),
             code,
             expires_at,
             creator_blob,
@@ -126,6 +131,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         ticket: Option<[u8; 16]>,
     ) -> Result<(RelaySlotId, torca_foundation::Timestamp, Vec<u8>), RendezvousClientError> {
         let response = self.exchange(RelayRequest::Join {
+            operation_id: RelayOperationId(joiner_token.0),
             code,
             joiner_blob,
             joiner_token,
@@ -141,11 +147,18 @@ impl<T: RelayTransport> RendezvousClient<T> {
 
     pub fn push(
         &mut self,
+        message_id: OpaqueId,
         slot_id: RelaySlotId,
         token: RelaySideToken,
         blob: Vec<u8>,
     ) -> Result<(), RendezvousClientError> {
-        let response = self.exchange(RelayRequest::Push { slot_id, token, blob })?;
+        let response = self.exchange(RelayRequest::Push {
+            operation_id: RelayOperationId(message_id),
+            message_id: RelayMessageId(message_id),
+            slot_id,
+            token,
+            blob,
+        })?;
         match response {
             RelayResponse::Accepted => Ok(()),
             _ => Err(RendezvousClientError::UnexpectedResponse),
@@ -156,10 +169,24 @@ impl<T: RelayTransport> RendezvousClient<T> {
         &mut self,
         slot_id: RelaySlotId,
         token: RelaySideToken,
-    ) -> Result<Vec<Vec<u8>>, RendezvousClientError> {
-        let response = self.exchange(RelayRequest::Poll { slot_id, token })?;
+        after: RelaySequence,
+    ) -> Result<Vec<RelayDelivery>, RendezvousClientError> {
+        let response = self.exchange(RelayRequest::Poll { slot_id, token, after })?;
         match response {
-            RelayResponse::Blobs(blobs) => Ok(blobs),
+            RelayResponse::Deliveries(deliveries) => Ok(deliveries),
+            _ => Err(RendezvousClientError::UnexpectedResponse),
+        }
+    }
+
+    pub fn ack(
+        &mut self,
+        slot_id: RelaySlotId,
+        token: RelaySideToken,
+        up_to: RelaySequence,
+    ) -> Result<(), RendezvousClientError> {
+        let response = self.exchange(RelayRequest::Ack { slot_id, token, up_to })?;
+        match response {
+            RelayResponse::Acked(acked) if acked == up_to => Ok(()),
             _ => Err(RendezvousClientError::UnexpectedResponse),
         }
     }
@@ -180,11 +207,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         self.observe(Some(TransportDirection::Tx), OperationPhase::Started);
         let result = match self.transport.exchange(&request, self.timeout) {
             Ok(response) => checked_response(response),
-            Err(error) if error.request_was_sent => {
-                let _ = self.transport.reconnect();
-                Err(RendezvousClientError::OutcomeUnknown(error.kind))
-            }
-            Err(first_error) => {
+            Err(first_error) if !matches!(request, RelayRequest::Close { .. }) => {
                 self.transport.reconnect().map_err(RendezvousClientError::Transport)?;
                 let response =
                     self.transport.exchange(&request, self.timeout).map_err(|error| {
@@ -196,15 +219,34 @@ impl<T: RelayTransport> RendezvousClient<T> {
                     })?;
                 checked_response(response)
             }
+            Err(error) if error.request_was_sent => {
+                let _ = self.transport.reconnect();
+                Err(RendezvousClientError::OutcomeUnknown(error.kind))
+            }
+            Err(_first_error) => {
+                self.transport.reconnect().map_err(RendezvousClientError::Transport)?;
+                self.transport
+                    .exchange(&request, self.timeout)
+                    .map_err(RendezvousClientError::Transport)
+                    .and_then(checked_response)
+            }
         };
-        self.observe(
-            Some(TransportDirection::Tx),
-            if result.is_ok() { OperationPhase::Completed } else { OperationPhase::Failed },
-        );
-        if result.is_ok() {
-            self.observe(Some(TransportDirection::Rx), OperationPhase::Completed);
+        match result {
+            Ok(response) => {
+                // TX is recorded when the request starts. Complete the
+                // round-trip without a direction, then emit RX only after a
+                // response was decoded. This keeps the LED channels causal
+                // and prevents a successful response from masquerading as a
+                // second TX event.
+                self.observe(None, OperationPhase::Completed);
+                self.observe(Some(TransportDirection::Rx), OperationPhase::Completed);
+                Ok(response)
+            }
+            Err(error) => {
+                self.observe(Some(TransportDirection::Tx), OperationPhase::Failed);
+                Err(error)
+            }
         }
-        result
     }
 
     fn observe(&self, direction: Option<TransportDirection>, phase: OperationPhase) {
@@ -252,6 +294,10 @@ impl ScriptedRelayTransport {
     }
 }
 impl RelayTransport for ScriptedRelayTransport {
+    fn invalidate(&mut self) {
+        self.connected = false;
+    }
+
     fn reconnect(&mut self) -> Result<(), RelayTransportError> {
         self.connected = true;
         Ok(())
@@ -274,5 +320,54 @@ impl RelayTransport for ScriptedRelayTransport {
                 request_was_sent: false,
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use torca_foundation::OpaqueId;
+    use torca_relay_protocol::{RelaySideToken, RelaySlotId};
+
+    #[test]
+    fn retries_an_idempotent_request_after_a_lost_response() {
+        let mut transport = ScriptedRelayTransport::default();
+        transport.reconnect().expect("initial connection");
+        // The relay may have committed the first request and the return path
+        // may then disappear. The caller receives a replay of exactly the
+        // same request; relay operation IDs make mutation requests safe and
+        // Poll itself is non-destructive.
+        transport.push_response(Err(RelayTransportError {
+            kind: RelayTransportFailureKind::Disconnected,
+            request_was_sent: true,
+        }));
+        transport.push_response(Ok(RelayResponse::Deliveries(Vec::new())));
+        let mut client = RendezvousClient::new(transport, Duration::from_millis(25));
+        client
+            .poll(
+                RelaySlotId(OpaqueId::from_u128(1)),
+                RelaySideToken(OpaqueId::from_u128(2)),
+                RelaySequence(0),
+            )
+            .expect("replayed poll");
+        assert_eq!(client.transport.requests().len(), 2);
+        assert_eq!(client.transport.requests()[0], client.transport.requests()[1]);
+    }
+
+    #[test]
+    fn close_is_not_replayed_after_an_unknown_outcome() {
+        let mut transport = ScriptedRelayTransport::default();
+        transport.reconnect().expect("initial connection");
+        transport.push_response(Err(RelayTransportError {
+            kind: RelayTransportFailureKind::Disconnected,
+            request_was_sent: true,
+        }));
+        let mut client = RendezvousClient::new(transport, Duration::from_millis(25));
+        let result = client.close(
+            RelaySlotId(OpaqueId::from_u128(1)),
+            torca_relay_protocol::RelaySlotCapability(OpaqueId::from_u128(3)),
+        );
+        assert!(matches!(result, Err(RendezvousClientError::OutcomeUnknown(_))));
+        assert_eq!(client.transport.requests().len(), 1);
     }
 }

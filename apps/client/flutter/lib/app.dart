@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -8,7 +10,6 @@ import 'localization/app_locale_mode.dart';
 import 'localization/torca_strings.dart';
 import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
-import 'screens/deep_link_join_screen.dart';
 import 'screens/diagnostics_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/pairing_screen.dart';
@@ -41,6 +42,8 @@ class _TorcaAppState extends State<TorcaApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   int _handledPairingRequest = 0;
   final Set<String> _pairingPromptsShown = <String>{};
+  final Map<String, PairingState> _pairingStates = <String, PairingState>{};
+  bool _pairingBaselineCaptured = false;
   bool _pairingPromptOpen = false;
 
   @override
@@ -73,6 +76,8 @@ class _TorcaAppState extends State<TorcaApp> {
     oldWidget.gateway.snapshots.removeListener(_pairingSnapshotChanged);
     widget.gateway.snapshots.addListener(_pairingSnapshotChanged);
     _handledPairingRequest = widget.navigation.newPairingRequest.value;
+    _pairingStates.clear();
+    _pairingBaselineCaptured = false;
   }
 
   @override
@@ -124,9 +129,14 @@ class _TorcaAppState extends State<TorcaApp> {
       return;
     }
     widget.navigation.clearPairingRequest();
-    navigator.push<void>(
-      MaterialPageRoute(
-        builder: (_) => DeepLinkJoinScreen(gateway: widget.gateway, code: code),
+    // Deep links must use the exact same join composer as Contacts. The old
+    // route rendered a second, legacy screen on Android and was the source of
+    // the keyboard/input and layout divergence between platforms.
+    unawaited(
+      showJoinInvitationModal(
+        navigator.context,
+        widget.gateway,
+        initialCode: code,
       ),
     );
   }
@@ -151,9 +161,35 @@ class _TorcaAppState extends State<TorcaApp> {
           pairing.typedState == PairingState.awaitingApproval);
 
   void _pairingSnapshotChanged() {
+    final pairings = widget.gateway.snapshots.value.pairings;
+    if (_pairingBaselineCaptured) {
+      for (final pairing in pairings) {
+        final previous = _pairingStates[pairing.id];
+        if (previous != null &&
+            previous != PairingState.completed &&
+            pairing.typedState == PairingState.completed) {
+          final name = pairing.remoteDisplayName?.trim();
+          final label = name == null || name.isEmpty ? 'Contact' : name;
+          final context = _navigatorKey.currentContext;
+          if (mounted && context != null) {
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(content: Text('$label accepted your invitation')),
+              );
+          }
+        }
+      }
+    }
+    _pairingStates
+      ..clear()
+      ..addEntries(
+        pairings.map((pairing) => MapEntry(pairing.id, pairing.typedState)),
+      );
+    _pairingBaselineCaptured = true;
     if (!mounted || _pairingPromptOpen) return;
     PairingDto? candidate;
-    for (final pairing in widget.gateway.snapshots.value.pairings) {
+    for (final pairing in pairings) {
       if (_needsPairingDecision(pairing) &&
           !_pairingPromptsShown.contains(pairing.id)) {
         candidate = pairing;
@@ -179,7 +215,11 @@ class _TorcaAppState extends State<TorcaApp> {
     try {
       await showDialog<void>(
         context: navigator.context,
-        barrierDismissible: false,
+        // The prompt is an attention surface, not a modal lock. Users must
+        // be able to dismiss it with a tap outside or the system back action;
+        // the pairing remains in the Invitations list until explicitly
+        // accepted, rejected or cancelled.
+        barrierDismissible: true,
         builder: (_) =>
             IncomingPairingDialog(gateway: widget.gateway, pairing: pairing),
       );
@@ -190,9 +230,14 @@ class _TorcaAppState extends State<TorcaApp> {
   }
 
   void _openPairing() {
-    _navigatorKey.currentState?.push<void>(
-      MaterialPageRoute(builder: (_) => PairingScreen(gateway: widget.gateway)),
-    );
+    // Pairing has two explicit product flows: joining belongs to the global
+    // add-contact action, while creating belongs exclusively to Invitations.
+    // Do not route through the legacy combined PairingScreen; it reintroduces
+    // the old Create/Join UI on Android and desktop shortcuts.
+    final context = _navigatorKey.currentContext;
+    if (context != null) {
+      unawaited(showJoinInvitationModal(context, widget.gateway));
+    }
   }
 
   void _openSettings() {
@@ -234,6 +279,7 @@ class _TorcaAppState extends State<TorcaApp> {
       theme: AppTheme.light(widget.preferences.appearance),
       darkTheme: AppTheme.dark(widget.preferences.appearance),
       themeMode: AppTheme.materialMode(widget.preferences.themeMode),
+      themeAnimationDuration: Duration.zero,
       builder: (context, child) => RuntimeStatusScope(
         gateway: widget.gateway,
         child: PreferencesScope(

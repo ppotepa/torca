@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
@@ -10,6 +12,7 @@ class AttachmentTile extends StatelessWidget {
     required this.onCancel,
     required this.onOpen,
     required this.onSave,
+    this.loadPreview,
     this.operationBusy = false,
     super.key,
   });
@@ -20,6 +23,7 @@ class AttachmentTile extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onSave;
   final bool operationBusy;
+  final Future<String?> Function()? loadPreview;
 
   @override
   Widget build(BuildContext context) {
@@ -44,9 +48,16 @@ class AttachmentTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          if (attachment.mediaType.startsWith('image/')) ...<Widget>[
+            _AttachmentImagePreview(
+              attachmentId: attachment.id,
+              loadPreview: available ? loadPreview : null,
+            ),
+            const SizedBox(height: 8),
+          ],
           Row(
             children: <Widget>[
-              Icon(_iconFor(attachment.mediaType), size: 22),
+              Icon(_iconFor(context, attachment.mediaType), size: 22),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -60,7 +71,8 @@ class AttachmentTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${formatBytes(attachment.size)} · ${_statusLabel(attachment.status)}',
+                      '${formatBytes(attachment.size)} · ${_statusLabel(attachment.status, attachment.direction)}'
+                      '${attachment.attemptCount > 0 ? ' · attempt ${attachment.attemptCount}' : ''}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -95,25 +107,25 @@ class AttachmentTile extends StatelessWidget {
               if (available)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onOpen,
-                  icon: const Icon(Icons.open_in_new),
+                  icon: Icon(context.torcaIcons.open),
                   label: const Text('Open'),
                 ),
               if (available)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onSave,
-                  icon: const Icon(Icons.save_alt),
+                  icon: Icon(context.torcaIcons.save),
                   label: const Text('Save as'),
                 ),
               if (failed)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onRetry,
-                  icon: const Icon(Icons.refresh),
+                  icon: Icon(context.torcaIcons.retry),
                   label: const Text('Retry'),
                 ),
               if (!terminal)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onCancel,
-                  icon: const Icon(Icons.close),
+                  icon: Icon(context.torcaIcons.close),
                   label: const Text('Cancel'),
                 ),
             ],
@@ -123,25 +135,104 @@ class AttachmentTile extends StatelessWidget {
     );
   }
 
-  static IconData _iconFor(String mediaType) {
-    if (mediaType.startsWith('image/')) return Icons.image_outlined;
-    if (mediaType.startsWith('video/')) return Icons.movie_outlined;
-    if (mediaType.startsWith('audio/')) return Icons.audio_file_outlined;
-    if (mediaType == 'application/pdf') return Icons.picture_as_pdf_outlined;
-    if (mediaType.startsWith('text/')) return Icons.description_outlined;
-    return Icons.insert_drive_file_outlined;
+  static IconData _iconFor(BuildContext context, String mediaType) {
+    if (mediaType.startsWith('image/')) return context.torcaIcons.image;
+    if (mediaType.startsWith('video/')) return context.torcaIcons.video;
+    if (mediaType.startsWith('audio/')) return context.torcaIcons.audio;
+    if (mediaType == 'application/pdf') return context.torcaIcons.pdf;
+    if (mediaType.startsWith('text/') || mediaType == 'application/json') {
+      return context.torcaIcons.textFile;
+    }
+    if (mediaType.contains('zip') || mediaType.contains('gzip')) {
+      return context.torcaIcons.archive;
+    }
+    if (mediaType.contains('word') ||
+        mediaType.contains('excel') ||
+        mediaType.contains('powerpoint') ||
+        mediaType.contains('officedocument')) {
+      return context.torcaIcons.document;
+    }
+    return context.torcaIcons.file;
   }
 
-  static String _statusLabel(String status) => switch (status) {
-    'queued' => 'Queued',
-    'preparing' => 'Preparing',
-    'sending' => 'Sending',
-    'receiving' => 'Receiving',
-    'available' => 'Available',
-    'failed' => 'Transfer failed',
-    'cancelled' => 'Cancelled',
-    _ => status,
-  };
+  static String _statusLabel(String status, String direction) =>
+      switch (status) {
+        'prepared' => 'Preparing secure copy',
+        'encrypting' => 'Encrypting',
+        'queued' =>
+          direction == 'inbound' ? 'Waiting to receive' : 'Waiting for peer',
+        'transferring' || 'sending' =>
+          direction == 'inbound' ? 'Receiving securely' : 'Sending securely',
+        'receiving' => 'Receiving securely',
+        'available' => 'Verified on device',
+        'failed' => 'Transfer failed',
+        'cancelled' => 'Cancelled',
+        _ => status,
+      };
+}
+
+class _AttachmentImagePreview extends StatefulWidget {
+  const _AttachmentImagePreview({
+    required this.attachmentId,
+    required this.loadPreview,
+  });
+
+  final String attachmentId;
+  final Future<String?> Function()? loadPreview;
+
+  @override
+  State<_AttachmentImagePreview> createState() =>
+      _AttachmentImagePreviewState();
+}
+
+class _AttachmentImagePreviewState extends State<_AttachmentImagePreview> {
+  Future<String?>? _path;
+
+  @override
+  void initState() {
+    super.initState();
+    _path = widget.loadPreview?.call();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AttachmentImagePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.attachmentId != widget.attachmentId ||
+        (oldWidget.loadPreview == null && widget.loadPreview != null)) {
+      _path = widget.loadPreview?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+    dimension: 128,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: _path == null
+          ? Icon(context.torcaIcons.image, size: 32)
+          : FutureBuilder<String?>(
+              future: _path,
+              builder: (context, snapshot) {
+                final path = snapshot.data;
+                if (path == null)
+                  return Icon(context.torcaIcons.image, size: 32);
+                return ClipRect(
+                  child: Image.file(
+                    File(path),
+                    width: 128,
+                    height: 128,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) =>
+                        Icon(context.torcaIcons.image, size: 32),
+                  ),
+                );
+              },
+            ),
+    ),
+  );
 }
 
 String formatBytes(int bytes) {

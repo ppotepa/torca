@@ -67,5 +67,17 @@ class TorcaTokens extends ThemeExtension<TorcaTokens> {
 double lerpDouble(double a, double b, double t) => a + (b - a) * t;
 
 extension TorcaTokenContext on BuildContext {
-  TorcaTokens get torcaTokens => Theme.of(this).extension<TorcaTokens>()!;
+  TorcaTokens get torcaTokens =>
+      Theme.of(this).extension<TorcaTokens>() ??
+      const TorcaTokens(
+        terminal: false,
+        compact: false,
+        radiusSmall: 6,
+        radiusMedium: 8,
+        radiusLarge: 12,
+        spaceUnit: 6,
+        listTileHeight: 64,
+        borderWidth: .5,
+        animationDuration: Duration(milliseconds: 180),
+      );
 }

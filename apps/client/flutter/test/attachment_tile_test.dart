@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/attachment_tile.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 void main() {
   test('byte formatter is human readable', () {
@@ -38,9 +39,10 @@ void main() {
     );
 
     expect(find.text('photo.jpg'), findsOneWidget);
+    expect(find.textContaining('Sending securely'), findsOneWidget);
     expect(find.textContaining('4.00 MiB'), findsWidgets);
     expect(find.text('1.00 MiB / 4.00 MiB'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
-    expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+    expect(find.byIcon(TorcaIconSet.modern.image), findsNWidgets(2));
   });
 }

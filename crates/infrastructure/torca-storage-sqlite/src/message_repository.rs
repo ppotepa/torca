@@ -118,6 +118,9 @@ impl SqlCipherMessageStore {
                     created_at_ms: row.get(5)?,
                     updated_at_ms: row.get(6)?,
                     attempt_count: row.get(7)?,
+                    sent_at_ms: row.get(8)?,
+                    delivered_at_ms: row.get(9)?,
+                    read_at_ms: row.get(10)?,
                 })
             })
             .map_err(|_| MessageError::RepositoryFailure)?;
@@ -163,6 +166,9 @@ impl SqlCipherMessageStore {
                     created_at_ms: row.get(5)?,
                     updated_at_ms: row.get(6)?,
                     attempt_count: row.get(7)?,
+                    sent_at_ms: row.get(8)?,
+                    delivered_at_ms: row.get(9)?,
+                    read_at_ms: row.get(10)?,
                 })
             })
             .map_err(|_| MessageError::RepositoryFailure)?;
@@ -192,6 +198,9 @@ impl SqlCipherMessageStore {
                     row.get::<_, Option<i64>>(8)?,
                     row.get::<_, Option<i64>>(9)?,
                     row.get::<_, Option<i64>>(10)?,
+                    row.get::<_, Option<i64>>(11)?,
+                    row.get::<_, Option<i64>>(12)?,
+                    row.get::<_, Option<i64>>(13)?,
                 ))
             })
             .map_err(|_| MessageError::RepositoryFailure)?;
@@ -210,6 +219,9 @@ impl SqlCipherMessageStore {
                 created_at_ms,
                 updated_at_ms,
                 attempt_count,
+                sent_at_ms,
+                delivered_at_ms,
+                read_at_ms,
             ) = row.map_err(|_| MessageError::RepositoryFailure)?;
             let conversation_id =
                 ConversationId::from_opaque(OpaqueId::from_bytes(fixed_16(conversation.clone())?));
@@ -225,6 +237,9 @@ impl SqlCipherMessageStore {
                         created_at_ms: created_at_ms.ok_or(MessageError::RepositoryFailure)?,
                         updated_at_ms: updated_at_ms.ok_or(MessageError::RepositoryFailure)?,
                         attempt_count: attempt_count.ok_or(MessageError::RepositoryFailure)?,
+                        sent_at_ms,
+                        delivered_at_ms,
+                        read_at_ms,
                     }
                     .into_message()?,
                 ),
@@ -276,6 +291,9 @@ impl MessageRepository for SqlCipherMessageStore {
                         created_at_ms: row.get(5)?,
                         updated_at_ms: row.get(6)?,
                         attempt_count: row.get(7)?,
+                        sent_at_ms: row.get(8)?,
+                        delivered_at_ms: row.get(9)?,
+                        read_at_ms: row.get(10)?,
                     })
                 },
             )
@@ -314,6 +332,9 @@ impl MessageRepository for SqlCipherMessageStore {
                     created_at_ms: row.get(5)?,
                     updated_at_ms: row.get(6)?,
                     attempt_count: row.get(7)?,
+                    sent_at_ms: row.get(8)?,
+                    delivered_at_ms: row.get(9)?,
+                    read_at_ms: row.get(10)?,
                 })
             })
             .map_err(|_| MessageError::RepositoryFailure)?;
@@ -338,6 +359,9 @@ impl MessageRepository for SqlCipherMessageStore {
                     created_at_ms: row.get(6)?,
                     updated_at_ms: row.get(7)?,
                     attempt_count: row.get(8)?,
+                    sent_at_ms: row.get(9)?,
+                    delivered_at_ms: row.get(10)?,
+                    read_at_ms: row.get(11)?,
                 })
             })
             .map_err(|_| MessageError::RepositoryFailure)?;
@@ -355,6 +379,9 @@ struct MessageRow {
     created_at_ms: i64,
     updated_at_ms: i64,
     attempt_count: i64,
+    sent_at_ms: Option<i64>,
+    delivered_at_ms: Option<i64>,
+    read_at_ms: Option<i64>,
 }
 
 impl MessageRow {
@@ -382,6 +409,9 @@ impl MessageRow {
         let attempts = (1..=attempt_count)
             .map(|number| DeliveryAttempt { number, at: updated_at, error_code: None })
             .collect();
+        let sent_at = optional_timestamp(self.sent_at_ms)?;
+        let delivered_at = optional_timestamp(self.delivered_at_ms)?;
+        let read_at = optional_timestamp(self.read_at_ms)?;
         Message::from_persisted(
             id,
             conversation_id,
@@ -391,6 +421,9 @@ impl MessageRow {
             status,
             created_at,
             updated_at,
+            sent_at,
+            delivered_at,
+            read_at,
             attempts,
         )
         .map_err(|_| MessageError::RepositoryFailure)
@@ -422,10 +455,21 @@ fn execute_message(
                 message.created_at().to_unix_millis(),
                 message.updated_at().to_unix_millis(),
                 attempt_count,
+                message.sent_at().map(Timestamp::to_unix_millis),
+                message.delivered_at().map(Timestamp::to_unix_millis),
+                message.read_at().map(Timestamp::to_unix_millis),
             ],
         )
         .map_err(|_| MessageError::RepositoryFailure)?;
     Ok(())
+}
+
+fn optional_timestamp(value: Option<i64>) -> Result<Option<Timestamp>, MessageError> {
+    value
+        .map(|milliseconds| {
+            Timestamp::from_unix_millis(milliseconds).map_err(|_| MessageError::RepositoryFailure)
+        })
+        .transpose()
 }
 
 fn fixed_16(value: Vec<u8>) -> Result<[u8; 16], MessageError> {

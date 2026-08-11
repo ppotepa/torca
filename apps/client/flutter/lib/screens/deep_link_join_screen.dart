@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
-import '../generated/torca_contract.dart';
 import '../widgets/runtime_network_status.dart';
 import 'pairing_screen.dart';
 
-class DeepLinkJoinScreen extends StatefulWidget {
+/// @deprecated Deep links are routed through `showJoinInvitationModal` so
+/// Contacts, QR and platform links share one join flow. Kept as a source
+/// compatibility shim for downstream integrations that still import this
+/// symbol; do not add new navigation to it.
+@Deprecated('Use showJoinInvitationModal from pairing_screen.dart')
+class DeepLinkJoinScreen extends StatelessWidget {
   const DeepLinkJoinScreen({
     required this.gateway,
     required this.code,
@@ -13,14 +18,6 @@ class DeepLinkJoinScreen extends StatefulWidget {
   });
   final EngineGateway gateway;
   final String code;
-  @override
-  State<DeepLinkJoinScreen> createState() => _DeepLinkJoinScreenState();
-}
-
-class _DeepLinkJoinScreenState extends State<DeepLinkJoinScreen> {
-  bool _busy = false;
-  String? _error;
-
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: const RuntimeAppBar(title: Text('Join Torca invitation')),
@@ -33,54 +30,28 @@ class _DeepLinkJoinScreenState extends State<DeepLinkJoinScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const Icon(Icons.link, size: 48),
+              Icon(context.torcaIcons.link, size: 48),
               const SizedBox(height: 16),
               const Text('Invitation code', textAlign: TextAlign.center),
               const SizedBox(height: 8),
               SelectableText(
-                widget.code,
+                code,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: _busy ? null : _join,
-                child: Text(_busy ? 'Joining…' : 'Join invitation'),
-              ),
-              if (_error != null) ...<Widget>[
-                const SizedBox(height: 12),
-                Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                onPressed: () => showJoinInvitationModal(
+                  context,
+                  gateway,
+                  initialCode: code,
                 ),
-              ],
+                child: const Text('Join invitation'),
+              ),
             ],
           ),
         ),
       ),
     ),
   );
-
-  Future<void> _join() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    final result = await widget.gateway.execute(
-      JoinPairingCommandDto(code: widget.code),
-    );
-    if (!mounted) return;
-    if (result.ok) {
-      await Navigator.of(context).pushReplacement<void, void>(
-        MaterialPageRoute(
-          builder: (_) => PairingScreen(gateway: widget.gateway),
-        ),
-      );
-    } else {
-      setState(() {
-        _busy = false;
-        _error = result.error ?? 'Could not join invitation';
-      });
-    }
-  }
 }

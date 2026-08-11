@@ -3,7 +3,7 @@ use core::fmt;
 use torca_client_application::{
     ApplicationQueryError, ApplicationReadModels, ClientApplicationHandle, ContactSecuritySnapshot,
     ContactSecurityState, ConversationHistoryPort, ConversationMessagePage,
-    ConversationMessageSummary, RuntimeSettingsPort, SecurityProjectionPort,
+    ConversationMessageSummary, PendingOperationStore, RuntimeSettingsPort, SecurityProjectionPort,
 };
 use torca_client_engine::{ClientEngine, ClientEngineActor};
 use torca_conversations::ConversationId;
@@ -12,8 +12,8 @@ use torca_foundation::Timestamp;
 use torca_messaging::{Message, MessageId};
 use torca_platform::{PlatformServices, SecretNamespace};
 use torca_storage_sqlite::{
-    SqlCipherMessageStore, SqlCipherPairingRepository, SqlCipherReceiptStore,
-    SqlCipherSecurityProjection, SqlCipherSettingsStore, SqlCipherStore,
+    SqlCipherMessageStore, SqlCipherPairingRepository, SqlCipherPendingOperationStore,
+    SqlCipherReceiptStore, SqlCipherSecurityProjection, SqlCipherSettingsStore, SqlCipherStore,
 };
 
 #[cfg(target_os = "android")]
@@ -38,6 +38,7 @@ pub(crate) struct ProductionEngineParts {
     pub application: ClientApplicationHandle,
     pub actor: ClientEngineActor,
     pub read_models: ApplicationReadModels,
+    pub pending: Box<dyn PendingOperationStore>,
 }
 
 struct SqliteHistory(SqlCipherMessageStore);
@@ -184,6 +185,8 @@ fn spawn_production_engine_for(
         .map_err(|error| storage_error("open receipt repository", &error))?;
     let settings = SqlCipherSettingsStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open runtime settings store", &error))?;
+    let pending = SqlCipherPendingOperationStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open pending operation store", &error))?;
     let pairings =
         SqlCipherPairingRepository::open(&database_path, &database_key).map_err(|error| {
             NativeCompositionError::new(format!("open pairing session store failed: {error}"))
@@ -206,6 +209,7 @@ fn spawn_production_engine_for(
     Ok(ProductionEngineParts {
         application,
         actor,
+        pending: Box::new(pending),
         read_models: ApplicationReadModels {
             history: Box::new(SqliteHistory(history)),
             security: Box::new(SqliteSecurity(security)),

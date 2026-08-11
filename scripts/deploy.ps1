@@ -2,16 +2,22 @@
 param(
     [ValidateSet('auto', 'windows', 'android', 'all')]
     [string]$Target = 'auto',
-    [string]$Device,
+    [string[]]$Device,
     [ValidateSet('debug','release')]
     [string]$Configuration = 'release',
-    [ValidateSet('Ensure','Preserve','Restart','Rotate')]
+    [ValidateSet('Full','Quick','Skip')]
+    [string]$Validation = 'Full',
+    [ValidateSet('Ensure','Preserve','Restart','Repair','Rotate')]
     [string]$OnionPolicy = 'Ensure',
+    [ValidateSet('IfRequired','Rebuild','Reuse')]
+    [string]$RelayBuildPolicy = 'IfRequired',
     [ValidateSet('auto','docker','process')]
     [string]$StackProvider = 'auto',
     [ValidateSet('Preserve','ResetSelected','ResetAll')]
     [string]$ClientDataPolicy = 'Preserve',
-    [ValidateSet('IfRequired','Rebuild','Reuse')]
+    [ValidateSet('ClientsAndRelay','RelayOnly','FullReset')]
+    [string]$DeploymentScope = 'ClientsAndRelay',
+    [ValidateSet('IfRequired','Rebuild','Reuse','Existing')]
     [string]$BuildPolicy = 'IfRequired',
     [ValidateSet('Selected','Always','Skip')]
     [string]$InstallPolicy = 'Selected',
@@ -21,6 +27,7 @@ param(
     [switch]$Confirm,
     [switch]$AllowDataReset,
     [switch]$ReuseBuild,
+    [switch]$Wizard,
     [switch]$SkipLaunch
 )
 
@@ -29,12 +36,28 @@ $root = Split-Path -Parent $PSScriptRoot
 if ($StackProvider -ne 'auto') { $env:TORCA_STACK_PROVIDER = $StackProvider }
 
 if (-not $env:TORCA_ORCHESTRATED) {
+    $explicitLifecyclePolicy = @(
+        @(
+            'DeploymentScope', 'OnionPolicy', 'RelayBuildPolicy', 'ClientDataPolicy',
+            'BuildPolicy', 'InstallPolicy', 'RunPolicy'
+        ) | Where-Object { $PSBoundParameters.ContainsKey($_) }
+    )
+    $useWizard = [bool]$Wizard -or (-not $NonInteractive -and $explicitLifecyclePolicy.Count -eq 0)
+    if ($useWizard) {
+        & (Join-Path $PSScriptRoot 'wizard.ps1')
+        if ($LASTEXITCODE -ne 0) { throw "Wizard failed with code $LASTEXITCODE." }
+        return
+    }
     $arguments = @{
-        Command = 'deploy'; Target = $Target; Configuration = $Configuration
+        Command = 'deploy'; Target = $Target
         OnionPolicy = $OnionPolicy
+        RelayBuildPolicy = $RelayBuildPolicy
         StackProvider = $StackProvider
+        DeploymentScope = $DeploymentScope
         InstallPolicy = $InstallPolicy; RunPolicy = $RunPolicy
     }
+    if ($PSBoundParameters.ContainsKey('Configuration') -or $NonInteractive) { $arguments.Configuration = $Configuration }
+    if ($PSBoundParameters.ContainsKey('Validation') -or $NonInteractive) { $arguments.Validation = $Validation }
     if ($PSBoundParameters.ContainsKey('ClientDataPolicy')) { $arguments.ClientDataPolicy = $ClientDataPolicy }
     if ($PSBoundParameters.ContainsKey('BuildPolicy')) { $arguments.BuildPolicy = $BuildPolicy }
     if ($Device) { $arguments.Device = $Device }

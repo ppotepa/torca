@@ -50,6 +50,48 @@ abstract interface class GatewayAvailability {
   String? get failureReason;
 }
 
+class ClientBuildInfo {
+  const ClientBuildInfo({
+    required this.productVersion,
+    required this.buildId,
+    required this.sourceCommit,
+    required this.sourceFingerprint,
+    required this.relayEndpointHash,
+    required this.targetPlatform,
+    required this.targetArchitecture,
+    required this.contractSchema,
+    required this.wireVersion,
+  });
+
+  factory ClientBuildInfo.fromJson(Map<String, dynamic> value) =>
+      ClientBuildInfo(
+        productVersion: value['productVersion'] as String? ?? 'development',
+        buildId: value['buildId'] as String? ?? 'dev',
+        sourceCommit: value['sourceCommit'] as String? ?? 'working-tree',
+        sourceFingerprint:
+            value['sourceFingerprint'] as String? ?? 'development',
+        relayEndpointHash: value['relayEndpointHash'] as String? ?? 'unknown',
+        targetPlatform: value['targetPlatform'] as String? ?? 'unknown',
+        targetArchitecture: value['targetArchitecture'] as String? ?? 'unknown',
+        contractSchema: value['contractSchema'] as int? ?? 0,
+        wireVersion: value['wireVersion'] as int? ?? 0,
+      );
+
+  final String productVersion;
+  final String buildId;
+  final String sourceCommit;
+  final String sourceFingerprint;
+  final String relayEndpointHash;
+  final String targetPlatform;
+  final String targetArchitecture;
+  final int contractSchema;
+  final int wireVersion;
+}
+
+abstract interface class BuildInfoProvider {
+  ClientBuildInfo get buildInfo;
+}
+
 abstract interface class PairingUriParser {
   Future<String?> parsePairingUri(String rawUri);
 }

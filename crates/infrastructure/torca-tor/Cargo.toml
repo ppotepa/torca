@@ -9,7 +9,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-arti-client = { version = "0.45", default-features = false, features = ["experimental-api", "onion-service-client", "onion-service-service", "rustls", "tokio"] }
+arti-client = { version = "0.45", default-features = false, features = ["experimental-api", "onion-service-client", "onion-service-service", "rustls", "static-sqlite", "tokio"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 safelog = "0.9"

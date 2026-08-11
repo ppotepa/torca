@@ -1,5 +1,10 @@
 //! Process-wide, payload-free connectivity observations and projections.
 
+mod supervisor;
+pub use supervisor::{RelayHealthHandle, RelayHealthPort, RelayHealthSnapshot, RelayHealthWorker};
+mod peer_supervisor;
+pub use peer_supervisor::{PeerProbeCandidate, PeerProbeRequest, PeerProbeSupervisor};
+
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -122,7 +127,10 @@ impl ConnectivityObserver {
             channel.in_flight = channel.in_flight.saturating_sub(1);
         }
         match direction {
-            Some(TransportDirection::Tx) if phase == OperationPhase::Completed => {
+            // TX is observable when an operation is emitted, not when the
+            // corresponding round-trip later completes. Keeping TX on
+            // `Completed` collapsed request and response into one UI frame.
+            Some(TransportDirection::Tx) if phase == OperationPhase::Started => {
                 channel.tx_sequence = channel.tx_sequence.saturating_add(1);
                 channel.last_tx_at = Some(at);
             }
@@ -181,10 +189,9 @@ impl ConnectivityObserver {
         };
         let phase = match probe.status {
             ProbeStatus::Healthy => OperationPhase::Completed,
-            // `Checking` is published only after the bounded probe worker has
-            // been launched, so this is real outbound activity, not intent.
-            ProbeStatus::Checking => OperationPhase::Completed,
-            ProbeStatus::Unknown => OperationPhase::Started,
+            // Checking is in-flight work. Counting it as success used to make
+            // LEDs flash green before any relay response had arrived.
+            ProbeStatus::Checking | ProbeStatus::Unknown => OperationPhase::Started,
             ProbeStatus::Degraded | ProbeStatus::Unreachable | ProbeStatus::Failed => {
                 OperationPhase::Failed
             }

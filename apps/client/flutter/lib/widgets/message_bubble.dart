@@ -15,7 +15,9 @@ class MessageBubble extends StatelessWidget {
     this.quotedBody,
     this.quotedUnavailable = false,
     this.footer = const <Widget>[],
+    this.showBody = true,
     this.compactTop = false,
+    this.senderLabel,
     super.key,
   });
 
@@ -25,7 +27,9 @@ class MessageBubble extends StatelessWidget {
   final String? quotedBody;
   final bool quotedUnavailable;
   final List<Widget> footer;
+  final bool showBody;
   final bool compactTop;
+  final String? senderLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +85,20 @@ class MessageBubble extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Text(
+                                senderLabel ?? (outbound ? 'You' : 'Contact'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelMedium
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
                         if (quotedBody != null) ...<Widget>[
                           ReplyQuote(
                             body: quotedBody!,
@@ -88,7 +106,7 @@ class MessageBubble extends StatelessWidget {
                           ),
                           const SizedBox(height: 7),
                         ],
-                        SelectableText(message.body),
+                        if (showBody) SelectableText(message.body),
                         if (footer.isNotEmpty) ...<Widget>[
                           const SizedBox(height: 6),
                           ...footer,
@@ -98,7 +116,31 @@ class MessageBubble extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: <Widget>[
-                            MessageTimestamp(milliseconds: message.createdAtMs),
+                            if (outbound && message.sentAtMs != null)
+                              _LifecycleMilestone(
+                                kind: _LifecycleKind.sent,
+                                milliseconds: message.sentAtMs!,
+                              ),
+                            if (outbound &&
+                                message.deliveredAtMs != null) ...<Widget>[
+                              const SizedBox(width: 5),
+                              _LifecycleMilestone(
+                                kind: _LifecycleKind.delivered,
+                                milliseconds: message.deliveredAtMs!,
+                              ),
+                            ],
+                            if (outbound &&
+                                message.readAtMs != null) ...<Widget>[
+                              const SizedBox(width: 5),
+                              _LifecycleMilestone(
+                                kind: _LifecycleKind.read,
+                                milliseconds: message.readAtMs!,
+                              ),
+                            ],
+                            if (!outbound || message.sentAtMs == null)
+                              MessageTimestamp(
+                                milliseconds: message.createdAtMs,
+                              ),
                             if (outbound) ...<Widget>[
                               const SizedBox(width: 5),
                               MessageStatusIndicator(status: message.status),
@@ -113,6 +155,38 @@ class MessageBubble extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+enum _LifecycleKind { sent, delivered, read }
+
+class _LifecycleMilestone extends StatelessWidget {
+  const _LifecycleMilestone({required this.kind, required this.milliseconds});
+
+  final _LifecycleKind kind;
+  final int milliseconds;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+    final value =
+        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    final (description, icon) = switch (kind) {
+      _LifecycleKind.sent => ('Sent', context.torcaIcons.sent),
+      _LifecycleKind.delivered => ('Delivered', context.torcaIcons.delivered),
+      _LifecycleKind.read => ('Read', context.torcaIcons.read),
+    };
+    return Tooltip(
+      message: '$description $value',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 12),
+          const SizedBox(width: 2),
+          Text(value, style: Theme.of(context).textTheme.labelSmall),
+        ],
       ),
     );
   }

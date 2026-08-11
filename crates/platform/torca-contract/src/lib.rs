@@ -3,7 +3,7 @@
 use serde::Serialize;
 use torca_client_application::{
     ApplicationCommand, ApplicationError, ApplicationSnapshotContext, BootstrapPhase,
-    BootstrapStepId, BootstrapStepState, ProbeTarget,
+    BootstrapStepId, BootstrapStepState, PendingOperationKind, ProbeTarget,
 };
 use torca_contacts::ContactId;
 use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
@@ -15,7 +15,7 @@ pub mod generated {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/generated_contract.rs"));
 }
 
-pub const CONTRACT_VERSION: u16 = 16;
+pub const CONTRACT_VERSION: u16 = generated::CONTRACT_VERSION;
 
 /// Serializes the contract-owned notification cursor query used by platform
 /// notification consumers. Native hosts must not hand-assemble ABI requests.
@@ -106,6 +106,7 @@ pub enum BridgeCommand {
         name: String,
         media_type: String,
         size: u64,
+        at_ms: i64,
     },
     RetryAttachment {
         attachment_id_hex: String,
@@ -148,6 +149,7 @@ pub struct BridgeSnapshot {
     pub conversations: Vec<BridgeConversation>,
     pub messages: Vec<BridgeMessage>,
     pub attachments: Vec<BridgeAttachment>,
+    pub pending_operations: Vec<BridgePendingOperation>,
     #[serde(skip)]
     pub unread_messages_count: u32,
     #[serde(skip)]
@@ -156,6 +158,21 @@ pub struct BridgeSnapshot {
     pub pairing_attention_count: u32,
     pub bootstrap_phase: String,
     pub bootstrap_steps: Vec<BridgeBootstrapStep>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgePendingOperation {
+    pub id: String,
+    pub resource_id: String,
+    pub kind: String,
+    pub state: String,
+    pub dependency: String,
+    pub attempts: u32,
+    pub next_attempt_at_ms: i64,
+    pub created_at_ms: i64,
+    pub last_error: Option<String>,
 }
 
 /// Cursor-addressed, redacted notification emitted by the process runtime.
@@ -238,6 +255,17 @@ pub struct BridgeTransportStatus {
     pub peer: BridgeTransportIndicator,
     pub peers_ready: u32,
     pub peers_total: u32,
+    pub relay_info: Option<BridgeRelayInfo>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRelayInfo {
+    pub product_version: String,
+    pub build_id: String,
+    pub source_commit: String,
+    pub protocol_version: u16,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -248,6 +276,8 @@ pub struct BridgeContact {
     pub onion_address: String,
     pub status: String,
     pub connection_state: String,
+    pub presence_state: String,
+    pub last_seen_at_ms: Option<i64>,
     pub safety_number: String,
     pub peer_health: BridgePeerHealth,
     pub verification_status: String,
@@ -279,6 +309,9 @@ pub struct BridgeMessage {
     pub reply_to_message_id: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub sent_at_ms: Option<i64>,
+    pub delivered_at_ms: Option<i64>,
+    pub read_at_ms: Option<i64>,
     pub attempt_count: u32,
 }
 #[must_use]
@@ -299,6 +332,9 @@ pub struct BridgeAttachment {
     pub size: u64,
     pub status: String,
     pub offset: u64,
+    pub attempt_count: u32,
+    pub updated_at_ms: i64,
+    pub direction: String,
 }
 
 pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationCommand, String> {
@@ -389,6 +425,7 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
             name,
             media_type,
             size,
+            at_ms,
         } => ApplicationCommand::QueueAttachment {
             attachment_id: parse_id(&attachment_id_hex)?,
             message_id: parse_id(&message_id_hex)?,
@@ -397,6 +434,7 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
             name,
             media_type,
             size,
+            at_ms,
         },
         BridgeCommand::RetryAttachment { attachment_id_hex } => {
             ApplicationCommand::RetryAttachment { attachment_id: parse_id(&attachment_id_hex)? }
@@ -447,6 +485,9 @@ pub fn bridge_message_from_domain(message: Message) -> BridgeMessage {
         reply_to_message_id: message.reply_to().map(|reply| reply.message_id.to_string()),
         created_at_ms: message.created_at().to_unix_millis(),
         updated_at_ms: message.updated_at().to_unix_millis(),
+        sent_at_ms: message.sent_at().map(Timestamp::to_unix_millis),
+        delivered_at_ms: message.delivered_at().map(Timestamp::to_unix_millis),
+        read_at_ms: message.read_at().map(Timestamp::to_unix_millis),
         attempt_count: u32::try_from(message.attempts().len()).unwrap_or(u32::MAX),
     }
 }
@@ -507,6 +548,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
         identity_fingerprint,
         identity_fingerprints,
         safety_numbers,
+        pending_operations,
     } = context;
     let identity_name = snapshot.identity.as_ref().and_then(|identity| {
         identity.profile().map(|profile| profile.display_name().as_str().to_owned())
@@ -540,10 +582,18 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 },
                 latency_ms: None,
                 last_activity_at_ms: network
-                    .tor_activity
-                    .last_activity_at
+                    .connectivity
+                    .tor
+                    .last_tx_at
+                    .into_iter()
+                    .chain(network.connectivity.tor.last_rx_at)
+                    .max()
                     .map(Timestamp::to_unix_millis),
-                activity_sequence: network.connectivity.event_cursor,
+                activity_sequence: network
+                    .connectivity
+                    .tor
+                    .tx_sequence
+                    .saturating_add(network.connectivity.tor.rx_sequence),
                 tx_sequence: network.connectivity.tor.tx_sequence,
                 rx_sequence: network.connectivity.tor.rx_sequence,
                 in_flight: network.connectivity.tor.in_flight,
@@ -554,10 +604,18 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 code: relay_code,
                 latency_ms: relay_latency_ms,
                 last_activity_at_ms: network
-                    .relay_activity
-                    .last_activity_at
+                    .connectivity
+                    .relay
+                    .last_tx_at
+                    .into_iter()
+                    .chain(network.connectivity.relay.last_rx_at)
+                    .max()
                     .map(Timestamp::to_unix_millis),
-                activity_sequence: network.connectivity.event_cursor,
+                activity_sequence: network
+                    .connectivity
+                    .relay
+                    .tx_sequence
+                    .saturating_add(network.connectivity.relay.rx_sequence),
                 tx_sequence: network.connectivity.relay.tx_sequence,
                 rx_sequence: network.connectivity.relay.rx_sequence,
                 in_flight: network.connectivity.relay.in_flight,
@@ -589,7 +647,11 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     .chain(network.connectivity.peer.last_rx_at)
                     .max()
                     .map(Timestamp::to_unix_millis),
-                activity_sequence: network.connectivity.event_cursor,
+                activity_sequence: network
+                    .connectivity
+                    .peer
+                    .tx_sequence
+                    .saturating_add(network.connectivity.peer.rx_sequence),
                 tx_sequence: network.connectivity.peer.tx_sequence,
                 rx_sequence: network.connectivity.peer.rx_sequence,
                 in_flight: network.connectivity.peer.in_flight,
@@ -597,6 +659,12 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             },
             peers_ready: network.connectivity.peers_ready,
             peers_total: network.connectivity.peers_total,
+            relay_info: network.relay_info.map(|info| BridgeRelayInfo {
+                product_version: info.product_version,
+                build_id: info.build_id,
+                source_commit: info.source_commit,
+                protocol_version: info.protocol_version,
+            }),
         },
         onion_address: network.onion_address,
         bootstrap_phase: bootstrap_phase.into(),
@@ -719,6 +787,14 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     onion_address: contact.route().onion_address().to_owned(),
                     status: format!("{:?}", contact.status()).to_lowercase(),
                     connection_state: peer_health.state.clone(),
+                    presence_state: if peer_health.state == "ready" {
+                        "online".into()
+                    } else if peer_health.last_success_at_ms.is_some() {
+                        "offline".into()
+                    } else {
+                        "unknown".into()
+                    },
+                    last_seen_at_ms: peer_health.last_success_at_ms,
                     safety_number,
                     peer_health,
                     verification_status: if verification.verified {
@@ -756,6 +832,53 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 size: attachment.size,
                 status: attachment.status,
                 offset: attachment.offset,
+                attempt_count: attachment.attempt_count,
+                updated_at_ms: attachment.updated_at_ms,
+                direction: attachment.direction,
+            })
+            .collect(),
+        pending_operations: pending_operations
+            .into_iter()
+            .map(|operation| {
+                let (kind, dependency) = match operation.kind {
+                    // Pairing envelopes contain the local onion endpoint and
+                    // must also reach the rendezvous relay. A single "relay"
+                    // label hid the Android wait for its own onion service.
+                    PendingOperationKind::CreatePairing => {
+                        ("pairing.create", "tor_onion_and_relay")
+                    }
+                    PendingOperationKind::JoinPairing { .. } => {
+                        ("pairing.join", "tor_onion_and_relay")
+                    }
+                    PendingOperationKind::ApprovePairing => ("pairing.approve", "relay"),
+                    PendingOperationKind::RejectPairing => ("pairing.reject", "relay"),
+                    PendingOperationKind::CancelPairing => ("pairing.cancel", "relay"),
+                    PendingOperationKind::RenameContact { .. } => ("contact.rename", "runtime"),
+                    PendingOperationKind::VerifyContact => ("contact.verify", "runtime"),
+                    PendingOperationKind::ResetContactVerification => {
+                        ("contact.verification.reset", "runtime")
+                    }
+                    PendingOperationKind::BlockContact => ("contact.block", "runtime"),
+                    PendingOperationKind::UnblockContact => ("contact.unblock", "runtime"),
+                    PendingOperationKind::RemoveContact => ("contact.remove", "runtime"),
+                    PendingOperationKind::ClearConversationHistory => {
+                        ("conversation.history.clear", "runtime")
+                    }
+                    PendingOperationKind::MarkConversationRead => {
+                        ("conversation.mark_read", "runtime")
+                    }
+                };
+                BridgePendingOperation {
+                    id: operation.id.to_string(),
+                    resource_id: operation.resource_id.to_string(),
+                    kind: kind.into(),
+                    state: if operation.attempts == 0 { "queued" } else { "retrying" }.into(),
+                    dependency: dependency.into(),
+                    attempts: operation.attempts,
+                    next_attempt_at_ms: operation.next_attempt_at_ms,
+                    created_at_ms: operation.created_at_ms,
+                    last_error: operation.last_error,
+                }
             })
             .collect(),
         unread_messages_count: 0,

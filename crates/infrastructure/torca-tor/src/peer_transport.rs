@@ -1,9 +1,7 @@
+use crate::TorServiceHandle;
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::Arc;
-
-use crate::TorService;
 use torca_foundation::{CorrelationId, OpaqueId};
 use torca_peer::{PeerTransport, PeerTransportError};
 use torca_peer_protocol::MAX_PEER_DATA_LEN;
@@ -20,7 +18,7 @@ const PEER_WIRE_PAYLOAD_OVERHEAD: usize = 1024;
 
 /// Embedded-Tor peer transport with strict `torca-wire` stream framing.
 pub struct TorPeerTransport {
-    client: Option<Arc<TorService>>,
+    client: Option<TorServiceHandle>,
     onion_address: String,
     port: u16,
     stream: Option<TcpStream>,
@@ -32,7 +30,7 @@ pub struct TorPeerTransport {
 impl TorPeerTransport {
     /// Creates a disconnected transport. Onion validation remains at the embedded Tor boundary
     /// so every actual connection is validated even after configuration reloads.
-    pub fn new(client: Arc<TorService>, onion_address: impl Into<String>, port: u16) -> Self {
+    pub fn new(client: TorServiceHandle, onion_address: impl Into<String>, port: u16) -> Self {
         Self {
             client: Some(client),
             onion_address: onion_address.into(),

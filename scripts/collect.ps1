@@ -5,6 +5,7 @@ param(
     [string[]]$Device,
     [ValidateSet('basic', 'extended', 'incident')][string]$Profile = 'extended',
     [switch]$IncludeLogcat,
+    [switch]$SkipLogcat,
     [switch]$IncludeStackLogs,
     [switch]$SkipStackLogs,
     [switch]$KeepDirectory,
@@ -15,12 +16,21 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $moduleRoot = Join-Path $PSScriptRoot 'modules'
 foreach ($module in @('Torca.Config', 'Torca.State', 'Torca.Devices')) {
-    Import-Module (Join-Path $moduleRoot "$module.psm1") -Force -WarningAction SilentlyContinue
+    $modulePath = Join-Path $moduleRoot "$module.psm1"
+    if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
+        throw "Torca module is missing: $modulePath"
+    }
+    Import-Module $modulePath -Force -ErrorAction Stop
+}
+foreach ($requiredCommand in @('Get-TorcaPaths', 'Initialize-TorcaPaths', 'Get-TorcaDevices')) {
+    if (-not (Get-Command $requiredCommand -ErrorAction SilentlyContinue)) {
+        throw "Torca collection module loader did not expose required command: $requiredCommand"
+    }
 }
 $paths = Get-TorcaPaths -RepoRoot $repoRoot
 Initialize-TorcaPaths -Paths $paths
 
-$collectLogcat = $Profile -ne 'basic' -or [bool]$IncludeLogcat
+$collectLogcat = -not $SkipLogcat -and ($Profile -ne 'basic' -or [bool]$IncludeLogcat)
 $collectStack = -not $SkipStackLogs
 if ($Profile -eq 'incident' -and -not $PSBoundParameters.ContainsKey('Profile')) {
     throw 'Incident profile must be selected explicitly with -Profile incident.'
@@ -194,8 +204,9 @@ foreach ($item in $logicalDevices) {
             Invoke-Capture $endpoint @('shell', 'dumpsys', 'meminfo', 'com.torca.torca_app') (Join-Path $destination 'memory.log') 'memory' | Out-Null
             Invoke-Capture $endpoint @('shell', 'dumpsys', 'connectivity') (Join-Path $destination 'connectivity.log') 'connectivity' | Out-Null
             Invoke-Capture $endpoint @('shell', 'dumpsys', 'activity', 'top') (Join-Path $destination 'activity-top.log') 'activity top' | Out-Null
+            Invoke-Capture $endpoint @('shell', 'dumpsys', 'window', 'policy') (Join-Path $destination 'lock-state.log') 'lock state' | Out-Null
             Invoke-Capture $endpoint @('shell', 'getprop', 'ro.product.cpu.abilist') (Join-Path $destination 'abi.log') 'ABI' | Out-Null
-            $result.collected += @('device-properties.log', 'package.log', 'services.log', 'processes.log', 'memory.log', 'connectivity.log', 'activity-top.log', 'abi.log')
+            $result.collected += @('device-properties.log', 'package.log', 'services.log', 'processes.log', 'memory.log', 'connectivity.log', 'activity-top.log', 'lock-state.log', 'abi.log')
             if ($collectLogcat) {
                 $appPid = (& adb -s $endpoint shell pidof com.torca.torca_app 2>$null | Out-String).Trim()
                 $logcatArgs = @('logcat', '-d', '-v', 'threadtime', '-b', 'main', '-b', 'system', '-b', 'crash')
@@ -226,7 +237,32 @@ foreach ($item in $logicalDevices) {
                 Remove-Item -LiteralPath $pullDestination -Recurse -Force
             } else {
                 Remove-Item -LiteralPath $pullDestination -Recurse -Force -ErrorAction SilentlyContinue
-                $result.errors += "$endpoint/runtime logs pull failed (exit $pullExitCode)"
+                # Recent Android builds keep runtime logs in the app-private
+                # files directory. The external scoped-storage path above is
+                # optional and often does not exist. Debuggable packages can
+                # still expose the same files through run-as, which gives the
+                # incident collector the native attachment/relay diagnostics
+                # instead of silently returning an empty archive.
+                $internalFiles = @(& adb -s $endpoint shell run-as com.torca.torca_app find files/torca/logs -type f 2>$null |
+                    ForEach-Object { $_.ToString().Trim() } |
+                    Where-Object { $_ -match '^files/torca/logs/.+' })
+                if ($internalFiles.Count -gt 0) {
+                    $internalRoot = Join-Path $destination 'internal-runtime-logs'
+                    foreach ($relativeFile in $internalFiles) {
+                        $relativeName = $relativeFile.Substring('files/torca/logs/'.Length).Replace('/', '\')
+                        $localFile = Join-Path $internalRoot $relativeName
+                        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $localFile) | Out-Null
+                        & adb -s $endpoint exec-out run-as com.torca.torca_app cat $relativeFile > $localFile
+                        if ($LASTEXITCODE -eq 0) { $result.collected += "internal-runtime-logs/$($relativeName.Replace('\', '/'))" }
+                    }
+                } else {
+                    $lockState = Get-Content -LiteralPath (Join-Path $destination 'lock-state.log') -Raw -ErrorAction SilentlyContinue
+                    if ($lockState -match '(?m)\bshowing\s*=\s*true\b') {
+                        $result.errors += "$endpoint/runtime logs unavailable because the Android device is locked; unlock it and rerun collection"
+                    } else {
+                        $result.errors += "$endpoint/runtime logs pull failed (exit $pullExitCode) and no private logs were accessible"
+                    }
+                }
             }
         }
     } catch { $result.errors += $_.Exception.Message; Add-Error "$($item.Id): $($_.Exception.Message)" }
@@ -248,3 +284,4 @@ Compress-Archive -Path (Join-Path $collectRoot '*') -DestinationPath $zip -Force
 Write-Host "Diagnostics package: $zip" -ForegroundColor Green
 if ($RemoveDirectoryAfterArchive -and -not $KeepDirectory) { Remove-Item -LiteralPath $collectRoot -Recurse -Force }
 Prune-CollectionHistory -Root $collectionParent -Current $collectRoot
+Write-Output $zip

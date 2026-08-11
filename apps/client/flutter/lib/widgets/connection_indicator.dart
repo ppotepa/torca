@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../theme/app_semantic_colors.dart';
 import 'connection_state_presenter.dart';
@@ -20,6 +21,7 @@ class ConnectionIndicator extends StatelessWidget {
     final presentation = ConnectionStatePresenter.peer(
       state: state,
       blocked: blocked,
+      icons: context.torcaIcons,
     );
     final semantic = Theme.of(context).extension<AppSemanticColors>();
     final scheme = Theme.of(context).colorScheme;

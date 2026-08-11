@@ -45,6 +45,7 @@ class FfiEngineGateway
         GatewayAvailability,
         AttachmentCapabilitiesProvider,
         ConversationHistoryProvider,
+        BuildInfoProvider,
         RuntimeShutdownGateway {
   FfiEngineGateway._(this._worker, this._snapshots, this._eventsController) {
     _worker.events.listen((event) {
@@ -65,7 +66,6 @@ class FfiEngineGateway
       ValueNotifier<AppSnapshotDto>(const AppSnapshotDto()),
       StreamController<RuntimeEventDto>.broadcast(),
     );
-    await gateway.initialize();
     return gateway;
   }
 
@@ -83,6 +83,9 @@ class FfiEngineGateway
   @override
   AppCapabilities get capabilities =>
       const AppCapabilities(maxAttachmentBytes: 16 * 1024 * 1024);
+
+  @override
+  ClientBuildInfo get buildInfo => _worker.buildInfo;
 
   @override
   bool get isAvailable => !_disposed && _worker.isAlive;
@@ -192,7 +195,16 @@ class FfiEngineGateway
   }
 
   @override
-  Future<String> diagnosticsJson() async => '{"events":[]}';
+  Future<String> diagnosticsJson() async {
+    final response = await _worker.invoke(RuntimeRequestDto.diagnostics);
+    final value = jsonDecode(response);
+    if (value is! Map<String, dynamic> || value['status'] != 'succeeded') {
+      throw StateError('Native diagnostics query failed');
+    }
+    return jsonEncode(
+      value['snapshot'] ?? const <String, Object?>{'events': []},
+    );
+  }
 
   @override
   Future<void> shutdown() async {
@@ -249,7 +261,12 @@ class FfiEngineGateway
 }
 
 class NativeRuntimeWorker {
-  NativeRuntimeWorker._(this._commandPort, this._events, this._isolate);
+  NativeRuntimeWorker._(
+    this._commandPort,
+    this._events,
+    this._isolate,
+    this.buildInfo,
+  );
 
   static Future<NativeRuntimeWorker> start() async {
     final ready = ReceivePort();
@@ -263,12 +280,19 @@ class NativeRuntimeWorker {
     final commandPort = ports['commandPort'] as SendPort;
     final eventPort = ReceivePort();
     commandPort.send(<String, Object?>{'attachEvents': eventPort.sendPort});
-    return NativeRuntimeWorker._(commandPort, eventPort, isolate);
+    final metadata = Map<String, dynamic>.from(ports['metadata'] as Map);
+    return NativeRuntimeWorker._(
+      commandPort,
+      eventPort,
+      isolate,
+      ClientBuildInfo.fromJson(metadata),
+    );
   }
 
   final SendPort _commandPort;
   final ReceivePort _events;
   final Isolate _isolate;
+  final ClientBuildInfo buildInfo;
   int _requestCounter = 0;
   bool _disposed = false;
   Future<void> _requestTail = Future<void>.value();
@@ -387,7 +411,10 @@ void _workerMainImpl(List<Object?> arguments) {
   SendPort? eventsPort;
   Timer? snapshotTimer;
   var notificationCursor = 0;
-  ready.send(<String, Object?>{'commandPort': commandPort.sendPort});
+  ready.send(<String, Object?>{
+    'commandPort': commandPort.sendPort,
+    'metadata': metadata,
+  });
   commandPort.listen((message) {
     if (message is! Map) return;
     if (message['attachEvents'] is SendPort) {
@@ -578,6 +605,9 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
   final transport = value['transport'] is Map<String, dynamic>
       ? value['transport'] as Map<String, dynamic>
       : const <String, dynamic>{};
+  final relayInfo = transport['relayInfo'] is Map<String, dynamic>
+      ? transport['relayInfo'] as Map<String, dynamic>
+      : null;
   final navigationBadges = value['navigationBadges'] is Map<String, dynamic>
       ? value['navigationBadges'] as Map<String, dynamic>
       : const <String, dynamic>{};
@@ -655,6 +685,8 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
               onionAddress: item['onionAddress'] as String? ?? '',
               status: item['status'] as String? ?? '',
               connectionState: item['connectionState'] as String? ?? '',
+              presenceState: item['presenceState'] as String? ?? 'unknown',
+              lastSeenAtMs: item['lastSeenAtMs'] as int?,
               safetyNumber: item['safetyNumber'] as String?,
               verificationStatus:
                   item['verificationStatus'] as String? ?? 'unverified',
@@ -711,6 +743,28 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
               size: item['size'] as int? ?? 0,
               status: item['status'] as String? ?? '',
               offset: item['offset'] as int? ?? 0,
+              attemptCount: item['attemptCount'] as int? ?? 0,
+              updatedAtMs: item['updatedAtMs'] as int? ?? 0,
+              direction: item['direction'] as String? ?? 'outbound',
+            ),
+          )
+          .toList(growable: false);
+  final pendingOperations =
+      (value['pendingOperations'] is List<Object?>
+              ? value['pendingOperations'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (item) => PendingOperationDto(
+              id: item['id'] as String? ?? '',
+              resourceId: item['resourceId'] as String? ?? '',
+              kind: item['kind'] as String? ?? '',
+              state: item['state'] as String? ?? 'queued',
+              dependency: item['dependency'] as String? ?? 'network',
+              attempts: item['attempts'] as int? ?? 0,
+              nextAttemptAtMs: item['nextAttemptAtMs'] as int? ?? 0,
+              createdAtMs: item['createdAtMs'] as int? ?? 0,
+              lastError: item['lastError'] as String?,
             ),
           )
           .toList(growable: false);
@@ -735,6 +789,15 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
       peer: indicator('peer', fallbackState: 'disconnected'),
       peersReady: transport['peersReady'] as int? ?? 0,
       peersTotal: transport['peersTotal'] as int? ?? 0,
+      relayInfo: relayInfo == null
+          ? null
+          : RelayInfoDto(
+              productVersion:
+                  relayInfo['productVersion'] as String? ?? 'unknown',
+              buildId: relayInfo['buildId'] as String? ?? 'unknown',
+              sourceCommit: relayInfo['sourceCommit'] as String? ?? 'unknown',
+              protocolVersion: relayInfo['protocolVersion'] as int? ?? 0,
+            ),
     ),
     navigationBadges: NavigationBadgesDto(
       unreadMessages: navigationBadges['unreadMessages'] as int? ?? 0,
@@ -749,6 +812,7 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
     conversations: conversations,
     messages: messages,
     attachments: attachments,
+    pendingOperations: pendingOperations,
   );
 }
 
@@ -756,7 +820,14 @@ AppSnapshotDto? _decodeSnapshot(String raw) {
 ConversationPageDto decodeConversationPageResponse(String raw) {
   final value = jsonDecode(raw);
   if (value is! Map<String, dynamic>) {
-    return const ConversationPageDto(messages: [], hasMore: false);
+    throw const FormatException('Conversation response is not an object');
+  }
+  if (value['status'] == 'failed') {
+    final error = value['error'];
+    final message = error is Map<String, dynamic>
+        ? error['messageKey'] as String?
+        : null;
+    throw StateError(message ?? 'Conversation history query failed');
   }
   final snapshot = value['snapshot'];
   final page = snapshot is Map<String, dynamic> ? snapshot : value;
@@ -782,5 +853,8 @@ MessageDto _decodeMessage(Map<String, dynamic> value) => MessageDto(
   replyToMessageId: value['replyToMessageId'] as String?,
   createdAtMs: value['createdAtMs'] as int? ?? 0,
   updatedAtMs: value['updatedAtMs'] as int? ?? 0,
+  sentAtMs: value['sentAtMs'] as int?,
+  deliveredAtMs: value['deliveredAtMs'] as int?,
+  readAtMs: value['readAtMs'] as int?,
   attemptCount: value['attemptCount'] as int? ?? 0,
 );

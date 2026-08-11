@@ -6,8 +6,9 @@
 
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::Once;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use arti_client::{BootstrapBehavior, TorClient, config::TorClientConfigBuilder};
@@ -82,8 +83,63 @@ pub enum TorHealth {
     Failed,
 }
 
-/// Opaque handle to a running Tor service.
-pub type TorServiceHandle = Arc<TorService>;
+/// Stable publication state for the local onion service.  It deliberately
+/// hides Arti implementation details while preserving the readiness boundary
+/// needed by application policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OnionServiceHealth {
+    Stopped,
+    Publishing,
+    Reachable,
+    Degraded,
+    Failed,
+}
+
+/// Stable, swappable handle to the active Tor service.
+///
+/// Infrastructure adapters keep this handle for their whole lifetime. During
+/// recovery it becomes temporarily unavailable and is then atomically pointed
+/// at the replacement Arti client, so relay and peer reconnects never retain a
+/// permanently stale runtime.
+#[derive(Clone, Default)]
+pub struct TorServiceHandle {
+    inner: Arc<RwLock<Option<Arc<TorService>>>>,
+}
+
+impl TorServiceHandle {
+    fn new(service: Arc<TorService>) -> Self {
+        Self { inner: Arc::new(RwLock::new(Some(service))) }
+    }
+
+    fn current(&self) -> Result<Arc<TorService>, TorError> {
+        self.inner
+            .read()
+            .map_err(|_| TorError("Tor service handle is unavailable".into()))?
+            .clone()
+            .ok_or_else(|| TorError("Tor service is recovering".into()))
+    }
+
+    fn replace(&self, service: Arc<TorService>) -> Option<Arc<TorService>> {
+        self.inner.write().ok().and_then(|mut current| current.replace(service))
+    }
+
+    fn clear(&self) -> Option<Arc<TorService>> {
+        self.inner.write().ok().and_then(|mut current| current.take())
+    }
+
+    pub fn connect_onion(&self, hostname: &str, port: u16) -> Result<TorStream, TorError> {
+        self.current()?.connect_onion(hostname, port)
+    }
+
+    pub fn connect_onion_with_timeout(
+        &self,
+        hostname: &str,
+        port: u16,
+        timeout: Duration,
+    ) -> Result<TorStream, TorError> {
+        self.current()?.connect_onion_with_timeout(hostname, port, timeout)
+    }
+}
 
 pub type TorBootstrapObserver = Arc<dyn Fn(TorBootstrapEvent) + Send + Sync>;
 
@@ -108,7 +164,12 @@ impl std::error::Error for TorError {}
 pub struct TorService {
     runtime: Runtime,
     client: Arc<TorClient<PreferredRuntime>>,
-    onion_service: Option<Arc<tor_hsservice::RunningOnionService>>,
+    // Publication is driven by a dedicated infrastructure worker.  The
+    // service itself must therefore be safely callable through `Arc`, while
+    // still retaining the Arti handle that keeps the onion service alive.
+    onion_service: Mutex<Option<Arc<tor_hsservice::RunningOnionService>>>,
+    onion_health: Arc<RwLock<OnionServiceHealth>>,
+    onion_publication_revision: Arc<AtomicU64>,
 }
 
 static RUSTLS_PROVIDER: Once = Once::new();
@@ -139,6 +200,7 @@ impl TorService {
         let state_root = state_root.into();
         std::fs::create_dir_all(&state_root)
             .map_err(|error| TorError(format!("create Arti state directory: {error}")))?;
+        let directory_cache_present = directory_has_entries(&state_root.join("cache"));
         let runtime = Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -165,7 +227,15 @@ impl TorService {
 
             let mut last_error = None;
             for attempt in 1..=MAX_BOOTSTRAP_ATTEMPTS {
-                match bootstrap_attempt(client.clone(), timeout, attempt, observer.as_ref()).await {
+                match bootstrap_attempt(
+                    client.clone(),
+                    timeout,
+                    attempt,
+                    directory_cache_present,
+                    observer.as_ref(),
+                )
+                .await
+                {
                     Ok(()) => return Ok(client),
                     Err(error) if is_unambiguous_state_corruption(&error) => return Err(error),
                     Err(error) => last_error = Some(error),
@@ -208,18 +278,42 @@ impl TorService {
             }
         };
 
-        Ok(Self { runtime, client, onion_service: None })
+        Ok(Self {
+            runtime,
+            client,
+            onion_service: Mutex::new(None),
+            onion_health: Arc::new(RwLock::new(OnionServiceHealth::Stopped)),
+            onion_publication_revision: Arc::new(AtomicU64::new(0)),
+        })
     }
 
     /// Publishes a stable onion service and forwards accepted streams to the
     /// supplied local listener. The listener remains the shared Torca peer
     /// protocol boundary; Arti only provides the encrypted Tor transport.
     pub fn publish_onion_service(
-        &mut self,
+        &self,
         target: SocketAddr,
         timeout: std::time::Duration,
     ) -> Result<String, TorError> {
+        if let Ok(service) = self.onion_service.lock() {
+            if let Some(running) = service.as_ref() {
+                return running
+                    .onion_address()
+                    .map(|address| address.display_unredacted().to_string())
+                    .ok_or_else(|| TorError("onion service identity is unavailable".into()));
+            }
+        }
         let client = Arc::clone(&self.client);
+        let onion_health = Arc::clone(&self.onion_health);
+        let onion_publication_revision = Arc::clone(&self.onion_publication_revision);
+        // Publish the initial state before the observer can receive Arti's
+        // first status event.  Setting it after `block_on` used to overwrite
+        // a fast `Running` event with `Publishing`, leaving an already
+        // reachable service permanently reported as bootstrapping.
+        if let Ok(mut health) = self.onion_health.write() {
+            *health = OnionServiceHealth::Publishing;
+        }
+        self.onion_publication_revision.fetch_add(1, Ordering::Relaxed);
         let service_result = self.runtime.block_on(async move {
             tokio::time::timeout(timeout, async move {
                 let nickname = tor_hsservice::HsNickname::try_from("torca-peer".to_owned())
@@ -260,14 +354,123 @@ impl TorService {
                         });
                     }
                 });
+
+                // Onion-service publication is eventually consistent. Blocking
+                // startup on `Running` creates a restart loop: every restart
+                // discards the introduction-point work that was still making
+                // progress. Keep the service alive and observe publication in
+                // the background; connectivity probes gate network operations.
+                let mut events = running.status_events();
+                tokio::spawn(async move {
+                    let mut last_state = None;
+                    let mut last_problem = None;
+                    // Arti can emit an initial `Shutdown` snapshot before it
+                    // emits `Bootstrapping` for a newly launched service. It
+                    // is not a terminal shutdown of *this* running handle.
+                    // Treat it as publication-in-progress until an active
+                    // state has been observed; otherwise relay startup tears
+                    // down the client and repeats bootstrap forever.
+                    let mut observed_active_state = false;
+                    // Descriptor refreshes can emit `Bootstrapping` after a
+                    // service has become reachable.  The old descriptor and
+                    // introduction points remain usable during that refresh,
+                    // so readiness is monotonic until Arti reports an actual
+                    // degraded or terminal state.
+                    let mut observed_reachable = false;
+                    while let Some(status) = events.next().await {
+                        let state = status.state();
+                        let problem = onion_problem_code(status.current_problem());
+                        let mapped = match state {
+                            value if value.is_fully_reachable() => {
+                                observed_active_state = true;
+                                observed_reachable = true;
+                                OnionServiceHealth::Reachable
+                            }
+                            tor_hsservice::status::State::DegradedUnreachable
+                            | tor_hsservice::status::State::Recovering => {
+                                observed_active_state = true;
+                                OnionServiceHealth::Degraded
+                            }
+                            tor_hsservice::status::State::Broken => OnionServiceHealth::Failed,
+                            tor_hsservice::status::State::Shutdown
+                                if onion_shutdown_is_terminal(observed_active_state) =>
+                            {
+                                OnionServiceHealth::Stopped
+                            }
+                            tor_hsservice::status::State::Shutdown => {
+                                OnionServiceHealth::Publishing
+                            }
+                            tor_hsservice::status::State::Bootstrapping => {
+                                observed_active_state = true;
+                                if observed_reachable {
+                                    OnionServiceHealth::Reachable
+                                } else {
+                                    OnionServiceHealth::Publishing
+                                }
+                            }
+                            _ => {
+                                observed_active_state = true;
+                                if observed_reachable {
+                                    OnionServiceHealth::Reachable
+                                } else {
+                                    OnionServiceHealth::Publishing
+                                }
+                            }
+                        };
+                        if let Ok(mut health) = onion_health.write() {
+                            *health = mapped;
+                        }
+                        if last_state != Some(state) || last_problem != Some(problem) {
+                            onion_publication_revision.fetch_add(1, Ordering::Relaxed);
+                            eprintln!(
+                                "torca-tor: onion service publication state={state:?} problem={problem}"
+                            );
+                            last_state = Some(state);
+                            last_problem = Some(problem);
+                        }
+                    }
+                });
                 Ok::<_, TorError>((running, address))
             })
             .await
             .map_err(|_| TorError("publish onion service timed out".into()))?
         });
         let (running, address) = service_result?;
-        self.onion_service = Some(running);
+        self.onion_service
+            .lock()
+            .map_err(|_| TorError("onion service state is unavailable".into()))?
+            .replace(running);
         Ok(address)
+    }
+
+    pub fn onion_service_health(&self) -> OnionServiceHealth {
+        self.onion_health.read().map_or(OnionServiceHealth::Failed, |value| *value)
+    }
+
+    pub(crate) fn onion_publication_revision(&self) -> u64 {
+        self.onion_publication_revision.load(Ordering::Relaxed)
+    }
+
+    /// Terminates the current onion-service instance while preserving its HSS
+    /// identity in the Arti keystore. Dropping the final running handle stops
+    /// introduction-point and descriptor tasks; the next publication attempt
+    /// launches a genuinely new service with the same onion address.
+    pub(crate) fn stop_onion_service(&self) {
+        let running = self.onion_service.lock().ok().and_then(|mut service| service.take());
+        drop(running);
+        if let Ok(mut health) = self.onion_health.write() {
+            *health = OnionServiceHealth::Stopped;
+        }
+        self.onion_publication_revision.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records a publication failure without invalidating a successfully
+    /// bootstrapped Tor client. A later background attempt can recover it.
+    pub fn mark_onion_publication_failed(&self) {
+        if let Ok(mut health) = self.onion_health.write() {
+            *health = OnionServiceHealth::Failed;
+        }
+        self.onion_publication_revision.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Runs a synchronous operation on the owned async runtime.
@@ -352,6 +555,7 @@ async fn bootstrap_attempt(
     client: Arc<TorClient<PreferredRuntime>>,
     timeout: Duration,
     attempt: u32,
+    directory_cache_present: bool,
     observer: Option<&TorBootstrapObserver>,
 ) -> Result<(), TorError> {
     let mut events = client.bootstrap_events();
@@ -363,7 +567,18 @@ async fn bootstrap_attempt(
     let bootstrap_started = Instant::now();
     let mut last_fraction = client.bootstrap_status().as_frac();
     let mut last_summary = client.bootstrap_status().to_string();
-    notify_bootstrap(observer, last_fraction, attempt, "TOR_BOOTSTRAP_STARTING", &last_summary);
+    let cache_summary = if directory_cache_present {
+        "persistent directory cache detected"
+    } else {
+        "directory cache empty; cold bootstrap requires a network download"
+    };
+    notify_bootstrap(
+        observer,
+        last_fraction,
+        attempt,
+        "TOR_BOOTSTRAP_STARTING",
+        &format!("{last_summary}; {cache_summary}"),
+    );
     let mut events_open = true;
     tokio::pin!(deadline);
     loop {
@@ -385,7 +600,16 @@ async fn bootstrap_attempt(
                 result
                     .map_err(|error| TorError(format!("join Arti bootstrap task: {error}")))?
                     .map_err(|error| TorError(format!("bootstrap Arti client: {error}")))?;
-                notify_bootstrap(observer, 1.0, attempt, "TOR_BOOTSTRAP_READY", "Tor network bootstrap completed");
+                notify_bootstrap(
+                    observer,
+                    1.0,
+                    attempt,
+                    "TOR_BOOTSTRAP_READY",
+                    &format!(
+                        "Tor network bootstrap completed in {} ms; {cache_summary}",
+                        bootstrap_started.elapsed().as_millis()
+                    ),
+                );
                 return Ok(());
             }
             status = events.next(), if events_open => {
@@ -465,6 +689,10 @@ fn is_unambiguous_state_corruption(error: &TorError) -> bool {
         .any(|marker| message.contains(marker))
 }
 
+const fn onion_shutdown_is_terminal(observed_active_state: bool) -> bool {
+    observed_active_state
+}
+
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn progress_percent(fraction: f32) -> u8 {
     (fraction * 100.0).round().clamp(0.0, 100.0) as u8
@@ -487,9 +715,26 @@ fn quarantine_state_cache(state_root: &std::path::Path) {
     }
 }
 
+fn directory_has_entries(path: &std::path::Path) -> bool {
+    std::fs::read_dir(path).ok().and_then(|mut entries| entries.next()).is_some()
+}
+
+fn onion_problem_code(problem: Option<&tor_hsservice::status::Problem>) -> &'static str {
+    match problem {
+        None => "none",
+        Some(tor_hsservice::status::Problem::Runtime(_)) => "runtime",
+        Some(tor_hsservice::status::Problem::DescriptorUpload(_)) => "descriptor_upload",
+        Some(tor_hsservice::status::Problem::Ipt(_)) => "introduction_point",
+        Some(_) => "other",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TorError, is_unambiguous_state_corruption, progress_percent};
+    use super::{
+        TorError, directory_has_entries, is_unambiguous_state_corruption,
+        onion_shutdown_is_terminal, progress_percent,
+    };
 
     #[test]
     fn bootstrap_progress_is_bounded_and_rounded() {
@@ -501,10 +746,34 @@ mod tests {
     }
 
     #[test]
+    fn directory_cache_probe_distinguishes_missing_empty_and_populated_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "torca-tor-cache-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        assert!(!directory_has_entries(&root));
+        std::fs::create_dir_all(&root).expect("create cache directory");
+        assert!(!directory_has_entries(&root));
+        std::fs::write(root.join("cached-directory-data"), b"present").expect("write cache marker");
+        assert!(directory_has_entries(&root));
+        std::fs::remove_dir_all(root).expect("remove cache directory");
+    }
+
+    #[test]
     fn only_explicit_state_corruption_triggers_quarantine() {
         assert!(is_unambiguous_state_corruption(&TorError("cache integrity check failed".into())));
         assert!(!is_unambiguous_state_corruption(&TorError(
             "directory consensus unavailable".into()
         )));
+    }
+
+    #[test]
+    fn initial_onion_shutdown_snapshot_is_not_terminal() {
+        assert!(!onion_shutdown_is_terminal(false));
+        assert!(onion_shutdown_is_terminal(true));
     }
 }

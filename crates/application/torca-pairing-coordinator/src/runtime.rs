@@ -382,9 +382,11 @@ where
         now: Timestamp,
     ) -> Result<PairingPollReport, PairingRuntimeError> {
         let role = self.session(session_id)?.role();
-        let envelopes = self.coordinator.poll(session_id)?;
+        let batch = self.coordinator.poll(session_id)?;
         let mut report = PairingPollReport::default();
-        for envelope in envelopes {
+        let mut cleanup_terminal_after_ack = false;
+        let mut cleanup_completed_after_ack = false;
+        for envelope in batch.envelopes {
             match &envelope.payload {
                 PairingPayload::Offer(offer) => {
                     if let Some(existing) = self.remote_offers.get(&session_id) {
@@ -448,6 +450,7 @@ where
                 PairingPayload::CompletionAck(ack) => {
                     self.apply_completion_ack(session_id, *ack)?;
                     report.completion_acks_applied += 1;
+                    cleanup_completed_after_ack = true;
                     break;
                 }
                 PairingPayload::Rejection(_) => {
@@ -459,7 +462,7 @@ where
                             .map_err(|_| PairingRuntimeError::Engine)?;
                         report.rejections_applied += 1;
                     }
-                    self.cleanup_terminal(session_id);
+                    cleanup_terminal_after_ack = true;
                     break;
                 }
                 PairingPayload::Cancellation(_) => {
@@ -471,13 +474,21 @@ where
                             .map_err(|_| PairingRuntimeError::Engine)?;
                         report.cancellations_applied += 1;
                     }
-                    self.cleanup_terminal(session_id);
+                    cleanup_terminal_after_ack = true;
                     break;
                 }
             }
         }
         if self.local_offers.contains_key(&session_id) {
             self.persist_session(session_id)?;
+        }
+        if let Some(received_through) = batch.received_through {
+            self.coordinator.ack(session_id, received_through)?;
+        }
+        if cleanup_completed_after_ack {
+            self.cleanup_completed(session_id);
+        } else if cleanup_terminal_after_ack {
+            self.cleanup_terminal(session_id);
         }
         Ok(report)
     }
@@ -493,6 +504,10 @@ where
         self.completion_ack_sent.remove(&session_id);
         let _ = self.peer_secrets.delete_pairing_state(session_id);
         self.coordinator.close(session_id).map_err(Into::into)
+    }
+
+    pub fn network_changed(&mut self) {
+        self.coordinator.network_changed();
     }
 
     pub fn into_parts(self) -> (PairingCoordinator<R, C>, EngineHandle, A, S) {
@@ -608,7 +623,6 @@ where
         if ack.transcript_digest != digest || !self.completion_applied.contains(&session_id) {
             return Err(PairingRuntimeError::InvalidCompletion);
         }
-        self.cleanup_completed(session_id);
         Ok(())
     }
 

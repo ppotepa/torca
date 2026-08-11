@@ -2,6 +2,8 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+const CONTRACT_VERSION_MARKER: &str = "__TORCA_CONTRACT_VERSION__";
+
 fn main() {
     let schema_path = PathBuf::from("crates/platform/torca-contract/schema/torca_contract.json");
     let schema = fs::read_to_string(&schema_path).unwrap_or_else(|error| {
@@ -47,20 +49,22 @@ fn main() {
         eprintln!("missing contract projection {}: {error}", expected_path.display());
         std::process::exit(1);
     });
-    let version_marker = format!("const int torcaContractVersion = {};", contract_version.unwrap());
-    let expected = template
-        .lines()
-        .map(|line| {
-            if line.trim_start().starts_with("const int torcaContractVersion =") {
-                version_marker.as_str()
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
+    let expected =
+        render_dart_template(&template, contract_version.unwrap()).unwrap_or_else(|error| {
+            eprintln!("{error}: {}", expected_path.display());
+            std::process::exit(1);
+        });
     let rust_path = PathBuf::from("crates/platform/torca-contract/src/generated_contract.rs");
+    let release_path = PathBuf::from("release/version.json");
+    let release_template = fs::read_to_string(&release_path).unwrap_or_else(|error| {
+        eprintln!("missing release manifest {}: {error}", release_path.display());
+        std::process::exit(1);
+    });
+    let release_expected = render_release_manifest(&release_template, contract_version.unwrap())
+        .unwrap_or_else(|error| {
+            eprintln!("{error}: {}", release_path.display());
+            std::process::exit(1);
+        });
     let rust_expected = format!(
         concat!(
             "// GENERATED FILE. DO NOT EDIT.\n",
@@ -95,11 +99,81 @@ fn main() {
             eprintln!("generated Rust contract is stale: {}", rust_path.display());
             std::process::exit(1);
         }
+        if release_template != release_expected {
+            eprintln!("release manifest contractSchema is stale: {}", release_path.display());
+            std::process::exit(1);
+        }
     } else {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("create output directory");
         }
         fs::write(&path, expected).expect("write generated contract");
         fs::write(&rust_path, rust_expected).expect("write generated Rust contract");
+        fs::write(&release_path, release_expected).expect("write release manifest contract schema");
+    }
+}
+
+fn render_dart_template(template: &str, contract_version: u64) -> Result<String, String> {
+    let marker_count = template.matches(CONTRACT_VERSION_MARKER).count();
+    if marker_count != 1 {
+        return Err(format!(
+            "contract Dart template must contain exactly one {CONTRACT_VERSION_MARKER} marker; found {marker_count}"
+        ));
+    }
+    Ok(template.replace(CONTRACT_VERSION_MARKER, &contract_version.to_string()))
+}
+
+fn render_release_manifest(manifest: &str, contract_version: u64) -> Result<String, String> {
+    let mut replacements = 0_u8;
+    let mut rendered = manifest
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("\"contractSchema\"") {
+                replacements = replacements.saturating_add(1);
+                let indent = &line[..line.len() - line.trim_start().len()];
+                format!("{indent}\"contractSchema\": {contract_version},")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    rendered.push('\n');
+    if replacements != 1 {
+        return Err(format!(
+            "release manifest must contain exactly one contractSchema field; found {replacements}"
+        ));
+    }
+    Ok(rendered)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_contract_version_from_the_only_marker() {
+        assert_eq!(
+            render_dart_template("const v = __TORCA_CONTRACT_VERSION__;", 17),
+            Ok("const v = 17;".into())
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_duplicate_contract_version_markers() {
+        assert!(render_dart_template("const v = 17;", 17).is_err());
+        assert!(
+            render_dart_template("__TORCA_CONTRACT_VERSION__ __TORCA_CONTRACT_VERSION__", 17)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn renders_release_contract_schema_without_reformatting_the_manifest() {
+        let input = "{\n  \"version\": \"0.2\",\n  \"contractSchema\": 16,\n}\n";
+        assert_eq!(
+            render_release_manifest(input, 17),
+            Ok("{\n  \"version\": \"0.2\",\n  \"contractSchema\": 17,\n}\n".into())
+        );
     }
 }

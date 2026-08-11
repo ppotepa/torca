@@ -83,6 +83,43 @@ foreach ($source in $storageSources) {
     }
 }
 
+# Application ports must expose semantic vocabulary, never concrete peer/Tor/
+# storage adapter types. Keep this source-level guard alongside the dependency
+# graph check because a re-export can otherwise hide the leak behind a facade.
+$applicationSources = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates/application') -Filter '*.rs' -File -Recurse
+foreach ($source in $applicationSources) {
+    $content = Get-Content -Raw -LiteralPath $source.FullName
+    if ($content -match 'torca_(?:peer_link|peer_shared|tor|storage_sqlite)::|\b(?:InboundPeerEnvelope|PeerConnectionState)\b') {
+        throw "Application API contains an infrastructure vocabulary leak: $($source.FullName)"
+    }
+}
+
+# ABI errors must preserve typed descriptors from inward layers. Classifying
+# errors by matching human-readable strings makes the wire contract change when
+# an internal Display implementation changes.
+$abiSources = @(
+    Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates/platform/torca-native/src') -Filter '*.rs' -File -Recurse
+    Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates/platform/torca-contract/src') -Filter '*.rs' -File -Recurse
+)
+foreach ($source in $abiSources) {
+    $content = Get-Content -Raw -LiteralPath $source.FullName
+    if ($content -match '(?i)(?:error|message|display)\.to_string\(\)\.contains\s*\(') {
+        throw "ABI error classification must use typed ErrorDescriptor values: $($source.FullName)"
+    }
+}
+
+# Versioned pairing representations belong to protocol crates. Application,
+# infrastructure and UI code may consume typed invitations but must not create
+# a second wire URI grammar.
+$pairingUriSources = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Filter '*.rs' -File -Recurse |
+    Where-Object { (Get-Content -Raw -LiteralPath $_.FullName) -match 'torca://pair\?v=' }
+foreach ($source in $pairingUriSources) {
+    $relative = $source.FullName.Substring(((Resolve-Path -LiteralPath $RepoRoot).Path.Length + 1)).Replace('\', '/')
+    if (-not $relative.StartsWith('crates/protocol/')) {
+        throw "Pairing wire URI must be owned by protocol crates: $relative"
+    }
+}
+
 $receiptDerivations = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Filter '*.rs' -File -Recurse |
     Where-Object { (Get-Content -Raw -LiteralPath $_.FullName) -match 'fn\s+derived_receipt_id' }
 if (@($receiptDerivations).Count -gt 0) {

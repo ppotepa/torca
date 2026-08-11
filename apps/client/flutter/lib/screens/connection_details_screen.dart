@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -33,6 +34,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
       final presentation = ConnectionStatePresenter.peer(
         state: contact.peerHealth.state,
         blocked: blocked,
+        icons: context.torcaIcons,
       );
       return Scaffold(
         appBar: const RuntimeAppBar(title: Text('Connection details')),
@@ -41,9 +43,10 @@ class ConnectionDetailsScreen extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
-                const CircleAvatar(
-                  radius: 26,
-                  child: Icon(Icons.person_outline),
+                TorcaAvatar(
+                  label: contact.displayName,
+                  size: 52,
+                  child: Icon(context.torcaIcons.contacts),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

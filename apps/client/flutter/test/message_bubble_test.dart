@@ -18,10 +18,14 @@ void main() {
               conversationId: '02',
               body: 'Hello',
               direction: 'outbound',
-              status: 'delivered',
+              status: 'read',
               replyToMessageId: '03',
               createdAtMs: 1000,
+              sentAtMs: 2000,
+              deliveredAtMs: 3000,
+              readAtMs: 4000,
             ),
+            senderLabel: 'You',
             quotedBody: 'Earlier message',
             onLongPress: () {},
           ),
@@ -30,8 +34,19 @@ void main() {
     );
 
     expect(find.text('Hello'), findsOneWidget);
+    expect(find.text('You'), findsOneWidget);
     expect(find.text('Earlier message'), findsOneWidget);
-    expect(find.byIcon(Icons.done_all), findsOneWidget);
+    for (final lifecycle in const <String>['Sent ', 'Delivered ', 'Read ']) {
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Tooltip &&
+              (widget.message?.startsWith(lifecycle) ?? false),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(find.byTooltip('Read'), findsOneWidget);
     expect(find.text('outbound'), findsNothing);
     expect(find.text('Delivered'), findsNothing);
   });

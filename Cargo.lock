@@ -5342,6 +5342,7 @@ name = "torca-storage-sqlite"
 version = "0.2.0-alpha.0"
 dependencies = [
  "rusqlite",
+ "torca-client-application",
  "torca-client-engine",
  "torca-contacts",
  "torca-control-delivery",

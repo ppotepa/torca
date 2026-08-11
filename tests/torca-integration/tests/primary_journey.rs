@@ -133,6 +133,9 @@ fn primary_journey_is_deterministic_across_bounded_components() {
     assert_eq!(snapshot.contacts.len(), 1);
     assert_eq!(snapshot.conversations.len(), 1);
     assert_eq!(snapshot.messages.len(), 1);
+    assert_eq!(snapshot.messages[0].sent_at(), Some(ts(8)));
+    assert_eq!(snapshot.messages[0].delivered_at(), Some(ts(9)));
+    assert_eq!(snapshot.messages[0].read_at(), Some(ts(10)));
 
     let mut durable = InMemoryDurableDeliveryStore::default();
     let retry_message = torca_messaging::Message::outbound(

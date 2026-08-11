@@ -15,6 +15,7 @@
 **/ios/Flutter/.last_build_id
 **/app.*.symbols
 **/app.*.map.json
+**/android/app/src/main/jniLibs/**/libtorca_native.so
 
 # Android build state and signing material
 **/.gradle/
@@ -52,10 +53,11 @@
 **/artifacts/
 **/.torca/
 /logs/
+/logs.zip
 
 # Local tooling state
 /.codegraph/
-/concat.txt
+**/concat.txt
 /.codex/
 /.cache/
 

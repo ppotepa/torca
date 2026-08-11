@@ -82,16 +82,16 @@ docs/0.2/                 current source track and audit
 
 ## Developer workflow
 
-Public entrypoints remain deliberately small:
+Use the unified local workflow:
 
 ```powershell
-./scripts/build.ps1
-./scripts/run.ps1
-./scripts/deploy.ps1
+.\scripts\wizard.ps1
 ```
 
-`build.ps1` starts with a cheap source-policy gate that rejects obsolete source roots, frontend-owned
-native mutation ABI and contract drift before expensive tooling runs.
+It detects every connected Windows/Android target and provides run, redeploy,
+selective rebuild, full redeploy, explicit Onion rotation, relay maintenance and
+diagnostic collection. Lower-level scripts remain automation/CI entrypoints and
+implementation details.
 
 ## Canonical documents
 

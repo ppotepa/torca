@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::{application_envelope, application_peer_state};
@@ -13,15 +15,74 @@ use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
 use torca_runtime::PeerConnectionStatus;
 
-const PROBE_INTERVAL: Duration = Duration::from_secs(30);
-const PROBE_RETRY: Duration = Duration::from_secs(10);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
 #[derive(Clone, Copy)]
 struct HealthEntry {
     snapshot: PeerHealthSnapshot,
     previous_state: PeerConnectionState,
-    next_probe_at: Timestamp,
+}
+
+enum PeerProbeCommand {
+    Probe {
+        contact_id: ContactId,
+        probe_id: OpaqueId,
+        reported_rtt: u64,
+        reply: SyncSender<Result<Duration, PeerLinkError>>,
+    },
+    Shutdown,
+}
+
+/// One durable executor for peer keepalives.  The health coordinator chooses
+/// which contact is due; this worker only performs the bounded I/O.
+struct PeerProbeWorker {
+    commands: SyncSender<PeerProbeCommand>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl PeerProbeWorker {
+    fn spawn<S, K>(link: SharedPeerLink<S, K>) -> Result<Self, CommunicationError>
+    where
+        S: ContactRepository + PeerCredentialRepository + Send + 'static,
+        K: HandshakeSigner + Send + 'static,
+    {
+        let (commands, receiver) = mpsc::sync_channel(1);
+        let worker = thread::Builder::new()
+            .name("torca-peer-probe".to_owned())
+            .spawn(move || {
+                while let Ok(command) = receiver.recv() {
+                    match command {
+                        PeerProbeCommand::Shutdown => break,
+                        PeerProbeCommand::Probe { contact_id, probe_id, reported_rtt, reply } => {
+                            let started = Instant::now();
+                            let result = link
+                                .send_keepalive_and_wait_ack(
+                                    contact_id,
+                                    probe_id,
+                                    PROBE_MESSAGE_KIND,
+                                    reported_rtt.to_be_bytes().to_vec(),
+                                    PROBE_TIMEOUT,
+                                )
+                                .map(|_| started.elapsed());
+                            let _ = reply.send(result);
+                        }
+                    }
+                }
+            })
+            .map_err(|_| CommunicationError::Peer)?;
+        Ok(Self { commands, worker: Some(worker) })
+    }
+
+    fn submit(&self, command: PeerProbeCommand) -> Result<(), CommunicationError> {
+        self.commands.try_send(command).map_err(|_| CommunicationError::Peer)
+    }
+
+    fn shutdown(mut self) {
+        let _ = self.commands.send(PeerProbeCommand::Shutdown);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 pub struct HealthPeerLinkAdapter<R, S, K> {
@@ -29,12 +90,29 @@ pub struct HealthPeerLinkAdapter<R, S, K> {
     link: SharedPeerLink<S, K>,
     local_identity_id: OpaqueId,
     health: BTreeMap<ContactId, HealthEntry>,
-    probe_sequence: u128,
+    probe_in_flight: Option<(ContactId, Receiver<Result<Duration, PeerLinkError>>)>,
+    probe_worker: Option<PeerProbeWorker>,
 }
 
-impl<R, S, K> HealthPeerLinkAdapter<R, S, K> {
-    pub fn new(link: SharedPeerLink<S, K>, relationships: R, local_identity_id: OpaqueId) -> Self {
-        Self { relationships, link, local_identity_id, health: BTreeMap::new(), probe_sequence: 1 }
+impl<R, S, K> HealthPeerLinkAdapter<R, S, K>
+where
+    S: ContactRepository + PeerCredentialRepository + Send + 'static,
+    K: HandshakeSigner + Send + 'static,
+{
+    pub fn new(
+        link: SharedPeerLink<S, K>,
+        relationships: R,
+        local_identity_id: OpaqueId,
+    ) -> Result<Self, CommunicationError> {
+        let probe_worker = PeerProbeWorker::spawn(link.clone())?;
+        Ok(Self {
+            relationships,
+            link,
+            local_identity_id,
+            health: BTreeMap::new(),
+            probe_in_flight: None,
+            probe_worker: Some(probe_worker),
+        })
     }
 }
 
@@ -51,7 +129,6 @@ where
             let entry = self.health.entry(*contact_id).or_insert_with(|| HealthEntry {
                 snapshot: PeerHealthSnapshot::from_connection_state(map_peer_state(state)),
                 previous_state: state,
-                next_probe_at: now,
             });
             if entry.previous_state == PeerConnectionState::Ready
                 && state != PeerConnectionState::Ready
@@ -73,11 +150,6 @@ where
                     now.duration_since(last),
                 );
             }
-            if state == PeerConnectionState::Ready
-                && entry.previous_state != PeerConnectionState::Ready
-            {
-                entry.next_probe_at = now;
-            }
             entry.previous_state = state;
         }
     }
@@ -86,15 +158,6 @@ where
         let Ok(Some(contact)) = self.relationships.get(contact_id) else { return false };
         self.local_identity_id.as_bytes()
             < contact.remote_identity().identity_id().to_opaque().as_bytes()
-    }
-
-    fn next_probe(&self, now: Timestamp) -> Option<ContactId> {
-        self.health.iter().find_map(|(contact_id, entry)| {
-            (entry.snapshot.state == PeerConnectionStatus::Ready
-                && now >= entry.next_probe_at
-                && self.should_initiate_probe(*contact_id))
-            .then_some(*contact_id)
-        })
     }
 
     fn record_probe_result(
@@ -114,7 +177,6 @@ where
                 entry.snapshot.consecutive_failures = 0;
                 entry.snapshot.quality =
                     classify_peer_health(Some(rtt_ms), 0, Some(Duration::ZERO));
-                entry.next_probe_at = now.checked_add(PROBE_INTERVAL).unwrap_or(now);
             }
             Err(_) => {
                 entry.snapshot.consecutive_failures =
@@ -124,7 +186,6 @@ where
                     entry.snapshot.consecutive_failures,
                     entry.snapshot.last_success_at.and_then(|last| now.duration_since(last)),
                 );
-                entry.next_probe_at = now.checked_add(PROBE_RETRY).unwrap_or(now);
             }
         }
     }
@@ -174,28 +235,55 @@ where
         )
     }
 
-    fn probe_due(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
-        let Some(contact_id) = self.next_probe(now) else { return Ok(()) };
-        let reported_rtt = self
-            .health
-            .get(&contact_id)
-            .and_then(|entry| entry.snapshot.rtt_ms)
-            .unwrap_or(u64::MAX);
-        let probe_id = OpaqueId::from_u128(self.probe_sequence);
-        self.probe_sequence = self.probe_sequence.saturating_add(1).max(1);
-        let started = Instant::now();
-        let result = self
-            .link
-            .send_keepalive_and_wait_ack(
-                contact_id,
-                probe_id,
-                PROBE_MESSAGE_KIND,
-                reported_rtt.to_be_bytes().to_vec(),
-                PROBE_TIMEOUT,
-            )
-            .map(|_| started.elapsed());
-        self.record_probe_result(contact_id, now, result);
+    fn peer_probe_eligible(&self, contact_id: ContactId) -> bool {
+        self.should_initiate_probe(contact_id)
+    }
+
+    fn begin_probe(
+        &mut self,
+        contact_id: ContactId,
+        probe_id: OpaqueId,
+        reported_rtt: u64,
+    ) -> Result<(), CommunicationError> {
+        if self.probe_in_flight.is_some() {
+            return Err(CommunicationError::Peer);
+        }
+        let Some(worker) = self.probe_worker.as_ref() else {
+            return Err(CommunicationError::Peer);
+        };
+        let (sender, receiver) = mpsc::sync_channel(1);
+        worker.submit(PeerProbeCommand::Probe {
+            contact_id,
+            probe_id,
+            reported_rtt,
+            reply: sender,
+        })?;
+        self.probe_in_flight = Some((contact_id, receiver));
         Ok(())
+    }
+
+    fn take_probe_completion(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<Option<ContactId>, CommunicationError> {
+        if let Some((contact_id, receiver)) = self.probe_in_flight.as_ref() {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    let contact_id = *contact_id;
+                    self.probe_in_flight = None;
+                    self.record_probe_result(contact_id, now, result);
+                    return Ok(Some(contact_id));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    let contact_id = *contact_id;
+                    self.probe_in_flight = None;
+                    self.record_probe_result(contact_id, now, Err(PeerLinkError::NotReady));
+                    return Ok(Some(contact_id));
+                }
+                Err(TryRecvError::Empty) => return Ok(None),
+            }
+        }
+        Ok(None)
     }
 
     fn accept_probe(
@@ -216,7 +304,6 @@ where
         let entry = self.health.entry(envelope.contact_id).or_insert_with(|| HealthEntry {
             snapshot: PeerHealthSnapshot::from_connection_state(map_peer_state(state)),
             previous_state: state,
-            next_probe_at: now.checked_add(PROBE_INTERVAL).unwrap_or(now),
         });
         entry.snapshot.state = map_peer_state(state);
         entry.snapshot.last_success_at = Some(now);
@@ -231,7 +318,11 @@ where
     }
 
     fn shutdown(&mut self) {
+        self.probe_in_flight = None;
         self.health.clear();
+        if let Some(worker) = self.probe_worker.take() {
+            worker.shutdown();
+        }
         self.link.shutdown();
     }
 }

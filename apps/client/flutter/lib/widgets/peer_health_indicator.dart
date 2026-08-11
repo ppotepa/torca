@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
 import '../theme/app_semantic_colors.dart';
@@ -52,11 +53,9 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
       _ => context.semanticColors.connectionOffline,
     };
     final icon = switch (health.quality) {
-      'excellent' => Icons.signal_cellular_alt,
-      'good' => Icons.network_cell,
-      'fair' => Icons.network_cell,
-      'poor' => Icons.signal_cellular_connected_no_internet_4_bar,
-      _ => Icons.signal_cellular_off,
+      'excellent' || 'good' => context.torcaIcons.online,
+      'fair' || 'poor' => context.torcaIcons.warning,
+      _ => context.torcaIcons.error,
     };
     final rtt = health.rttMs == null ? '' : ' · ${health.rttMs} ms';
     final child = AnimatedBuilder(
@@ -75,7 +74,9 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
                 padding: EdgeInsets.all(glow * 2),
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: glow * 0.22),
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(
+                    context.torcaTokens.radiusLarge,
+                  ),
                 ),
                 child: Icon(icon, size: 17, color: color),
               ),
@@ -93,7 +94,9 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
       child: widget.onPressed == null
           ? child
           : InkWell(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(
+                context.torcaTokens.radiusLarge,
+              ),
               onTap: widget.onPressed,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),

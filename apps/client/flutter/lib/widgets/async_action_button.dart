@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 /// A stable-size action button that makes asynchronous work explicit.
 class AsyncActionButton extends StatelessWidget {
@@ -24,7 +25,7 @@ class AsyncActionButton extends StatelessWidget {
             height: 18,
             child: CircularProgressIndicator(strokeWidth: 2),
           )
-        : Icon(icon ?? Icons.arrow_forward),
+        : Icon(icon ?? context.torcaIcons.send),
     label: Text(busy ? '$label…' : label),
   );
 }

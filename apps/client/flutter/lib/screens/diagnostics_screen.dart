@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -113,8 +114,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                   (check) => ListTile(
                     leading: Icon(
                       check.ok
-                          ? Icons.check_circle_outline
-                          : Icons.error_outline,
+                          ? context.torcaIcons.success
+                          : context.torcaIcons.error,
                     ),
                     title: Text(check.name),
                     subtitle: Text(check.detail),
@@ -151,17 +152,17 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         IconButton(
           tooltip: 'Run self-test',
           onPressed: _loading ? null : _selfTest,
-          icon: const Icon(Icons.fact_check_outlined),
+          icon: Icon(context.torcaIcons.diagnostics),
         ),
         IconButton(
           tooltip: 'Export diagnostics',
           onPressed: _loading ? null : _export,
-          icon: const Icon(Icons.save_alt),
+          icon: Icon(context.torcaIcons.save),
         ),
         IconButton(
           tooltip: 'Refresh',
           onPressed: _loading ? null : _refresh,
-          icon: const Icon(Icons.refresh),
+          icon: Icon(context.torcaIcons.retry),
         ),
       ],
     ),
@@ -195,12 +196,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                   children: <Widget>[
                     FilledButton.tonalIcon(
                       onPressed: _loading ? null : _selfTest,
-                      icon: const Icon(Icons.fact_check_outlined),
+                      icon: Icon(context.torcaIcons.diagnostics),
                       label: const Text('Run self-test'),
                     ),
                     OutlinedButton.icon(
                       onPressed: _loading ? null : _export,
-                      icon: const Icon(Icons.save_alt),
+                      icon: Icon(context.torcaIcons.save),
                       label: const Text('Export diagnostics'),
                     ),
                   ],
@@ -218,7 +219,9 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                         color: Theme.of(
                           context,
                         ).colorScheme.surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(
+                          context.torcaTokens.radiusMedium,
+                        ),
                       ),
                       child: SelectableText(_pretty(_json ?? '{"events":[]}')),
                     ),

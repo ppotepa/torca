@@ -218,6 +218,12 @@ pub trait PeerCredentialRepository {
 pub struct InMemoryContactRepository {
     contacts: BTreeMap<ContactId, Contact>,
 }
+impl InMemoryContactRepository {
+    /// Removes a contact from this ephemeral repository.
+    pub fn remove(&mut self, id: ContactId) -> Option<Contact> {
+        self.contacts.remove(&id)
+    }
+}
 impl ContactRepository for InMemoryContactRepository {
     fn insert(&mut self, contact: Contact) -> Result<(), ContactError> {
         if self.contacts.contains_key(&contact.id()) {
@@ -244,6 +250,12 @@ impl ContactRepository for InMemoryContactRepository {
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryPeerCredentialRepository {
     credentials: BTreeMap<ContactId, PeerCredential>,
+}
+impl InMemoryPeerCredentialRepository {
+    /// Removes the credential belonging to a deleted local relationship.
+    pub fn remove_credential(&mut self, contact_id: ContactId) -> Option<PeerCredential> {
+        self.credentials.remove(&contact_id)
+    }
 }
 impl PeerCredentialRepository for InMemoryPeerCredentialRepository {
     fn insert_credential(&mut self, credential: PeerCredential) -> Result<(), ContactError> {

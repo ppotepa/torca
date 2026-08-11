@@ -14,6 +14,7 @@ mod inbound_sqlcipher;
 mod message_repository;
 mod migration;
 mod pairing_repository;
+mod pending_operations;
 mod read_state;
 mod receipt_repository;
 mod relationship_admin;
@@ -41,6 +42,7 @@ pub use message_repository::{
 };
 pub use migration::{Migration, MigrationError, MigrationRunner, migrations};
 pub use pairing_repository::SqlCipherPairingRepository;
+pub use pending_operations::{PendingOperationStorageError, SqlCipherPendingOperationStore};
 pub use read_state::{ReadStateError, SqlCipherReadState};
 pub use receipt_repository::{SqlCipherReceiptStore, SqlCipherReceiptStoreOpenError};
 pub use relationship_admin::{

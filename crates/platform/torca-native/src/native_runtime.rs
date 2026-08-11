@@ -45,6 +45,28 @@ enum HostStartEvent {
     Finished(HostStartResult),
 }
 
+/// Open diagnostics before production composition starts.  Tor/SQLCipher
+/// bootstrap can take long enough to fail or be interrupted; initializing the
+/// logger only after composition made exactly those failures invisible in
+/// packaged Android runs.
+fn open_startup_logger() -> Option<Logger> {
+    #[cfg(target_os = "android")]
+    let log_root = crate::composition::android::log_root_path().unwrap_or_else(|_| default_root());
+    #[cfg(not(target_os = "android"))]
+    let log_root = default_root();
+    match Logger::new(
+        log_root,
+        std::env::var("TORCA_DEVICE_ID").unwrap_or_else(|_| "native".into()),
+        crate::torca_runtime::compiled_build_id(),
+    ) {
+        Ok(logger) => Some(logger),
+        Err(error) => {
+            eprintln!("Torca native logger startup failed: {error}");
+            None
+        }
+    }
+}
+
 pub struct TorcaRuntime {
     application_runtime: ClientApplicationRuntime,
     actor: Option<ClientEngineActor>,
@@ -69,6 +91,9 @@ pub struct TorcaRuntime {
     host_failures: u32,
     host_state_hint: TorState,
     network_changed_pending: bool,
+    last_onion_log_state: Option<(String, Option<String>)>,
+    last_relay_log_state: Option<(String, Option<String>)>,
+    network_ready_logged: bool,
     pub(crate) last_result_json: String,
     pub(crate) snapshot_json: String,
     pub(crate) query_json: String,
@@ -90,34 +115,30 @@ impl TorcaRuntime {
     }
 
     pub(crate) fn new() -> Result<Self, String> {
-        let parts = spawn_production_engine()
-            .map_err(|error| format!("native engine composition failed: {error}"))?;
+        let logger = open_startup_logger();
+        let parts = match spawn_production_engine() {
+            Ok(parts) => parts,
+            Err(error) => {
+                if let Some(logger) = logger.as_ref() {
+                    let _ = logger.event(
+                        "bootstrap",
+                        Level::Error,
+                        "composition",
+                        "COMPOSITION_FAILED",
+                        &format!("Native engine composition failed: {error}"),
+                    );
+                }
+                return Err(format!("native engine composition failed: {error}"));
+            }
+        };
         let application = parts.application.clone();
         let mut application_runtime = ClientApplicationRuntime::new(application.clone());
         application_runtime.attach_read_models(parts.read_models);
+        application_runtime.attach_pending_store(parts.pending);
         let notifications_enabled = application_runtime
             .read_models()
             .and_then(|models| models.settings.notifications_enabled().ok())
             .unwrap_or(true);
-        #[cfg(target_os = "android")]
-        let log_root =
-            crate::composition::android::log_root_path().unwrap_or_else(|_| default_root());
-        #[cfg(not(target_os = "android"))]
-        let log_root = default_root();
-        let logger = match Logger::new(
-            log_root,
-            std::env::var("TORCA_DEVICE_ID").unwrap_or_else(|_| "native".into()),
-            crate::torca_runtime::compiled_build_id(),
-        ) {
-            Ok(logger) => Some(logger),
-            Err(error) => {
-                // A logger failure must never erase the only startup
-                // diagnostic.  Packaged Windows/Android launches still have
-                // stderr/logcat available for collection.
-                eprintln!("Torca native logger startup failed: {error}");
-                None
-            }
-        };
         let contact_notification_seen = application_runtime
             .snapshot_context()
             .map(bridge_snapshot_from_application)
@@ -147,6 +168,9 @@ impl TorcaRuntime {
             host_failures: 0,
             host_state_hint: TorState::Stopped,
             network_changed_pending: false,
+            last_onion_log_state: None,
+            last_relay_log_state: None,
+            network_ready_logged: false,
             last_result_json: success_result("initialized"),
             snapshot_json: empty_snapshot_json(),
             query_json: "{\"messages\":[],\"hasMore\":false}".into(),
@@ -227,36 +251,9 @@ impl TorcaRuntime {
         let is_profile = matches!(&command, torca_contract::BridgeCommand::UpdateProfile { .. });
         if is_profile {
             self.log_profile(request_id, "PROFILE_REQUEST_RECEIVED");
-            let ready = self
-                .application_runtime
-                .snapshot_context()
-                .map(bridge_snapshot_from_application)
-                .map(|snapshot| {
-                    matches!(snapshot.bootstrap_phase.as_str(), "ready_for_profile" | "ready")
-                })
-                .unwrap_or(false);
-            if !ready {
-                self.last_result_json = error_result("PROFILE_NOT_READY");
-                return ABI_ERROR;
-            }
             self.log_profile(request_id, "PROFILE_COMMAND_QUEUED");
             self.log_profile(request_id, "PROFILE_COMMAND_STARTED");
             self.log_profile(request_id, "PROFILE_STORAGE_STARTED");
-        }
-        if let Some(conversation_id) = command_conversation_id(&command) {
-            match self.read_models().security.requires_reverification(conversation_id) {
-                Ok(true) => {
-                    self.last_result_json = error_result(
-                        "contact identity changed; safety number re-verification required",
-                    );
-                    return ABI_ERROR;
-                }
-                Ok(false) => {}
-                Err(_) => {
-                    self.last_result_json = error_result("contact security state unavailable");
-                    return ABI_ERROR;
-                }
-            }
         }
         let result = bridge_result_from_application(match decode_application_command(command) {
             Ok(command) => self.application_runtime.execute(command),
@@ -306,19 +303,25 @@ impl TorcaRuntime {
                     return ABI_ERROR;
                 }
             };
-        if let Err(error) = self.apply_history_summaries(&mut snapshot) {
-            self.last_result_json = error_result(error);
-            return ABI_ERROR;
-        }
-        if let Err(error) = self.apply_security_states(&mut snapshot) {
-            self.last_result_json = error_result(error);
-            return ABI_ERROR;
-        }
+        // Read-model projections are optional sections of the application snapshot.
+        // A transient history/security query failure must not suppress a fresh transport
+        // snapshot and leave the process-wide connection indicators showing stale data.
+        let _ = self.apply_history_summaries(&mut snapshot);
+        let _ = self.apply_security_states(&mut snapshot);
         self.apply_navigation_badges(&mut snapshot);
-        if !self.application_runtime.has_runtime() && snapshot.identity_name.is_some() {
-            snapshot.tor_state = format!("{:?}", self.host_state_hint).to_lowercase();
+        // Keep applying the initial bootstrap gate after the production runtime
+        // has attached. Tor becoming ready is only an intermediate milestone;
+        // the application must remain on the bootstrap surface until the local
+        // onion service and relay are ready as well.
+        if snapshot.identity_name.is_some()
+            && (!self.application_runtime.has_runtime() || !self.network_ready_logged)
+        {
+            if !self.application_runtime.has_runtime() {
+                snapshot.tor_state = format!("{:?}", self.host_state_hint).to_lowercase();
+            }
             self.apply_host_state_hint(&mut snapshot);
         }
+        self.log_network_transitions(&snapshot);
         let snapshot_json = bridge_snapshot_json(&snapshot);
         self.snapshot_json = serde_json::from_str::<serde_json::Value>(&snapshot_json)
             .map(|mut value| {
@@ -329,11 +332,66 @@ impl TorcaRuntime {
         ABI_OK
     }
 
+    fn log_network_transitions(&mut self, snapshot: &torca_contract::BridgeSnapshot) {
+        let onion = snapshot
+            .bootstrap_steps
+            .iter()
+            .find(|step| step.id == "onion_service")
+            .map(|step| (step.state.clone(), step.code.clone()));
+        let relay = snapshot
+            .bootstrap_steps
+            .iter()
+            .find(|step| step.id == "secure_relay")
+            .map(|step| (step.state.clone(), step.code.clone()));
+
+        if let Some(current) = onion.as_ref()
+            && self.last_onion_log_state.as_ref() != Some(current)
+        {
+            let (level, code, message) = network_transition_event("ONION", current);
+            self.log("tor", level, "onion_service", &code, &message);
+            self.last_onion_log_state = Some(current.clone());
+        }
+        if let Some(current) = relay.as_ref()
+            && self.last_relay_log_state.as_ref() != Some(current)
+        {
+            let (level, code, message) = network_transition_event("RELAY", current);
+            self.log("relay", level, "relay_connection", &code, &message);
+            self.last_relay_log_state = Some(current.clone());
+        }
+
+        let network_ready = onion.as_ref().is_some_and(|(state, _)| state == "ready")
+            && relay.as_ref().is_some_and(|(state, _)| state == "ready");
+        if network_ready && !self.network_ready_logged {
+            self.log(
+                "bootstrap",
+                Level::Info,
+                "network",
+                "NETWORK_READY",
+                "Tor, local onion service and relay are ready",
+            );
+            self.network_ready_logged = true;
+        }
+    }
+
+    pub(crate) fn reconcile_pending_operations(&self) {
+        let _ = self.application_runtime.advance_pending_operations();
+    }
+
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
-        snapshot.bootstrap_phase = match self.host_state_hint {
-            TorState::Degraded | TorState::Failed => "failed",
-            TorState::Stopped => "idle",
-            TorState::Starting | TorState::Ready => "starting",
+        // Do not expose the normal application shell before the first complete
+        // network bootstrap. Identity creation is only a local prerequisite;
+        // pairing and other network operations are not usable until Tor, the
+        // private onion service and the relay have all reached NETWORK_READY.
+        // Once that first gate has opened, keep the shell available during later
+        // transient outages and expose those outages through the step/status UI.
+        snapshot.bootstrap_phase = if snapshot.identity_name.is_none() {
+            "ready_for_profile"
+        } else if self.network_ready_logged {
+            "ready"
+        } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
+            "degraded"
+        } else {
+            "running"
         }
         .into();
         let network_state = if self.host_progress >= 100 {
@@ -532,6 +590,19 @@ impl TorcaRuntime {
         })
         .to_string();
         ABI_OK
+    }
+
+    pub(crate) fn diagnostics_json(&mut self) -> i32 {
+        match self.application_runtime.diagnostics_json() {
+            Ok(diagnostics) => {
+                self.query_json = diagnostics;
+                ABI_OK
+            }
+            Err(error) => {
+                self.last_result_json = error_result(&error.to_string());
+                ABI_ERROR
+            }
+        }
     }
 
     pub(crate) fn parse_pairing_uri(&mut self, raw_uri: &str) -> i32 {
@@ -908,9 +979,10 @@ impl TorcaRuntime {
                     self.host_attempt = self.host_attempt.max(1);
                     self.host_status_code = Some("TOR_BOOTSTRAP_READY".into());
                     self.host_status_summary = Some("Tor network bootstrap completed".into());
-                    self.host_onion_progress = 100;
-                    self.host_onion_status_code = Some("ONION_SERVICE_READY".into());
-                    self.host_onion_status_summary = Some("Private onion service published".into());
+                    self.host_onion_progress = self.host_onion_progress.max(5);
+                    self.host_onion_status_code = Some("ONION_SERVICE_PUBLISHING".into());
+                    self.host_onion_status_summary =
+                        Some("Waiting for private onion service reachability".into());
                     self.log(
                         "bootstrap",
                         Level::Info,
@@ -921,16 +993,9 @@ impl TorcaRuntime {
                 }
                 Err(error) => {
                     self.host_failures = self.host_failures.saturating_add(1);
-                    let diagnostic = error.to_string();
-                    let unsafe_to_retry = diagnostic.contains("bootstrap Arti client stalled")
-                        || diagnostic.contains("bootstrap Arti client exhausted")
-                        || diagnostic.contains("onion service exhausted");
+                    let retry_exhausted = self.host_failures >= NETWORK_MAX_ATTEMPTS;
                     self.host_state_hint =
-                        if unsafe_to_retry || self.host_failures >= NETWORK_MAX_ATTEMPTS {
-                            TorState::Failed
-                        } else {
-                            TorState::Degraded
-                        };
+                        if retry_exhausted { TorState::Failed } else { TorState::Degraded };
                     self.log(
                         "bootstrap",
                         Level::Error,
@@ -938,25 +1003,15 @@ impl TorcaRuntime {
                         "RUNTIME_START_FAILED",
                         &format!("Production network runtime start failed: {error}"),
                     );
-                    self.host_retry_at = (!unsafe_to_retry
-                        && self.host_failures < NETWORK_MAX_ATTEMPTS)
-                        .then(|| {
-                            let delay = match self.host_failures {
-                                1 => Duration::from_secs(5),
-                                2 => Duration::from_secs(15),
-                                _ => NETWORK_RETRY_DELAY,
-                            };
-                            Instant::now() + delay
-                        });
-                    if unsafe_to_retry {
-                        if self.host_onion_attempt > 0 && self.host_onion_progress < 100 {
-                            self.host_onion_status_code =
-                                Some("ONION_SERVICE_RESTART_REQUIRED".into());
-                            self.host_onion_retry_at = None;
-                        } else {
-                            self.host_status_code = Some("TOR_RESTART_REQUIRED".into());
-                        }
-                    } else if self.host_retry_at.is_some() {
+                    self.host_retry_at = (!retry_exhausted).then(|| {
+                        let delay = match self.host_failures {
+                            1 => Duration::from_secs(5),
+                            2 => Duration::from_secs(15),
+                            _ => NETWORK_RETRY_DELAY,
+                        };
+                        Instant::now() + delay
+                    });
+                    if self.host_retry_at.is_some() {
                         self.host_status_code = Some("TOR_BOOTSTRAP_RETRYING".into());
                         self.host_last_progress_at_ms = unix_time_ms().ok();
                     } else {
@@ -1027,6 +1082,29 @@ impl TorcaRuntime {
     }
 }
 
+fn network_transition_event(
+    component: &str,
+    (state, diagnostic): &(String, Option<String>),
+) -> (Level, String, String) {
+    let suffix = match state.as_str() {
+        "ready" => "READY",
+        "failed" => "FAILED",
+        "degraded" => "DEGRADED",
+        "retrying" => "RETRYING",
+        "running" | "checking" => "CONNECTING",
+        _ => "PENDING",
+    };
+    let level = match suffix {
+        "FAILED" => Level::Error,
+        "DEGRADED" | "RETRYING" => Level::Warn,
+        _ => Level::Info,
+    };
+    let code = format!("{component}_{suffix}");
+    let detail = diagnostic.as_deref().unwrap_or("no diagnostic code");
+    let message = format!("{component} state changed to {state} ({detail})");
+    (level, code, message)
+}
+
 fn notification_event_json(event: &torca_contract::NotificationEvent) -> serde_json::Value {
     serde_json::json!({
         "cursor": event.cursor,
@@ -1071,17 +1149,6 @@ fn instant_to_unix_ms(deadline: Instant) -> Option<i64> {
     let remaining = deadline.checked_duration_since(Instant::now()).unwrap_or_default();
     let remaining_ms = i64::try_from(remaining.as_millis()).ok()?;
     unix_time_ms().ok()?.checked_add(remaining_ms)
-}
-
-fn command_conversation_id(command: &torca_contract::BridgeCommand) -> Option<ConversationId> {
-    let raw = match command {
-        torca_contract::BridgeCommand::QueueMessage { conversation_id_hex, .. }
-        | torca_contract::BridgeCommand::QueueAttachment { conversation_id_hex, .. } => {
-            conversation_id_hex
-        }
-        _ => return None,
-    };
-    raw.parse::<OpaqueId>().ok().map(ConversationId::from_opaque)
 }
 
 impl Drop for TorcaRuntime {

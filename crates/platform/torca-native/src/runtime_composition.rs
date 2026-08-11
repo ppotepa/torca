@@ -1,6 +1,5 @@
-use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
@@ -10,21 +9,23 @@ use torca_crypto::{
     ManagedIdentityKeys, ManagedPeerSecrets, OwnedHandshakeSigner, RustCryptoProvider,
     RustPairingCrypto,
 };
+use torca_foundation::ErrorCode;
 use torca_pairing_coordinator::{
     PairingApprovalPort, PairingCoordinator, PairingPeerSecretStore, PairingRuntime,
 };
-use torca_pairing_driver::RuntimePairingDriver;
+use torca_pairing_driver::{PairingWorkerDriver, RuntimePairingDriver};
 use torca_platform::{PlatformServices, SecretNamespace};
-use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayRequest, RelayResponse};
-use torca_rendezvous_client::{RendezvousClient, TorRelayTransport};
-use torca_runtime::{RelayProbe, RuntimeDriverError, RuntimeHandle, RuntimeOwner};
+use torca_rendezvous_client::{RendezvousClient, SharedTorRelayTransport};
+use torca_runtime::{RelayProbe, RelayServiceInfo, RuntimeHandle, RuntimeOwner};
 use torca_storage_sqlite::SqlCipherRelationshipAdmin;
 use torca_tor::{OwnedTorDriver, SharedTorEndpoint};
-use torca_tor::{PeerListener, TorBootstrapObserver, TorService};
+use torca_tor::{PeerListener, TorBootstrapObserver};
 
 use crate::composition::{NativeCompositionError, load_or_create_database_key};
 
-const NETWORK_TIMEOUT: Duration = Duration::from_secs(30);
+// Keep interactive requests below the application command deadline. Long-lived
+// recovery is handled by the pairing supervisor instead of one blocking call.
+const NETWORK_TIMEOUT: Duration = Duration::from_secs(8);
 const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const COMPILED_RELAY_ENDPOINT: &str = match option_env!("TORCA_RELAY_ENDPOINT") {
     Some(value) => value,
@@ -32,42 +33,44 @@ const COMPILED_RELAY_ENDPOINT: &str = match option_env!("TORCA_RELAY_ENDPOINT") 
 };
 
 struct TorRelayProbe {
-    tor: Arc<TorService>,
-    host: String,
-    port: u16,
+    transport: SharedTorRelayTransport,
+    info: Mutex<Option<RelayServiceInfo>>,
 }
 
 impl RelayProbe for TorRelayProbe {
-    fn probe(&self) -> Result<(), RuntimeDriverError> {
-        let mut stream = self
-            .tor
-            .connect_onion_with_timeout(&self.host, self.port, Duration::from_secs(15))
-            .map_err(|_| RuntimeDriverError::Communication)?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(15)))
-            .map_err(|_| RuntimeDriverError::Communication)?;
-        stream
-            .set_write_timeout(Some(Duration::from_secs(15)))
-            .map_err(|_| RuntimeDriverError::Communication)?;
-        let frame = RelayCodec::encode_request(&RelayRequest::Health)
-            .map_err(|_| RuntimeDriverError::Communication)?;
-        stream.write_all(&frame).map_err(|_| RuntimeDriverError::Communication)?;
-        let mut header = [0_u8; RELAY_HEADER_LEN];
-        stream.read_exact(&mut header).map_err(|_| RuntimeDriverError::Communication)?;
-        let frame_len = RelayCodec::frame_len_from_header(&header)
-            .map_err(|_| RuntimeDriverError::Communication)?;
-        let mut response = Vec::with_capacity(frame_len);
-        response.extend_from_slice(&header);
-        response.resize(frame_len, 0);
-        stream
-            .read_exact(&mut response[RELAY_HEADER_LEN..])
-            .map_err(|_| RuntimeDriverError::Communication)?;
-        match RelayCodec::decode_response(&response)
-            .map_err(|_| RuntimeDriverError::Communication)?
-        {
-            RelayResponse::Healthy => Ok(()),
-            _ => Err(RuntimeDriverError::Communication),
-        }
+    fn probe(&self) -> Result<(), ErrorCode> {
+        self.transport
+            .relay_info(Duration::from_secs(10))
+            .map(|info| {
+                if let Ok(mut current) = self.info.lock() {
+                    *current = Some(RelayServiceInfo {
+                        product_version: info.product_version,
+                        build_id: info.build_id,
+                        source_commit: info.source_commit,
+                        protocol_version: info.protocol_version,
+                    });
+                }
+            })
+            .map_err(|error| {
+                ErrorCode::new(match error.kind {
+                    torca_rendezvous_client::RelayTransportFailureKind::Unavailable => {
+                        "relay.connection_unavailable"
+                    }
+                    torca_rendezvous_client::RelayTransportFailureKind::Timeout => {
+                        "relay.request_timeout"
+                    }
+                    torca_rendezvous_client::RelayTransportFailureKind::Disconnected => {
+                        "relay.connection_disconnected"
+                    }
+                    torca_rendezvous_client::RelayTransportFailureKind::InvalidResponse => {
+                        "relay.health_response_invalid"
+                    }
+                })
+            })
+    }
+
+    fn service_info(&self) -> Option<RelayServiceInfo> {
+        self.info.lock().ok().and_then(|value| value.clone())
     }
 }
 pub(crate) fn spawn_production_runtime(
@@ -153,13 +156,13 @@ fn spawn_runtime_for(
     // Relay health is deliberately asynchronous. A relay outage must put the
     // relay step into degraded state without preventing Tor/onion/profile from
     // becoming available.
+    let relay_transport = SharedTorRelayTransport::new(tor_client.clone(), relay.0, relay.1);
     let relay_probe: Arc<dyn RelayProbe> =
-        Arc::new(TorRelayProbe { tor: tor_client.clone(), host: relay.0.clone(), port: relay.1 });
+        Arc::new(TorRelayProbe { transport: relay_transport.clone(), info: Mutex::new(None) });
     let pairing = build_pairing_driver(
         engine.clone(),
         endpoint,
-        tor_client,
-        relay,
+        relay_transport,
         ManagedIdentityKeys::new(
             RustCryptoProvider,
             platform.open_secret_store(SecretNamespace::Identity),
@@ -171,6 +174,8 @@ fn spawn_runtime_for(
         connectivity.clone(),
     )?
     .with_contact_metadata(metadata);
+    let pairing = PairingWorkerDriver::spawn(pairing)
+        .map_err(|_| NativeCompositionError::new("spawn pairing supervisor failed"))?;
     Ok(RuntimeOwner::spawn_with_connectivity(
         engine,
         pairing,
@@ -189,22 +194,20 @@ fn bind_peer_listener() -> Result<PeerListener, NativeCompositionError> {
 fn build_pairing_driver<A, S>(
     engine: EngineHandle,
     endpoint: SharedTorEndpoint,
-    tor_client: Arc<TorService>,
-    relay: (String, u16),
+    relay_transport: SharedTorRelayTransport,
     approval: A,
     peer_secrets: S,
     connectivity: ConnectivityObserver,
 ) -> Result<
-    RuntimePairingDriver<RendezvousClient<TorRelayTransport>, RustPairingCrypto, A, S>,
+    RuntimePairingDriver<RendezvousClient<SharedTorRelayTransport>, RustPairingCrypto, A, S>,
     NativeCompositionError,
 >
 where
     A: PairingApprovalPort + Send + 'static,
     S: PairingPeerSecretStore + Send + 'static,
 {
-    let transport = TorRelayTransport::new(tor_client, relay.0, relay.1);
     let rendezvous =
-        RendezvousClient::new(transport, NETWORK_TIMEOUT).with_connectivity(connectivity);
+        RendezvousClient::new(relay_transport, NETWORK_TIMEOUT).with_connectivity(connectivity);
     let coordinator = PairingCoordinator::new(rendezvous, RustPairingCrypto::new());
     let mut runtime = PairingRuntime::new(coordinator, engine.clone(), approval, peer_secrets);
     runtime

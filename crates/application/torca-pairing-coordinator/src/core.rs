@@ -28,6 +28,20 @@ pub struct PairingSideToken(pub OpaqueId);
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingRelayDelivery {
+    pub sequence: u64,
+    pub blob: Vec<u8>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PairingPollBatch {
+    pub envelopes: Vec<PairingEnvelope>,
+    pub received_through: Option<u64>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingEphemeralKey {
     pub handle: PairingCryptoHandle,
     pub public_key: [u8; 32],
@@ -145,6 +159,7 @@ pub trait PairingCryptoPort {
 }
 
 pub trait PairingRendezvousPort {
+    fn network_changed(&mut self) {}
     fn open(
         &mut self,
         code: &PairingCode,
@@ -163,6 +178,7 @@ pub trait PairingRendezvousPort {
     ) -> Result<(PairingSlotId, Timestamp, Vec<u8>), PairingCoordinatorError>;
     fn push(
         &mut self,
+        message_id: OpaqueId,
         slot: PairingSlotId,
         token: PairingSideToken,
         blob: Vec<u8>,
@@ -171,7 +187,14 @@ pub trait PairingRendezvousPort {
         &mut self,
         slot: PairingSlotId,
         token: PairingSideToken,
-    ) -> Result<Vec<Vec<u8>>, PairingCoordinatorError>;
+        after: u64,
+    ) -> Result<Vec<PairingRelayDelivery>, PairingCoordinatorError>;
+    fn ack(
+        &mut self,
+        slot: PairingSlotId,
+        token: PairingSideToken,
+        up_to: u64,
+    ) -> Result<(), PairingCoordinatorError>;
     fn close(
         &mut self,
         slot: PairingSlotId,
@@ -211,6 +234,7 @@ struct TransportSession {
     token: PairingSideToken,
     slot_capability: Option<PairingSlotCapability>,
     remote_public_key: Option<[u8; 32]>,
+    acknowledged_through: u64,
 }
 
 pub struct PairingCoordinator<R, C> {
@@ -269,6 +293,7 @@ where
                 token,
                 slot_capability: Some(capability),
                 remote_public_key: None,
+                acknowledged_through: 0,
             },
         );
         Ok((slot, relay_expires_at))
@@ -309,6 +334,7 @@ where
                 token,
                 slot_capability: None,
                 remote_public_key: Some(creator_public_key),
+                acknowledged_through: 0,
             },
         );
         Ok((slot, relay_expires_at))
@@ -317,16 +343,19 @@ where
     pub fn poll(
         &mut self,
         session_id: PairingSessionId,
-    ) -> Result<Vec<PairingEnvelope>, PairingCoordinatorError> {
+    ) -> Result<PairingPollBatch, PairingCoordinatorError> {
         let session = self
             .sessions
             .get(&session_id)
             .cloned()
             .ok_or(PairingCoordinatorError::SessionNotFound)?;
-        let blobs = self.rendezvous.poll(session.slot, session.token)?;
-        let mut envelopes = Vec::with_capacity(blobs.len());
+        let deliveries =
+            self.rendezvous.poll(session.slot, session.token, session.acknowledged_through)?;
+        let mut envelopes = Vec::with_capacity(deliveries.len());
         let mut remote_public_key = session.remote_public_key;
-        for blob in blobs {
+        let mut received_through = None;
+        for delivery in deliveries {
+            let blob = delivery.blob;
             // The rendezvous service delivers the joiner's ephemeral public key to the creator
             // exactly once as the join operation is accepted. It is transport setup material,
             // not an encrypted protocol envelope.
@@ -336,6 +365,7 @@ where
                 if let Some(stored) = self.sessions.get_mut(&session_id) {
                     stored.remote_public_key = Some(key);
                 }
+                received_through = Some(delivery.sequence);
                 continue;
             }
             let encrypted = decode_encrypted(&blob)?;
@@ -359,6 +389,7 @@ where
                 .validate_pairing_id(session.context.0)
                 .map_err(|_| PairingCoordinatorError::Protocol)?;
             envelopes.push(envelope);
+            received_through = Some(delivery.sequence);
             if remote_public_key.is_none() {
                 remote_public_key = Some(remote);
                 if let Some(stored) = self.sessions.get_mut(&session_id) {
@@ -366,7 +397,28 @@ where
                 }
             }
         }
-        Ok(envelopes)
+        Ok(PairingPollBatch { envelopes, received_through })
+    }
+
+    pub fn ack(
+        &mut self,
+        session_id: PairingSessionId,
+        up_to: u64,
+    ) -> Result<(), PairingCoordinatorError> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .cloned()
+            .ok_or(PairingCoordinatorError::SessionNotFound)?;
+        self.rendezvous.ack(session.slot, session.token, up_to)?;
+        if let Some(stored) = self.sessions.get_mut(&session_id) {
+            stored.acknowledged_through = stored.acknowledged_through.max(up_to);
+        }
+        Ok(())
+    }
+
+    pub fn network_changed(&mut self) {
+        self.rendezvous.network_changed();
     }
 
     pub fn push(
@@ -384,7 +436,8 @@ where
             .map_err(|_| PairingCoordinatorError::Protocol)?;
         let remote = session.remote_public_key.ok_or(PairingCoordinatorError::InvalidBlob)?;
         let encrypted = self.encrypt_envelope(session.context, &session.key, remote, envelope)?;
-        self.rendezvous.push(session.slot, session.token, encode_encrypted(&encrypted))
+        let message_id = self.random_id()?;
+        self.rendezvous.push(message_id, session.slot, session.token, encode_encrypted(&encrypted))
     }
 
     /// Derives the long-lived peer secret from the same contributory X25519 exchange but a
@@ -474,6 +527,7 @@ where
                 token: snapshot.token,
                 slot_capability: snapshot.slot_capability,
                 remote_public_key: snapshot.remote_public_key,
+                acknowledged_through: 0,
             },
         );
         Ok(())

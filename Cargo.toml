@@ -49,6 +49,13 @@ members = [
 ]
 resolver = "3"
 
+# Release is used frequently during device iteration because it exercises the
+# same packaging path as production. Keeping incremental metadata makes a
+# second release build substantially cheaper; CI can still start from a clean
+# target directory when a fully cold build is required.
+[profile.release]
+incremental = true
+
 # Arti 0.45 currently pulls saturating-time 0.4.0.  The published crate can
 # spin forever on Windows where SystemTime rounds sub-100ns durations to zero.
 # Keep the fix reproducible until an upstream release contains the guard.

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use rusqlite::{ErrorCode, params};
 use torca_delivery::{DurableDeliveryError, InboundMessageStore};
+use torca_foundation::Timestamp;
 use torca_messaging::{Message, MessageDirection, MessageStatus};
 
 use crate::{
@@ -98,6 +99,9 @@ impl InboundMessageStore for SqlCipherInboundStore {
                     message.created_at().to_unix_millis(),
                     message.updated_at().to_unix_millis(),
                     attempt_count,
+                    message.sent_at().map(Timestamp::to_unix_millis),
+                    message.delivered_at().map(Timestamp::to_unix_millis),
+                    message.read_at().map(Timestamp::to_unix_millis),
                 ],
             )?;
             Ok(true)
@@ -145,4 +149,38 @@ fn storage_error(error: rusqlite::Error) -> DurableDeliveryError {
         .sqlite_error_code()
         .map_or_else(|| "unknown".to_owned(), |value| format!("{value:?}"));
     DurableDeliveryError::Storage(format!("SQLite inbound operation failed ({code})"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use torca_conversations::ConversationId;
+    use torca_delivery::InboundMessageStore;
+    use torca_messaging::{MessageBody, MessageId};
+
+    #[test]
+    fn inbound_message_persists_with_lifecycle_columns() {
+        let mut store = SqlCipherInboundStore::open_in_memory(&DatabaseKey::new([0x73; 32]))
+            .expect("open inbound store");
+        let at = Timestamp::from_unix_millis(42).expect("timestamp");
+        let message = Message::inbound(
+            MessageId::from_u128(7),
+            ConversationId::from_u128(8),
+            MessageBody::new("hello").expect("body"),
+            None,
+            at,
+        );
+
+        assert!(
+            store
+                .persist_inbound(torca_foundation::OpaqueId::from_u128(9), message)
+                .expect("persist")
+        );
+        let delivered: Option<i64> = store
+            .backend
+            .connection()
+            .query_row("SELECT delivered_at_ms FROM messages", [], |row| row.get(0))
+            .expect("read lifecycle");
+        assert_eq!(delivered, Some(42));
+    }
 }

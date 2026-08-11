@@ -7,14 +7,14 @@ enum TorcaThemeVariant {
   modernGraphite,
   modernForest,
   terminalGruvbox,
-  terminalDracula,
-  terminalSolarized;
+  terminalTokyoNight,
+  terminalCatppuccin;
 
   TorcaThemeFamily get family => switch (this) {
     modernOcean || modernGraphite || modernForest => TorcaThemeFamily.modern,
     terminalGruvbox ||
-    terminalDracula ||
-    terminalSolarized => TorcaThemeFamily.terminal,
+    terminalTokyoNight ||
+    terminalCatppuccin => TorcaThemeFamily.terminal,
   };
 
   String get label => switch (this) {
@@ -22,14 +22,22 @@ enum TorcaThemeVariant {
     modernGraphite => 'Graphite',
     modernForest => 'Forest',
     terminalGruvbox => 'Gruvbox',
-    terminalDracula => 'Dracula',
-    terminalSolarized => 'Solarized',
+    terminalTokyoNight => 'Tokyo Night',
+    terminalCatppuccin => 'Catppuccin',
   };
 
-  static TorcaThemeVariant parse(String? value) => values.firstWhere(
-    (variant) => variant.name == value,
-    orElse: () => TorcaThemeVariant.modernOcean,
-  );
+  static TorcaThemeVariant parse(String? value) {
+    // Preserve preferences written before the terminal palette refresh.
+    final migrated = switch (value) {
+      'terminalDracula' => 'terminalTokyoNight',
+      'terminalSolarized' => 'terminalCatppuccin',
+      _ => value,
+    };
+    return values.firstWhere(
+      (variant) => variant.name == migrated,
+      orElse: () => TorcaThemeVariant.modernOcean,
+    );
+  }
 }
 
 enum TorcaDensity { compact, comfortable }

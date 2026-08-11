@@ -18,6 +18,8 @@ class ConversationTimelineController extends ChangeNotifier {
   List<MessageDto> _messages = const <MessageDto>[];
   bool _hasMore = true;
   bool _loading = false;
+  bool _refreshing = false;
+  bool _refreshPending = false;
   int _generation = 0;
 
   List<MessageDto> get messages => _messages;
@@ -44,7 +46,7 @@ class ConversationTimelineController extends ChangeNotifier {
   Future<void> refreshLatest() => _loadLatest(replace: false);
 
   Future<int> loadOlder() async {
-    if (_loading || !_hasMore || _messages.isEmpty) return 0;
+    if (_loading || _refreshing || !_hasMore || _messages.isEmpty) return 0;
     final generation = _generation;
     _loading = true;
     notifyListeners();
@@ -72,33 +74,53 @@ class ConversationTimelineController extends ChangeNotifier {
       searchConversationFor(_gateway, _conversationId, query, limit: limit);
 
   Future<void> _loadLatest({required bool replace}) async {
-    if (_loading) return;
+    if (_loading || _refreshing) {
+      _refreshPending = true;
+      return;
+    }
     final generation = _generation;
-    _loading = true;
-    notifyListeners();
+    var replaceCurrent = replace;
+    _refreshing = true;
     try {
-      final page = await conversationPageFor(
-        _gateway,
-        _conversationId,
-        limit: pageSize,
-      );
-      if (generation != _generation) return;
-      if (replace || _messages.isEmpty || page.messages.isEmpty) {
-        _messages = page.messages;
-      } else {
-        _messages = _merge(_messages, page.messages);
-      }
-      // A latest page shorter than the configured size proves the entire conversation is loaded.
-      // Once older pages have already been loaded, retain their hasMore state unless the history
-      // was cleared and the latest page is now empty.
-      if (replace || _messages.length <= pageSize || page.messages.isEmpty) {
-        _hasMore = page.hasMore;
-      }
+      do {
+        _refreshPending = false;
+        // A background refresh must not replace a stable empty/data state with
+        // a spinner. The previous implementation toggled this flag on every
+        // global snapshot (roughly every 250ms), which made "No messages yet"
+        // visibly flicker in an otherwise idle conversation.
+        final initialLoad = replaceCurrent && _messages.isEmpty;
+        if (initialLoad) {
+          _loading = true;
+          notifyListeners();
+        }
+        try {
+          final page = await conversationPageFor(
+            _gateway,
+            _conversationId,
+            limit: pageSize,
+          );
+          if (generation != _generation) return;
+          if (replaceCurrent || _messages.isEmpty || page.messages.isEmpty) {
+            _messages = page.messages;
+          } else {
+            _messages = _merge(_messages, page.messages);
+          }
+          if (replaceCurrent ||
+              _messages.length <= pageSize ||
+              page.messages.isEmpty) {
+            _hasMore = page.hasMore;
+          }
+          notifyListeners();
+        } finally {
+          if (generation == _generation && initialLoad) {
+            _loading = false;
+            notifyListeners();
+          }
+        }
+        replaceCurrent = false;
+      } while (generation == _generation && _refreshPending);
     } finally {
-      if (generation == _generation) {
-        _loading = false;
-        notifyListeners();
-      }
+      _refreshing = false;
     }
   }
 

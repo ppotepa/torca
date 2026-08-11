@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,7 +17,7 @@ TorcaApp _app(EngineGateway gateway) => TorcaApp(
 );
 
 void main() {
-  testWidgets('invitation code stays editable while relay is degraded', (
+  testWidgets('invitations screen only exposes invitation generation', (
     WidgetTester tester,
   ) async {
     const snapshot = AppSnapshotDto(
@@ -35,14 +36,95 @@ void main() {
         ),
       ),
     );
-    final field = tester.widget<TextField>(
-      find.widgetWithText(TextField, 'Invitation code'),
-    );
-    expect(field.enabled, isTrue);
+    expect(find.text('Join an invitation'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
     expect(
       find.widgetWithText(FilledButton, 'Generate Invitation'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('queued pairing remains visible while network recovers', (
+    WidgetTester tester,
+  ) async {
+    const snapshot = AppSnapshotDto(
+      identity: IdentityDto(displayName: 'Alice'),
+      bootstrapPhase: 'ready',
+      pendingOperations: <PendingOperationDto>[
+        PendingOperationDto(
+          id: '01',
+          resourceId: '02',
+          kind: 'pairing.create',
+          state: 'retrying',
+          dependency: 'relay',
+          attempts: 2,
+          nextAttemptAtMs: 100,
+          createdAtMs: 1,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PairingScreen(
+          gateway: FakeEngineGateway(initialSnapshot: snapshot),
+        ),
+      ),
+    );
+
+    expect(find.text('Waiting for network'), findsOneWidget);
+    expect(find.text('Generating invitation'), findsOneWidget);
+    expect(find.text('Retry 2 · waiting for relay'), findsOneWidget);
+  });
+
+  testWidgets('generator modal starts work without a second generate action', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () =>
+                  showInvitationGeneratorModal(context, FakeEngineGateway()),
+              child: const Text('Open generator'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open generator'));
+    await tester.pump();
+
+    expect(find.text('Your invitation'), findsOneWidget);
+    expect(find.text('Generate Invitation'), findsNothing);
+  });
+
+  testWidgets('desktop join modal does not expose QR scanning', (
+    WidgetTester tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () =>
+                showJoinInvitationModal(context, FakeEngineGateway()),
+            child: const Text('Open join'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open join'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.byTooltip('Scan QR'), findsNothing);
+    expect(find.text('Join invitation'), findsWidgets);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('profile setup is the initial recoverable route', (
@@ -145,14 +227,18 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Pair contact'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Generate Invitation'));
+    await tester.tap(find.text('Invitations').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Active invitations'), findsOneWidget);
-    expect(find.text('T0R-CA1'), findsOneWidget);
-    expect(find.text('Cancel invitation'), findsOneWidget);
+    expect(
+      find.text('Create and manage short-lived private contact invitations.'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(FilledButton, 'Generate Invitation'),
+      findsOneWidget,
+    );
+    expect(find.text('Join an invitation'), findsNothing);
     expect(find.byType(Scaffold), findsOneWidget);
   });
 

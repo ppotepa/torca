@@ -1,13 +1,16 @@
 use torca_pairing::PairingCode;
 use torca_pairing_coordinator::{
-    PairingCoordinatorError, PairingRendezvousPort, PairingSideToken, PairingSlotCapability,
-    PairingSlotId,
+    PairingCoordinatorError, PairingRelayDelivery, PairingRendezvousPort, PairingSideToken,
+    PairingSlotCapability, PairingSlotId,
 };
-use torca_relay_protocol::{RelayCode, RelaySideToken, RelaySlotCapability};
+use torca_relay_protocol::{RelayCode, RelaySequence, RelaySideToken, RelaySlotCapability};
 
 use crate::{RelayTransport, RendezvousClient};
 
 impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
+    fn network_changed(&mut self) {
+        RendezvousClient::network_changed(self);
+    }
     fn open(
         &mut self,
         code: &PairingCode,
@@ -55,12 +58,14 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
 
     fn push(
         &mut self,
+        message_id: torca_foundation::OpaqueId,
         slot: PairingSlotId,
         token: PairingSideToken,
         blob: Vec<u8>,
     ) -> Result<(), PairingCoordinatorError> {
         RendezvousClient::push(
             self,
+            message_id,
             torca_relay_protocol::RelaySlotId(slot.0),
             RelaySideToken(token.0),
             blob,
@@ -72,11 +77,37 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         &mut self,
         slot: PairingSlotId,
         token: PairingSideToken,
-    ) -> Result<Vec<Vec<u8>>, PairingCoordinatorError> {
+        after: u64,
+    ) -> Result<Vec<PairingRelayDelivery>, PairingCoordinatorError> {
         RendezvousClient::poll(
             self,
             torca_relay_protocol::RelaySlotId(slot.0),
             RelaySideToken(token.0),
+            RelaySequence(after),
+        )
+        .map(|deliveries| {
+            deliveries
+                .into_iter()
+                .map(|delivery| PairingRelayDelivery {
+                    sequence: delivery.sequence.0,
+                    blob: delivery.blob,
+                })
+                .collect()
+        })
+        .map_err(|_| PairingCoordinatorError::Rendezvous)
+    }
+
+    fn ack(
+        &mut self,
+        slot: PairingSlotId,
+        token: PairingSideToken,
+        up_to: u64,
+    ) -> Result<(), PairingCoordinatorError> {
+        RendezvousClient::ack(
+            self,
+            torca_relay_protocol::RelaySlotId(slot.0),
+            RelaySideToken(token.0),
+            RelaySequence(up_to),
         )
         .map_err(|_| PairingCoordinatorError::Rendezvous)
     }

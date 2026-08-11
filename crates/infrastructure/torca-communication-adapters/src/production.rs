@@ -1,6 +1,5 @@
 use core::fmt;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
@@ -23,7 +22,7 @@ use torca_storage_sqlite::{
     SqlCipherMessageStore, SqlCipherRelationshipAdmin, SqlCipherStore,
 };
 use torca_tor::PeerListener;
-use torca_tor::TorService;
+use torca_tor::TorServiceHandle;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
@@ -40,6 +39,7 @@ const RETRY_MAX: Duration = Duration::from_secs(60);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommunicationBuildError {
     Storage,
+    Peer,
     Attachment,
     Cache,
 }
@@ -57,7 +57,7 @@ pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
     pub export_secret_store: EP,
     pub relationship_secret_store: RP,
     pub listener: PeerListener,
-    pub tor_client: Arc<TorService>,
+    pub tor_client: TorServiceHandle,
     pub local_identity_id: OpaqueId,
     pub connectivity: ConnectivityObserver,
 }
@@ -205,7 +205,8 @@ where
         staging_root.to_path_buf(),
     );
 
-    let peer = HealthPeerLinkAdapter::new(link, health_relationships, inputs.local_identity_id);
+    let peer = HealthPeerLinkAdapter::new(link, health_relationships, inputs.local_identity_id)
+        .map_err(|_| CommunicationBuildError::Peer)?;
     Ok(TorcaCommunicationDriver::new(
         engine,
         Box::new(peer),

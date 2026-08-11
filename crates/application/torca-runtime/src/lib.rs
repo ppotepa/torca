@@ -11,7 +11,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
 use torca_client_engine::{EngineCommand, EngineHandle};
-use torca_connectivity::{ConnectivityObserver, ConnectivitySnapshot};
+use torca_connectivity::{
+    ConnectivityObserver, ConnectivitySnapshot, PeerProbeCandidate, PeerProbeSupervisor,
+    RelayHealthHandle, RelayHealthPort, RelayHealthSnapshot, RelayHealthWorker,
+};
 use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationId;
 use torca_diagnostics::{
@@ -30,13 +33,6 @@ const QUERY_WAIT: Duration = Duration::from_secs(5);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(15);
 const MAILBOX_CAPACITY: usize = 256;
 const ENQUEUE_WAIT: Duration = Duration::from_secs(2);
-const RELAY_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
-const RELAY_RETRY_BACKOFF: [Duration; 4] = [
-    Duration::from_secs(5),
-    Duration::from_secs(15),
-    Duration::from_secs(30),
-    Duration::from_secs(60),
-];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TorState {
@@ -45,6 +41,18 @@ pub enum TorState {
     Ready,
     Degraded,
     Failed,
+}
+/// Publication health of this device's onion endpoint.  This is deliberately
+/// separate from `TorState`: a bootstrapped Tor client can still be waiting
+/// for introduction points or descriptor publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OnionServiceState {
+    Unknown,
+    Publishing,
+    Reachable,
+    Degraded,
+    Failed,
+    Stopped,
 }
 /// Application-owned peer session state. Infrastructure adapters map their provider state here.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -86,20 +94,10 @@ pub struct TransportActivitySnapshot {
 
 #[derive(Default)]
 struct TransportActivityLedger {
-    tor: TransportActivitySnapshot,
-    relay: TransportActivitySnapshot,
     peers: BTreeMap<ContactId, TransportActivitySnapshot>,
 }
 
 impl TransportActivityLedger {
-    fn mark_tor(&mut self, now: Timestamp) {
-        Self::mark(&mut self.tor, now);
-    }
-
-    fn mark_relay(&mut self, now: Timestamp) {
-        Self::mark(&mut self.relay, now);
-    }
-
     fn mark_peer(&mut self, contact_id: ContactId, now: Timestamp) {
         Self::mark(self.peers.entry(contact_id).or_default(), now);
     }
@@ -146,16 +144,27 @@ pub struct NetworkSnapshot {
     pub peer_health: BTreeMap<ContactId, PeerHealthSnapshot>,
     pub contact_names: BTreeMap<ContactId, String>,
     pub contact_verifications: BTreeMap<ContactId, ContactVerificationSnapshot>,
-    pub tor_activity: TransportActivitySnapshot,
-    pub relay_activity: TransportActivitySnapshot,
     pub peer_activity: BTreeMap<ContactId, TransportActivitySnapshot>,
     pub probes: Vec<ProbeResult>,
     pub connectivity: ConnectivitySnapshot,
+    pub relay_info: Option<RelayServiceInfo>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayServiceInfo {
+    pub product_version: String,
+    pub build_id: String,
+    pub source_commit: String,
+    pub protocol_version: u16,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeDriverError {
     Pairing,
     Communication,
+    /// A stable, redacted descriptor preserved from a narrower application
+    /// port.  The runtime must not erase the cause into `Communication`.
+    Classified(ErrorDescriptor),
     Tor,
     Engine,
     Pending,
@@ -178,6 +187,7 @@ impl ClassifiedError for RuntimeDriverError {
                 ErrorCategory::Unavailable,
                 RetryAdvice::Backoff,
             ),
+            Self::Classified(descriptor) => return *descriptor,
             Self::Tor => {
                 ("runtime.tor_unavailable", ErrorCategory::Unavailable, RetryAdvice::Backoff)
             }
@@ -211,9 +221,11 @@ pub trait PairingDriver: Send + 'static {
     fn reject(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError>;
     fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError>;
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn network_changed(&mut self, _now: Timestamp) {}
     fn shutdown(&mut self);
 }
-pub trait CommunicationDriver: Send + 'static {
+/// Owns only background delivery/inbound maintenance and peer session state.
+pub trait PeerSessionPort: Send + 'static {
     fn recover(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn maintenance(
         &mut self,
@@ -224,6 +236,37 @@ pub trait CommunicationDriver: Send + 'static {
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
     }
+    /// Whether this device is the deterministic initiator of the keepalive
+    /// for this relationship. The adapter supplies the transport capability;
+    /// application owns cadence and retry policy.
+    fn peer_probe_eligible(&self, _contact_id: ContactId) -> bool {
+        true
+    }
+    /// Starts one bounded keepalive I/O operation. Implementations must return
+    /// promptly after accepting it into their single-flight worker.
+    fn begin_peer_probe(
+        &mut self,
+        _contact_id: ContactId,
+        _probe_id: OpaqueId,
+        _reported_rtt_ms: u64,
+    ) -> Result<(), RuntimeDriverError> {
+        Ok(())
+    }
+    /// Returns the contact whose pending keepalive completed. Health details
+    /// remain available through `peer_health`, avoiding infrastructure errors
+    /// in the application vocabulary.
+    fn take_peer_probe_completion(
+        &mut self,
+        _now: Timestamp,
+    ) -> Result<Option<ContactId>, RuntimeDriverError> {
+        Ok(None)
+    }
+    fn shutdown(&mut self);
+}
+
+/// Contact administration is not a transport command, despite some actions
+/// causing a peer session to be closed by its infrastructure implementation.
+pub trait RelationshipAdminPort: Send + 'static {
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError>;
     fn contact_verifications(
         &self,
@@ -258,11 +301,17 @@ pub trait CommunicationDriver: Send + 'static {
         conversation_id: ConversationId,
     ) -> Result<(), RuntimeDriverError>;
     fn remove_contact(&mut self, contact_id: ContactId) -> Result<(), RuntimeDriverError>;
+}
+
+pub trait ConversationReadPort: Send + 'static {
     fn mark_conversation_read(
         &mut self,
         conversation_id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
+}
+
+pub trait AttachmentTransferPort: Send + 'static {
     fn prepare_attachment(
         &mut self,
         request: &AttachmentSendRequest,
@@ -278,18 +327,46 @@ pub trait CommunicationDriver: Send + 'static {
         attachment_id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
+    fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError>;
+}
+
+pub trait AttachmentExportPort: Send + 'static {
     fn export_attachment(
         &mut self,
         attachment_id: AttachmentId,
         destination: PathBuf,
     ) -> Result<(), RuntimeDriverError>;
-    fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError>;
-    fn shutdown(&mut self);
+}
+
+/// Compatibility composition for the process runtime. New use cases should
+/// depend on one of the narrow ports above, not this aggregate.
+pub trait CommunicationDriver:
+    PeerSessionPort
+    + RelationshipAdminPort
+    + ConversationReadPort
+    + AttachmentTransferPort
+    + AttachmentExportPort
+{
+}
+impl<T> CommunicationDriver for T where
+    T: PeerSessionPort
+        + RelationshipAdminPort
+        + ConversationReadPort
+        + AttachmentTransferPort
+        + AttachmentExportPort
+{
 }
 pub trait TorDriver: Send + 'static {
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
     fn state(&self) -> TorState;
     fn onion_address(&self) -> Option<String>;
+    fn onion_service_state(&self) -> OnionServiceState {
+        if self.onion_address().is_some() {
+            OnionServiceState::Publishing
+        } else {
+            OnionServiceState::Unknown
+        }
+    }
     fn shutdown(&mut self);
 }
 
@@ -297,118 +374,18 @@ pub trait TorDriver: Send + 'static {
 /// probe implementation must be cheap to clone through `Arc` and may perform
 /// blocking network work on the worker thread created by the supervisor.
 pub trait RelayProbe: Send + Sync + 'static {
-    fn probe(&self) -> Result<(), RuntimeDriverError>;
+    fn probe(&self) -> Result<(), ErrorCode>;
+
+    fn service_info(&self) -> Option<RelayServiceInfo> {
+        None
+    }
 }
 
-struct RelayProbeState {
-    probe: Option<Arc<dyn RelayProbe>>,
-    result_rx: Option<Receiver<Result<(), RuntimeDriverError>>>,
-    started_at: Option<std::time::Instant>,
-    next_retry_at: std::time::Instant,
-    failures: u32,
-    status: ProbeStatus,
-    latency_ms: Option<u64>,
-    code: &'static str,
-}
+struct RuntimeRelayHealthPort(Arc<dyn RelayProbe>);
 
-impl RelayProbeState {
-    fn new(probe: Option<Arc<dyn RelayProbe>>) -> Self {
-        let configured = probe.is_some();
-        Self {
-            probe,
-            result_rx: None,
-            started_at: None,
-            next_retry_at: std::time::Instant::now(),
-            failures: 0,
-            status: if configured { ProbeStatus::Checking } else { ProbeStatus::Unknown },
-            latency_ms: None,
-            code: if configured { "RELAY_PROBE_PENDING" } else { "RELAY_PROBE_UNCONFIGURED" },
-        }
-    }
-
-    fn tick(&mut self) {
-        let Some(probe) = self.probe.clone() else { return };
-        if let Some(receiver) = self.result_rx.as_ref() {
-            match receiver.try_recv() {
-                Ok(result) => {
-                    let started = self.started_at.take().unwrap_or_else(std::time::Instant::now);
-                    self.result_rx = None;
-                    self.status = match result {
-                        Ok(()) => {
-                            self.failures = 0;
-                            self.next_retry_at = std::time::Instant::now() + RELAY_RETRY_BACKOFF[3];
-                            self.latency_ms = Some(
-                                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                            );
-                            self.code = "RELAY_READY";
-                            ProbeStatus::Healthy
-                        }
-                        Err(_) => self.failed_retry(),
-                    };
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.result_rx = None;
-                    self.started_at = None;
-                    self.status = self.failed_retry();
-                }
-                Err(mpsc::TryRecvError::Empty) => {
-                    if self
-                        .started_at
-                        .is_some_and(|started| started.elapsed() >= RELAY_PROBE_TIMEOUT)
-                    {
-                        self.result_rx = None;
-                        self.started_at = None;
-                        self.status = self.failed_retry();
-                    }
-                }
-            }
-        }
-        if self.result_rx.is_none() && std::time::Instant::now() >= self.next_retry_at {
-            let (sender, receiver) = mpsc::channel();
-            self.result_rx = Some(receiver);
-            self.started_at = Some(std::time::Instant::now());
-            self.status = ProbeStatus::Checking;
-            self.code = "RELAY_PROBE_RUNNING";
-            thread::spawn(move || {
-                let _ = sender.send(probe.probe());
-            });
-        }
-    }
-
-    fn failed_retry(&mut self) -> ProbeStatus {
-        self.failures = self.failures.saturating_add(1);
-        let index = usize::try_from(self.failures.saturating_sub(1))
-            .unwrap_or(usize::MAX)
-            .min(RELAY_RETRY_BACKOFF.len() - 1);
-        self.next_retry_at = std::time::Instant::now() + RELAY_RETRY_BACKOFF[index];
-        self.latency_ms = None;
-        self.code = "RELAY_UNREACHABLE";
-        ProbeStatus::Degraded
-    }
-
-    fn reset_for_network_change(&mut self) {
-        // Drop an in-flight worker result; a new probe must represent the new
-        // network, not a socket created on the previous route.
-        self.result_rx = None;
-        self.started_at = None;
-        self.failures = 0;
-        self.latency_ms = None;
-        self.next_retry_at = std::time::Instant::now();
-        self.status =
-            if self.probe.is_some() { ProbeStatus::Checking } else { ProbeStatus::Unknown };
-        self.code =
-            if self.probe.is_some() { "RELAY_NETWORK_CHANGED" } else { "RELAY_PROBE_UNCONFIGURED" };
-    }
-
-    fn result(&self, now: Timestamp) -> ProbeResult {
-        ProbeResult {
-            target: ProbeTarget::Relay,
-            kind: ProbeKind::Connectivity,
-            status: self.status,
-            diagnostic_code: self.code.into(),
-            latency_ms: self.latency_ms,
-            measured_at: now,
-        }
+impl RelayHealthPort for RuntimeRelayHealthPort {
+    fn check_relay_health(&self) -> Result<(), ErrorCode> {
+        self.0.probe()
     }
 }
 
@@ -544,6 +521,7 @@ impl RuntimeHandle {
 pub struct RuntimeOwner {
     sender: SyncSender<RuntimeCommand>,
     join: Option<JoinHandle<()>>,
+    relay_worker: Option<RelayHealthWorker>,
 }
 impl RuntimeOwner {
     pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
@@ -587,6 +565,16 @@ impl RuntimeOwner {
         relay_probe: Option<Arc<dyn RelayProbe>>,
         connectivity: ConnectivityObserver,
     ) -> (RuntimeHandle, Self) {
+        let relay_info = relay_probe.clone();
+        let relay_worker = relay_probe.and_then(|probe| {
+            RelayHealthWorker::spawn(Arc::new(RuntimeRelayHealthPort(probe)))
+                .map_err(|error| {
+                    eprintln!("torca-runtime: relay supervisor unavailable: {error}");
+                    error
+                })
+                .ok()
+        });
+        let relay_health = relay_worker.as_ref().map(RelayHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
@@ -627,14 +615,15 @@ impl RuntimeOwner {
                 &mut tor,
                 &mut diagnostics,
                 &mut sequence,
-                relay_probe,
+                relay_health,
+                relay_info,
                 connectivity,
             );
             communication.shutdown();
             pairing.shutdown();
             tor.shutdown();
         });
-        (handle, Self { sender, join: Some(join) })
+        (handle, Self { sender, join: Some(join), relay_worker })
     }
     pub fn shutdown(mut self) -> Result<(), RuntimeDriverError> {
         let (tx, rx) = mpsc::channel();
@@ -642,6 +631,9 @@ impl RuntimeOwner {
         rx.recv_timeout(SHUTDOWN_WAIT).map_err(|_| RuntimeDriverError::Communication)?;
         if let Some(join) = self.join.take() {
             join.join().map_err(|_| RuntimeDriverError::Communication)?;
+        }
+        if let Some(worker) = self.relay_worker.take() {
+            worker.shutdown();
         }
         Ok(())
     }
@@ -659,17 +651,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     tor: &mut T,
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
-    relay_probe: Option<Arc<dyn RelayProbe>>,
+    relay_health: Option<RelayHealthHandle>,
+    relay_info: Option<Arc<dyn RelayProbe>>,
     connectivity: ConnectivityObserver,
 ) {
     let mut last_tor_state = None;
+    let mut last_onion_state = None;
+    let mut last_relay_state = None::<(ProbeStatus, ErrorCode)>;
     let mut last_peer_states = BTreeMap::<ContactId, PeerConnectionStatus>::new();
     let mut last_peer_successes = BTreeMap::<ContactId, Option<Timestamp>>::new();
     let mut tor_failed = false;
     let mut pairing_failed = false;
     let mut communication_failed = false;
     let mut probes = ProbeSupervisor::default();
-    let mut relay = RelayProbeState::new(relay_probe);
+    let mut peer_probes = PeerProbeSupervisor::default();
     let mut transport_activity = TransportActivityLedger::default();
     loop {
         match receiver.recv_timeout(RUNTIME_TICK) {
@@ -678,10 +673,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 break;
             }
             Ok(RuntimeCommand::NetworkChanged) => {
-                relay.reset_for_network_change();
+                if let Some(relay) = &relay_health {
+                    relay.network_changed();
+                }
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
-                transport_activity.mark_tor(now);
-                transport_activity.mark_relay(now);
+                pairing.network_changed(now);
                 record(
                     diagnostics,
                     sequence,
@@ -700,9 +696,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     communication,
                     tor,
                     &probes,
+                    relay_info.as_ref(),
                     &mut transport_activity,
                     &connectivity,
                     diagnostics,
+                    sequence,
                     now,
                 );
             }
@@ -710,13 +708,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             Err(RecvTimeoutError::Disconnected) => break,
         }
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
-        let relay_before = (relay.status, relay.code, relay.latency_ms, relay.failures);
-        relay.tick();
-        if relay_before != (relay.status, relay.code, relay.latency_ms, relay.failures) {
-            // A relay probe always traverses embedded Tor, so both indicators
-            // receive the same redacted transport observation.
-            transport_activity.mark_tor(now);
-            transport_activity.mark_relay(now);
+        let relay_snapshot = relay_health
+            .as_ref()
+            .map_or_else(RelayHealthSnapshot::default, RelayHealthHandle::snapshot);
+        let relay_state = (relay_snapshot.status, relay_snapshot.diagnostic_code);
+        if last_relay_state.as_ref() != Some(&relay_state) {
+            record(
+                diagnostics,
+                sequence,
+                now,
+                Component::Relay,
+                map_probe_health(relay_snapshot.status),
+                relay_event_code(relay_snapshot.status),
+            );
+            last_relay_state = Some(relay_state);
         }
         observe_maintenance(
             tor.maintenance(now),
@@ -739,12 +744,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             "PAIRING_MAINTENANCE_RECOVERED",
         );
         let tor_state = tor.state();
+        let onion_state = tor.onion_service_state();
         record_runtime_probes(
             &mut probes,
             tor_state,
-            tor.onion_address().is_some(),
+            onion_state,
             communication_failed,
-            relay.result(now),
+            relay_probe_result(relay_snapshot, now),
             now,
         );
         for probe in probes.latest() {
@@ -752,7 +758,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         }
         if last_tor_state != Some(tor_state) {
             last_tor_state = Some(tor_state);
-            transport_activity.mark_tor(now);
             record(
                 diagnostics,
                 sequence,
@@ -760,6 +765,17 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 Component::Tor,
                 map_health(tor_state),
                 "TOR_STATE_CHANGED",
+            );
+        }
+        if last_onion_state != Some(onion_state) {
+            last_onion_state = Some(onion_state);
+            record(
+                diagnostics,
+                sequence,
+                now,
+                Component::Tor,
+                map_onion_health(onion_state),
+                onion_event_code(onion_state),
             );
         }
         if let Ok(snapshot) = engine.snapshot() {
@@ -770,7 +786,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 .map(torca_contacts::Contact::id)
                 .collect();
             observe_maintenance(
-                communication.maintenance(&contacts, now),
+                communication.maintenance(&contacts, now).and_then(|()| {
+                    maintain_peer_probes(communication, &contacts, &mut peer_probes, now)
+                }),
                 &mut communication_failed,
                 diagnostics,
                 sequence,
@@ -784,7 +802,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             for id in contacts {
                 let state = communication.connection_state(id);
                 if last_peer_states.get(&id) != Some(&state) {
-                    transport_activity.mark_tor(now);
                     transport_activity.mark_peer(id, now);
                     record(
                         diagnostics,
@@ -799,7 +816,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 if health.last_success_at.is_some()
                     && last_peer_successes.get(&id) != Some(&health.last_success_at)
                 {
-                    transport_activity.mark_tor(now);
                     transport_activity.mark_peer(id, now);
                 }
                 current.insert(id, state);
@@ -810,6 +826,53 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             last_peer_successes = current_successes;
         }
     }
+}
+
+/// Application owns peer probe cadence and retry timing. The communication
+/// adapter only validates eligibility, executes one bounded keepalive and
+/// maintains its transport-health sample.
+fn maintain_peer_probes<C: PeerSessionPort>(
+    communication: &mut C,
+    contacts: &[ContactId],
+    supervisor: &mut PeerProbeSupervisor,
+    now: Timestamp,
+) -> Result<(), RuntimeDriverError> {
+    if let Some(contact_id) = communication.take_peer_probe_completion(now)? {
+        let health = communication.peer_health(contact_id);
+        supervisor.complete(
+            contact_id.to_opaque(),
+            health.consecutive_failures == 0 && health.last_success_at.is_some(),
+            now,
+        );
+    }
+    let candidates = contacts
+        .iter()
+        .copied()
+        .map(|contact_id| {
+            let health = communication.peer_health(contact_id);
+            PeerProbeCandidate {
+                peer_id: contact_id.to_opaque(),
+                ready: health.state == PeerConnectionStatus::Ready,
+                eligible: communication.peer_probe_eligible(contact_id),
+                reported_rtt_ms: health.rtt_ms,
+            }
+        })
+        .collect::<Vec<_>>();
+    supervisor.reconcile(&candidates, now);
+    let Some(request) = supervisor.next_due(&candidates, now) else { return Ok(()) };
+    let Some(contact_id) =
+        contacts.iter().copied().find(|contact_id| contact_id.to_opaque() == request.peer_id)
+    else {
+        supervisor.complete(request.peer_id, false, now);
+        return Ok(());
+    };
+    if let Err(error) =
+        communication.begin_peer_probe(contact_id, request.probe_id, request.reported_rtt_ms)
+    {
+        supervisor.complete(request.peer_id, false, now);
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn observe_maintenance(
@@ -838,7 +901,7 @@ fn observe_maintenance(
 fn record_runtime_probes(
     probes: &mut ProbeSupervisor,
     tor_state: TorState,
-    onion_ready: bool,
+    onion_state: OnionServiceState,
     peer_failed: bool,
     relay_result: ProbeResult,
     now: Timestamp,
@@ -868,8 +931,20 @@ fn record_runtime_probes(
     probes.record(runtime_probe(
         ProbeTarget::OnionService,
         ProbeKind::Readiness,
-        if onion_ready { ProbeStatus::Healthy } else { ProbeStatus::Checking },
-        if onion_ready { "ONION_READY" } else { "ONION_PENDING" },
+        match onion_state {
+            OnionServiceState::Reachable => ProbeStatus::Healthy,
+            OnionServiceState::Publishing => ProbeStatus::Checking,
+            OnionServiceState::Degraded => ProbeStatus::Degraded,
+            OnionServiceState::Failed => ProbeStatus::Failed,
+            OnionServiceState::Unknown | OnionServiceState::Stopped => ProbeStatus::Unknown,
+        },
+        match onion_state {
+            OnionServiceState::Reachable => "ONION_REACHABLE",
+            OnionServiceState::Publishing => "ONION_PUBLISHING",
+            OnionServiceState::Degraded => "ONION_DEGRADED",
+            OnionServiceState::Failed => "ONION_FAILED",
+            OnionServiceState::Unknown | OnionServiceState::Stopped => "ONION_UNAVAILABLE",
+        },
         now,
     ));
     probes.record(runtime_probe(
@@ -898,6 +973,17 @@ fn runtime_probe(
     }
 }
 
+fn relay_probe_result(snapshot: RelayHealthSnapshot, measured_at: Timestamp) -> ProbeResult {
+    ProbeResult {
+        target: ProbeTarget::Relay,
+        kind: ProbeKind::Connectivity,
+        status: snapshot.status,
+        diagnostic_code: snapshot.diagnostic_code.to_string(),
+        latency_ms: snapshot.latency_ms,
+        measured_at,
+    }
+}
+
 fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     command: RuntimeCommand,
     engine: &EngineHandle,
@@ -905,82 +991,79 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     communication: &mut C,
     tor: &T,
     probes: &ProbeSupervisor,
+    relay_info: Option<&Arc<dyn RelayProbe>>,
     transport_activity: &mut TransportActivityLedger,
     connectivity: &ConnectivityObserver,
     diagnostics: &mut DiagnosticBuffer,
+    sequence: &mut u128,
     now: Timestamp,
 ) {
     match command {
         RuntimeCommand::CreatePairing(id, r) => {
-            transport_activity.mark_tor(now);
-            transport_activity.mark_relay(now);
-            let _ = r.send(pairing.create(id, now));
+            let result = pairing.create(id, now);
+            record_pairing_result(&result, "CREATE", diagnostics, sequence, now);
+            let _ = r.send(result);
         }
         RuntimeCommand::JoinPairing(id, code, ticket, r) => {
-            transport_activity.mark_tor(now);
-            transport_activity.mark_relay(now);
-            let _ = r.send(pairing.join(id, code, ticket, now));
+            let result = pairing.join(id, code, ticket, now);
+            record_pairing_result(&result, "JOIN", diagnostics, sequence, now);
+            let _ = r.send(result);
         }
         RuntimeCommand::ApprovePairing(id, r) => {
-            transport_activity.mark_tor(now);
-            transport_activity.mark_relay(now);
-            let _ = r.send(pairing.approve(id, now));
+            let result = pairing.approve(id, now);
+            record_pairing_result(&result, "APPROVE", diagnostics, sequence, now);
+            let _ = r.send(result);
         }
         RuntimeCommand::RejectPairing(id, r) => {
-            transport_activity.mark_tor(now);
-            transport_activity.mark_relay(now);
-            let _ = r.send(pairing.reject(id));
+            let result = pairing.reject(id);
+            record_pairing_result(&result, "REJECT", diagnostics, sequence, now);
+            let _ = r.send(result);
         }
         RuntimeCommand::CancelPairing(id, r) => {
-            transport_activity.mark_tor(now);
-            transport_activity.mark_relay(now);
-            let _ = r.send(pairing.cancel(id));
+            let result = pairing.cancel(id);
+            record_pairing_result(&result, "CANCEL", diagnostics, sequence, now);
+            let _ = r.send(result);
         }
         RuntimeCommand::VerifyContact(id, r) => {
-            transport_activity.mark_tor(now);
             transport_activity.mark_peer(id, now);
             let _ = r.send(communication.verify_contact(id, now));
         }
         RuntimeCommand::ResetContactVerification(id, r) => {
-            transport_activity.mark_tor(now);
             transport_activity.mark_peer(id, now);
             let _ = r.send(communication.reset_contact_verification(id));
         }
         RuntimeCommand::RenameContact(id, name, r) => {
-            transport_activity.mark_tor(now);
             transport_activity.mark_peer(id, now);
             let _ = r.send(communication.rename_contact(id, name, now));
         }
         RuntimeCommand::BlockContact(id, r) => {
-            transport_activity.mark_tor(now);
             transport_activity.mark_peer(id, now);
             let _ = r.send(communication.block_contact(id, now));
         }
         RuntimeCommand::UnblockContact(id, r) => {
-            transport_activity.mark_tor(now);
             transport_activity.mark_peer(id, now);
             let _ = r.send(communication.unblock_contact(id, now));
         }
         RuntimeCommand::RemoveContact(id, r) => {
-            transport_activity.mark_tor(now);
             transport_activity.mark_peer(id, now);
             let _ = r.send(communication.remove_contact(id));
         }
         RuntimeCommand::ClearConversationHistory(id, r) => {
-            transport_activity.mark_tor(now);
             let _ = r.send(communication.clear_conversation_history(id));
         }
         RuntimeCommand::MarkConversationRead(id, r) => {
-            transport_activity.mark_tor(now);
             let _ = r.send(communication.mark_conversation_read(id, now));
         }
         RuntimeCommand::QueueAttachment(request_value, r) => {
-            transport_activity.mark_tor(now);
             let message_id = MessageId::from_opaque(request_value.message_id);
             let body = MessageBody::new(format!("Attachment: {}", request_value.name))
                 .map_err(|_| RuntimeDriverError::Communication);
             let result = body.and_then(|body| {
-                let _ = engine
+                // Stage the encrypted attachment before exposing the message.
+                // A rejected/unreadable source must never leave a misleading
+                // `Attachment: name` text message in the conversation.
+                communication.prepare_attachment(&request_value, now)?;
+                if engine
                     .dispatch(EngineCommand::QueueMessage {
                         message_id,
                         conversation_id: ConversationId::from_opaque(request_value.conversation_id),
@@ -988,33 +1071,21 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                         reply_to: None,
                         at: now,
                     })
-                    .map_err(|_| RuntimeDriverError::Engine)?;
-                match communication.prepare_attachment(&request_value, now) {
-                    Ok(()) => Ok(()),
-                    Err(error) => {
-                        let failure_code = ErrorCode::new("ATTACHMENT_PREPARE");
-                        let _ = engine
-                            .dispatch(EngineCommand::BeginMessageSend { message_id, at: now })
-                            .map_err(|_| RuntimeDriverError::Engine)?;
-                        let _ = engine
-                            .dispatch(EngineCommand::MarkMessageFailed {
-                                message_id,
-                                at: now,
-                                error_code: failure_code,
-                            })
-                            .map_err(|_| RuntimeDriverError::Engine)?;
-                        Err(error)
-                    }
+                    .is_err()
+                {
+                    // The cache was prepared, but there is no message that can
+                    // own it. Keep the durable row out of the transfer queue.
+                    let _ = communication.cancel_attachment(request_value.attachment_id, now);
+                    return Err(RuntimeDriverError::Engine);
                 }
+                Ok(())
             });
             let _ = r.send(result);
         }
         RuntimeCommand::RetryAttachment(id, r) => {
-            transport_activity.mark_tor(now);
             let _ = r.send(communication.retry_attachment(id, now));
         }
         RuntimeCommand::CancelAttachment(id, r) => {
-            transport_activity.mark_tor(now);
             let _ = r.send(communication.cancel_attachment(id, now));
         }
         RuntimeCommand::ExportAttachment(id, destination, r) => {
@@ -1045,11 +1116,10 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     peer_health,
                     contact_names,
                     contact_verifications,
-                    tor_activity: transport_activity.tor,
-                    relay_activity: transport_activity.relay,
                     peer_activity: transport_activity.peers.clone(),
                     probes: probes.latest(),
                     connectivity: connectivity.snapshot(),
+                    relay_info: relay_info.and_then(|source| source.service_info()),
                 })
             })();
             let _ = r.send(result);
@@ -1134,6 +1204,26 @@ fn record(
         buffer.record(DiagnosticEvent { event_id, at, component, state, code, detail: None });
     }
 }
+
+fn record_pairing_result<T>(
+    result: &Result<T, RuntimeDriverError>,
+    action: &str,
+    diagnostics: &mut DiagnosticBuffer,
+    sequence: &mut u128,
+    now: Timestamp,
+) {
+    let (state, suffix) = match result {
+        Ok(_) => (HealthState::Ready, "ACCEPTED"),
+        Err(RuntimeDriverError::Pending) => (HealthState::Degraded, "QUEUED"),
+        Err(RuntimeDriverError::Communication | RuntimeDriverError::Tor) => {
+            (HealthState::Degraded, "RETRYING")
+        }
+        Err(_) => (HealthState::Failed, "FAILED"),
+    };
+    let code = format!("PAIRING_{action}_{suffix}");
+    record(diagnostics, sequence, now, Component::Engine, state, &code);
+}
+
 const fn map_health(state: TorState) -> HealthState {
     match state {
         TorState::Stopped => HealthState::Stopped,
@@ -1141,6 +1231,25 @@ const fn map_health(state: TorState) -> HealthState {
         TorState::Ready => HealthState::Ready,
         TorState::Degraded => HealthState::Degraded,
         TorState::Failed => HealthState::Failed,
+    }
+}
+const fn map_onion_health(state: OnionServiceState) -> HealthState {
+    match state {
+        OnionServiceState::Reachable => HealthState::Ready,
+        OnionServiceState::Degraded => HealthState::Degraded,
+        OnionServiceState::Failed => HealthState::Failed,
+        OnionServiceState::Stopped => HealthState::Stopped,
+        OnionServiceState::Unknown | OnionServiceState::Publishing => HealthState::Starting,
+    }
+}
+const fn onion_event_code(state: OnionServiceState) -> &'static str {
+    match state {
+        OnionServiceState::Unknown => "ONION_UNKNOWN",
+        OnionServiceState::Publishing => "ONION_PUBLISHING",
+        OnionServiceState::Reachable => "ONION_REACHABLE",
+        OnionServiceState::Degraded => "ONION_DEGRADED",
+        OnionServiceState::Failed => "ONION_FAILED",
+        OnionServiceState::Stopped => "ONION_STOPPED",
     }
 }
 const fn map_peer_health(state: PeerConnectionStatus) -> HealthState {
@@ -1153,22 +1262,41 @@ const fn map_peer_health(state: PeerConnectionStatus) -> HealthState {
         | PeerConnectionStatus::Reconnecting => HealthState::Starting,
     }
 }
+const fn map_probe_health(state: ProbeStatus) -> HealthState {
+    match state {
+        ProbeStatus::Healthy => HealthState::Ready,
+        ProbeStatus::Failed | ProbeStatus::Unreachable | ProbeStatus::Degraded => {
+            HealthState::Degraded
+        }
+        ProbeStatus::Checking | ProbeStatus::Unknown | ProbeStatus::Disabled => {
+            HealthState::Starting
+        }
+    }
+}
+const fn relay_event_code(state: ProbeStatus) -> &'static str {
+    match state {
+        ProbeStatus::Healthy => "RELAY_CONNECTED",
+        ProbeStatus::Degraded => "RELAY_DEGRADED",
+        ProbeStatus::Failed | ProbeStatus::Unreachable => "RELAY_DISCONNECTED",
+        ProbeStatus::Checking => "RELAY_CONNECTING",
+        ProbeStatus::Unknown | ProbeStatus::Disabled => "RELAY_UNKNOWN",
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn transport_activity_is_monotonic_and_redacted() {
+    fn contact_activity_is_monotonic_and_redacted() {
         let at = Timestamp::from_unix_millis(1).expect("valid timestamp");
+        let contact = ContactId::from_opaque(OpaqueId::from_u128(1));
         let mut ledger = TransportActivityLedger::default();
-        ledger.mark_tor(at);
-        ledger.mark_relay(at);
-        ledger.mark_tor(at);
+        ledger.mark_peer(contact, at);
+        ledger.mark_peer(contact, at);
 
-        assert_eq!(ledger.tor.sequence, 2);
-        assert_eq!(ledger.relay.sequence, 1);
-        assert_eq!(ledger.tor.last_activity_at, Some(at));
-        assert_eq!(ledger.relay.last_activity_at, Some(at));
+        let activity = ledger.peers.get(&contact).expect("contact activity");
+        assert_eq!(activity.sequence, 2);
+        assert_eq!(activity.last_activity_at, Some(at));
     }
 }

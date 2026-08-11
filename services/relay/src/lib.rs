@@ -6,8 +6,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_relay_protocol::{
-    RelayCode, RelayJoinTicket, RelayProtocolError, RelayRequest, RelayResponse, RelaySide,
-    RelaySideToken, RelaySlotCapability, RelaySlotId, validate_blob,
+    RelayCode, RelayDelivery, RelayInfo, RelayJoinTicket, RelayMessageId, RelayOperationId,
+    RelayProtocolError, RelayProtocolVersion, RelayRequest, RelayResponse, RelaySequence,
+    RelaySide, RelaySideToken, RelaySlotCapability, RelaySlotId, validate_blob,
 };
 
 pub use server::{DEFAULT_MAX_CONNECTIONS, RelayServer, RelayServerConfig, RelayServerError};
@@ -30,8 +31,10 @@ struct Slot {
     creator_token: RelaySideToken,
     ticket: RelayJoinTicket,
     joiner_token: Option<RelaySideToken>,
-    to_creator: VecDeque<Vec<u8>>,
-    to_joiner: VecDeque<Vec<u8>>,
+    to_creator: VecDeque<RelayDelivery>,
+    to_joiner: VecDeque<RelayDelivery>,
+    next_to_creator_sequence: u64,
+    next_to_joiner_sequence: u64,
 }
 
 impl Slot {
@@ -44,12 +47,40 @@ impl Slot {
         }
         Err(RelayProtocolError::Unauthorized)
     }
+
+    fn enqueue(
+        &mut self,
+        receiving_side: RelaySide,
+        message_id: RelayMessageId,
+        blob: Vec<u8>,
+    ) -> Result<(), RelayProtocolError> {
+        let (queue, next_sequence) = match receiving_side {
+            RelaySide::Creator => (&mut self.to_creator, &mut self.next_to_creator_sequence),
+            RelaySide::Joiner => (&mut self.to_joiner, &mut self.next_to_joiner_sequence),
+        };
+        if queue.len() >= MAX_QUEUED_BLOBS_PER_SIDE {
+            return Err(RelayProtocolError::QueueFull);
+        }
+        let sequence = *next_sequence;
+        *next_sequence =
+            next_sequence.checked_add(1).ok_or(RelayProtocolError::InvalidOperation)?;
+        queue.push_back(RelayDelivery { sequence: RelaySequence(sequence), message_id, blob });
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OperationRecord {
+    expires_at: Timestamp,
+    response: RelayResponse,
 }
 
 /// Deterministic ephemeral relay broker.
 #[derive(Clone, Debug)]
 pub struct RelayBroker {
+    info: RelayInfo,
     slots: BTreeMap<RelayCode, Slot>,
+    operation_results: BTreeMap<RelayOperationId, OperationRecord>,
     next_id: u128,
     max_slots: usize,
     failed_join_window_started_at: Option<Timestamp>,
@@ -64,8 +95,21 @@ impl Default for RelayBroker {
 impl RelayBroker {
     /// Creates a bounded broker. A zero capacity is normalized to one slot.
     pub fn with_max_slots(max_slots: usize) -> Self {
+        let info = RelayInfo::new(
+            env!("CARGO_PKG_VERSION"),
+            option_env!("TORCA_RELAY_BUILD_ID").unwrap_or("development"),
+            option_env!("TORCA_RELAY_SOURCE_COMMIT").unwrap_or("working-tree"),
+        )
+        .unwrap_or_else(|_| RelayInfo {
+            product_version: env!("CARGO_PKG_VERSION").to_owned(),
+            build_id: "invalid-build-metadata".to_owned(),
+            source_commit: "unknown".to_owned(),
+            protocol_version: RelayProtocolVersion::V4.0,
+        });
         Self {
+            info,
             slots: BTreeMap::new(),
+            operation_results: BTreeMap::new(),
             next_id: 1,
             max_slots: max_slots.max(1),
             failed_join_window_started_at: None,
@@ -82,7 +126,9 @@ impl RelayBroker {
         self.expire(now);
         match request {
             RelayRequest::Health => Ok(RelayResponse::Healthy),
+            RelayRequest::Info => Ok(RelayResponse::Info(self.info.clone())),
             RelayRequest::Open {
+                operation_id,
                 code,
                 expires_at,
                 creator_blob,
@@ -90,6 +136,9 @@ impl RelayBroker {
                 creator_token,
                 ticket,
             } => {
+                if let Some(response) = self.replayed(operation_id) {
+                    return Ok(response);
+                }
                 validate_blob(&creator_blob)?;
                 if expires_at <= now {
                     return Err(RelayProtocolError::SlotExpired);
@@ -120,11 +169,18 @@ impl RelayBroker {
                         joiner_token: None,
                         to_creator: VecDeque::new(),
                         to_joiner: VecDeque::new(),
+                        next_to_creator_sequence: 1,
+                        next_to_joiner_sequence: 1,
                     },
                 );
-                Ok(RelayResponse::Opened { slot_id: id, expires_at: relay_expires_at })
+                let response = RelayResponse::Opened { slot_id: id, expires_at: relay_expires_at };
+                self.remember(operation_id, relay_expires_at, response.clone());
+                Ok(response)
             }
-            RelayRequest::Join { code, joiner_blob, joiner_token, ticket } => {
+            RelayRequest::Join { operation_id, code, joiner_blob, joiner_token, ticket } => {
+                if let Some(response) = self.replayed(operation_id) {
+                    return Ok(response);
+                }
                 validate_blob(&joiner_blob)?;
                 if !self.slots.contains_key(&code) {
                     self.record_failed_join(now)?;
@@ -145,35 +201,59 @@ impl RelayBroker {
                     }
                 }
                 slot.joiner_token = Some(joiner_token);
-                slot.to_creator.push_back(joiner_blob);
-                Ok(RelayResponse::Joined {
+                slot.enqueue(RelaySide::Creator, RelayMessageId(operation_id.0), joiner_blob)?;
+                let expires_at = slot.expires_at;
+                let response = RelayResponse::Joined {
                     slot_id: slot.id,
-                    expires_at: slot.expires_at,
+                    expires_at,
                     creator_blob: slot.creator_blob.clone(),
-                })
+                };
+                self.remember(operation_id, expires_at, response.clone());
+                Ok(response)
             }
-            RelayRequest::Push { slot_id, token, blob } => {
+            RelayRequest::Push { operation_id, message_id, slot_id, token, blob } => {
+                if let Some(response) = self.replayed(operation_id) {
+                    return Ok(response);
+                }
                 validate_blob(&blob)?;
                 let slot = self.find_mut(slot_id)?;
                 let side = slot.authenticate(token)?;
-                let queue = match side {
-                    RelaySide::Creator => &mut slot.to_joiner,
-                    RelaySide::Joiner => &mut slot.to_creator,
+                let receiving_side = match side {
+                    RelaySide::Creator => RelaySide::Joiner,
+                    RelaySide::Joiner => RelaySide::Creator,
                 };
-                if queue.len() >= MAX_QUEUED_BLOBS_PER_SIDE {
-                    return Err(RelayProtocolError::QueueFull);
-                }
-                queue.push_back(blob);
-                Ok(RelayResponse::Accepted)
+                slot.enqueue(receiving_side, message_id, blob)?;
+                let expires_at = slot.expires_at;
+                let response = RelayResponse::Accepted;
+                self.remember(operation_id, expires_at, response.clone());
+                Ok(response)
             }
-            RelayRequest::Poll { slot_id, token } => {
+            RelayRequest::Poll { slot_id, token, after } => {
+                let slot = self.find_mut(slot_id)?;
+                let side = slot.authenticate(token)?;
+                let queue = match side {
+                    RelaySide::Creator => &slot.to_creator,
+                    RelaySide::Joiner => &slot.to_joiner,
+                };
+                let deliveries = queue
+                    .iter()
+                    .filter(|delivery| delivery.sequence > after)
+                    .take(torca_relay_protocol::MAX_RELAY_BATCH_BLOBS)
+                    .cloned()
+                    .collect();
+                Ok(RelayResponse::Deliveries(deliveries))
+            }
+            RelayRequest::Ack { slot_id, token, up_to } => {
                 let slot = self.find_mut(slot_id)?;
                 let side = slot.authenticate(token)?;
                 let queue = match side {
                     RelaySide::Creator => &mut slot.to_creator,
                     RelaySide::Joiner => &mut slot.to_joiner,
                 };
-                Ok(RelayResponse::Blobs(queue.drain(..).collect()))
+                while queue.front().is_some_and(|delivery| delivery.sequence <= up_to) {
+                    queue.pop_front();
+                }
+                Ok(RelayResponse::Acked(up_to))
             }
             RelayRequest::Close { slot_id, capability } => {
                 let code = self
@@ -194,6 +274,7 @@ impl RelayBroker {
     pub fn expire(&mut self, now: Timestamp) -> usize {
         let before = self.slots.len();
         self.slots.retain(|_, slot| slot.expires_at > now);
+        self.operation_results.retain(|_, record| record.expires_at > now);
         before - self.slots.len()
     }
 
@@ -211,6 +292,19 @@ impl RelayBroker {
         self.slots.values_mut().find(|slot| slot.id == id).ok_or(RelayProtocolError::SlotNotFound)
     }
 
+    fn replayed(&self, operation_id: RelayOperationId) -> Option<RelayResponse> {
+        self.operation_results.get(&operation_id).map(|record| record.response.clone())
+    }
+
+    fn remember(
+        &mut self,
+        operation_id: RelayOperationId,
+        expires_at: Timestamp,
+        response: RelayResponse,
+    ) {
+        self.operation_results.insert(operation_id, OperationRecord { expires_at, response });
+    }
+
     fn record_failed_join(&mut self, now: Timestamp) -> Result<(), RelayProtocolError> {
         let fresh_window = self.failed_join_window_started_at.is_none_or(|started_at| {
             now.duration_since(started_at)
@@ -225,5 +319,24 @@ impl RelayBroker {
         }
         self.failed_join_attempts = self.failed_join_attempts.saturating_add(1);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn broker_exposes_non_empty_build_metadata() {
+        let response = RelayBroker::default()
+            .handle(RelayRequest::Info, Timestamp::UNIX_EPOCH)
+            .expect("relay info");
+        let RelayResponse::Info(info) = response else {
+            panic!("unexpected response: {response:?}");
+        };
+        assert!(!info.product_version.is_empty());
+        assert!(!info.build_id.is_empty());
+        assert!(!info.source_commit.is_empty());
+        assert_eq!(info.protocol_version, RelayProtocolVersion::V4.0);
     }
 }

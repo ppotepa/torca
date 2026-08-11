@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 class MessageStatusIndicator extends StatelessWidget {
   const MessageStatusIndicator({required this.status, super.key});
@@ -7,7 +8,7 @@ class MessageStatusIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final presentation = _presentation(status);
+    final presentation = _presentation(context, status);
     return Tooltip(
       message: presentation.label,
       child: Semantics(
@@ -17,6 +18,8 @@ class MessageStatusIndicator extends StatelessWidget {
           size: 14,
           color: presentation.isError
               ? Theme.of(context).colorScheme.error
+              : status == 'read'
+              ? Theme.of(context).colorScheme.primary
               : Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
@@ -24,22 +27,36 @@ class MessageStatusIndicator extends StatelessWidget {
   }
 }
 
-({IconData icon, String label, bool isError}) _presentation(String status) =>
-    switch (status) {
-      'queued' => (icon: Icons.schedule, label: 'Queued', isError: false),
-      'sending' => (icon: Icons.sync, label: 'Sending', isError: false),
-      'sent' => (icon: Icons.check, label: 'Sent', isError: false),
-      'delivered' => (icon: Icons.done_all, label: 'Delivered', isError: false),
-      'read' => (icon: Icons.done_all, label: 'Read', isError: false),
-      'failed' => (
-        icon: Icons.error_outline,
-        label: 'Delivery failed',
-        isError: true,
-      ),
-      'cancelled' => (
-        icon: Icons.cancel_outlined,
-        label: 'Cancelled',
-        isError: true,
-      ),
-      _ => (icon: Icons.info_outline, label: status, isError: false),
-    };
+({IconData icon, String label, bool isError}) _presentation(
+  BuildContext context,
+  String status,
+) => switch (status) {
+  'queued' => (
+    icon: context.torcaIcons.queued,
+    label: 'Queued',
+    isError: false,
+  ),
+  'sending' => (
+    icon: context.torcaIcons.sending,
+    label: 'Sending',
+    isError: false,
+  ),
+  'sent' => (icon: context.torcaIcons.sent, label: 'Sent', isError: false),
+  'delivered' => (
+    icon: context.torcaIcons.delivered,
+    label: 'Delivered',
+    isError: false,
+  ),
+  'read' => (icon: context.torcaIcons.read, label: 'Read', isError: false),
+  'failed' => (
+    icon: context.torcaIcons.error,
+    label: 'Delivery failed',
+    isError: true,
+  ),
+  'cancelled' => (
+    icon: context.torcaIcons.cancelled,
+    label: 'Cancelled',
+    isError: true,
+  ),
+  _ => (icon: context.torcaIcons.info, label: status, isError: false),
+};

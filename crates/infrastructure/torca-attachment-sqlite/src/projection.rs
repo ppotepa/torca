@@ -15,6 +15,9 @@ pub struct AttachmentProjectionRow {
     pub size: u64,
     pub status: String,
     pub offset: u64,
+    pub attempt_count: u32,
+    pub updated_at_ms: i64,
+    pub direction: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,13 +62,26 @@ impl SqlCipherAttachmentProjection {
                     row.get::<_, String>(3)?,
                     row.get::<_, i64>(4)?,
                     row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
                     row.get::<_, i64>(9)?,
+                    row.get::<_, i64>(10)?,
                 ))
             })
             .map_err(|_| AttachmentProjectionError::Storage)?;
         rows.map(|row| {
-            let (id, message_id, name, media_type, size, status, offset) =
-                row.map_err(|_| AttachmentProjectionError::Storage)?;
+            let (
+                id,
+                message_id,
+                name,
+                media_type,
+                size,
+                status,
+                updated_at_ms,
+                attempt_count,
+                offset,
+                direction,
+            ) = row.map_err(|_| AttachmentProjectionError::Storage)?;
             Ok(AttachmentProjectionRow {
                 id: OpaqueId::from_bytes(fixed16(id)?),
                 message_id: OpaqueId::from_bytes(fixed16(message_id)?),
@@ -76,9 +92,21 @@ impl SqlCipherAttachmentProjection {
                 status: status_label(status)?.into(),
                 offset: u64::try_from(offset)
                     .map_err(|_| AttachmentProjectionError::InvalidStoredState)?,
+                attempt_count: u32::try_from(attempt_count)
+                    .map_err(|_| AttachmentProjectionError::InvalidStoredState)?,
+                updated_at_ms,
+                direction: direction_label(direction)?.into(),
             })
         })
         .collect()
+    }
+}
+
+fn direction_label(value: i64) -> Result<&'static str, AttachmentProjectionError> {
+    match value {
+        0 => Ok("outbound"),
+        1 => Ok("inbound"),
+        _ => Err(AttachmentProjectionError::InvalidStoredState),
     }
 }
 

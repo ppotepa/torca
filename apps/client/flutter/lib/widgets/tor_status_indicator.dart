@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../theme/app_semantic_colors.dart';
 import 'connection_state_presenter.dart';
@@ -11,7 +12,10 @@ class TorStatusIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final presentation = ConnectionStatePresenter.tor(state);
+    final presentation = ConnectionStatePresenter.tor(
+      state,
+      context.torcaIcons,
+    );
     final color = switch (presentation.tone) {
       ConnectionTone.ready => context.semanticColors.connectionReady,
       ConnectionTone.connecting => context.semanticColors.connectionConnecting,
@@ -28,7 +32,9 @@ class TorStatusIndicator extends StatelessWidget {
       child: onPressed == null
           ? chip
           : InkWell(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(
+                context.torcaTokens.radiusLarge,
+              ),
               onTap: onPressed,
               child: chip,
             ),

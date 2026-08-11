@@ -8,7 +8,10 @@ WITH ranked AS (
         reply_to_message_id,
         created_at_ms,
         updated_at_ms,
-        attempt_count,
+attempt_count,
+sent_at_ms,
+delivered_at_ms,
+read_at_ms,
         SUM(CASE WHEN direction = 1 AND status = 3 THEN 1 ELSE 0 END)
             OVER (PARTITION BY conversation_id) AS unread_count,
         ROW_NUMBER() OVER (
@@ -28,7 +31,10 @@ SELECT
     r.reply_to_message_id,
     r.created_at_ms,
     r.updated_at_ms,
-    r.attempt_count
+    r.attempt_count,
+    r.sent_at_ms,
+    r.delivered_at_ms,
+    r.read_at_ms
 FROM conversations c
 LEFT JOIN ranked r
     ON r.conversation_id = c.conversation_id

@@ -8,17 +8,16 @@ Work currently lands directly on `main`; each commit must leave the repository i
 
 ## Developer workflow
 
-Use only the three public root workflows:
+Use the single interactive development workflow:
 
 ```powershell
-./scripts/build.ps1
-./scripts/run.ps1
-./scripts/deploy.ps1
+.\scripts\wizard.ps1
 ```
 
-- `build` owns source policy, formatting/codegen, architecture/release checks, Rust/Flutter validation and optional platform compilation.
-- `run` prepares the shared native/runtime composition and launches the selected client target.
-- `deploy` performs release builds, packaging and checksums.
+The wizard detects all deployable devices and owns run, existing-artifact
+redeploy, selective component rebuild, full reset, explicit Onion rotation,
+relay maintenance and log collection. `build.ps1`, `deploy.ps1`, `torca.ps1`
+and the other wrappers remain stable automation/CI interfaces behind it.
 
 Do not create public one-off scripts for formatting, codegen, packaging or platform bootstrap. Private helpers belong under `scripts/modules/`; `tools/build/overlays/` contains only platform templates.
 

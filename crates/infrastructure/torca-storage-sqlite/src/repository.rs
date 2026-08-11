@@ -22,6 +22,8 @@ use crate::{
     StorageKernel, contact_sql, conversation_sql, identity_sql, peer_credential_sql,
 };
 
+const DELETE_CONTACT_SQL: &str = include_str!("../sql/commands/contact_delete.sql");
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SqlCipherStoreOpenError {
     Backend(StorageBackendError),
@@ -378,6 +380,16 @@ impl RelationshipRepository for SqlCipherStore {
                 Err(error)
             }
         }
+    }
+
+    fn remove_relationship(&mut self, contact_id: ContactId) -> Result<(), EngineError> {
+        let contact = contact_id.to_opaque().into_bytes();
+        let changed = self
+            .backend
+            .connection()
+            .execute(DELETE_CONTACT_SQL, params![contact.as_slice()])
+            .map_err(|_| relationship_failure())?;
+        if changed == 1 { Ok(()) } else { Err(EngineError("contact not found".into())) }
     }
 }
 

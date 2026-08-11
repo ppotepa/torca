@@ -4,6 +4,7 @@ import 'package:iconsx_plus/iconsx_plus.dart';
 @immutable
 class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
   const TorcaIconSet({
+    required this.pixel,
     required this.chats,
     required this.contacts,
     required this.invitations,
@@ -17,6 +18,8 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
     required this.confirm,
   });
 
+  final bool pixel;
+
   final IconData chats;
   final IconData contacts;
   final IconData invitations;
@@ -29,7 +32,67 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
   final IconData close;
   final IconData confirm;
 
+  IconData get back =>
+      pixel ? PixelArtIcons.chevron_left : HeroIcons.chevron_left;
+  IconData get expand =>
+      pixel ? PixelArtIcons.chevron_down : HeroIcons.chevron_down;
+  IconData get collapse =>
+      pixel ? PixelArtIcons.chevron_up : HeroIcons.chevron_up;
+  IconData get more =>
+      pixel ? PixelArtIcons.more_horizontal : HeroIcons.ellipsis_horizontal;
+  IconData get reply =>
+      pixel ? PixelArtIcons.reply : HeroIcons.arrow_uturn_left;
+  IconData get copy => pixel ? PixelArtIcons.copy : HeroIcons.square_2_stack;
+  IconData get retry => pixel ? PixelArtIcons.reload : HeroIcons.arrow_path;
+  IconData get download =>
+      pixel ? PixelArtIcons.download : HeroIcons.arrow_down_tray;
+  IconData get jumpToLatest =>
+      pixel ? PixelArtIcons.arrow_down : HeroIcons.arrow_down;
+  IconData get remove => pixel ? PixelArtIcons.trash : HeroIcons.trash;
+  IconData get edit => pixel ? PixelArtIcons.edit : HeroIcons.pencil_square;
+  IconData get block => pixel ? PixelArtIcons.lock : HeroIcons.no_symbol;
+  IconData get success => pixel ? PixelArtIcons.check : HeroIcons.check_circle;
+  IconData get warning =>
+      pixel ? PixelArtIcons.warning_box : HeroIcons.exclamation_triangle;
+  IconData get error =>
+      pixel ? PixelArtIcons.alert : HeroIcons.exclamation_circle;
+  IconData get online => pixel ? PixelArtIcons.radio_signal : HeroIcons.signal;
+  IconData get file => pixel ? PixelArtIcons.file : HeroIcons.document;
+  IconData get image => pixel ? PixelArtIcons.image : HeroIcons.photo;
+  IconData get video => pixel ? PixelArtIcons.video : HeroIcons.film;
+  IconData get audio => pixel ? PixelArtIcons.music : HeroIcons.musical_note;
+  IconData get pdf => pixel ? PixelArtIcons.book_open : HeroIcons.document_text;
+  IconData get document => pixel ? PixelArtIcons.file_alt : HeroIcons.document;
+  IconData get archive => pixel ? PixelArtIcons.archive : HeroIcons.archive_box;
+  IconData get textFile => pixel ? PixelArtIcons.notes : HeroIcons.code_bracket;
+  IconData get info => contactInfo;
+  IconData get identity =>
+      pixel ? PixelArtIcons.shield : HeroIcons.shield_check;
+  IconData get diagnostics => pixel ? PixelArtIcons.chart : HeroIcons.chart_bar;
+  IconData get notifications =>
+      pixel ? PixelArtIcons.notification : HeroIcons.bell;
+  IconData get appearance =>
+      pixel ? PixelArtIcons.paint_bucket : HeroIcons.swatch;
+  IconData get language =>
+      pixel ? PixelArtIcons.message_text : HeroIcons.language;
+  IconData get open =>
+      pixel ? PixelArtIcons.open : HeroIcons.arrow_top_right_on_square;
+  IconData get save => pixel ? PixelArtIcons.save : HeroIcons.arrow_down_tray;
+  IconData get scan =>
+      pixel ? PixelArtIcons.camera : HeroIcons.viewfinder_circle;
+  IconData get link => pixel ? PixelArtIcons.link : HeroIcons.link;
+  IconData get reconnect => retry;
+  IconData get queued => pixel ? PixelArtIcons.clock : HeroIcons.clock;
+  IconData get sending => pixel ? PixelArtIcons.sync : HeroIcons.arrow_path;
+  IconData get sent => pixel ? PixelArtIcons.check : HeroIcons.check;
+  IconData get delivered =>
+      pixel ? PixelArtIcons.check_double : HeroIcons.check_badge;
+  IconData get read => pixel ? PixelArtIcons.eye : HeroIcons.eye;
+  IconData get cancelled =>
+      pixel ? PixelArtIcons.close_box : HeroIcons.x_circle;
+
   static const modern = TorcaIconSet(
+    pixel: false,
     chats: HeroIcons.chat_bubble_left_right,
     contacts: HeroIcons.user_group,
     invitations: HeroIcons.qr_code,
@@ -44,6 +107,7 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
   );
 
   static const terminal = TorcaIconSet(
+    pixel: true,
     chats: PixelArtIcons.message_text,
     contacts: PixelArtIcons.users,
     invitations: PixelArtIcons.camera,
@@ -59,6 +123,7 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
 
   @override
   TorcaIconSet copyWith({
+    bool? pixel,
     IconData? chats,
     IconData? contacts,
     IconData? invitations,
@@ -71,6 +136,7 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
     IconData? close,
     IconData? confirm,
   }) => TorcaIconSet(
+    pixel: pixel ?? this.pixel,
     chats: chats ?? this.chats,
     contacts: contacts ?? this.contacts,
     invitations: invitations ?? this.invitations,
@@ -90,5 +156,6 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
 }
 
 extension TorcaIconContext on BuildContext {
-  TorcaIconSet get torcaIcons => Theme.of(this).extension<TorcaIconSet>()!;
+  TorcaIconSet get torcaIcons =>
+      Theme.of(this).extension<TorcaIconSet>() ?? TorcaIconSet.modern;
 }

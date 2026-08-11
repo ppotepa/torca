@@ -107,6 +107,9 @@ pub struct Message {
     status: MessageStatus,
     created_at: Timestamp,
     updated_at: Timestamp,
+    sent_at: Option<Timestamp>,
+    delivered_at: Option<Timestamp>,
+    read_at: Option<Timestamp>,
     attempts: Vec<DeliveryAttempt>,
 }
 
@@ -128,6 +131,9 @@ impl Message {
             status: MessageStatus::Queued,
             created_at: at,
             updated_at: at,
+            sent_at: None,
+            delivered_at: None,
+            read_at: None,
             attempts: Vec::new(),
         }
     }
@@ -148,6 +154,9 @@ impl Message {
             status: MessageStatus::Delivered,
             created_at: at,
             updated_at: at,
+            sent_at: None,
+            delivered_at: Some(at),
+            read_at: None,
             attempts: Vec::new(),
         }
     }
@@ -162,6 +171,9 @@ impl Message {
         status: MessageStatus,
         created_at: Timestamp,
         updated_at: Timestamp,
+        sent_at: Option<Timestamp>,
+        delivered_at: Option<Timestamp>,
+        read_at: Option<Timestamp>,
         attempts: Vec<DeliveryAttempt>,
     ) -> Result<Self, MessageError> {
         for (index, attempt) in attempts.iter().enumerate() {
@@ -185,6 +197,9 @@ impl Message {
             status,
             created_at,
             updated_at,
+            sent_at,
+            delivered_at,
+            read_at,
             attempts,
         })
     }
@@ -220,6 +235,15 @@ impl Message {
     pub const fn updated_at(&self) -> Timestamp {
         self.updated_at
     }
+    pub const fn sent_at(&self) -> Option<Timestamp> {
+        self.sent_at
+    }
+    pub const fn delivered_at(&self) -> Option<Timestamp> {
+        self.delivered_at
+    }
+    pub const fn read_at(&self) -> Option<Timestamp> {
+        self.read_at
+    }
     /// Returns delivery attempts.
     pub fn attempts(&self) -> &[DeliveryAttempt] {
         &self.attempts
@@ -246,6 +270,7 @@ impl Message {
         }
         self.status = MessageStatus::Sent;
         self.updated_at = at;
+        self.sent_at = Some(at);
         Ok(())
     }
     /// Applies a monotonic delivered state.
@@ -254,6 +279,7 @@ impl Message {
             MessageStatus::Sent => {
                 self.status = MessageStatus::Delivered;
                 self.updated_at = at;
+                self.delivered_at = Some(at);
                 Ok(true)
             }
             MessageStatus::Delivered | MessageStatus::Read => Ok(false),
@@ -266,6 +292,10 @@ impl Message {
             MessageStatus::Sent | MessageStatus::Delivered => {
                 self.status = MessageStatus::Read;
                 self.updated_at = at;
+                if self.delivered_at.is_none() {
+                    self.delivered_at = Some(at);
+                }
+                self.read_at = Some(at);
                 Ok(true)
             }
             MessageStatus::Read => Ok(false),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
 import 'connection_indicator.dart';
@@ -41,7 +42,7 @@ class ConversationSummaryTile extends StatelessWidget {
       onSecondaryTapDown: onSecondaryTapDown,
       child: ListTile(
         selected: selected,
-        leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+        leading: TorcaAvatar(label: contact?.displayName ?? 'Contact'),
         title: Row(
           children: <Widget>[
             Expanded(child: Text(contact?.displayName ?? 'Contact')),
@@ -63,7 +64,7 @@ class ConversationSummaryTile extends StatelessWidget {
             ),
             if (conversation.unreadCount > 0) ...<Widget>[
               const SizedBox(width: 8),
-              Badge(label: Text('${conversation.unreadCount}')),
+              TorcaBadge(label: Text('${conversation.unreadCount}')),
             ],
           ],
         ),
@@ -78,7 +79,7 @@ class ConversationSummaryTile extends StatelessWidget {
             if (contact != null)
               IconButton(
                 tooltip: 'Contact details',
-                icon: const Icon(Icons.info_outline, size: 19),
+                icon: Icon(context.torcaIcons.info, size: 19),
                 onPressed: onContactInfo,
               ),
           ],

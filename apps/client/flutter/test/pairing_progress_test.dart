@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/pairing_progress.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 void main() {
   testWidgets('pairing progress reflects runtime stage', (tester) async {
@@ -12,11 +13,11 @@ void main() {
       ),
     );
 
-    expect(find.byIcon(Icons.qr_code_2), findsOneWidget);
-    expect(find.byIcon(Icons.link), findsOneWidget);
-    expect(find.byIcon(Icons.verified_user_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
-    expect(find.byIcon(Icons.hub_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.arrow_forward), findsNWidgets(4));
+    expect(find.byIcon(TorcaIconSet.modern.invitations), findsOneWidget);
+    expect(find.byIcon(TorcaIconSet.modern.link), findsOneWidget);
+    expect(find.byIcon(TorcaIconSet.modern.identity), findsOneWidget);
+    expect(find.byIcon(TorcaIconSet.modern.confirm), findsOneWidget);
+    expect(find.byIcon(TorcaIconSet.modern.online), findsOneWidget);
+    expect(find.byIcon(TorcaIconSet.modern.send), findsNWidgets(4));
   });
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 enum AppOverflowAction { pairing, identity, diagnostics, settings, about }
 
@@ -20,49 +21,49 @@ class AppOverflowMenu extends StatelessWidget {
       PopupMenuItem(
         value: AppOverflowAction.pairing,
         enabled: hasIdentity,
-        child: const ListTile(
+        child: ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.person_add_alt_1),
-          title: Text('New pairing'),
+          leading: Icon(context.torcaIcons.addContact),
+          title: const Text('New pairing'),
         ),
       ),
       PopupMenuItem(
         value: AppOverflowAction.identity,
         enabled: hasIdentity,
-        child: const ListTile(
+        child: ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.shield_outlined),
-          title: Text('Your identity'),
+          leading: Icon(context.torcaIcons.identity),
+          title: const Text('Your identity'),
         ),
       ),
       const PopupMenuDivider(),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: AppOverflowAction.diagnostics,
         child: ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.monitor_heart_outlined),
-          title: Text('Diagnostics'),
+          leading: Icon(context.torcaIcons.diagnostics),
+          title: const Text('Diagnostics'),
         ),
       ),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: AppOverflowAction.settings,
         child: ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.settings_outlined),
-          title: Text('Settings'),
+          leading: Icon(context.torcaIcons.settings),
+          title: const Text('Settings'),
         ),
       ),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: AppOverflowAction.about,
         child: ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.info_outline),
-          title: Text('About Torca'),
+          leading: Icon(context.torcaIcons.info),
+          title: const Text('About Torca'),
         ),
       ),
     ],

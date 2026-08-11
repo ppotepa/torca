@@ -45,6 +45,9 @@ impl<R, M, S, K, C, P> AttachmentControlAdapter<R, M, S, K, C, P> {
                     size: row.size,
                     status: row.status,
                     offset: row.offset,
+                    attempt_count: row.attempt_count,
+                    updated_at_ms: row.updated_at_ms,
+                    direction: row.direction,
                 })
                 .collect()
         })
@@ -101,7 +104,12 @@ where
         .map_err(|_| CommunicationError::Attachment)?;
         let result = self
             .transfer
-            .prepare_outgoing(attachment, &bytes, now)
+            .prepare_outgoing(
+                attachment,
+                torca_conversations::ConversationId::from_opaque(request.conversation_id),
+                &bytes,
+                now,
+            )
             .map(|_| ())
             .map_err(|_| CommunicationError::Attachment);
         bytes.fill(0);

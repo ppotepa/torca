@@ -10,12 +10,14 @@ use torca_pairing::{PairingCode, PairingSessionId};
 use torca_pairing_coordinator::{
     LocalPairingContext, PairingApprovalError, PairingApprovalPort, PairingCoordinator,
     PairingCoordinatorError, PairingCredentialError, PairingDerivedSecret, PairingPeerSecretStore,
-    PairingRendezvousPort, PairingRuntime, PairingSideToken, PairingSlotCapability, PairingSlotId,
+    PairingRelayDelivery, PairingRendezvousPort, PairingRuntime, PairingSideToken,
+    PairingSlotCapability, PairingSlotId,
 };
 use torca_pairing_protocol::PairingEnvelope;
 use torca_relay::RelayBroker;
 use torca_relay_protocol::{
-    RelayCode, RelayJoinTicket, RelayRequest, RelayResponse, RelaySideToken as WireRelaySideToken,
+    RelayCode, RelayJoinTicket, RelayMessageId, RelayOperationId, RelayRequest, RelayResponse,
+    RelaySequence, RelaySideToken as WireRelaySideToken,
     RelaySlotCapability as WireRelaySlotCapability, RelaySlotId as WireRelaySlotId,
 };
 
@@ -44,6 +46,7 @@ impl PairingRendezvousPort for SharedRelay {
         let relay_code =
             RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
         match self.call(RelayRequest::Open {
+            operation_id: RelayOperationId(capability.0),
             code: relay_code,
             expires_at,
             creator_blob,
@@ -68,6 +71,7 @@ impl PairingRendezvousPort for SharedRelay {
         let relay_code =
             RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
         match self.call(RelayRequest::Join {
+            operation_id: RelayOperationId(token.0),
             code: relay_code,
             joiner_blob,
             joiner_token: WireRelaySideToken(token.0),
@@ -82,11 +86,14 @@ impl PairingRendezvousPort for SharedRelay {
 
     fn push(
         &mut self,
+        message_id: OpaqueId,
         slot: PairingSlotId,
         token: PairingSideToken,
         blob: Vec<u8>,
     ) -> Result<(), PairingCoordinatorError> {
         match self.call(RelayRequest::Push {
+            operation_id: RelayOperationId(message_id),
+            message_id: RelayMessageId(message_id),
             slot_id: WireRelaySlotId(slot.0),
             token: WireRelaySideToken(token.0),
             blob,
@@ -100,12 +107,36 @@ impl PairingRendezvousPort for SharedRelay {
         &mut self,
         slot: PairingSlotId,
         token: PairingSideToken,
-    ) -> Result<Vec<Vec<u8>>, PairingCoordinatorError> {
+        after: u64,
+    ) -> Result<Vec<PairingRelayDelivery>, PairingCoordinatorError> {
         match self.call(RelayRequest::Poll {
             slot_id: WireRelaySlotId(slot.0),
             token: WireRelaySideToken(token.0),
+            after: RelaySequence(after),
         })? {
-            RelayResponse::Blobs(blobs) => Ok(blobs),
+            RelayResponse::Deliveries(deliveries) => Ok(deliveries
+                .into_iter()
+                .map(|delivery| PairingRelayDelivery {
+                    sequence: delivery.sequence.0,
+                    blob: delivery.blob,
+                })
+                .collect()),
+            _ => Err(PairingCoordinatorError::Rendezvous),
+        }
+    }
+
+    fn ack(
+        &mut self,
+        slot: PairingSlotId,
+        token: PairingSideToken,
+        up_to: u64,
+    ) -> Result<(), PairingCoordinatorError> {
+        match self.call(RelayRequest::Ack {
+            slot_id: WireRelaySlotId(slot.0),
+            token: WireRelaySideToken(token.0),
+            up_to: RelaySequence(up_to),
+        })? {
+            RelayResponse::Acked(_) => Ok(()),
             _ => Err(PairingCoordinatorError::Rendezvous),
         }
     }

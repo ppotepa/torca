@@ -22,7 +22,7 @@ use torca_attachments::{
 use torca_contacts::{
     Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
 };
-use torca_conversations::ConversationRepository;
+use torca_conversations::{ConversationId, ConversationRepository};
 use torca_crypto::{Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, ProtectedSecretStore};
 use torca_file_storage::{BlobStore, FileBlobStore};
 use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
@@ -130,6 +130,7 @@ where
     pub fn prepare_outgoing(
         &mut self,
         mut attachment: Attachment,
+        conversation_id: ConversationId,
         plaintext: &[u8],
         at: Timestamp,
     ) -> Result<[u8; 32], AttachmentTransferError> {
@@ -138,7 +139,17 @@ where
         {
             return Err(AttachmentTransferError::InvalidState);
         }
-        let contact = self.contact_for_message(attachment.message_id())?;
+        // The attachment is staged before its companion text message is
+        // committed.  Resolving the recipient through that future message
+        // made every new attachment fail with `Message` on the first send.
+        // The command already carries the existing conversation, which is
+        // the authoritative owner of the recipient relationship.
+        let conversation = ConversationRepository::get(&self.relationships, conversation_id)
+            .map_err(|_| AttachmentTransferError::Relationship)?
+            .ok_or(AttachmentTransferError::Relationship)?;
+        let contact = ContactRepository::get(&self.relationships, conversation.contact_id())
+            .map_err(|_| AttachmentTransferError::Relationship)?
+            .ok_or(AttachmentTransferError::Relationship)?;
         let credential = self.credential(contact.id())?;
         let digest = sha256(plaintext);
         attachment.begin_encryption(at).map_err(map_attachment)?;
@@ -182,10 +193,18 @@ where
                     continue;
                 }
                 report.attempted += 1;
+                let attachment_id = attachment.id();
                 match self.advance_outgoing(attachment, now) {
                     Ok(AdvanceOutcome::Chunk) => report.chunks_sent += 1,
                     Ok(AdvanceOutcome::Completed) => report.completed += 1,
-                    Err(_) => report.failed += 1,
+                    Err(_) => {
+                        // A failed peer/frame attempt used to be reported only
+                        // in memory. That left the durable row in
+                        // `Transferring`, so maintenance retried it on every
+                        // tick with no backoff and no visible attempt count.
+                        self.record_outgoing_failure(attachment_id, now)?;
+                        report.failed += 1;
+                    }
                 }
             }
         }
@@ -248,12 +267,15 @@ where
         mut attachment: Attachment,
         now: Timestamp,
     ) -> Result<AdvanceOutcome, AttachmentTransferError> {
-        let contact = self.contact_for_message(attachment.message_id())?;
-        let credential = self.credential(contact.id())?;
         if matches!(attachment.status(), AttachmentStatus::Queued | AttachmentStatus::Failed) {
             attachment.begin_transfer(now).map_err(map_attachment)?;
             self.metadata.update(attachment.clone()).map_err(map_attachment)?;
         }
+        // Persist `Transferring` before resolving the peer.  All subsequent
+        // failures can then transition this exact attempt to `Failed` and use
+        // the normal durable retry schedule.
+        let contact = self.contact_for_message(attachment.message_id())?;
+        let credential = self.credential(contact.id())?;
         let state = self
             .metadata
             .transfer_state(attachment.id())
@@ -319,16 +341,29 @@ where
 
     fn fail_outgoing<T>(
         &mut self,
-        mut attachment: Attachment,
+        attachment: Attachment,
         now: Timestamp,
         error: AttachmentTransferError,
     ) -> Result<T, AttachmentTransferError> {
-        let code = ErrorCode::new("ATTACHMENT_SEND");
-        if attachment.status() == AttachmentStatus::Transferring {
-            let _ = attachment.mark_failed(now, code);
-            let _ = self.metadata.update(attachment);
-        }
+        let _ = self.record_outgoing_failure(attachment.id(), now);
         Err(error)
+    }
+
+    fn record_outgoing_failure(
+        &mut self,
+        attachment_id: AttachmentId,
+        now: Timestamp,
+    ) -> Result<(), AttachmentTransferError> {
+        let Some(mut attachment) = self.metadata.get(attachment_id).map_err(map_attachment)? else {
+            return Ok(());
+        };
+        if attachment.status() == AttachmentStatus::Transferring {
+            attachment
+                .mark_failed(now, ErrorCode::new("ATTACHMENT_SEND"))
+                .map_err(map_attachment)?;
+            self.metadata.update(attachment).map_err(map_attachment)?;
+        }
+        Ok(())
     }
 
     fn send_frame(

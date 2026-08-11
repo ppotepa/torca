@@ -32,7 +32,7 @@ void main() {
     final terminal = AppTheme.dark(
       const TorcaAppearance(
         family: TorcaThemeFamily.terminal,
-        variant: TorcaThemeVariant.terminalDracula,
+        variant: TorcaThemeVariant.terminalTokyoNight,
       ),
     );
     expect(modern.extension<TorcaTokens>()!.terminal, isFalse);

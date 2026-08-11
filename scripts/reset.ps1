@@ -17,7 +17,7 @@ if ($Scope -eq 'Runtime') {
 if ($Scope -in @('Identity','Database','All') -and -not ($Confirm -or $AllowDataReset)) {
     throw "Reset scope '$Scope' clears Android application data. Re-run with -AllowDataReset."
 }
-$policy = if ($Scope -eq 'All') { 'ResetAll' } else { 'ResetSelected' }
-& (Join-Path $PSScriptRoot 'torca.ps1') -Command deploy -Target android -Device $Device `
-    -ClientDataPolicy $policy -Confirm -BuildPolicy Reuse -InstallPolicy Skip -RunPolicy Skip -NonInteractive
-if ($LASTEXITCODE -ne 0) { throw "Client reset failed with code $LASTEXITCODE." }
+Write-Warning 'This reset removes the selected client persistent Arti cache. Its next launch requires a cold Tor bootstrap and may spend 15-90+ seconds downloading directory data.'
+Import-Module (Join-Path $PSScriptRoot 'modules/Torca.Data.psm1') -Force -WarningAction SilentlyContinue -Verbose:$false
+Reset-TorcaClientData -Devices @([pscustomobject]@{ Platform = 'android'; Id = $Device })
+Write-Host "Reset Torca application data on: $Device" -ForegroundColor Green

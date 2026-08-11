@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_foundation::Timestamp;
-use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayResponse};
+use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayCodecError, RelayResponse};
 
 use crate::{DEFAULT_MAX_ACTIVE_SLOTS, RelayBroker};
 
@@ -54,7 +54,10 @@ pub enum RelayServerError {
     Io(std::io::ErrorKind),
     Clock,
     BrokerPoisoned,
-    Codec,
+    /// A peer sent an invalid or incompatible relay wire frame. The codec
+    /// error is safe to log: it contains only framing/version information,
+    /// never a pairing code, token, payload or endpoint.
+    Codec(RelayCodecError),
 }
 impl fmt::Display for RelayServerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -70,6 +73,8 @@ pub struct RelayServer {
     cleanup_interval: Duration,
     max_connections: usize,
     active_connections: Arc<AtomicUsize>,
+    requests: Arc<AtomicUsize>,
+    failures: Arc<AtomicUsize>,
 }
 
 impl RelayServer {
@@ -82,15 +87,28 @@ impl RelayServer {
             cleanup_interval: config.cleanup_interval,
             max_connections: config.max_connections.max(1),
             active_connections: Arc::new(AtomicUsize::new(0)),
+            requests: Arc::new(AtomicUsize::new(0)),
+            failures: Arc::new(AtomicUsize::new(0)),
         })
     }
 
     pub fn run(self) -> Result<(), RelayServerError> {
         let cleanup_broker = Arc::clone(&self.broker);
         let cleanup_interval = self.cleanup_interval;
+        let cleanup_active = Arc::clone(&self.active_connections);
+        let cleanup_requests = Arc::clone(&self.requests);
+        let cleanup_failures = Arc::clone(&self.failures);
         let _cleanup_worker = thread::Builder::new()
             .name("torca-relay-expiry".into())
-            .spawn(move || expiry_loop(cleanup_broker, cleanup_interval))
+            .spawn(move || {
+                expiry_loop(
+                    cleanup_broker,
+                    cleanup_interval,
+                    cleanup_active,
+                    cleanup_requests,
+                    cleanup_failures,
+                );
+            })
             .map_err(io_error)?;
 
         for connection in self.listener.incoming() {
@@ -102,9 +120,16 @@ impl RelayServer {
             let broker = Arc::clone(&self.broker);
             let active = Arc::clone(&self.active_connections);
             let timeout = self.io_timeout;
+            let requests = Arc::clone(&self.requests);
+            let failures = Arc::clone(&self.failures);
             let spawn = thread::Builder::new().name("torca-relay-client".into()).spawn(move || {
                 let _permit = ConnectionPermit { active };
-                let _ = serve_connection(stream, broker, timeout);
+                if let Err(error) =
+                    serve_connection(stream, broker, timeout, requests, failures.as_ref())
+                {
+                    failures.fetch_add(1, Ordering::Relaxed);
+                    eprintln!("torca-relay: connection closed error={error}");
+                }
             });
             if spawn.is_err() {
                 self.active_connections.fetch_sub(1, Ordering::AcqRel);
@@ -140,7 +165,14 @@ fn try_acquire_connection(active: &AtomicUsize, maximum: usize) -> bool {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn expiry_loop(broker: Arc<Mutex<RelayBroker>>, interval: Duration) {
+fn expiry_loop(
+    broker: Arc<Mutex<RelayBroker>>,
+    interval: Duration,
+    active: Arc<AtomicUsize>,
+    requests: Arc<AtomicUsize>,
+    failures: Arc<AtomicUsize>,
+) {
+    let mut ticks = 0_u32;
     loop {
         thread::sleep(interval);
         let Ok(now) = system_timestamp() else {
@@ -149,7 +181,18 @@ fn expiry_loop(broker: Arc<Mutex<RelayBroker>>, interval: Duration) {
         let Ok(mut broker) = broker.lock() else {
             return;
         };
-        let _ = broker.expire(now);
+        let expired = broker.expire(now);
+        ticks = ticks.saturating_add(1);
+        if ticks >= 12 || expired != 0 {
+            ticks = 0;
+            eprintln!(
+                "torca-relay: stats active_connections={} active_slots={} requests={} failures={} expired_slots={expired}",
+                active.load(Ordering::Relaxed),
+                broker.active_slots(),
+                requests.load(Ordering::Relaxed),
+                failures.load(Ordering::Relaxed),
+            );
+        }
     }
 }
 
@@ -158,6 +201,8 @@ fn serve_connection(
     mut stream: TcpStream,
     broker: Arc<Mutex<RelayBroker>>,
     timeout: Duration,
+    requests: Arc<AtomicUsize>,
+    failures: &AtomicUsize,
 ) -> Result<(), RelayServerError> {
     stream.set_read_timeout(Some(timeout)).map_err(io_error)?;
     stream.set_write_timeout(Some(timeout)).map_err(io_error)?;
@@ -167,17 +212,20 @@ fn serve_connection(
         let Some(frame) = read_frame(&mut stream)? else {
             return Ok(());
         };
-        let request = RelayCodec::decode_request(&frame).map_err(|_| RelayServerError::Codec)?;
+        let request = RelayCodec::decode_request(&frame).map_err(RelayServerError::Codec)?;
+        requests.fetch_add(1, Ordering::Relaxed);
         let now = system_timestamp()?;
         let response = {
             let mut broker = broker.lock().map_err(|_| RelayServerError::BrokerPoisoned)?;
             match broker.handle(request, now) {
                 Ok(response) => response,
-                Err(error) => RelayResponse::Error(error),
+                Err(error) => {
+                    failures.fetch_add(1, Ordering::Relaxed);
+                    RelayResponse::Error(error)
+                }
             }
         };
-        let encoded =
-            RelayCodec::encode_response(&response).map_err(|_| RelayServerError::Codec)?;
+        let encoded = RelayCodec::encode_response(&response).map_err(RelayServerError::Codec)?;
         stream.write_all(&encoded).map_err(io_error)?;
         stream.flush().map_err(io_error)?;
     }
@@ -187,14 +235,27 @@ fn read_frame(stream: &mut TcpStream) -> Result<Option<Vec<u8>>, RelayServerErro
     let mut header = [0_u8; RELAY_HEADER_LEN];
     match stream.read_exact(&mut header) {
         Ok(()) => {}
-        Err(error) if matches!(error.kind(), std::io::ErrorKind::UnexpectedEof) => return Ok(None),
+        // A rendezvous client intentionally keeps a Tor stream between polls.
+        // Its adaptive backoff reaches 30 seconds, so treating the configured
+        // read deadline as a transport *failure* created needless reconnects
+        // and misleading relay failure counters. Closing an idle stream is
+        // still a bounded resource policy; it is simply a normal close.
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::WouldBlock
+            ) =>
+        {
+            return Ok(None);
+        }
         Err(error) if matches!(error.kind(), std::io::ErrorKind::ConnectionReset) => {
             return Ok(None);
         }
         Err(error) => return Err(io_error(error)),
     }
-    let frame_len =
-        RelayCodec::frame_len_from_header(&header).map_err(|_| RelayServerError::Codec)?;
+    let frame_len = RelayCodec::frame_len_from_header(&header).map_err(RelayServerError::Codec)?;
     let payload_len = frame_len - RELAY_HEADER_LEN;
     let mut frame = Vec::with_capacity(frame_len);
     frame.extend_from_slice(&header);
@@ -216,4 +277,22 @@ pub(crate) fn system_timestamp() -> Result<Timestamp, RelayServerError> {
 #[allow(clippy::needless_pass_by_value)]
 fn io_error(error: std::io::Error) -> RelayServerError {
     RelayServerError::Io(error.kind())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_frame;
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+
+    #[test]
+    fn idle_stream_timeout_is_a_normal_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        let client = TcpStream::connect(address).expect("client");
+        let (mut server, _) = listener.accept().expect("accept");
+        server.set_read_timeout(Some(Duration::from_millis(20))).expect("timeout");
+        assert_eq!(read_frame(&mut server).expect("idle close"), None);
+        drop(client);
+    }
 }

@@ -1,8 +1,14 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:SourceFingerprintCache = @{}
 
 function Get-TorcaBuildSourceFingerprint {
     param([string]$RepoRoot)
+
+    $cacheKey = [IO.Path]::GetFullPath($RepoRoot).ToLowerInvariant()
+    if ($script:SourceFingerprintCache.ContainsKey($cacheKey)) {
+        return $script:SourceFingerprintCache[$cacheKey]
+    }
 
     # A commit id is insufficient during normal local development: the worktree
     # can contain ABI-changing edits that have not been committed yet. Hash the
@@ -12,6 +18,7 @@ function Get-TorcaBuildSourceFingerprint {
         (Join-Path $RepoRoot 'apps/client/flutter/android'),
         (Join-Path $RepoRoot 'apps/client/flutter/windows'),
         (Join-Path $RepoRoot 'apps/client/flutter/pubspec.yaml'),
+        (Join-Path $RepoRoot 'apps/client/flutter/pubspec.lock'),
         (Join-Path $RepoRoot 'crates'),
         (Join-Path $RepoRoot 'scripts/modules'),
         (Join-Path $RepoRoot 'scripts/build.ps1'),
@@ -27,7 +34,11 @@ function Get-TorcaBuildSourceFingerprint {
             Get-Item -LiteralPath $root
         } elseif (Test-Path -LiteralPath $root -PathType Container) {
             Get-ChildItem -LiteralPath $root -Recurse -File |
-                Where-Object { $_.FullName -notmatch '[\\/](target|build|\.dart_tool|\.gradle|\.cxx|node_modules|jniLibs)[\\/]' }
+                Where-Object {
+                    $_.FullName -notmatch '[\\/](target|build|\.dart_tool|\.gradle|\.cxx|node_modules|jniLibs)[\\/]' -and
+                    $_.FullName -notmatch '[\\/]windows[\\/]flutter[\\/]generated_(plugin_registrant\.(cc|h)|plugins\.cmake)$' -and
+                    $_.FullName -notmatch '[\\/]android[\\/]local\.properties$'
+                }
         }
     }
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -40,7 +51,9 @@ function Get-TorcaBuildSourceFingerprint {
             [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $bytes, 0)
         }
         [void]$sha.TransformFinalBlock([byte[]]::new(0), 0, 0)
-        return [BitConverter]::ToString($sha.Hash).Replace('-', '')
+        $fingerprint = [BitConverter]::ToString($sha.Hash).Replace('-', '')
+        $script:SourceFingerprintCache[$cacheKey] = $fingerprint
+        return $fingerprint
     } finally {
         $sha.Dispose()
     }
@@ -54,7 +67,10 @@ function Get-TorcaScopedBuildPaths {
     )
     [pscustomobject]@{
         RepoRoot = $Paths.RepoRoot
-        ManifestFile = Get-TorcaBuildManifestPath -Paths $Paths -Target $Target -Configuration $Configuration
+        # Keep the build-identity module self-contained. Importing Config with
+        # -Force here can unload the caller's exported functions (including
+        # Get-TorcaPaths) while `torca.ps1` is still starting up.
+        ManifestFile = Join-Path $Paths.BuildManifestRoot "$($Target.ToLowerInvariant())-$($Configuration.ToLowerInvariant()).json"
     }
 }
 
@@ -65,9 +81,64 @@ function Get-TorcaScopedBuildManifest {
         [Parameter(Mandatory = $true)][string]$Configuration
     )
     $scopedPaths = Get-TorcaScopedBuildPaths -Paths $Paths -Target $Target -Configuration $Configuration
-    $manifest = Get-TorcaBuildManifest -Paths $scopedPaths
-    if ($manifest) { return $manifest }
+    if (-not (Test-Path -LiteralPath $scopedPaths.ManifestFile)) { return $null }
+    try { return Get-Content -LiteralPath $scopedPaths.ManifestFile -Raw | ConvertFrom-Json }
+    catch { throw "Invalid Torca build manifest: $($scopedPaths.ManifestFile)" }
+}
 
+function Clear-TorcaBuildSourceFingerprintCache {
+    $script:SourceFingerprintCache = @{}
+}
+
+function Test-TorcaClientArtifactsExist {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][ValidateSet('windows','android','all')][string]$Target,
+        [Parameter(Mandatory = $true)][ValidateSet('debug','release')][string]$Configuration
+    )
+
+    $flutterRoot = Join-Path $RepoRoot 'apps/client/flutter'
+    if ($Target -in @('windows','all')) {
+        $name = if ($Configuration -eq 'release') { 'Release' } else { 'Debug' }
+        if (-not (Test-Path -LiteralPath (Join-Path $flutterRoot "build/windows/x64/runner/$name/torca_app.exe"))) {
+            return $false
+        }
+    }
+    if ($Target -in @('android','all')) {
+        $apkOutput = Join-Path $flutterRoot 'build/app/outputs/flutter-apk'
+        $universalApk = Join-Path $apkOutput "app-$Configuration.apk"
+        $requiredSplitApks = @(
+            (Join-Path $apkOutput "app-arm64-v8a-$Configuration.apk"),
+            (Join-Path $apkOutput "app-x86_64-$Configuration.apk")
+        )
+        $hasUniversalApk = Test-Path -LiteralPath $universalApk
+        $hasRequiredSplitApks = @($requiredSplitApks | Where-Object { Test-Path -LiteralPath $_ }).Count -eq $requiredSplitApks.Count
+        if (-not $hasUniversalApk -and -not $hasRequiredSplitApks) { return $false }
+    }
+    return $true
+}
+
+function Get-TorcaExistingBuildManifest {
+    param(
+        [Parameter(Mandatory = $true)]$Paths,
+        [Parameter(Mandatory = $true)][string]$Endpoint,
+        [Parameter(Mandatory = $true)][ValidateSet('windows','android','all')][string]$Target,
+        [Parameter(Mandatory = $true)][ValidateSet('debug','release')][string]$Configuration
+    )
+
+    # "Existing" deliberately ignores current source changes: it means the
+    # operator wants to reinstall the last already-built binary.  The relay
+    # endpoint and artifacts are still verified because deploying a binary
+    # compiled for another onion would create a misleading, unusable install.
+    $candidateTargets = if ($Target -eq 'all') { @('all') } else { @($Target, 'all') }
+    foreach ($candidateTarget in $candidateTargets) {
+        $manifest = Get-TorcaScopedBuildManifest -Paths $Paths -Target $candidateTarget -Configuration $Configuration
+        if (-not $manifest) { continue }
+        if ([string]$manifest.Endpoint -ne $Endpoint -or [string]$manifest.Configuration -ne $Configuration) { continue }
+        if (-not (@($manifest.Targets) -contains $candidateTarget)) { continue }
+        if (-not (Test-TorcaClientArtifactsExist -RepoRoot $Paths.RepoRoot -Target $Target -Configuration $Configuration)) { continue }
+        return $manifest
+    }
     return $null
 }
 
@@ -84,22 +155,7 @@ function Test-TorcaBuildRequired {
     if (-not (@($manifest.Targets) -contains $Target)) { return $true }
     if ([string]$manifest.SourceFingerprint -ne (Get-TorcaBuildSourceFingerprint -RepoRoot $Paths.RepoRoot)) { return $true }
     if ([string]$manifest.BuildId -ne (Get-TorcaBuildId -RepoRoot $Paths.RepoRoot -Endpoint $Endpoint -Target $Target -Configuration $Configuration)) { return $true }
-    $flutterRoot = Join-Path $Paths.RepoRoot 'apps/client/flutter'
-    if ($Target -in @('windows','all')) {
-        $name = if ($Configuration -eq 'release') { 'Release' } else { 'Debug' }
-        if (-not (Test-Path (Join-Path $flutterRoot "build/windows/x64/runner/$name/torca_app.exe"))) { return $true }
-    }
-    if ($Target -in @('android','all')) {
-        $apkOutput = Join-Path $flutterRoot 'build/app/outputs/flutter-apk'
-        $universalApk = Join-Path $apkOutput "app-$Configuration.apk"
-        $requiredSplitApks = @(
-            (Join-Path $apkOutput "app-arm64-v8a-$Configuration.apk"),
-            (Join-Path $apkOutput "app-x86_64-$Configuration.apk")
-        )
-        $hasUniversalApk = Test-Path -LiteralPath $universalApk
-        $hasRequiredSplitApks = @($requiredSplitApks | Where-Object { Test-Path -LiteralPath $_ }).Count -eq $requiredSplitApks.Count
-        if (-not $hasUniversalApk -and -not $hasRequiredSplitApks) { return $true }
-    }
+    if (-not (Test-TorcaClientArtifactsExist -RepoRoot $Paths.RepoRoot -Target $Target -Configuration $Configuration)) { return $true }
     return $false
 }
 
@@ -122,7 +178,13 @@ function Get-TorcaBuildId {
 }
 
 function Invoke-TorcaClientBuild {
-    param([string]$RepoRoot, [string]$Target, [string]$Configuration, [string]$Endpoint)
+    param(
+        [string]$RepoRoot,
+        [string]$Target,
+        [string]$Configuration,
+        [string]$Endpoint,
+        [ValidateSet('Full','Quick','Skip')][string]$Validation = 'Full'
+    )
     $old = $env:TORCA_RELAY_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED; $oldBuildId = $env:TORCA_BUILD_ID
     $oldProductVersion = $env:TORCA_PRODUCT_VERSION; $oldSourceFingerprint = $env:TORCA_SOURCE_FINGERPRINT
     $oldSourceCommit = $env:TORCA_SOURCE_COMMIT; $oldRelayHash = $env:TORCA_RELAY_ENDPOINT_HASH
@@ -141,7 +203,7 @@ function Invoke-TorcaClientBuild {
                 $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Endpoint))
             ).Replace('-', '').ToLowerInvariant()
         } finally { $endpointSha.Dispose() }
-        & (Join-Path $RepoRoot 'scripts/build.ps1') -Target $Target -Configuration $Configuration
+        & (Join-Path $RepoRoot 'scripts/build.ps1') -Target $Target -Configuration $Configuration -Validation $Validation
         if ($LASTEXITCODE -ne 0) { throw "Build failed with code $LASTEXITCODE." }
     } finally {
         $env:TORCA_RELAY_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated; $env:TORCA_BUILD_ID = $oldBuildId
@@ -168,14 +230,54 @@ function Install-TorcaClient {
         [ValidateSet('debug','release')][string]$Configuration = 'debug'
     )
     if (-not $Device) { throw 'An Android device id is required for installation.' }
-    $apk = Join-Path $RepoRoot "apps/client/flutter/build/app/outputs/flutter-apk/app-$Configuration.apk"
-    if (($Device -match '_adb-tls-' -or $Device -match ':\d+$') -and (Get-Command adb -ErrorAction SilentlyContinue)) {
-        if (-not (Test-Path -LiteralPath $apk)) { throw "$Configuration APK is missing: $apk" }
-        $installOutput = (& adb -s $Device install -r $apk 2>&1 | Out-String).Trim()
-        $installCode = $LASTEXITCODE
+    $apkOutput = Join-Path $RepoRoot 'apps/client/flutter/build/app/outputs/flutter-apk'
+    $universalApk = Join-Path $apkOutput "app-$Configuration.apk"
+    $apk = $null
+    $abis = @()
+    if (Get-Command adb -ErrorAction SilentlyContinue) {
+        $abisOutput = (& adb -s $Device shell getprop ro.product.cpu.abilist 2>$null | Out-String).Trim()
+        $abis = @($abisOutput -split ',' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($abis.Count -eq 0) {
+            $primaryAbi = (& adb -s $Device shell getprop ro.product.cpu.abi 2>$null | Out-String).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($primaryAbi)) { $abis = @($primaryAbi) }
+        }
+        foreach ($abi in $abis) {
+            $candidate = switch ($abi.Trim()) {
+                'arm64-v8a' { Join-Path $apkOutput "app-arm64-v8a-$Configuration.apk"; break }
+                'x86_64' { Join-Path $apkOutput "app-x86_64-$Configuration.apk"; break }
+                default { $null }
+            }
+            if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+                $apk = $candidate
+                break
+            }
+        }
+    }
+    $splitApks = @(Get-ChildItem -LiteralPath $apkOutput -Filter "app-*-$Configuration.apk" -File -ErrorAction SilentlyContinue)
+    if (-not $apk -and $splitApks.Count -eq 0 -and (Test-Path -LiteralPath $universalApk)) {
+        $apk = $universalApk
+    }
+    if (Get-Command adb -ErrorAction SilentlyContinue) {
+        if (-not $apk) {
+            throw "No compatible $Configuration Android APK found for $Device in $apkOutput (ABIs=$($abis -join ', ')). Split APKs exist, so refusing to fall back to a potentially stale universal APK."
+        }
+        $installOutput = ''
+        $installCode = 1
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            $installOutput = (& adb -s $Device install -r $apk 2>&1 | Out-String).Trim()
+            $installCode = $LASTEXITCODE
+            if ($installCode -eq 0) { break }
+            if ($installOutput -notmatch 'INSTALL_FAILED_USER_RESTRICTED' -or $attempt -eq 2) { break }
+
+            Write-Host ''
+            Write-Host "Android requires confirmation on $Device." -ForegroundColor Yellow
+            Write-Host 'Unlock the phone and accept the installation prompt.' -ForegroundColor Yellow
+            Write-Host 'On Xiaomi/Redmi/Poco enable Developer options > Install via USB and USB debugging (Security settings).' -ForegroundColor Yellow
+            $null = Read-Host 'Press Enter to retry this APK without rebuilding or resetting data'
+        }
         if ($installCode -ne 0) {
             if ($installOutput -match 'INSTALL_FAILED_USER_RESTRICTED') {
-                throw "Android blocked or cancelled ADB installation on $Device. Keep the phone unlocked and approve the system install prompt. On Xiaomi/Redmi/Poco HyperOS/MIUI also enable Developer options > USB debugging (Security settings) / Install via USB; wireless debugging alone is insufficient. Details: $installOutput"
+                throw "Android blocked or cancelled ADB installation twice on $Device. Keep the phone unlocked and approve the system install prompt. On Xiaomi/Redmi/Poco HyperOS/MIUI enable Developer options > Install via USB and USB debugging (Security settings); wireless debugging alone is insufficient. The APK remains available and can be installed with Use Last. Details: $installOutput"
             }
             throw "ADB install failed with code $installCode on $Device. Details: $installOutput"
         }
@@ -252,11 +354,13 @@ function Invoke-TorcaClientRun {
         [ValidateSet('debug','release')][string]$Configuration = 'debug',
         [switch]$Installed,
         [string]$ExpectedBuildId,
+        [switch]$DeferHealthCheck,
         [ValidateRange(5,900)][int]$HealthTimeoutSeconds = 900
     )
     if ($Installed -and $Target -eq 'windows') {
-        $exe = Join-Path $RepoRoot 'apps/client/flutter/build/windows/x64/runner/Release/torca_app.exe'
-        if (-not (Test-Path -LiteralPath $exe)) { throw "Installed Windows release is missing: $exe" }
+        $directoryName = if ($Configuration -eq 'release') { 'Release' } else { 'Debug' }
+        $exe = Join-Path $RepoRoot "apps/client/flutter/build/windows/x64/runner/$directoryName/torca_app.exe"
+        if (-not (Test-Path -LiteralPath $exe)) { throw "Built Windows $Configuration client is missing: $exe" }
         $running = @(Get-Process -Name torca_app -ErrorAction SilentlyContinue)
         foreach ($process in $running) {
             if ($process.MainWindowHandle -ne 0) {
@@ -290,12 +394,28 @@ function Invoke-TorcaClientRun {
         # health check accidentally validate that Debug process and its
         # target/debug/torca_native.dll instead of the requested release.
         $started = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+        if ($DeferHealthCheck) {
+            return [pscustomobject]@{
+                Platform = 'windows'
+                Device = $null
+                ProcessId = $started.Id
+                Executable = $exe
+            }
+        }
         Wait-TorcaClientLaunch -Platform windows -ExpectedBuildId $ExpectedBuildId -ExpectedWindowsProcessId $started.Id -ExpectedWindowsExecutable $exe -TimeoutSeconds $HealthTimeoutSeconds
         return
     }
     if ($Installed -and $Device -and (Get-Command adb -ErrorAction SilentlyContinue)) {
-        & adb -s $Device shell monkey -p com.torca.torca_app 1
+        & adb -s $Device shell monkey -p com.torca.torca_app 1 | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "ADB launch failed with code $LASTEXITCODE." }
+        if ($DeferHealthCheck) {
+            return [pscustomobject]@{
+                Platform = 'android'
+                Device = $Device
+                ProcessId = $null
+                Executable = $null
+            }
+        }
         Wait-TorcaClientLaunch -Platform android -Device $Device -ExpectedBuildId $ExpectedBuildId -TimeoutSeconds $HealthTimeoutSeconds
         return
     }
@@ -365,15 +485,27 @@ function Wait-TorcaClientLaunch {
                         $bootstrap = if (Test-Path -LiteralPath $bootstrapLog) { Get-Content -LiteralPath $bootstrapLog -Tail 80 -ErrorAction SilentlyContinue } else { @() }
                         $events = @($bootstrap | ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } | Where-Object { $_ })
                         $failure = $events | Where-Object { $_.code -eq 'RUNTIME_START_FAILED' } | Select-Object -Last 1
-                        $ready = $events | Where-Object { $_.code -eq 'TOR_READY' } | Select-Object -Last 1
-                        if ($ready) {
-                            Write-Host "Windows runtime health verified: PID $($process[0].Id), build=$($run.build_id), state=TOR_READY" -ForegroundColor Green
+                        $torReady = $events | Where-Object { $_.code -eq 'TOR_READY' } | Select-Object -Last 1
+                        $networkReady = $events | Where-Object { $_.code -eq 'NETWORK_READY' } | Select-Object -Last 1
+                        if ($networkReady) {
+                            Write-Host "Windows network health verified: PID $($process[0].Id), build=$($run.build_id), state=NETWORK_READY" -ForegroundColor Green
                             return
                         }
                         if ($failure -and [string]$failure.message -match 'bootstrap Arti client stalled') {
                             throw "Windows Tor bootstrap reached a terminal stall. $($failure.message). Restart is required; incident log: $bootstrapLog"
                         }
-                        if ($failure) { $lastDetail = "Windows Tor startup: $($failure.message)" }
+                        if ($failure -and -not $torReady) { $lastDetail = "Windows Tor startup: $($failure.message)" }
+                        elseif ($torReady) {
+                            $networkCodes = foreach ($name in @('tor.log','relay.log')) {
+                                $path = Join-Path $runStart.DirectoryName $name
+                                if (Test-Path -LiteralPath $path) {
+                                    Get-Content -LiteralPath $path -Tail 20 -ErrorAction SilentlyContinue |
+                                        ForEach-Object { try { ($_ | ConvertFrom-Json).code } catch { $null } } |
+                                        Where-Object { $_ } | Select-Object -Last 1
+                                }
+                            }
+                            $lastDetail = "Windows core runtime is ready; waiting for onion and relay ($(@($networkCodes) -join ', '))"
+                        }
                         else { $lastEvent = $events | Select-Object -Last 1; $lastDetail = if ($lastEvent) { "Windows runtime event: $($lastEvent.code)" } else { 'Windows runtime log is initializing' } }
                     } catch {
                         if ($_.Exception.Message -like 'Windows runtime build ID mismatch*' -or $_.Exception.Message -like 'Windows Tor bootstrap reached a terminal stall*') { throw }
@@ -382,9 +514,9 @@ function Wait-TorcaClientLaunch {
                 } else { $lastDetail = "Windows process PID $($process[0].Id) is running; waiting for a fresh runtime log" }
             }
             elseif ($processObserved) {
-                throw 'Windows torca_app exited before native runtime reached TOR_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident.'
+                throw 'Windows torca_app exited before native runtime reached NETWORK_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident.'
             } elseif ($ExpectedWindowsProcessId) {
-                throw "Windows release process PID $ExpectedWindowsProcessId exited before native runtime reached TOR_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident."
+                throw "Windows release process PID $ExpectedWindowsProcessId exited before native runtime reached NETWORK_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident."
             } else { $lastDetail = 'Windows torca_app process is not running yet' }
         } else {
             if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required for Android launch verification.' }
@@ -394,15 +526,31 @@ function Wait-TorcaClientLaunch {
                 $logFiles = (& adb -s $Device shell find /sdcard/Android/data/com.torca.torca_app/files/torca/logs -type f -name bootstrap.log 2>$null | Out-String).Trim() -split "`r?`n" | Where-Object { $_ }
                 $remoteLog = $logFiles | Select-Object -Last 1
                 $events = if ($remoteLog) { (& adb -s $Device shell tail -n 80 $remoteLog 2>$null | Out-String) } else { '' }
-                if ($events -match '"code"\s*:\s*"TOR_READY"') {
-                    Write-Host "Android runtime health verified on ${Device}: PID $pid, state=TOR_READY" -ForegroundColor Green
+                if ($events -match '"code"\s*:\s*"NETWORK_READY"') {
+                    Write-Host "Android network health verified on ${Device}: PID $pid, state=NETWORK_READY" -ForegroundColor Green
                     return
                 }
                 $failure = [Regex]::Matches($events, '"code"\s*:\s*"RUNTIME_START_FAILED"[^\r\n]*') | Select-Object -Last 1
-                $lastDetail = if ($failure) { "Android Tor startup: $($failure.Value)" } elseif ($remoteLog) { "Android process PID $pid is running; waiting for TOR_READY" } else { "Android process PID $pid is running; waiting for runtime bootstrap log" }
+                $torReady = $events -match '"code"\s*:\s*"TOR_READY"'
+                if ($failure -and -not $torReady) {
+                    $lastDetail = "Android Tor startup: $($failure.Value)"
+                } elseif ($torReady -and $remoteLog) {
+                    $remoteDirectory = $remoteLog.Substring(0, $remoteLog.LastIndexOf('/'))
+                    $networkCodes = foreach ($name in @('tor.log','relay.log')) {
+                        $content = (& adb -s $Device shell tail -n 20 "$remoteDirectory/$name" 2>$null | Out-String)
+                        [Regex]::Matches($content, '"code"\s*:\s*"([^"]+)"') |
+                            Select-Object -Last 1 |
+                            ForEach-Object { $_.Groups[1].Value }
+                    }
+                    $lastDetail = "Android core runtime is ready; waiting for onion and relay ($(@($networkCodes) -join ', '))"
+                } elseif ($remoteLog) {
+                    $lastDetail = "Android process PID $pid is running; waiting for TOR_READY"
+                } else {
+                    $lastDetail = "Android process PID $pid is running; waiting for runtime bootstrap log"
+                }
             }
             elseif ($processObserved) {
-                throw "Android package process exited on $Device before native runtime reached TOR_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat."
+                throw "Android package process exited on $Device before native runtime reached NETWORK_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat."
             } else { $lastDetail = "Android package process is not running on $Device yet" }
         }
         if ($lastDetail -ne $lastReported) {
@@ -416,18 +564,33 @@ function Wait-TorcaClientLaunch {
 }
 
 function Write-TorcaBuildManifest {
-    param([pscustomobject]$Paths, [string]$Endpoint, [string[]]$Targets, [string]$Configuration)
+    param(
+        [pscustomobject]$Paths,
+        [string]$Endpoint,
+        [string[]]$Targets,
+        [string]$Configuration,
+        [string]$BuildId,
+        [string]$SourceFingerprint
+    )
     $manifestTarget = if (@($Targets).Count -eq 1) { @($Targets)[0] } else { ($Targets -join ',') }
     $scopedPaths = Get-TorcaScopedBuildPaths -Paths $Paths -Target $manifestTarget -Configuration $Configuration
     $commit = (& git -C $Paths.RepoRoot rev-parse HEAD 2>$null)
     $release = Get-Content (Join-Path $Paths.RepoRoot 'release/version.json') -Raw | ConvertFrom-Json
-    Set-TorcaBuildManifest -Paths $scopedPaths -Manifest ([pscustomobject]@{
+    $manifest = [pscustomobject]@{
         Schema = 1; Endpoint = $Endpoint; Targets = @($Targets); Configuration = $Configuration
-        SourceFingerprint = Get-TorcaBuildSourceFingerprint -RepoRoot $Paths.RepoRoot
-        BuildId = Get-TorcaBuildId -RepoRoot $Paths.RepoRoot -Endpoint $Endpoint -Target $manifestTarget -Configuration $Configuration
+        # These values must be the exact frozen values embedded into the
+        # binaries. Recomputing after Flutter/Gradle generated files changed
+        # used to produce a manifest for an identity no artifact contained.
+        SourceFingerprint = if ($SourceFingerprint) { $SourceFingerprint } else { Get-TorcaBuildSourceFingerprint -RepoRoot $Paths.RepoRoot }
+        BuildId = if ($BuildId) { $BuildId } else { Get-TorcaBuildId -RepoRoot $Paths.RepoRoot -Endpoint $Endpoint -Target $manifestTarget -Configuration $Configuration }
         ContractSchema = [int]$release.contractSchema
         Commit = ($commit -join '').Trim(); BuiltAt = [DateTime]::UtcNow.ToString('o')
-    })
+    }
+    $parent = Split-Path -Parent $scopedPaths.ManifestFile
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $temporary = "$($scopedPaths.ManifestFile).tmp"
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $scopedPaths.ManifestFile -Force
 }
 
-Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Wait-TorcaClientLaunch, Write-TorcaBuildManifest
+Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Clear-TorcaBuildSourceFingerprintCache, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaExistingBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Assert-TorcaAndroidInstalledArtifact, Get-TorcaFileSha256, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Wait-TorcaClientLaunch, Write-TorcaBuildManifest

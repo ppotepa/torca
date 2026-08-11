@@ -2,8 +2,13 @@
 
 use std::collections::BTreeMap;
 
+mod pending;
 mod query;
 mod runtime;
+pub use pending::{
+    InMemoryPendingOperationStore, PendingOperation, PendingOperationKind, PendingOperationStore,
+    PendingOperationStoreError, pending_operation_id,
+};
 pub use query::{
     ApplicationQueryError, ApplicationReadModels, ContactSecuritySnapshot, ContactSecurityState,
     ConversationHistoryPort, ConversationMessagePage, ConversationMessageSummary,
@@ -21,8 +26,8 @@ use torca_foundation::OpaqueId;
 use torca_identity::{fingerprint_for, safety_number};
 pub use torca_probing::{ProbeStatus, ProbeTarget};
 pub use torca_runtime::{
-    AttachmentSendRequest, AttachmentView, NetworkSnapshot, RuntimeDriverError, RuntimeHandle,
-    TorState, TransportActivitySnapshot,
+    AttachmentSendRequest, AttachmentView, NetworkSnapshot, RelayServiceInfo, RuntimeDriverError,
+    RuntimeHandle, TorState, TransportActivitySnapshot,
 };
 
 /// Process-safe handle to the application consistency boundary.
@@ -43,6 +48,7 @@ pub struct ApplicationSnapshotContext {
     pub identity_fingerprint: Option<String>,
     pub identity_fingerprints: BTreeMap<OpaqueId, String>,
     pub safety_numbers: BTreeMap<ContactId, String>,
+    pub pending_operations: Vec<PendingOperation>,
 }
 
 impl ApplicationSnapshotContext {
@@ -98,21 +104,12 @@ impl ClientApplicationHandle {
         self.engine.clone()
     }
 
-    /// Application readiness policy. The wire boundary supplies only a
-    /// runtime snapshot; it does not own these use-case decisions.
+    /// Local precondition for creating an invitation. The relay probe is not
+    /// authoritative here: it is a separate stream and may be stale while the
+    /// real pairing transport can reconnect or queue the operation. The
+    /// operation itself remains responsible for returning a retryable result.
     pub fn pairing_creation_allowed(network: &NetworkSnapshot) -> Result<(), &'static str> {
-        match network
-            .probes
-            .iter()
-            .find(|probe| probe.target == ProbeTarget::Relay)
-            .map(|probe| probe.status)
-        {
-            Some(ProbeStatus::Healthy) => Ok(()),
-            Some(ProbeStatus::Degraded | ProbeStatus::Failed | ProbeStatus::Unreachable) => {
-                Err("RELAY_DEGRADED")
-            }
-            _ => Err("RELAY_NOT_READY"),
-        }
+        if network.tor == TorState::Ready { Ok(()) } else { Err("TOR_NOT_READY") }
     }
 
     /// Joining is an explicit connectivity attempt. An unknown or degraded
@@ -146,7 +143,9 @@ impl ClientApplicationHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApplicationError, ClientApplicationHandle};
+    use super::{
+        ApplicationCommand, ApplicationError, ClientApplicationHandle, ClientApplicationRuntime,
+    };
     use torca_client_engine::{ClientEngine, ClientEngineActor};
     use torca_foundation::ClassifiedError;
 
@@ -162,5 +161,52 @@ mod tests {
     fn application_errors_keep_machine_readable_descriptors() {
         let error = ApplicationError::from_message("RELAY_DEGRADED".into());
         assert_eq!(error.descriptor().code().as_str(), "relay.degraded");
+    }
+
+    #[test]
+    fn profile_can_be_saved_before_network_runtime_is_attached() {
+        let (engine, actor) = ClientEngineActor::spawn(ClientEngine::default());
+        let application = ClientApplicationHandle::new(engine);
+        let runtime = ClientApplicationRuntime::new(application.clone());
+        runtime
+            .bootstrap_identity("00000000000000000000000000000001".parse().expect("identity id"), 0)
+            .expect("identity bootstrap");
+
+        let result = runtime.execute(ApplicationCommand::UpdateProfile {
+            display_name: "offline-user".into(),
+            at_ms: 1,
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(
+            application
+                .overview()
+                .expect("application overview")
+                .identity
+                .and_then(|identity| identity
+                    .profile()
+                    .map(|profile| profile.display_name().as_str().to_owned()))
+                .as_deref(),
+            Some("offline-user")
+        );
+        actor.shutdown().expect("actor shutdown");
+    }
+
+    #[test]
+    fn pairing_command_is_queued_before_network_runtime_is_attached() {
+        let (engine, actor) = ClientEngineActor::spawn(ClientEngine::default());
+        let application = ClientApplicationHandle::new(engine);
+        let runtime = ClientApplicationRuntime::new(application);
+        let session_id = "00000000000000000000000000000002".parse().expect("session id");
+
+        let result = runtime
+            .execute(ApplicationCommand::CreatePairing { session_id })
+            .expect("queue pairing");
+
+        assert_eq!(result.kind, "pairing_queued");
+        let snapshot = runtime.snapshot_context().expect("snapshot context");
+        assert_eq!(snapshot.pending_operations.len(), 1);
+        assert_eq!(snapshot.pending_operations[0].resource_id, session_id);
+        actor.shutdown().expect("actor shutdown");
     }
 }

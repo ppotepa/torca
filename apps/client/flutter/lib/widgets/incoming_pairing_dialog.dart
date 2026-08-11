@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -57,7 +58,9 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
 
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: !_busy,
+    // Network completion continues in the runtime; it must never trap the user
+    // inside a modal while relay or peer connectivity is recovering.
+    canPop: true,
     child: Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
       child: ConstrainedBox(
@@ -80,7 +83,9 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   Icon(
-                    completed ? Icons.check_circle : Icons.person_add_alt_1,
+                    completed
+                        ? context.torcaIcons.success
+                        : context.torcaIcons.addContact,
                     size: 58,
                     color: completed
                         ? Colors.green.shade700
@@ -101,7 +106,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                     const SizedBox(height: 20),
                     FilledButton.icon(
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.check),
+                      icon: Icon(context.torcaIcons.confirm),
                       label: const Text('Done'),
                     ),
                   ] else ...<Widget>[
@@ -110,7 +115,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                     Text(
                       _accepted
                           ? 'Decision saved. Waiting for the secure connection to finish.'
-                          : 'This device joined your invitation. Verify the identity before accepting.',
+                          : 'This device joined your invitation. Review the contact details before accepting.',
                       textAlign: TextAlign.center,
                     ),
                     if (_error != null) ...<Widget>[
@@ -145,7 +150,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                                         strokeWidth: 2,
                                       ),
                                     )
-                                  : const Icon(Icons.check),
+                                  : Icon(context.torcaIcons.confirm),
                               label: const Text('Accept'),
                             ),
                           ),
@@ -160,7 +165,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                                       ),
                                       accept: false,
                                     ),
-                              icon: const Icon(Icons.close),
+                              icon: Icon(context.torcaIcons.close),
                               label: const Text('Reject'),
                             ),
                           ),
@@ -168,9 +173,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                       )
                     else
                       OutlinedButton(
-                        onPressed: _busy
-                            ? null
-                            : () => Navigator.of(context).pop(),
+                        onPressed: () => Navigator.of(context).pop(),
                         child: const Text('Close'),
                       ),
                   ],
@@ -195,7 +198,7 @@ class _IdentitySummary extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(context.torcaTokens.radiusLarge),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

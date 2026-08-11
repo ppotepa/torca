@@ -1,0 +1,17 @@
+name: torca_attachment_processing
+description: Safe attachment inspection, classification and client-side image preparation for Torca.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.12.0 <4.0.0"
+  flutter: ">=3.44.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  image: ^4.9.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

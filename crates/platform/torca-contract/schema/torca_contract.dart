@@ -3,7 +3,7 @@
 
 import 'dart:convert';
 
-const int torcaContractVersion = 16;
+const int torcaContractVersion = __TORCA_CONTRACT_VERSION__;
 const int torcaNativeAbiVersion = 1;
 
 class BridgeResultDto {
@@ -142,9 +142,22 @@ class TransportStatusDto {
     this.peer = const TransportIndicatorDto(state: 'disconnected'),
     this.peersReady = 0,
     this.peersTotal = 0,
+    this.relayInfo,
   });
   final TransportIndicatorDto tor, relay, peer;
   final int peersReady, peersTotal;
+  final RelayInfoDto? relayInfo;
+}
+
+class RelayInfoDto {
+  const RelayInfoDto({
+    required this.productVersion,
+    required this.buildId,
+    required this.sourceCommit,
+    required this.protocolVersion,
+  });
+  final String productVersion, buildId, sourceCommit;
+  final int protocolVersion;
 }
 
 class NavigationBadgesDto {
@@ -163,6 +176,8 @@ class ContactDto {
     required this.onionAddress,
     required this.status,
     required this.connectionState,
+    this.presenceState = 'unknown',
+    this.lastSeenAtMs,
     this.safetyNumber,
     this.peerHealth = const PeerHealthDto(),
     this.verificationStatus = 'unverified',
@@ -173,10 +188,12 @@ class ContactDto {
       onionAddress,
       status,
       connectionState,
+      presenceState,
       verificationStatus;
   final String? safetyNumber;
   final PeerHealthDto peerHealth;
   final int? verifiedAtMs;
+  final int? lastSeenAtMs;
 }
 
 class ConversationDto {
@@ -205,11 +222,15 @@ class MessageDto {
     this.replyToMessageId,
     this.createdAtMs = 0,
     this.updatedAtMs = 0,
+    this.sentAtMs,
+    this.deliveredAtMs,
+    this.readAtMs,
     this.attemptCount = 0,
   });
   final String id, conversationId, body, direction, status;
   final String? replyToMessageId;
   final int createdAtMs, updatedAtMs, attemptCount;
+  final int? sentAtMs, deliveredAtMs, readAtMs;
 }
 
 class AttachmentDto {
@@ -221,9 +242,30 @@ class AttachmentDto {
     required this.size,
     required this.status,
     required this.offset,
+    this.attemptCount = 0,
+    this.updatedAtMs = 0,
+    this.direction = 'outbound',
   });
   final String id, messageId, name, mediaType, status;
-  final int size, offset;
+  final int size, offset, attemptCount, updatedAtMs;
+  final String direction;
+}
+
+class PendingOperationDto {
+  const PendingOperationDto({
+    required this.id,
+    required this.resourceId,
+    required this.kind,
+    required this.state,
+    required this.dependency,
+    required this.attempts,
+    required this.nextAttemptAtMs,
+    required this.createdAtMs,
+    this.lastError,
+  });
+  final String id, resourceId, kind, state, dependency;
+  final int attempts, nextAttemptAtMs, createdAtMs;
+  final String? lastError;
 }
 
 class AppSnapshotDto {
@@ -242,6 +284,7 @@ class AppSnapshotDto {
     this.conversations = const [],
     this.messages = const [],
     this.attachments = const [],
+    this.pendingOperations = const [],
     this.bootstrapPhase = 'failed',
     this.bootstrapSteps = const [],
   });
@@ -258,6 +301,7 @@ class AppSnapshotDto {
   final List<ConversationDto> conversations;
   final List<MessageDto> messages;
   final List<AttachmentDto> attachments;
+  final List<PendingOperationDto> pendingOperations;
   final String bootstrapPhase;
   final List<BootstrapStepDto> bootstrapSteps;
 }
@@ -468,6 +512,12 @@ class RuntimeRequestDto {
         name: 'notifications.poll',
         payload: <String, Object?>{'afterCursor': afterCursor},
       );
+
+  static const RuntimeRequestDto diagnostics = RuntimeRequestDto._(
+    kind: 'query',
+    name: 'diagnostics.get',
+    payload: <String, Object?>{},
+  );
 
   static const RuntimeRequestDto snapshot = RuntimeRequestDto._(
     kind: 'query',

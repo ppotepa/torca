@@ -22,4 +22,7 @@ pub struct AttachmentView {
     pub size: u64,
     pub status: String,
     pub offset: u64,
+    pub attempt_count: u32,
+    pub updated_at_ms: i64,
+    pub direction: String,
 }

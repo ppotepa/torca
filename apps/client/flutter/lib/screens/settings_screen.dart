@@ -39,16 +39,16 @@ class SettingsScreen extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
                         child: SegmentedButton<TorcaThemeFamily>(
-                          segments: const <ButtonSegment<TorcaThemeFamily>>[
+                          segments: <ButtonSegment<TorcaThemeFamily>>[
                             ButtonSegment(
                               value: TorcaThemeFamily.modern,
-                              icon: Icon(Icons.forum_outlined),
-                              label: Text('Modern'),
+                              icon: Icon(context.torcaIcons.chats),
+                              label: const Text('Modern'),
                             ),
                             ButtonSegment(
                               value: TorcaThemeFamily.terminal,
-                              icon: Icon(Icons.terminal),
-                              label: Text('Terminal'),
+                              icon: Icon(context.torcaIcons.diagnostics),
+                              label: const Text('Terminal'),
                             ),
                           ],
                           selected: <TorcaThemeFamily>{
@@ -66,6 +66,7 @@ class SettingsScreen extends StatelessWidget {
                           decoration: const InputDecoration(
                             labelText: 'Variant',
                           ),
+                          icon: Icon(context.torcaIcons.expand),
                           items: TorcaThemeVariant.values
                               .where(
                                 (variant) =>
@@ -90,7 +91,7 @@ class SettingsScreen extends StatelessWidget {
                       _AppearancePreview(appearance: preferences.appearance),
                       const Divider(height: 24),
                       ...AppThemeMode.values.map(
-                        (mode) => RadioListTile<AppThemeMode>(
+                        (mode) => TorcaRadioTile<AppThemeMode>(
                           title: Text(_themeLabel(strings, mode)),
                           value: mode,
                           groupValue: preferences.themeMode,
@@ -102,7 +103,7 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       ),
                       const Divider(height: 1),
-                      RadioListTile<TorcaDensity>(
+                      TorcaRadioTile<TorcaDensity>(
                         title: const Text('Compact density'),
                         value: TorcaDensity.compact,
                         groupValue: preferences.appearance.density,
@@ -112,7 +113,7 @@ class SettingsScreen extends StatelessWidget {
                           }
                         },
                       ),
-                      RadioListTile<TorcaDensity>(
+                      TorcaRadioTile<TorcaDensity>(
                         title: const Text('Comfortable density'),
                         value: TorcaDensity.comfortable,
                         groupValue: preferences.appearance.density,
@@ -122,8 +123,8 @@ class SettingsScreen extends StatelessWidget {
                           }
                         },
                       ),
-                      SwitchListTile(
-                        secondary: const Icon(Icons.motion_photos_off_outlined),
+                      TorcaSwitchTile(
+                        secondary: Icon(context.torcaIcons.warning),
                         title: const Text('Reduce motion'),
                         value: preferences.appearance.reduceMotion,
                         onChanged: preferences.setReduceMotion,
@@ -141,7 +142,7 @@ class SettingsScreen extends StatelessWidget {
                   child: Column(
                     children: AppLocaleMode.values
                         .map(
-                          (mode) => RadioListTile<AppLocaleMode>(
+                          (mode) => TorcaRadioTile<AppLocaleMode>(
                             title: Text(_localeLabel(strings, mode)),
                             value: mode,
                             groupValue: preferences.localeMode,
@@ -161,8 +162,8 @@ class SettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Card(
-                  child: SwitchListTile(
-                    secondary: const Icon(Icons.visibility_outlined),
+                  child: TorcaSwitchTile(
+                    secondary: Icon(context.torcaIcons.read),
                     title: Text(strings.sendReadReceipts),
                     subtitle: Text(strings.sendReadReceiptsDescription),
                     value: preferences.readReceiptsEnabled,
@@ -176,8 +177,8 @@ class SettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Card(
-                  child: SwitchListTile(
-                    secondary: const Icon(Icons.notifications_outlined),
+                  child: TorcaSwitchTile(
+                    secondary: Icon(context.torcaIcons.notifications),
                     title: Text(strings.enableNotifications),
                     subtitle: Text(strings.notificationPrivacy),
                     value: preferences.notificationsEnabled,
@@ -192,8 +193,8 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Card(
-                    child: SwitchListTile(
-                      secondary: const Icon(Icons.move_to_inbox_outlined),
+                    child: TorcaSwitchTile(
+                      secondary: Icon(context.torcaIcons.save),
                       title: Text(strings.closeToTray),
                       subtitle: Text(strings.closeToTrayDescription),
                       value: preferences.closeToTrayEnabled,
@@ -249,38 +250,61 @@ class _AppearancePreview extends StatelessWidget {
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  CircleAvatar(
-                    radius: 18,
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                      borderRadius: BorderRadius.circular(
+                        context.torcaTokens.terminal ? 0 : 19,
+                      ),
+                    ),
                     child: Icon(context.torcaIcons.contacts, size: 18),
                   ),
                   const SizedBox(width: 10),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Text('Private contact'),
-                        Text('Secure message preview'),
+                        const Text('Alice'),
+                        Text(
+                          'online',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                        ),
                       ],
                     ),
                   ),
-                  Badge.count(count: 2),
+                  Text('14:22', style: Theme.of(context).textTheme.labelSmall),
                 ],
               ),
+              const SizedBox(height: 12),
+              Text('TODAY', style: Theme.of(context).textTheme.labelSmall),
+              const SizedBox(height: 8),
+              const _PreviewMessage(
+                body: 'Are we still meeting?',
+                time: '14:20',
+              ),
+              const SizedBox(height: 5),
+              const _PreviewMessage(
+                body: 'Yes, give me 5 min.',
+                time: '14:21  ✓✓',
+                outbound: true,
+              ),
+              const SizedBox(height: 5),
+              const _PreviewMessage(body: 'Perfect!', time: '14:22'),
               const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: context.torcaColors.messageOutbound,
-                    borderRadius: BorderRadius.circular(
-                      context.torcaTokens.radiusMedium,
-                    ),
-                  ),
-                  child: const Text('Hello through Tor'),
+              TextField(
+                readOnly: true,
+                decoration: InputDecoration(
+                  hintText: 'Message',
+                  prefixIcon: Icon(context.torcaIcons.attachment),
+                  suffixIcon: Icon(context.torcaIcons.send),
                 ),
               ),
             ],
@@ -289,4 +313,42 @@ class _AppearancePreview extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PreviewMessage extends StatelessWidget {
+  const _PreviewMessage({
+    required this.body,
+    required this.time,
+    this.outbound = false,
+  });
+
+  final String body;
+  final String time;
+  final bool outbound;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: outbound ? Alignment.centerRight : Alignment.centerLeft,
+    child: Container(
+      constraints: const BoxConstraints(maxWidth: 250),
+      padding: const EdgeInsets.fromLTRB(10, 7, 8, 5),
+      decoration: BoxDecoration(
+        color: outbound
+            ? context.torcaColors.messageOutbound
+            : context.torcaColors.messageInbound,
+        border: context.torcaTokens.terminal
+            ? Border.all(color: Theme.of(context).colorScheme.outline)
+            : null,
+        borderRadius: BorderRadius.circular(context.torcaTokens.radiusLarge),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: <Widget>[
+          Text(body),
+          const SizedBox(height: 3),
+          Text(time, style: Theme.of(context).textTheme.labelSmall),
+        ],
+      ),
+    ),
+  );
 }

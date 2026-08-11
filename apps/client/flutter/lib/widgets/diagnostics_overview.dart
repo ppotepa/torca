@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
 
@@ -23,35 +24,35 @@ class DiagnosticsOverview extends StatelessWidget {
         : '$readyPeers of $totalPeers direct peer links ready';
 
     final checks = <_OverviewItem>[
-      const _OverviewItem(
+      _OverviewItem(
         'Native bridge',
         true,
         'Contract $torcaContractVersion snapshot readable',
-        Icons.memory_outlined,
+        context.torcaIcons.diagnostics,
       ),
       _OverviewItem(
         'Local identity',
         snapshot.identity != null,
         snapshot.identity == null ? 'Not initialized' : 'Loaded',
-        Icons.badge_outlined,
+        context.torcaIcons.identity,
       ),
       _OverviewItem(
         'Tor',
         snapshot.torState == 'ready',
         'State: ${snapshot.torState}',
-        Icons.security_outlined,
+        context.torcaIcons.identity,
       ),
       _OverviewItem(
         'Onion service',
         (snapshot.onionAddress ?? '').endsWith('.onion'),
         snapshot.onionAddress == null ? 'No onion address' : 'Published',
-        Icons.link_outlined,
+        context.torcaIcons.link,
       ),
       _OverviewItem(
         'Direct peers',
         totalPeers == 0 || readyPeers > 0,
         peerDetail,
-        Icons.hub_outlined,
+        context.torcaIcons.online,
       ),
       _OverviewItem(
         'Diagnostics stream',
@@ -59,7 +60,7 @@ class DiagnosticsOverview extends StatelessWidget {
         diagnosticsReadable
             ? 'Redacted health events readable'
             : 'No readable health events',
-        Icons.monitor_heart_outlined,
+        context.torcaIcons.diagnostics,
       ),
     ];
 
@@ -100,7 +101,7 @@ class _HealthCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Icon(
-            item.ok ? Icons.check_circle_outline : Icons.error_outline,
+            item.ok ? context.torcaIcons.success : context.torcaIcons.error,
             color: item.ok
                 ? Theme.of(context).colorScheme.primary
                 : Theme.of(context).colorScheme.error,

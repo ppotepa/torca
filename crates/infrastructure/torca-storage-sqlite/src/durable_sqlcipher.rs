@@ -342,6 +342,9 @@ impl MessageRow {
             status,
             created_at,
             updated_at,
+            None,
+            None,
+            None,
             Vec::new(),
         )
         .map_err(|_| DurableDeliveryError::Storage("stored message state is invalid".into()))

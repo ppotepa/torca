@@ -5,6 +5,9 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.relay
+      args:
+        TORCA_RELAY_BUILD_ID: ${TORCA_RELAY_BUILD_ID:-development}
+        TORCA_RELAY_SOURCE_COMMIT: ${TORCA_RELAY_SOURCE_COMMIT:-working-tree}
     restart: unless-stopped
     networks: [torca]
     expose: ["8844"]
@@ -12,6 +15,13 @@ services:
       TORCA_RELAY_BIND: 0.0.0.0:8844
       TORCA_TOR_STATE: /var/lib/torca/tor
       TORCA_RELAY_ENDPOINT_FILE: /var/lib/torca/relay_endpoint.txt
+      # Presence of this file means Arti has reported external onion
+      # reachability. It is deliberately not Docker's liveness condition:
+      # the broker must stay running and recover while Tor warms up.
+      TORCA_RELAY_READY_FILE: /var/lib/torca/relay_ready.txt
+      # Must exceed the application's 30-second adaptive pairing poll delay.
+      # It bounds an idle broker stream without manufacturing reconnect storms.
+      TORCA_RELAY_IO_TIMEOUT_MS: "45000"
       # Docker Desktop exposes the Windows bind mount with permissive Unix
       # metadata. Arti's strict fs-mistrust check would reject that mount;
       # the container has an isolated state volume and does not use host Tor.
@@ -19,7 +29,16 @@ services:
     volumes:
       - ./../../.torca/stack:/var/lib/torca
     healthcheck:
-      test: ["CMD-SHELL", "test -s /var/lib/torca/relay_endpoint.txt && grep -Eq ':228C[[:space:]].*[[:space:]]0A[[:space:]]' /proc/net/tcp /proc/net/tcp6 && /usr/local/bin/torca-relay health-check"]
+      # Do not couple container liveness to the onion endpoint file.  The
+      # broker binds before Arti publishes, and the publisher may recreate its
+      # state while the broker remains perfectly able to serve local requests.
+      # The protocol probe verifies both the listener and request/response
+      # path, so it is stronger and less brittle than parsing /proc/net/tcp.
+      test: ["CMD", "/usr/local/bin/torca-relay", "health-check"]
+      # This is intentionally a *local broker liveness* check. Onion
+      # reachability is tracked separately in relay_ready.txt and must not
+      # make Docker restart a healthy process while Arti warms up.
+      start_period: 15s
       interval: 2s
       timeout: 2s
       retries: 30

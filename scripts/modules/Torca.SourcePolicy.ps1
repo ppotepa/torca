@@ -13,6 +13,15 @@ $readStatePath = Join-Path $RepoRoot 'crates/infrastructure/torca-storage-sqlite
 if ((Get-Content -LiteralPath $readStatePath -Raw).Contains('ApplicationPayloadCodec')) {
     throw 'SQL read-state storage must execute pending jobs, not encode application payloads.'
 }
+$peerHealthPath = Join-Path $RepoRoot 'crates/infrastructure/torca-communication-adapters/src/peer_health.rs'
+if (Test-Path -LiteralPath $peerHealthPath) {
+    $peerHealth = Get-Content -LiteralPath $peerHealthPath -Raw
+    foreach ($fragment in @('PROBE_INTERVAL', 'PROBE_RETRY', 'next_probe_at', 'fn probe_due')) {
+        if ($peerHealth.Contains($fragment)) {
+            throw "P2P probe cadence belongs to torca-connectivity application policy, not peer_health.rs: $fragment"
+        }
+    }
+}
 $forbiddenFiles = @(
     'crates/application/torca-pairing-coordinator/src/final_runtime.rs',
     'crates/infrastructure/torca-storage-sqlite/src/migration_v2.rs',
@@ -48,12 +57,25 @@ $canonicalSchema = Get-Content $canonicalSchemaPath -Raw
 if (-not $canonicalSchema.Contains('"schema": 1') -or -not $canonicalSchema.Contains('"profile.set"')) {
     throw 'Canonical contract schema is invalid.'
 }
-$schemaPath = Join-Path $RepoRoot 'crates/platform/torca-contract/schema/torca_contract.dart'
 $generatedPath = Join-Path $RepoRoot 'apps/client/flutter/lib/generated/torca_contract.dart'
-$schema = Get-Content $schemaPath -Raw
-$generated = Get-Content $generatedPath -Raw
-if ($schema -ne $generated) {
-    throw 'Flutter contract projection drifted from the canonical contract schema.'
+$contractTemplatePath = Join-Path $RepoRoot 'crates/platform/torca-contract/schema/torca_contract.dart'
+if (-not (Test-Path -LiteralPath $contractTemplatePath) -or -not (Test-Path -LiteralPath $generatedPath)) {
+    throw 'Contract Dart template or generated Flutter projection is missing.'
+}
+$contractTemplate = Get-Content $contractTemplatePath -Raw
+$contractMarker = '__TORCA_CONTRACT_VERSION__'
+$contractMarkerCount = ([regex]::Matches($contractTemplate, [regex]::Escape($contractMarker))).Count
+if ($contractMarkerCount -ne 1) {
+    throw 'Contract Dart template must contain exactly one __TORCA_CONTRACT_VERSION__ marker.'
+}
+Push-Location $RepoRoot
+try {
+    & cargo run -p torca-contract-gen -- --check apps/client/flutter/lib/generated/torca_contract.dart
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Flutter contract projection drifted from the canonical contract schema. Run the contract generator and commit its output.'
+    }
+} finally {
+    Pop-Location
 }
 $obsoleteCommandFragments = @(
     'String? identityIdHex',
@@ -63,7 +85,7 @@ $obsoleteCommandFragments = @(
     'int? atMs'
 )
 foreach ($fragment in $obsoleteCommandFragments) {
-    if ($schema.Contains($fragment)) {
+    if ($contractTemplate.Contains($fragment)) {
         throw "Presentation-ownership debt returned: $fragment"
     }
 }
@@ -84,7 +106,14 @@ $forbiddenFragments = @(
 foreach ($root in $sourceRoots) {
     if (-not (Test-Path -LiteralPath $root)) { continue }
     $files = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\target\\' -and $_.Name -ne 'Torca.SourcePolicy.ps1' }
+        Where-Object {
+            $_.FullName -notmatch '\\target\\' -and
+            $_.Name -ne 'Torca.SourcePolicy.ps1' -and
+            # `codecat` diagnostic bundles are ignored generated text, not
+            # source. Scanning them makes policy results depend on a local
+            # troubleshooting artifact and can block an otherwise valid build.
+            $_.Name -ne 'concat.txt'
+        }
     foreach ($file in $files) {
         $text = Get-Content -LiteralPath $file.FullName -Raw
         foreach ($fragment in $forbiddenFragments) {
@@ -132,6 +161,15 @@ if (Test-Path -LiteralPath $flutterLib) {
         }
         if ($text.Contains('DynamicLibrary') -and $file.Name -ne 'ffi_engine_gateway.dart') {
             throw "DynamicLibrary escaped the native runtime worker: $($file.FullName)"
+        }
+        if ($text -cmatch '(?<!torca)Icons\.') {
+            throw "Raw Material icon escaped the Torca semantic icon set: $($file.FullName)"
+        }
+        if ($text -match 'BorderRadius\.circular\(\s*\d') {
+            throw "Hard-coded component radius escaped Torca geometry tokens: $($file.FullName)"
+        }
+        if ($text -match '\b(?:Linear|Radial|Sweep)Gradient\s*\(') {
+            throw "Gradient escaped the flat Torca presentation policy: $($file.FullName)"
         }
     }
 }

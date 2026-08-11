@@ -16,6 +16,7 @@ const STORAGE_EPOCH: u16 = 2;
 const MAILBOX_CAPACITY: usize = 256;
 const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+const PENDING_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const IDEMPOTENCY_MAX_ENTRIES: usize = 1024;
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(15 * 60);
 const BUILD_ID: &str = match option_env!("TORCA_BUILD_ID") {
@@ -81,6 +82,7 @@ struct ActorState {
     runtime_id: String,
     revision: u64,
     completed: IdempotencyLedger,
+    next_pending_reconcile_at: Instant,
 }
 
 struct CompletedCommand {
@@ -288,6 +290,7 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                         runtime_id,
                         revision: 1,
                         completed: IdempotencyLedger::default(),
+                        next_pending_reconcile_at: Instant::now(),
                     },
                 );
             }
@@ -309,15 +312,24 @@ fn actor_loop(receiver: Receiver<ActorMessage>, mut state: ActorState) {
     loop {
         let message = match receiver.recv_timeout(Duration::from_secs(1)) {
             Ok(message) => message,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                state.maintain();
+                continue;
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match message {
             ActorMessage::Invoke { request, response } => {
                 let _ = response.send(state.invoke(&request));
+                // Flutter polls snapshots frequently.  Maintenance must be
+                // deadline-driven, not dependent on finding a one-second gap
+                // in the actor mailbox, otherwise durable pairing work can
+                // remain queued forever while the UI is open.
+                state.maintain();
             }
             ActorMessage::Lifecycle { event, response } => {
                 let _ = response.send(state.runtime.lifecycle(&event));
+                state.maintain();
             }
             ActorMessage::Shutdown { response } => {
                 let _ = state.runtime.close();
@@ -348,6 +360,16 @@ fn dispatch_lifecycle(event: &str) -> i32 {
 }
 
 impl ActorState {
+    fn maintain(&mut self) {
+        if Instant::now() < self.next_pending_reconcile_at {
+            return;
+        }
+        self.next_pending_reconcile_at = Instant::now() + PENDING_RECONCILE_INTERVAL;
+        // This is the sole reconciliation path.  Snapshot reads are pure and
+        // cannot trigger network traffic or queue mutations.
+        self.runtime.reconcile_pending_operations();
+    }
+
     fn invoke(&mut self, raw: &str) -> Vec<u8> {
         let started = Instant::now();
         let request: Value = match serde_json::from_str(raw) {
@@ -419,6 +441,7 @@ impl ActorState {
                 let cursor = payload.get("afterCursor").and_then(Value::as_u64).unwrap_or(0);
                 self.runtime.notification_events_json(cursor)
             }
+            ("query", "diagnostics.get") => self.runtime.diagnostics_json(),
             ("query", "pairing.parse") => {
                 let uri = payload.get("uri").and_then(Value::as_str).unwrap_or_default();
                 self.runtime.parse_pairing_uri(uri)
@@ -457,6 +480,7 @@ impl ActorState {
         let mut snapshot: Value = if name == "conversation.page"
             || name == "conversation.search"
             || name == "notifications.poll"
+            || name == "diagnostics.get"
             || name == "pairing.parse"
             || name == "pairing.encode"
         {
@@ -467,6 +491,7 @@ impl ActorState {
         if name != "conversation.page"
             && name != "conversation.search"
             && name != "notifications.poll"
+            && name != "diagnostics.get"
         {
             if let Value::Object(object) = &mut snapshot {
                 object.insert("runtimeId".into(), Value::String(self.runtime_id.clone()));
@@ -833,6 +858,7 @@ fn bridge_command(
                 .get("size")
                 .and_then(Value::as_u64)
                 .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
+            at_ms: now()?,
         }),
         "attachment.retry" => {
             Ok(BridgeCommand::RetryAttachment { attachment_id_hex: text("attachmentIdHex")? })

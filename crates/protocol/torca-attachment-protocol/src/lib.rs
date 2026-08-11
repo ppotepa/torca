@@ -255,3 +255,32 @@ impl<'a> Cursor<'a> {
         self.offset == self.input.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_round_trips_without_losing_message_binding() {
+        let frame = AttachmentFrame::Metadata(AttachmentMetadataFrame {
+            attachment_id: AttachmentId::from_u128(1),
+            message_id: OpaqueId::from_u128(2),
+            name: AttachmentName::new("photo.jpg").expect("valid name"),
+            media_type: MediaType::new("image/jpeg").expect("valid media type"),
+            size: 3,
+            digest: [7; 32],
+        });
+        let encoded = AttachmentCodec::encode(&frame).expect("encode succeeds");
+        assert_eq!(AttachmentCodec::decode(&encoded).expect("decode succeeds"), frame);
+    }
+
+    #[test]
+    fn oversized_chunk_is_rejected_before_transport() {
+        let frame = AttachmentFrame::Chunk(AttachmentChunkFrame {
+            attachment_id: AttachmentId::from_u128(1),
+            offset: 0,
+            bytes: vec![0; MAX_ATTACHMENT_CHUNK + 1],
+        });
+        assert_eq!(AttachmentCodec::encode(&frame), Err(AttachmentProtocolError::ChunkTooLarge));
+    }
+}

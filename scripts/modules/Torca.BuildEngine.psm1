@@ -35,7 +35,7 @@ function Assert-TorcaReleaseMetadata {
     $release = Get-Content (Join-Path $script:RepoRoot 'release/version.json') -Raw | ConvertFrom-Json
     $cargo = Get-Content (Join-Path $script:RepoRoot 'Cargo.toml') -Raw
     $pubspec = Get-Content (Join-Path $script:FlutterRoot 'pubspec.yaml') -Raw
-    $contract = Get-Content (Join-Path $script:RepoRoot 'crates/platform/torca-contract/src/lib.rs') -Raw
+    $contractSchema = Get-Content (Join-Path $script:RepoRoot 'crates/platform/torca-contract/schema/torca_contract.json') -Raw | ConvertFrom-Json
 
     $cargoMatch = [Regex]::Match($cargo, '(?m)^\s*version\s*=\s*"([^"]+)"\s*$')
     if (-not $cargoMatch.Success -or $cargoMatch.Groups[1].Value -ne [string]$release.version) {
@@ -51,9 +51,12 @@ function Assert-TorcaReleaseMetadata {
         throw 'Flutter version/build does not match release/version.json.'
     }
 
-    $contractMatch = [Regex]::Match($contract, 'CONTRACT_VERSION\s*:\s*u16\s*=\s*(\d+)\s*;')
-    if (-not $contractMatch.Success -or [int]$contractMatch.Groups[1].Value -ne [int]$release.contractSchema) {
-        throw 'Rust bridge contract version does not match release/version.json.'
+    # Contract version is generated into Rust and Dart; release metadata must
+    # compare with the language-neutral schema rather than regex-parsing an
+    # implementation alias such as `generated::CONTRACT_VERSION`.
+    if ($null -eq $contractSchema.contractVersion -or
+        [int]$contractSchema.contractVersion -ne [int]$release.contractSchema) {
+        throw 'Canonical contract schema version does not match release/version.json.'
     }
 
     Write-Host "Release metadata consistent: $($release.version)+$($release.build)"
@@ -245,9 +248,14 @@ function Ensure-TorcaFlutterPlatform {
         Apply-TorcaAndroidOverlay
         $gradleProperties = Join-Path $script:FlutterRoot 'android/gradle.properties'
         $properties = if (Test-Path $gradleProperties) { Get-Content $gradleProperties } else { @() }
-        if (-not ($properties -match '^kotlin\.incremental=false$')) {
-            Add-Content -LiteralPath $gradleProperties -Value 'kotlin.incremental=false' -Encoding ascii
-        }
+        $properties = @($properties | Where-Object { $_ -notmatch '^kotlin\.incremental=' })
+        # Kotlin's relocatable incremental cache throws when a Windows checkout
+        # and Flutter's Pub cache live on different drive letters (for example
+        # G:\repo and C:\Users\...\Pub\Cache). Keep Gradle's artifact cache and
+        # parallelism, but disable only Kotlin source-level incrementality there.
+        $kotlinIncremental = if ($env:OS -eq 'Windows_NT') { 'false' } else { 'true' }
+        $properties += "kotlin.incremental=$kotlinIncremental"
+        Set-Content -LiteralPath $gradleProperties -Value $properties -Encoding ascii
     }
 }
 
@@ -287,6 +295,29 @@ function Assert-TorcaNativeAbi {
     Write-Host "Native $Platform ABI verified: $([IO.Path]::GetFileName($Library))"
 }
 
+function Invoke-TorcaQuickValidation {
+    Assert-TorcaReleaseMetadata
+    Assert-TorcaArchitecture
+    Assert-TorcaFlutterToolchain
+    Ensure-TorcaCargoLock
+
+    # Keep generated ABI input synchronized, but avoid workspace-wide clippy and
+    # test suites during an iterative device redeploy. Full validation remains
+    # mandatory by default and should be used for release artifacts.
+    Invoke-TorcaExternal 'Generated contract check' {
+        cargo run -p torca-contract-gen -- --check apps/client/flutter/lib/generated/torca_contract.dart
+    }
+    Invoke-TorcaExternal 'Rust native check' {
+        cargo check -p torca-native --locked
+    }
+    Push-Location $script:FlutterRoot
+    try {
+        Invoke-TorcaExternal 'Flutter analysis' { flutter analyze }
+    } finally {
+        Pop-Location
+    }
+}
+
 function Assert-TorcaRelayEndpointEmbedded {
     param(
         [Parameter(Mandatory = $true)][string]$Library,
@@ -320,6 +351,37 @@ function Assert-TorcaRelayEndpointEmbedded {
     Write-Host "Relay endpoint embedded: $Endpoint"
 }
 
+function Assert-TorcaBuildIdEmbedded {
+    param(
+        [Parameter(Mandatory = $true)][string]$Library,
+        [Parameter(Mandatory = $true)][string]$BuildId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BuildId)) { return }
+    if (-not (Test-Path -LiteralPath $Library)) {
+        throw "Native library is missing while verifying the compiled build identity: $Library"
+    }
+    $needle = [Text.Encoding]::UTF8.GetBytes($BuildId)
+    $bytes = [IO.File]::ReadAllBytes($Library)
+    $found = $false
+    if ($needle.Length -le $bytes.Length) {
+        for ($offset = 0; $offset -le $bytes.Length - $needle.Length -and -not $found; $offset++) {
+            $match = $true
+            for ($index = 0; $index -lt $needle.Length; $index++) {
+                if ($bytes[$offset + $index] -ne $needle[$index]) {
+                    $match = $false
+                    break
+                }
+            }
+            $found = $match
+        }
+    }
+    if (-not $found) {
+        throw "Native library build ID differs from this build invocation. Expected=$BuildId Library=$Library. Clean/rebuild this target; do not deploy this artifact."
+    }
+    Write-Host "Native build ID embedded: $BuildId"
+}
+
 function Assert-TorcaAndroidPackage {
     param(
         [Parameter(Mandatory = $true)][string]$Apk
@@ -343,6 +405,7 @@ function Assert-TorcaAndroidPackage {
         foreach ($library in $libraries) {
             Assert-TorcaNativeAbi -Library $library.FullName -Platform android
             Assert-TorcaRelayEndpointEmbedded -Library $library.FullName -Endpoint $env:TORCA_RELAY_ENDPOINT
+            Assert-TorcaBuildIdEmbedded -Library $library.FullName -BuildId $env:TORCA_BUILD_ID
             $flutterLibrary = Join-Path $library.DirectoryName 'libflutter.so'
             if (-not (Test-Path -LiteralPath $flutterLibrary)) {
                 throw "Android package is missing libflutter.so beside $($library.FullName): $Apk"
@@ -609,17 +672,25 @@ function Build-TorcaFlutterTarget {
             }
             Assert-TorcaNativeAbi -Library $rustDll -Platform windows
             Assert-TorcaRelayEndpointEmbedded -Library $rustDll -Endpoint $env:TORCA_RELAY_ENDPOINT
+            Assert-TorcaBuildIdEmbedded -Library $rustDll -BuildId $env:TORCA_BUILD_ID
             Copy-Item $rustDll (Join-Path $runnerDir 'torca_native.dll') -Force
             Assert-TorcaNativeAbi -Library (Join-Path $runnerDir 'torca_native.dll') -Platform windows
             Assert-TorcaRelayEndpointEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -Endpoint $env:TORCA_RELAY_ENDPOINT
+            Assert-TorcaBuildIdEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -BuildId $env:TORCA_BUILD_ID
             $forbiddenNativeNames = @('torca_' + 'bridge.dll', 'torca_' + 'contract.dll')
             Get-ChildItem $runnerDir -Recurse -File |
                 Where-Object { $forbiddenNativeNames -contains $_.Name } |
                 Remove-Item -Force -ErrorAction SilentlyContinue
             Assert-TorcaWindowsPackage -Root $runnerDir
         } else {
-            Invoke-TorcaExternal "Flutter Android $Configuration ABI packages" { flutter build apk --$Configuration --split-per-abi @dartDefine }
+            # Split-per-ABI output is the source of truth for deployment. Remove
+            # any universal APK left by an older Flutter build so the installer
+            # cannot silently pick a stale artifact.
             $apkOutput = Join-Path $script:FlutterRoot 'build/app/outputs/flutter-apk'
+            foreach ($staleApk in @(Get-ChildItem -LiteralPath $apkOutput -Filter '*.apk' -File -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $staleApk.FullName -Force
+            }
+            Invoke-TorcaExternal "Flutter Android $Configuration ABI packages" { flutter build apk --$Configuration --split-per-abi @dartDefine }
             $releaseApks = @(Get-ChildItem $apkOutput -Filter "*-$Configuration.apk" -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -in @("app-arm64-v8a-$Configuration.apk", "app-x86_64-$Configuration.apk") })
             if ($releaseApks.Count -eq 0) { throw "Flutter produced no Android ABI APKs in $apkOutput" }
@@ -635,13 +706,30 @@ function Invoke-TorcaBuild {
     param(
         [ValidateSet('auto', 'check', 'windows', 'android', 'all')][string]$Target = 'auto',
         [ValidateSet('debug', 'release')][string]$Configuration = 'debug',
+        [ValidateSet('Full', 'Quick', 'Skip')][string]$Validation = 'Full',
         [switch]$CI
     )
 
+    $oldRustcWrapper = $env:RUSTC_WRAPPER
+    if ([string]::IsNullOrWhiteSpace($oldRustcWrapper)) {
+        $sccache = Get-Command sccache -ErrorAction SilentlyContinue
+        if ($sccache) {
+            $env:RUSTC_WRAPPER = $sccache.Source
+            Write-Host "Rust compiler cache enabled: $($sccache.Source)"
+        } else {
+            Write-Host 'Rust compiler cache unavailable (optional: cargo install sccache --locked).' -ForegroundColor DarkYellow
+        }
+    }
     Push-Location $script:RepoRoot
     try {
         $resolvedTarget = Get-TorcaTarget $Target
-        Invoke-TorcaValidation -CI:$CI
+        if ($CI -or $Validation -eq 'Full') {
+            Invoke-TorcaValidation -CI:$CI
+        } elseif ($Validation -eq 'Quick') {
+            Invoke-TorcaQuickValidation
+        } else {
+            Write-Host 'Build validation skipped explicitly; source/architecture policy still ran in build.ps1.' -ForegroundColor Yellow
+        }
 
         if ($resolvedTarget -eq 'check') {
             Write-Host 'Build validation completed successfully.'
@@ -656,6 +744,7 @@ function Invoke-TorcaBuild {
         Write-Host "Build completed successfully: $resolvedTarget / $Configuration"
     } finally {
         Pop-Location
+        $env:RUSTC_WRAPPER = $oldRustcWrapper
     }
 }
 
@@ -903,11 +992,23 @@ function Invoke-TorcaDeploy {
                 Push-Location $script:FlutterRoot
                 try {
                     if (Get-Command adb -ErrorAction SilentlyContinue) {
-                        $installOutput = (& adb -s $Device install -r $selectedApk 2>&1 | Out-String).Trim()
-                        $installCode = $LASTEXITCODE
+                        $installOutput = ''
+                        $installCode = 1
+                        for ($attempt = 1; $attempt -le 2; $attempt++) {
+                            $installOutput = (& adb -s $Device install -r $selectedApk 2>&1 | Out-String).Trim()
+                            $installCode = $LASTEXITCODE
+                            if ($installCode -eq 0) { break }
+                            if ($installOutput -notmatch 'INSTALL_FAILED_USER_RESTRICTED' -or $attempt -eq 2) { break }
+
+                            Write-Host ''
+                            Write-Host "Android requires confirmation on $Device." -ForegroundColor Yellow
+                            Write-Host 'Unlock the phone and accept the installation prompt.' -ForegroundColor Yellow
+                            Write-Host 'On Xiaomi/Redmi/Poco enable Developer options > Install via USB and USB debugging (Security settings).' -ForegroundColor Yellow
+                            $null = Read-Host 'Press Enter to retry this APK without rebuilding or resetting data'
+                        }
                         if ($installCode -ne 0) {
                             if ($installOutput -match 'INSTALL_FAILED_USER_RESTRICTED') {
-                                throw "Android blocked or cancelled ADB installation on $Device. Keep the phone unlocked and approve the system install prompt. On Xiaomi/Redmi/Poco HyperOS/MIUI also enable Developer options > USB debugging (Security settings) / Install via USB; wireless debugging alone is insufficient. Details: $installOutput"
+                                throw "Android blocked or cancelled ADB installation twice on $Device. Keep the phone unlocked and approve the system install prompt. On Xiaomi/Redmi/Poco HyperOS/MIUI enable Developer options > Install via USB and USB debugging (Security settings); wireless debugging alone is insufficient. The APK remains available and can be installed with Use Last. Details: $installOutput"
                             }
                             throw "ADB install failed with code $installCode on $Device. Details: $installOutput"
                         }

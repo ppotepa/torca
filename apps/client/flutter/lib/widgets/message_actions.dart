@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 enum MessageAction { reply, copy, details }
 
@@ -9,12 +10,22 @@ abstract final class MessageActionMenu {
         builder: (context) => SafeArea(
           child: Wrap(
             children: <Widget>[
-              _tile(context, MessageAction.reply, Icons.reply, 'Reply'),
-              _tile(context, MessageAction.copy, Icons.copy_outlined, 'Copy'),
+              _tile(
+                context,
+                MessageAction.reply,
+                context.torcaIcons.reply,
+                'Reply',
+              ),
+              _tile(
+                context,
+                MessageAction.copy,
+                context.torcaIcons.copy,
+                'Copy',
+              ),
               _tile(
                 context,
                 MessageAction.details,
-                Icons.info_outline,
+                context.torcaIcons.info,
                 'Message details',
               ),
             ],
@@ -33,14 +44,14 @@ abstract final class MessageActionMenu {
         Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
         Offset.zero & overlay.size,
       ),
-      items: const <PopupMenuEntry<MessageAction>>[
+      items: <PopupMenuEntry<MessageAction>>[
         PopupMenuItem(
           value: MessageAction.reply,
           child: ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.reply),
-            title: Text('Reply'),
+            leading: Icon(context.torcaIcons.reply),
+            title: const Text('Reply'),
           ),
         ),
         PopupMenuItem(
@@ -48,8 +59,8 @@ abstract final class MessageActionMenu {
           child: ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.copy_outlined),
-            title: Text('Copy'),
+            leading: Icon(context.torcaIcons.copy),
+            title: const Text('Copy'),
           ),
         ),
         PopupMenuItem(
@@ -57,8 +68,8 @@ abstract final class MessageActionMenu {
           child: ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.info_outline),
-            title: Text('Message details'),
+            leading: Icon(context.torcaIcons.info),
+            title: const Text('Message details'),
           ),
         ),
       ],

@@ -47,12 +47,14 @@ impl SqlCipherBackend {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let connection = Connection::open_with_flags(path, flags).map_err(map_sqlite_error)?;
+        configure_sqlcipher_logging(&connection)?;
         Self::from_connection(connection, key)
     }
 
     /// Opens an encrypted in-memory database, primarily for integration tests.
     pub fn open_in_memory(key: &DatabaseKey) -> Result<Self, StorageBackendError> {
         let connection = Connection::open_in_memory().map_err(map_sqlite_error)?;
+        configure_sqlcipher_logging(&connection)?;
         Self::from_connection(connection, key)
     }
 
@@ -73,6 +75,14 @@ impl SqlCipherBackend {
     pub const fn connection(&self) -> &Connection {
         &self.connection
     }
+}
+
+fn configure_sqlcipher_logging(connection: &Connection) -> Result<(), StorageBackendError> {
+    // SQLCipher defaults to WARN and emits one message for every failed best-effort mlock call.
+    // Windows and Android commonly impose a small lock quota, so that default can flood logs
+    // even though encryption remains operational. Preserve memory security and all ERROR-level
+    // diagnostics while suppressing the non-fatal per-allocation warnings.
+    connection.execute_batch("PRAGMA cipher_log_level = ERROR;").map_err(map_sqlite_error)
 }
 
 impl StorageBackend for SqlCipherBackend {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 class PairingProgress extends StatelessWidget {
   const PairingProgress({required this.state, super.key});
@@ -13,17 +14,16 @@ class PairingProgress extends StatelessWidget {
     'P2P ready',
   ];
 
-  static const _icons = <IconData>[
-    Icons.qr_code_2,
-    Icons.link,
-    Icons.verified_user_outlined,
-    Icons.check_circle_outline,
-    Icons.hub_outlined,
-  ];
-
   @override
   Widget build(BuildContext context) {
     final current = _stage(state);
+    final icons = <IconData>[
+      context.torcaIcons.invitations,
+      context.torcaIcons.link,
+      context.torcaIcons.identity,
+      context.torcaIcons.confirm,
+      context.torcaIcons.online,
+    ];
     final terminalFailure = const {
       'rejected',
       'cancelled',
@@ -38,7 +38,7 @@ class PairingProgress extends StatelessWidget {
           if (position.isOdd) {
             return Expanded(
               child: Icon(
-                Icons.arrow_forward,
+                context.torcaIcons.send,
                 size: 18,
                 color: Theme.of(context).colorScheme.outline,
               ),
@@ -50,7 +50,7 @@ class PairingProgress extends StatelessWidget {
             child: Tooltip(
               message: _steps[index],
               child: Icon(
-                _icons[index],
+                icons[index],
                 size: 28,
                 color: reached
                     ? Theme.of(context).colorScheme.primary

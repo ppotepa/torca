@@ -27,6 +27,10 @@ impl TcpRelayTransport {
 }
 
 impl RelayTransport for TcpRelayTransport {
+    fn invalidate(&mut self) {
+        self.disconnect();
+    }
+
     fn reconnect(&mut self) -> Result<(), RelayTransportError> {
         self.stream = None;
         let stream = TcpStream::connect_timeout(&self.endpoint, self.connect_timeout)

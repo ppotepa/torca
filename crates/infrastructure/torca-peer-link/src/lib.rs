@@ -6,7 +6,6 @@
 
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -23,8 +22,9 @@ use torca_peer_protocol::{
     AckStatus, HandshakeAck, HandshakeHello, HandshakePolicy, HandshakeSigner, PeerCodec,
     PeerMessage,
 };
-use torca_tor::TorService;
-use torca_tor::{PeerListener, TOR_PEER_VIRTUAL_PORT, TorPeerTransport, TransportError};
+use torca_tor::{
+    PeerListener, TOR_PEER_VIRTUAL_PORT, TorPeerTransport, TorServiceHandle, TransportError,
+};
 
 const MAX_CLOCK_SKEW_MS: i64 = 2 * 60 * 1000;
 const MAX_PENDING_INCOMING: usize = 64;
@@ -111,7 +111,7 @@ pub struct PeerLink<S, K> {
     relationships: S,
     signer: K,
     local_identity_id: OpaqueId,
-    tor_client: Arc<TorService>,
+    tor_client: TorServiceHandle,
     random: RustCryptoProvider,
     pending: Vec<TorPeerTransport>,
     incoming: BTreeMap<ContactId, IncomingSession>,
@@ -131,7 +131,7 @@ where
         relationships: S,
         signer: K,
         local_identity_id: OpaqueId,
-        tor_client: Arc<TorService>,
+        tor_client: TorServiceHandle,
     ) -> Self {
         Self {
             listener,

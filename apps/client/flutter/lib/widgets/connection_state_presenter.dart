@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 enum ConnectionTone { ready, connecting, offline, blocked }
 
@@ -23,76 +24,78 @@ abstract final class ConnectionStatePresenter {
   static ConnectionPresentation peer({
     required String state,
     required bool blocked,
+    required TorcaIconSet icons,
   }) {
     if (blocked) {
-      return const ConnectionPresentation(
+      return ConnectionPresentation(
         label: 'Blocked',
         shortLabel: 'Blocked',
         tooltip: 'Contact is blocked',
-        icon: Icons.block,
+        icon: icons.block,
         tone: ConnectionTone.blocked,
       );
     }
     return switch (state) {
-      'ready' => const ConnectionPresentation(
+      'ready' => ConnectionPresentation(
         label: 'Direct P2P over Tor',
         shortLabel: 'P2P',
         tooltip: 'Direct P2P over Tor',
-        icon: Icons.hub,
+        icon: icons.online,
         tone: ConnectionTone.ready,
       ),
-      'connecting' || 'handshaking' => const ConnectionPresentation(
+      'connecting' || 'handshaking' => ConnectionPresentation(
         label: 'Connecting',
         shortLabel: '…',
         tooltip: 'Connecting to peer through Tor',
-        icon: Icons.sync,
+        icon: icons.reconnect,
         tone: ConnectionTone.connecting,
       ),
-      'reconnecting' => const ConnectionPresentation(
+      'reconnecting' => ConnectionPresentation(
         label: 'Reconnecting',
         shortLabel: '…',
         tooltip: 'Reconnecting to peer through Tor',
-        icon: Icons.sync,
+        icon: icons.reconnect,
         tone: ConnectionTone.connecting,
       ),
-      _ => const ConnectionPresentation(
+      _ => ConnectionPresentation(
         label: 'Offline',
         shortLabel: 'offline',
         tooltip: 'Peer is offline',
-        icon: Icons.cloud_off_outlined,
+        icon: icons.error,
         tone: ConnectionTone.offline,
       ),
     };
   }
 
-  static ConnectionPresentation tor(String state) => switch (state) {
-    'ready' => const ConnectionPresentation(
-      label: 'Tor ready',
-      shortLabel: 'Tor',
-      tooltip: 'Tor is ready',
-      icon: Icons.security,
-      tone: ConnectionTone.ready,
-    ),
-    'starting' || 'connecting' => const ConnectionPresentation(
-      label: 'Tor starting',
-      shortLabel: 'Starting',
-      tooltip: 'Tor is starting',
-      icon: Icons.security_outlined,
-      tone: ConnectionTone.connecting,
-    ),
-    'reconnecting' => const ConnectionPresentation(
-      label: 'Tor reconnecting',
-      shortLabel: 'Reconnecting',
-      tooltip: 'Tor is reconnecting',
-      icon: Icons.security_outlined,
-      tone: ConnectionTone.connecting,
-    ),
-    _ => ConnectionPresentation(
-      label: 'Tor ${state.isEmpty ? 'offline' : state}',
-      shortLabel: state.isEmpty ? 'Offline' : state,
-      tooltip: 'Tor: ${state.isEmpty ? 'offline' : state}',
-      icon: Icons.security_outlined,
-      tone: ConnectionTone.offline,
-    ),
-  };
+  static ConnectionPresentation tor(String state, TorcaIconSet icons) =>
+      switch (state) {
+        'ready' => ConnectionPresentation(
+          label: 'Tor ready',
+          shortLabel: 'Tor',
+          tooltip: 'Tor is ready',
+          icon: icons.identity,
+          tone: ConnectionTone.ready,
+        ),
+        'starting' || 'connecting' => ConnectionPresentation(
+          label: 'Tor starting',
+          shortLabel: 'Starting',
+          tooltip: 'Tor is starting',
+          icon: icons.identity,
+          tone: ConnectionTone.connecting,
+        ),
+        'reconnecting' => ConnectionPresentation(
+          label: 'Tor reconnecting',
+          shortLabel: 'Reconnecting',
+          tooltip: 'Tor is reconnecting',
+          icon: icons.reconnect,
+          tone: ConnectionTone.connecting,
+        ),
+        _ => ConnectionPresentation(
+          label: 'Tor ${state.isEmpty ? 'offline' : state}',
+          shortLabel: state.isEmpty ? 'Offline' : state,
+          tooltip: 'Tor: ${state.isEmpty ? 'offline' : state}',
+          icon: icons.identity,
+          tone: ConnectionTone.offline,
+        ),
+      };
 }

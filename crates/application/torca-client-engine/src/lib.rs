@@ -87,6 +87,9 @@ pub enum EngineCommand {
         conversation_id: ConversationId,
         at: Timestamp,
     },
+    RemoveContact {
+        contact_id: ContactId,
+    },
     RemovePairing {
         session_id: PairingSessionId,
     },
@@ -129,6 +132,7 @@ pub enum EngineResult {
     PairingCancelled,
     PairingCompleted { contact_id: ContactId, conversation_id: ConversationId },
     ConversationStarted { conversation_id: ConversationId },
+    ContactRemoved { contact_id: ContactId },
     PairingRemoved,
     MessageQueued { message_id: MessageId },
     MessageUpdated { message_id: MessageId },
@@ -173,6 +177,8 @@ pub trait RelationshipRepository:
         conversation: DirectConversation,
         credential: PeerCredential,
     ) -> Result<(), EngineError>;
+    /// Clears one complete local relationship from this repository.
+    fn remove_relationship(&mut self, contact_id: ContactId) -> Result<(), EngineError>;
 }
 
 #[derive(Clone, Debug, Default)]
@@ -249,6 +255,22 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
         contacts.insert(contact).map_err(map_error)?;
         conversations.insert(conversation).map_err(map_error)?;
         credentials.insert_credential(credential).map_err(map_error)?;
+        self.contacts = contacts;
+        self.conversations = conversations;
+        self.credentials = credentials;
+        Ok(())
+    }
+
+    fn remove_relationship(&mut self, contact_id: ContactId) -> Result<(), EngineError> {
+        if ContactRepository::get(self, contact_id).map_err(map_error)?.is_none() {
+            return Err(EngineError("contact not found".into()));
+        }
+        let mut contacts = self.contacts.clone();
+        let mut conversations = self.conversations.clone();
+        let mut credentials = self.credentials.clone();
+        contacts.remove(contact_id);
+        conversations.remove_for_contact(contact_id);
+        credentials.remove_credential(contact_id);
         self.contacts = contacts;
         self.conversations = conversations;
         self.credentials = credentials;
@@ -470,6 +492,10 @@ where
                 )
                 .map_err(map_error)?;
                 Ok(EngineResult::ConversationStarted { conversation_id })
+            }
+            EngineCommand::RemoveContact { contact_id } => {
+                self.relationships.remove_relationship(contact_id)?;
+                Ok(EngineResult::ContactRemoved { contact_id })
             }
             EngineCommand::QueueMessage { message_id, conversation_id, body, reply_to, at } => {
                 if ConversationRepository::get(&self.relationships, conversation_id)

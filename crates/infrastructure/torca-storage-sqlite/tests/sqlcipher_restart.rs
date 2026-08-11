@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use torca_client_application::{PendingOperation, PendingOperationKind, PendingOperationStore};
 use torca_conversations::ConversationId;
 use torca_foundation::{CommandId, Timestamp};
 use torca_identity::{
@@ -9,7 +10,8 @@ use torca_identity::{
 };
 use torca_messaging::{Message, MessageBody, MessageId};
 use torca_storage_sqlite::{
-    DatabaseKey, DurableDeliveryStore, SqlCipherDurableStore, SqlCipherStore,
+    DatabaseKey, DurableDeliveryStore, SqlCipherDurableStore, SqlCipherPendingOperationStore,
+    SqlCipherStore,
 };
 
 struct TemporaryDatabase(PathBuf);
@@ -96,4 +98,40 @@ fn claimed_outbox_is_recovered_after_restart() {
     let mut reopened = SqlCipherDurableStore::open(database.path(), &key).expect("reopen");
     assert_eq!(reopened.recover_stale_claims(Timestamp::UNIX_EPOCH).expect("recover"), 1);
     assert_eq!(reopened.claim_due(Timestamp::UNIX_EPOCH, 1).expect("reclaim").len(), 1);
+}
+
+#[test]
+fn pending_pairing_operation_survives_file_backed_restart() {
+    let database = TemporaryDatabase::new("pending-pairing-restart");
+    let key = DatabaseKey::new([0x75; 32]);
+    let id = "00000000000000000000000000000021".parse().expect("operation id");
+
+    {
+        let mut store =
+            SqlCipherPendingOperationStore::open(database.path(), &key).expect("open first");
+        store
+            .enqueue(PendingOperation {
+                id,
+                resource_id: id,
+                kind: PendingOperationKind::JoinPairing {
+                    code: "ABC123".into(),
+                    ticket: Some([9; 16]),
+                },
+                attempts: 0,
+                next_attempt_at_ms: 10,
+                created_at_ms: 10,
+                last_error: None,
+            })
+            .expect("enqueue pending pairing");
+    }
+
+    let reopened =
+        SqlCipherPendingOperationStore::open(database.path(), &key).expect("reopen pending store");
+    let operations = reopened.due(10, 8).expect("load pending operations");
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].resource_id, id);
+    let PendingOperationKind::JoinPairing { ticket, .. } = &operations[0].kind else {
+        panic!("expected pending join");
+    };
+    assert_eq!(*ticket, Some([9; 16]));
 }

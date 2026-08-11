@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:torca_attachment_processing/torca_attachment_processing.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
@@ -86,6 +87,8 @@ class _ConversationPaneState extends State<ConversationPane>
   final ScrollController _scrollController = ScrollController();
   final OperationTracker _operations = OperationTracker();
   final Map<String, String> _drafts = <String, String>{};
+  final AttachmentProcessor _attachmentProcessor = const AttachmentProcessor();
+  final List<_PendingAttachment> _pendingAttachments = <_PendingAttachment>[];
 
   late ConversationTimelineController _timeline;
   Timer? _searchDebounce;
@@ -95,6 +98,7 @@ class _ConversationPaneState extends State<ConversationPane>
   bool _markingRead = false;
   bool _loadingOlder = false;
   bool _showJumpToLatest = false;
+  int _jumpMessageCount = 0;
   int _lastActivityAtMs = 0;
   String? _unreadBoundaryMessageId;
   MessageDto? _replyingTo;
@@ -173,6 +177,10 @@ class _ConversationPaneState extends State<ConversationPane>
     widget.gateway.snapshots.removeListener(_snapshotChanged);
     _timeline.removeListener(_timelineChanged);
     _timeline.dispose();
+    for (final pending in _pendingAttachments) {
+      unawaited(pending.prepared.dispose());
+    }
+    _pendingAttachments.clear();
     _searchDebounce?.cancel();
     _searchController.dispose();
     _scrollController.removeListener(_scrollChanged);
@@ -212,7 +220,12 @@ class _ConversationPaneState extends State<ConversationPane>
     }
     if (!_nearBottom()) return;
     unawaited(_markReadIfNeeded());
-    if (_showJumpToLatest) setState(() => _showJumpToLatest = false);
+    if (_showJumpToLatest) {
+      setState(() {
+        _showJumpToLatest = false;
+        _jumpMessageCount = 0;
+      });
+    }
   }
 
   Future<void> _loadOlder() async {
@@ -260,8 +273,11 @@ class _ConversationPaneState extends State<ConversationPane>
         if (follow) {
           _scrollToBottom();
           unawaited(_markReadIfNeeded());
-        } else if (!_showJumpToLatest && count > beforeCount) {
-          setState(() => _showJumpToLatest = true);
+        } else if (count > beforeCount) {
+          setState(() {
+            _showJumpToLatest = true;
+            _jumpMessageCount += count - beforeCount;
+          });
         }
       });
     }());
@@ -294,7 +310,12 @@ class _ConversationPaneState extends State<ConversationPane>
         ),
       );
     }
-    if (_showJumpToLatest && mounted) setState(() => _showJumpToLatest = false);
+    if (_showJumpToLatest && mounted) {
+      setState(() {
+        _showJumpToLatest = false;
+        _jumpMessageCount = 0;
+      });
+    }
   }
 
   Future<void> _markReadIfNeeded() async {
@@ -309,11 +330,19 @@ class _ConversationPaneState extends State<ConversationPane>
     if (!hasDelivered) return;
     _markingRead = true;
     try {
-      await widget.gateway.execute(
+      final result = await widget.gateway.execute(
         MarkConversationReadCommandDto(
           conversationIdHex: widget.conversation.id,
         ),
       );
+      if (mounted && !result.ok) {
+        _showError(
+          BridgeErrorPresenter.message(
+            result,
+            fallback: 'Could not mark conversation as read',
+          ),
+        );
+      }
     } finally {
       _markingRead = false;
     }
@@ -330,6 +359,7 @@ class _ConversationPaneState extends State<ConversationPane>
       final reply = _replyingTo;
       final contact = _contactFor(snapshot, widget.conversation);
       final sending = _operations.isActive('message:send');
+      final sendingAttachment = _operations.isActive('attachment:send');
       final pickingAttachment = _operations.isActive('attachment:pick');
 
       return Column(
@@ -396,6 +426,9 @@ class _ConversationPaneState extends State<ConversationPane>
                       final retryable =
                           message.direction == 'outbound' &&
                           message.status == 'failed';
+                      final attachmentAnnouncement = message.body.startsWith(
+                        'Attachment: ',
+                      );
                       final retryBusy = _operations.isActive(
                         'message:${message.id}:retry',
                       );
@@ -407,6 +440,14 @@ class _ConversationPaneState extends State<ConversationPane>
                           if (showUnread) const _UnreadSeparator(),
                           MessageBubble(
                             message: message,
+                            // Never expose the compatibility announcement
+                            // (which contains a path/hash) as chat content.
+                            // A typed AttachmentDto is rendered below; until
+                            // it arrives, show a safe synchronizing state.
+                            showBody: !attachmentAnnouncement,
+                            senderLabel: message.direction == 'outbound'
+                                ? 'You'
+                                : contact?.displayName ?? 'Contact',
                             compactTop: grouped,
                             onLongPress: () => _showMessageActions(message),
                             onSecondaryTapDown: (details) =>
@@ -422,6 +463,16 @@ class _ConversationPaneState extends State<ConversationPane>
                                 message.replyToMessageId != null &&
                                 quoted == null,
                             footer: <Widget>[
+                              if (attachmentAnnouncement && attachments.isEmpty)
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Attachment is syncing…',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ),
                               if (retryable && !_searching)
                                 Align(
                                   alignment: Alignment.centerLeft,
@@ -437,7 +488,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                               strokeWidth: 2,
                                             ),
                                           )
-                                        : const Icon(Icons.refresh),
+                                        : Icon(context.torcaIcons.retry),
                                     label: Text(
                                       retryBusy ? 'Retrying…' : 'Retry now',
                                     ),
@@ -467,6 +518,10 @@ class _ConversationPaneState extends State<ConversationPane>
                                   ),
                                   onOpen: () => _openAttachment(attachment),
                                   onSave: () => _saveAttachment(attachment),
+                                  loadPreview:
+                                      attachment.mediaType.startsWith('image/')
+                                      ? () => _loadAttachmentPreview(attachment)
+                                      : null,
                                 );
                               }),
                             ],
@@ -492,11 +547,15 @@ class _ConversationPaneState extends State<ConversationPane>
                   Positioned(
                     right: 16,
                     bottom: 12,
-                    child: FloatingActionButton.small(
-                      heroTag: null,
-                      tooltip: 'Jump to latest message',
-                      onPressed: _scrollToBottom,
-                      child: const Icon(Icons.arrow_downward),
+                    child: Badge(
+                      isLabelVisible: _jumpMessageCount > 0,
+                      label: Text('$_jumpMessageCount'),
+                      child: FloatingActionButton.small(
+                        heroTag: null,
+                        tooltip: 'Jump to latest message',
+                        onPressed: _scrollToBottom,
+                        child: Icon(context.torcaIcons.jumpToLatest),
+                      ),
                     ),
                   ),
               ],
@@ -510,6 +569,16 @@ class _ConversationPaneState extends State<ConversationPane>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
+                  if (_pendingAttachments.isNotEmpty) ...<Widget>[
+                    _AttachmentTray(
+                      attachments: _pendingAttachments,
+                      onRemove: (pending) => setState(() {
+                        _pendingAttachments.remove(pending);
+                        unawaited(pending.prepared.dispose());
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   if (reply != null) ...<Widget>[
                     _ReplyComposerPreview(
                       message: reply,
@@ -521,7 +590,8 @@ class _ConversationPaneState extends State<ConversationPane>
                     children: <Widget>[
                       IconButton(
                         tooltip: 'Attach files',
-                        onPressed: pickingAttachment || _searching
+                        onPressed:
+                            pickingAttachment || sendingAttachment || _searching
                             ? null
                             : _pickAttachments,
                         icon: pickingAttachment
@@ -543,9 +613,13 @@ class _ConversationPaneState extends State<ConversationPane>
                       ),
                       const SizedBox(width: 8),
                       IconButton.filled(
-                        tooltip: sending ? 'Sending message' : 'Send message',
-                        onPressed: sending || _searching ? null : _sendMessage,
-                        icon: sending
+                        tooltip: sending || sendingAttachment
+                            ? 'Sending'
+                            : 'Send message',
+                        onPressed: sending || sendingAttachment || _searching
+                            ? null
+                            : _sendMessage,
+                        icon: sending || sendingAttachment
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
@@ -609,7 +683,7 @@ class _ConversationPaneState extends State<ConversationPane>
             IconButton(
               tooltip: 'Close search',
               onPressed: _closeSearch,
-              icon: const Icon(Icons.close),
+              icon: Icon(context.torcaIcons.close),
             ),
         ],
       ),
@@ -756,7 +830,12 @@ class _ConversationPaneState extends State<ConversationPane>
           _detail('Direction', message.direction),
           _detail('Status', _messageStatusLabel(message.status)),
           _detail('Queued / received', _date(message.createdAtMs)),
-          _detail('Last update', _date(message.updatedAtMs)),
+          if (message.sentAtMs != null)
+            _detail('Sent', _date(message.sentAtMs!)),
+          if (message.deliveredAtMs != null)
+            _detail('Delivered', _date(message.deliveredAtMs!)),
+          if (message.readAtMs != null)
+            _detail('Read', _date(message.readAtMs!)),
           _detail('Send attempts', '${message.attemptCount}'),
         ],
       ),
@@ -780,32 +859,40 @@ class _ConversationPaneState extends State<ConversationPane>
 
   Future<void> _sendMessage() async {
     final body = _controller.text.trim();
-    if (body.isEmpty || _searching) return;
-    final replyTo = _replyingTo?.id;
-    await _operations.run('message:send', () async {
-      final result = await widget.gateway.execute(
-        QueueMessageCommandDto(
-          conversationIdHex: widget.conversation.id,
-          body: body,
-          replyToMessageId: replyTo,
-        ),
-      );
-      if (!mounted) return;
-      if (result.ok) {
-        _controller.clear();
-        _drafts.remove(widget.conversation.id);
-        setState(() => _replyingTo = null);
-        await _timeline.refreshLatest();
-        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-      } else {
-        _showError(
-          BridgeErrorPresenter.message(
-            result,
-            fallback: 'Could not queue message',
+    if ((body.isEmpty && _pendingAttachments.isEmpty) || _searching) return;
+    if (body.isNotEmpty) {
+      final replyTo = _replyingTo?.id;
+      var sent = false;
+      await _operations.run('message:send', () async {
+        final result = await widget.gateway.execute(
+          QueueMessageCommandDto(
+            conversationIdHex: widget.conversation.id,
+            body: body,
+            replyToMessageId: replyTo,
           ),
         );
-      }
-    });
+        if (!mounted) return;
+        if (result.ok) {
+          sent = true;
+          _controller.clear();
+          _drafts.remove(widget.conversation.id);
+          setState(() => _replyingTo = null);
+          await _timeline.refreshLatest();
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => _scrollToBottom(),
+          );
+        } else {
+          _showError(
+            BridgeErrorPresenter.message(
+              result,
+              fallback: 'Could not queue message',
+            ),
+          );
+        }
+      });
+      if (!sent) return;
+    }
+    if (_pendingAttachments.isNotEmpty) await _queuePendingAttachments();
   }
 
   Future<void> _pickAttachments() async {
@@ -816,35 +903,88 @@ class _ConversationPaneState extends State<ConversationPane>
       );
       if (picked == null || picked.files.isEmpty || !mounted) return;
       final maxBytes = capabilitiesFor(widget.gateway).maxAttachmentBytes;
-      var queued = 0;
-      for (final file in picked.files) {
+      const maximumFiles = 5;
+      const maximumVideoBytes = 5 * 1024 * 1024;
+      final remainingSlots = maximumFiles - _pendingAttachments.length;
+      if (remainingSlots <= 0) {
+        _showError('You can queue at most $maximumFiles attachments.');
+        return;
+      }
+      if (picked.files.length > remainingSlots) {
+        _showError('Only $remainingSlots attachment slots remain.');
+      }
+      final preparedAttachments = <_PendingAttachment>[];
+      for (final file in picked.files.take(remainingSlots)) {
         final path = file.path;
         if (path == null || path.isEmpty) {
           _showError('${file.name}: local file path is unavailable');
           continue;
         }
-        if (file.size <= 0 || file.size > maxBytes) {
-          _showError(
-            '${file.name}: maximum attachment size is ${formatBytes(maxBytes)}',
-          );
+        if (file.size <= 0) {
+          _showError('${file.name}: the selected file is empty');
           continue;
         }
+        PreparedAttachment prepared;
+        try {
+          prepared = await _attachmentProcessor.prepare(
+            sourcePath: path,
+            originalName: file.name,
+            extension: file.extension,
+          );
+        } on AttachmentSelectionException catch (error) {
+          _showError('${file.name}: ${error.message}');
+          continue;
+        } catch (_) {
+          _showError('${file.name}: the file could not be processed');
+          continue;
+        }
+        final limit = prepared.kind == AttachmentMediaKind.video
+            ? maximumVideoBytes
+            : maxBytes;
+        if (prepared.size > limit) {
+          _showError(
+            '${file.name}: maximum ${prepared.kind == AttachmentMediaKind.video ? 'video' : 'attachment'} size is ${formatBytes(limit)}',
+          );
+          await prepared.dispose();
+          continue;
+        }
+        preparedAttachments.add(_PendingAttachment(file.name, prepared));
+      }
+      if (preparedAttachments.isEmpty || !mounted) return;
+      setState(() => _pendingAttachments.addAll(preparedAttachments));
+    });
+  }
+
+  Future<void> _queuePendingAttachments() async {
+    if (_pendingAttachments.isEmpty) return;
+    final pending = List<_PendingAttachment>.of(_pendingAttachments);
+    var queued = 0;
+    await _operations.run('attachment:send', () async {
+      for (final item in pending) {
+        final prepared = item.prepared;
         final response = await widget.gateway.execute(
           QueueAttachmentCommandDto(
             conversationIdHex: widget.conversation.id,
-            sourcePath: path,
-            name: file.name,
-            mediaType: _mediaType(file.extension),
-            size: file.size,
+            sourcePath: prepared.path,
+            name: prepared.name,
+            mediaType: prepared.mediaType,
+            size: prepared.size,
           ),
         );
         if (!mounted) return;
         if (!response.ok) {
+          // Keep the app-owned staging file and tray entry when queueing
+          // fails.  Relay/runtime outages are transient; deleting the source
+          // here made retry impossible and forced the user to pick the file
+          // again.
           _showError(
-            '${file.name}: ${BridgeErrorPresenter.message(response, fallback: 'Could not queue attachment')}',
+            '${item.originalName}: ${BridgeErrorPresenter.message(response, fallback: 'Could not queue attachment')}',
           );
           continue;
         }
+        await prepared.dispose();
+        if (!mounted) return;
+        setState(() => _pendingAttachments.remove(item));
         queued++;
       }
       if (queued > 0) await _timeline.refreshLatest();
@@ -883,6 +1023,20 @@ class _ConversationPaneState extends State<ConversationPane>
         );
       }
     });
+  }
+
+  Future<String?> _loadAttachmentPreview(AttachmentDto attachment) async {
+    final path =
+        '${Directory.systemTemp.path}${torcaPathSeparator}torca-preview-${attachment.id}.jpg';
+    final file = File(path);
+    if (await file.exists() && await file.length() > 0) return path;
+    final result = await widget.gateway.execute(
+      ExportAttachmentCommandDto(
+        attachmentIdHex: attachment.id,
+        destinationPath: path,
+      ),
+    );
+    return result.ok && await file.exists() ? path : null;
   }
 
   Future<void> _openAttachment(AttachmentDto attachment) async {
@@ -940,30 +1094,6 @@ class _ConversationPaneState extends State<ConversationPane>
 
   void _showError(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  }
-
-  String _mediaType(String? extension) {
-    switch ((extension ?? '').toLowerCase()) {
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg';
-      case 'png':
-        return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
-      case 'pdf':
-        return 'application/pdf';
-      case 'txt':
-        return 'text/plain';
-      case 'mp4':
-        return 'video/mp4';
-      case 'mp3':
-        return 'audio/mpeg';
-      default:
-        return 'application/octet-stream';
-    }
   }
 
   String _messageStatusLabel(String status) => switch (status) {
@@ -1043,11 +1173,11 @@ class _ReplyComposerPreview extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(context.torcaTokens.radiusMedium),
     ),
     child: Row(
       children: <Widget>[
-        const Icon(Icons.reply, size: 18),
+        Icon(context.torcaIcons.reply, size: 18),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -1060,11 +1190,107 @@ class _ReplyComposerPreview extends StatelessWidget {
           tooltip: 'Cancel reply',
           visualDensity: VisualDensity.compact,
           onPressed: onCancel,
-          icon: const Icon(Icons.close),
+          icon: Icon(context.torcaIcons.close),
         ),
       ],
     ),
   );
+}
+
+class _PendingAttachment {
+  const _PendingAttachment(this.originalName, this.prepared);
+
+  final String originalName;
+  final PreparedAttachment prepared;
+}
+
+class _AttachmentTray extends StatelessWidget {
+  const _AttachmentTray({required this.attachments, required this.onRemove});
+
+  final List<_PendingAttachment> attachments;
+  final ValueChanged<_PendingAttachment> onRemove;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    constraints: const BoxConstraints(minHeight: 72, maxHeight: 116),
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(context.torcaTokens.radiusLarge),
+    ),
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      itemCount: attachments.length,
+      separatorBuilder: (_, _) => const SizedBox(width: 8),
+      itemBuilder: (context, index) {
+        final item = attachments[index];
+        final prepared = item.prepared;
+        final isImage = prepared.kind == AttachmentMediaKind.image;
+        return SizedBox(
+          width: 190,
+          child: Row(
+            children: <Widget>[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(
+                  context.torcaTokens.radiusSmall,
+                ),
+                child: SizedBox(
+                  width: 52,
+                  height: 52,
+                  child: isImage
+                      ? Image.file(File(prepared.path), fit: BoxFit.cover)
+                      : ColoredBox(
+                          color: Theme.of(context).colorScheme.surface,
+                          child: Icon(_iconFor(context, prepared.kind)),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      item.originalName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                    Text(
+                      '${prepared.mediaType} · ${formatBytes(prepared.size)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Remove attachment',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onRemove(item),
+                icon: Icon(context.torcaIcons.close),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+
+  static IconData _iconFor(BuildContext context, AttachmentMediaKind kind) =>
+      switch (kind) {
+        AttachmentMediaKind.video => context.torcaIcons.video,
+        AttachmentMediaKind.audio => context.torcaIcons.audio,
+        AttachmentMediaKind.pdf => context.torcaIcons.pdf,
+        AttachmentMediaKind.document => context.torcaIcons.document,
+        AttachmentMediaKind.archive => context.torcaIcons.archive,
+        AttachmentMediaKind.text => context.torcaIcons.textFile,
+        AttachmentMediaKind.image => context.torcaIcons.image,
+        AttachmentMediaKind.binary => context.torcaIcons.file,
+      };
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

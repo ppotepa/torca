@@ -11,8 +11,8 @@ abstract final class TorcaThemeFactory {
     final terminal = appearance.family == TorcaThemeFamily.terminal;
     final compact = appearance.density == TorcaDensity.compact;
     final radiusSmall = terminal ? 0.0 : 6.0;
-    final radiusMedium = terminal ? 2.0 : 8.0;
-    final radiusLarge = terminal ? 3.0 : 12.0;
+    final radiusMedium = terminal ? 0.0 : 8.0;
+    final radiusLarge = terminal ? 0.0 : 12.0;
     final scheme =
         ColorScheme.fromSeed(
           seedColor: palette.primary,
@@ -43,7 +43,12 @@ abstract final class TorcaThemeFactory {
     );
     final displayFamily = terminal ? 'PressStart2P' : null;
     final displayPackage = terminal ? 'torca_ui' : null;
-    final text = base.textTheme.copyWith(
+    final bodyFamily = terminal ? 'JetBrainsMono' : null;
+    final bodyPackage = terminal ? 'torca_ui' : null;
+    final body = terminal
+        ? base.textTheme.apply(fontFamily: bodyFamily, package: bodyPackage)
+        : base.textTheme;
+    final text = body.copyWith(
       headlineSmall: base.textTheme.headlineSmall?.copyWith(
         fontFamily: displayFamily,
         package: displayPackage,
@@ -128,6 +133,52 @@ abstract final class TorcaThemeFactory {
           side: BorderSide(color: scheme.outline),
         ),
       ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(shape: shape),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(shape: shape),
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          shape: WidgetStatePropertyAll<OutlinedBorder>(shape),
+          side: WidgetStatePropertyAll<BorderSide>(
+            BorderSide(color: scheme.outline),
+          ),
+        ),
+      ),
+      checkboxTheme: CheckboxThemeData(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(terminal ? 0 : 3),
+        ),
+        side: BorderSide(color: scheme.outline, width: terminal ? 2 : 1),
+      ),
+      radioTheme: RadioThemeData(
+        visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+      ),
+      switchTheme: SwitchThemeData(
+        trackOutlineColor: WidgetStatePropertyAll<Color>(scheme.outline),
+        trackOutlineWidth: WidgetStatePropertyAll<double>(terminal ? 2 : 1),
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        shape: shape,
+        side: BorderSide(color: scheme.outline),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: palette.surface,
+        elevation: terminal ? 0 : 4,
+        shape: shape,
+      ),
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: <TargetPlatform, PageTransitionsBuilder>{
+          TargetPlatform.android: _NoPageTransitionsBuilder(),
+          TargetPlatform.iOS: _NoPageTransitionsBuilder(),
+          TargetPlatform.linux: _NoPageTransitionsBuilder(),
+          TargetPlatform.macOS: _NoPageTransitionsBuilder(),
+          TargetPlatform.windows: _NoPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: _NoPageTransitionsBuilder(),
+        },
+      ),
       listTileTheme: ListTileThemeData(
         dense: compact,
         minTileHeight: compact ? 52 : 64,
@@ -167,6 +218,19 @@ abstract final class TorcaThemeFactory {
       ],
     );
   }
+}
+
+class _NoPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _NoPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => child;
 }
 
 class _Palette {
@@ -238,57 +302,57 @@ _Palette _palette(TorcaThemeVariant variant, Brightness brightness) {
               0xFF9D0006,
               0xFFBDAE93,
             ),
-    TorcaThemeVariant.terminalDracula =>
+    TorcaThemeVariant.terminalTokyoNight =>
       dark
           ? _terminal(
-              0xFF282A36,
-              0xFF30323F,
-              0xFF44475A,
-              0xFFF8F8F2,
-              0xFFBD93F9,
-              0xFF4B3C66,
-              0xFF50FA7B,
-              0xFF8BE9FD,
-              0xFFFF5555,
-              0xFF6272A4,
+              0xFF1A1B26,
+              0xFF24283B,
+              0xFF292E42,
+              0xFFC0CAF5,
+              0xFF7AA2F7,
+              0xFF3D59A1,
+              0xFF9ECE6A,
+              0xFFBB9AF7,
+              0xFFF7768E,
+              0xFF565F89,
             )
           : _terminal(
-              0xFFF8F8F2,
-              0xFFFFFFFF,
-              0xFFE8E8EE,
-              0xFF282A36,
-              0xFF7C4DCC,
-              0xFFE2D5F5,
-              0xFF087E3B,
-              0xFF087C91,
-              0xFFC62828,
-              0xFF9A9AAF,
+              0xFFD5D6DB,
+              0xFFE1E2E7,
+              0xFFC8CAD2,
+              0xFF343B58,
+              0xFF34548A,
+              0xFFA8B5D1,
+              0xFF485E30,
+              0xFF5A4A78,
+              0xFF8C4351,
+              0xFF9699A3,
             ),
-    TorcaThemeVariant.terminalSolarized =>
+    TorcaThemeVariant.terminalCatppuccin =>
       dark
           ? _terminal(
-              0xFF002B36,
-              0xFF073642,
-              0xFF0B3D49,
-              0xFFEEE8D5,
-              0xFF268BD2,
-              0xFF164F67,
-              0xFF859900,
-              0xFF2AA198,
-              0xFFDC322F,
-              0xFF586E75,
+              0xFF1E1E2E,
+              0xFF181825,
+              0xFF313244,
+              0xFFCDD6F4,
+              0xFF89B4FA,
+              0xFF45475A,
+              0xFFA6E3A1,
+              0xFFCBA6F7,
+              0xFFF38BA8,
+              0xFF585B70,
             )
           : _terminal(
-              0xFFFDF6E3,
-              0xFFEEE8D5,
-              0xFFE5DDC8,
-              0xFF073642,
-              0xFF268BD2,
-              0xFFD5E7EF,
-              0xFF859900,
-              0xFF2AA198,
-              0xFFDC322F,
-              0xFF93A1A1,
+              0xFFEFF1F5,
+              0xFFE6E9EF,
+              0xFFDCE0E8,
+              0xFF4C4F69,
+              0xFF1E66F5,
+              0xFFCCD0DA,
+              0xFF40A02B,
+              0xFF8839EF,
+              0xFFD20F39,
+              0xFF9CA0B0,
             ),
   };
 }

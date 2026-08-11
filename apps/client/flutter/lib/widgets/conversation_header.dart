@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
-import 'peer_health_indicator.dart';
 
 class ConversationHeader extends StatelessWidget {
   const ConversationHeader({
@@ -23,10 +23,7 @@ class ConversationHeader extends StatelessWidget {
     return Row(
       mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
       children: <Widget>[
-        CircleAvatar(
-          radius: compact ? 16 : 20,
-          child: const Icon(Icons.person_outline),
-        ),
+        TorcaAvatar(label: name, size: compact ? 32 : 40),
         const SizedBox(width: 10),
         Flexible(
           child: Column(
@@ -47,9 +44,17 @@ class ConversationHeader extends StatelessWidget {
                         'Blocked',
                         style: Theme.of(context).textTheme.bodySmall,
                       )
-                    : PeerHealthIndicator(
-                        health: value.peerHealth,
-                        onPressed: onConnectionDetails,
+                    : InkWell(
+                        onTap: onConnectionDetails,
+                        child: Text(
+                          _presenceLabel(context, value),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: value.presenceState == 'online'
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                        ),
                       ),
             ],
           ),
@@ -59,10 +64,37 @@ class ConversationHeader extends StatelessWidget {
           IconButton(
             tooltip: 'Connection details',
             onPressed: onConnectionDetails,
-            icon: const Icon(Icons.info_outline),
+            icon: Icon(context.torcaIcons.info),
           ),
         ],
       ],
     );
   }
+}
+
+String _presenceLabel(BuildContext context, ContactDto contact) {
+  if (contact.presenceState == 'online') return 'online';
+  final milliseconds = contact.lastSeenAtMs;
+  if (milliseconds == null || milliseconds <= 0) {
+    return contact.connectionState == 'reconnecting'
+        ? 'reconnecting'
+        : 'offline';
+  }
+  final value = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+  final now = DateTime.now();
+  final time = MaterialLocalizations.of(
+    context,
+  ).formatTimeOfDay(TimeOfDay.fromDateTime(value));
+  if (value.year == now.year &&
+      value.month == now.month &&
+      value.day == now.day) {
+    return 'last seen today at $time';
+  }
+  final yesterday = now.subtract(const Duration(days: 1));
+  if (value.year == yesterday.year &&
+      value.month == yesterday.month &&
+      value.day == yesterday.day) {
+    return 'last seen yesterday at $time';
+  }
+  return 'last seen ${MaterialLocalizations.of(context).formatMediumDate(value)}';
 }

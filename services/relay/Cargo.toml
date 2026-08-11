@@ -8,10 +8,19 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+default = ["relay-bin"]
+relay-bin = ["dep:torca-tor"]
+
+[[bin]]
+name = "torca-relay"
+path = "src/main.rs"
+required-features = ["relay-bin"]
+
 [dependencies]
 torca-foundation = { path = "../../crates/foundation/torca-foundation" }
 torca-relay-protocol = { path = "../../crates/protocol/torca-relay-protocol" }
-torca-tor = { package = "torca-tor", path = "../../crates/infrastructure/torca-tor" }
+torca-tor = { package = "torca-tor", path = "../../crates/infrastructure/torca-tor", optional = true }
 
 [lints]
 workspace = true
