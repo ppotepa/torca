@@ -1,4 +1,3 @@
-#![allow(clippy::all)]
 //! Shared native Torca runtime implementation.
 
 mod app_paths;

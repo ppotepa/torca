@@ -34,6 +34,34 @@ foreach ($relative in $forbiddenFiles) {
     }
 }
 
+foreach ($relative in @('LICENSE', 'PRIVACY.md', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $relative))) {
+        throw "Required distribution document is missing: $relative"
+    }
+}
+
+$rustSources = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Recurse -File -Include '*.rs','Cargo.toml' |
+    Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' }
+foreach ($file in $rustSources) {
+    $text = Get-Content -LiteralPath $file.FullName -Raw
+    if ($text.Contains('#![allow(clippy::all)]') -or
+        $text.Contains('all = { level = "allow"') -or
+        $text.Contains('pedantic = { level = "allow"')) {
+        throw "Broad Clippy suppression is forbidden: $($file.FullName)"
+    }
+}
+
+foreach ($relative in @(
+    'crates/infrastructure/torca-storage-sqlite/src/pairing_repository.rs',
+    'crates/infrastructure/torca-storage-sqlite/src/pending_operations.rs'
+)) {
+    $path = Join-Path $RepoRoot $relative
+    $text = Get-Content -LiteralPath $path -Raw
+    if ($text -match '"\s*(?:INSERT|SELECT|UPDATE|DELETE)\s') {
+        throw "Business SQL must live in parameterized .sql files: $relative"
+    }
+}
+
 $header = Get-Content (Join-Path $RepoRoot 'crates/platform/torca-native/include/torca_native.h') -Raw
 $obsoleteAbi = @(
     'torca_engine_create_identity(',
@@ -156,6 +184,10 @@ if (Test-Path -LiteralPath $flutterLib) {
         Where-Object { $_.FullName -notmatch '[\\/]platform[\\/]' }
     foreach ($file in $uiFiles) {
         $text = Get-Content -LiteralPath $file.FullName -Raw
+        $lineCount = (Get-Content -LiteralPath $file.FullName).Count
+        if ($lineCount -gt 1200) {
+            throw "Flutter source file exceeds the 1200-line maintainability gate: $($file.FullName) ($lineCount lines)"
+        }
         if ($text.Contains('Platform.is')) {
             throw "Platform detection escaped lib/platform: $($file.FullName)"
         }
@@ -170,6 +202,25 @@ if (Test-Path -LiteralPath $flutterLib) {
         }
         if ($text -match '\b(?:Linear|Radial|Sweep)Gradient\s*\(') {
             throw "Gradient escaped the flat Torca presentation policy: $($file.FullName)"
+        }
+        if ($text -match '\.(?:state|status|direction|quality|role|dependency|bootstrapPhase)\s*(?:==|!=)\s*[''"]') {
+            throw "Raw wire-state comparison escaped generated typed accessors: $($file.FullName)"
+        }
+        if ($text -match 'Colors\.(?:green|orange|red|blue)') {
+            throw "Status color escaped Torca semantic colors: $($file.FullName)"
+        }
+    }
+
+    foreach ($relative in @(
+        'widgets/peer_health_indicator.dart',
+        'widgets/runtime_network_status.dart'
+    )) {
+        $path = Join-Path $flutterLib $relative
+        $text = Get-Content -LiteralPath $path -Raw
+        if ($text.Contains('AnimationController') -and
+            (-not $text.Contains('MediaQuery.disableAnimationsOf') -or
+             -not $text.Contains('torcaTokens.animationDuration'))) {
+            throw "Continuous status animation must honor OS and Torca reduce-motion policy: $relative"
         }
     }
 }

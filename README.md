@@ -101,4 +101,7 @@ implementation details.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): system boundaries.
 - [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md):
   security guarantees and non-guarantees.
+- [`PRIVACY.md`](PRIVACY.md): local data, network metadata, retention and user choices.
+- [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): distribution terms and
+  principal dependency notices.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): development rules.

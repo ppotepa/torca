@@ -13,6 +13,12 @@ use torca_pairing::{
 
 use crate::{DatabaseKey, SqlCipherBackend, StorageKernel};
 
+const INSERT_SQL: &str = include_str!("../sql/commands/pairing_insert.sql");
+const UPDATE_SQL: &str = include_str!("../sql/commands/pairing_update.sql");
+const DELETE_SQL: &str = include_str!("../sql/commands/pairing_delete.sql");
+const SELECT_SQL: &str = include_str!("../sql/queries/pairing_select_by_id.sql");
+const LIST_SQL: &str = include_str!("../sql/queries/pairing_list.sql");
+
 /// Durable pairing session store. It owns its SQLCipher connection and is used only by the
 /// single client-engine actor, so all repository mutations remain single-writer operations.
 pub struct SqlCipherPairingRepository {
@@ -42,10 +48,7 @@ impl PairingRepository for SqlCipherPairingRepository {
         let values = encode(&session)?;
         self.connection()
             .execute(
-                "INSERT INTO pairing_sessions(session_id, code, role, state, expires_at_ms, local_approved, remote_approved,
-                 remote_identity_id, remote_key_id, remote_key_algorithm, remote_public_key, remote_key_generation,
-                 remote_display_name, remote_onion_address, remote_capability_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                INSERT_SQL,
                 params![
                     values.id,
                     values.code,
@@ -71,9 +74,7 @@ impl PairingRepository for SqlCipherPairingRepository {
     fn get(&self, id: PairingSessionId) -> Result<Option<PairingSession>, PairingError> {
         self.connection()
             .query_row(
-                "SELECT session_id, code, role, state, expires_at_ms, local_approved, remote_approved,
-                 remote_identity_id, remote_key_id, remote_key_algorithm, remote_public_key, remote_key_generation,
-                 remote_display_name, remote_onion_address, remote_capability_id FROM pairing_sessions WHERE session_id = ?1",
+                SELECT_SQL,
                 params![id.to_opaque().as_bytes().as_slice()],
                 decode_row,
             )
@@ -86,10 +87,7 @@ impl PairingRepository for SqlCipherPairingRepository {
         let changed = self
             .connection()
             .execute(
-                "UPDATE pairing_sessions SET code=?2, role=?3, state=?4, expires_at_ms=?5, local_approved=?6,
-                 remote_approved=?7, remote_identity_id=?8, remote_key_id=?9, remote_key_algorithm=?10,
-                 remote_public_key=?11, remote_key_generation=?12, remote_display_name=?13, remote_onion_address=?14, remote_capability_id=?15
-                 WHERE session_id=?1",
+                UPDATE_SQL,
                 params![
                     values.id,
                     values.code,
@@ -118,9 +116,7 @@ impl PairingRepository for SqlCipherPairingRepository {
     fn list(&self) -> Result<Vec<PairingSession>, PairingError> {
         let mut statement = self
             .connection()
-            .prepare("SELECT session_id, code, role, state, expires_at_ms, local_approved, remote_approved,
-                      remote_identity_id, remote_key_id, remote_key_algorithm, remote_public_key, remote_key_generation,
-                      remote_display_name, remote_onion_address, remote_capability_id FROM pairing_sessions ORDER BY session_id")
+            .prepare(LIST_SQL)
             .map_err(|_| PairingError::Storage)?;
         let rows = statement.query_map([], decode_row).map_err(|_| PairingError::Storage)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|_| PairingError::Storage)
@@ -130,7 +126,7 @@ impl PairingRepository for SqlCipherPairingRepository {
         let changed = self
             .connection()
             .execute(
-                "DELETE FROM pairing_sessions WHERE session_id = ?1",
+                DELETE_SQL,
                 params![id.to_opaque().as_bytes().as_slice()],
             )
             .map_err(|_| PairingError::Storage)?;

@@ -8,6 +8,11 @@ use torca_foundation::OpaqueId;
 
 use crate::{DatabaseKey, SqlCipherBackend, SqlCipherStoreOpenError};
 
+const ENQUEUE_SQL: &str = include_str!("../sql/commands/pending_operation_enqueue.sql");
+const COMPLETE_SQL: &str = include_str!("../sql/commands/pending_operation_complete.sql");
+const RESCHEDULE_SQL: &str = include_str!("../sql/commands/pending_operation_reschedule.sql");
+const DUE_SQL: &str = include_str!("../sql/queries/pending_operations_due.sql");
+
 #[derive(Debug)]
 pub enum PendingOperationStorageError {
     Open(SqlCipherStoreOpenError),
@@ -58,7 +63,7 @@ impl PendingOperationStore for SqlCipherPendingOperationStore {
         self.backend
             .connection()
             .execute(
-                "INSERT INTO pending_operations(operation_id, resource_id, operation_kind, text_payload, binary_payload, attempts, next_attempt_at_ms, created_at_ms, last_error) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(operation_id) DO UPDATE SET text_payload = excluded.text_payload, binary_payload = excluded.binary_payload, attempts = 0, next_attempt_at_ms = excluded.next_attempt_at_ms, last_error = NULL",
+                ENQUEUE_SQL,
                 params![
                     operation.id.to_string(),
                     operation.resource_id.to_string(),
@@ -84,7 +89,7 @@ impl PendingOperationStore for SqlCipherPendingOperationStore {
         let mut statement = self
             .backend
             .connection()
-            .prepare("SELECT operation_id, resource_id, operation_kind, text_payload, binary_payload, attempts, next_attempt_at_ms, created_at_ms, last_error FROM pending_operations WHERE next_attempt_at_ms <= ?1 ORDER BY next_attempt_at_ms, created_at_ms, operation_id LIMIT ?2")
+            .prepare(DUE_SQL)
             .map_err(|_| PendingOperationStoreError::Unavailable)?;
         let rows = statement
             .query_map(params![now_ms, limit], |row| {
@@ -123,7 +128,7 @@ impl PendingOperationStore for SqlCipherPendingOperationStore {
     fn complete(&mut self, id: OpaqueId) -> Result<(), PendingOperationStoreError> {
         self.backend
             .connection()
-            .execute("DELETE FROM pending_operations WHERE operation_id = ?1", [id.to_string()])
+            .execute(COMPLETE_SQL, [id.to_string()])
             .map_err(|_| PendingOperationStoreError::Unavailable)?;
         Ok(())
     }
@@ -138,7 +143,7 @@ impl PendingOperationStore for SqlCipherPendingOperationStore {
         self.backend
             .connection()
             .execute(
-                "UPDATE pending_operations SET attempts = ?2, next_attempt_at_ms = ?3, last_error = ?4 WHERE operation_id = ?1",
+                RESCHEDULE_SQL,
                 params![id.to_string(), i64::from(attempts), next_attempt_at_ms, error],
             )
             .map_err(|_| PendingOperationStoreError::Unavailable)?;
