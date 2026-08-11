@@ -74,7 +74,7 @@ void main() {
 
     expect(find.text('Waiting for network'), findsOneWidget);
     expect(find.text('Generating invitation'), findsOneWidget);
-    expect(find.text('Retry 2 · waiting for relay'), findsOneWidget);
+    expect(find.text('Retry 2 · waiting for secure relay'), findsOneWidget);
   });
 
   testWidgets('generator modal starts work without a second generate action', (

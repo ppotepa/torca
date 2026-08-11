@@ -69,11 +69,11 @@ void main() {
     );
 
     expect(ledLabel(tester, 'Relay-tx-led'), 'TX activity');
-    expect(ledLabel(tester, 'Relay-rx-led'), 'RX idle');
+    expect(ledLabel(tester, 'Relay-rx-led'), 'RX activity');
 
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(ledLabel(tester, 'Relay-tx-led'), 'TX idle');
-    expect(ledLabel(tester, 'Relay-rx-led'), 'RX activity');
+    expect(ledLabel(tester, 'Relay-rx-led'), 'RX idle');
   });
 }

@@ -83,6 +83,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   PairingDto? _createdPairing;
   String? _inviteUri;
   String? _createdSessionId;
+  bool _queued = false;
 
   @override
   void initState() {
@@ -132,20 +133,13 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     );
     if (result == null || !result.ok || !mounted) return;
     if (result.kind == 'pairing_queued') {
-      // A queued create has no invitation URI/QR yet. Keeping the modal open
-      // would trap the user behind an indefinite placeholder and make the
-      // Contacts/Chats tabs appear broken. The pending operation remains in
-      // the snapshot and will produce the invitation once NETWORK_READY is
-      // reached.
-      final messenger = ScaffoldMessenger.of(context);
-      Navigator.of(context).pop();
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Invitation queued. It will be generated when the secure network is ready.',
-          ),
-        ),
-      );
+      // Keep the modal visible with an explicit waiting state. The close
+      // button remains available, while the pending operation can later
+      // resolve into a real pairing and QR code in this same modal.
+      setState(() {
+        _queued = true;
+        _createdSessionId = result.resourceId;
+      });
       return;
     }
     setState(() {
@@ -285,8 +279,9 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
               }
               return _InvitationGenerationPlaceholder(
                 busy: _operations.isActive('pairing:create'),
+                queued: _queued,
                 error: _error,
-                onRetry: _operations.isActive('pairing:create')
+                onRetry: _queued || _operations.isActive('pairing:create')
                     ? null
                     : _create,
               );
@@ -311,11 +306,13 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
 class _InvitationGenerationPlaceholder extends StatelessWidget {
   const _InvitationGenerationPlaceholder({
     required this.busy,
+    required this.queued,
     required this.error,
     required this.onRetry,
   });
 
   final bool busy;
+  final bool queued;
   final String? error;
   final VoidCallback? onRetry;
 
@@ -340,6 +337,8 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
         Text(
           busy
               ? 'Generating a private invitation…'
+              : queued
+              ? 'Invitation queued for the secure network.'
               : 'Invitation is waiting for the network.',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.titleMedium,
@@ -350,7 +349,9 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
         Center(child: block(width: 178, height: 28)),
         const SizedBox(height: 12),
         Center(child: block(width: 120, height: 18)),
-        const Spacer(),
+        // This placeholder is rendered inside AppModal's SingleChildScrollView;
+        // a flex child would receive unbounded height constraints.
+        const SizedBox(height: 24),
         if (error != null) ...<Widget>[
           Text(
             error!,
@@ -359,11 +360,18 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
           ),
           const SizedBox(height: 10),
         ],
-        OutlinedButton.icon(
-          onPressed: onRetry,
-          icon: Icon(context.torcaIcons.reconnect),
-          label: Text(busy ? 'Generating…' : 'Retry generation'),
-        ),
+        if (queued)
+          Text(
+            'Close this window to continue using the application. The invitation will appear here automatically when the connection is ready.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: Icon(context.torcaIcons.reconnect),
+            label: Text(busy ? 'Generating…' : 'Retry generation'),
+          ),
       ],
     );
   }
