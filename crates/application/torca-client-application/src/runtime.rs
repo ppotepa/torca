@@ -841,7 +841,8 @@ impl ClientApplicationRuntime {
         // as an explicit command.  Health projection is observational only:
         // it can be stale or use a different Tor stream and therefore cannot
         // veto recovery of a queued pairing operation.
-        let now_ms = current_timestamp().map_err(ApplicationError::operation_failed)?.to_unix_millis();
+        let now_ms =
+            current_timestamp().map_err(ApplicationError::operation_failed)?.to_unix_millis();
         let operations = self
             .pending
             .lock()
@@ -954,7 +955,9 @@ impl ClientApplicationRuntime {
                             .dispatch(EngineCommand::RemoveContact {
                                 contact_id: ContactId::from_opaque(operation.resource_id),
                             })
-                            .map_err(|error| ApplicationError::operation_failed(error.to_string()))?;
+                            .map_err(|error| {
+                                ApplicationError::operation_failed(error.to_string())
+                            })?;
                     }
                     store.complete(operation.id).map_err(|_| {
                         ApplicationError::operation_failed(

@@ -6,8 +6,7 @@ use rusqlite::OptionalExtension;
 use crate::{DatabaseKey, SqlCipherBackend, SqlCipherStoreOpenError};
 
 const BOOL_SETTING_SQL: &str = include_str!("../sql/queries/runtime_bool_setting.sql");
-const SETTING_UPDATED_AT_SQL: &str =
-    include_str!("../sql/queries/runtime_setting_updated_at.sql");
+const SETTING_UPDATED_AT_SQL: &str = include_str!("../sql/queries/runtime_setting_updated_at.sql");
 const UPSERT_BOOL_SETTING_SQL: &str =
     include_str!("../sql/commands/runtime_bool_setting_upsert.sql");
 const NOTIFICATIONS_ENABLED: &str = "notifications_enabled";
@@ -83,11 +82,9 @@ impl SqlCipherSettingsStore {
     pub fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, SettingsError> {
         self.backend
             .connection()
-            .query_row(
-                SETTING_UPDATED_AT_SQL,
-                [NEW_CONTACTS_ACKNOWLEDGED],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row(SETTING_UPDATED_AT_SQL, [NEW_CONTACTS_ACKNOWLEDGED], |row| {
+                row.get::<_, i64>(0)
+            })
             .optional()
             .map_err(|_| SettingsError::Query)
     }

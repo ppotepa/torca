@@ -170,9 +170,7 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
 
     runtimeLifecycleObserver?.detach();
     androidNotificationRouter?.dispose();
-    await _bestEffort(
-      () => deepLinkRouter?.dispose() ?? Future<void>.value(),
-    );
+    await _bestEffort(() => deepLinkRouter?.dispose() ?? Future<void>.value());
     await _bestEffort(
       () => desktopLifecycle?.dispose() ?? Future<void>.value(),
     );

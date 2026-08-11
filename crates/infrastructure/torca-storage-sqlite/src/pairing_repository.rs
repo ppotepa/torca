@@ -67,17 +67,19 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_capability_id,
                 ],
             )
-            .map_err(|error| if matches!(error, rusqlite::Error::SqliteFailure(_, _)) { PairingError::AlreadyExists } else { PairingError::Storage })?;
+            .map_err(|error| {
+                if matches!(error, rusqlite::Error::SqliteFailure(_, _)) {
+                    PairingError::AlreadyExists
+                } else {
+                    PairingError::Storage
+                }
+            })?;
         Ok(())
     }
 
     fn get(&self, id: PairingSessionId) -> Result<Option<PairingSession>, PairingError> {
         self.connection()
-            .query_row(
-                SELECT_SQL,
-                params![id.to_opaque().as_bytes().as_slice()],
-                decode_row,
-            )
+            .query_row(SELECT_SQL, params![id.to_opaque().as_bytes().as_slice()], decode_row)
             .optional()
             .map_err(|_| PairingError::Storage)
     }
@@ -114,10 +116,8 @@ impl PairingRepository for SqlCipherPairingRepository {
     }
 
     fn list(&self) -> Result<Vec<PairingSession>, PairingError> {
-        let mut statement = self
-            .connection()
-            .prepare(LIST_SQL)
-            .map_err(|_| PairingError::Storage)?;
+        let mut statement =
+            self.connection().prepare(LIST_SQL).map_err(|_| PairingError::Storage)?;
         let rows = statement.query_map([], decode_row).map_err(|_| PairingError::Storage)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|_| PairingError::Storage)
     }
@@ -125,10 +125,7 @@ impl PairingRepository for SqlCipherPairingRepository {
     fn delete(&mut self, id: PairingSessionId) -> Result<(), PairingError> {
         let changed = self
             .connection()
-            .execute(
-                DELETE_SQL,
-                params![id.to_opaque().as_bytes().as_slice()],
-            )
+            .execute(DELETE_SQL, params![id.to_opaque().as_bytes().as_slice()])
             .map_err(|_| PairingError::Storage)?;
         if changed == 0 { Err(PairingError::NotFound) } else { Ok(()) }
     }

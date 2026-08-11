@@ -253,12 +253,7 @@ impl TorcaRuntime {
         }
         if let torca_contract::BridgeCommand::SetReadReceipts { enabled } = &command {
             let now = unix_time_ms().unwrap_or(0);
-            if self
-                .read_models()
-                .settings
-                .set_read_receipts_enabled(*enabled, now)
-                .is_err()
-            {
+            if self.read_models().settings.set_read_receipts_enabled(*enabled, now).is_err() {
                 self.last_result_json = error_result("read receipt setting storage unavailable");
                 return ABI_ERROR;
             }
@@ -350,8 +345,7 @@ impl TorcaRuntime {
         self.snapshot_json = serde_json::from_str::<serde_json::Value>(&snapshot_json)
             .map(|mut value| {
                 value["notificationsEnabled"] = serde_json::Value::Bool(self.notifications_enabled);
-                value["readReceiptsEnabled"] =
-                    serde_json::Value::Bool(self.read_receipts_enabled);
+                value["readReceiptsEnabled"] = serde_json::Value::Bool(self.read_receipts_enabled);
                 value.to_string()
             })
             .unwrap_or(snapshot_json);
@@ -891,17 +885,15 @@ impl TorcaRuntime {
             let _ = progress_sender.send(HostStartEvent::Progress(progress));
         });
         thread::spawn(move || {
-            let result =
-                match catch_unwind(AssertUnwindSafe(|| {
-                    spawn_production_runtime(engine, observer, read_receipt_policy)
-                }))
-                {
-                    Ok(result) => result,
-                    Err(payload) => Err(NativeCompositionError::new(format!(
-                        "production network runtime worker panicked: {}",
-                        panic_message(payload)
-                    ))),
-                };
+            let result = match catch_unwind(AssertUnwindSafe(|| {
+                spawn_production_runtime(engine, observer, read_receipt_policy)
+            })) {
+                Ok(result) => result,
+                Err(payload) => Err(NativeCompositionError::new(format!(
+                    "production network runtime worker panicked: {}",
+                    panic_message(payload)
+                ))),
+            };
             if let Err(send_error) = sender.send(HostStartEvent::Finished(result)) {
                 if let HostStartEvent::Finished(Ok((_handle, owner))) = send_error.0 {
                     let _ = owner.shutdown();

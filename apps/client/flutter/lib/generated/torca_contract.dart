@@ -122,7 +122,15 @@ enum BootstrapStepState {
   unknown,
 }
 
-enum BootstrapPhase { idle, starting, readyForProfile, ready, degraded, failed, unknown }
+enum BootstrapPhase {
+  idle,
+  starting,
+  readyForProfile,
+  ready,
+  degraded,
+  failed,
+  unknown,
+}
 
 enum TransportState {
   stopped,
@@ -154,7 +162,16 @@ enum ConversationStatus { active, archived, unknown }
 
 enum MessageDirection { outbound, inbound, unknown }
 
-enum MessageStatus { queued, sending, sent, delivered, read, failed, cancelled, unknown }
+enum MessageStatus {
+  queued,
+  sending,
+  sent,
+  delivered,
+  read,
+  failed,
+  cancelled,
+  unknown,
+}
 
 enum AttachmentDirection { outbound, inbound, unknown }
 
@@ -171,7 +188,13 @@ enum AttachmentStatus {
 
 enum PendingOperationState { queued, retrying, unknown }
 
-enum PendingOperationDependency { torOnionAndRelay, relay, runtime, network, unknown }
+enum PendingOperationDependency {
+  torOnionAndRelay,
+  relay,
+  runtime,
+  network,
+  unknown,
+}
 
 class PairingDto {
   const PairingDto({
@@ -291,7 +314,8 @@ class TransportIndicatorDto {
 
   TransportState get typedState => _transportState(state);
   bool get isUsable =>
-      typedState == TransportState.healthy || typedState == TransportState.ready;
+      typedState == TransportState.healthy ||
+      typedState == TransportState.ready;
 }
 
 class TransportStatusDto {
@@ -419,12 +443,13 @@ class ContactDto {
     'offline' => PresenceState.offline,
     _ => PresenceState.unknown,
   };
-  VerificationStatus get typedVerificationStatus => switch (verificationStatus) {
-    'verified' => VerificationStatus.verified,
-    'unverified' => VerificationStatus.unverified,
-    'identity_changed' => VerificationStatus.identityChanged,
-    _ => VerificationStatus.unknown,
-  };
+  VerificationStatus get typedVerificationStatus =>
+      switch (verificationStatus) {
+        'verified' => VerificationStatus.verified,
+        'unverified' => VerificationStatus.unverified,
+        'identity_changed' => VerificationStatus.identityChanged,
+        _ => VerificationStatus.unknown,
+      };
 }
 
 class ConversationDto {
@@ -459,7 +484,9 @@ class ConversationDto {
     _ => ConversationStatus.unknown,
   };
   MessageDirection? get typedLastMessageDirection =>
-      lastMessageDirection == null ? null : _messageDirection(lastMessageDirection!);
+      lastMessageDirection == null
+      ? null
+      : _messageDirection(lastMessageDirection!);
   MessageStatus? get typedLastMessageStatus =>
       lastMessageStatus == null ? null : _messageStatus(lastMessageStatus!);
 }
@@ -632,28 +659,28 @@ class AppSnapshotDto {
           ? NavigationBadgesDto.fromJson(navigationBadges)
           : const NavigationBadgesDto(),
       onionAddress: value['onionAddress'] as String?,
-      pairings: _objects(value['pairings'])
-          .map(PairingDto.fromJson)
-          .toList(growable: false),
-      contacts: _objects(value['contacts'])
-          .map(ContactDto.fromJson)
-          .toList(growable: false),
-      conversations: _objects(value['conversations'])
-          .map(ConversationDto.fromJson)
-          .toList(growable: false),
-      messages: _objects(value['messages'])
-          .map(MessageDto.fromJson)
-          .toList(growable: false),
-      attachments: _objects(value['attachments'])
-          .map(AttachmentDto.fromJson)
-          .toList(growable: false),
-      pendingOperations: _objects(value['pendingOperations'])
-          .map(PendingOperationDto.fromJson)
-          .toList(growable: false),
+      pairings: _objects(
+        value['pairings'],
+      ).map(PairingDto.fromJson).toList(growable: false),
+      contacts: _objects(
+        value['contacts'],
+      ).map(ContactDto.fromJson).toList(growable: false),
+      conversations: _objects(
+        value['conversations'],
+      ).map(ConversationDto.fromJson).toList(growable: false),
+      messages: _objects(
+        value['messages'],
+      ).map(MessageDto.fromJson).toList(growable: false),
+      attachments: _objects(
+        value['attachments'],
+      ).map(AttachmentDto.fromJson).toList(growable: false),
+      pendingOperations: _objects(
+        value['pendingOperations'],
+      ).map(PendingOperationDto.fromJson).toList(growable: false),
       bootstrapPhase: value['bootstrapPhase'] as String? ?? 'failed',
-      bootstrapSteps: _objects(value['bootstrapSteps'])
-          .map(BootstrapStepDto.fromJson)
-          .toList(growable: false),
+      bootstrapSteps: _objects(
+        value['bootstrapSteps'],
+      ).map(BootstrapStepDto.fromJson).toList(growable: false),
     );
   }
   final String runtimeId;
