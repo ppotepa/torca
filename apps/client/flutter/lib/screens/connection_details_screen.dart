@@ -30,7 +30,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
           ),
         );
       }
-      final blocked = contact.status == 'blocked';
+      final blocked = contact.typedStatus == ContactStatus.blocked;
       final presentation = ConnectionStatePresenter.peer(
         state: contact.peerHealth.state,
         blocked: blocked,

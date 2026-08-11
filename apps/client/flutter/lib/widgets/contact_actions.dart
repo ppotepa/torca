@@ -1,0 +1,148 @@
+import 'package:flutter/material.dart';
+
+import '../gateway/engine_gateway.dart';
+import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
+import 'bridge_error_presenter.dart';
+
+/// Shared contact mutations and confirmations used by list and detail views.
+/// Returning `true` means the command completed successfully.
+class ContactActions {
+  const ContactActions._();
+
+  static Future<bool> rename(
+    BuildContext context,
+    EngineGateway gateway,
+    ContactDto contact,
+  ) async {
+    final strings = context.strings;
+    final controller = TextEditingController(text: contact.displayName);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(strings.renameContact),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 64,
+          decoration: InputDecoration(labelText: strings.localName),
+          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: Text(strings.save),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final name = value?.trim();
+    if (name == null || name.isEmpty || !context.mounted) return false;
+    return _execute(
+      context,
+      gateway,
+      RenameContactCommandDto(contactIdHex: contact.id, displayName: name),
+      strings.couldNotRenameContact,
+    );
+  }
+
+  static Future<bool> toggleBlock(
+    BuildContext context,
+    EngineGateway gateway,
+    ContactDto contact,
+  ) async {
+    final strings = context.strings;
+    final blocking = contact.typedStatus != ContactStatus.blocked;
+    if (blocking &&
+        !await _confirm(
+          context,
+          strings.blockContactTitle(contact.displayName),
+          strings.blockContactDescription,
+          strings.blockContact,
+        )) {
+      return false;
+    }
+    if (!context.mounted) return false;
+    return _execute(
+      context,
+      gateway,
+      blocking
+          ? BlockContactCommandDto(contactIdHex: contact.id)
+          : UnblockContactCommandDto(contactIdHex: contact.id),
+      blocking ? strings.couldNotBlockContact : strings.couldNotUnblockContact,
+    );
+  }
+
+  static Future<bool> remove(
+    BuildContext context,
+    EngineGateway gateway,
+    ContactDto contact,
+  ) async {
+    final strings = context.strings;
+    if (!await _confirm(
+      context,
+      strings.removeContactTitle(contact.displayName),
+      strings.removeContactDescription,
+      strings.remove,
+    )) {
+      return false;
+    }
+    if (!context.mounted) return false;
+    return _execute(
+      context,
+      gateway,
+      RemoveContactCommandDto(contactIdHex: contact.id),
+      strings.couldNotRemoveContact,
+    );
+  }
+
+  static Future<bool> _confirm(
+    BuildContext context,
+    String title,
+    String message,
+    String action,
+  ) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(context.strings.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(action),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  static Future<bool> _execute(
+    BuildContext context,
+    EngineGateway gateway,
+    BridgeCommandDto command,
+    String fallback,
+  ) async {
+    final result = await gateway.execute(command);
+    if (!context.mounted) return result.ok;
+    if (!result.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            BridgeErrorPresenter.message(result, fallback: fallback),
+          ),
+        ),
+      );
+    }
+    return result.ok;
+  }
+}

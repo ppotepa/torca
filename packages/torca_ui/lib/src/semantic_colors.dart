@@ -13,6 +13,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     required this.unreadBadge,
     required this.chatBackground,
     required this.separator,
+    required this.activityTransmit,
+    required this.activityReceive,
+    required this.inactiveIndicator,
   });
 
   final Color connectionReady;
@@ -25,6 +28,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
   final Color unreadBadge;
   final Color chatBackground;
   final Color separator;
+  final Color activityTransmit;
+  final Color activityReceive;
+  final Color inactiveIndicator;
 
   factory TorcaSemanticColors.fromScheme(ColorScheme scheme) =>
       TorcaSemanticColors(
@@ -38,6 +44,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
         unreadBadge: scheme.primary,
         chatBackground: scheme.surface,
         separator: scheme.outlineVariant,
+        activityTransmit: scheme.primary,
+        activityReceive: scheme.tertiary,
+        inactiveIndicator: scheme.surfaceContainerHighest,
       );
 
   @override
@@ -52,6 +61,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     Color? unreadBadge,
     Color? chatBackground,
     Color? separator,
+    Color? activityTransmit,
+    Color? activityReceive,
+    Color? inactiveIndicator,
   }) => TorcaSemanticColors(
     connectionReady: connectionReady ?? this.connectionReady,
     connectionConnecting: connectionConnecting ?? this.connectionConnecting,
@@ -63,6 +75,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     unreadBadge: unreadBadge ?? this.unreadBadge,
     chatBackground: chatBackground ?? this.chatBackground,
     separator: separator ?? this.separator,
+    activityTransmit: activityTransmit ?? this.activityTransmit,
+    activityReceive: activityReceive ?? this.activityReceive,
+    inactiveIndicator: inactiveIndicator ?? this.inactiveIndicator,
   );
 
   @override
@@ -83,6 +98,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
       unreadBadge: mix(unreadBadge, other.unreadBadge),
       chatBackground: mix(chatBackground, other.chatBackground),
       separator: mix(separator, other.separator),
+      activityTransmit: mix(activityTransmit, other.activityTransmit),
+      activityReceive: mix(activityReceive, other.activityReceive),
+      inactiveIndicator: mix(inactiveIndicator, other.inactiveIndicator),
     );
   }
 }

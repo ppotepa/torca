@@ -66,7 +66,9 @@ class DesktopLifecycle with WindowListener, TrayListener {
     if (!Platform.isWindows || _quitting || _disposed) return;
     final snapshot = gateway.snapshots.value;
     final readyPeers = snapshot.contacts
-        .where((contact) => contact.peerHealth.state == 'ready')
+        .where(
+          (contact) => contact.peerHealth.typedState == TransportState.ready,
+        )
         .length;
     await trayManager.setContextMenu(
       Menu(

@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../widgets/bridge_error_presenter.dart';
+import '../localization/torca_strings.dart';
 import '../widgets/connection_indicator.dart';
+import '../widgets/contact_actions.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/runtime_network_status.dart';
 import 'connection_details_screen.dart';
@@ -59,34 +60,40 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
                 leading: TorcaAvatar(label: contact.displayName),
                 title: Text(contact.displayName),
                 subtitle: Text(
-                  contact.status == 'blocked'
-                      ? 'Blocked'
-                      : 'Direct Tor contact',
+                  contact.typedStatus == ContactStatus.blocked
+                      ? context.strings.blocked
+                      : context.strings.directTorContact,
                 ),
                 trailing: ConnectionIndicator(
                   state: contact.connectionState,
-                  blocked: contact.status == 'blocked',
+                  blocked: contact.typedStatus == ContactStatus.blocked,
                 ),
               ),
             ),
             const SizedBox(height: 12),
             if (widget.onStartConversation != null) ...<Widget>[
               FilledButton.icon(
-                onPressed: contact.status == 'blocked'
+                onPressed: contact.typedStatus == ContactStatus.blocked
                     ? null
                     : widget.onStartConversation,
                 icon: Icon(context.torcaIcons.chats),
-                label: const Text('Start conversation'),
+                label: Text(context.strings.startConversation),
               ),
               const SizedBox(height: 12),
             ],
             _DetailsCard(
-              title: 'Connection',
+              title: context.strings.connection,
               children: <Widget>[
-                _ValueRow(label: 'State', value: contact.connectionState),
-                _ValueRow(label: 'Quality', value: contact.peerHealth.quality),
                 _ValueRow(
-                  label: 'Onion address',
+                  label: context.strings.state,
+                  value: contact.connectionState,
+                ),
+                _ValueRow(
+                  label: context.strings.quality,
+                  value: contact.peerHealth.quality,
+                ),
+                _ValueRow(
+                  label: context.strings.onionAddress,
                   value: contact.onionAddress,
                   selectable: true,
                 ),
@@ -102,32 +109,32 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
                       ),
                     ),
                     icon: Icon(context.torcaIcons.diagnostics),
-                    label: const Text('Connection details'),
+                    label: Text(context.strings.connectionDetails),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             _DetailsCard(
-              title: 'Contact actions',
+              title: context.strings.contactActions,
               children: <Widget>[
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(context.torcaIcons.edit),
-                  title: const Text('Rename contact'),
+                  title: Text(context.strings.renameContact),
                   onTap: () => _rename(contact),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(
-                    contact.status == 'blocked'
+                    contact.typedStatus == ContactStatus.blocked
                         ? context.torcaIcons.success
                         : context.torcaIcons.block,
                   ),
                   title: Text(
-                    contact.status == 'blocked'
-                        ? 'Unblock contact'
-                        : 'Block contact',
+                    contact.typedStatus == ContactStatus.blocked
+                        ? context.strings.unblockContact
+                        : context.strings.blockContact,
                   ),
                   onTap: () => _toggleBlock(contact),
                 ),
@@ -138,7 +145,7 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
                     color: Theme.of(context).colorScheme.error,
                   ),
                   title: Text(
-                    'Remove contact',
+                    context.strings.removeContact,
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.error,
                     ),
@@ -161,105 +168,20 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
   }
 
   Future<void> _rename(ContactDto contact) async {
-    final controller = TextEditingController(text: contact.displayName);
-    final value = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename contact'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 64,
-          decoration: const InputDecoration(labelText: 'Local name'),
-          onSubmitted: (value) => Navigator.of(context).pop(value),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    final name = value?.trim();
-    if (name == null || name.isEmpty || !mounted) return;
-    final result = await widget.gateway.execute(
-      RenameContactCommandDto(contactIdHex: contact.id, displayName: name),
-    );
-    if (mounted && !result.ok) _showError(result, 'Could not rename contact');
+    await ContactActions.rename(context, widget.gateway, contact);
   }
 
   Future<void> _toggleBlock(ContactDto contact) async {
-    final blocking = contact.status != 'blocked';
-    if (blocking &&
-        !await _confirm(
-          'Block ${contact.displayName}?',
-          'Torca will close the peer connection and will not reconnect until you unblock this contact.',
-          'Block',
-        ))
-      return;
-    final result = await widget.gateway.execute(
-      blocking
-          ? BlockContactCommandDto(contactIdHex: contact.id)
-          : UnblockContactCommandDto(contactIdHex: contact.id),
-    );
-    if (mounted && !result.ok) {
-      _showError(
-        result,
-        blocking ? 'Could not block contact' : 'Could not unblock contact',
-      );
-    }
+    await ContactActions.toggleBlock(context, widget.gateway, contact);
   }
 
   Future<void> _remove(ContactDto contact) async {
-    if (!await _confirm(
-      'Remove ${contact.displayName}?',
-      'This removes the local relationship, conversation history, pending work and protected peer credential.',
-      'Remove',
-    ))
-      return;
-    final result = await widget.gateway.execute(
-      RemoveContactCommandDto(contactIdHex: contact.id),
+    final removed = await ContactActions.remove(
+      context,
+      widget.gateway,
+      contact,
     );
-    if (!mounted) return;
-    if (!result.ok) {
-      _showError(result, 'Could not remove contact');
-      return;
-    }
-    Navigator.of(context).pop();
-  }
-
-  Future<bool> _confirm(String title, String message, String action) async =>
-      await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(title),
-          content: Text(message),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: Text(action),
-            ),
-          ],
-        ),
-      ) ??
-      false;
-
-  void _showError(BridgeResultDto result, String fallback) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(BridgeErrorPresenter.message(result, fallback: fallback)),
-      ),
-    );
+    if (mounted && removed) Navigator.of(context).pop();
   }
 }
 
@@ -269,21 +191,25 @@ class IdentityDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: const RuntimeAppBar(title: Text('Your identity')),
+    appBar: RuntimeAppBar(title: Text(context.strings.yourIdentity)),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
         _DetailsCard(
-          title: 'Local identity',
+          title: context.strings.localIdentity,
           children: <Widget>[
             _ValueRow(
-              label: 'Display name',
-              value: snapshot.identity?.displayName ?? 'Unavailable',
+              label: context.strings.displayName,
+              value:
+                  snapshot.identity?.displayName ?? context.strings.unavailable,
             ),
-            _ValueRow(label: 'Tor state', value: snapshot.torState),
             _ValueRow(
-              label: 'Onion address',
-              value: snapshot.onionAddress ?? 'Unavailable',
+              label: context.strings.torState,
+              value: snapshot.torState,
+            ),
+            _ValueRow(
+              label: context.strings.onionAddress,
+              value: snapshot.onionAddress ?? context.strings.unavailable,
               selectable: true,
             ),
           ],

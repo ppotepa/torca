@@ -56,6 +56,49 @@ class TorcaStrings {
   String get yesterday => _pl ? 'Wczoraj' : 'Yesterday';
   String get retryNow => _pl ? 'Spróbuj ponownie' : 'Retry now';
   String get retrying => _pl ? 'Ponawianie…' : 'Retrying…';
+  String get blocked => _pl ? 'Zablokowany' : 'Blocked';
+  String get directTorContact =>
+      _pl ? 'Bezpośredni kontakt Tor' : 'Direct Tor contact';
+  String get startConversation =>
+      _pl ? 'Rozpocznij rozmowę' : 'Start conversation';
+  String get connection => _pl ? 'Połączenie' : 'Connection';
+  String get state => _pl ? 'Stan' : 'State';
+  String get quality => _pl ? 'Jakość' : 'Quality';
+  String get onionAddress => _pl ? 'Adres onion' : 'Onion address';
+  String get connectionDetails =>
+      _pl ? 'Szczegóły połączenia' : 'Connection details';
+  String get contactActions => _pl ? 'Akcje kontaktu' : 'Contact actions';
+  String get renameContact => _pl ? 'Zmień nazwę kontaktu' : 'Rename contact';
+  String get unblockContact => _pl ? 'Odblokuj kontakt' : 'Unblock contact';
+  String get blockContact => _pl ? 'Zablokuj kontakt' : 'Block contact';
+  String get removeContact => _pl ? 'Usuń kontakt' : 'Remove contact';
+  String get localName => _pl ? 'Nazwa lokalna' : 'Local name';
+  String get cancel => _pl ? 'Anuluj' : 'Cancel';
+  String get save => _pl ? 'Zapisz' : 'Save';
+  String get remove => _pl ? 'Usuń' : 'Remove';
+  String blockContactTitle(String name) =>
+      _pl ? 'Zablokować kontakt $name?' : 'Block $name?';
+  String get blockContactDescription => _pl
+      ? 'Torca zamknie połączenie z tym kontaktem i nie połączy się ponownie, dopóki go nie odblokujesz.'
+      : 'Torca will close the peer connection and will not reconnect until you unblock this contact.';
+  String removeContactTitle(String name) =>
+      _pl ? 'Usunąć kontakt $name?' : 'Remove $name?';
+  String get removeContactDescription => _pl
+      ? 'Usuwa to lokalną relację, historię rozmowy, oczekujące operacje i chronione dane uwierzytelniające kontaktu.'
+      : 'This removes the local relationship, conversation history, pending work and protected peer credential.';
+  String get couldNotRenameContact =>
+      _pl ? 'Nie udało się zmienić nazwy kontaktu' : 'Could not rename contact';
+  String get couldNotBlockContact =>
+      _pl ? 'Nie udało się zablokować kontaktu' : 'Could not block contact';
+  String get couldNotUnblockContact =>
+      _pl ? 'Nie udało się odblokować kontaktu' : 'Could not unblock contact';
+  String get couldNotRemoveContact =>
+      _pl ? 'Nie udało się usunąć kontaktu' : 'Could not remove contact';
+  String get yourIdentity => _pl ? 'Twoja tożsamość' : 'Your identity';
+  String get localIdentity => _pl ? 'Tożsamość lokalna' : 'Local identity';
+  String get displayName => _pl ? 'Nazwa wyświetlana' : 'Display name';
+  String get torState => _pl ? 'Stan Tor' : 'Tor state';
+  String get unavailable => _pl ? 'Niedostępne' : 'Unavailable';
 }
 
 extension TorcaStringsContext on BuildContext {

@@ -204,7 +204,8 @@ class _ConversationPaneState extends State<ConversationPane>
     _unreadBoundaryMessageId = _timeline.messages
         .where(
           (message) =>
-              message.direction == 'inbound' && message.status == 'delivered',
+              message.typedDirection == MessageDirection.inbound &&
+              message.typedStatus == MessageStatus.delivered,
         )
         .map((message) => message.id)
         .firstOrNull;
@@ -325,7 +326,8 @@ class _ConversationPaneState extends State<ConversationPane>
     if (ModalRoute.of(context)?.isCurrent != true || !_nearBottom()) return;
     final hasDelivered = _timeline.messages.any(
       (message) =>
-          message.direction == 'inbound' && message.status == 'delivered',
+          message.typedDirection == MessageDirection.inbound &&
+          message.typedStatus == MessageStatus.delivered,
     );
     if (!hasDelivered) return;
     _markingRead = true;
@@ -424,8 +426,8 @@ class _ConversationPaneState extends State<ConversationPane>
                           )
                           .toList(growable: false);
                       final retryable =
-                          message.direction == 'outbound' &&
-                          message.status == 'failed';
+                          message.typedDirection == MessageDirection.outbound &&
+                          message.typedStatus == MessageStatus.failed;
                       final attachmentAnnouncement = message.body.startsWith(
                         'Attachment: ',
                       );
@@ -445,7 +447,9 @@ class _ConversationPaneState extends State<ConversationPane>
                             // A typed AttachmentDto is rendered below; until
                             // it arrives, show a safe synchronizing state.
                             showBody: !attachmentAnnouncement,
-                            senderLabel: message.direction == 'outbound'
+                            senderLabel:
+                                message.typedDirection ==
+                                    MessageDirection.outbound
                                 ? 'You'
                                 : contact?.displayName ?? 'Contact',
                             compactTop: grouped,

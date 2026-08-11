@@ -234,8 +234,8 @@ class _TorcaAppState extends State<TorcaApp> {
   void _openPairing() {
     // Pairing has two explicit product flows: joining belongs to the global
     // add-contact action, while creating belongs exclusively to Invitations.
-    // Do not route through the legacy combined PairingScreen; it reintroduces
-    // the old Create/Join UI on Android and desktop shortcuts.
+    // Keep the platform shortcut aligned with the same focused join modal used
+    // by Contacts; invitation creation remains in the Invitations section.
     final context = _navigatorKey.currentContext;
     if (context != null) {
       unawaited(showJoinInvitationModal(context, widget.gateway));

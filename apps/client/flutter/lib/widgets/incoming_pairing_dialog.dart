@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../controllers/pairing_action_controller.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import 'bridge_error_presenter.dart';
+import '../theme/app_semantic_colors.dart';
 
 /// Global approval surface for a remote device that joined an invitation.
 class IncomingPairingDialog extends StatefulWidget {
@@ -21,9 +22,22 @@ class IncomingPairingDialog extends StatefulWidget {
 }
 
 class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
-  bool _busy = false;
+  late final PairingActionController _actions = PairingActionController(
+    widget.gateway,
+  )..addListener(_changed);
   bool _accepted = false;
-  String? _error;
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _actions
+      ..removeListener(_changed)
+      ..dispose();
+    super.dispose();
+  }
 
   PairingDto? _current(AppSnapshotDto snapshot) {
     for (final pairing in snapshot.pairings) {
@@ -32,30 +46,14 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
     return null;
   }
 
-  Future<void> _run(BridgeCommandDto command, {required bool accept}) async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    final result = await widget.gateway.execute(command);
-    if (!mounted) return;
-    if (!result.ok) {
-      setState(() {
-        _busy = false;
-        _error = BridgeErrorPresenter.message(
-          result,
-          fallback: 'Pairing operation failed',
-        );
-      });
-      return;
-    }
+  Future<void> _run(PairingAction action, {required bool accept}) async {
+    final succeeded = await _actions.run(action, widget.pairing.id);
+    if (!mounted || !succeeded) return;
     if (!accept) {
       Navigator.of(context).pop();
       return;
     }
     setState(() {
-      _busy = false;
       _accepted = true;
     });
   }
@@ -92,7 +90,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                         : context.torcaIcons.addContact,
                     size: 58,
                     color: completed
-                        ? Colors.green.shade700
+                        ? context.semanticColors.connectionReady
                         : Theme.of(context).colorScheme.primary,
                   ),
                   const SizedBox(height: 12),
@@ -122,10 +120,10 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                           : 'This device joined your invitation. Review the contact details before accepting.',
                       textAlign: TextAlign.center,
                     ),
-                    if (_error != null) ...<Widget>[
+                    if (_actions.error != null) ...<Widget>[
                       const SizedBox(height: 12),
                       Text(
-                        _error!,
+                        _actions.error!,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.error,
@@ -138,15 +136,13 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                         children: <Widget>[
                           Expanded(
                             child: FilledButton.icon(
-                              onPressed: _busy
+                              onPressed: _actions.busy
                                   ? null
                                   : () => _run(
-                                      ApprovePairingCommandDto(
-                                        sessionIdHex: widget.pairing.id,
-                                      ),
+                                      PairingAction.approve,
                                       accept: true,
                                     ),
-                              icon: _busy
+                              icon: _actions.busy
                                   ? const SizedBox(
                                       width: 18,
                                       height: 18,
@@ -161,12 +157,10 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: OutlinedButton.icon(
-                              onPressed: _busy
+                              onPressed: _actions.busy
                                   ? null
                                   : () => _run(
-                                      RejectPairingCommandDto(
-                                        sessionIdHex: widget.pairing.id,
-                                      ),
+                                      PairingAction.reject,
                                       accept: false,
                                     ),
                               icon: Icon(context.torcaIcons.close),

@@ -10,6 +10,7 @@ import '../widgets/adaptive_app_shell.dart';
 import '../widgets/app_overflow_menu.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/connection_indicator.dart';
+import '../widgets/contact_actions.dart';
 import '../widgets/conversation_actions.dart';
 import '../widgets/conversation_summary_tile.dart';
 import '../widgets/runtime_network_status.dart';
@@ -142,9 +143,8 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
         (steps.length * 100);
     final active = projectedSteps.where(
       (step) =>
-          step.state == 'running' ||
-          step.state == 'verifying' ||
-          step.state == 'retrying',
+          step.typedState == BootstrapStepState.running ||
+          step.typedState == BootstrapStepState.verifying,
     );
     final elapsed = active.isEmpty ? _elapsed : _elapsedFor(active.first);
     final restartRequired = projectedSteps.any(
@@ -309,7 +309,9 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
 
   String _diagnostic(AppSnapshotDto snapshot) {
     final failed = snapshot.bootstrapSteps.where(
-      (step) => step.state == 'failed' || step.state == 'degraded',
+      (step) =>
+          step.typedState == BootstrapStepState.failed ||
+          step.typedState == BootstrapStepState.degraded,
     );
     final step = failed.isEmpty ? null : failed.first;
     if (step == null || step.code == null || step.code!.isEmpty) {
@@ -348,12 +350,11 @@ class _BootstrapStepTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ready = step.state == 'ready';
+    final ready = step.typedState == BootstrapStepState.ready;
     final running =
-        step.state == 'running' ||
-        step.state == 'verifying' ||
-        step.state == 'retrying';
-    final degraded = step.state == 'degraded';
+        step.typedState == BootstrapStepState.running ||
+        step.typedState == BootstrapStepState.verifying;
+    final degraded = step.typedState == BootstrapStepState.degraded;
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 3),
       decoration: BoxDecoration(
@@ -375,7 +376,7 @@ class _BootstrapStepTile extends StatelessWidget {
               ? context.torcaIcons.reconnect
               : context.torcaIcons.queued,
           color: ready
-              ? Colors.green
+              ? context.torcaColors.connectionReady
               : degraded
               ? Theme.of(context).colorScheme.tertiary
               : running
@@ -400,7 +401,7 @@ class _BootstrapStepTile extends StatelessWidget {
                     const SizedBox(width: 10),
                   ],
                   Text(
-                    step.state == 'retrying' && retryRemaining != null
+                    retryRemaining != null
                         ? _formatDuration(retryRemaining!)
                         : _formatDuration(elapsed),
                   ),
@@ -575,8 +576,8 @@ class _HomeScreenState extends State<HomeScreen> {
           onRetry: widget.onRetryBootstrap,
         );
       }
-      if (snapshot.bootstrapPhase != 'ready' &&
-          snapshot.bootstrapPhase != 'ready_for_profile') {
+      if (snapshot.typedBootstrapPhase != BootstrapPhase.ready &&
+          snapshot.typedBootstrapPhase != BootstrapPhase.readyForProfile) {
         return _BootstrapProgressScreen(
           snapshot: snapshot,
           onRetry: () =>
@@ -829,7 +830,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case ConversationAction.contactDetails:
         _openContactDetails(contact);
       case ConversationAction.rename:
-        await _renameContact(contact);
+        await ContactActions.rename(context, widget.gateway, contact);
       case ConversationAction.clearHistory:
         if (!await _confirm(
           'Clear conversation history?',
@@ -844,34 +845,9 @@ class _HomeScreenState extends State<HomeScreen> {
           'Could not clear conversation history',
         );
       case ConversationAction.blockToggle:
-        if (contact.status == 'blocked') {
-          await _execute(
-            UnblockContactCommandDto(contactIdHex: contact.id),
-            'Could not unblock contact',
-          );
-        } else {
-          if (!await _confirm(
-            'Block ${contact.displayName}?',
-            'The current peer connection will be closed and Torca will not reconnect until you unblock this contact.',
-            'Block',
-          ))
-            return;
-          await _execute(
-            BlockContactCommandDto(contactIdHex: contact.id),
-            'Could not block contact',
-          );
-        }
+        await ContactActions.toggleBlock(context, widget.gateway, contact);
       case ConversationAction.remove:
-        if (!await _confirm(
-          'Remove ${contact.displayName}?',
-          'This removes the contact, local conversation history, pending work and protected peer credential. This cannot be undone.',
-          'Remove',
-        ))
-          return;
-        await _execute(
-          RemoveContactCommandDto(contactIdHex: contact.id),
-          'Could not remove contact',
-        );
+        await ContactActions.remove(context, widget.gateway, contact);
     }
   }
 
@@ -885,77 +861,19 @@ class _HomeScreenState extends State<HomeScreen> {
       case ContactAction.contactDetails:
         _openContactDetails(contact);
       case ContactAction.rename:
-        await _renameContact(contact);
+        await ContactActions.rename(context, widget.gateway, contact);
       case ContactAction.blockToggle:
-        if (contact.status == 'blocked') {
-          await _execute(
-            UnblockContactCommandDto(contactIdHex: contact.id),
-            'Could not unblock contact',
-          );
-        } else {
-          if (!await _confirm(
-            'Block ${contact.displayName}?',
-            'The current peer connection will be closed and Torca will not reconnect until you unblock this contact.',
-            'Block',
-          ))
-            return;
-          await _execute(
-            BlockContactCommandDto(contactIdHex: contact.id),
-            'Could not block contact',
-          );
-        }
+        await ContactActions.toggleBlock(context, widget.gateway, contact);
       case ContactAction.remove:
-        if (!await _confirm(
-          'Remove ${contact.displayName}?',
-          'This removes the contact, local conversation history, pending work and protected peer credential. This cannot be undone.',
-          'Remove',
-        ))
-          return;
-        await _execute(
-          RemoveContactCommandDto(contactIdHex: contact.id),
-          'Could not remove contact',
+        final removed = await ContactActions.remove(
+          context,
+          widget.gateway,
+          contact,
         );
-        if (mounted && _selectedContactId == contact.id) {
+        if (mounted && removed && _selectedContactId == contact.id) {
           setState(() => _selectedContactId = null);
         }
     }
-  }
-
-  Future<void> _renameContact(ContactDto contact) async {
-    final controller = TextEditingController(text: contact.displayName);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename contact'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 64,
-          decoration: const InputDecoration(labelText: 'Local name'),
-          onSubmitted: (value) => Navigator.of(context).pop(value),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    final normalized = name?.trim();
-    if (normalized == null || normalized.isEmpty || !mounted) return;
-    await _execute(
-      RenameContactCommandDto(
-        contactIdHex: contact.id,
-        displayName: normalized,
-      ),
-      'Could not rename contact',
-    );
   }
 
   Future<bool> _confirm(String title, String message, String action) async =>
@@ -1188,7 +1106,7 @@ class _ConversationList extends StatelessWidget {
     ContactDto contact, {
     Offset? globalPosition,
   }) async {
-    final blocked = contact.status == 'blocked';
+    final blocked = contact.typedStatus == ContactStatus.blocked;
     final action = globalPosition == null
         ? await ConversationActionMenu.showTouch(context, blocked: blocked)
         : await ConversationActionMenu.showDesktop(
@@ -1278,7 +1196,7 @@ class _ContactsSection extends StatelessWidget {
                       children: <Widget>[
                         ConnectionIndicator(
                           state: contact.connectionState,
-                          blocked: contact.status == 'blocked',
+                          blocked: contact.typedStatus == ContactStatus.blocked,
                           showLabel: false,
                         ),
                         IconButton(
@@ -1323,12 +1241,12 @@ class _ContactsSection extends StatelessWidget {
     final action = globalPosition == null
         ? await ContactActionMenu.showTouch(
             context,
-            blocked: contact.status == 'blocked',
+            blocked: contact.typedStatus == ContactStatus.blocked,
           )
         : await ContactActionMenu.showDesktop(
             context,
             globalPosition,
-            blocked: contact.status == 'blocked',
+            blocked: contact.typedStatus == ContactStatus.blocked,
           );
     if (action != null && context.mounted) await onAction(contact, action);
   }
@@ -1376,12 +1294,12 @@ class _InvitationsSection extends StatelessWidget {
           Card(
             child: ListTile(
               leading: Icon(
-                pairing.role == 'creator'
+                pairing.typedRole == PairingRole.creator
                     ? context.torcaIcons.invitations
                     : context.torcaIcons.link,
               ),
               title: Text(
-                pairing.role == 'creator'
+                pairing.typedRole == PairingRole.creator
                     ? 'Created invitation'
                     : 'Joined invitation',
               ),
@@ -1421,7 +1339,7 @@ class _ContactContextPanel extends StatelessWidget {
         const SizedBox(height: 8),
         ConnectionIndicator(
           state: contact.connectionState,
-          blocked: contact.status == 'blocked',
+          blocked: contact.typedStatus == ContactStatus.blocked,
         ),
         const SizedBox(height: 16),
         _ContextValue(label: 'Quality', value: contact.peerHealth.quality),
