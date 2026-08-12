@@ -1,7 +1,7 @@
 //! One communication supervisor over the process-owned authenticated peer link.
 
 use core::fmt;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -345,6 +345,7 @@ pub struct TorcaCommunicationDriver {
     attachments: Arc<Mutex<Box<dyn AttachmentRuntime>>>,
     attachment_job_active: Arc<AtomicBool>,
     attachment_snapshot_cache: Arc<Mutex<Vec<AttachmentView>>>,
+    deferred_attachments: VecDeque<InboundEnvelope>,
     attachment_export: Box<dyn AttachmentExportRuntime>,
     read_state: Box<dyn ReadStateRuntime>,
     relationships: Box<dyn RelationshipAdminRuntime>,
@@ -372,6 +373,7 @@ impl TorcaCommunicationDriver {
             attachments: Arc::new(Mutex::new(attachments)),
             attachment_job_active: Arc::new(AtomicBool::new(false)),
             attachment_snapshot_cache: Arc::new(Mutex::new(Vec::new())),
+            deferred_attachments: VecDeque::new(),
             attachment_export,
             read_state,
             relationships,
@@ -390,6 +392,18 @@ impl TorcaCommunicationDriver {
     }
 
     fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
+        if let Some(envelope) = self.deferred_attachments.pop_front() {
+            match self.attachments.try_lock() {
+                Ok(mut attachments) => attachments.process_inbound(envelope.clone(), now)?,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    self.deferred_attachments.push_front(envelope);
+                    return Ok(());
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(CommunicationError::Attachment);
+                }
+            }
+        }
         for _ in 0..INBOUND_BATCH {
             let Some(envelope) = self.peer.take_inbound()? else { break };
             match envelope.message_kind {
@@ -397,12 +411,23 @@ impl TorcaCommunicationDriver {
                 ATTACHMENT_MESSAGE_KIND => {
                     let contact_id = envelope.contact_id;
                     let envelope_id = envelope.envelope_id;
-                    if let Err(error) = self.attachment_runtime()?.process_inbound(envelope, now) {
-                        eprintln!(
-                            "torca-attachment: inbound failed contact={} envelope={} code={error}",
-                            contact_id, envelope_id
-                        );
-                        return Err(error);
+                    match self.attachments.try_lock() {
+                        Ok(mut attachments) => {
+                            if let Err(error) = attachments.process_inbound(envelope, now) {
+                                eprintln!(
+                                    "torca-attachment: inbound failed contact={} envelope={} code={error}",
+                                    contact_id, envelope_id
+                                );
+                                return Err(error);
+                            }
+                        }
+                        Err(std::sync::TryLockError::WouldBlock) => {
+                            self.deferred_attachments.push_back(envelope);
+                            break;
+                        }
+                        Err(std::sync::TryLockError::Poisoned(_)) => {
+                            return Err(CommunicationError::Attachment);
+                        }
                     }
                 }
                 PROBE_MESSAGE_KIND => self.peer.accept_probe(&envelope, now)?,
