@@ -269,9 +269,9 @@ class _AppearancePreview extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        const Text('Alice'),
+                        Text(context.strings.sampleContactName),
                         Text(
-                          'online',
+                          context.strings.sampleOnline,
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: Theme.of(context).colorScheme.primary,
@@ -280,7 +280,10 @@ class _AppearancePreview extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Text('14:22', style: Theme.of(context).textTheme.labelSmall),
+                  Text(
+                    context.strings.sampleTime,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
                 ],
               ),
               const SizedBox(height: 12),

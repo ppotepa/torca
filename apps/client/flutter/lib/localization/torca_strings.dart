@@ -221,6 +221,9 @@ class TorcaStrings {
   String get presence => _pl ? 'Obecnosc' : 'Presence';
   String get lastSeen => _pl ? 'Ostatnio widziany' : 'Last seen';
   String get todayUpper => _pl ? 'DZISIAJ' : 'TODAY';
+  String get sampleContactName => 'Alice';
+  String get sampleOnline => _pl ? 'online' : 'online';
+  String get sampleTime => '14:22';
   String remoteIdentity(String? id) =>
       _pl ? 'Tozsamosc ${id ?? '-'}' : 'Identity ${id ?? '-'}';
   String get searchMessages => _pl ? 'Szukaj wiadomosci' : 'Search messages';
