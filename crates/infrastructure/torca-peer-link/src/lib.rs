@@ -118,6 +118,7 @@ pub struct PeerLink<S, K> {
     incoming: BTreeMap<ContactId, IncomingSession>,
     outgoing: BTreeMap<ContactId, OutgoingSession>,
     reconnect: BTreeMap<ContactId, ReconnectEntry>,
+    pending_acks: BTreeMap<(ContactId, OpaqueId), LinkAck>,
     inbound: VecDeque<InboundPeerEnvelope>,
     connectivity: Option<ConnectivityObserver>,
 }
@@ -145,6 +146,7 @@ where
             incoming: BTreeMap::new(),
             outgoing: BTreeMap::new(),
             reconnect: BTreeMap::new(),
+            pending_acks: BTreeMap::new(),
             inbound: VecDeque::new(),
             connectivity: None,
         }
@@ -304,11 +306,21 @@ where
         contact_id: ContactId,
         envelope_id: OpaqueId,
     ) -> Result<Option<LinkAck>, PeerLinkError> {
+        if let Some(ack) = self.pending_acks.remove(&(contact_id, envelope_id)) {
+            return Ok(Some(ack));
+        }
         let now = system_timestamp()?;
         match self.poll_contact(contact_id, now) {
-            Ok(Some(PeerMessage::Ack { envelope_id: received, status }))
-                if received == envelope_id =>
-            {
+            Ok(Some(PeerMessage::Ack { envelope_id: received, status })) => {
+                let ack = match status {
+                    AckStatus::Accepted => LinkAck::Accepted,
+                    AckStatus::Duplicate => LinkAck::Duplicate,
+                    AckStatus::Rejected => return Err(PeerLinkError::AckRejected),
+                };
+                if received != envelope_id {
+                    self.pending_acks.insert((contact_id, received), ack);
+                    return Ok(None);
+                }
                 self.observe(
                     contact_id,
                     Some(TransportDirection::Rx),
@@ -317,12 +329,7 @@ where
                     Some(envelope_id),
                     now,
                 );
-                return match status {
-                    AckStatus::Accepted => Ok(LinkAck::Accepted),
-                    AckStatus::Duplicate => Ok(LinkAck::Duplicate),
-                    AckStatus::Rejected => Err(PeerLinkError::AckRejected),
-                }
-                .map(Some);
+                Ok(Some(ack))
             }
             Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
                 self.observe(
