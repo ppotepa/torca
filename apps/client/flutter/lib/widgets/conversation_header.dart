@@ -18,7 +18,7 @@ class ConversationHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = contact;
-    final blocked = value?.status == 'blocked';
+    final blocked = value?.typedStatus == ContactStatus.blocked;
     final name = value?.displayName ?? 'Contact';
     return Row(
       mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
@@ -50,7 +50,9 @@ class ConversationHeader extends StatelessWidget {
                           _presenceLabel(context, value),
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
-                                color: value.presenceState == 'online'
+                                color:
+                                    value.typedPresenceState ==
+                                        PresenceState.online
                                     ? Theme.of(context).colorScheme.primary
                                     : null,
                               ),
@@ -73,10 +75,10 @@ class ConversationHeader extends StatelessWidget {
 }
 
 String _presenceLabel(BuildContext context, ContactDto contact) {
-  if (contact.presenceState == 'online') return 'online';
+  if (contact.typedPresenceState == PresenceState.online) return 'online';
   final milliseconds = contact.lastSeenAtMs;
   if (milliseconds == null || milliseconds <= 0) {
-    return contact.connectionState == 'reconnecting'
+    return contact.peerHealth.typedState == TransportState.reconnecting
         ? 'reconnecting'
         : 'offline';
   }

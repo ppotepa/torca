@@ -26,7 +26,7 @@ class ConversationSummaryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final blocked = contact?.status == 'blocked';
+    final blocked = contact?.typedStatus == ContactStatus.blocked;
     final message = conversation.lastMessageBody;
     final prefix = conversation.lastMessageDirection == 'outbound'
         ? 'You: '

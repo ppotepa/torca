@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 /// backend. Keys are scoped by the caller (for example `message:<id>:retry`).
 class OperationTracker extends ChangeNotifier {
   final Set<String> _active = <String>{};
+  bool _disposed = false;
 
   bool isActive(String key) => _active.contains(key);
 
@@ -13,14 +14,21 @@ class OperationTracker extends ChangeNotifier {
       _active.any((key) => key.startsWith(prefix));
 
   Future<bool> run(String key, Future<void> Function() action) async {
-    if (!_active.add(key)) return false;
+    if (_disposed || !_active.add(key)) return false;
     notifyListeners();
     try {
       await action();
       return true;
     } finally {
       _active.remove(key);
-      notifyListeners();
+      if (!_disposed) notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _active.clear();
+    super.dispose();
   }
 }

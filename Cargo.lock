@@ -5006,6 +5006,7 @@ dependencies = [
  "serde_json",
  "torca-client-application",
  "torca-contacts",
+ "torca-conversations",
  "torca-foundation",
  "torca-messaging",
  "torca-pairing",
@@ -5128,6 +5129,7 @@ version = "0.2.0-alpha.0"
 dependencies = [
  "jni",
  "serde_json",
+ "torca-attachments",
  "torca-client-application",
  "torca-client-engine",
  "torca-communication-adapters",

@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
-use torca_communication_adapters::{ProductionCommunicationInputs, build_production_communication};
+use torca_communication_adapters::{
+    ProductionCommunicationInputs, ReadReceiptPolicy, build_production_communication,
+};
 use torca_connectivity::ConnectivityObserver;
 use torca_crypto::{
     ManagedIdentityKeys, ManagedPeerSecrets, OwnedHandshakeSigner, RustCryptoProvider,
@@ -76,15 +78,17 @@ impl RelayProbe for TorRelayProbe {
 pub(crate) fn spawn_production_runtime(
     engine: EngineHandle,
     bootstrap_observer: TorBootstrapObserver,
+    read_receipt_policy: ReadReceiptPolicy,
 ) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
     let platform = crate::platform_selector::platform_services()?;
-    spawn_runtime_for(platform.as_ref(), engine, bootstrap_observer)
+    spawn_runtime_for(platform.as_ref(), engine, bootstrap_observer, read_receipt_policy)
 }
 
 fn spawn_runtime_for(
     platform: &dyn PlatformServices,
     engine: EngineHandle,
     bootstrap_observer: TorBootstrapObserver,
+    read_receipt_policy: ReadReceiptPolicy,
 ) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
     let paths = platform.app_paths();
     let database_path = paths.data.join("torca.db");
@@ -144,6 +148,7 @@ fn spawn_runtime_for(
             tor_client: tor_client.clone(),
             local_identity_id: identity_id,
             connectivity: connectivity.clone(),
+            read_receipt_policy,
         },
     )
     .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;

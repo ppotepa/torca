@@ -6,9 +6,19 @@ abstract final class BridgeErrorPresenter {
     String fallback = 'The operation could not be completed.',
   }) {
     if (result.ok) return '';
-    final explicit = result.error?.trim();
-    if (explicit != null && explicit.isNotEmpty) return explicit;
-    return switch (result.errorCode) {
+    final code = (result.errorCode ?? result.messageKey ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('.', '_');
+    final typed = switch (code) {
+      'relay_not_ready' =>
+        'Pairing is unavailable until the secure relay is ready.',
+      'relay_degraded' =>
+        'Pairing is temporarily unavailable while the relay reconnects.',
+      'profile_not_ready' =>
+        'The secure runtime is not ready for profile setup.',
+      'identity_changed' =>
+        'Contact identity changed. Verify the new Safety Number before sending.',
       'pairing_expired' => 'The pairing invitation has expired.',
       'already_exists' => 'This item already exists.',
       'not_found' => 'The requested item is no longer available.',
@@ -23,7 +33,13 @@ abstract final class BridgeErrorPresenter {
         'The secure Torca runtime is currently unavailable.',
       'operation_conflict' =>
         'The operation is not valid in the current state.',
-      _ => fallback,
+      _ => null,
     };
+    if (typed != null) return typed;
+    final explicit = result.error?.trim();
+    if (explicit != null && explicit.isNotEmpty && !explicit.contains('.')) {
+      return explicit;
+    }
+    return fallback;
   }
 }

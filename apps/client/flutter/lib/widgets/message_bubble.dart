@@ -33,7 +33,7 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final outbound = message.direction == 'outbound';
+    final outbound = message.typedDirection == MessageDirection.outbound;
     final background = outbound
         ? context.semanticColors.messageOutbound
         : context.semanticColors.messageInbound;

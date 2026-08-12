@@ -76,6 +76,12 @@ pub trait RuntimeSettingsPort {
         enabled: bool,
         updated_at_ms: i64,
     ) -> Result<(), ApplicationQueryError>;
+    fn read_receipts_enabled(&self) -> Result<bool, ApplicationQueryError>;
+    fn set_read_receipts_enabled(
+        &self,
+        enabled: bool,
+        updated_at_ms: i64,
+    ) -> Result<(), ApplicationQueryError>;
     fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError>;
     fn acknowledge_new_contacts(&self, updated_at_ms: i64) -> Result<(), ApplicationQueryError>;
 }

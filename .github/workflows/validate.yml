@@ -89,6 +89,8 @@ jobs:
           cache: true
       - name: Build Windows client
         shell: pwsh
+        env:
+          TORCA_RELAY_ENDPOINT: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443
         run: ./scripts/build.ps1 -Target windows -Configuration debug -CI
 
   android:
@@ -116,4 +118,6 @@ jobs:
           cache: true
       - name: Build Android client
         shell: pwsh
+        env:
+          TORCA_RELAY_ENDPOINT: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443
         run: ./scripts/build.ps1 -Target android -Configuration debug -CI

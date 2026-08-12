@@ -113,4 +113,22 @@ void main() {
     timeline.dispose();
     await gateway.dispose();
   });
+
+  test('late query completion is ignored after dispose', () async {
+    final gateway = _HistoryGateway();
+    final timeline = ConversationTimelineController(
+      gateway: gateway,
+      conversationId: 'conversation',
+    );
+    final initializing = timeline.initialize();
+
+    timeline.dispose();
+    gateway.first.complete(
+      const ConversationPageDto(messages: <MessageDto>[], hasMore: false),
+    );
+
+    await initializing;
+    expect(timeline.messages, isEmpty);
+    await gateway.dispose();
+  });
 }

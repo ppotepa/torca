@@ -65,28 +65,11 @@ fn main() {
             eprintln!("{error}: {}", release_path.display());
             std::process::exit(1);
         });
-    let rust_expected = format!(
-        concat!(
-            "// GENERATED FILE. DO NOT EDIT.\n",
-            "// Generated from: crates/platform/torca-contract/schema/torca_contract.json\n\n",
-            "pub const SCHEMA_VERSION: u16 = {schema_version};\n",
-            "pub const CONTRACT_VERSION: u16 = {contract_version};\n",
-            "pub const COMMANDS: &[&str] = &[{commands}];\n",
-            "pub const QUERIES: &[&str] = &[{queries}];\n\n",
-            "pub fn contains(kind: &str, name: &str) -> bool {{\n",
-            "    match kind {{\n",
-            "        \"command\" => COMMANDS.contains(&name),\n",
-            "        \"query\" => QUERIES.contains(&name),\n",
-            "        \"lifecycle\" => matches!(name, \"host_started\" | \"foregrounded\" | \"backgrounded\" | \"network_changed\" | \"low_memory\" | \"terminating\"),\n",
-            "        _ => false,\n",
-            "    }}\n",
-            "}}\n",
-        ),
-        schema_version = schema_version.unwrap(),
-        contract_version = contract_version.unwrap(),
-        commands =
-            commands.iter().map(|value| format!("\"{value}\"")).collect::<Vec<_>>().join(", "),
-        queries = queries.iter().map(|value| format!("\"{value}\"")).collect::<Vec<_>>().join(", "),
+    let rust_expected = render_rust_contract(
+        schema_version.unwrap(),
+        contract_version.unwrap(),
+        &commands,
+        &queries,
     );
     if check {
         let actual = fs::read_to_string(&path).unwrap_or_default();
@@ -111,6 +94,42 @@ fn main() {
         fs::write(&rust_path, rust_expected).expect("write generated Rust contract");
         fs::write(&release_path, release_expected).expect("write release manifest contract schema");
     }
+}
+
+fn render_rust_contract(
+    schema_version: u64,
+    contract_version: u64,
+    commands: &[&str],
+    queries: &[&str],
+) -> String {
+    let commands =
+        commands.iter().map(|value| format!("    \"{value}\",")).collect::<Vec<_>>().join("\n");
+    let queries =
+        queries.iter().map(|value| format!("    \"{value}\",")).collect::<Vec<_>>().join("\n");
+    format!(concat!(
+        "// GENERATED FILE. DO NOT EDIT.\n",
+        "// Generated from: crates/platform/torca-contract/schema/torca_contract.json\n\n",
+        "pub const SCHEMA_VERSION: u16 = {schema_version};\n",
+        "pub const CONTRACT_VERSION: u16 = {contract_version};\n",
+        "pub const COMMANDS: &[&str] = &[\n{commands}\n];\n",
+        "pub const QUERIES: &[&str] = &[\n{queries}\n];\n\n",
+        "pub fn contains(kind: &str, name: &str) -> bool {{\n",
+        "    match kind {{\n",
+        "        \"command\" => COMMANDS.contains(&name),\n",
+        "        \"query\" => QUERIES.contains(&name),\n",
+        "        \"lifecycle\" => matches!(\n",
+        "            name,\n",
+        "            \"host_started\"\n",
+        "                | \"foregrounded\"\n",
+        "                | \"backgrounded\"\n",
+        "                | \"network_changed\"\n",
+        "                | \"low_memory\"\n",
+        "                | \"terminating\"\n",
+        "        ),\n",
+        "        _ => false,\n",
+        "    }}\n",
+        "}}\n",
+    ),)
 }
 
 fn render_dart_template(template: &str, contract_version: u64) -> Result<String, String> {

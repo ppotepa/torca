@@ -16,7 +16,9 @@ class DiagnosticsOverview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final readyPeers = snapshot.contacts
-        .where((contact) => contact.peerHealth.state == 'ready')
+        .where(
+          (contact) => contact.peerHealth.typedState == TransportState.ready,
+        )
         .length;
     final totalPeers = snapshot.contacts.length;
     final peerDetail = totalPeers == 0
@@ -38,7 +40,7 @@ class DiagnosticsOverview extends StatelessWidget {
       ),
       _OverviewItem(
         'Tor',
-        snapshot.torState == 'ready',
+        snapshot.transport.tor.typedState == TransportState.ready,
         'State: ${snapshot.torState}',
         context.torcaIcons.identity,
       ),

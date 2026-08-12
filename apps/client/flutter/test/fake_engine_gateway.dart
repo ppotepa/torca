@@ -32,6 +32,7 @@ class FakeEngineGateway implements EngineGateway, PairingUriParser {
   final ListQueue<FakeGatewayResponse> _responses;
   final ListQueue<String?> _parsedPairingCodes;
   final String diagnostics;
+  final List<BridgeCommandDto> commands = <BridgeCommandDto>[];
 
   @override
   ValueListenable<AppSnapshotDto> get snapshots => _snapshots;
@@ -51,6 +52,7 @@ class FakeEngineGateway implements EngineGateway, PairingUriParser {
 
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
+    commands.add(command);
     if (_responses.isEmpty) {
       return const BridgeResultDto(ok: true, kind: 'snapshot');
     }

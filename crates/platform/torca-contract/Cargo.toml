@@ -12,6 +12,7 @@ publish = false
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-client-application = { path = "../../application/torca-client-application" }
 torca-contacts = { path = "../../domains/torca-contacts" }
+torca-conversations = { path = "../../domains/torca-conversations" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
 torca-messaging = { path = "../../domains/torca-messaging" }

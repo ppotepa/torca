@@ -227,11 +227,23 @@ class _TransportLightState extends State<_TransportLight>
     vsync: this,
     duration: const Duration(milliseconds: 240),
   );
+  bool _animationsEnabled = true;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsEnabled =
+        context.torcaTokens.animationDuration != Duration.zero &&
+        !MediaQuery.disableAnimationsOf(context);
     _syncBreathing();
+    if (!_animationsEnabled) {
+      _txPulse
+        ..stop()
+        ..value = 0;
+      _rxPulse
+        ..stop()
+        ..value = 0;
+    }
   }
 
   @override
@@ -243,24 +255,25 @@ class _TransportLightState extends State<_TransportLight>
     final rxChanged =
         oldWidget.indicator.rxSequence != widget.indicator.rxSequence &&
         widget.indicator.rxSequence > 0;
-    if (txChanged) {
+    if (_animationsEnabled && txChanged) {
       _txPulse.forward(from: 0);
     }
-    if (rxChanged) {
+    if (_animationsEnabled && rxChanged) {
       // RX is an independent direction. Do not delay it behind TX: a single
       // snapshot may legitimately contain both directions, and the LEDs must
       // reflect the observed counters rather than an inferred request order.
       _rxPulse.forward(from: 0);
     }
     _syncBreathing();
-    if (oldWidget.indicator.state != widget.indicator.state &&
-        _isAlarmState(widget.indicator.state)) {
+    if (_animationsEnabled &&
+        oldWidget.indicator.typedState != widget.indicator.typedState &&
+        _isAlarmState(widget.indicator.typedState)) {
       _breathing.forward(from: 0);
     }
   }
 
   void _syncBreathing() {
-    if (_isPulsingLink(widget.indicator.state)) {
+    if (_animationsEnabled && _isPulsingLink(widget.indicator.typedState)) {
       if (!_breathing.isAnimating) _breathing.repeat(reverse: true);
     } else {
       _breathing.stop();
@@ -280,13 +293,13 @@ class _TransportLightState extends State<_TransportLight>
   Widget build(BuildContext context) {
     final stateColor = widget.stale
         ? Theme.of(context).colorScheme.outline
-        : _color(context, widget.indicator.state);
+        : _color(context, widget.indicator.typedState);
     final iconColor = widget.stale
         ? Theme.of(context).colorScheme.outline
         : Theme.of(context).colorScheme.onSurface;
     final status = widget.stale
         ? 'monitoring stale'
-        : _statusLabel(widget.indicator.state);
+        : _statusLabel(widget.indicator.typedState);
     final latency = widget.indicator.latencyMs == null
         ? ''
         : ' · ${widget.indicator.latencyMs} ms';
@@ -306,11 +319,11 @@ class _TransportLightState extends State<_TransportLight>
           ]),
           builder: (context, child) {
             final connecting =
-                !widget.stale && _isPulsingLink(widget.indicator.state);
+                !widget.stale && _isPulsingLink(widget.indicator.typedState);
             final failed =
-                !widget.stale && _isAlarmState(widget.indicator.state);
+                !widget.stale && _isAlarmState(widget.indicator.typedState);
             final linkActive =
-                !widget.stale && _linkActive(widget.indicator.state);
+                !widget.stale && _linkActive(widget.indicator.typedState);
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
               child: Row(
@@ -339,14 +352,14 @@ class _TransportLightState extends State<_TransportLight>
                     key: ValueKey<String>('${widget.label}-tx-led'),
                     label: 'TX',
                     active: _txPulse.isAnimating,
-                    color: const Color(0xFF76FF03),
+                    color: context.semanticColors.activityTransmit,
                   ),
                   const SizedBox(width: 3),
                   _EthernetLed(
                     key: ValueKey<String>('${widget.label}-rx-led'),
                     label: 'RX',
                     active: _rxPulse.isAnimating,
-                    color: const Color(0xFFFFC107),
+                    color: context.semanticColors.activityReceive,
                   ),
                 ],
               ),
@@ -377,7 +390,7 @@ class _EthernetLed extends StatelessWidget {
       width: 5,
       height: 9,
       decoration: BoxDecoration(
-        color: active ? color : const Color(0xFF171A18),
+        color: active ? color : context.semanticColors.inactiveIndicator,
         borderRadius: BorderRadius.circular(
           context.torcaTokens.terminal ? 0 : 1,
         ),
@@ -391,37 +404,47 @@ class _EthernetLed extends StatelessWidget {
   );
 }
 
-bool _isVerifying(String state) =>
-    state == 'starting' || state == 'checking' || state == 'connecting';
+bool _isVerifying(TransportState state) => const {
+  TransportState.starting,
+  TransportState.checking,
+  TransportState.connecting,
+}.contains(state);
 
-bool _isPulsingLink(String state) => _isVerifying(state);
+bool _isPulsingLink(TransportState state) => _isVerifying(state);
 
-bool _isAlarmState(String state) =>
-    state == 'degraded' ||
-    state == 'failed' ||
-    state == 'unreachable' ||
-    state == 'disconnected';
+bool _isAlarmState(TransportState state) => const {
+  TransportState.degraded,
+  TransportState.failed,
+  TransportState.unreachable,
+  TransportState.disconnected,
+}.contains(state);
 
-bool _linkActive(String state) => state == 'ready' || state == 'healthy';
+bool _linkActive(TransportState state) =>
+    state == TransportState.ready || state == TransportState.healthy;
 
-String _statusLabel(String state) => switch (state) {
-  'ready' || 'healthy' => 'connected',
-  'starting' || 'checking' || 'connecting' => 'connecting',
-  'degraded' => 'degraded',
-  'failed' || 'unreachable' => 'unavailable',
-  'inactive' => 'inactive',
-  'disconnected' => 'disconnected',
+String _statusLabel(TransportState state) => switch (state) {
+  TransportState.ready || TransportState.healthy => 'connected',
+  TransportState.starting ||
+  TransportState.checking ||
+  TransportState.connecting => 'connecting',
+  TransportState.degraded => 'degraded',
+  TransportState.failed || TransportState.unreachable => 'unavailable',
+  TransportState.inactive => 'inactive',
+  TransportState.disconnected => 'disconnected',
   _ => 'offline',
 };
 
-Color _color(BuildContext context, String state) => switch (state) {
-  'ready' || 'healthy' => context.semanticColors.connectionReady,
-  'starting' ||
-  'checking' ||
-  'connecting' => context.semanticColors.connectionConnecting,
-  'degraded' => context.semanticColors.warning,
-  'failed' || 'unreachable' => context.semanticColors.connectionOffline,
-  'inactive' || 'stopped' => const Color(0xFF343A36),
-  'disconnected' => context.semanticColors.connectionOffline,
+Color _color(BuildContext context, TransportState state) => switch (state) {
+  TransportState.ready ||
+  TransportState.healthy => context.semanticColors.connectionReady,
+  TransportState.starting ||
+  TransportState.checking ||
+  TransportState.connecting => context.semanticColors.connectionConnecting,
+  TransportState.degraded => context.semanticColors.warning,
+  TransportState.failed ||
+  TransportState.unreachable => context.semanticColors.connectionOffline,
+  TransportState.inactive ||
+  TransportState.stopped => context.semanticColors.inactiveIndicator,
+  TransportState.disconnected => context.semanticColors.connectionOffline,
   _ => context.semanticColors.connectionConnecting,
 };

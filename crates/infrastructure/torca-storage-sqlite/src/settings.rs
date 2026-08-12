@@ -5,6 +5,14 @@ use rusqlite::OptionalExtension;
 
 use crate::{DatabaseKey, SqlCipherBackend, SqlCipherStoreOpenError};
 
+const BOOL_SETTING_SQL: &str = include_str!("../sql/queries/runtime_bool_setting.sql");
+const SETTING_UPDATED_AT_SQL: &str = include_str!("../sql/queries/runtime_setting_updated_at.sql");
+const UPSERT_BOOL_SETTING_SQL: &str =
+    include_str!("../sql/commands/runtime_bool_setting_upsert.sql");
+const NOTIFICATIONS_ENABLED: &str = "notifications_enabled";
+const READ_RECEIPTS_ENABLED: &str = "read_receipts_enabled";
+const NEW_CONTACTS_ACKNOWLEDGED: &str = "new_contacts_acknowledged";
+
 /// Durable runtime-owned settings stored in the encrypted application database.
 pub struct SqlCipherSettingsStore {
     backend: SqlCipherBackend,
@@ -47,18 +55,7 @@ impl SqlCipherSettingsStore {
     }
 
     pub fn notifications_enabled(&self) -> Result<bool, SettingsError> {
-        let value = self
-            .backend
-            .connection()
-            .query_row(
-                "SELECT bool_value FROM runtime_settings WHERE setting_key = 'notifications_enabled'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(|_| SettingsError::Query)?
-            .unwrap_or(1);
-        Ok(value != 0)
+        self.bool_setting(NOTIFICATIONS_ENABLED, true)
     }
 
     pub fn set_notifications_enabled(
@@ -66,36 +63,59 @@ impl SqlCipherSettingsStore {
         enabled: bool,
         updated_at_ms: i64,
     ) -> Result<(), SettingsError> {
-        self.backend
-            .connection()
-            .execute(
-                "INSERT INTO runtime_settings(setting_key, bool_value, updated_at_ms) VALUES ('notifications_enabled', ?1, ?2) ON CONFLICT(setting_key) DO UPDATE SET bool_value = excluded.bool_value, updated_at_ms = excluded.updated_at_ms",
-                rusqlite::params![i64::from(enabled), updated_at_ms],
-            )
-            .map_err(|_| SettingsError::Write)?;
-        Ok(())
+        self.set_bool_setting(NOTIFICATIONS_ENABLED, enabled, updated_at_ms)
+    }
+
+    pub fn read_receipts_enabled(&self) -> Result<bool, SettingsError> {
+        self.bool_setting(READ_RECEIPTS_ENABLED, true)
+    }
+
+    pub fn set_read_receipts_enabled(
+        &self,
+        enabled: bool,
+        updated_at_ms: i64,
+    ) -> Result<(), SettingsError> {
+        self.set_bool_setting(READ_RECEIPTS_ENABLED, enabled, updated_at_ms)
     }
 
     /// Returns the local acknowledgement boundary for the Contacts navigation badge.
     pub fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, SettingsError> {
         self.backend
             .connection()
-            .query_row(
-                "SELECT updated_at_ms FROM runtime_settings WHERE setting_key = 'new_contacts_acknowledged'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row(SETTING_UPDATED_AT_SQL, [NEW_CONTACTS_ACKNOWLEDGED], |row| {
+                row.get::<_, i64>(0)
+            })
             .optional()
             .map_err(|_| SettingsError::Query)
     }
 
     /// Marks every contact visible at `updated_at_ms` as acknowledged on this device.
     pub fn acknowledge_new_contacts(&self, updated_at_ms: i64) -> Result<(), SettingsError> {
+        self.set_bool_setting(NEW_CONTACTS_ACKNOWLEDGED, true, updated_at_ms)
+    }
+
+    fn bool_setting(&self, key: &str, default: bool) -> Result<bool, SettingsError> {
+        let value = self
+            .backend
+            .connection()
+            .query_row(BOOL_SETTING_SQL, [key], |row| row.get::<_, i64>(0))
+            .optional()
+            .map_err(|_| SettingsError::Query)?
+            .unwrap_or(i64::from(default));
+        Ok(value != 0)
+    }
+
+    fn set_bool_setting(
+        &self,
+        key: &str,
+        enabled: bool,
+        updated_at_ms: i64,
+    ) -> Result<(), SettingsError> {
         self.backend
             .connection()
             .execute(
-                "INSERT INTO runtime_settings(setting_key, bool_value, updated_at_ms) VALUES ('new_contacts_acknowledged', 1, ?1) ON CONFLICT(setting_key) DO UPDATE SET updated_at_ms = excluded.updated_at_ms",
-                rusqlite::params![updated_at_ms],
+                UPSERT_BOOL_SETTING_SQL,
+                rusqlite::params![key, i64::from(enabled), updated_at_ms],
             )
             .map_err(|_| SettingsError::Write)?;
         Ok(())
@@ -114,6 +134,15 @@ mod tests {
         assert!(store.notifications_enabled().expect("read default"));
         store.set_notifications_enabled(false, 42).expect("write setting");
         assert!(!store.notifications_enabled().expect("read updated"));
+    }
+
+    #[test]
+    fn read_receipt_setting_is_durable_for_the_connection() {
+        let key = DatabaseKey::new([0x19; 32]);
+        let store = SqlCipherSettingsStore::open_in_memory(&key).expect("settings store");
+        assert!(store.read_receipts_enabled().expect("read default"));
+        store.set_read_receipts_enabled(false, 42).expect("write setting");
+        assert!(!store.read_receipts_enabled().expect("read updated"));
     }
 
     #[test]

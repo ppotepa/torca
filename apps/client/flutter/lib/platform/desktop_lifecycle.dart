@@ -16,9 +16,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
   final AppNavigationController navigation;
   StreamSubscription<RuntimeEventDto>? _eventSubscription;
   bool _quitting = false;
+  bool _disposed = false;
 
   Future<void> initialize() async {
-    if (!Platform.isWindows) return;
+    if (!Platform.isWindows || _disposed) return;
     await gateway.sendLifecycle('host_started');
     await windowManager.ensureInitialized();
     await windowManager.setPreventClose(true);
@@ -41,8 +42,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
   }
 
   Future<void> dispose() async {
-    if (!Platform.isWindows) return;
+    if (!Platform.isWindows || _disposed) return;
+    _disposed = true;
     await _eventSubscription?.cancel();
+    _eventSubscription = null;
     preferences.removeListener(_preferencesChanged);
     windowManager.removeListener(this);
     trayManager.removeListener(this);
@@ -50,20 +53,22 @@ class DesktopLifecycle with WindowListener, TrayListener {
   }
 
   void _preferencesChanged() {
-    if (!_quitting) unawaited(_updateTrayMenu());
+    if (!_quitting && !_disposed) unawaited(_updateTrayMenu());
   }
 
   void _runtimeEvent(RuntimeEventDto event) {
-    if (!Platform.isWindows || _quitting) return;
+    if (!Platform.isWindows || _quitting || _disposed) return;
     unawaited(_updateTrayMenu());
     if (preferences.notificationsEnabled) unawaited(_notify(event));
   }
 
   Future<void> _updateTrayMenu() async {
-    if (!Platform.isWindows || _quitting) return;
+    if (!Platform.isWindows || _quitting || _disposed) return;
     final snapshot = gateway.snapshots.value;
     final readyPeers = snapshot.contacts
-        .where((contact) => contact.peerHealth.state == 'ready')
+        .where(
+          (contact) => contact.peerHealth.typedState == TransportState.ready,
+        )
         .length;
     await trayManager.setContextMenu(
       Menu(

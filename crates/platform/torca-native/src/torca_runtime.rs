@@ -169,6 +169,12 @@ fn metadata() -> &'static [u8] {
             "relayEndpointHash": RELAY_ENDPOINT_HASH,
             "targetPlatform": std::env::consts::OS,
             "targetArchitecture": std::env::consts::ARCH,
+            "capabilities": {
+                "maxAttachmentBytes": torca_attachments::MAX_ATTACHMENT_BYTES,
+                "maxVideoAttachmentBytes": 5 * 1024 * 1024,
+                "maxQueuedAttachments": 5,
+                "maxAttachmentSourceBytes": 64 * 1024 * 1024,
+            },
         }))
         .expect("static runtime metadata is serializable")
     })
@@ -785,6 +791,12 @@ fn bridge_command(
                 .and_then(Value::as_bool)
                 .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
         }),
+        "privacy.read_receipts.set" => Ok(BridgeCommand::SetReadReceipts {
+            enabled: payload
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
+        }),
         "contacts.acknowledge_new" => Ok(BridgeCommand::AcknowledgeNewContacts),
         "profile.set" => {
             Ok(BridgeCommand::UpdateProfile { display_name: text("displayName")?, at_ms: now()? })
@@ -904,6 +916,11 @@ mod tests {
         assert_eq!(value["nativeAbi"], NATIVE_ABI);
         assert_eq!(value["storageEpoch"], STORAGE_EPOCH);
         assert_eq!(value["contractSchema"], CONTRACT_VERSION);
+        assert_eq!(
+            value["capabilities"]["maxAttachmentBytes"],
+            torca_attachments::MAX_ATTACHMENT_BYTES
+        );
+        assert_eq!(value["capabilities"]["maxQueuedAttachments"], 5);
         assert!(value["buildId"].is_string());
         assert!(value["sourceFingerprint"].is_string());
     }

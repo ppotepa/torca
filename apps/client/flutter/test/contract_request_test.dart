@@ -38,6 +38,7 @@ void main() {
         destinationPath: '/tmp/out',
       ),
       const SetNotificationsCommandDto(enabled: true),
+      const SetReadReceiptsEnabledCommandDto(enabled: false),
       const AcknowledgeNewContactsCommandDto(),
       const RefreshSnapshotCommandDto(),
     ];
@@ -70,6 +71,17 @@ void main() {
       expect(wire['name'], isNotEmpty);
       expect(wire['payload'], isA<Map<String, dynamic>>());
     }
+  });
+
+  test('generated decoders reject missing required fields', () {
+    expect(
+      () => MessageDto.fromJson(<String, dynamic>{'id': 'message'}),
+      throwsA(isA<ContractDecodeException>()),
+    );
+    expect(
+      AppSnapshotDto.fromJson(const <String, dynamic>{}).typedBootstrapPhase,
+      BootstrapPhase.failed,
+    );
   });
 
   test('conversation page cursor includes message id and timestamp', () {

@@ -30,6 +30,7 @@ use crate::json::{
     error_result, success_result,
 };
 use crate::runtime_composition::spawn_production_runtime;
+use torca_communication_adapters::ReadReceiptPolicy;
 
 pub(crate) const ABI_OK: i32 = 0;
 pub(crate) const ABI_ERROR: i32 = -1;
@@ -105,6 +106,8 @@ pub struct TorcaRuntime {
     pub(crate) notification_cursor: u64,
     notification_events: Vec<torca_contract::NotificationEvent>,
     notifications_enabled: bool,
+    read_receipts_enabled: bool,
+    read_receipt_policy: ReadReceiptPolicy,
 }
 
 impl TorcaRuntime {
@@ -139,6 +142,11 @@ impl TorcaRuntime {
             .read_models()
             .and_then(|models| models.settings.notifications_enabled().ok())
             .unwrap_or(true);
+        let read_receipts_enabled = application_runtime
+            .read_models()
+            .and_then(|models| models.settings.read_receipts_enabled().ok())
+            .unwrap_or(true);
+        let read_receipt_policy = ReadReceiptPolicy::new(read_receipts_enabled);
         let contact_notification_seen = application_runtime
             .snapshot_context()
             .map(bridge_snapshot_from_application)
@@ -180,6 +188,8 @@ impl TorcaRuntime {
             notification_cursor: 0,
             notification_events: Vec::new(),
             notifications_enabled,
+            read_receipts_enabled,
+            read_receipt_policy,
         };
         runtime.log(
             "runtime",
@@ -240,6 +250,15 @@ impl TorcaRuntime {
                     i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX),
                 );
             }
+        }
+        if let torca_contract::BridgeCommand::SetReadReceipts { enabled } = &command {
+            let now = unix_time_ms().unwrap_or(0);
+            if self.read_models().settings.set_read_receipts_enabled(*enabled, now).is_err() {
+                self.last_result_json = error_result("read receipt setting storage unavailable");
+                return ABI_ERROR;
+            }
+            self.read_receipts_enabled = *enabled;
+            self.read_receipt_policy.set_enabled(*enabled);
         }
         if matches!(&command, torca_contract::BridgeCommand::AcknowledgeNewContacts) {
             let now = unix_time_ms().unwrap_or(0);
@@ -317,7 +336,7 @@ impl TorcaRuntime {
             && (!self.application_runtime.has_runtime() || !self.network_ready_logged)
         {
             if !self.application_runtime.has_runtime() {
-                snapshot.tor_state = format!("{:?}", self.host_state_hint).to_lowercase();
+                snapshot.tor_state = torca_contract::tor_state_name(self.host_state_hint).into();
             }
             self.apply_host_state_hint(&mut snapshot);
         }
@@ -326,6 +345,7 @@ impl TorcaRuntime {
         self.snapshot_json = serde_json::from_str::<serde_json::Value>(&snapshot_json)
             .map(|mut value| {
                 value["notificationsEnabled"] = serde_json::Value::Bool(self.notifications_enabled);
+                value["readReceiptsEnabled"] = serde_json::Value::Bool(self.read_receipts_enabled);
                 value.to_string()
             })
             .unwrap_or(snapshot_json);
@@ -762,9 +782,9 @@ impl TorcaRuntime {
             if let Some(message) = &summary.last_message {
                 conversation.last_message_body = Some(message.body().as_str().to_owned());
                 conversation.last_message_direction =
-                    Some(format!("{:?}", message.direction()).to_lowercase());
+                    Some(torca_contract::message_direction_name(message.direction()).into());
                 conversation.last_message_status =
-                    Some(format!("{:?}", message.status()).to_lowercase());
+                    Some(torca_contract::message_status_name(message.status()).into());
             }
         }
         Ok(())
@@ -865,15 +885,15 @@ impl TorcaRuntime {
             let _ = progress_sender.send(HostStartEvent::Progress(progress));
         });
         thread::spawn(move || {
-            let result =
-                match catch_unwind(AssertUnwindSafe(|| spawn_production_runtime(engine, observer)))
-                {
-                    Ok(result) => result,
-                    Err(payload) => Err(NativeCompositionError::new(format!(
-                        "production network runtime worker panicked: {}",
-                        panic_message(payload)
-                    ))),
-                };
+            let result = match catch_unwind(AssertUnwindSafe(|| {
+                spawn_production_runtime(engine, observer, read_receipt_policy)
+            })) {
+                Ok(result) => result,
+                Err(payload) => Err(NativeCompositionError::new(format!(
+                    "production network runtime worker panicked: {}",
+                    panic_message(payload)
+                ))),
+            };
             if let Err(send_error) = sender.send(HostStartEvent::Finished(result)) {
                 if let HostStartEvent::Finished(Ok((_handle, owner))) = send_error.0 {
                     let _ = owner.shutdown();

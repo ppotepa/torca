@@ -81,8 +81,7 @@ class FfiEngineGateway
   Stream<RuntimeEventDto> get events => _eventsController.stream;
 
   @override
-  AppCapabilities get capabilities =>
-      const AppCapabilities(maxAttachmentBytes: 16 * 1024 * 1024);
+  ClientCapabilitiesDto get capabilities => buildInfo.capabilities;
 
   @override
   ClientBuildInfo get buildInfo => _worker.buildInfo;
@@ -243,8 +242,10 @@ class FfiEngineGateway
     return BridgeResultDto(
       ok: false,
       kind: 'error:${code ?? 'runtime.operation.failed'}',
-      error: error is Map ? error['messageKey'] as String? : null,
       errorCode: code,
+      messageKey: error is Map ? error['messageKey'] as String? : null,
+      diagnosticId: error is Map ? error['diagnosticId'] as String? : null,
+      retryable: error is Map && (error['retryable'] as bool? ?? false),
       resourceId: value['resourceId'] as String?,
       inviteUri: value['inviteUri'] as String?,
     );
@@ -270,23 +271,36 @@ class NativeRuntimeWorker {
 
   static Future<NativeRuntimeWorker> start() async {
     final ready = ReceivePort();
-    final isolate = await Isolate.spawn(_workerMain, <Object?>[
-      ready.sendPort,
-    ], debugName: 'torca-native-runtime-worker');
-    final ports = await ready.first.timeout(const Duration(seconds: 15)) as Map;
-    if (ports['error'] != null) {
-      throw StateError(ports['error'] as String);
+    Isolate? isolate;
+    ReceivePort? eventPort;
+    try {
+      isolate = await Isolate.spawn(_workerMain, <Object?>[
+        ready.sendPort,
+      ], debugName: 'torca-native-runtime-worker');
+      final value = await ready.first.timeout(const Duration(seconds: 15));
+      if (value is! Map) {
+        throw StateError('native runtime worker returned an invalid handshake');
+      }
+      if (value['error'] != null) {
+        throw StateError(value['error'] as String);
+      }
+      final commandPort = value['commandPort'] as SendPort;
+      eventPort = ReceivePort();
+      commandPort.send(<String, Object?>{'attachEvents': eventPort.sendPort});
+      final metadata = Map<String, dynamic>.from(value['metadata'] as Map);
+      ready.close();
+      return NativeRuntimeWorker._(
+        commandPort,
+        eventPort,
+        isolate,
+        ClientBuildInfo.fromJson(metadata),
+      );
+    } on Object {
+      ready.close();
+      eventPort?.close();
+      isolate?.kill(priority: Isolate.immediate);
+      rethrow;
     }
-    final commandPort = ports['commandPort'] as SendPort;
-    final eventPort = ReceivePort();
-    commandPort.send(<String, Object?>{'attachEvents': eventPort.sendPort});
-    final metadata = Map<String, dynamic>.from(ports['metadata'] as Map);
-    return NativeRuntimeWorker._(
-      commandPort,
-      eventPort,
-      isolate,
-      ClientBuildInfo.fromJson(metadata),
-    );
   }
 
   final SendPort _commandPort;
@@ -322,14 +336,19 @@ class NativeRuntimeWorker {
 
   Future<String> _invokeNow(RuntimeRequestDto request, String requestId) async {
     final reply = ReceivePort();
-    _commandPort.send(<String, Object?>{
-      'invoke': request.encode(requestId),
-      'timeoutMs': request.timeoutMs,
-      'reply': reply.sendPort,
-    });
-    final value = await reply.first;
-    reply.close();
-    return value as String;
+    try {
+      _commandPort.send(<String, Object?>{
+        'invoke': request.encode(requestId),
+        'timeoutMs': request.timeoutMs,
+        'reply': reply.sendPort,
+      });
+      final value = await reply.first.timeout(
+        Duration(milliseconds: request.timeoutMs + 2000),
+      );
+      return value as String;
+    } finally {
+      reply.close();
+    }
   }
 
   bool _isRetryableTimeout(String raw) {
@@ -346,12 +365,15 @@ class NativeRuntimeWorker {
     if (_disposed) return;
     final queued = _requestTail.then((_) async {
       final reply = ReceivePort();
-      _commandPort.send(<String, Object?>{
-        'shutdown': true,
-        'reply': reply.sendPort,
-      });
-      await reply.first;
-      reply.close();
+      try {
+        _commandPort.send(<String, Object?>{
+          'shutdown': true,
+          'reply': reply.sendPort,
+        });
+        await reply.first.timeout(const Duration(seconds: 17));
+      } finally {
+        reply.close();
+      }
     });
     _requestTail = queued.then<void>(
       (_) {},
@@ -363,22 +385,25 @@ class NativeRuntimeWorker {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    final queued = _requestTail.then((_) async {
+    try {
+      await _requestTail.timeout(const Duration(seconds: 12));
       final reply = ReceivePort();
-      _commandPort.send(<String, Object?>{
-        'dispose': true,
-        'reply': reply.sendPort,
-      });
-      await reply.first;
-      reply.close();
-    });
-    _requestTail = queued.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    await queued;
-    _events.close();
-    _isolate.kill(priority: Isolate.immediate);
+      try {
+        _commandPort.send(<String, Object?>{
+          'dispose': true,
+          'reply': reply.sendPort,
+        });
+        await reply.first.timeout(const Duration(seconds: 3));
+      } finally {
+        reply.close();
+      }
+    } on Object {
+      // A failed isolate cannot acknowledge disposal; killing it is the final
+      // bounded cleanup path.
+    } finally {
+      _events.close();
+      _isolate.kill(priority: Isolate.immediate);
+    }
   }
 }
 
@@ -411,6 +436,7 @@ void _workerMainImpl(List<Object?> arguments) {
   SendPort? eventsPort;
   Timer? snapshotTimer;
   var notificationCursor = 0;
+  String? lastSnapshotJson;
   ready.send(<String, Object?>{
     'commandPort': commandPort.sendPort,
     'metadata': metadata,
@@ -422,7 +448,7 @@ void _workerMainImpl(List<Object?> arguments) {
       void pollSnapshot() {
         final target = eventsPort;
         if (target == null) return;
-        var next = const Duration(milliseconds: 250);
+        var next = const Duration(seconds: 1);
         try {
           final raw = bindings.invoke(
             handle,
@@ -434,10 +460,17 @@ void _workerMainImpl(List<Object?> arguments) {
           final decoded = jsonDecode(raw);
           if (decoded is Map && decoded['snapshot'] is Map) {
             final snapshot = decoded['snapshot'] as Map;
-            target.send(jsonEncode(snapshot));
-            // Keep the process-wide transport monitor responsive after
-            // bootstrap too. The native projection is payload-free and cheap.
-            next = const Duration(milliseconds: 250);
+            final encoded = jsonEncode(snapshot);
+            if (encoded != lastSnapshotJson) {
+              lastSnapshotJson = encoded;
+              target.send(encoded);
+            }
+            final phase = snapshot['bootstrapPhase'];
+            final pending = snapshot['pendingOperations'];
+            final settled = phase == 'ready' || phase == 'degraded';
+            if (!settled || (pending is List && pending.isNotEmpty)) {
+              next = const Duration(milliseconds: 250);
+            }
           }
           final notificationRaw = bindings.invoke(
             handle,
@@ -599,221 +632,15 @@ class _WorkerBindings {
 }
 
 AppSnapshotDto? _decodeSnapshot(String raw) {
-  final value = jsonDecode(raw);
-  if (value is! Map<String, dynamic>) return null;
-  final identity = value['identity'];
-  final transport = value['transport'] is Map<String, dynamic>
-      ? value['transport'] as Map<String, dynamic>
-      : const <String, dynamic>{};
-  final relayInfo = transport['relayInfo'] is Map<String, dynamic>
-      ? transport['relayInfo'] as Map<String, dynamic>
-      : null;
-  final navigationBadges = value['navigationBadges'] is Map<String, dynamic>
-      ? value['navigationBadges'] as Map<String, dynamic>
-      : const <String, dynamic>{};
-  TransportIndicatorDto indicator(
-    String name, {
-    required String fallbackState,
-  }) {
-    final item = transport[name] is Map<String, dynamic>
-        ? transport[name] as Map<String, dynamic>
-        : const <String, dynamic>{};
-    return TransportIndicatorDto(
-      state: item['state'] as String? ?? fallbackState,
-      code: item['code'] as String? ?? 'UNAVAILABLE',
-      latencyMs: item['latencyMs'] as int?,
-      lastActivityAtMs: item['lastActivityAtMs'] as int?,
-      activitySequence: item['activitySequence'] as int? ?? 0,
-      txSequence: item['txSequence'] as int? ?? 0,
-      rxSequence: item['rxSequence'] as int? ?? 0,
-      inFlight: item['inFlight'] as int? ?? 0,
-      queued: item['queued'] as int? ?? 0,
-    );
+  try {
+    final value = jsonDecode(raw);
+    if (value is! Map<String, dynamic>) return null;
+    return AppSnapshotDto.fromJson(value);
+  } on FormatException {
+    return null;
+  } on TypeError {
+    return null;
   }
-
-  final bootstrapSteps =
-      (value['bootstrapSteps'] is List<Object?>
-              ? value['bootstrapSteps'] as List<Object?>
-              : const <Object?>[])
-          .whereType<Map<String, dynamic>>()
-          .map(
-            (item) => BootstrapStepDto(
-              id: item['id'] as String? ?? '',
-              state: item['state'] as String? ?? 'pending',
-              code: item['code'] as String?,
-              progress: item['progress'] as int? ?? 0,
-              attempt: item['attempt'] as int? ?? 0,
-              startedAtMs: item['startedAtMs'] as int?,
-              lastProgressAtMs: item['lastProgressAtMs'] as int?,
-              retryAtMs: item['retryAtMs'] as int?,
-            ),
-          )
-          .toList(growable: false);
-  final pairings =
-      (value['pairings'] is List
-              ? value['pairings'] as List<Object?>
-              : const <Object?>[])
-          .whereType<Map<String, dynamic>>()
-          .map(
-            (item) => PairingDto(
-              id: item['id'] as String? ?? '',
-              code: item['code'] as String? ?? '',
-              inviteUri: item['inviteUri'] as String? ?? '',
-              role: item['role'] as String? ?? '',
-              state: item['state'] as String? ?? '',
-              expiresAtMs: item['expiresAtMs'] as int? ?? 0,
-              localApproved: item['localApproved'] as bool? ?? false,
-              remoteApproved: item['remoteApproved'] as bool? ?? false,
-              remoteIdentityId: item['remoteIdentityId'] as String?,
-              remoteDisplayName: item['remoteDisplayName'] as String?,
-              remoteFingerprint: item['remoteFingerprint'] as String?,
-            ),
-          )
-          .toList(growable: false);
-  final contacts =
-      (value['contacts'] is List
-              ? value['contacts'] as List<Object?>
-              : const <Object?>[])
-          .whereType<Map<String, dynamic>>()
-          .map((item) {
-            final health = item['peerHealth'] is Map<String, dynamic>
-                ? item['peerHealth'] as Map<String, dynamic>
-                : const <String, dynamic>{};
-            return ContactDto(
-              id: item['id'] as String? ?? '',
-              displayName: item['displayName'] as String? ?? 'Contact',
-              onionAddress: item['onionAddress'] as String? ?? '',
-              status: item['status'] as String? ?? '',
-              connectionState: item['connectionState'] as String? ?? '',
-              presenceState: item['presenceState'] as String? ?? 'unknown',
-              lastSeenAtMs: item['lastSeenAtMs'] as int?,
-              safetyNumber: item['safetyNumber'] as String?,
-              verificationStatus:
-                  item['verificationStatus'] as String? ?? 'unverified',
-              verifiedAtMs: item['verifiedAtMs'] as int?,
-              peerHealth: PeerHealthDto(
-                state: health['state'] as String? ?? 'disconnected',
-                quality: health['quality'] as String? ?? 'unknown',
-                rttMs: health['rttMs'] as int?,
-                lastSuccessAtMs: health['lastSuccessAtMs'] as int?,
-                consecutiveFailures: health['consecutiveFailures'] as int? ?? 0,
-                reconnectAttempt: health['reconnectAttempt'] as int? ?? 0,
-                lastActivityAtMs: health['lastActivityAtMs'] as int?,
-                activitySequence: health['activitySequence'] as int? ?? 0,
-              ),
-            );
-          })
-          .toList(growable: false);
-  final conversations =
-      (value['conversations'] is List
-              ? value['conversations'] as List
-              : const <Object?>[])
-          .whereType<Map<String, dynamic>>()
-          .map(
-            (item) => ConversationDto(
-              id: item['id'] as String? ?? '',
-              contactId: item['contactId'] as String? ?? '',
-              status: item['status'] as String? ?? '',
-              unreadCount: item['unreadCount'] as int? ?? 0,
-              lastActivityAtMs: item['lastActivityAtMs'] as int? ?? 0,
-              lastMessageBody: item['lastMessageBody'] as String?,
-              lastMessageDirection: item['lastMessageDirection'] as String?,
-              lastMessageStatus: item['lastMessageStatus'] as String?,
-            ),
-          )
-          .toList(growable: false);
-  final messages =
-      (value['messages'] is List
-              ? value['messages'] as List<Object?>
-              : const <Object?>[])
-          .whereType<Map<String, dynamic>>()
-          .map(_decodeMessage)
-          .toList(growable: false);
-  final attachments =
-      (value['attachments'] is List
-              ? value['attachments'] as List<Object?>
-              : const <Object?>[])
-          .whereType<Map<String, dynamic>>()
-          .map(
-            (item) => AttachmentDto(
-              id: item['id'] as String? ?? '',
-              messageId: item['messageId'] as String? ?? '',
-              name: item['name'] as String? ?? '',
-              mediaType: item['mediaType'] as String? ?? '',
-              size: item['size'] as int? ?? 0,
-              status: item['status'] as String? ?? '',
-              offset: item['offset'] as int? ?? 0,
-              attemptCount: item['attemptCount'] as int? ?? 0,
-              updatedAtMs: item['updatedAtMs'] as int? ?? 0,
-              direction: item['direction'] as String? ?? 'outbound',
-            ),
-          )
-          .toList(growable: false);
-  final pendingOperations =
-      (value['pendingOperations'] is List<Object?>
-              ? value['pendingOperations'] as List<Object?>
-              : const <Object?>[])
-          .whereType<Map<String, dynamic>>()
-          .map(
-            (item) => PendingOperationDto(
-              id: item['id'] as String? ?? '',
-              resourceId: item['resourceId'] as String? ?? '',
-              kind: item['kind'] as String? ?? '',
-              state: item['state'] as String? ?? 'queued',
-              dependency: item['dependency'] as String? ?? 'network',
-              attempts: item['attempts'] as int? ?? 0,
-              nextAttemptAtMs: item['nextAttemptAtMs'] as int? ?? 0,
-              createdAtMs: item['createdAtMs'] as int? ?? 0,
-              lastError: item['lastError'] as String?,
-            ),
-          )
-          .toList(growable: false);
-  return AppSnapshotDto(
-    runtimeId: value['runtimeId'] as String? ?? '',
-    revision: value['revision'] as int? ?? 0,
-    notificationCursor: value['notificationCursor'] as int? ?? 0,
-    notificationsEnabled: value['notificationsEnabled'] as bool? ?? true,
-    identity: identity is Map<String, dynamic>
-        ? IdentityDto(
-            displayName: identity['displayName'] as String?,
-            fingerprint: identity['fingerprint'] as String?,
-          )
-        : null,
-    torState: value['torState'] as String? ?? 'stopped',
-    transport: TransportStatusDto(
-      tor: indicator(
-        'tor',
-        fallbackState: value['torState'] as String? ?? 'stopped',
-      ),
-      relay: indicator('relay', fallbackState: 'unknown'),
-      peer: indicator('peer', fallbackState: 'disconnected'),
-      peersReady: transport['peersReady'] as int? ?? 0,
-      peersTotal: transport['peersTotal'] as int? ?? 0,
-      relayInfo: relayInfo == null
-          ? null
-          : RelayInfoDto(
-              productVersion:
-                  relayInfo['productVersion'] as String? ?? 'unknown',
-              buildId: relayInfo['buildId'] as String? ?? 'unknown',
-              sourceCommit: relayInfo['sourceCommit'] as String? ?? 'unknown',
-              protocolVersion: relayInfo['protocolVersion'] as int? ?? 0,
-            ),
-    ),
-    navigationBadges: NavigationBadgesDto(
-      unreadMessages: navigationBadges['unreadMessages'] as int? ?? 0,
-      newContacts: navigationBadges['newContacts'] as int? ?? 0,
-      pairingAttention: navigationBadges['pairingAttention'] as int? ?? 0,
-    ),
-    onionAddress: value['onionAddress'] as String?,
-    bootstrapPhase: value['bootstrapPhase'] as String? ?? 'starting',
-    bootstrapSteps: bootstrapSteps,
-    pairings: pairings,
-    contacts: contacts,
-    conversations: conversations,
-    messages: messages,
-    attachments: attachments,
-    pendingOperations: pendingOperations,
-  );
 }
 
 @visibleForTesting
@@ -836,25 +663,10 @@ ConversationPageDto decodeConversationPageResponse(String raw) {
               ? page['messages'] as List<Object?>
               : const <Object?>[])
           .whereType<Map<String, dynamic>>()
-          .map(_decodeMessage)
+          .map(MessageDto.fromJson)
           .toList(growable: false);
   return ConversationPageDto(
     messages: messages,
     hasMore: page['hasMore'] == true,
   );
 }
-
-MessageDto _decodeMessage(Map<String, dynamic> value) => MessageDto(
-  id: value['id'] as String? ?? '',
-  conversationId: value['conversationId'] as String? ?? '',
-  body: value['body'] as String? ?? '',
-  direction: value['direction'] as String? ?? 'unknown',
-  status: value['status'] as String? ?? 'unknown',
-  replyToMessageId: value['replyToMessageId'] as String?,
-  createdAtMs: value['createdAtMs'] as int? ?? 0,
-  updatedAtMs: value['updatedAtMs'] as int? ?? 0,
-  sentAtMs: value['sentAtMs'] as int?,
-  deliveredAtMs: value['deliveredAtMs'] as int?,
-  readAtMs: value['readAtMs'] as int?,
-  attemptCount: value['attemptCount'] as int? ?? 0,
-);

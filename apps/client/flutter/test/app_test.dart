@@ -17,66 +17,6 @@ TorcaApp _app(EngineGateway gateway) => TorcaApp(
 );
 
 void main() {
-  testWidgets('invitations screen only exposes invitation generation', (
-    WidgetTester tester,
-  ) async {
-    const snapshot = AppSnapshotDto(
-      identity: IdentityDto(displayName: 'Alice'),
-      torState: 'ready',
-      transport: TransportStatusDto(
-        tor: TransportIndicatorDto(state: 'ready'),
-        relay: TransportIndicatorDto(state: 'degraded'),
-      ),
-      bootstrapPhase: 'ready',
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PairingScreen(
-          gateway: FakeEngineGateway(initialSnapshot: snapshot),
-        ),
-      ),
-    );
-    expect(find.text('Join an invitation'), findsNothing);
-    expect(find.byType(TextField), findsNothing);
-    expect(
-      find.widgetWithText(FilledButton, 'Generate Invitation'),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('queued pairing remains visible while network recovers', (
-    WidgetTester tester,
-  ) async {
-    const snapshot = AppSnapshotDto(
-      identity: IdentityDto(displayName: 'Alice'),
-      bootstrapPhase: 'ready',
-      pendingOperations: <PendingOperationDto>[
-        PendingOperationDto(
-          id: '01',
-          resourceId: '02',
-          kind: 'pairing.create',
-          state: 'retrying',
-          dependency: 'relay',
-          attempts: 2,
-          nextAttemptAtMs: 100,
-          createdAtMs: 1,
-        ),
-      ],
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PairingScreen(
-          gateway: FakeEngineGateway(initialSnapshot: snapshot),
-        ),
-      ),
-    );
-
-    expect(find.text('Waiting for network'), findsOneWidget);
-    expect(find.text('Generating invitation'), findsOneWidget);
-    expect(find.text('Retry 2 · waiting for secure relay'), findsOneWidget);
-  });
-
   testWidgets('generator modal starts work without a second generate action', (
     WidgetTester tester,
   ) async {

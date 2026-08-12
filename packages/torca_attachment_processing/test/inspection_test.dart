@@ -54,6 +54,26 @@ void main() {
     );
   });
 
+  test('rejects oversized non-image files before creating a staging copy', () async {
+    final source = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'torca-processing-oversized-${DateTime.now().microsecondsSinceEpoch}.txt',
+    );
+    await source.writeAsString('too large');
+    addTearDown(() async {
+      if (await source.exists()) await source.delete();
+    });
+
+    await expectLater(
+      const AttachmentProcessor().prepare(
+        sourcePath: source.path,
+        originalName: 'notes.txt',
+        maximumBytes: 2,
+      ),
+      throwsA(isA<AttachmentSizeException>()),
+    );
+  });
+
   test('prepares an image below the configured transport budget', () async {
     final source = image.Image(width: 960, height: 720);
     for (var y = 0; y < source.height; y += 1) {

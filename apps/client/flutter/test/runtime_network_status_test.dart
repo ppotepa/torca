@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/runtime_network_status.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 void main() {
   Widget monitor(AppSnapshotDto snapshot) => MaterialApp(
@@ -72,6 +73,33 @@ void main() {
     expect(ledLabel(tester, 'Relay-rx-led'), 'RX activity');
 
     await tester.pump(const Duration(milliseconds: 250));
+
+    expect(ledLabel(tester, 'Relay-tx-led'), 'TX idle');
+    expect(ledLabel(tester, 'Relay-rx-led'), 'RX idle');
+  });
+
+  testWidgets('reduce motion keeps network activity indicators static', (
+    tester,
+  ) async {
+    Widget reducedMotionMonitor(AppSnapshotDto snapshot) => MaterialApp(
+      theme: AppTheme.light(const TorcaAppearance(reduceMotion: true)),
+      home: Scaffold(body: RuntimeNetworkStatus(snapshot: snapshot)),
+    );
+
+    await tester.pumpWidget(reducedMotionMonitor(const AppSnapshotDto()));
+    await tester.pumpWidget(
+      reducedMotionMonitor(
+        const AppSnapshotDto(
+          transport: TransportStatusDto(
+            relay: TransportIndicatorDto(
+              state: 'healthy',
+              txSequence: 1,
+              rxSequence: 1,
+            ),
+          ),
+        ),
+      ),
+    );
 
     expect(ledLabel(tester, 'Relay-tx-led'), 'TX idle');
     expect(ledLabel(tester, 'Relay-rx-led'), 'RX idle');

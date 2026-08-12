@@ -30,9 +30,9 @@ class AttachmentTile extends StatelessWidget {
     final total = attachment.size <= 0 ? 1 : attachment.size;
     final transferred = attachment.offset.clamp(0, total);
     final progress = (transferred / total).clamp(0.0, 1.0);
-    final failed = attachment.status == 'failed';
-    final available = attachment.status == 'available';
-    final cancelled = attachment.status == 'cancelled';
+    final failed = attachment.typedStatus == AttachmentStatus.failed;
+    final available = attachment.typedStatus == AttachmentStatus.available;
+    final cancelled = attachment.typedStatus == AttachmentStatus.cancelled;
     final terminal = available || cancelled;
 
     return Container(

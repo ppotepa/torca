@@ -85,7 +85,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       ),
       _Check(
         'Embedded Tor',
-        snapshot.torState == 'ready',
+        snapshot.transport.tor.typedState == TransportState.ready,
         'Tor state: ${snapshot.torState}',
       ),
       _Check(

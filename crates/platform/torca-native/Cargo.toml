@@ -18,6 +18,7 @@ crate-type = ["cdylib", "rlib"]
 torca-client-application = { path = "../../application/torca-client-application" }
 torca-contract = { path = "../torca-contract" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
+torca-attachments = { path = "../../domains/torca-attachments" }
 torca-communication-adapters = { path = "../../infrastructure/torca-communication-adapters" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }
@@ -53,7 +54,5 @@ unsafe_op_in_unsafe_fn = "deny"
 unused_must_use = "deny"
 
 [lints.clippy]
-all = { level = "allow", priority = -1 }
-pedantic = { level = "allow", priority = -1 }
 module_name_repetitions = "allow"
 must_use_candidate = "allow"

@@ -26,11 +26,26 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
     vsync: this,
     duration: const Duration(milliseconds: 680),
   );
+  bool _animationsEnabled = true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsEnabled =
+        context.torcaTokens.animationDuration != Duration.zero &&
+        !MediaQuery.disableAnimationsOf(context);
+    if (!_animationsEnabled) {
+      _pulse
+        ..stop()
+        ..value = 0;
+    }
+  }
 
   @override
   void didUpdateWidget(covariant PeerHealthIndicator oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.health.activitySequence != widget.health.activitySequence &&
+    if (_animationsEnabled &&
+        oldWidget.health.activitySequence != widget.health.activitySequence &&
         widget.health.activitySequence > 0) {
       _pulse.forward(from: 0);
     }
@@ -45,16 +60,19 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
   @override
   Widget build(BuildContext context) {
     final health = widget.health;
-    final quality = _qualityLabel(health.quality);
-    final color = switch (health.quality) {
-      'excellent' || 'good' => context.semanticColors.connectionReady,
-      'fair' => context.semanticColors.connectionConnecting,
-      'poor' => context.semanticColors.warning,
+    final quality = _qualityLabel(health.typedQuality);
+    final color = switch (health.typedQuality) {
+      PeerHealthQuality.excellent ||
+      PeerHealthQuality.good => context.semanticColors.connectionReady,
+      PeerHealthQuality.fair => context.semanticColors.connectionConnecting,
+      PeerHealthQuality.poor => context.semanticColors.warning,
       _ => context.semanticColors.connectionOffline,
     };
-    final icon = switch (health.quality) {
-      'excellent' || 'good' => context.torcaIcons.online,
-      'fair' || 'poor' => context.torcaIcons.warning,
+    final icon = switch (health.typedQuality) {
+      PeerHealthQuality.excellent ||
+      PeerHealthQuality.good => context.torcaIcons.online,
+      PeerHealthQuality.fair ||
+      PeerHealthQuality.poor => context.torcaIcons.warning,
       _ => context.torcaIcons.error,
     };
     final rtt = health.rttMs == null ? '' : ' · ${health.rttMs} ms';
@@ -106,11 +124,11 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
     );
   }
 
-  String _qualityLabel(String quality) => switch (quality) {
-    'excellent' => 'Excellent',
-    'good' => 'Good',
-    'fair' => 'Fair',
-    'poor' => 'Poor',
+  String _qualityLabel(PeerHealthQuality quality) => switch (quality) {
+    PeerHealthQuality.excellent => 'Excellent',
+    PeerHealthQuality.good => 'Good',
+    PeerHealthQuality.fair => 'Fair',
+    PeerHealthQuality.poor => 'Poor',
     _ => 'Unknown',
   };
 }

@@ -26,9 +26,9 @@ use torca_tor::TorServiceHandle;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
-    HealthPeerLinkAdapter, InboundTextReceiptAdapter, ReadStateAdapter, ReceiptPeerTransport,
-    RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto, TextPeerTransport,
-    TextWorkerAdapter,
+    HealthPeerLinkAdapter, InboundTextReceiptAdapter, PrivacyReadStateAdapter, ReadReceiptPolicy,
+    ReceiptPeerTransport, RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto,
+    TextPeerTransport, TextWorkerAdapter,
 };
 
 const ACK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -60,6 +60,7 @@ pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
     pub tor_client: TorServiceHandle,
     pub local_identity_id: OpaqueId,
     pub connectivity: ConnectivityObserver,
+    pub read_receipt_policy: ReadReceiptPolicy,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -215,7 +216,7 @@ where
         Box::new(inbound),
         Box::new(attachments),
         Box::new(attachment_export),
-        Box::new(ReadStateAdapter::new(read_state)),
+        Box::new(PrivacyReadStateAdapter::new(read_state, inputs.read_receipt_policy)),
         Box::new(relationships),
     ))
 }
