@@ -95,7 +95,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         snapshot.onionAddress ?? 'No onion address',
       ),
       _Check(
-        'Diagnostics stream',
+        context.strings.diagnosticsStream,
         _hasReadableEvents(_json),
         _hasReadableEvents(_json)
             ? 'Health events readable'
@@ -148,7 +148,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: RuntimeAppBar(
-      title: const Text('Diagnostics'),
+      title: Text(context.strings.diagnostics),
       actions: <Widget>[
         IconButton(
           tooltip: 'Run self-test',
@@ -210,8 +210,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 const SizedBox(height: 12),
                 ExpansionTile(
                   tilePadding: EdgeInsets.zero,
-                  title: const Text('Raw diagnostics'),
-                  subtitle: const Text('Redacted developer event stream'),
+                  title: Text(context.strings.rawDiagnostics),
+                  subtitle: Text(context.strings.redactedDeveloperEventStream),
                   children: <Widget>[
                     Container(
                       width: double.infinity,

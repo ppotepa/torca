@@ -10,6 +10,7 @@ import 'package:torca_ui/torca_ui.dart';
 import '../controllers/pairing_action_controller.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../widgets/app_modal.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/operation_tracker.dart';
@@ -179,7 +180,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
                   right: 8,
                   top: 8,
                   child: IconButton.filledTonal(
-                    tooltip: 'Close scanner',
+                    tooltip: context.strings.closeScanner,
                     onPressed: () => Navigator.of(dialogContext).pop(),
                     icon: Icon(context.torcaIcons.close),
                   ),
@@ -385,7 +386,11 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onRetry,
             icon: Icon(context.torcaIcons.reconnect),
-            label: Text(busy ? 'Generating…' : 'Retry generation'),
+            label: Text(
+              busy
+                  ? context.strings.generatingInvitation
+                  : context.strings.retryGeneration,
+            ),
           ),
       ],
     );
@@ -861,7 +866,9 @@ class _TerminalPairingContent extends StatelessWidget {
         icon: Icon(
           completed ? context.torcaIcons.chats : context.torcaIcons.close,
         ),
-        label: Text(completed ? 'Open conversation' : 'Close'),
+        label: Text(
+          completed ? context.strings.openConversation : context.strings.close,
+        ),
       ),
     ],
   );

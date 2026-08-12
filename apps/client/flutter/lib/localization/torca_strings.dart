@@ -150,6 +150,22 @@ class TorcaStrings {
   String get comfortableDensity =>
       _pl ? 'Gestosc wygodna' : 'Comfortable density';
   String get reduceMotion => _pl ? 'Ogranicz ruch' : 'Reduce motion';
+  String get rawDiagnostics => _pl ? 'Surowa diagnostyka' : 'Raw diagnostics';
+  String get redactedDeveloperEventStream => _pl
+      ? 'Zanonimizowany strumien zdarzen deweloperskich'
+      : 'Redacted developer event stream';
+  String get diagnosticsStream =>
+      _pl ? 'Strumien diagnostyczny' : 'Diagnostics stream';
+  String get directP2pOverTor => 'Direct P2P over Tor';
+  String get excellent => _pl ? 'Doskonaly' : 'Excellent';
+  String get good => _pl ? 'Dobry' : 'Good';
+  String get fair => _pl ? 'Sredni' : 'Fair';
+  String get poor => _pl ? 'Slaby' : 'Poor';
+  String get unknown => _pl ? 'Nieznany' : 'Unknown';
+  String get closeScanner => _pl ? 'Zamknij skaner' : 'Close scanner';
+  String get generatingInvitation => _pl ? 'Generowanie…' : 'Generating…';
+  String get retryGeneration => _pl ? 'Ponow generowanie' : 'Retry generation';
+  String get openConversation => _pl ? 'Otworz rozmowe' : 'Open conversation';
 }
 
 extension TorcaStringsContext on BuildContext {

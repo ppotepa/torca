@@ -70,7 +70,8 @@ class ConnectionDetailsScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 24),
-            if (presentation.label != 'Direct P2P over Tor') ...<Widget>[
+            if (presentation.label !=
+                context.strings.directP2pOverTor) ...<Widget>[
               _DetailCard(
                 label: context.strings.status,
                 value: presentation.label,
@@ -79,24 +80,24 @@ class ConnectionDetailsScreen extends StatelessWidget {
             ],
             _DetailCard(
               label: context.strings.transport,
-              value: 'Direct P2P over Tor',
+              value: context.strings.directP2pOverTor,
             ),
             const SizedBox(height: 8),
             _DetailCard(
               label: 'Quality',
-              value: _quality(contact.peerHealth.quality),
+              value: _quality(contact.peerHealth.quality, context),
             ),
             const SizedBox(height: 8),
             _DetailCard(
               label: context.strings.roundTrip,
               value: contact.peerHealth.rttMs == null
-                  ? 'Unavailable'
+                  ? context.strings.unavailable
                   : '${contact.peerHealth.rttMs} ms',
             ),
             const SizedBox(height: 8),
             _DetailCard(
               label: context.strings.lastSuccessfulProbe,
-              value: _timestamp(contact.peerHealth.lastSuccessAtMs),
+              value: _timestamp(contact.peerHealth.lastSuccessAtMs, context),
             ),
             const SizedBox(height: 8),
             _DetailCard(
@@ -126,16 +127,16 @@ class ConnectionDetailsScreen extends StatelessWidget {
     return null;
   }
 
-  static String _quality(String value) => switch (value) {
-    'excellent' => 'Excellent',
-    'good' => 'Good',
-    'fair' => 'Fair',
-    'poor' => 'Poor',
-    _ => 'Unknown',
+  String _quality(String value, BuildContext context) => switch (value) {
+    'excellent' => context.strings.excellent,
+    'good' => context.strings.good,
+    'fair' => context.strings.fair,
+    'poor' => context.strings.poor,
+    _ => context.strings.unknown,
   };
 
-  static String _timestamp(int? value) {
-    if (value == null || value <= 0) return 'Unavailable';
+  String _timestamp(int? value, BuildContext context) {
+    if (value == null || value <= 0) return context.strings.unavailable;
     return DateTime.fromMillisecondsSinceEpoch(value).toLocal().toString();
   }
 }
