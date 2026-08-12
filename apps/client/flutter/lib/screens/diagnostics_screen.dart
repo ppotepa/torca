@@ -7,6 +7,7 @@ import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../widgets/diagnostics_overview.dart';
 import '../widgets/runtime_network_status.dart';
 
@@ -53,15 +54,15 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     try {
       await File(path).writeAsString(value, flush: true);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Diagnostics exported')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.strings.diagnosticsExported)),
+        );
       }
     } on FileSystemException {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Export failed')));
+        ).showSnackBar(SnackBar(content: Text(context.strings.exportFailed)));
       }
     }
   }
@@ -104,7 +105,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Connection self-test'),
+        title: Text(context.strings.connectionSelfTest),
         content: SizedBox(
           width: 520,
           child: ListView(
@@ -127,7 +128,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(context.strings.close),
           ),
         ],
       ),
@@ -197,12 +198,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                     FilledButton.tonalIcon(
                       onPressed: _loading ? null : _selfTest,
                       icon: Icon(context.torcaIcons.diagnostics),
-                      label: const Text('Run self-test'),
+                      label: Text(context.strings.runSelfTest),
                     ),
                     OutlinedButton.icon(
                       onPressed: _loading ? null : _export,
                       icon: Icon(context.torcaIcons.save),
-                      label: const Text('Export diagnostics'),
+                      label: Text(context.strings.exportDiagnostics),
                     ),
                   ],
                 ),

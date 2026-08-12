@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 
 class AttachmentTile extends StatelessWidget {
   const AttachmentTile({
@@ -108,25 +109,25 @@ class AttachmentTile extends StatelessWidget {
                 TextButton.icon(
                   onPressed: operationBusy ? null : onOpen,
                   icon: Icon(context.torcaIcons.open),
-                  label: const Text('Open'),
+                  label: Text(context.strings.open),
                 ),
               if (available)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onSave,
                   icon: Icon(context.torcaIcons.save),
-                  label: const Text('Save as'),
+                  label: Text(context.strings.saveAs),
                 ),
               if (failed)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onRetry,
                   icon: Icon(context.torcaIcons.retry),
-                  label: const Text('Retry'),
+                  label: Text(context.strings.retryNow),
                 ),
               if (!terminal)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onCancel,
                   icon: Icon(context.torcaIcons.close),
-                  label: const Text('Cancel'),
+                  label: Text(context.strings.cancel),
                 ),
             ],
           ),

@@ -117,6 +117,20 @@ class TorcaStrings {
       _pl ? 'Kolejne bledy' : 'Consecutive failures';
   String get reconnectAttempts =>
       _pl ? 'Proby ponownego polaczenia' : 'Reconnect attempts';
+  String get open => _pl ? 'Otworz' : 'Open';
+  String get saveAs => _pl ? 'Zapisz jako' : 'Save as';
+  String get messageDetails => _pl ? 'Szczegoly wiadomosci' : 'Message details';
+  String get close => _pl ? 'Zamknij' : 'Close';
+  String get messageCopied => _pl ? 'Wiadomosc skopiowana' : 'Message copied';
+  String get attachmentSaved => _pl ? 'Zalacznik zapisany' : 'Attachment saved';
+  String get diagnosticsExported =>
+      _pl ? 'Diagnostyka wyeksportowana' : 'Diagnostics exported';
+  String get exportFailed => _pl ? 'Eksport nieudany' : 'Export failed';
+  String get connectionSelfTest =>
+      _pl ? 'Test polaczenia' : 'Connection self-test';
+  String get runSelfTest => _pl ? 'Uruchom test' : 'Run self-test';
+  String get exportDiagnostics =>
+      _pl ? 'Eksportuj diagnostyke' : 'Export diagnostics';
 }
 
 extension TorcaStringsContext on BuildContext {

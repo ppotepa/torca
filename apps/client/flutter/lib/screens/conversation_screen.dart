@@ -10,6 +10,7 @@ import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/bridge_error_presenter.dart';
@@ -815,9 +816,9 @@ class _ConversationPaneState extends State<ConversationPane>
       case MessageAction.copy:
         await Clipboard.setData(ClipboardData(text: message.body));
         if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Message copied')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.strings.messageCopied)),
+          );
         }
       case MessageAction.details:
         await _showMessageDetails(message);
@@ -827,7 +828,7 @@ class _ConversationPaneState extends State<ConversationPane>
   Future<void> _showMessageDetails(MessageDto message) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Message details'),
+      title: Text(context.strings.messageDetails),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -848,7 +849,7 @@ class _ConversationPaneState extends State<ConversationPane>
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
+          child: Text(context.strings.close),
         ),
       ],
     ),
@@ -1033,9 +1034,9 @@ class _ConversationPaneState extends State<ConversationPane>
       );
       if (!mounted) return;
       if (result.ok) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Attachment saved')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.strings.attachmentSaved)),
+        );
       } else {
         _showError(
           BridgeErrorPresenter.message(
