@@ -118,7 +118,7 @@ pub struct PeerLink<S, K> {
     incoming: BTreeMap<ContactId, IncomingSession>,
     outgoing: BTreeMap<ContactId, OutgoingSession>,
     reconnect: BTreeMap<ContactId, ReconnectEntry>,
-    pending_acks: BTreeMap<(ContactId, OpaqueId), LinkAck>,
+    pending_acks: BTreeMap<(ContactId, OpaqueId), Result<LinkAck, PeerLinkError>>,
     inbound: VecDeque<InboundPeerEnvelope>,
     connectivity: Option<ConnectivityObserver>,
 }
@@ -307,15 +307,15 @@ where
         envelope_id: OpaqueId,
     ) -> Result<Option<LinkAck>, PeerLinkError> {
         if let Some(ack) = self.pending_acks.remove(&(contact_id, envelope_id)) {
-            return Ok(Some(ack));
+            return ack.map(Some);
         }
         let now = system_timestamp()?;
         match self.poll_contact(contact_id, now) {
             Ok(Some(PeerMessage::Ack { envelope_id: received, status })) => {
                 let ack = match status {
-                    AckStatus::Accepted => LinkAck::Accepted,
-                    AckStatus::Duplicate => LinkAck::Duplicate,
-                    AckStatus::Rejected => return Err(PeerLinkError::AckRejected),
+                    AckStatus::Accepted => Ok(LinkAck::Accepted),
+                    AckStatus::Duplicate => Ok(LinkAck::Duplicate),
+                    AckStatus::Rejected => Err(PeerLinkError::AckRejected),
                 };
                 if received != envelope_id {
                     self.pending_acks.insert((contact_id, received), ack);
@@ -329,7 +329,7 @@ where
                     Some(envelope_id),
                     now,
                 );
-                Ok(Some(ack))
+                ack.map(Some)
             }
             Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
                 self.observe(
