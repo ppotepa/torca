@@ -379,7 +379,17 @@ impl TorcaCommunicationDriver {
             let Some(envelope) = self.peer.take_inbound()? else { break };
             match envelope.message_kind {
                 TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND => self.inbound.process(envelope, now)?,
-                ATTACHMENT_MESSAGE_KIND => self.attachments.process_inbound(envelope, now)?,
+                ATTACHMENT_MESSAGE_KIND => {
+                    let contact_id = envelope.contact_id;
+                    let envelope_id = envelope.envelope_id;
+                    if let Err(error) = self.attachments.process_inbound(envelope, now) {
+                        eprintln!(
+                            "torca-attachment: inbound failed contact={} envelope={} code={error}",
+                            contact_id, envelope_id
+                        );
+                        return Err(error);
+                    }
+                }
                 PROBE_MESSAGE_KIND => self.peer.accept_probe(&envelope, now)?,
                 _ => self.peer.reject(&envelope)?,
             }
