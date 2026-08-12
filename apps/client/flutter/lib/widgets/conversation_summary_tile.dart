@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import 'connection_indicator.dart';
 
 class ConversationSummaryTile extends StatelessWidget {
@@ -32,9 +33,9 @@ class ConversationSummaryTile extends StatelessWidget {
         ? 'You: '
         : '';
     final subtitle = blocked
-        ? 'Blocked'
+        ? context.strings.blocked
         : message == null || message.isEmpty
-        ? 'No messages yet'
+        ? context.strings.noMessagesYet
         : '$prefix$message';
 
     return GestureDetector(
@@ -42,7 +43,9 @@ class ConversationSummaryTile extends StatelessWidget {
       onSecondaryTapDown: onSecondaryTapDown,
       child: ListTile(
         selected: selected,
-        leading: TorcaAvatar(label: contact?.displayName ?? 'Contact'),
+        leading: TorcaAvatar(
+          label: contact?.displayName ?? context.strings.contactLabel,
+        ),
         title: Row(
           children: <Widget>[
             Expanded(child: Text(contact?.displayName ?? 'Contact')),

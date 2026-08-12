@@ -131,6 +131,8 @@ class TorcaStrings {
   String get runSelfTest => _pl ? 'Uruchom test' : 'Run self-test';
   String get exportDiagnostics =>
       _pl ? 'Eksportuj diagnostyke' : 'Export diagnostics';
+  String get noMessagesYet => _pl ? 'Brak wiadomosci' : 'No messages yet';
+  String get contactLabel => _pl ? 'Kontakt' : 'Contact';
 }
 
 extension TorcaStringsContext on BuildContext {

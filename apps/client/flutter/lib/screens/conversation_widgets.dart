@@ -12,8 +12,8 @@ class _DateSeparator extends StatelessWidget {
     final day = DateTime(date.year, date.month, date.day);
     final difference = today.difference(day).inDays;
     final label = switch (difference) {
-      0 => 'Today',
-      1 => 'Yesterday',
+      0 => context.strings.today,
+      1 => context.strings.yesterday,
       _ =>
         '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
     };
@@ -30,14 +30,14 @@ class _UnreadSeparator extends StatelessWidget {
   const _UnreadSeparator();
 
   @override
-  Widget build(BuildContext context) => const Row(
+  Widget build(BuildContext context) => Row(
     children: <Widget>[
-      Expanded(child: Divider()),
+      const Expanded(child: Divider()),
       Padding(
-        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Text('New messages'),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text(context.strings.newMessages),
       ),
-      Expanded(child: Divider()),
+      const Expanded(child: Divider()),
     ],
   );
 }
@@ -66,7 +66,7 @@ class _ReplyComposerPreview extends StatelessWidget {
           ),
         ),
         IconButton(
-          tooltip: 'Cancel reply',
+          tooltip: context.strings.cancel,
           visualDensity: VisualDensity.compact,
           onPressed: onCancel,
           icon: Icon(context.torcaIcons.close),
