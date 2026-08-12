@@ -396,7 +396,7 @@ class _ConversationPaneState extends State<ConversationPane>
                             ? (_searchController.text.trim().isEmpty
                                   ? 'Type to search this conversation.'
                                   : 'No matching messages.')
-                            : 'No messages yet. Messages are sent directly through Tor.',
+                            : '${context.strings.noMessagesYet}. ${context.strings.noMessagesYetDescription}',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -497,7 +497,9 @@ class _ConversationPaneState extends State<ConversationPane>
                                           )
                                         : Icon(context.torcaIcons.retry),
                                     label: Text(
-                                      retryBusy ? 'Retrying…' : 'Retry now',
+                                      retryBusy
+                                          ? context.strings.retrying
+                                          : context.strings.retryNow,
                                     ),
                                   ),
                                 ),
@@ -688,7 +690,7 @@ class _ConversationPaneState extends State<ConversationPane>
             )
           else
             IconButton(
-              tooltip: 'Close search',
+              tooltip: context.strings.closeSearch,
               onPressed: _closeSearch,
               icon: Icon(context.torcaIcons.close),
             ),
@@ -861,7 +863,7 @@ class _ConversationPaneState extends State<ConversationPane>
   );
 
   String _date(int ms) => ms <= 0
-      ? 'Unavailable'
+      ? context.strings.unavailable
       : DateTime.fromMillisecondsSinceEpoch(ms).toLocal().toString();
 
   Future<void> _sendMessage() async {
@@ -1108,7 +1110,7 @@ class _ConversationPaneState extends State<ConversationPane>
         _showError(
           BridgeErrorPresenter.message(
             result,
-            fallback: 'Attachment operation failed',
+            fallback: context.strings.attachmentOperationFailed,
           ),
         );
       }

@@ -62,10 +62,10 @@ class _ConversationList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (conversations.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text('Pair a contact to start a conversation.'),
+          padding: const EdgeInsets.all(24),
+          child: Text(context.strings.pairContactHint),
         ),
       );
     }
@@ -164,7 +164,10 @@ class _ContactsSection extends StatelessWidget {
         final list = ListView(
           padding: const EdgeInsets.all(16),
           children: <Widget>[
-            Text('Contacts', style: Theme.of(context).textTheme.headlineSmall),
+            Text(
+              context.strings.contacts,
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
             const SizedBox(height: 8),
             Text(
               '${contacts.length} private ${contacts.length == 1 ? 'contact' : 'contacts'}',
@@ -263,14 +266,17 @@ class _InvitationsSection extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(24),
     children: <Widget>[
-      Text('Invitations', style: Theme.of(context).textTheme.headlineSmall),
+      Text(
+        context.strings.invitations,
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
       const SizedBox(height: 8),
-      const Text('Create and manage short-lived private contact invitations.'),
+      Text(context.strings.createManageInvitations),
       const SizedBox(height: 20),
       FilledButton.icon(
         onPressed: onOpen,
         icon: Icon(context.torcaIcons.invitations),
-        label: const Text('Generate Invitation'),
+        label: Text(context.strings.generateInvitation),
       ),
       const SizedBox(height: 24),
       if (pairings.isEmpty)
@@ -430,7 +436,7 @@ class _ConversationPlaceholder extends StatelessWidget {
       children: <Widget>[
         Icon(context.torcaIcons.chats, size: 48),
         const SizedBox(height: 12),
-        const Text('Select a conversation'),
+        Text(context.strings.selectConversation),
       ],
     ),
   );

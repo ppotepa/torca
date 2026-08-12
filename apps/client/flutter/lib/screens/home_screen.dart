@@ -60,7 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
   ) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Build & connection info'),
+      title: Text(context.strings.buildAndConnectionInfo),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -104,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
+          child: Text(context.strings.close),
         ),
       ],
     ),
@@ -437,7 +437,7 @@ class _HomeScreenState extends State<HomeScreen> {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text(context.strings.cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),

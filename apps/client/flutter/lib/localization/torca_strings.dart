@@ -166,6 +166,31 @@ class TorcaStrings {
   String get generatingInvitation => _pl ? 'Generowanie…' : 'Generating…';
   String get retryGeneration => _pl ? 'Ponow generowanie' : 'Retry generation';
   String get openConversation => _pl ? 'Otworz rozmowe' : 'Open conversation';
+  String get noMessagesYetDescription => _pl
+      ? 'Wiadomosci sa wysylane bezposrednio przez Tor.'
+      : 'Messages are sent directly through Tor.';
+  String get attachmentSyncing =>
+      _pl ? 'Synchronizacja zalacznika…' : 'Attachment is syncing…';
+  String get closeSearch => _pl ? 'Zamknij wyszukiwanie' : 'Close search';
+  String get attachmentOperationFailed =>
+      _pl ? 'Operacja zalacznika nieudana' : 'Attachment operation failed';
+  String get buildAndConnectionInfo =>
+      _pl ? 'Informacje o buildzie i polaczeniu' : 'Build & connection info';
+  String get pairContactHint => _pl
+      ? 'Polacz kontakt, aby rozpoczac rozmowe.'
+      : 'Pair a contact to start a conversation.';
+  String get contacts => _pl ? 'Kontakty' : 'Contacts';
+  String get invitations => _pl ? 'Zaproszenia' : 'Invitations';
+  String get selectConversation =>
+      _pl ? 'Wybierz rozmowe' : 'Select a conversation';
+  String get createManageInvitations => _pl
+      ? 'Tworz i zarzadzaj krotkimi, prywatnymi zaproszeniami.'
+      : 'Create and manage short-lived private contact invitations.';
+  String get generateInvitation =>
+      _pl ? 'Wygeneruj zaproszenie' : 'Generate Invitation';
+  String get copyCode => _pl ? 'Kopiuj kod' : 'Copy code';
+  String get invitationCodeCopied =>
+      _pl ? 'Kod zaproszenia skopiowany' : 'Invitation code copied';
 }
 
 extension TorcaStringsContext on BuildContext {
