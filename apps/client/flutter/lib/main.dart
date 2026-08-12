@@ -7,6 +7,7 @@ import 'app.dart';
 import 'gateway/engine_gateway.dart';
 import 'gateway/ffi_engine_gateway.dart';
 import 'generated/torca_contract.dart';
+import 'localization/torca_strings.dart';
 import 'navigation/app_navigation_controller.dart';
 import 'platform/android_notification_router.dart';
 import 'platform/deep_link_router.dart';
@@ -210,6 +211,10 @@ class _StartupScreen extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     theme: ThemeData.dark(useMaterial3: true),
+    localizationsDelegates: const <LocalizationsDelegate<Object>>[
+      TorcaStrings.delegate,
+    ],
+    supportedLocales: TorcaStrings.supportedLocales,
     home: Scaffold(
       body: SafeArea(
         child: Center(
@@ -233,7 +238,10 @@ class _StartupScreen extends StatelessWidget {
                   child: Text(failure!, textAlign: TextAlign.center),
                 ),
                 const SizedBox(height: 20),
-                FilledButton(onPressed: onRetry, child: const Text('Retry')),
+                FilledButton(
+                  onPressed: onRetry,
+                  child: Text(TorcaStrings.of(context).retryNow),
+                ),
               ],
             ],
           ),
