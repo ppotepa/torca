@@ -133,6 +133,12 @@ class TorcaStrings {
       _pl ? 'Eksportuj diagnostyke' : 'Export diagnostics';
   String get noMessagesYet => _pl ? 'Brak wiadomosci' : 'No messages yet';
   String get contactLabel => _pl ? 'Kontakt' : 'Contact';
+  String get secureRuntimeNotReady => _pl
+      ? 'Bezpieczne srodowisko nie jest gotowe'
+      : 'Secure runtime is not ready';
+  String get runtimePreparationFailed => _pl
+      ? 'Nie udalo sie przygotowac lokalnego szyfrowanego srodowiska. Tozsamosc nie zostala zmieniona.'
+      : 'Torca could not prepare the local encrypted runtime. Your identity has not been changed.';
 }
 
 extension TorcaStringsContext on BuildContext {

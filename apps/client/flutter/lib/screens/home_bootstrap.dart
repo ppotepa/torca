@@ -31,14 +31,13 @@ class _BootstrapFailureScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        'Secure runtime is not ready',
+                        context.strings.secureRuntimeNotReady,
                         style: Theme.of(context).textTheme.headlineSmall,
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 12),
-                      const Text(
-                        'Torca could not prepare the local encrypted runtime. '
-                        'Your identity has not been changed.',
+                      Text(
+                        context.strings.runtimePreparationFailed,
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 16),
@@ -54,7 +53,7 @@ class _BootstrapFailureScreen extends StatelessWidget {
                         FilledButton.icon(
                           onPressed: onRetry,
                           icon: Icon(context.torcaIcons.retry),
-                          label: const Text('Retry'),
+                          label: Text(context.strings.retryNow),
                         ),
                       ],
                     ],
