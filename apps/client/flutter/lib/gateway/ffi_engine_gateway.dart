@@ -452,14 +452,18 @@ void _workerMainImpl(List<Object?> arguments) {
         try {
           final raw = bindings.invoke(
             handle,
-            RuntimeRequestDto.snapshot.encode(
+            RuntimeRequestDto.runtimePoll(notificationCursor).encode(
               'worker-poll-${DateTime.now().microsecondsSinceEpoch}',
             ),
             5000,
           );
           final decoded = jsonDecode(raw);
-          if (decoded is Map && decoded['snapshot'] is Map) {
-            final snapshot = decoded['snapshot'] as Map;
+          final poll = decoded is Map && decoded['snapshot'] is Map
+              ? decoded['snapshot'] as Map
+              : const <String, Object?>{};
+          final pollSnapshot = poll['snapshot'];
+          if (pollSnapshot is Map) {
+            final snapshot = pollSnapshot;
             final encoded = jsonEncode(snapshot);
             if (encoded != lastSnapshotJson) {
               lastSnapshotJson = encoded;
@@ -472,19 +476,9 @@ void _workerMainImpl(List<Object?> arguments) {
               next = const Duration(milliseconds: 250);
             }
           }
-          final notificationRaw = bindings.invoke(
-            handle,
-            RuntimeRequestDto.notificationEvents(
-              notificationCursor,
-            ).encode('worker-events-${DateTime.now().microsecondsSinceEpoch}'),
-            5000,
-          );
-          final notificationDecoded = jsonDecode(notificationRaw);
-          final events = notificationDecoded is Map
-              ? notificationDecoded['snapshot']
-              : null;
-          if (events is Map && events['events'] is List) {
-            for (final event in events['events'] as List) {
+          final events = poll['events'];
+          if (events is List) {
+            for (final event in events) {
               if (event is Map) {
                 final cursor = event['cursor'];
                 if (cursor is int && cursor > notificationCursor) {
@@ -493,10 +487,10 @@ void _workerMainImpl(List<Object?> arguments) {
                 target.send(jsonEncode(event));
               }
             }
-            final afterCursor = events['afterCursor'];
-            if (afterCursor is int && afterCursor > notificationCursor) {
-              notificationCursor = afterCursor;
-            }
+          }
+          final afterCursor = poll['afterCursor'];
+          if (afterCursor is int && afterCursor > notificationCursor) {
+            notificationCursor = afterCursor;
           }
         } on Object {
           // The next scheduled poll retries after a transient native failure.

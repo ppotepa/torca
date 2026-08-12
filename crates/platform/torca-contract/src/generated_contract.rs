@@ -34,6 +34,7 @@ pub const QUERIES: &[&str] = &[
     "conversation.page",
     "conversation.search",
     "notifications.poll",
+    "runtime.poll",
     "diagnostics.get",
     "pairing.parse",
     "pairing.encode",

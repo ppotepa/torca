@@ -958,6 +958,12 @@ class RuntimeRequestDto {
         payload: <String, Object?>{'afterCursor': afterCursor},
       );
 
+  factory RuntimeRequestDto.runtimePoll(int afterCursor) => RuntimeRequestDto._(
+    kind: 'query',
+    name: 'runtime.poll',
+    payload: <String, Object?>{'afterCursor': afterCursor},
+  );
+
   static const RuntimeRequestDto diagnostics = RuntimeRequestDto._(
     kind: 'query',
     name: 'diagnostics.get',

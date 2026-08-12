@@ -447,6 +447,27 @@ impl ActorState {
                 let cursor = payload.get("afterCursor").and_then(Value::as_u64).unwrap_or(0);
                 self.runtime.notification_events_json(cursor)
             }
+            ("query", "runtime.poll") => {
+                let cursor = payload.get("afterCursor").and_then(Value::as_u64).unwrap_or(0);
+                let snapshot_code = self.runtime.refresh_snapshot();
+                if snapshot_code != ABI_OK {
+                    snapshot_code
+                } else {
+                    let events_code = self.runtime.notification_events_json(cursor);
+                    if events_code == ABI_OK {
+                        let snapshot = serde_json::from_str::<Value>(&self.runtime.snapshot_json)
+                            .unwrap_or(Value::Null);
+                        let events = serde_json::from_str::<Value>(&self.runtime.query_json)
+                            .unwrap_or(Value::Null);
+                        self.runtime.query_json = serde_json::json!({
+                            "snapshot": snapshot,
+                            "events": events.get("events").cloned().unwrap_or_else(|| serde_json::json!([])),
+                            "afterCursor": events.get("afterCursor").cloned().unwrap_or(Value::from(cursor)),
+                        }).to_string();
+                    }
+                    events_code
+                }
+            }
             ("query", "diagnostics.get") => self.runtime.diagnostics_json(),
             ("query", "pairing.parse") => {
                 let uri = payload.get("uri").and_then(Value::as_str).unwrap_or_default();
@@ -486,6 +507,7 @@ impl ActorState {
         let mut snapshot: Value = if name == "conversation.page"
             || name == "conversation.search"
             || name == "notifications.poll"
+            || name == "runtime.poll"
             || name == "diagnostics.get"
             || name == "pairing.parse"
             || name == "pairing.encode"
@@ -497,6 +519,7 @@ impl ActorState {
         if name != "conversation.page"
             && name != "conversation.search"
             && name != "notifications.poll"
+            && name != "runtime.poll"
             && name != "diagnostics.get"
         {
             if let Value::Object(object) = &mut snapshot {

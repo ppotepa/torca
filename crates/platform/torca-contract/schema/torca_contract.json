@@ -13,7 +13,7 @@
       "conversation.read", "attachment.queue", "attachment.retry",
       "attachment.cancel", "attachment.export"
     ],
-    "queries": ["snapshot.get", "conversation.page", "conversation.search", "notifications.poll", "diagnostics.get", "pairing.parse", "pairing.encode"]
+    "queries": ["snapshot.get", "conversation.page", "conversation.search", "notifications.poll", "runtime.poll", "diagnostics.get", "pairing.parse", "pairing.encode"]
   },
   "error": {
     "code": "stable-machine-code",
