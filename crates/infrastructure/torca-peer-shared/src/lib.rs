@@ -52,13 +52,31 @@ where
         ciphertext: Vec<u8>,
         timeout: Duration,
     ) -> Result<LinkAck, PeerLinkError> {
+        self.send_and_wait_ack_with_limit(
+            contact_id,
+            envelope_id,
+            message_kind,
+            ciphertext,
+            timeout,
+            Duration::from_secs(5),
+        )
+    }
+
+    pub fn send_and_wait_ack_with_limit(
+        &self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        message_kind: u16,
+        ciphertext: Vec<u8>,
+        timeout: Duration,
+        wait_limit: Duration,
+    ) -> Result<LinkAck, PeerLinkError> {
         {
             let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;
             link.send_envelope(contact_id, envelope_id, message_kind, ciphertext)?;
         }
-        let deadline = Instant::now()
-            .checked_add(timeout.min(Duration::from_secs(5)))
-            .ok_or(PeerLinkError::AckTimeout)?;
+        let deadline =
+            Instant::now().checked_add(timeout.min(wait_limit)).ok_or(PeerLinkError::AckTimeout)?;
         loop {
             let ack = {
                 let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;

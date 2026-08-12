@@ -32,6 +32,7 @@ use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
 
 pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
+const ATTACHMENT_ACK_WAIT_BUDGET: Duration = Duration::from_millis(500);
 const NONCE_BYTES: usize = 24;
 const PEER_AAD_LABEL: &[u8] = b"TORCA-PEER-DATA-V1";
 const CACHE_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-CACHE-V1";
@@ -385,12 +386,13 @@ where
             &plaintext,
         )?;
         self.link
-            .send_and_wait_ack(
+            .send_and_wait_ack_with_limit(
                 contact.id(),
                 envelope_id,
                 ATTACHMENT_MESSAGE_KIND,
                 encrypted,
                 self.ack_timeout,
+                ATTACHMENT_ACK_WAIT_BUDGET,
             )
             .map_err(map_peer)
     }
