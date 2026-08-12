@@ -6,6 +6,56 @@ import 'package:torca_ui/torca_ui.dart';
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
 
+class AttachmentPendingTile extends StatelessWidget {
+  const AttachmentPendingTile({
+    required this.name,
+    required this.outbound,
+    super.key,
+  });
+
+  final String name;
+  final bool outbound;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(top: 8),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.55),
+      borderRadius: BorderRadius.circular(context.torcaTokens.radiusMedium),
+      border: context.torcaTokens.terminal
+          ? Border.all(color: Theme.of(context).colorScheme.outline)
+          : null,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Icon(context.torcaIcons.file, size: 22),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(
+                    outbound ? 'Preparing upload' : 'Preparing download',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const LinearProgressIndicator(),
+      ],
+    ),
+  );
+}
+
 class AttachmentTile extends StatelessWidget {
   const AttachmentTile({
     required this.attachment,

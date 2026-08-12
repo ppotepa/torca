@@ -45,4 +45,22 @@ void main() {
     expect(find.text('Cancel'), findsOneWidget);
     expect(find.byIcon(TorcaIconSet.modern.image), findsNWidgets(2));
   });
+
+  testWidgets('pending attachment uses the same job card shell', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: const Scaffold(
+          body: AttachmentPendingTile(name: 'clip.mp4', outbound: true),
+        ),
+      ),
+    );
+
+    expect(find.text('clip.mp4'), findsOneWidget);
+    expect(find.text('Preparing upload'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byIcon(TorcaIconSet.modern.file), findsOneWidget);
+  });
 }

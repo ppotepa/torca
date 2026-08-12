@@ -128,6 +128,7 @@ where
             .ok_or(CommunicationError::Attachment)?;
         match attachment.status() {
             AttachmentStatus::Failed => {
+                self.transfer.forget_outgoing(id);
                 attachment.begin_transfer(now).map_err(|_| CommunicationError::Attachment)?;
                 self.control.update(attachment).map_err(|_| CommunicationError::Attachment)
             }
@@ -147,6 +148,7 @@ where
             .get(id)
             .map_err(|_| CommunicationError::Attachment)?
             .ok_or(CommunicationError::Attachment)?;
+        self.transfer.forget_outgoing(id);
         attachment.cancel(now).map_err(|_| CommunicationError::Attachment)?;
         self.control.update(attachment).map_err(|_| CommunicationError::Attachment)
     }

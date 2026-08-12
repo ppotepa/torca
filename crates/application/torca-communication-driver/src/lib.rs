@@ -41,12 +41,10 @@ pub const PROBE_MESSAGE_KIND: u16 = 4;
 const INBOUND_BATCH: usize = 64;
 const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
-// Keep bulk transfer work bounded so a single communication tick cannot
-// monopolize the runtime actor while waiting for peer ACKs.  The transfer
-// worker will eventually replace this synchronous adapter path; until then a
-// single frame per tick preserves text/control responsiveness as much as the
-// current transport permits.
+// One durable chunk per worker turn keeps progress monotonic and preserves
+// fair access to the shared peer transport.
 const ATTACHMENT_BATCH: usize = 1;
+const MAX_DEFERRED_ATTACHMENTS: usize = 64;
 
 /// Provider-neutral inbound envelope owned by the application boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -394,10 +392,12 @@ impl TorcaCommunicationDriver {
     fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         if let Some(envelope) = self.deferred_attachments.pop_front() {
             match self.attachments.try_lock() {
-                Ok(mut attachments) => attachments.process_inbound(envelope.clone(), now)?,
+                Ok(mut attachments) => {
+                    attachments.process_inbound(envelope.clone(), now)?;
+                    refresh_attachment_cache(&self.attachment_snapshot_cache, &**attachments);
+                }
                 Err(std::sync::TryLockError::WouldBlock) => {
                     self.deferred_attachments.push_front(envelope);
-                    return Ok(());
                 }
                 Err(std::sync::TryLockError::Poisoned(_)) => {
                     return Err(CommunicationError::Attachment);
@@ -420,10 +420,16 @@ impl TorcaCommunicationDriver {
                                 );
                                 return Err(error);
                             }
+                            refresh_attachment_cache(
+                                &self.attachment_snapshot_cache,
+                                &**attachments,
+                            );
                         }
                         Err(std::sync::TryLockError::WouldBlock) => {
+                            if self.deferred_attachments.len() >= MAX_DEFERRED_ATTACHMENTS {
+                                return Err(CommunicationError::Attachment);
+                            }
                             self.deferred_attachments.push_back(envelope);
-                            break;
                         }
                         Err(std::sync::TryLockError::Poisoned(_)) => {
                             return Err(CommunicationError::Attachment);
@@ -463,13 +469,16 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             if !self.attachment_job_active.swap(true, Ordering::AcqRel) {
                 let attachments = Arc::clone(&self.attachments);
                 let active = Arc::clone(&self.attachment_job_active);
+                let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
                 let messages = snapshot.messages.clone();
                 thread::spawn(move || {
                     let result = attachments
                         .lock()
                         .map_err(|_| CommunicationError::Attachment)
                         .and_then(|mut runtime| {
-                            runtime.maintenance_outgoing(&messages, now, ATTACHMENT_BATCH)
+                            runtime.maintenance_outgoing(&messages, now, ATTACHMENT_BATCH)?;
+                            refresh_attachment_cache(&projection_cache, &**runtime);
+                            Ok(())
                         });
                     if let Err(error) = result {
                         eprintln!("torca-attachment: maintenance failed code={error}");
@@ -571,19 +580,30 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         request: &AttachmentSendRequest,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        let result = self
-            .attachment_runtime()
-            .map_err(map_runtime)?
-            .prepare_outgoing(request, now)
-            .map_err(map_runtime);
+        let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
+        let result = {
+            let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
+            let result = attachments.prepare_outgoing(request, now).map_err(map_runtime);
+            if result.is_ok() {
+                refresh_attachment_cache(&projection_cache, &**attachments);
+            }
+            result
+        };
         if result.is_ok() {
             self.attachment_scheduler.wake();
         }
         result
     }
     fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
-        let result =
-            self.attachment_runtime().map_err(map_runtime)?.retry(id, now).map_err(map_runtime);
+        let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
+        let result = {
+            let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
+            let result = attachments.retry(id, now).map_err(map_runtime);
+            if result.is_ok() {
+                refresh_attachment_cache(&projection_cache, &**attachments);
+            }
+            result
+        };
         if result.is_ok() {
             self.attachment_scheduler.wake();
         }
@@ -594,7 +614,11 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.attachment_runtime().map_err(map_runtime)?.cancel(id, now).map_err(map_runtime)
+        let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
+        let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
+        attachments.cancel(id, now).map_err(map_runtime)?;
+        refresh_attachment_cache(&projection_cache, &**attachments);
+        Ok(())
     }
     fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
         let Ok(attachments) = self.attachments.try_lock() else {
@@ -625,6 +649,15 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
         destination: PathBuf,
     ) -> Result<(), RuntimeDriverError> {
         self.attachment_export.export_attachment(id, destination).map_err(map_runtime)
+    }
+}
+
+fn refresh_attachment_cache(cache: &Mutex<Vec<AttachmentView>>, runtime: &dyn AttachmentRuntime) {
+    let Ok(Some(snapshot)) = runtime.snapshot_projection() else {
+        return;
+    };
+    if let Ok(mut cached) = cache.lock() {
+        *cached = snapshot;
     }
 }
 

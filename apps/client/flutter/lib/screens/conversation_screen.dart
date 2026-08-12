@@ -471,14 +471,13 @@ class _ConversationPaneState extends State<ConversationPane>
                                 quoted == null,
                             footer: <Widget>[
                               if (attachmentAnnouncement && attachments.isEmpty)
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'Attachment is syncing…',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
+                                AttachmentPendingTile(
+                                  name: message.body.substring(
+                                    'Attachment: '.length,
                                   ),
+                                  outbound:
+                                      message.typedDirection ==
+                                      MessageDirection.outbound,
                                 ),
                               if (retryable && !_searching)
                                 Align(

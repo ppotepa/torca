@@ -437,6 +437,10 @@ impl ClientApplicationRuntime {
             | ApplicationCommand::RejectPairing { session_id }
             | ApplicationCommand::CancelPairing { session_id } => Some(*session_id),
             ApplicationCommand::StartConversation { contact_id } => Some(*contact_id),
+            ApplicationCommand::QueueAttachment { attachment_id, .. }
+            | ApplicationCommand::RetryAttachment { attachment_id }
+            | ApplicationCommand::CancelAttachment { attachment_id }
+            | ApplicationCommand::ExportAttachment { attachment_id, .. } => Some(*attachment_id),
             _ => None,
         };
         let mut invite_uri = None;

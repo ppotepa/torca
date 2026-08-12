@@ -5,6 +5,7 @@
 //! loss/process death safe without a second message transport.
 
 use core::fmt;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -27,12 +28,11 @@ use torca_crypto::{Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, Protec
 use torca_file_storage::{BlobStore, FileBlobStore};
 use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageDirection, MessageId, MessageRepository};
-use torca_peer_link::{InboundPeerEnvelope, LinkAck, PeerLinkError};
+use torca_peer_link::{InboundPeerEnvelope, PeerLinkError};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
 
 pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
-const ATTACHMENT_ACK_WAIT_BUDGET: Duration = Duration::from_millis(500);
 const NONCE_BYTES: usize = 24;
 const PEER_AAD_LABEL: &[u8] = b"TORCA-PEER-DATA-V1";
 const CACHE_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-CACHE-V1";
@@ -90,6 +90,23 @@ pub struct AttachmentTransfer<R, M, S, K, C, P> {
     staging_root: PathBuf,
     local_identity_id: OpaqueId,
     ack_timeout: Duration,
+    pending_outgoing: BTreeMap<AttachmentId, PendingOutgoingFrame>,
+    metadata_acked: BTreeSet<AttachmentId>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingOutgoingFrame {
+    contact_id: ContactId,
+    envelope_id: OpaqueId,
+    sent_at: Timestamp,
+    phase: OutgoingFramePhase,
+}
+
+#[derive(Clone, Copy)]
+enum OutgoingFramePhase {
+    Metadata,
+    Chunk { next_offset: u64, digest: [u8; 32] },
+    Complete,
 }
 
 impl<R, M, S, K, C, P> AttachmentTransfer<R, M, S, K, C, P>
@@ -125,6 +142,8 @@ where
             staging_root,
             local_identity_id,
             ack_timeout,
+            pending_outgoing: BTreeMap::new(),
+            metadata_acked: BTreeSet::new(),
         })
     }
 
@@ -198,6 +217,7 @@ where
                 report.attempted += 1;
                 let attachment_id = attachment.id();
                 match self.advance_outgoing(attachment, now) {
+                    Ok(AdvanceOutcome::Waiting) => {}
                     Ok(AdvanceOutcome::Chunk) => report.chunks_sent += 1,
                     Ok(AdvanceOutcome::Completed) => report.completed += 1,
                     Err(error) => {
@@ -265,11 +285,68 @@ where
         &self.metadata
     }
 
+    pub fn forget_outgoing(&mut self, attachment_id: AttachmentId) {
+        self.pending_outgoing.remove(&attachment_id);
+        self.metadata_acked.remove(&attachment_id);
+    }
+
     fn advance_outgoing(
         &mut self,
         mut attachment: Attachment,
         now: Timestamp,
     ) -> Result<AdvanceOutcome, AttachmentTransferError> {
+        if let Some(pending) = self.pending_outgoing.get(&attachment.id()).copied() {
+            match self
+                .link
+                .poll_envelope_ack(pending.contact_id, pending.envelope_id)
+                .map_err(map_peer)
+            {
+                Ok(Some(_)) => {
+                    self.pending_outgoing.remove(&attachment.id());
+                    return match pending.phase {
+                        OutgoingFramePhase::Metadata => {
+                            self.metadata_acked.insert(attachment.id());
+                            Ok(AdvanceOutcome::Waiting)
+                        }
+                        OutgoingFramePhase::Chunk { next_offset, digest } => {
+                            self.metadata
+                                .update_transfer_progress(
+                                    attachment.id(),
+                                    next_offset,
+                                    Some(digest),
+                                    now,
+                                )
+                                .map_err(map_attachment)?;
+                            Ok(AdvanceOutcome::Chunk)
+                        }
+                        OutgoingFramePhase::Complete => {
+                            attachment.mark_available(now).map_err(map_attachment)?;
+                            self.metadata.update(attachment.clone()).map_err(map_attachment)?;
+                            self.metadata_acked.remove(&attachment.id());
+                            Ok(AdvanceOutcome::Completed)
+                        }
+                    };
+                }
+                Ok(None) => {
+                    if now
+                        .duration_since(pending.sent_at)
+                        .is_some_and(|elapsed| elapsed >= self.ack_timeout)
+                    {
+                        self.pending_outgoing.remove(&attachment.id());
+                        return self.fail_outgoing(
+                            attachment,
+                            now,
+                            AttachmentTransferError::PeerAckTimeout,
+                        );
+                    }
+                    return Ok(AdvanceOutcome::Waiting);
+                }
+                Err(error) => {
+                    self.pending_outgoing.remove(&attachment.id());
+                    return self.fail_outgoing(attachment, now, error);
+                }
+            }
+        }
         if matches!(attachment.status(), AttachmentStatus::Queued | AttachmentStatus::Failed) {
             attachment.begin_transfer(now).map_err(map_attachment)?;
             self.metadata.update(attachment.clone()).map_err(map_attachment)?;
@@ -292,7 +369,7 @@ where
             return self.fail_outgoing(attachment, now, AttachmentTransferError::DigestMismatch);
         }
 
-        if state.offset == 0 {
+        if state.offset == 0 && !self.metadata_acked.contains(&attachment.id()) {
             let frame = AttachmentFrame::Metadata(AttachmentMetadataFrame {
                 attachment_id: attachment.id(),
                 message_id: attachment.message_id().to_opaque(),
@@ -301,7 +378,16 @@ where
                 size: attachment.size(),
                 digest,
             });
-            self.send_frame(&contact, &credential, stable_frame_id(attachment.id(), 1, 0), frame)?;
+            self.start_frame(
+                attachment.id(),
+                &contact,
+                &credential,
+                stable_frame_id(attachment.id(), 1, 0),
+                frame,
+                OutgoingFramePhase::Metadata,
+                now,
+            )?;
+            return Ok(AdvanceOutcome::Waiting);
         }
 
         if state.offset < attachment.size() {
@@ -313,22 +399,21 @@ where
                 offset: state.offset,
                 bytes: plaintext[start..end].to_vec(),
             });
-            self.send_frame(
+            let next = u64::try_from(end).map_err(|_| AttachmentTransferError::OffsetMismatch)?;
+            self.start_frame(
+                attachment.id(),
                 &contact,
                 &credential,
                 stable_frame_id(attachment.id(), 2, state.offset),
                 frame,
+                OutgoingFramePhase::Chunk { next_offset: next, digest },
+                now,
             )?;
-            let next = u64::try_from(end).map_err(|_| AttachmentTransferError::OffsetMismatch)?;
-            self.metadata
-                .update_transfer_progress(attachment.id(), next, Some(digest), now)
-                .map_err(map_attachment)?;
-            if next < attachment.size() {
-                return Ok(AdvanceOutcome::Chunk);
-            }
+            return Ok(AdvanceOutcome::Waiting);
         }
 
-        self.send_frame(
+        self.start_frame(
+            attachment.id(),
             &contact,
             &credential,
             stable_frame_id(attachment.id(), 4, attachment.size()),
@@ -336,10 +421,10 @@ where
                 attachment_id: attachment.id(),
                 digest,
             }),
+            OutgoingFramePhase::Complete,
+            now,
         )?;
-        attachment.mark_available(now).map_err(map_attachment)?;
-        self.metadata.update(attachment).map_err(map_attachment)?;
-        Ok(AdvanceOutcome::Completed)
+        Ok(AdvanceOutcome::Waiting)
     }
 
     fn fail_outgoing<T>(
@@ -370,13 +455,16 @@ where
         Ok(())
     }
 
-    fn send_frame(
+    fn start_frame(
         &mut self,
+        attachment_id: AttachmentId,
         contact: &Contact,
         credential: &PeerCredential,
         envelope_id: OpaqueId,
         frame: AttachmentFrame,
-    ) -> Result<LinkAck, AttachmentTransferError> {
+        phase: OutgoingFramePhase,
+        now: Timestamp,
+    ) -> Result<(), AttachmentTransferError> {
         let plaintext =
             AttachmentCodec::encode(&frame).map_err(|_| AttachmentTransferError::Protocol)?;
         let encrypted = self.seal_wire(
@@ -386,15 +474,13 @@ where
             &plaintext,
         )?;
         self.link
-            .send_and_wait_ack_with_limit(
-                contact.id(),
-                envelope_id,
-                ATTACHMENT_MESSAGE_KIND,
-                encrypted,
-                self.ack_timeout,
-                ATTACHMENT_ACK_WAIT_BUDGET,
-            )
-            .map_err(map_peer)
+            .send_envelope(contact.id(), envelope_id, ATTACHMENT_MESSAGE_KIND, encrypted)
+            .map_err(map_peer)?;
+        self.pending_outgoing.insert(
+            attachment_id,
+            PendingOutgoingFrame { contact_id: contact.id(), envelope_id, sent_at: now, phase },
+        );
+        Ok(())
     }
 
     fn accept_metadata(
@@ -685,6 +771,7 @@ where
 }
 
 enum AdvanceOutcome {
+    Waiting,
     Chunk,
     Completed,
 }

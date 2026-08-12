@@ -209,8 +209,8 @@ where
     }
 
     /// Sends one encrypted application envelope and waits for the matching protocol ACK. Incoming
-    /// data observed while waiting is queued for the normal inbound handler
-    /// and acknowledged after it enters the bounded inbound queue.
+    /// data observed while waiting is queued for the normal inbound handler.
+    /// The application sends its ACK only after durable frame processing.
     pub fn send_and_wait_ack(
         &mut self,
         contact_id: ContactId,
@@ -353,12 +353,6 @@ where
                     message_kind,
                     ciphertext,
                 })?;
-                // A sender may be waiting for this ACK while we are
-                // waiting for a different outbound ACK.  Confirm the
-                // frame after it has been durably queued in the inbound
-                // buffer; otherwise simultaneous uploads can deadlock
-                // both peers until their ACK timeouts expire.
-                self.send_ack(contact_id, envelope_id, AckStatus::Accepted)?;
                 Ok(None)
             }
             Ok(_) => Ok(None),
@@ -677,6 +671,9 @@ where
                     })?;
                     report.inbound_queued += 1;
                 }
+                Ok(Some(PeerMessage::Ack { envelope_id, status })) => {
+                    self.store_pending_ack(contact_id, envelope_id, status);
+                }
                 Ok(_) => {
                     if !was_ready && self.is_ready(contact_id) {
                         self.reconnect.remove(&contact_id);
@@ -710,6 +707,9 @@ where
                     })?;
                     report.inbound_queued += 1;
                 }
+                Ok(Some(PeerMessage::Ack { envelope_id, status })) => {
+                    self.store_pending_ack(contact_id, envelope_id, status);
+                }
                 Ok(_) => {}
                 Err(_) => {
                     self.mark_disconnected(contact_id);
@@ -726,6 +726,25 @@ where
             }
         }
         Ok(())
+    }
+
+    fn store_pending_ack(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        status: AckStatus,
+    ) {
+        let ack = match status {
+            AckStatus::Accepted => Ok(LinkAck::Accepted),
+            AckStatus::Duplicate => Ok(LinkAck::Duplicate),
+            AckStatus::Rejected => Err(PeerLinkError::AckRejected),
+        };
+        if self.pending_acks.len() >= MAX_PENDING_ACKS {
+            if let Some(oldest) = self.pending_acks.keys().next().copied() {
+                self.pending_acks.remove(&oldest);
+            }
+        }
+        self.pending_acks.insert((contact_id, envelope_id), ack);
     }
 
     fn poll_contact(
