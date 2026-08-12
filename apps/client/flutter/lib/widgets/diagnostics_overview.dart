@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 
 class DiagnosticsOverview extends StatelessWidget {
   const DiagnosticsOverview({
@@ -22,20 +23,22 @@ class DiagnosticsOverview extends StatelessWidget {
         .length;
     final totalPeers = snapshot.contacts.length;
     final peerDetail = totalPeers == 0
-        ? 'No contacts paired'
-        : '$readyPeers of $totalPeers direct peer links ready';
+        ? context.strings.noContactsPaired
+        : context.strings.directPeerLinksReady(readyPeers, totalPeers);
 
     final checks = <_OverviewItem>[
       _OverviewItem(
-        'Native bridge',
+        context.strings.nativeBridge,
         true,
-        'Contract $torcaContractVersion snapshot readable',
+        '${context.strings.contractSnapshotReadable} ($torcaContractVersion)',
         context.torcaIcons.diagnostics,
       ),
       _OverviewItem(
-        'Local identity',
+        context.strings.localIdentityCheck,
         snapshot.identity != null,
-        snapshot.identity == null ? 'Not initialized' : 'Loaded',
+        snapshot.identity == null
+            ? context.strings.notInitialized
+            : context.strings.loaded,
         context.torcaIcons.identity,
       ),
       _OverviewItem(
@@ -45,23 +48,25 @@ class DiagnosticsOverview extends StatelessWidget {
         context.torcaIcons.identity,
       ),
       _OverviewItem(
-        'Onion service',
+        context.strings.onionService,
         (snapshot.onionAddress ?? '').endsWith('.onion'),
-        snapshot.onionAddress == null ? 'No onion address' : 'Published',
+        snapshot.onionAddress == null
+            ? context.strings.noOnionAddress
+            : context.strings.published,
         context.torcaIcons.link,
       ),
       _OverviewItem(
-        'Direct peers',
+        context.strings.directPeers,
         totalPeers == 0 || readyPeers > 0,
         peerDetail,
         context.torcaIcons.online,
       ),
       _OverviewItem(
-        'Diagnostics stream',
+        context.strings.diagnosticsStream,
         diagnosticsReadable,
         diagnosticsReadable
-            ? 'Redacted health events readable'
-            : 'No readable health events',
+            ? context.strings.redactedHealthEventsReadable
+            : context.strings.noReadableHealthEvents,
         context.torcaIcons.diagnostics,
       ),
     ];

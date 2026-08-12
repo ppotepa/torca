@@ -198,6 +198,26 @@ class TorcaStrings {
   String get cancelInvitation =>
       _pl ? 'Anuluj zaproszenie' : 'Cancel invitation';
   String get copy => _pl ? 'Kopiuj' : 'Copy';
+  String get nativeBridge => _pl ? 'Most natywny' : 'Native bridge';
+  String get localIdentityCheck => _pl ? 'Lokalna tozsamosc' : 'Local identity';
+  String get onionService => _pl ? 'Usluga onion' : 'Onion service';
+  String get directPeers => _pl ? 'Bezposrednie wezly' : 'Direct peers';
+  String get noContactsPaired =>
+      _pl ? 'Brak sparowanych kontaktow' : 'No contacts paired';
+  String directPeerLinksReady(int ready, int total) => _pl
+      ? '$ready z $total bezposrednich polaczen gotowych'
+      : '$ready of $total direct peer links ready';
+  String get contractSnapshotReadable =>
+      _pl ? 'Snapshot kontraktu czytelny' : 'Contract snapshot readable';
+  String get notInitialized => _pl ? 'Nie zainicjalizowano' : 'Not initialized';
+  String get loaded => _pl ? 'Zaladowano' : 'Loaded';
+  String get published => _pl ? 'Opublikowano' : 'Published';
+  String get noOnionAddress => _pl ? 'Brak adresu onion' : 'No onion address';
+  String get redactedHealthEventsReadable => _pl
+      ? 'Zanonimizowane zdarzenia zdrowia czytelne'
+      : 'Redacted health events readable';
+  String get noReadableHealthEvents =>
+      _pl ? 'Brak czytelnych zdarzen zdrowia' : 'No readable health events';
   String get startingSecureNetwork =>
       _pl ? 'Uruchamianie bezpiecznej sieci…' : 'Starting secure network…';
 }
