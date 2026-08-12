@@ -139,6 +139,12 @@ class TorcaStrings {
   String get runtimePreparationFailed => _pl
       ? 'Nie udalo sie przygotowac lokalnego szyfrowanego srodowiska. Tozsamosc nie zostala zmieniona.'
       : 'Torca could not prepare the local encrypted runtime. Your identity has not been changed.';
+  String get modern => _pl ? 'Nowoczesny' : 'Modern';
+  String get terminal => _pl ? 'Terminal' : 'Terminal';
+  String get compactDensity => _pl ? 'Gestosc kompaktowa' : 'Compact density';
+  String get comfortableDensity =>
+      _pl ? 'Gestosc wygodna' : 'Comfortable density';
+  String get reduceMotion => _pl ? 'Ogranicz ruch' : 'Reduce motion';
 }
 
 extension TorcaStringsContext on BuildContext {

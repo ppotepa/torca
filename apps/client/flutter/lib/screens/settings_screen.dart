@@ -43,12 +43,12 @@ class SettingsScreen extends StatelessWidget {
                             ButtonSegment(
                               value: TorcaThemeFamily.modern,
                               icon: Icon(context.torcaIcons.chats),
-                              label: const Text('Modern'),
+                              label: Text(strings.modern),
                             ),
                             ButtonSegment(
                               value: TorcaThemeFamily.terminal,
                               icon: Icon(context.torcaIcons.diagnostics),
-                              label: const Text('Terminal'),
+                              label: Text(strings.terminal),
                             ),
                           ],
                           selected: <TorcaThemeFamily>{
@@ -104,7 +104,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       const Divider(height: 1),
                       TorcaRadioTile<TorcaDensity>(
-                        title: const Text('Compact density'),
+                        title: Text(strings.compactDensity),
                         value: TorcaDensity.compact,
                         groupValue: preferences.appearance.density,
                         onChanged: (value) {
@@ -114,7 +114,7 @@ class SettingsScreen extends StatelessWidget {
                         },
                       ),
                       TorcaRadioTile<TorcaDensity>(
-                        title: const Text('Comfortable density'),
+                        title: Text(strings.comfortableDensity),
                         value: TorcaDensity.comfortable,
                         groupValue: preferences.appearance.density,
                         onChanged: (value) {
@@ -125,7 +125,7 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       TorcaSwitchTile(
                         secondary: Icon(context.torcaIcons.warning),
-                        title: const Text('Reduce motion'),
+                        title: Text(strings.reduceMotion),
                         value: preferences.appearance.reduceMotion,
                         onChanged: preferences.setReduceMotion,
                       ),
