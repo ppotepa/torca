@@ -106,30 +106,36 @@ fn render_rust_contract(
         commands.iter().map(|value| format!("    \"{value}\",")).collect::<Vec<_>>().join("\n");
     let queries =
         queries.iter().map(|value| format!("    \"{value}\",")).collect::<Vec<_>>().join("\n");
-    format!(concat!(
-        "// GENERATED FILE. DO NOT EDIT.\n",
-        "// Generated from: crates/platform/torca-contract/schema/torca_contract.json\n\n",
-        "pub const SCHEMA_VERSION: u16 = {schema_version};\n",
-        "pub const CONTRACT_VERSION: u16 = {contract_version};\n",
-        "pub const COMMANDS: &[&str] = &[\n{commands}\n];\n",
-        "pub const QUERIES: &[&str] = &[\n{queries}\n];\n\n",
-        "pub fn contains(kind: &str, name: &str) -> bool {{\n",
-        "    match kind {{\n",
-        "        \"command\" => COMMANDS.contains(&name),\n",
-        "        \"query\" => QUERIES.contains(&name),\n",
-        "        \"lifecycle\" => matches!(\n",
-        "            name,\n",
-        "            \"host_started\"\n",
-        "                | \"foregrounded\"\n",
-        "                | \"backgrounded\"\n",
-        "                | \"network_changed\"\n",
-        "                | \"low_memory\"\n",
-        "                | \"terminating\"\n",
-        "        ),\n",
-        "        _ => false,\n",
-        "    }}\n",
-        "}}\n",
-    ),)
+    format!(
+        concat!(
+            "// GENERATED FILE. DO NOT EDIT.\n",
+            "// Generated from: crates/platform/torca-contract/schema/torca_contract.json\n\n",
+            "pub const SCHEMA_VERSION: u16 = {schema_version};\n",
+            "pub const CONTRACT_VERSION: u16 = {contract_version};\n",
+            "pub const COMMANDS: &[&str] = &[\n{commands}\n];\n",
+            "pub const QUERIES: &[&str] = &[\n{queries}\n];\n\n",
+            "pub fn contains(kind: &str, name: &str) -> bool {{\n",
+            "    match kind {{\n",
+            "        \"command\" => COMMANDS.contains(&name),\n",
+            "        \"query\" => QUERIES.contains(&name),\n",
+            "        \"lifecycle\" => matches!(\n",
+            "            name,\n",
+            "            \"host_started\"\n",
+            "                | \"foregrounded\"\n",
+            "                | \"backgrounded\"\n",
+            "                | \"network_changed\"\n",
+            "                | \"low_memory\"\n",
+            "                | \"terminating\"\n",
+            "        ),\n",
+            "        _ => false,\n",
+            "    }}\n",
+            "}}\n",
+        ),
+        schema_version = schema_version,
+        contract_version = contract_version,
+        commands = commands,
+        queries = queries,
+    )
 }
 
 fn render_dart_template(template: &str, contract_version: u64) -> Result<String, String> {

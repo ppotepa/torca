@@ -6,6 +6,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../gateway/engine_gateway.dart';
+import '../generated/torca_contract.dart';
 import '../navigation/app_navigation_controller.dart';
 import '../settings/local_preferences.dart';
 

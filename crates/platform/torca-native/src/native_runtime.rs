@@ -884,6 +884,7 @@ impl TorcaRuntime {
         let observer: TorBootstrapObserver = std::sync::Arc::new(move |progress| {
             let _ = progress_sender.send(HostStartEvent::Progress(progress));
         });
+        let read_receipt_policy = self.read_receipt_policy.clone();
         thread::spawn(move || {
             let result = match catch_unwind(AssertUnwindSafe(|| {
                 spawn_production_runtime(engine, observer, read_receipt_policy)

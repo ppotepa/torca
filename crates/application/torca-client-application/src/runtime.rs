@@ -268,7 +268,7 @@ impl ClientApplicationRuntime {
         let network = self.network_snapshot()?.unwrap_or_else(stopped_network_snapshot);
         let has_identity = app.identity.is_some();
         let has_profile = app.identity.as_ref().and_then(|identity| identity.profile()).is_some();
-        let tor_state = format!("{:?}", network.tor).to_lowercase();
+        let tor_state = tor_state_name(network.tor);
         let onion_status = network
             .probes
             .iter()
@@ -305,7 +305,7 @@ impl ClientApplicationRuntime {
             bootstrap.complete(BootstrapStepId::DeviceIdentity);
         }
         if has_identity {
-            match tor_state.as_str() {
+            match tor_state {
                 "ready" => {
                     if step_state(&bootstrap, BootstrapStepId::Tor)
                         != Some(BootstrapStepState::Ready)
@@ -1013,6 +1013,16 @@ impl ClientApplicationRuntime {
 
 fn step_state(bootstrap: &BootstrapState, id: BootstrapStepId) -> Option<BootstrapStepState> {
     bootstrap.snapshot().steps.into_iter().find(|step| step.id == id).map(|step| step.state)
+}
+
+fn tor_state_name(state: TorState) -> &'static str {
+    match state {
+        TorState::Stopped => "stopped",
+        TorState::Starting => "starting",
+        TorState::Ready => "ready",
+        TorState::Degraded => "degraded",
+        TorState::Failed => "failed",
+    }
 }
 
 fn stopped_network_snapshot() -> NetworkSnapshot {

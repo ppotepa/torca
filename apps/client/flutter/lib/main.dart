@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 import 'app.dart';
 import 'gateway/engine_gateway.dart';
@@ -225,7 +226,7 @@ class _StartupScreen extends StatelessWidget {
                 SizedBox(height: 16),
                 Text('Starting secure network…'),
               ] else ...<Widget>[
-                const Icon(Icons.error_outline, size: 40),
+                Icon(TorcaIconSet.modern.error, size: 40),
                 const SizedBox(height: 16),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 32),
