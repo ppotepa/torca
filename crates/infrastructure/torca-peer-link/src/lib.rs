@@ -215,6 +215,33 @@ where
         ciphertext: Vec<u8>,
         timeout: Duration,
     ) -> Result<LinkAck, PeerLinkError> {
+        self.send_envelope(contact_id, envelope_id, message_kind, ciphertext)?;
+        let wait_slice = timeout.min(MAX_ACK_WAIT_SLICE);
+        let deadline = Instant::now().checked_add(wait_slice).ok_or(PeerLinkError::AckTimeout)?;
+        loop {
+            if let Some(ack) = self.poll_envelope_ack(contact_id, envelope_id)? {
+                return Ok(ack);
+            }
+            if Instant::now() >= deadline {
+                let now = system_timestamp()?;
+                if timeout <= MAX_ACK_WAIT_SLICE {
+                    self.mark_disconnected(contact_id);
+                    self.schedule_reconnect(contact_id, now)?;
+                }
+                return Err(PeerLinkError::AckTimeout);
+            }
+            thread::sleep(POLL_SLEEP);
+        }
+    }
+
+    /// Sends an envelope without waiting for its acknowledgement.
+    pub fn send_envelope(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        message_kind: u16,
+        ciphertext: Vec<u8>,
+    ) -> Result<(), PeerLinkError> {
         if !self.is_ready(contact_id) {
             let now = system_timestamp()?;
             let _ = self.ensure_connected(contact_id, now);
@@ -248,72 +275,64 @@ where
             Some(envelope_id),
             started_at,
         );
-        let wait_slice = timeout.min(MAX_ACK_WAIT_SLICE);
-        let deadline = Instant::now().checked_add(wait_slice).ok_or(PeerLinkError::AckTimeout)?;
-        loop {
-            let now = system_timestamp()?;
-            match self.poll_contact(contact_id, now) {
-                Ok(Some(PeerMessage::Ack { envelope_id: received, status }))
-                    if received == envelope_id =>
-                {
-                    self.observe(
-                        contact_id,
-                        Some(TransportDirection::Rx),
-                        TransportOperation::Ack,
-                        OperationPhase::Completed,
-                        Some(envelope_id),
-                        now,
-                    );
-                    return match status {
-                        AckStatus::Accepted => Ok(LinkAck::Accepted),
-                        AckStatus::Duplicate => Ok(LinkAck::Duplicate),
-                        AckStatus::Rejected => Err(PeerLinkError::AckRejected),
-                    };
-                }
-                Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
-                    self.observe(
-                        contact_id,
-                        Some(TransportDirection::Rx),
-                        TransportOperation::Envelope,
-                        OperationPhase::Completed,
-                        Some(envelope_id),
-                        now,
-                    );
-                    self.queue_inbound(InboundPeerEnvelope {
-                        contact_id,
-                        envelope_id,
-                        message_kind,
-                        ciphertext,
-                    })?;
-                    // A sender may be waiting for this ACK while we are
-                    // waiting for a different outbound ACK.  Confirm the
-                    // frame after it has been durably queued in the inbound
-                    // buffer; otherwise simultaneous uploads can deadlock
-                    // both peers until their ACK timeouts expire.
-                    self.send_ack(contact_id, envelope_id, AckStatus::Accepted)?;
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    self.schedule_reconnect(contact_id, now)?;
-                    return Err(error);
-                }
-            }
-            if Instant::now() >= deadline {
+        Ok(())
+    }
+
+    /// Polls one step for an envelope acknowledgement.  Other inbound data
+    /// is queued and acknowledged so concurrent transfers do not deadlock.
+    pub fn poll_envelope_ack(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+    ) -> Result<Option<LinkAck>, PeerLinkError> {
+        let now = system_timestamp()?;
+        match self.poll_contact(contact_id, now) {
+            Ok(Some(PeerMessage::Ack { envelope_id: received, status }))
+                if received == envelope_id =>
+            {
                 self.observe(
                     contact_id,
                     Some(TransportDirection::Rx),
                     TransportOperation::Ack,
-                    OperationPhase::TimedOut,
+                    OperationPhase::Completed,
                     Some(envelope_id),
                     now,
                 );
-                if timeout <= MAX_ACK_WAIT_SLICE {
-                    self.mark_disconnected(contact_id);
-                    self.schedule_reconnect(contact_id, now)?;
+                return match status {
+                    AckStatus::Accepted => Ok(LinkAck::Accepted),
+                    AckStatus::Duplicate => Ok(LinkAck::Duplicate),
+                    AckStatus::Rejected => Err(PeerLinkError::AckRejected),
                 }
-                return Err(PeerLinkError::AckTimeout);
+                .map(Some);
             }
-            thread::sleep(POLL_SLEEP);
+            Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
+                self.observe(
+                    contact_id,
+                    Some(TransportDirection::Rx),
+                    TransportOperation::Envelope,
+                    OperationPhase::Completed,
+                    Some(envelope_id),
+                    now,
+                );
+                self.queue_inbound(InboundPeerEnvelope {
+                    contact_id,
+                    envelope_id,
+                    message_kind,
+                    ciphertext,
+                })?;
+                // A sender may be waiting for this ACK while we are
+                // waiting for a different outbound ACK.  Confirm the
+                // frame after it has been durably queued in the inbound
+                // buffer; otherwise simultaneous uploads can deadlock
+                // both peers until their ACK timeouts expire.
+                self.send_ack(contact_id, envelope_id, AckStatus::Accepted)?;
+                Ok(None)
+            }
+            Ok(_) => Ok(None),
+            Err(error) => {
+                self.schedule_reconnect(contact_id, now)?;
+                Err(error)
+            }
         }
     }
 

@@ -1,7 +1,8 @@
 //! Shared ownership handle for the single process-owned PeerLink.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
 use torca_foundation::{OpaqueId, Timestamp};
@@ -51,13 +52,26 @@ where
         ciphertext: Vec<u8>,
         timeout: Duration,
     ) -> Result<LinkAck, PeerLinkError> {
-        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.send_and_wait_ack(
-            contact_id,
-            envelope_id,
-            message_kind,
-            ciphertext,
-            timeout,
-        )
+        {
+            let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;
+            link.send_envelope(contact_id, envelope_id, message_kind, ciphertext)?;
+        }
+        let deadline = Instant::now()
+            .checked_add(timeout.min(Duration::from_secs(5)))
+            .ok_or(PeerLinkError::AckTimeout)?;
+        loop {
+            let ack = {
+                let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;
+                link.poll_envelope_ack(contact_id, envelope_id)?
+            };
+            if let Some(ack) = ack {
+                return Ok(ack);
+            }
+            if Instant::now() >= deadline {
+                return Err(PeerLinkError::AckTimeout);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     pub fn send_keepalive_and_wait_ack(
