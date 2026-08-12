@@ -1023,6 +1023,7 @@ mod tests {
     fn generated_operation_allowlist_matches_runtime_surface() {
         assert!(generated::contains("command", "profile.set"));
         assert!(generated::contains("query", "snapshot.get"));
+        assert!(generated::contains("query", "runtime.poll"));
         assert!(generated::contains("lifecycle", "foregrounded"));
         assert!(!generated::contains("command", "operation.unknown"));
         assert!(!generated::contains("query", "message.history.full"));
