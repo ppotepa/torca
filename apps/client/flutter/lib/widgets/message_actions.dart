@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../localization/torca_strings.dart';
+
 enum MessageAction { reply, copy, details }
 
 abstract final class MessageActionMenu {
@@ -14,19 +16,19 @@ abstract final class MessageActionMenu {
                 context,
                 MessageAction.reply,
                 context.torcaIcons.reply,
-                'Reply',
+                context.strings.reply,
               ),
               _tile(
                 context,
                 MessageAction.copy,
                 context.torcaIcons.copy,
-                'Copy',
+                context.strings.copy,
               ),
               _tile(
                 context,
                 MessageAction.details,
                 context.torcaIcons.info,
-                'Message details',
+                context.strings.messageDetails,
               ),
             ],
           ),
@@ -51,7 +53,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.reply),
-            title: const Text('Reply'),
+            title: Text(context.strings.reply),
           ),
         ),
         PopupMenuItem(
@@ -60,7 +62,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.copy),
-            title: const Text('Copy'),
+            title: Text(context.strings.copy),
           ),
         ),
         PopupMenuItem(
@@ -69,7 +71,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.info),
-            title: const Text('Message details'),
+            title: Text(context.strings.messageDetails),
           ),
         ),
       ],
