@@ -247,6 +247,11 @@ class TorcaStrings {
       _pl ? 'Tor ponownie sie laczy' : 'Tor reconnecting';
   String torStateLabel(String state) =>
       'Tor: ${state.isEmpty ? 'offline' : state}';
+  String get p2pShort => 'P2P';
+  String get torShort => 'Tor';
+  String get startingShort => _pl ? 'Start' : 'Starting';
+  String get reconnectingShort => _pl ? 'Laczenie' : 'Reconnecting';
+  String get offlineShort => 'Offline';
   String get nativeBridge => _pl ? 'Most natywny' : 'Native bridge';
   String get localIdentityCheck => _pl ? 'Lokalna tozsamosc' : 'Local identity';
   String get onionService => _pl ? 'Usluga onion' : 'Onion service';
