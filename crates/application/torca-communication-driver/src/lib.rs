@@ -410,8 +410,18 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         // starve text/control delivery.  The adapter persists Failed and its
         // next-attempt time before returning the error.
         if self.attachment_scheduler.due(now) {
-            let _ =
-                self.attachments.maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH);
+            match self.attachments.maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH) {
+                Ok(report) if report.failed > 0 || report.completed > 0 => {
+                    eprintln!(
+                        "torca-attachment: attempted={} chunks={} completed={} failed={}",
+                        report.attempted, report.chunks_sent, report.completed, report.failed
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("torca-attachment: maintenance failed code={error}");
+                }
+            }
             self.attachment_scheduler.record_attempt(now);
         }
         Ok(())
