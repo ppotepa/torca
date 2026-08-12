@@ -222,7 +222,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                         child: Text(
                                           restartRequired
                                               ? 'Restart application'
-                                              : 'Retry',
+                                              : context.strings.retryNow,
                                         ),
                                       ),
                                     ],

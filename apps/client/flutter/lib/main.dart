@@ -226,10 +226,10 @@ class _StartupScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 32, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 24),
-              if (failure == null) ...const <Widget>[
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Starting secure network…'),
+              if (failure == null) ...<Widget>[
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(context.strings.startingSecureNetwork),
               ] else ...<Widget>[
                 Icon(TorcaIconSet.modern.error, size: 40),
                 const SizedBox(height: 16),

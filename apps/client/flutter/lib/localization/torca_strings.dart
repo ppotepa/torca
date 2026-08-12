@@ -197,6 +197,8 @@ class TorcaStrings {
   String get cancelRequest => _pl ? 'Anuluj zadanie' : 'Cancel request';
   String get cancelInvitation =>
       _pl ? 'Anuluj zaproszenie' : 'Cancel invitation';
+  String get startingSecureNetwork =>
+      _pl ? 'Uruchamianie bezpiecznej sieci…' : 'Starting secure network…';
 }
 
 extension TorcaStringsContext on BuildContext {
