@@ -1,5 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
