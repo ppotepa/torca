@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -70,6 +71,10 @@ class ConversationTimelineController extends ChangeNotifier {
       _messages = _merge(page.messages, _messages);
       _hasMore = page.hasMore;
       return _messages.length - previousCount;
+    } on TimeoutException catch (error, stackTrace) {
+      debugPrint('older conversation history temporarily unavailable: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      return 0;
     } finally {
       if (generation == _generation) {
         _loading = false;
@@ -120,6 +125,13 @@ class ConversationTimelineController extends ChangeNotifier {
             _hasMore = page.hasMore;
           }
           _notifyChanged();
+        } on TimeoutException catch (error, stackTrace) {
+          // Attachment transfers can temporarily occupy the native
+          // communication actor. Keep the last stable timeline visible and
+          // retry on the next snapshot instead of surfacing an unhandled
+          // exception from the Flutter worker.
+          debugPrint('conversation history temporarily unavailable: $error');
+          debugPrintStack(stackTrace: stackTrace);
         } finally {
           if (generation == _generation && initialLoad) {
             _loading = false;

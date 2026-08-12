@@ -36,7 +36,12 @@ pub const PROBE_MESSAGE_KIND: u16 = 4;
 const INBOUND_BATCH: usize = 64;
 const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
-const ATTACHMENT_BATCH: usize = 2;
+// Keep bulk transfer work bounded so a single communication tick cannot
+// monopolize the runtime actor while waiting for peer ACKs.  The transfer
+// worker will eventually replace this synchronous adapter path; until then a
+// single frame per tick preserves text/control responsiveness as much as the
+// current transport permits.
+const ATTACHMENT_BATCH: usize = 1;
 
 /// Provider-neutral inbound envelope owned by the application boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
