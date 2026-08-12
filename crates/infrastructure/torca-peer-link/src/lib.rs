@@ -29,6 +29,7 @@ use torca_tor::{
 const MAX_CLOCK_SKEW_MS: i64 = 2 * 60 * 1000;
 const MAX_PENDING_INCOMING: usize = 64;
 const MAX_INBOUND_EVENTS: usize = 256;
+const MAX_PENDING_ACKS: usize = 256;
 const RECONNECT_BASE_MS: u64 = 1_000;
 const RECONNECT_MAX_MS: u64 = 60_000;
 const POLL_SLEEP: Duration = Duration::from_millis(10);
@@ -208,7 +209,8 @@ where
     }
 
     /// Sends one encrypted application envelope and waits for the matching protocol ACK. Incoming
-    /// data observed while waiting is queued for the normal inbound handler and is never ACKed here.
+    /// data observed while waiting is queued for the normal inbound handler
+    /// and acknowledged after it enters the bounded inbound queue.
     pub fn send_and_wait_ack(
         &mut self,
         contact_id: ContactId,
@@ -318,6 +320,11 @@ where
                     AckStatus::Rejected => Err(PeerLinkError::AckRejected),
                 };
                 if received != envelope_id {
+                    if self.pending_acks.len() >= MAX_PENDING_ACKS {
+                        if let Some(oldest) = self.pending_acks.keys().next().copied() {
+                            self.pending_acks.remove(&oldest);
+                        }
+                    }
                     self.pending_acks.insert((contact_id, received), ack);
                     return Ok(None);
                 }
