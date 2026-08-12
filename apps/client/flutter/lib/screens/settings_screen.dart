@@ -284,7 +284,10 @@ class _AppearancePreview extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Text('TODAY', style: Theme.of(context).textTheme.labelSmall),
+              Text(
+                context.strings.todayUpper,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
               const SizedBox(height: 8),
               const _PreviewMessage(
                 body: 'Are we still meeting?',

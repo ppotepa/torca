@@ -220,6 +220,9 @@ class TorcaStrings {
   String get never => _pl ? 'Nigdy' : 'Never';
   String get presence => _pl ? 'Obecnosc' : 'Presence';
   String get lastSeen => _pl ? 'Ostatnio widziany' : 'Last seen';
+  String get todayUpper => _pl ? 'DZISIAJ' : 'TODAY';
+  String remoteIdentity(String? id) =>
+      _pl ? 'Tozsamosc ${id ?? '-'}' : 'Identity ${id ?? '-'}';
   String get searchMessages => _pl ? 'Szukaj wiadomosci' : 'Search messages';
   String get refresh => _pl ? 'Odswiez' : 'Refresh';
   String get removeAttachment => _pl ? 'Usun zalacznik' : 'Remove attachment';

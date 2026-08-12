@@ -208,7 +208,7 @@ class _IdentitySummary extends StatelessWidget {
           ),
           if (pairing.remoteIdentityId != null) ...<Widget>[
             const SizedBox(height: 6),
-            Text('Identity ${pairing.remoteIdentityId}'),
+            Text(context.strings.remoteIdentity(pairing.remoteIdentityId)),
           ],
           if (pairing.remoteFingerprint != null) ...<Widget>[
             const SizedBox(height: 8),
