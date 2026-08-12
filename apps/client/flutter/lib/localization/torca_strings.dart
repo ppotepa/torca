@@ -191,6 +191,12 @@ class TorcaStrings {
   String get copyCode => _pl ? 'Kopiuj kod' : 'Copy code';
   String get invitationCodeCopied =>
       _pl ? 'Kod zaproszenia skopiowany' : 'Invitation code copied';
+  String get done => _pl ? 'Gotowe' : 'Done';
+  String get accept => _pl ? 'Akceptuj' : 'Accept';
+  String get reject => _pl ? 'Odrzuc' : 'Reject';
+  String get cancelRequest => _pl ? 'Anuluj zadanie' : 'Cancel request';
+  String get cancelInvitation =>
+      _pl ? 'Anuluj zaproszenie' : 'Cancel invitation';
 }
 
 extension TorcaStringsContext on BuildContext {

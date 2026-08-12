@@ -662,7 +662,7 @@ class _PairingSessionDetails extends StatelessWidget {
         FilledButton.icon(
           onPressed: onDone,
           icon: Icon(context.torcaIcons.success),
-          label: const Text('Done'),
+          label: Text(context.strings.done),
         ),
       ] else ...<Widget>[
         if (pairing.typedRole == PairingRole.creator &&
@@ -686,7 +686,7 @@ class _PairingSessionDetails extends StatelessWidget {
                 child: FilledButton.icon(
                   onPressed: busy ? null : onApprove,
                   icon: Icon(context.torcaIcons.confirm),
-                  label: const Text('Accept'),
+                  label: Text(context.strings.accept),
                 ),
               ),
               const SizedBox(width: 10),
@@ -694,7 +694,7 @@ class _PairingSessionDetails extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: busy ? null : onReject,
                   icon: Icon(context.torcaIcons.close),
-                  label: const Text('Reject'),
+                  label: Text(context.strings.reject),
                 ),
               ),
             ],
@@ -712,7 +712,7 @@ class _PairingSessionDetails extends StatelessWidget {
               side: BorderSide(color: Theme.of(context).colorScheme.error),
             ),
             icon: Icon(context.torcaIcons.cancelled),
-            label: const Text('Cancel request'),
+            label: Text(context.strings.cancelRequest),
           ),
         ] else if (pairing.typedState == PairingState.open) ...<Widget>[
           OutlinedButton.icon(
@@ -722,7 +722,7 @@ class _PairingSessionDetails extends StatelessWidget {
               side: BorderSide(color: Theme.of(context).colorScheme.error),
             ),
             icon: Icon(context.torcaIcons.cancelled),
-            label: const Text('Cancel invitation'),
+            label: Text(context.strings.cancelInvitation),
           ),
         ],
       ],
@@ -823,12 +823,14 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
                     await Clipboard.setData(ClipboardData(text: widget.code));
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Invitation code copied')),
+                        SnackBar(
+                          content: Text(context.strings.invitationCodeCopied),
+                        ),
                       );
                     }
                   },
             icon: Icon(context.torcaIcons.copy),
-            label: const Text('Copy code'),
+            label: Text(context.strings.copyCode),
           ),
         ),
       ],
