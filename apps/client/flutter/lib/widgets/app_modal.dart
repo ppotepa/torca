@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../localization/torca_strings.dart';
+
 /// Consistent responsive container for details and confirmation flows.
 class AppModal extends StatelessWidget {
   const AppModal({
@@ -45,7 +47,7 @@ class AppModal extends StatelessWidget {
                       ),
                     ),
                     IconButton(
-                      tooltip: 'Close',
+                      tooltip: context.strings.closeTooltip,
                       onPressed: () => Navigator.of(context).pop(),
                       icon: Icon(context.torcaIcons.close),
                     ),

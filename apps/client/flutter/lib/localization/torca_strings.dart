@@ -133,6 +133,11 @@ class TorcaStrings {
       _pl ? 'Eksportuj diagnostyke' : 'Export diagnostics';
   String get noMessagesYet => _pl ? 'Brak wiadomosci' : 'No messages yet';
   String get contactLabel => _pl ? 'Kontakt' : 'Contact';
+  String get closeTooltip => _pl ? 'Zamknij' : 'Close';
+  String buildTooltip(String build, String relay) => _pl
+      ? 'Build $build\nWersja relay: $relay'
+      : 'Torca build $build\nRelay version: $relay';
+  String buildLabel(String build) => _pl ? 'build $build' : 'build $build';
   String get secureRuntimeNotReady => _pl
       ? 'Bezpieczne srodowisko nie jest gotowe'
       : 'Secure runtime is not ready';

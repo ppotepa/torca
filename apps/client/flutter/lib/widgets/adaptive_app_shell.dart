@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../localization/torca_strings.dart';
+
 import 'runtime_network_status.dart';
 
 /// Shared responsive navigation frame for every authenticated Torca surface.
@@ -146,7 +148,7 @@ class _BuildFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Tooltip(
-    message: 'Torca build $buildLabel\nRelay version: $relayLabel',
+    message: context.strings.buildTooltip(buildLabel, relayLabel),
     child: InkWell(
       onTap: onTap,
       child: expanded
@@ -157,7 +159,7 @@ class _BuildFooter extends StatelessWidget {
                 const SizedBox(height: 5),
                 const Text('Torca'),
                 Text(
-                  'build $buildLabel',
+                  context.strings.buildLabel(buildLabel),
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
                 Text(relayLabel, style: Theme.of(context).textTheme.labelSmall),
