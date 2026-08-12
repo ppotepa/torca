@@ -225,6 +225,22 @@ class TorcaStrings {
   String get removeAttachment => _pl ? 'Usun zalacznik' : 'Remove attachment';
   String get scanQr => _pl ? 'Skanuj QR' : 'Scan QR';
   String get contactDetails => _pl ? 'Szczegoly kontaktu' : 'Contact details';
+  String get contactBlocked =>
+      _pl ? 'Kontakt jest zablokowany' : 'Contact is blocked';
+  String get connecting => _pl ? 'Laczenie' : 'Connecting';
+  String get reconnecting => _pl ? 'Ponowne laczenie' : 'Reconnecting';
+  String get peerOffline => _pl ? 'Kontakt offline' : 'Peer is offline';
+  String get connectingPeerThroughTor =>
+      _pl ? 'Laczenie z kontaktem przez Tor' : 'Connecting to peer through Tor';
+  String get reconnectingPeerThroughTor => _pl
+      ? 'Ponowne laczenie z kontaktem przez Tor'
+      : 'Reconnecting to peer through Tor';
+  String get torReady => _pl ? 'Tor gotowy' : 'Tor ready';
+  String get torStarting => _pl ? 'Tor uruchamia sie' : 'Tor starting';
+  String get torReconnecting =>
+      _pl ? 'Tor ponownie sie laczy' : 'Tor reconnecting';
+  String torStateLabel(String state) =>
+      'Tor: ${state.isEmpty ? 'offline' : state}';
   String get nativeBridge => _pl ? 'Most natywny' : 'Native bridge';
   String get localIdentityCheck => _pl ? 'Lokalna tozsamosc' : 'Local identity';
   String get onionService => _pl ? 'Usluga onion' : 'Onion service';

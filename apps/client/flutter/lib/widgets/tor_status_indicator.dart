@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../localization/torca_strings.dart';
 import '../theme/app_semantic_colors.dart';
 import 'connection_state_presenter.dart';
 
@@ -15,6 +16,7 @@ class TorStatusIndicator extends StatelessWidget {
     final presentation = ConnectionStatePresenter.tor(
       state,
       context.torcaIcons,
+      context.strings,
     );
     final color = switch (presentation.tone) {
       ConnectionTone.ready => context.semanticColors.connectionReady,

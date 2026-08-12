@@ -36,6 +36,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
         state: contact.peerHealth.state,
         blocked: blocked,
         icons: context.torcaIcons,
+        strings: context.strings,
       );
       return Scaffold(
         appBar: RuntimeAppBar(
