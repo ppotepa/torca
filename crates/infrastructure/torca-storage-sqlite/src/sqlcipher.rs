@@ -162,7 +162,9 @@ fn verify_sqlcipher(connection: &Connection) -> Result<String, StorageBackendErr
     }
 
     connection
-        .query_row("SELECT count(*) FROM sqlite_master;", [], |row| row.get::<_, i64>(0))
+        .query_row(include_str!("../sql/queries/verify_database.sql"), [], |row| {
+            row.get::<_, i64>(0)
+        })
         .map_err(|_| StorageBackendError("database key verification failed".into()))?;
 
     Ok(version)

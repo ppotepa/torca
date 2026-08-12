@@ -179,7 +179,7 @@ mod tests {
         let delivered: Option<i64> = store
             .backend
             .connection()
-            .query_row("SELECT delivered_at_ms FROM messages", [], |row| row.get(0))
+            .query_row(include_str!("../sql/queries/test_delivered_at.sql"), [], |row| row.get(0))
             .expect("read lifecycle");
         assert_eq!(delivered, Some(42));
     }

@@ -51,6 +51,18 @@ foreach ($file in $rustSources) {
     }
 }
 
+# Persistence SQL belongs in the SQL source tree. Test fixtures may use direct
+# reads to assert persisted state, but production Rust must load named queries.
+$productionStorageSources = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates/infrastructure/torca-storage-sqlite/src') -Recurse -File -Filter '*.rs' |
+    Where-Object { $_.FullName -notmatch '[\\/]tests?[\\/]' -and $_.Name -notmatch '_test\\.rs$' }
+foreach ($file in $productionStorageSources) {
+    $text = Get-Content -LiteralPath $file.FullName -Raw
+    if ($text -match 'query_(?:row|map|iter)\s*\(\s*"\s*(?:SELECT|INSERT|UPDATE|DELETE)\b' -or
+        $text -match 'execute(?:_batch)?\s*\(\s*"\s*(?:SELECT|INSERT|UPDATE|DELETE)\b') {
+        throw "Production storage SQL must live in named .sql files: $($file.FullName)"
+    }
+}
+
 foreach ($relative in @(
     'crates/infrastructure/torca-storage-sqlite/src/pairing_repository.rs',
     'crates/infrastructure/torca-storage-sqlite/src/pending_operations.rs'
