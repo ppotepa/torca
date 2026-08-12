@@ -3,6 +3,7 @@ import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../widgets/connection_state_presenter.dart';
 import '../widgets/peer_health_indicator.dart';
 import '../widgets/runtime_network_status.dart';
@@ -23,11 +24,11 @@ class ConnectionDetailsScreen extends StatelessWidget {
     builder: (context, snapshot, _) {
       final contact = _contact(snapshot);
       if (contact == null) {
-        return const Scaffold(
-          appBar: const RuntimeAppBar(title: Text('Connection details')),
-          body: const Center(
-            child: Text('This contact is no longer available.'),
+        return Scaffold(
+          appBar: RuntimeAppBar(
+            title: Text(context.strings.connectionDetailsTitle),
           ),
+          body: Center(child: Text(context.strings.contactUnavailable)),
         );
       }
       final blocked = contact.typedStatus == ContactStatus.blocked;
@@ -37,7 +38,9 @@ class ConnectionDetailsScreen extends StatelessWidget {
         icons: context.torcaIcons,
       );
       return Scaffold(
-        appBar: const RuntimeAppBar(title: Text('Connection details')),
+        appBar: RuntimeAppBar(
+          title: Text(context.strings.connectionDetailsTitle),
+        ),
         body: ListView(
           padding: const EdgeInsets.all(20),
           children: <Widget>[
@@ -59,7 +62,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       blocked
-                          ? const Text('Blocked')
+                          ? Text(context.strings.blocked)
                           : PeerHealthIndicator(health: contact.peerHealth),
                     ],
                   ),
@@ -68,10 +71,16 @@ class ConnectionDetailsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             if (presentation.label != 'Direct P2P over Tor') ...<Widget>[
-              _DetailCard(label: 'Status', value: presentation.label),
+              _DetailCard(
+                label: context.strings.status,
+                value: presentation.label,
+              ),
               const SizedBox(height: 8),
             ],
-            const _DetailCard(label: 'Transport', value: 'Direct P2P over Tor'),
+            _DetailCard(
+              label: context.strings.transport,
+              value: 'Direct P2P over Tor',
+            ),
             const SizedBox(height: 8),
             _DetailCard(
               label: 'Quality',
@@ -79,24 +88,24 @@ class ConnectionDetailsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             _DetailCard(
-              label: 'Round trip',
+              label: context.strings.roundTrip,
               value: contact.peerHealth.rttMs == null
                   ? 'Unavailable'
                   : '${contact.peerHealth.rttMs} ms',
             ),
             const SizedBox(height: 8),
             _DetailCard(
-              label: 'Last successful probe',
+              label: context.strings.lastSuccessfulProbe,
               value: _timestamp(contact.peerHealth.lastSuccessAtMs),
             ),
             const SizedBox(height: 8),
             _DetailCard(
-              label: 'Consecutive failures',
+              label: context.strings.consecutiveFailures,
               value: '${contact.peerHealth.consecutiveFailures}',
             ),
             const SizedBox(height: 8),
             _DetailCard(
-              label: 'Reconnect attempts',
+              label: context.strings.reconnectAttempts,
               value: '${contact.peerHealth.reconnectAttempt}',
             ),
             const SizedBox(height: 20),

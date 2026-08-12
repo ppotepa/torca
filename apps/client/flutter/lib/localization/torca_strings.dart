@@ -99,6 +99,24 @@ class TorcaStrings {
   String get displayName => _pl ? 'Nazwa wyświetlana' : 'Display name';
   String get torState => _pl ? 'Stan Tor' : 'Tor state';
   String get unavailable => _pl ? 'Niedostępne' : 'Unavailable';
+  String get applicationMenu => _pl ? 'Menu aplikacji' : 'Application menu';
+  String get newPairing => _pl ? 'Nowe parowanie' : 'New pairing';
+  String get diagnostics => _pl ? 'Diagnostyka' : 'Diagnostics';
+  String get aboutTorca => _pl ? 'O Torca' : 'About Torca';
+  String get connectionDetailsTitle =>
+      _pl ? 'Szczegoly polaczenia' : 'Connection details';
+  String get contactUnavailable => _pl
+      ? 'Ten kontakt nie jest juz dostepny.'
+      : 'This contact is no longer available.';
+  String get status => _pl ? 'Stan' : 'Status';
+  String get transport => 'Transport';
+  String get roundTrip => _pl ? 'Opoznienie' : 'Round trip';
+  String get lastSuccessfulProbe =>
+      _pl ? 'Ostatnia udana sonda' : 'Last successful probe';
+  String get consecutiveFailures =>
+      _pl ? 'Kolejne bledy' : 'Consecutive failures';
+  String get reconnectAttempts =>
+      _pl ? 'Proby ponownego polaczenia' : 'Reconnect attempts';
 }
 
 extension TorcaStringsContext on BuildContext {

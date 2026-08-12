@@ -452,9 +452,9 @@ void _workerMainImpl(List<Object?> arguments) {
         try {
           final raw = bindings.invoke(
             handle,
-            RuntimeRequestDto.runtimePoll(notificationCursor).encode(
-              'worker-poll-${DateTime.now().microsecondsSinceEpoch}',
-            ),
+            RuntimeRequestDto.runtimePoll(
+              notificationCursor,
+            ).encode('worker-poll-${DateTime.now().microsecondsSinceEpoch}'),
             5000,
           );
           final decoded = jsonDecode(raw);

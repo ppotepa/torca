@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../localization/torca_strings.dart';
+
 enum AppOverflowAction { pairing, identity, diagnostics, settings, about }
 
 class AppOverflowMenu extends StatelessWidget {
@@ -15,7 +17,7 @@ class AppOverflowMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => PopupMenuButton<AppOverflowAction>(
-    tooltip: 'Application menu',
+    tooltip: context.strings.applicationMenu,
     onSelected: onSelected,
     itemBuilder: (context) => <PopupMenuEntry<AppOverflowAction>>[
       PopupMenuItem(
@@ -25,7 +27,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.addContact),
-          title: const Text('New pairing'),
+          title: Text(context.strings.newPairing),
         ),
       ),
       PopupMenuItem(
@@ -35,7 +37,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.identity),
-          title: const Text('Your identity'),
+          title: Text(context.strings.yourIdentity),
         ),
       ),
       const PopupMenuDivider(),
@@ -45,7 +47,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.diagnostics),
-          title: const Text('Diagnostics'),
+          title: Text(context.strings.diagnostics),
         ),
       ),
       PopupMenuItem(
@@ -54,7 +56,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.settings),
-          title: const Text('Settings'),
+          title: Text(context.strings.settings),
         ),
       ),
       PopupMenuItem(
@@ -63,7 +65,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.info),
-          title: const Text('About Torca'),
+          title: Text(context.strings.aboutTorca),
         ),
       ),
     ],
