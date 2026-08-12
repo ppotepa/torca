@@ -234,11 +234,14 @@ impl DeployExecutor {
                 launch.wait_process(device).map_err(DeployError::Launch)?;
                 launch.wait_visible_surface(device).map_err(DeployError::Launch)?;
             }
+            run.advance(
+                DeployStage::ClientsLaunched,
+                "selected clients started and exposed a visible surface",
+            );
+            self.checkpoint(run)?;
             for (device, receipt) in receipts {
                 launch.wait_network_ready(device, receipt).map_err(DeployError::Launch)?;
             }
-            run.advance(DeployStage::ClientsLaunched, "selected clients launched");
-            self.checkpoint(run)?;
         }
         Ok(())
     }

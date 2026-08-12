@@ -50,22 +50,8 @@ impl<'a> LaunchController<'a> {
                 )
                 .map_err(LaunchError::ArtifactVerification)?;
                 WorkspaceWindowsClient::new(self.paths, self.runner).stop()?;
-                let output = self.runner.run(&CommandSpec {
-                    program: if cfg!(windows) { "cmd".into() } else { exe.display().to_string() },
-                    arguments: if cfg!(windows) {
-                        vec!["/C".into(), "start".into(), String::new(), exe.display().to_string()]
-                    } else {
-                        Vec::new()
-                    },
-                    working_directory: exe.parent().unwrap_or(&self.paths.repo_root).to_path_buf(),
-                    timeout: Duration::from_secs(30),
-                    environment: std::collections::BTreeMap::new(),
-                })?;
-                if output.success {
-                    Ok(LaunchReceipt { started_at })
-                } else {
-                    Err(LaunchError::Command(output.text))
-                }
+                spawn_windows_detached(&exe, self.paths, self.runner)?;
+                Ok(LaunchReceipt { started_at })
             }
             crate::domain::Target::Android => {
                 let output = self.runner.run(&CommandSpec {
@@ -143,7 +129,7 @@ impl<'a> LaunchController<'a> {
         device: &Device,
         receipt: LaunchReceipt,
     ) -> Result<(), LaunchError> {
-        let deadline = std::time::Instant::now() + Duration::from_secs(900);
+        let deadline = std::time::Instant::now() + Duration::from_secs(180);
         let started = std::time::Instant::now();
         let mut next_heartbeat = started;
         while std::time::Instant::now() < deadline {
@@ -263,11 +249,14 @@ impl<'a> LaunchController<'a> {
         let output = self.command("adb", &["-s", device, "shell", "tail", "-n", "120", path])?;
         Ok(file_is_fresh_from_log(&output.text, launched_at)
             && output.success
-            && output
-                .text
-                .lines()
-                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-                .any(|value| value.get("code").and_then(Value::as_str) == Some("NETWORK_READY")))
+            && output.text.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).any(
+                |value| {
+                    matches!(
+                        value.get("code").and_then(Value::as_str),
+                        Some("LOCAL_READY") | Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY")
+                    )
+                },
+            ))
     }
 
     fn command(
@@ -338,12 +327,47 @@ fn read_network_ready(path: &std::path::Path) -> bool {
     let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
-    content
-        .lines()
-        .rev()
-        .take(120)
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .any(|value| value.get("code").and_then(Value::as_str) == Some("NETWORK_READY"))
+    content.lines().rev().take(120).filter_map(|line| serde_json::from_str::<Value>(line).ok()).any(
+        |value| {
+            matches!(
+                value.get("code").and_then(Value::as_str),
+                Some("LOCAL_READY") | Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY")
+            )
+        },
+    )
+}
+
+#[cfg(windows)]
+fn spawn_windows_detached(
+    executable: &std::path::Path,
+    paths: &RuntimePaths,
+    _runner: &dyn CommandRunner,
+) -> Result<(), LaunchError> {
+    use std::process::{Command, Stdio};
+    Command::new(executable)
+        .current_dir(executable.parent().unwrap_or(&paths.repo_root))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| LaunchError::Io(error))
+}
+
+#[cfg(not(windows))]
+fn spawn_windows_detached(
+    executable: &std::path::Path,
+    paths: &RuntimePaths,
+    runner: &dyn CommandRunner,
+) -> Result<(), LaunchError> {
+    let output = runner.run(&CommandSpec {
+        program: executable.display().to_string(),
+        arguments: Vec::new(),
+        working_directory: executable.parent().unwrap_or(&paths.repo_root).to_path_buf(),
+        timeout: Duration::from_secs(30),
+        environment: std::collections::BTreeMap::new(),
+    })?;
+    if output.success { Ok(()) } else { Err(LaunchError::Command(output.text)) }
 }
 #[derive(Debug, Error)]
 pub enum LaunchError {

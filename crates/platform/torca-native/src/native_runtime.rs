@@ -332,13 +332,10 @@ impl TorcaRuntime {
         let _ = self.apply_history_summaries(&mut snapshot);
         let _ = self.apply_security_states(&mut snapshot);
         self.apply_navigation_badges(&mut snapshot);
-        // Keep applying the initial bootstrap gate after the production runtime
-        // has attached. The application shell opens when Tor and the relay are
-        // usable. Local peer-onion publication is recovered independently and
-        // remains an operation-level prerequisite for pairing/P2P.
-        if snapshot.identity_name.is_some()
-            && (!self.application_runtime.has_runtime() || !self.network_ready_logged)
-        {
+        // Keep transport indicators live after the application shell opens, but
+        // never gate the shell on relay control-plane health. Pairing/P2P keeps
+        // its narrower relay/onion prerequisites at operation level.
+        if snapshot.identity_name.is_some() {
             if !self.application_runtime.has_runtime() {
                 snapshot.tor_state = torca_contract::tor_state_name(self.host_state_hint).into();
             }
@@ -407,16 +404,11 @@ impl TorcaRuntime {
     }
 
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
-        // Do not expose the normal application shell before the first complete
-        // network bootstrap. Identity creation is only a local prerequisite;
-        // general application traffic is usable once Tor and the relay have
-        // reached NETWORK_READY. Pairing/P2P retains its narrower local-onion
-        // prerequisite in the application policy.
-        // Once that first gate has opened, keep the shell available during later
-        // transient outages and expose those outages through the step/status UI.
+        // The local application runtime is the shell gate. Tor, onion and relay
+        // are independently observable capabilities and operation prerequisites.
         snapshot.bootstrap_phase = if snapshot.identity_name.is_none() {
             "ready_for_profile"
-        } else if self.network_ready_logged {
+        } else if self.application_runtime.has_runtime() {
             "ready"
         } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
             "degraded"
