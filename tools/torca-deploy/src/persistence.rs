@@ -62,12 +62,17 @@ impl StateStore {
                 Ok(DeployLock { path })
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let stale = fs::metadata(&path)
-                    .and_then(|metadata| metadata.modified())
-                    .ok()
-                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-                    .is_some_and(|age| age > Duration::from_secs(6 * 60 * 60));
-                if stale {
+                let existing = fs::read_to_string(&path).unwrap_or_default();
+                let owner_pid = parse_owner_pid(&existing);
+                let owner_alive = owner_pid.is_some_and(is_process_alive);
+                let stale = owner_pid.is_some() && !owner_alive;
+                let malformed_old = owner_pid.is_none()
+                    && fs::metadata(&path)
+                        .and_then(|metadata| metadata.modified())
+                        .ok()
+                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                        .is_some_and(|age| age > Duration::from_secs(60 * 60));
+                if stale || malformed_old {
                     fs::remove_file(&path).map_err(PersistenceError::Write)?;
                     let mut file = fs::OpenOptions::new()
                         .write(true)
@@ -161,6 +166,39 @@ fn backup_path(path: &Path) -> PathBuf {
     path.with_extension("bak")
 }
 
+fn parse_owner_pid(contents: &str) -> Option<u32> {
+    contents
+        .lines()
+        .find_map(|line| line.strip_prefix("pid=")?.split_whitespace().next())
+        .and_then(|pid| pid.parse().ok())
+}
+
+#[cfg(windows)]
+fn is_process_alive(pid: u32) -> bool {
+    let filter = format!("PID eq {pid}");
+    std::process::Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+        .map(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+        })
+        .unwrap_or(true)
+}
+
+#[cfg(unix)]
+fn is_process_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(not(any(windows, unix)))]
+fn is_process_alive(_pid: u32) -> bool {
+    true
+}
+
 #[derive(Debug, Error)]
 pub enum PersistenceError {
     #[error("could not resolve current directory: {0}")]
@@ -228,6 +266,20 @@ mod tests {
         let lock = store.acquire_lock().expect("first lock");
         assert!(matches!(store.acquire_lock(), Err(PersistenceError::ActiveDeployment(_))));
         drop(lock);
+        assert!(store.acquire_lock().is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_lock_owned_by_missing_process_is_reclaimed() {
+        let root =
+            std::env::temp_dir().join(format!("torca-deploy-stale-lock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DeployPaths { repo_root: root.clone(), state_root: root.join(".torca/deploy") };
+        fs::create_dir_all(&paths.state_root).expect("state directory");
+        fs::write(paths.state_root.join("active.lock"), "pid=4294967294 started=unknown\n")
+            .expect("stale lock");
+        let store = StateStore::new(paths);
         assert!(store.acquire_lock().is_ok());
         let _ = fs::remove_dir_all(root);
     }
