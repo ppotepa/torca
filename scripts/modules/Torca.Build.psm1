@@ -454,6 +454,16 @@ function Wait-TorcaClientLaunch {
                 if ($ExpectedWindowsExecutable) {
                     $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $($process[0].Id)" -ErrorAction SilentlyContinue
                     $actualExecutable = if ($processInfo) { [string]$processInfo.ExecutablePath } else { '' }
+                    # Win32_Process may return a relative dot for a newly
+                    # created GUI process while its command metadata is still
+                    # settling. Prefer the process object's canonical path
+                    # before treating the executable as mismatched.
+                    if ([string]::IsNullOrWhiteSpace($actualExecutable) -or $actualExecutable -eq '.') {
+                        try { $actualExecutable = [string]$process[0].Path } catch { $actualExecutable = '' }
+                    }
+                    if ([string]::IsNullOrWhiteSpace($actualExecutable) -or $actualExecutable -eq '.') {
+                        try { $actualExecutable = [string]$process[0].MainModule.FileName } catch { $actualExecutable = '' }
+                    }
                     $expectedExecutable = [IO.Path]::GetFullPath($ExpectedWindowsExecutable)
                     if ([string]::IsNullOrWhiteSpace($actualExecutable) -or
                         -not [string]::Equals([IO.Path]::GetFullPath($actualExecutable), $expectedExecutable, [StringComparison]::OrdinalIgnoreCase)) {
