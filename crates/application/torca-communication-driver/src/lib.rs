@@ -3,6 +3,11 @@
 use core::fmt;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
 
 mod attachment_scheduler;
 use attachment_scheduler::AttachmentJobScheduler;
@@ -337,7 +342,9 @@ pub struct TorcaCommunicationDriver {
     text: Box<dyn TextDeliveryRuntime>,
     control: Box<dyn ControlDeliveryRuntime>,
     inbound: Box<dyn InboundMessagingRuntime>,
-    attachments: Box<dyn AttachmentRuntime>,
+    attachments: Arc<Mutex<Box<dyn AttachmentRuntime>>>,
+    attachment_job_active: Arc<AtomicBool>,
+    attachment_snapshot_cache: Arc<Mutex<Vec<AttachmentView>>>,
     attachment_export: Box<dyn AttachmentExportRuntime>,
     read_state: Box<dyn ReadStateRuntime>,
     relationships: Box<dyn RelationshipAdminRuntime>,
@@ -362,12 +369,20 @@ impl TorcaCommunicationDriver {
             text,
             control,
             inbound,
-            attachments,
+            attachments: Arc::new(Mutex::new(attachments)),
+            attachment_job_active: Arc::new(AtomicBool::new(false)),
+            attachment_snapshot_cache: Arc::new(Mutex::new(Vec::new())),
             attachment_export,
             read_state,
             relationships,
             attachment_scheduler: AttachmentJobScheduler::new(),
         }
+    }
+
+    fn attachment_runtime(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Box<dyn AttachmentRuntime>>, CommunicationError> {
+        self.attachments.lock().map_err(|_| CommunicationError::Attachment)
     }
 
     pub fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
@@ -382,7 +397,7 @@ impl TorcaCommunicationDriver {
                 ATTACHMENT_MESSAGE_KIND => {
                     let contact_id = envelope.contact_id;
                     let envelope_id = envelope.envelope_id;
-                    if let Err(error) = self.attachments.process_inbound(envelope, now) {
+                    if let Err(error) = self.attachment_runtime()?.process_inbound(envelope, now) {
                         eprintln!(
                             "torca-attachment: inbound failed contact={} envelope={} code={error}",
                             contact_id, envelope_id
@@ -420,10 +435,22 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         // starve text/control delivery.  The adapter persists Failed and its
         // next-attempt time before returning the error.
         if self.attachment_scheduler.due(now) {
-            if let Err(error) =
-                self.attachments.maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH)
-            {
-                eprintln!("torca-attachment: maintenance failed code={error}");
+            if !self.attachment_job_active.swap(true, Ordering::AcqRel) {
+                let attachments = Arc::clone(&self.attachments);
+                let active = Arc::clone(&self.attachment_job_active);
+                let messages = snapshot.messages.clone();
+                thread::spawn(move || {
+                    let result = attachments
+                        .lock()
+                        .map_err(|_| CommunicationError::Attachment)
+                        .and_then(|mut runtime| {
+                            runtime.maintenance_outgoing(&messages, now, ATTACHMENT_BATCH)
+                        });
+                    if let Err(error) = result {
+                        eprintln!("torca-attachment: maintenance failed code={error}");
+                    }
+                    active.store(false, Ordering::Release);
+                });
             }
             self.attachment_scheduler.record_attempt(now);
         }
@@ -455,7 +482,9 @@ impl PeerSessionPort for TorcaCommunicationDriver {
     }
 
     fn shutdown(&mut self) {
-        self.attachments.shutdown();
+        if let Ok(mut attachments) = self.attachments.lock() {
+            attachments.shutdown();
+        }
         self.peer.shutdown();
     }
 }
@@ -517,14 +546,19 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         request: &AttachmentSendRequest,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        let result = self.attachments.prepare_outgoing(request, now).map_err(map_runtime);
+        let result = self
+            .attachment_runtime()
+            .map_err(map_runtime)?
+            .prepare_outgoing(request, now)
+            .map_err(map_runtime);
         if result.is_ok() {
             self.attachment_scheduler.wake();
         }
         result
     }
     fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
-        let result = self.attachments.retry(id, now).map_err(map_runtime);
+        let result =
+            self.attachment_runtime().map_err(map_runtime)?.retry(id, now).map_err(map_runtime);
         if result.is_ok() {
             self.attachment_scheduler.wake();
         }
@@ -535,14 +569,27 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.attachments.cancel(id, now).map_err(map_runtime)
+        self.attachment_runtime().map_err(map_runtime)?.cancel(id, now).map_err(map_runtime)
     }
     fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
-        if let Some(snapshot) = self.attachments.snapshot_projection().map_err(map_runtime)? {
-            return Ok(snapshot);
+        let Ok(attachments) = self.attachments.try_lock() else {
+            return Ok(self
+                .attachment_snapshot_cache
+                .lock()
+                .map(|snapshot| snapshot.clone())
+                .unwrap_or_default());
+        };
+        let snapshot =
+            if let Some(snapshot) = attachments.snapshot_projection().map_err(map_runtime)? {
+                snapshot
+            } else {
+                let messages = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+                attachments.snapshot(&messages.messages).map_err(map_runtime)?
+            };
+        if let Ok(mut cache) = self.attachment_snapshot_cache.lock() {
+            *cache = snapshot.clone();
         }
-        let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
-        self.attachments.snapshot(&snapshot.messages).map_err(map_runtime)
+        Ok(snapshot)
     }
 }
 
