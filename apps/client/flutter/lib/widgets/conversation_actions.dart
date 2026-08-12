@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../localization/torca_strings.dart';
+
 enum ConversationAction {
   open,
   contactDetails,
@@ -27,13 +29,13 @@ abstract final class ContactActionMenu {
             context,
             ContactAction.open,
             context.torcaIcons.chats,
-            'Open chat',
+            context.strings.openChat,
           ),
           _tile(
             context,
             ContactAction.contactDetails,
             context.torcaIcons.contactInfo,
-            'Contact information',
+            context.strings.contactInformation,
           ),
           _tile(
             context,
@@ -73,11 +75,15 @@ abstract final class ContactActionMenu {
         Offset.zero & overlay.size,
       ),
       items: <PopupMenuEntry<ContactAction>>[
-        _item(ContactAction.open, context.torcaIcons.chats, 'Open chat'),
+        _item(
+          ContactAction.open,
+          context.torcaIcons.chats,
+          context.strings.openChat,
+        ),
         _item(
           ContactAction.contactDetails,
           context.torcaIcons.contactInfo,
-          'Contact information',
+          context.strings.contactInformation,
         ),
         _item(ContactAction.rename, context.torcaIcons.edit, 'Rename contact'),
         const PopupMenuDivider(),

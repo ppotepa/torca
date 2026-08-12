@@ -4,6 +4,7 @@ import 'package:torca_ui/torca_ui.dart';
 import '../controllers/pairing_action_controller.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../theme/app_semantic_colors.dart';
 
 /// Global approval surface for a remote device that joined an invitation.
@@ -109,7 +110,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                     FilledButton.icon(
                       onPressed: () => Navigator.of(context).pop(),
                       icon: Icon(context.torcaIcons.confirm),
-                      label: const Text('Done'),
+                      label: Text(context.strings.done),
                     ),
                   ] else ...<Widget>[
                     _IdentitySummary(pairing: pairing ?? widget.pairing),
@@ -151,7 +152,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                                       ),
                                     )
                                   : Icon(context.torcaIcons.confirm),
-                              label: const Text('Accept'),
+                              label: Text(context.strings.accept),
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -164,7 +165,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                                       accept: false,
                                     ),
                               icon: Icon(context.torcaIcons.close),
-                              label: const Text('Reject'),
+                              label: Text(context.strings.reject),
                             ),
                           ),
                         ],
@@ -172,7 +173,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                     else
                       OutlinedButton(
                         onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('Close'),
+                        child: Text(context.strings.close),
                       ),
                   ],
                 ],
