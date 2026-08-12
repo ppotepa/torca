@@ -31,11 +31,40 @@ impl SharedTorRelayTransport {
         Self { inner: Arc::new(Mutex::new(TorRelayTransport::new(client, hostname, port))) }
     }
 
-    /// Sends a health request through the existing stream. Only a failed
-    /// request creates a new Tor stream, keeping the established connection
-    /// warm while preserving recovery for a broken circuit.
+    /// Sends a bounded health request through the existing stream. Recovery is
+    /// deliberately left to foreground transport operations so this path
+    /// cannot hold the shared lock during a Tor dial.
     pub fn check_health(&self, timeout: Duration) -> Result<(), RelayTransportError> {
-        self.relay_info(timeout).map(|_| ())
+        self.try_relay_info(timeout).map(|_| ())
+    }
+
+    /// Non-blocking health/info sample for the background supervisor. It never
+    /// waits behind a foreground exchange and never performs a reconnect while
+    /// another operation owns the transport.
+    pub fn try_relay_info(&self, timeout: Duration) -> Result<RelayInfo, RelayTransportError> {
+        // Health is background work. It must never wait behind a user-facing
+        // pairing or delivery exchange, nor start a second reconnect while
+        // that exchange owns the transport. The next scheduled probe will
+        // observe the stream after the foreground operation completes.
+        let mut transport = self.inner.try_lock().map_err(|_| RelayTransportError {
+            kind: RelayTransportFailureKind::Busy,
+            request_was_sent: false,
+        })?;
+        let response = transport.exchange(&RelayRequest::Info, timeout);
+        match response {
+            Ok(RelayResponse::Info(info)) => Ok(info),
+            Ok(_) => Err(RelayTransportError {
+                kind: RelayTransportFailureKind::InvalidResponse,
+                request_was_sent: true,
+            }),
+            Err(error) => {
+                // Health observation never reconnects while holding the
+                // shared transport lock. Foreground operations own recovery;
+                // the next probe observes the resulting stream.
+                transport.invalidate();
+                Err(error)
+            }
+        }
     }
 
     /// Reads build and protocol identity through the same persistent stream

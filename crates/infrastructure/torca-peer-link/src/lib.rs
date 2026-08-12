@@ -32,10 +32,11 @@ const MAX_INBOUND_EVENTS: usize = 256;
 const RECONNECT_BASE_MS: u64 = 1_000;
 const RECONNECT_MAX_MS: u64 = 60_000;
 const POLL_SLEEP: Duration = Duration::from_millis(10);
-// A delivery attempt must never monopolize the process-owned PeerLink mutex.
-// Durable workers retry the same envelope id, so a short cooperative slice is
-// safe: a late ACK is consumed by maintenance and a retransmit is deduplicated.
-const MAX_ACK_WAIT_SLICE: Duration = Duration::from_millis(500);
+// Keep the mutex cooperative, but allow a Tor circuit enough time to deliver an
+// attachment frame.  The old 500 ms ceiling worked for small text envelopes
+// but made every video/image chunk look lost on a normal onion-service RTT.
+// The caller's delivery timeout remains the authoritative retry deadline.
+const MAX_ACK_WAIT_SLICE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PeerConnectionState {

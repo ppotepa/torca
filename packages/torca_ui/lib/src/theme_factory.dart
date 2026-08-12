@@ -119,25 +119,37 @@ abstract final class TorcaThemeFactory {
         ),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
-        elevation: terminal ? 0 : 3,
+        elevation: 0,
+        focusElevation: 0,
+        hoverElevation: 0,
+        highlightElevation: 0,
+        disabledElevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusMedium),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(shape: shape),
+        style: FilledButton.styleFrom(shape: shape).copyWith(
+          animationDuration: Duration.zero,
+          elevation: const WidgetStatePropertyAll<double>(0),
+        ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           shape: shape,
           side: BorderSide(color: scheme.outline),
-        ),
+        ).copyWith(animationDuration: Duration.zero),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(shape: shape),
+        style: TextButton.styleFrom(
+          shape: shape,
+        ).copyWith(animationDuration: Duration.zero),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(shape: shape),
+        style: ElevatedButton.styleFrom(shape: shape).copyWith(
+          animationDuration: Duration.zero,
+          elevation: const WidgetStatePropertyAll<double>(0),
+        ),
       ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(

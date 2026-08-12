@@ -88,6 +88,19 @@ where
             capability_id: self.random_id()?,
         })
     }
+
+    fn publish_local_offer_if_ready(
+        &mut self,
+        session_id: PairingSessionId,
+    ) -> Result<bool, RuntimeDriverError> {
+        let context = match self.context() {
+            Ok(context) => context,
+            Err(RuntimeDriverError::Tor) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        self.runtime.publish_local_offer(session_id, context).map_err(map_pairing_error)?;
+        Ok(true)
+    }
     fn random_id(&mut self) -> Result<OpaqueId, RuntimeDriverError> {
         for _ in 0..8 {
             let mut bytes = [0_u8; 16];
@@ -127,9 +140,11 @@ where
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<PairingInvitationView, RuntimeDriverError> {
-        let context = self.context()?;
-        let invitation =
-            self.runtime.create_invitation(session_id, context, now).map_err(map_pairing_error)?;
+        let invitation = self
+            .runtime
+            .create_invitation_pending_route(session_id, now)
+            .map_err(map_pairing_error)?;
+        let _ = self.publish_local_offer_if_ready(session_id)?;
         self.schedule_now(session_id, now);
         Ok(PairingInvitationView {
             session_id: invitation.session_id,
@@ -145,10 +160,10 @@ where
         ticket: Option<[u8; 16]>,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        let context = self.context()?;
         self.runtime
-            .join_invitation(session_id, code, context, now, ticket)
+            .join_invitation_pending_route(session_id, code, ticket)
             .map_err(map_pairing_error)?;
+        let _ = self.publish_local_offer_if_ready(session_id)?;
         self.schedule_now(session_id, now);
         Ok(())
     }
@@ -173,6 +188,10 @@ where
         self.poll_schedule.retain(|id, _| active_sessions.contains(id));
         for session_id in active_sessions {
             if self.poll_schedule.get(&session_id).is_some_and(|state| now < state.next_at) {
+                continue;
+            }
+            if !self.publish_local_offer_if_ready(session_id)? {
+                self.schedule_failure(session_id, now);
                 continue;
             }
             match self.runtime.poll(session_id, now) {

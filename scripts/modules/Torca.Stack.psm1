@@ -320,7 +320,13 @@ function Wait-TorcaRelayOnionReachable {
     $lastState = $null
     while ((Get-Date) -lt $deadline) {
         $elapsed = [int]((Get-Date) - $started).TotalSeconds
-        $state = if (Test-Path -LiteralPath $Paths.RelayReady) { 'reachable' } else { 'warming' }
+        $readyEndpoint = if (Test-Path -LiteralPath $Paths.RelayReady) {
+            (Get-Content -LiteralPath $Paths.RelayReady -Raw -ErrorAction SilentlyContinue).Trim()
+        } else { '' }
+        # A stale readiness marker must never make a newly rotated relay look
+        # ready. The marker belongs to the exact endpoint currently persisted
+        # by the running stack.
+        $state = if ($readyEndpoint -eq $endpoint) { 'reachable' } else { 'warming' }
         if ($state -ne $lastState) {
             $stageState = if ($state -eq 'reachable') { 'ready' } else { 'running' }
             $stageDetail = if ($state -eq 'reachable') {

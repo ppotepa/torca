@@ -350,7 +350,7 @@ class _BootstrapStepTile extends StatelessWidget {
                   (step.id == 'tor_network' ||
                       step.id == 'onion_service' ||
                       step.id == 'secure_relay')
-              ? '$label  •  attempt ${step.attempt} of 3'
+              ? '$label · attempt ${step.attempt}'
               : label,
         ),
         subtitle: Text(_stateDescription(step, retryRemaining)),

@@ -42,10 +42,12 @@ const RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 pub enum AttachmentTransferError {
     Relationship,
     Message,
+    InboundMessagePending,
     Attachment,
     Storage,
     Crypto,
     Peer,
+    PeerAckTimeout,
     Protocol,
     InvalidState,
     DigestMismatch,
@@ -197,12 +199,12 @@ where
                 match self.advance_outgoing(attachment, now) {
                     Ok(AdvanceOutcome::Chunk) => report.chunks_sent += 1,
                     Ok(AdvanceOutcome::Completed) => report.completed += 1,
-                    Err(_) => {
+                    Err(error) => {
                         // A failed peer/frame attempt used to be reported only
                         // in memory. That left the durable row in
                         // `Transferring`, so maintenance retried it on every
                         // tick with no backoff and no visible attempt count.
-                        self.record_outgoing_failure(attachment_id, now)?;
+                        self.record_outgoing_failure(attachment_id, now, &error)?;
                         report.failed += 1;
                     }
                 }
@@ -345,7 +347,7 @@ where
         now: Timestamp,
         error: AttachmentTransferError,
     ) -> Result<T, AttachmentTransferError> {
-        let _ = self.record_outgoing_failure(attachment.id(), now);
+        let _ = self.record_outgoing_failure(attachment.id(), now, &error);
         Err(error)
     }
 
@@ -353,13 +355,14 @@ where
         &mut self,
         attachment_id: AttachmentId,
         now: Timestamp,
+        error: &AttachmentTransferError,
     ) -> Result<(), AttachmentTransferError> {
         let Some(mut attachment) = self.metadata.get(attachment_id).map_err(map_attachment)? else {
             return Ok(());
         };
         if attachment.status() == AttachmentStatus::Transferring {
             attachment
-                .mark_failed(now, ErrorCode::new("ATTACHMENT_SEND"))
+                .mark_failed(now, ErrorCode::new(transfer_error_code(&error)))
                 .map_err(map_attachment)?;
             self.metadata.update(attachment).map_err(map_attachment)?;
         }
@@ -403,7 +406,7 @@ where
             .messages
             .get(message_id)
             .map_err(|_| AttachmentTransferError::Message)?
-            .ok_or(AttachmentTransferError::Message)?;
+            .ok_or(AttachmentTransferError::InboundMessagePending)?;
         let conversation =
             ConversationRepository::get(&self.relationships, message.conversation_id())
                 .map_err(|_| AttachmentTransferError::Relationship)?
@@ -757,8 +760,31 @@ fn unpack_ciphertext(stored: &[u8]) -> Result<(Nonce, Ciphertext), AttachmentTra
 fn map_attachment(_: AttachmentError) -> AttachmentTransferError {
     AttachmentTransferError::Attachment
 }
-fn map_peer(_: PeerLinkError) -> AttachmentTransferError {
-    AttachmentTransferError::Peer
+
+fn transfer_error_code(error: &AttachmentTransferError) -> &'static str {
+    match error {
+        AttachmentTransferError::PeerAckTimeout => "ATTACHMENT_ACK_TIMEOUT",
+        AttachmentTransferError::Peer => "ATTACHMENT_PEER_UNAVAILABLE",
+        AttachmentTransferError::DigestMismatch => "ATTACHMENT_INTEGRITY_FAILED",
+        AttachmentTransferError::Storage | AttachmentTransferError::Io => {
+            "ATTACHMENT_STORAGE_FAILED"
+        }
+        AttachmentTransferError::Relationship | AttachmentTransferError::Message => {
+            "ATTACHMENT_DEPENDENCY_MISSING"
+        }
+        AttachmentTransferError::InboundMessagePending => "ATTACHMENT_MESSAGE_PENDING",
+        AttachmentTransferError::Crypto => "ATTACHMENT_CRYPTO_FAILED",
+        AttachmentTransferError::Protocol | AttachmentTransferError::OffsetMismatch => {
+            "ATTACHMENT_PROTOCOL_FAILED"
+        }
+        _ => "ATTACHMENT_SEND",
+    }
+}
+fn map_peer(error: PeerLinkError) -> AttachmentTransferError {
+    match error {
+        PeerLinkError::AckTimeout => AttachmentTransferError::PeerAckTimeout,
+        _ => AttachmentTransferError::Peer,
+    }
 }
 
 fn sync_directory(path: &Path) -> Result<(), AttachmentTransferError> {

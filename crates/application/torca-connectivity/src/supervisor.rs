@@ -168,6 +168,12 @@ fn run(
                 );
                 next_at = Instant::now() + HEALTHY_INTERVAL;
             }
+            Err(code) if code == ErrorCode::new("relay.connection_busy") => {
+                // A foreground exchange owns the transport. Preserve the
+                // last usable state and retry quickly without counting this
+                // expected contention as a relay failure.
+                next_at = Instant::now() + Duration::from_secs(1);
+            }
             Err(code) => {
                 failures = failures.saturating_add(1);
                 set_state(
@@ -303,6 +309,36 @@ mod tests {
         }
         assert_eq!(worker.handle().snapshot().status, ProbeStatus::Healthy);
         assert_eq!(worker.handle().snapshot().failures, 0);
+        worker.shutdown();
+    }
+
+    #[test]
+    fn transport_contention_does_not_count_as_relay_failure() {
+        let port = Arc::new(Scripted {
+            results: Mutex::new(VecDeque::from([
+                Err(ErrorCode::new("relay.connection_busy")),
+                Ok(()),
+            ])),
+        });
+        let worker = RelayHealthWorker::spawn(port).expect("spawn worker");
+        let busy_deadline = Instant::now() + Duration::from_secs(1);
+        while worker.handle().snapshot().diagnostic_code != ErrorCode::new("relay.connection_busy")
+            && Instant::now() < busy_deadline
+        {
+            thread::yield_now();
+        }
+        let snapshot = worker.handle().snapshot();
+        assert_eq!(snapshot.failures, 0);
+        assert_ne!(snapshot.status, ProbeStatus::Degraded);
+
+        worker.handle().network_changed();
+        let recovery_deadline = Instant::now() + Duration::from_secs(1);
+        while worker.handle().snapshot().status != ProbeStatus::Healthy
+            && Instant::now() < recovery_deadline
+        {
+            thread::yield_now();
+        }
+        assert_eq!(worker.handle().snapshot().status, ProbeStatus::Healthy);
         worker.shutdown();
     }
 }

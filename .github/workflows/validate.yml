@@ -36,6 +36,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
       - name: Rust tests
         run: cargo test --workspace --all-targets --all-features --locked
+      - name: Rust deploy planner smoke test
+        run: cargo run --locked -p torca-deploy -- full-redeploy --target all --configuration debug --dry-run
 
   flutter:
     name: Flutter and bridge contract
@@ -91,7 +93,7 @@ jobs:
         shell: pwsh
         env:
           TORCA_RELAY_ENDPOINT: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443
-        run: ./scripts/build.ps1 -Target windows -Configuration debug -CI
+        run: cargo run --locked -p torca-deploy -- build --target windows --configuration debug
 
   android:
     name: Android client build
@@ -120,4 +122,4 @@ jobs:
         shell: pwsh
         env:
           TORCA_RELAY_ENDPOINT: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443
-        run: ./scripts/build.ps1 -Target android -Configuration debug -CI
+        run: cargo run --locked -p torca-deploy -- build --target android --configuration debug

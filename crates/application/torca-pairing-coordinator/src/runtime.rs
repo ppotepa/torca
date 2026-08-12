@@ -225,6 +225,42 @@ where
         })
     }
 
+    /// Reserves a creator slot and persists the pairing session without
+    /// requiring the local onion route to be available yet. The caller must
+    /// publish the local offer with [`Self::publish_local_offer`] once the
+    /// onion service becomes reachable.
+    pub fn create_invitation_pending_route(
+        &mut self,
+        session_id: PairingSessionId,
+        now: Timestamp,
+    ) -> Result<PairingInvitation, PairingRuntimeError> {
+        let code = self.coordinator.generate_pairing_code()?;
+        let ticket = self.coordinator.generate_pairing_ticket()?;
+        let requested_expires_at = invitation_expires_at(now)?;
+        let (_, expires_at) = self.coordinator.open_creator(
+            session_id,
+            &code,
+            requested_expires_at,
+            *ticket.as_bytes(),
+        )?;
+        if self
+            .engine
+            .dispatch(EngineCommand::StartPairing { session_id, code: code.clone(), expires_at })
+            .is_err()
+        {
+            let _ = self.coordinator.close(session_id);
+            return Err(PairingRuntimeError::Engine);
+        }
+        self.persist_session(session_id)?;
+        Ok(PairingInvitation {
+            session_id,
+            uri: encode_invite_uri(&code, Some(&ticket)),
+            code,
+            expires_at,
+            ticket,
+        })
+    }
+
     pub fn join_invitation(
         &mut self,
         session_id: PairingSessionId,
@@ -248,6 +284,48 @@ where
         self.local_offers.insert(session_id, local_offer);
         self.persist_session(session_id)?;
         Ok(())
+    }
+
+    /// Joins the relay slot without requiring the local onion route. The
+    /// authenticated offer is sent later by [`Self::publish_local_offer`].
+    pub fn join_invitation_pending_route(
+        &mut self,
+        session_id: PairingSessionId,
+        code: PairingCode,
+        ticket: Option<[u8; 16]>,
+    ) -> Result<(), PairingRuntimeError> {
+        let (_, expires_at) = self.coordinator.join(session_id, &code, ticket)?;
+        if self
+            .engine
+            .dispatch(EngineCommand::JoinPairing { session_id, code, expires_at })
+            .is_err()
+        {
+            let _ = self.coordinator.close(session_id);
+            return Err(PairingRuntimeError::Engine);
+        }
+        self.persist_session(session_id)
+    }
+
+    /// Creates and durably records the local authenticated offer exactly once.
+    /// Joiners publish immediately; creators publish in response to the remote
+    /// offer, preserving the existing rendezvous protocol ordering.
+    pub fn publish_local_offer(
+        &mut self,
+        session_id: PairingSessionId,
+        local: LocalPairingContext,
+    ) -> Result<bool, PairingRuntimeError> {
+        if self.local_offers.contains_key(&session_id) {
+            return Ok(false);
+        }
+        let role = self.session(session_id)?.role();
+        let context = self.coordinator.context(session_id)?;
+        let local_offer = self.local_offer(context, local)?;
+        if role == PairingRole::Joiner {
+            self.coordinator.push(session_id, &local_offer)?;
+        }
+        self.local_offers.insert(session_id, local_offer);
+        self.persist_session(session_id)?;
+        Ok(true)
     }
 
     pub fn approve(

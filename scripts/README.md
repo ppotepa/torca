@@ -1,6 +1,16 @@
 # Development workflow
 
-Use one interactive entry point for normal local work:
+Use the Rust deployment entry point for normal local work:
+
+```powershell
+cargo run -p torca-deploy
+```
+
+It provides the Ratatui wizard, typed deployment plans and resumable
+checkpoints under `.torca/deploy`. The Rust controllers own deployment
+execution; PowerShell is not used by the Rust deploy path.
+
+The previous interactive entry point remains available:
 
 ```powershell
 .\scripts\wizard.ps1
@@ -53,10 +63,9 @@ Normal interactive examples:
 .\scripts\wizard.ps1 -Action FullRedeployNewOnion
 ```
 
-The lower-level `build.ps1`, `run.ps1`, `deploy.ps1`, `redeploy.ps1` and
-`torca.ps1` entrypoints are retained for CI and unattended automation. Calling
-`deploy.ps1` without lifecycle arguments or calling `torca.ps1` without a
-command redirects to this same wizard.
+The lower-level PowerShell entrypoints are deprecated and are not used by
+`torca-deploy`. CI and unattended deployment should call the Rust CLI directly;
+the scripts remain only until the repository cleanup removes them.
 
 `stack rotate` intentionally creates a new onion identity. The generated
 endpoint is stored in `.torca/stack/relay_endpoint.txt` and is passed as
@@ -123,11 +132,36 @@ For unattended cache verification use, for example:
 Collect the last diagnostic runs from the host and connected devices:
 
 ```powershell
-.\scripts\collect.ps1 -LastRuns 10 -Target all -Profile extended
+.\scripts\zip.ps1 -LastRuns 10 -Target all -Profile extended
 ```
 
-The collector writes a redaction-safe manifest, per-device logs and SHA-256
-checksums into `logs/collected/<date>/collect-<run>`, together with a ZIP.
+This is the canonical all-device entrypoint. It creates `logs.zip` in the
+repository root and keeps the timestamped source bundle under
+`logs/collected/<date>/collect-<run>`. The bundle has one producer-oriented
+layout:
+
+```text
+sources/
+  clients/windows/<host>/{runtime,platform}
+  clients/android/<serial>/{runtime,platform}
+  deploy/{runs,state}
+  relay/{live,persisted,state}
+  host/discovery
+```
+
+Windows and Android clients both emit structured Rust runs containing
+`run.start.json` and domain `.log` files. Android platform state and Logcat are
+stored beside, but never mixed with, those runtime runs. Rust and legacy
+PowerShell deployment runs are collected under `deploy/runs`; deploy
+checkpoints and build/device manifests are collected under `deploy/state`.
+Live Docker output is authoritative under `relay/live`; older `.torca/logs`
+files are retained under `relay/persisted` with freshness metadata so they
+cannot be mistaken for the current relay.
+
+The collector writes a redaction-safe `collection-manifest.json`, a complete
+`file-inventory.json`, source-origin metadata and SHA-256 checksums. Missing
+devices, missing runtime runs and endpoint drift are explicit warnings in both
+the terminal summary and manifest instead of silent partial success.
 Android USB and ADB Wireless aliases for the same physical device are grouped
 into one logical device. The `incident` profile is opt-in and may collect a
 wider Logcat snapshot.

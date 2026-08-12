@@ -26,7 +26,6 @@ pub use peer_transport::TorPeerTransport;
 pub use runtime_driver::{OwnedTorDriver, SharedTorEndpoint};
 
 pub const TOR_PEER_VIRTUAL_PORT: u16 = 17491;
-const BOOTSTRAP_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const BOOTSTRAP_RETRY_BACKOFF: [Duration; 2] = [Duration::from_secs(5), Duration::from_secs(15)];
 const MAX_BOOTSTRAP_ATTEMPTS: u32 = 3;
 
@@ -226,10 +225,19 @@ impl TorService {
                 .map_err(|error| TorError(format!("construct Arti client: {error}")))?;
 
             let mut last_error = None;
+            let deadline = Instant::now() + timeout;
             for attempt in 1..=MAX_BOOTSTRAP_ATTEMPTS {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(TorError("bootstrap Arti client deadline exceeded".into()));
+                }
+                // Bound each individual attempt so a transient Android
+                // transport failure can be retried.  The outer deadline still
+                // caps the whole bootstrap operation.
+                let attempt_timeout = remaining.min(Duration::from_secs(180));
                 match bootstrap_attempt(
                     client.clone(),
-                    timeout,
+                    attempt_timeout,
                     attempt,
                     directory_cache_present,
                     observer.as_ref(),
@@ -252,11 +260,17 @@ impl TorService {
                             retry_after_ms: u64::try_from(backoff.as_millis()).ok(),
                             code: "TOR_BOOTSTRAP_RETRYING",
                             summary: format!(
-                                "Tor bootstrap attempt {attempt} stopped making progress; retry scheduled"
+                                "Tor bootstrap attempt {attempt} failed after {} ms; retry scheduled (remaining_ms={})",
+                                timeout.saturating_sub(deadline.saturating_duration_since(Instant::now())).as_millis(),
+                                deadline.saturating_duration_since(Instant::now()).as_millis(),
                             ),
                         });
                     }
-                    tokio::time::sleep(backoff).await;
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    tokio::time::sleep(backoff.min(remaining)).await;
                 }
             }
             let error = last_error
@@ -362,6 +376,7 @@ impl TorService {
                 // the background; connectivity probes gate network operations.
                 let mut events = running.status_events();
                 tokio::spawn(async move {
+                    let publication_started = Instant::now();
                     let mut last_state = None;
                     let mut last_problem = None;
                     // Arti can emit an initial `Shutdown` snapshot before it
@@ -423,7 +438,8 @@ impl TorService {
                         if last_state != Some(state) || last_problem != Some(problem) {
                             onion_publication_revision.fetch_add(1, Ordering::Relaxed);
                             eprintln!(
-                                "torca-tor: onion service publication state={state:?} problem={problem}"
+                                "torca-tor: onion service publication state={state:?} problem={problem} elapsed_ms={}",
+                                publication_started.elapsed().as_millis()
                             );
                             last_state = Some(state);
                             last_problem = Some(problem);
@@ -562,8 +578,6 @@ async fn bootstrap_attempt(
     let bootstrap_client = client.clone();
     let mut bootstrap = tokio::spawn(async move { bootstrap_client.bootstrap().await });
     let deadline = tokio::time::sleep(timeout);
-    let mut stall_tick = tokio::time::interval(Duration::from_secs(1));
-    let mut last_progress = Instant::now();
     let bootstrap_started = Instant::now();
     let mut last_fraction = client.bootstrap_status().as_frac();
     let mut last_summary = client.bootstrap_status().to_string();
@@ -582,11 +596,6 @@ async fn bootstrap_attempt(
     let mut events_open = true;
     tokio::pin!(deadline);
     loop {
-        if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
-            bootstrap.abort();
-            let _ = bootstrap.await;
-            return Err(stalled_error(last_fraction, &last_summary));
-        }
         if bootstrap_started.elapsed() >= timeout {
             bootstrap.abort();
             let _ = bootstrap.await;
@@ -616,11 +625,11 @@ async fn bootstrap_attempt(
                 match status {
                     Some(status) => {
                         let fraction = status.as_frac();
-                        last_summary = status.to_string();
+                        let summary = status.to_string();
                         if fraction > last_fraction + f32::EPSILON {
                             last_fraction = fraction;
-                            last_progress = Instant::now();
                         }
+                        last_summary = summary;
                         let percent = progress_percent(fraction);
                         let code = if status.blocked().is_some() {
                             "TOR_BOOTSTRAP_BLOCKED"
@@ -636,13 +645,6 @@ async fn bootstrap_attempt(
                     None => events_open = false,
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-            _ = stall_tick.tick() => {
-                if last_progress.elapsed() >= BOOTSTRAP_STALL_TIMEOUT {
-                    bootstrap.abort();
-                    let _ = bootstrap.await;
-                    return Err(stalled_error(last_fraction, &last_summary));
-                }
             }
             () = &mut deadline => {
                 bootstrap.abort();
@@ -673,13 +675,6 @@ fn notify_bootstrap(
             summary: summary.to_owned(),
         });
     }
-}
-
-fn stalled_error(last_fraction: f32, last_summary: &str) -> TorError {
-    TorError(format!(
-        "bootstrap Arti client stalled at {:.0}% ({last_summary})",
-        last_fraction * 100.0
-    ))
 }
 
 fn is_unambiguous_state_corruption(error: &TorError) -> bool {

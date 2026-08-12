@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import com.torca.app.MainActivity
 import org.json.JSONObject
@@ -30,6 +31,7 @@ class TorcaForegroundService : Service() {
     private var notificationCursor = 0L
     private var notificationRuntimeId = ""
     private lateinit var connectivityManager: ConnectivityManager
+    private var warmupWakeLock: PowerManager.WakeLock? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) = notifyNetworkChanged()
         override fun onLost(network: Network) = notifyNetworkChanged()
@@ -106,6 +108,13 @@ class TorcaForegroundService : Service() {
         // observes the same runtime through FFI; it must not be the sole starter,
         // otherwise a restarted foreground service can remain alive without Tor.
         Thread {
+            warmupWakeLock = getSystemService(PowerManager::class.java)?.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "Torca::warmup",
+            )?.apply {
+                setReferenceCounted(false)
+                acquire(WARMUP_WAKELOCK_MS)
+            }
             try {
                 val available = NativeRuntimeBridge.nativeEnsureRuntime()
                 if (!available) {
@@ -118,6 +127,9 @@ class TorcaForegroundService : Service() {
                 }
             } catch (error: Throwable) {
                 Log.e(TAG, "Native Torca runtime startup failed", error)
+            } finally {
+                warmupWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+                warmupWakeLock = null
             }
         }.start()
         notificationHandler.post(notificationPoller)
@@ -127,6 +139,8 @@ class TorcaForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        warmupWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+        warmupWakeLock = null
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         notificationHandler.removeCallbacks(notificationPoller)
         notificationThread.quitSafely()
@@ -258,6 +272,7 @@ class TorcaForegroundService : Service() {
         const val NOTIFICATION_RUNTIME_ID = "runtime_id"
         const val NOTIFICATION_POLL_MS = 1500L
         const val RUNTIME_WAIT_MS = 250L
+        const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
         const val TAG = "TorcaRuntime"
     }
 

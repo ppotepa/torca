@@ -27,6 +27,30 @@ abstract final class BridgeErrorPresenter {
         'Encrypted local storage could not complete the operation.',
       'attachment_failure' =>
         'The attachment operation could not be completed.',
+      'attachment_ack_timeout' =>
+        'The peer did not acknowledge the attachment in time. It will be retried.',
+      'communication_attachment_ack_timeout' =>
+        'The peer did not acknowledge the attachment in time. It will be retried.',
+      'attachment_peer_unavailable' =>
+        'The peer connection is unavailable. The attachment will be retried.',
+      'communication_attachment_peer_unavailable' =>
+        'The peer connection is unavailable. The attachment will be retried.',
+      'attachment_integrity_failed' =>
+        'The attachment failed its integrity check.',
+      'communication_attachment_integrity_failed' =>
+        'The attachment failed its integrity check.',
+      'attachment_dependency_missing' =>
+        'The attachment is waiting for its conversation message.',
+      'communication_attachment_dependency_missing' =>
+        'The attachment is waiting for its conversation message.',
+      'communication_attachment_storage_failed' =>
+        'The attachment could not be stored locally.',
+      'communication_attachment_protocol_failed' =>
+        'The attachment protocol failed. Please retry the transfer.',
+      'attachment_message_pending' =>
+        'The attachment is waiting for the conversation message to arrive.',
+      'communication_attachment_unavailable' =>
+        'The attachment transfer is temporarily unavailable.',
       'network_unavailable' =>
         'The secure Tor peer connection is currently unavailable.',
       'runtime_unavailable' =>

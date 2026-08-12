@@ -35,7 +35,7 @@ void main() {
         blocked: false,
         icons: icons,
       ).label,
-      'Offline',
+      'Peer is offline',
     );
     expect(
       ConnectionStatePresenter.peer(

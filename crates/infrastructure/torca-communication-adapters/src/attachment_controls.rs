@@ -3,12 +3,14 @@ use std::io::Read;
 
 use crate::peer_envelope;
 use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
-use torca_attachment_transfer::AttachmentTransfer;
+use torca_attachment_transfer::{AttachmentTransfer, AttachmentTransferError};
 use torca_attachments::{
     Attachment, AttachmentId, AttachmentName, AttachmentRepository, AttachmentStatus,
     MAX_ATTACHMENT_BYTES, MediaType,
 };
-use torca_communication_driver::{AttachmentRuntime, CommunicationError, InboundEnvelope};
+use torca_communication_driver::{
+    AttachmentFailureStage, AttachmentRuntime, CommunicationError, InboundEnvelope,
+};
 use torca_contacts::{ContactRepository, PeerCredentialRepository};
 use torca_conversations::ConversationRepository;
 use torca_crypto::{CryptoProvider, ProtectedSecretStore};
@@ -48,6 +50,7 @@ impl<R, M, S, K, C, P> AttachmentControlAdapter<R, M, S, K, C, P> {
                     attempt_count: row.attempt_count,
                     updated_at_ms: row.updated_at_ms,
                     direction: row.direction,
+                    last_error_code: row.last_error_code,
                 })
                 .collect()
         })
@@ -164,7 +167,7 @@ where
         self.transfer
             .process_inbound(peer_envelope(&envelope), now)
             .map(|_| ())
-            .map_err(|_| CommunicationError::Attachment)
+            .map_err(map_attachment_error)
     }
 
     fn maintenance_outgoing(
@@ -176,8 +179,27 @@ where
         self.transfer
             .maintenance_outgoing(messages, now, limit)
             .map(|_| ())
-            .map_err(|_| CommunicationError::Attachment)
+            .map_err(map_attachment_error)
     }
 
     fn shutdown(&mut self) {}
+}
+
+fn map_attachment_error(error: AttachmentTransferError) -> CommunicationError {
+    let stage = match error {
+        AttachmentTransferError::PeerAckTimeout => AttachmentFailureStage::AckTimeout,
+        AttachmentTransferError::Peer => AttachmentFailureStage::PeerUnavailable,
+        AttachmentTransferError::DigestMismatch => AttachmentFailureStage::Integrity,
+        AttachmentTransferError::Storage | AttachmentTransferError::Io => {
+            AttachmentFailureStage::Storage
+        }
+        AttachmentTransferError::Relationship
+        | AttachmentTransferError::Message
+        | AttachmentTransferError::InboundMessagePending => AttachmentFailureStage::Dependency,
+        AttachmentTransferError::Protocol | AttachmentTransferError::OffsetMismatch => {
+            AttachmentFailureStage::Protocol
+        }
+        _ => AttachmentFailureStage::Unknown,
+    };
+    CommunicationError::AttachmentStage(stage)
 }

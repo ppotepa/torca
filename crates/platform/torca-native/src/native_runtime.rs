@@ -38,6 +38,7 @@ pub(crate) const ABI_CLOSED: i32 = -2;
 const NETWORK_RETRY_DELAY: Duration = Duration::from_secs(5);
 const NETWORK_START_OBSERVE_TIMEOUT: Duration = Duration::from_secs(120);
 const NETWORK_MAX_ATTEMPTS: u32 = 3;
+const ONION_PROGRESS_STALL_AFTER: Duration = Duration::from_secs(120);
 
 type HostStartResult = Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError>;
 
@@ -60,7 +61,10 @@ fn open_startup_logger() -> Option<Logger> {
         std::env::var("TORCA_DEVICE_ID").unwrap_or_else(|_| "native".into()),
         crate::torca_runtime::compiled_build_id(),
     ) {
-        Ok(logger) => Some(logger),
+        Ok(logger) => {
+            eprintln!("Torca native diagnostics: {}", logger.directory().display());
+            Some(logger)
+        }
         Err(error) => {
             eprintln!("Torca native logger startup failed: {error}");
             None
@@ -329,9 +333,9 @@ impl TorcaRuntime {
         let _ = self.apply_security_states(&mut snapshot);
         self.apply_navigation_badges(&mut snapshot);
         // Keep applying the initial bootstrap gate after the production runtime
-        // has attached. Tor becoming ready is only an intermediate milestone;
-        // the application must remain on the bootstrap surface until the local
-        // onion service and relay are ready as well.
+        // has attached. The application shell opens when Tor and the relay are
+        // usable. Local peer-onion publication is recovered independently and
+        // remains an operation-level prerequisite for pairing/P2P.
         if snapshot.identity_name.is_some()
             && (!self.application_runtime.has_runtime() || !self.network_ready_logged)
         {
@@ -379,7 +383,12 @@ impl TorcaRuntime {
             self.last_relay_log_state = Some(current.clone());
         }
 
-        let network_ready = onion.as_ref().is_some_and(|(state, _)| state == "ready")
+        let tor = snapshot
+            .bootstrap_steps
+            .iter()
+            .find(|step| step.id == "tor_network")
+            .map(|step| (step.state.clone(), step.code.clone()));
+        let network_ready = tor.as_ref().is_some_and(|(state, _)| state == "ready")
             && relay.as_ref().is_some_and(|(state, _)| state == "ready");
         if network_ready && !self.network_ready_logged {
             self.log(
@@ -387,7 +396,7 @@ impl TorcaRuntime {
                 Level::Info,
                 "network",
                 "NETWORK_READY",
-                "Tor, local onion service and relay are ready",
+                "Tor and relay are ready; local onion publication continues independently",
             );
             self.network_ready_logged = true;
         }
@@ -400,8 +409,9 @@ impl TorcaRuntime {
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
         // Do not expose the normal application shell before the first complete
         // network bootstrap. Identity creation is only a local prerequisite;
-        // pairing and other network operations are not usable until Tor, the
-        // private onion service and the relay have all reached NETWORK_READY.
+        // general application traffic is usable once Tor and the relay have
+        // reached NETWORK_READY. Pairing/P2P retains its narrower local-onion
+        // prerequisite in the application policy.
         // Once that first gate has opened, keep the shell available during later
         // transient outages and expose those outages through the step/status UI.
         snapshot.bootstrap_phase = if snapshot.identity_name.is_none() {
@@ -436,6 +446,17 @@ impl TorcaRuntime {
             step.last_progress_at_ms = self.host_last_progress_at_ms;
             step.retry_at_ms = self.host_retry_at.and_then(instant_to_unix_ms);
         }
+        let onion_stalled = self.host_onion_attempt > 0
+            && self.host_onion_progress < 100
+            && self.host_onion_last_progress_at_ms.is_some_and(|last_progress| {
+                unix_time_ms().ok().and_then(|now| now.checked_sub(last_progress)).is_some_and(
+                    |elapsed_ms| {
+                        elapsed_ms
+                            >= i64::try_from(ONION_PROGRESS_STALL_AFTER.as_millis())
+                                .unwrap_or(i64::MAX)
+                    },
+                )
+            });
         let onion_state = if self.host_progress < 100 {
             if network_state == "failed" { "blocked" } else { "pending" }
         } else if self.host_onion_progress >= 100 {
@@ -444,6 +465,8 @@ impl TorcaRuntime {
             "failed"
         } else if self.host_onion_retry_at.is_some() {
             "retrying"
+        } else if onion_stalled {
+            "stalled"
         } else if self.host_onion_attempt > 0 {
             "running"
         } else {
@@ -455,6 +478,8 @@ impl TorcaRuntime {
             step.state = onion_state.into();
             step.code = if onion_state == "blocked" {
                 Some("TOR_NETWORK_REQUIRED".into())
+            } else if onion_state == "stalled" {
+                Some("ONION_PUBLICATION_STALLED".into())
             } else {
                 self.host_onion_status_code.clone()
             };

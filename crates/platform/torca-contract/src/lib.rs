@@ -340,6 +340,7 @@ pub struct BridgeAttachment {
     pub attempt_count: u32,
     pub updated_at_ms: i64,
     pub direction: String,
+    pub last_error_code: Option<String>,
 }
 
 pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationCommand, String> {
@@ -955,6 +956,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 attempt_count: attachment.attempt_count,
                 updated_at_ms: attachment.updated_at_ms,
                 direction: attachment.direction,
+                last_error_code: attachment.last_error_code,
             })
             .collect(),
         pending_operations: pending_operations

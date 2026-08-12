@@ -26,6 +26,7 @@ pub use tor::{SharedTorRelayTransport, TorRelayTransport};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelayTransportFailureKind {
+    Busy,
     Unavailable,
     Timeout,
     Disconnected,

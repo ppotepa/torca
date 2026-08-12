@@ -42,7 +42,7 @@ struct TorRelayProbe {
 impl RelayProbe for TorRelayProbe {
     fn probe(&self) -> Result<(), ErrorCode> {
         self.transport
-            .relay_info(Duration::from_secs(10))
+            .try_relay_info(Duration::from_secs(2))
             .map(|info| {
                 if let Ok(mut current) = self.info.lock() {
                     *current = Some(RelayServiceInfo {
@@ -55,6 +55,9 @@ impl RelayProbe for TorRelayProbe {
             })
             .map_err(|error| {
                 ErrorCode::new(match error.kind {
+                    torca_rendezvous_client::RelayTransportFailureKind::Busy => {
+                        "relay.connection_busy"
+                    }
                     torca_rendezvous_client::RelayTransportFailureKind::Unavailable => {
                         "relay.connection_unavailable"
                     }

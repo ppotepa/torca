@@ -82,16 +82,17 @@ docs/0.2/                 current source track and audit
 
 ## Developer workflow
 
-Use the unified local workflow:
+Use the unified Rust workflow:
 
 ```powershell
-.\scripts\wizard.ps1
+cargo run -p torca-deploy
 ```
 
 It detects every connected Windows/Android target and provides run, redeploy,
 selective rebuild, full redeploy, explicit Onion rotation, relay maintenance and
-diagnostic collection. Lower-level scripts remain automation/CI entrypoints and
-implementation details.
+diagnostic collection. The same operations are available through the CLI, for
+example `cargo run -p torca-deploy -- resume`. Rust is the deployment
+implementation; legacy PowerShell entrypoints are not part of this path.
 
 ## Canonical documents
 

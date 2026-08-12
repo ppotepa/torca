@@ -1,0 +1,556 @@
+use crate::domain::{BuildPolicy, Configuration, Target};
+use crate::paths::RuntimePaths;
+use crate::process::{CommandRunner, CommandSpec, ProcessError};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::env;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use thiserror::Error;
+
+pub struct BuildController<'a> {
+    paths: &'a RuntimePaths,
+    runner: &'a dyn CommandRunner,
+}
+
+/// Verify that an artifact belongs to the requested target/configuration and
+/// has not changed since the Rust build manifest was written.
+pub fn verify_artifact_manifest(
+    paths: &RuntimePaths,
+    target: Target,
+    configuration: Configuration,
+    artifact: &Path,
+) -> Result<(), String> {
+    let mode = match configuration {
+        Configuration::Debug => "debug",
+        Configuration::Release => "release",
+    };
+    let manifest_path = paths.manifests.join(format!("clients-{mode}.json"));
+    let target_name = target.to_string();
+    let content = std::fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("read artifact manifest {}: {error}", manifest_path.display()))?;
+    let manifest: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("parse artifact manifest {}: {error}", manifest_path.display()))?;
+    if let Some(current_endpoint) = paths.endpoint() {
+        let recorded_endpoint =
+            manifest.get("endpoint").and_then(serde_json::Value::as_str).ok_or_else(|| {
+                format!(
+                    "artifact manifest {} does not record the relay endpoint",
+                    manifest_path.display()
+                )
+            })?;
+        if recorded_endpoint != current_endpoint {
+            return Err(format!(
+                "artifact endpoint mismatch for {}: manifest={}, current={}",
+                artifact.display(),
+                recorded_endpoint,
+                current_endpoint
+            ));
+        }
+    }
+    let expected = manifest
+        .get("artifacts")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|artifacts| {
+            artifacts.iter().find(|entry| {
+                entry.get("target").and_then(serde_json::Value::as_str)
+                    == Some(target_name.as_str())
+                    && entry.get("path").and_then(serde_json::Value::as_str).is_some_and(
+                        |recorded| artifact_paths_match(Path::new(recorded), artifact, target),
+                    )
+            })
+        })
+        .and_then(|entry| entry.get("sha256"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "artifact {} is not recorded for {} {}",
+                artifact.display(),
+                target,
+                configuration
+            )
+        })?;
+    let actual = hash_file(artifact)
+        .ok_or_else(|| format!("artifact does not exist: {}", artifact.display()))?;
+    if actual != expected {
+        return Err(format!(
+            "artifact hash mismatch for {}: expected {}, found {}",
+            artifact.display(),
+            expected,
+            actual
+        ));
+    }
+    Ok(())
+}
+
+fn artifact_paths_match(recorded: &Path, requested: &Path, target: Target) -> bool {
+    fn normalized(path: &Path) -> String {
+        std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
+    let recorded = normalized(recorded);
+    let requested = normalized(requested);
+    if matches!(target, Target::Windows) {
+        recorded.eq_ignore_ascii_case(&requested)
+    } else {
+        recorded == requested
+    }
+}
+impl<'a> BuildController<'a> {
+    pub fn new(paths: &'a RuntimePaths, runner: &'a dyn CommandRunner) -> Self {
+        Self { paths, runner }
+    }
+    pub fn build(
+        &self,
+        targets: &[Target],
+        configuration: Configuration,
+        policy: BuildPolicy,
+        endpoint: Option<&str>,
+    ) -> Result<(), BuildError> {
+        if matches!(policy, BuildPolicy::Reuse) {
+            return Ok(());
+        }
+        let endpoint = endpoint.ok_or(BuildError::MissingEndpoint)?;
+        if !RuntimePaths::validate_endpoint(endpoint) {
+            return Err(BuildError::InvalidEndpoint(endpoint.into()));
+        }
+        let mode = match configuration {
+            Configuration::Debug => "debug",
+            Configuration::Release => "release",
+        };
+        if targets.contains(&Target::Windows) {
+            crate::windows_client::WorkspaceWindowsClient::new(self.paths, self.runner)
+                .stop()
+                .map_err(BuildError::StopRunningClient)?;
+            let mut cargo_args = vec!["build", "-p", "torca-native", "--locked"];
+            if matches!(configuration, Configuration::Release) {
+                cargo_args.push("--release");
+            }
+            self.command_with_env("cargo", &cargo_args, endpoint, &self.paths.repo_root)?;
+        }
+        if targets.contains(&Target::Android) {
+            self.build_android_native(configuration, endpoint)?;
+            let profile =
+                if matches!(configuration, Configuration::Release) { "release" } else { "debug" };
+            for (abi, triple) in
+                [("arm64-v8a", "aarch64-linux-android"), ("x86_64", "x86_64-linux-android")]
+            {
+                let source = self
+                    .paths
+                    .repo_root
+                    .join(format!("target/{triple}/{profile}/libtorca_native.so"));
+                let destination = self.paths.repo_root.join(format!(
+                    "apps/client/flutter/android/app/src/main/jniLibs/{abi}/libtorca_native.so"
+                ));
+                if source.is_file() {
+                    if let Some(parent) = destination.parent() {
+                        std::fs::create_dir_all(parent).map_err(BuildError::Io)?;
+                    }
+                    std::fs::copy(source, destination).map_err(BuildError::Io)?;
+                }
+            }
+        }
+        if targets.contains(&Target::Windows) {
+            let define = format!("TORCA_RELAY_ENDPOINT={endpoint}");
+            let flutter = flutter_program()?;
+            let flutter_args = ["build", "windows", &format!("--{mode}"), "--dart-define", &define];
+            let environment =
+                [("TORCA_RELAY_ENDPOINT".to_owned(), endpoint.to_owned())].into_iter().collect();
+            let output = self.runner.run(&CommandSpec {
+                program: flutter.clone(),
+                arguments: flutter_args.iter().map(|arg| (*arg).into()).collect(),
+                working_directory: self.paths.repo_root.join("apps/client/flutter"),
+                timeout: Duration::from_secs(3600),
+                environment,
+            })?;
+            if !output.success {
+                let diagnostic = self.windows_install_diagnostic(mode);
+                return Err(BuildError::WindowsFlutter { output: output.text, diagnostic });
+            }
+            let source = self.paths.repo_root.join(format!("target/{mode}/torca_native.dll"));
+            let destination = self.paths.repo_root.join(format!(
+                "apps/client/flutter/build/windows/x64/runner/{mode}/torca_native.dll"
+            ));
+            if source.is_file() {
+                std::fs::copy(source, destination).map_err(BuildError::Io)?;
+            }
+        }
+        if targets.contains(&Target::Android) {
+            let define = format!("TORCA_RELAY_ENDPOINT={endpoint}");
+            let flutter = flutter_program()?;
+            self.command_with_env(
+                &flutter,
+                &[
+                    "build",
+                    "apk",
+                    &format!("--{mode}"),
+                    "--split-per-abi",
+                    "--dart-define",
+                    &define,
+                ],
+                endpoint,
+                &self.paths.repo_root.join("apps/client/flutter"),
+            )?;
+        }
+        let mut artifacts = Vec::new();
+        for target in targets {
+            let paths_for_target = match target {
+                Target::Windows => vec![self.paths.repo_root.join(format!(
+                    "apps/client/flutter/build/windows/x64/runner/{mode}/torca_app.exe"
+                ))],
+                Target::Android => vec![
+                    self.paths.repo_root.join(format!(
+                        "apps/client/flutter/build/app/outputs/flutter-apk/app-arm64-v8a-{mode}.apk"
+                    )),
+                    self.paths.repo_root.join(format!(
+                        "apps/client/flutter/build/app/outputs/flutter-apk/app-x86_64-{mode}.apk"
+                    )),
+                ],
+            };
+            for path in paths_for_target {
+                artifacts.push(serde_json::json!({
+                    "target": target.to_string(),
+                    "path": path,
+                    "sha256": hash_file(&path),
+                }));
+            }
+        }
+        let manifest = serde_json::json!({
+            "configuration": configuration.to_string(),
+            "targets": targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "endpoint": endpoint,
+            "artifacts": artifacts,
+            "builtAt": format!("{:?}", std::time::SystemTime::now()),
+        });
+        std::fs::write(
+            self.paths.manifests.join(format!("clients-{mode}.json")),
+            serde_json::to_vec_pretty(&manifest).map_err(BuildError::Serialize)?,
+        )
+        .map_err(BuildError::Io)?;
+        Ok(())
+    }
+
+    fn build_android_native(
+        &self,
+        configuration: Configuration,
+        endpoint: &str,
+    ) -> Result<(), BuildError> {
+        let toolchain = AndroidToolchain::discover()?;
+        for target in [
+            AndroidTarget {
+                triple: "aarch64-linux-android",
+                linker: "aarch64-linux-android23-clang.cmd",
+            },
+            AndroidTarget {
+                triple: "x86_64-linux-android",
+                linker: "x86_64-linux-android23-clang.cmd",
+            },
+        ] {
+            let mut arguments = vec![
+                "build".to_owned(),
+                "-p".to_owned(),
+                "torca-native".to_owned(),
+                "--target".to_owned(),
+                target.triple.to_owned(),
+                "--locked".to_owned(),
+            ];
+            if matches!(configuration, Configuration::Release) {
+                arguments.push("--release".to_owned());
+            }
+            let output = self.runner.run(&CommandSpec {
+                program: "cargo".into(),
+                arguments,
+                working_directory: self.paths.repo_root.clone(),
+                timeout: Duration::from_secs(3600),
+                environment: toolchain.environment(target, endpoint),
+            })?;
+            if !output.success {
+                return Err(BuildError::Command {
+                    program: format!("cargo build {}", target.triple),
+                    output: output.text,
+                });
+            }
+        }
+        Ok(())
+    }
+    fn command_with_env(
+        &self,
+        program: &str,
+        args: &[&str],
+        endpoint: &str,
+        working_directory: &Path,
+    ) -> Result<(), BuildError> {
+        let environment =
+            [("TORCA_RELAY_ENDPOINT".to_owned(), endpoint.to_owned())].into_iter().collect();
+        let output = self.runner.run(&CommandSpec {
+            program: program.into(),
+            arguments: args.iter().map(|x| (*x).into()).collect(),
+            working_directory: working_directory.to_path_buf(),
+            timeout: Duration::from_secs(3600),
+            environment,
+        })?;
+        if output.success {
+            Ok(())
+        } else {
+            Err(BuildError::Command { program: program.into(), output: output.text })
+        }
+    }
+
+    /// Flutter collapses CMake's real install failure into a generic MSB3073.
+    /// Re-running only CMake's generated install script is safe and exposes
+    /// the locked file or missing artifact that actually caused the failure.
+    fn windows_install_diagnostic(&self, mode: &str) -> String {
+        let build_root = self.paths.repo_root.join("apps/client/flutter/build/windows/x64");
+        let install = build_root.join("cmake_install.cmake");
+        let cache = build_root.join("CMakeCache.txt");
+        if !install.is_file() || !cache.is_file() {
+            return "CMake install script is unavailable; no additional diagnostic was produced."
+                .into();
+        }
+        let Some(cache_contents) = std::fs::read_to_string(cache).ok() else {
+            return "CMakeCache.txt could not be read.".into();
+        };
+        let Some(command) = cache_contents
+            .lines()
+            .find_map(|line| line.strip_prefix("CMAKE_COMMAND:INTERNAL="))
+            .map(str::to_owned)
+        else {
+            return "CMake executable was not found in CMakeCache.txt.".into();
+        };
+        match self.runner.run(&CommandSpec {
+            program: command,
+            arguments: vec![
+                format!("-DBUILD_TYPE={mode}"),
+                "-P".into(),
+                "cmake_install.cmake".into(),
+            ],
+            working_directory: build_root,
+            timeout: Duration::from_secs(60),
+            environment: BTreeMap::new(),
+        }) {
+            Ok(output) => output.text,
+            Err(error) => format!("Could not run generated CMake install diagnostic: {error}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AndroidTarget {
+    triple: &'static str,
+    linker: &'static str,
+}
+
+struct AndroidToolchain {
+    ndk_bin: PathBuf,
+    unix_perl: PathBuf,
+}
+
+impl AndroidToolchain {
+    fn discover() -> Result<Self, BuildError> {
+        let ndk_root = android_ndk_root().ok_or(BuildError::AndroidNdkUnavailable)?;
+        let ndk_bin = ndk_root.join("toolchains/llvm/prebuilt/windows-x86_64/bin");
+        if !ndk_bin.join("clang.exe").is_file() {
+            return Err(BuildError::AndroidNdkClangUnavailable(ndk_bin));
+        }
+        let unix_perl = [
+            PathBuf::from(r"C:\msys64\usr\bin\perl.exe"),
+            PathBuf::from(r"C:\Program Files\Git\usr\bin\perl.exe"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or(BuildError::UnixPerlUnavailable)?;
+        Ok(Self { ndk_bin, unix_perl })
+    }
+
+    fn environment(&self, target: AndroidTarget, endpoint: &str) -> BTreeMap<String, String> {
+        let mut environment = BTreeMap::new();
+        let existing_path = env::var_os("PATH").unwrap_or_default();
+        let perl_dir = self.unix_perl.parent().expect("perl has a parent");
+        let path = env::join_paths([self.ndk_bin.as_path(), perl_dir, Path::new(&existing_path)])
+            .expect("Windows PATH components are valid");
+        environment.insert("PATH".into(), path.to_string_lossy().into_owned());
+        // OpenSSL writes this value into a Makefile evaluated by MSYS `sh`.
+        // An absolute Windows path would lose its backslashes there, so keep a
+        // portable command name while placing its verified MSYS/Git directory
+        // at the beginning of PATH.
+        environment.insert("PERL".into(), "perl".into());
+        environment.insert("TORCA_RELAY_ENDPOINT".into(), endpoint.into());
+        environment.insert(format!("CC_{}", target.triple), "clang".into());
+        environment.insert(format!("AR_{}", target.triple), "llvm-ar".into());
+        environment.insert(
+            format!("CARGO_TARGET_{}_LINKER", target.triple.replace('-', "_").to_uppercase()),
+            self.ndk_bin.join(target.linker).to_string_lossy().into_owned(),
+        );
+        // Do not inherit CFLAGS from an older PowerShell deployment.  In
+        // particular, cargo-ndk's default API 21 combined with an inherited
+        // API 23 target makes OpenSSL's Configure receive contradictory flags.
+        environment
+            .insert(format!("CFLAGS_{}", target.triple), format!("--target={}23", target.triple));
+        environment
+    }
+}
+
+fn android_ndk_root() -> Option<PathBuf> {
+    ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT"]
+        .into_iter()
+        .filter_map(|key| env::var_os(key).map(PathBuf::from))
+        .find(|path| path.is_dir())
+        .or_else(|| {
+            [env::var_os("ANDROID_HOME"), env::var_os("ANDROID_SDK_ROOT")]
+                .into_iter()
+                .flatten()
+                .map(PathBuf::from)
+                .find_map(|sdk_root| newest_ndk(&sdk_root))
+        })
+        .or_else(|| newest_ndk(Path::new(r"C:\Android\android-sdk")))
+}
+
+fn newest_ndk(sdk_root: &Path) -> Option<PathBuf> {
+    let ndk_root = sdk_root.join("ndk");
+    let mut candidates = std::fs::read_dir(ndk_root)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.pop()
+}
+
+fn flutter_program() -> Result<String, BuildError> {
+    let configured =
+        env::var_os("FLUTTER_ROOT").map(PathBuf::from).map(|root| root.join("bin/flutter.bat"));
+    let from_path = env::var_os("PATH").and_then(|path| {
+        env::split_paths(&path)
+            .map(|directory| directory.join("flutter.bat"))
+            .find(|candidate| candidate.is_file())
+    });
+    configured
+        .filter(|candidate| candidate.is_file())
+        .or(from_path)
+        .or_else(|| {
+            let candidate = PathBuf::from(r"C:\tools\flutter\bin\flutter.bat");
+            candidate.is_file().then_some(candidate)
+        })
+        .map(|path| path.to_string_lossy().into_owned())
+        .ok_or(BuildError::FlutterUnavailable)
+}
+
+fn hash_file(path: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    Some(format!("{:x}", Sha256::digest(bytes)))
+}
+#[derive(Debug, Error)]
+pub enum BuildError {
+    #[error("build requires a valid relay endpoint")]
+    MissingEndpoint,
+    #[error("invalid relay endpoint: {0}")]
+    InvalidEndpoint(String),
+    #[error("Android NDK location is unavailable; set ANDROID_NDK_HOME to the installed NDK")]
+    AndroidNdkUnavailable,
+    #[error("Android NDK clang was not found in {0}")]
+    AndroidNdkClangUnavailable(PathBuf),
+    #[error(
+        "Android OpenSSL cross-build requires a Unix-compatible Perl. Install MSYS2 Perl or Git for Windows (expected C:\\msys64\\usr\\bin\\perl.exe or C:\\Program Files\\Git\\usr\\bin\\perl.exe)."
+    )]
+    UnixPerlUnavailable,
+    #[error("Flutter SDK was not found; set FLUTTER_ROOT or add flutter/bin to PATH")]
+    FlutterUnavailable,
+    #[error("could not close the running workspace Windows client before build: {0}")]
+    StopRunningClient(crate::windows_client::WindowsClientError),
+    #[error("Flutter Windows build failed:\n{output}\n\nCMake install diagnostic:\n{diagnostic}")]
+    WindowsFlutter { output: String, diagnostic: String },
+    #[error("build command failed: {program}: {output}")]
+    Command { program: String, output: String },
+    #[error("build process error: {0}")]
+    Process(#[from] ProcessError),
+    #[error("build I/O failed: {0}")]
+    Io(std::io::Error),
+    #[error("could not serialize build manifest: {0}")]
+    Serialize(serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{Configuration, Target};
+
+    #[test]
+    fn artifact_manifest_rejects_modified_binary() {
+        let root =
+            std::env::temp_dir().join(format!("torca-artifact-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = RuntimePaths::from_repo(root.clone());
+        paths.ensure().expect("runtime paths");
+        let artifact = root.join("torca_app.exe");
+        std::fs::write(&artifact, b"first build").expect("artifact");
+        let manifest = serde_json::json!({
+            "artifacts": [{
+                "target": "windows",
+                "path": artifact,
+                "sha256": hash_file(&artifact),
+            }]
+        });
+        std::fs::write(
+            paths.manifests.join("clients-debug.json"),
+            serde_json::to_vec(&manifest).expect("manifest json"),
+        )
+        .expect("manifest");
+        verify_artifact_manifest(&paths, Target::Windows, Configuration::Debug, &artifact)
+            .expect("matching artifact");
+        std::fs::write(&artifact, b"modified build").expect("modified artifact");
+        assert!(
+            verify_artifact_manifest(&paths, Target::Windows, Configuration::Debug, &artifact)
+                .is_err()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn windows_artifact_paths_are_case_insensitive() {
+        assert!(artifact_paths_match(
+            Path::new(r"G:\Torca\runner\debug\torca_app.exe"),
+            Path::new(r"g:\torca\runner\Debug\torca_app.exe"),
+            Target::Windows,
+        ));
+        assert!(!artifact_paths_match(
+            Path::new("/tmp/torca/debug/app"),
+            Path::new("/tmp/torca/Debug/app"),
+            Target::Android,
+        ));
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_another_relay_endpoint() {
+        let root = std::env::temp_dir()
+            .join(format!("torca-artifact-endpoint-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = RuntimePaths::from_repo(root.clone());
+        paths.ensure().expect("runtime paths");
+        let artifact = root.join("torca_app.exe");
+        std::fs::write(&artifact, b"build").expect("artifact");
+        let current_endpoint = format!("{}.onion:443", "a".repeat(56));
+        std::fs::write(&paths.relay_endpoint, &current_endpoint).expect("relay endpoint");
+        let manifest = serde_json::json!({
+            "endpoint": format!("{}.onion:443", "b".repeat(56)),
+            "artifacts": [{
+                "target": "windows",
+                "path": artifact,
+                "sha256": hash_file(&artifact),
+            }]
+        });
+        std::fs::write(
+            paths.manifests.join("clients-debug.json"),
+            serde_json::to_vec(&manifest).expect("manifest json"),
+        )
+        .expect("manifest");
+        let error =
+            verify_artifact_manifest(&paths, Target::Windows, Configuration::Debug, &artifact)
+                .expect_err("endpoint mismatch");
+        assert!(error.contains("artifact endpoint mismatch"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

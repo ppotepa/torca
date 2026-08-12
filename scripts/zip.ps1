@@ -42,4 +42,29 @@ if ($outputDirectory) {
 }
 Copy-Item -LiteralPath $archive[0] -Destination $OutputPath -Force
 Write-Host "Combined diagnostics archive: $OutputPath" -ForegroundColor Green
+$collectionDirectory = [IO.Path]::ChangeExtension($archive[0], $null)
+$manifestPath = Join-Path $collectionDirectory 'collection-manifest.json'
+if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $windowsCount = @($manifest.devices | Where-Object platform -eq 'windows').Count
+    $androidCount = @($manifest.devices | Where-Object platform -eq 'android').Count
+    $runtimeRuns = @($manifest.devices.collected | Where-Object { $_ -match '(^|/)run-\d+' }).Count
+    $deviceErrors = @($manifest.devices.errors | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $collectionErrors = @($manifest.errors | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $collectionWarnings = @($manifest.warnings | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $deployRuns = @(Get-ChildItem -LiteralPath (Join-Path $collectionDirectory 'sources/deploy/runs') -Recurse -File -Filter 'run.json' -ErrorAction SilentlyContinue).Count
+    Write-Host "Collection summary: status=$($manifest.status) windows=$windowsCount android=$androidCount clientRuntimeRuns=$runtimeRuns deployRuns=$deployRuns errors=$($deviceErrors.Count + $collectionErrors.Count) warnings=$($collectionWarnings.Count)" -ForegroundColor Cyan
+    foreach ($message in @($collectionErrors + $deviceErrors | Select-Object -Unique)) {
+        Write-Warning $message
+    }
+    foreach ($message in @($collectionWarnings | Select-Object -Unique)) {
+        Write-Warning $message
+    }
+    if ($runtimeRuns -eq 0) {
+        Write-Warning 'No structured native runtime run was collected. Start the clients, wait until the failure is visible, keep Android connected and authorized, then rerun zip.ps1.'
+    }
+}
+if ((Get-Item -LiteralPath $OutputPath).Length -lt 20KB) {
+    Write-Warning "The archive is unusually small ($((Get-Item -LiteralPath $OutputPath).Length) bytes). Check collection-manifest.json for missing devices or collection errors."
+}
 Write-Output $OutputPath

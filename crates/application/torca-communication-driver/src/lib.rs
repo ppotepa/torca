@@ -3,6 +3,9 @@
 use core::fmt;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+mod attachment_scheduler;
+use attachment_scheduler::AttachmentJobScheduler;
 use std::time::Duration;
 
 use torca_attachments::AttachmentId;
@@ -98,9 +101,21 @@ pub enum CommunicationError {
     Control,
     Inbound,
     Attachment,
+    AttachmentStage(AttachmentFailureStage),
     ReadState,
     Relationship,
     Engine,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttachmentFailureStage {
+    AckTimeout,
+    PeerUnavailable,
+    Integrity,
+    Storage,
+    Dependency,
+    Protocol,
+    Unknown,
 }
 impl fmt::Display for CommunicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -135,6 +150,38 @@ impl ClassifiedError for CommunicationError {
                     RetryAdvice::Backoff,
                 )
             }
+            Self::AttachmentStage(stage) => match stage {
+                AttachmentFailureStage::AckTimeout => (
+                    "communication.attachment_ack_timeout",
+                    ErrorCategory::Unavailable,
+                    RetryAdvice::Backoff,
+                ),
+                AttachmentFailureStage::PeerUnavailable => (
+                    "communication.attachment_peer_unavailable",
+                    ErrorCategory::Unavailable,
+                    RetryAdvice::Backoff,
+                ),
+                AttachmentFailureStage::Integrity => (
+                    "communication.attachment_integrity_failed",
+                    ErrorCategory::Conflict,
+                    RetryAdvice::Never,
+                ),
+                AttachmentFailureStage::Storage => (
+                    "communication.attachment_storage_failed",
+                    ErrorCategory::Internal,
+                    RetryAdvice::Never,
+                ),
+                AttachmentFailureStage::Dependency => (
+                    "communication.attachment_dependency_missing",
+                    ErrorCategory::Unavailable,
+                    RetryAdvice::Backoff,
+                ),
+                AttachmentFailureStage::Protocol | AttachmentFailureStage::Unknown => (
+                    "communication.attachment_protocol_failed",
+                    ErrorCategory::InvalidInput,
+                    RetryAdvice::Never,
+                ),
+            },
             Self::ReadState => {
                 ("communication.read_state_failed", ErrorCategory::Internal, RetryAdvice::Never)
             }
@@ -289,6 +336,7 @@ pub struct TorcaCommunicationDriver {
     attachment_export: Box<dyn AttachmentExportRuntime>,
     read_state: Box<dyn ReadStateRuntime>,
     relationships: Box<dyn RelationshipAdminRuntime>,
+    attachment_scheduler: AttachmentJobScheduler,
 }
 impl TorcaCommunicationDriver {
     #[allow(clippy::too_many_arguments)]
@@ -313,6 +361,7 @@ impl TorcaCommunicationDriver {
             attachment_export,
             read_state,
             relationships,
+            attachment_scheduler: AttachmentJobScheduler::new(),
         }
     }
 
@@ -351,9 +400,15 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         self.text.maintenance(now, TEXT_BATCH).map_err(map_runtime)?;
         self.control.maintenance(now, CONTROL_BATCH).map_err(map_runtime)?;
         let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
-        self.attachments
-            .maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH)
-            .map_err(map_runtime)?;
+        // Attachment delivery is a durable, independently retryable job.  A
+        // single peer/ACK failure must not abort the communication tick and
+        // starve text/control delivery.  The adapter persists Failed and its
+        // next-attempt time before returning the error.
+        if self.attachment_scheduler.due(now) {
+            let _ =
+                self.attachments.maintenance_outgoing(&snapshot.messages, now, ATTACHMENT_BATCH);
+            self.attachment_scheduler.record_attempt(now);
+        }
         Ok(())
     }
 
@@ -444,10 +499,18 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         request: &AttachmentSendRequest,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.attachments.prepare_outgoing(request, now).map_err(map_runtime)
+        let result = self.attachments.prepare_outgoing(request, now).map_err(map_runtime);
+        if result.is_ok() {
+            self.attachment_scheduler.wake();
+        }
+        result
     }
     fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
-        self.attachments.retry(id, now).map_err(map_runtime)
+        let result = self.attachments.retry(id, now).map_err(map_runtime);
+        if result.is_ok() {
+            self.attachment_scheduler.wake();
+        }
+        result
     }
     fn cancel_attachment(
         &mut self,

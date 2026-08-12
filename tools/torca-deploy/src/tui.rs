@@ -1,0 +1,381 @@
+use std::io;
+use std::time::{Duration, Instant};
+
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{
+    Terminal,
+    backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Style},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+};
+
+use crate::domain::{
+    BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, LaunchPolicy,
+    OnionPolicy, Target, ValidationLevel,
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WizardSelection {
+    Plan(DeployPlan),
+    Resume,
+}
+
+const ACTIONS: [(&str, Option<DeployAction>); 7] = [
+    ("Run installed clients", Some(DeployAction::RunInstalled)),
+    ("Redeploy current artifacts", Some(DeployAction::RedeployCurrent)),
+    ("Rebuild clients and relay", Some(DeployAction::Rebuild)),
+    ("Full redeploy", Some(DeployAction::FullRedeploy)),
+    ("Relay maintenance", Some(DeployAction::RelayMaintenance)),
+    ("Collect logs", Some(DeployAction::CollectLogs)),
+    ("Resume interrupted deployment", None),
+];
+
+pub fn choose_plan() -> io::Result<Option<WizardSelection>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    let result = run(&mut terminal);
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    result
+}
+
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> io::Result<Option<WizardSelection>> {
+    let mut selected = 0_usize;
+    let mut input = InputGuard::default();
+    loop {
+        terminal.draw(|frame| {
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(2)
+                .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+                .split(frame.area());
+            frame.render_widget(
+                Paragraph::new("Torca deploy")
+                    .style(Style::default().fg(Color::Cyan))
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL)),
+                layout[0],
+            );
+            let entries: Vec<ListItem> = ACTIONS
+                .iter()
+                .enumerate()
+                .map(|(index, (label, _))| {
+                    let marker = if index == selected { ">" } else { " " };
+                    ListItem::new(format!(" {marker} {} {label}", index + 1))
+                })
+                .collect();
+            frame.render_widget(
+                List::new(entries)
+                    .block(Block::default().title("Select action").borders(Borders::ALL)),
+                layout[1],
+            );
+            frame.render_widget(
+                Paragraph::new("↑/↓ select   Enter continue   q quit")
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL)),
+                layout[2],
+            );
+        })?;
+        if let Some(key) = input.read()? {
+            match key {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+                KeyCode::Up => selected = selected.saturating_sub(1),
+                KeyCode::Down => selected = (selected + 1).min(ACTIONS.len() - 1),
+                KeyCode::Enter => {
+                    if selected == ACTIONS.len() - 1 {
+                        return Ok(Some(WizardSelection::Resume));
+                    }
+                    let action = ACTIONS[selected].1.expect("action entry");
+                    return Ok(edit_plan(terminal, action)?
+                        .map(|plan| WizardSelection::Plan(plan.normalized())));
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Field {
+    Target,
+    Configuration,
+    ClientData,
+    Onion,
+}
+
+fn edit_plan(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    action: DeployAction,
+) -> io::Result<Option<DeployPlan>> {
+    let mut field = Field::Target;
+    let mut target = 0_u8; // all, Windows, Android
+    let mut configuration = Configuration::Debug;
+    let mut client_data = if action == DeployAction::FullRedeploy {
+        ClientDataPolicy::ResetProfile
+    } else {
+        ClientDataPolicy::Preserve
+    };
+    let mut onion = OnionPolicy::Ensure;
+    let mut input = InputGuard::default();
+    loop {
+        terminal.draw(|frame| {
+            let target_label = match target {
+                1 => "Windows",
+                2 => "Android",
+                _ => "All detected clients",
+            };
+            let data_label = match client_data {
+                ClientDataPolicy::Preserve => "Preserve client data",
+                ClientDataPolicy::ResetProfile => "Reset profile",
+                ClientDataPolicy::ResetAll => "Reset all client data",
+            };
+            let onion_label = match onion {
+                OnionPolicy::Ensure => "Ensure existing onion",
+                OnionPolicy::Restart => "Restart relay, preserve onion",
+                OnionPolicy::RepairDirectoryCache => "Repair Tor directory cache",
+                OnionPolicy::RotateIdentity => "Rotate onion identity (rebuild all)",
+            };
+            let text = format!(
+                "Action: {action}\n\n{} Target: {target_label}\n{} Build: {configuration}\n{} Data: {data_label}\n{} Onion: {onion_label}\n\n←/→ change   Tab/↑/↓ field   Enter review   Esc back",
+                marker(matches!(field, Field::Target)),
+                marker(matches!(field, Field::Configuration)),
+                marker(matches!(field, Field::ClientData)),
+                marker(matches!(field, Field::Onion)),
+            );
+            frame.render_widget(
+                Paragraph::new(text)
+                    .block(Block::default().title("Deployment options").borders(Borders::ALL)),
+                frame.area(),
+            );
+        })?;
+        if let Some(key) = input.read()? {
+            match key {
+                KeyCode::Esc => return Ok(None),
+                KeyCode::Tab | KeyCode::Down => field = next_field(field),
+                KeyCode::Up => field = previous_field(field),
+                KeyCode::Left | KeyCode::Right => {
+                    let direction = if key == KeyCode::Right { 1_i8 } else { -1 };
+                    match field {
+                        Field::Target => {
+                            target = cycle_target(target, direction);
+                        }
+                        Field::Configuration => {
+                            configuration = if configuration == Configuration::Debug {
+                                Configuration::Release
+                            } else {
+                                Configuration::Debug
+                            };
+                        }
+                        Field::ClientData => {
+                            client_data = cycle_data(client_data, direction);
+                        }
+                        Field::Onion => {
+                            onion = cycle_onion(onion, direction);
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    let targets = match target {
+                        1 => vec![Target::Windows],
+                        2 => vec![Target::Android],
+                        _ => vec![Target::Windows, Target::Android],
+                    };
+                    let mut plan = DeployPlan::normal(action, targets, configuration);
+                    plan.client_data = client_data;
+                    plan.onion = onion;
+                    plan.client_build = if action == DeployAction::RunInstalled {
+                        BuildPolicy::Reuse
+                    } else {
+                        plan.client_build
+                    };
+                    plan.relay_build = if action == DeployAction::RelayMaintenance {
+                        BuildPolicy::IfRequired
+                    } else {
+                        plan.relay_build
+                    };
+                    plan.validation = ValidationLevel::Quick;
+                    plan.launch = if action == DeployAction::CollectLogs {
+                        LaunchPolicy::Skip
+                    } else {
+                        LaunchPolicy::Restart
+                    };
+                    if confirm(terminal, &plan)? {
+                        return Ok(Some(plan));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn marker(active: bool) -> &'static str {
+    if active { ">" } else { " " }
+}
+
+fn next_field(field: Field) -> Field {
+    match field {
+        Field::Target => Field::Configuration,
+        Field::Configuration => Field::ClientData,
+        Field::ClientData => Field::Onion,
+        Field::Onion => Field::Target,
+    }
+}
+
+fn previous_field(field: Field) -> Field {
+    match field {
+        Field::Target => Field::ClientData,
+        Field::Configuration => Field::Target,
+        Field::ClientData => Field::Configuration,
+        Field::Onion => Field::ClientData,
+    }
+}
+
+fn cycle_data(current: ClientDataPolicy, direction: i8) -> ClientDataPolicy {
+    let index = match current {
+        ClientDataPolicy::Preserve => 0,
+        ClientDataPolicy::ResetProfile => 1,
+        ClientDataPolicy::ResetAll => 2,
+    };
+    match (index as i8 + direction).rem_euclid(3) {
+        1 => ClientDataPolicy::ResetProfile,
+        2 => ClientDataPolicy::ResetAll,
+        _ => ClientDataPolicy::Preserve,
+    }
+}
+
+fn cycle_target(current: u8, direction: i8) -> u8 {
+    match (current, direction > 0) {
+        (0, false) => 2,
+        (1, false) => 0,
+        (2, false) => 1,
+        (0, true) => 1,
+        (1, true) => 2,
+        (2, true) => 0,
+        _ => 0,
+    }
+}
+
+fn cycle_onion(current: OnionPolicy, direction: i8) -> OnionPolicy {
+    let index = match current {
+        OnionPolicy::Ensure => 0,
+        OnionPolicy::Restart => 1,
+        OnionPolicy::RepairDirectoryCache => 2,
+        OnionPolicy::RotateIdentity => 3,
+    };
+    match (index as i8 + direction).rem_euclid(4) {
+        1 => OnionPolicy::Restart,
+        2 => OnionPolicy::RepairDirectoryCache,
+        3 => OnionPolicy::RotateIdentity,
+        _ => OnionPolicy::Ensure,
+    }
+}
+
+/// Prevents terminal key auto-repeat from moving through several wizard
+/// options in one hold. Modern terminals expose `Repeat`/`Release` directly;
+/// the short fallback interval also covers terminals that report repeats as
+/// ordinary `Press` events.
+#[derive(Default)]
+struct InputGuard {
+    last_press: Option<(KeyCode, Instant)>,
+}
+
+impl InputGuard {
+    fn read(&mut self) -> io::Result<Option<KeyCode>> {
+        loop {
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if let Some(key) = self.accept(key) {
+                return Ok(Some(key));
+            }
+        }
+    }
+
+    fn accept(&mut self, key: KeyEvent) -> Option<KeyCode> {
+        match key.kind {
+            KeyEventKind::Release => {
+                if self.last_press.map(|(code, _)| code) == Some(key.code) {
+                    self.last_press = None;
+                }
+                None
+            }
+            KeyEventKind::Repeat => {
+                // A held arrow/left/right key must not act like multiple
+                // independent navigation commands.
+                None
+            }
+            KeyEventKind::Press => {
+                let now = Instant::now();
+                let navigation = matches!(
+                    key.code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right | KeyCode::Tab
+                );
+                if navigation
+                    && self.last_press.is_some_and(|(code, at)| {
+                        code == key.code && now.duration_since(at) < Duration::from_millis(220)
+                    })
+                {
+                    return None;
+                }
+                self.last_press = Some((key.code, now));
+                Some(key.code)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn held_navigation_repeat_is_ignored() {
+        let mut guard = InputGuard::default();
+        let press = KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Press);
+        let repeat =
+            KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Repeat);
+        assert_eq!(guard.accept(press), Some(KeyCode::Down));
+        assert_eq!(guard.accept(repeat), None);
+    }
+}
+
+fn confirm(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    plan: &DeployPlan,
+) -> io::Result<bool> {
+    let mut input = InputGuard::default();
+    loop {
+        terminal.draw(|frame| {
+            let area = frame.area();
+            let text = format!(
+                "Action: {}\nTargets: Windows, Android\nBuild: {}\nOnion: {:?}\n\nPress y to execute, n/Esc to cancel",
+                plan.action, plan.configuration, plan.onion
+            );
+            frame.render_widget(
+                Paragraph::new(text)
+                    .block(Block::default().title("Confirm deployment").borders(Borders::ALL)),
+                area,
+            );
+        })?;
+        if let Some(key) = input.read()? {
+            match key {
+                KeyCode::Char('y') | KeyCode::Enter => return Ok(true),
+                KeyCode::Char('n') | KeyCode::Esc => return Ok(false),
+                _ => {}
+            }
+        }
+    }
+}

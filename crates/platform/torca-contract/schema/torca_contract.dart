@@ -541,6 +541,7 @@ class AttachmentDto {
     this.attemptCount = 0,
     this.updatedAtMs = 0,
     this.direction = 'outbound',
+    this.lastErrorCode,
   });
   factory AttachmentDto.fromJson(Map<String, dynamic> value) => AttachmentDto(
     id: _requiredString(value, 'id'),
@@ -553,10 +554,12 @@ class AttachmentDto {
     attemptCount: _integer(value['attemptCount']),
     updatedAtMs: _integer(value['updatedAtMs']),
     direction: value['direction'] as String? ?? 'outbound',
+    lastErrorCode: value['lastErrorCode'] as String?,
   );
   final String id, messageId, name, mediaType, status;
   final int size, offset, attemptCount, updatedAtMs;
   final String direction;
+  final String? lastErrorCode;
 
   AttachmentDirection get typedDirection => switch (direction) {
     'outbound' => AttachmentDirection.outbound,

@@ -8,16 +8,18 @@ Work currently lands directly on `main`; each commit must leave the repository i
 
 ## Developer workflow
 
-Use the single interactive development workflow:
+Use the single Rust interactive development workflow:
 
 ```powershell
-.\scripts\wizard.ps1
+cargo run -p torca-deploy
 ```
 
 The wizard detects all deployable devices and owns run, existing-artifact
 redeploy, selective component rebuild, full reset, explicit Onion rotation,
-relay maintenance and log collection. `build.ps1`, `deploy.ps1`, `torca.ps1`
-and the other wrappers remain stable automation/CI interfaces behind it.
+relay maintenance and log collection. `cargo run -p torca-deploy -- resume`
+continues the last checkpoint. Deployment execution belongs to Rust; the
+remaining PowerShell files are validation/build helpers only and must not be
+called by `torca-deploy`.
 
 Do not create public one-off scripts for formatting, codegen, packaging or platform bootstrap. Private helpers belong under `scripts/modules/`; `tools/build/overlays/` contains only platform templates.
 

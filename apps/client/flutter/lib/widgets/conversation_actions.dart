@@ -22,6 +22,9 @@ abstract final class ContactActionMenu {
     required bool blocked,
   }) => showModalBottomSheet<ContactAction>(
     context: context,
+    useSafeArea: true,
+    isScrollControlled: false,
+    enableDrag: false,
     builder: (context) => SafeArea(
       child: Wrap(
         children: <Widget>[
@@ -134,6 +137,9 @@ abstract final class ConversationActionMenu {
     required bool blocked,
   }) => showModalBottomSheet<ConversationAction>(
     context: context,
+    useSafeArea: true,
+    isScrollControlled: false,
+    enableDrag: false,
     builder: (context) =>
         SafeArea(child: Wrap(children: _tiles(context, blocked))),
   );

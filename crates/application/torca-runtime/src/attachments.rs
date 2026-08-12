@@ -25,4 +25,5 @@ pub struct AttachmentView {
     pub attempt_count: u32,
     pub updated_at_ms: i64,
     pub direction: String,
+    pub last_error_code: Option<String>,
 }

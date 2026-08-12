@@ -1,0 +1,234 @@
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use thiserror::Error;
+
+use crate::domain::DeployRun;
+
+#[derive(Clone, Debug)]
+pub struct DeployPaths {
+    pub repo_root: PathBuf,
+    pub state_root: PathBuf,
+}
+
+impl DeployPaths {
+    pub fn discover() -> Result<Self, PersistenceError> {
+        let mut current = std::env::current_dir().map_err(PersistenceError::CurrentDirectory)?;
+        loop {
+            if current.join("Cargo.toml").is_file() && current.join("crates").is_dir() {
+                return Ok(Self {
+                    state_root: current.join(".torca").join("deploy"),
+                    repo_root: current,
+                });
+            }
+            if !current.pop() {
+                return Err(PersistenceError::RepoRoot);
+            }
+        }
+    }
+
+    pub fn runs_root(&self) -> PathBuf {
+        self.state_root.join("runs")
+    }
+    pub fn current_path(&self) -> PathBuf {
+        self.state_root.join("current.json")
+    }
+    pub fn run_path(&self, run_id: &str) -> PathBuf {
+        self.runs_root().join(format!("{run_id}.json"))
+    }
+}
+
+pub struct StateStore {
+    paths: DeployPaths,
+}
+
+impl StateStore {
+    pub const fn new(paths: DeployPaths) -> Self {
+        Self { paths }
+    }
+    pub const fn paths(&self) -> &DeployPaths {
+        &self.paths
+    }
+
+    pub fn acquire_lock(&self) -> Result<DeployLock, PersistenceError> {
+        fs::create_dir_all(&self.paths.state_root).map_err(PersistenceError::Write)?;
+        let path = self.paths.state_root.join("active.lock");
+        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                writeln!(file, "pid={} started={:?}", std::process::id(), SystemTime::now())
+                    .map_err(PersistenceError::Write)?;
+                Ok(DeployLock { path })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                    .is_some_and(|age| age > Duration::from_secs(6 * 60 * 60));
+                if stale {
+                    fs::remove_file(&path).map_err(PersistenceError::Write)?;
+                    let mut file = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&path)
+                        .map_err(|_| PersistenceError::ActiveDeployment(path.clone()))?;
+                    writeln!(file, "pid={} started={:?}", std::process::id(), SystemTime::now())
+                        .map_err(PersistenceError::Write)?;
+                    Ok(DeployLock { path })
+                } else {
+                    Err(PersistenceError::ActiveDeployment(path))
+                }
+            }
+            Err(error) => Err(PersistenceError::Write(error)),
+        }
+    }
+
+    pub fn save(&self, run: &DeployRun) -> Result<(), PersistenceError> {
+        fs::create_dir_all(self.paths.runs_root()).map_err(PersistenceError::Write)?;
+        let bytes = serde_json::to_vec_pretty(run).map_err(PersistenceError::Serialize)?;
+        atomic_write(&self.paths.run_path(&run.run_id), &bytes)?;
+        atomic_write(&self.paths.current_path(), &bytes)
+    }
+
+    pub fn load_current(&self) -> Result<DeployRun, PersistenceError> {
+        let path = self.paths.current_path();
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(primary) => {
+                fs::read(backup_path(&path)).map_err(|_| PersistenceError::Read(primary))?
+            }
+        };
+        serde_json::from_slice(&bytes).map_err(PersistenceError::Deserialize)
+    }
+
+    pub fn append_event(
+        &self,
+        run: &DeployRun,
+        event: impl AsRef<str>,
+    ) -> Result<(), PersistenceError> {
+        fs::create_dir_all(self.paths.runs_root()).map_err(PersistenceError::Write)?;
+        let path = self.paths.runs_root().join(format!("{}.events.jsonl", run.run_id));
+        let record = serde_json::json!({
+            "runId": run.run_id,
+            "stage": run.stage,
+            "message": event.as_ref(),
+        });
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(PersistenceError::Write)?;
+        writeln!(file, "{}", serde_json::to_string(&record).map_err(PersistenceError::Serialize)?)
+            .map_err(PersistenceError::Write)
+    }
+}
+
+pub struct DeployLock {
+    path: PathBuf,
+}
+
+impl Drop for DeployLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, bytes).map_err(PersistenceError::Write)?;
+    // Windows does not replace an existing destination with `rename`. Keep a
+    // same-directory backup while replacing it; load_current can recover it if
+    // the process is terminated between the two moves.
+    if path.exists() {
+        let backup = backup_path(path);
+        if backup.exists() {
+            fs::remove_file(&backup).map_err(PersistenceError::Write)?;
+        }
+        fs::rename(path, &backup).map_err(PersistenceError::Write)?;
+        if let Err(error) = fs::rename(&temporary, path) {
+            let _ = fs::rename(&backup, path);
+            return Err(PersistenceError::Write(error));
+        }
+        let _ = fs::remove_file(backup);
+        return Ok(());
+    }
+    fs::rename(temporary, path).map_err(PersistenceError::Write)
+}
+
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("bak")
+}
+
+#[derive(Debug, Error)]
+pub enum PersistenceError {
+    #[error("could not resolve current directory: {0}")]
+    CurrentDirectory(std::io::Error),
+    #[error("could not locate Torca repository root from current directory")]
+    RepoRoot,
+    #[error("could not read deployment state: {0}")]
+    Read(std::io::Error),
+    #[error("could not write deployment state: {0}")]
+    Write(std::io::Error),
+    #[error("could not serialize deployment state: {0}")]
+    Serialize(serde_json::Error),
+    #[error("could not parse deployment state: {0}")]
+    Deserialize(serde_json::Error),
+    #[error("another Torca deployment is active (lock: {0})")]
+    ActiveDeployment(PathBuf),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{Configuration, DeployAction, DeployPlan, Target};
+
+    #[test]
+    fn state_round_trip_preserves_checkpoint() {
+        let root = std::env::temp_dir().join(format!("torca-deploy-test-{}", std::process::id()));
+        let paths = DeployPaths { repo_root: root.clone(), state_root: root.join(".torca/deploy") };
+        let store = StateStore::new(paths);
+        let run = DeployRun::new(DeployPlan::normal(
+            DeployAction::Rebuild,
+            vec![Target::Windows],
+            Configuration::Debug,
+        ));
+        store.save(&run).expect("save state");
+        let restored = store.load_current().expect("load state");
+        assert_eq!(restored.run_id, run.run_id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn state_load_recovers_from_interrupted_replacement_backup() {
+        let root = std::env::temp_dir().join(format!("torca-deploy-backup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DeployPaths { repo_root: root.clone(), state_root: root.join(".torca/deploy") };
+        let store = StateStore::new(paths);
+        let run = DeployRun::new(DeployPlan::normal(
+            DeployAction::RunInstalled,
+            vec![Target::Windows],
+            Configuration::Debug,
+        ));
+        store.save(&run).expect("save state");
+        let current = store.paths().current_path();
+        fs::copy(&current, backup_path(&current)).expect("copy backup");
+        fs::remove_file(current).expect("remove interrupted current");
+        assert_eq!(store.load_current().expect("recover state").run_id, run.run_id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deployment_lock_prevents_concurrent_execution_and_releases_on_drop() {
+        let root = std::env::temp_dir().join(format!("torca-deploy-lock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DeployPaths { repo_root: root.clone(), state_root: root.join(".torca/deploy") };
+        let store = StateStore::new(paths);
+        let lock = store.acquire_lock().expect("first lock");
+        assert!(matches!(store.acquire_lock(), Err(PersistenceError::ActiveDeployment(_))));
+        drop(lock);
+        assert!(store.acquire_lock().is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+}

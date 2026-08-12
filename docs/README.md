@@ -10,6 +10,7 @@ Torca keeps a deliberately small set of maintained documentation because the imp
 - [`security/threat-model.md`](security/threat-model.md) — assets, trust boundaries, threats and review triggers.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — placement rules, workflows and documentation policy.
 - [`../ROADMAP.md`](../ROADMAP.md) — product/engineering direction rather than release bookkeeping.
+- [`diagnostics.md`](diagnostics.md) — canonical logging producers, bundle layout and collection integrity.
 
 Short README files at major repository roots (`apps`, `crates`, `services`, `tests`) are navigation aids only. They should point toward the same central model rather than introduce alternative architecture descriptions.
 

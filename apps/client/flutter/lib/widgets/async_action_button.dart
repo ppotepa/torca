@@ -17,15 +17,30 @@ class AsyncActionButton extends StatelessWidget {
   final IconData? icon;
 
   @override
-  Widget build(BuildContext context) => FilledButton.icon(
-    onPressed: busy ? null : onPressed,
-    icon: busy
-        ? const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-        : Icon(icon ?? context.torcaIcons.send),
-    label: Text(busy ? '$label…' : label),
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    enabled: !busy && onPressed != null,
+    label: label,
+    value: busy ? 'In progress' : null,
+    child: FilledButton.icon(
+      onPressed: busy ? null : onPressed,
+      // Keep both the label and the icon slot identical while the operation
+      // runs. Changing `label` to `label…` used to resize parent rows and made
+      // the whole modal/panel appear to jump on press.
+      icon: SizedBox(
+        width: 18,
+        height: 18,
+        child: Center(
+          child: busy
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(icon ?? context.torcaIcons.send, size: 18),
+        ),
+      ),
+      label: Text(label),
+    ),
   );
 }

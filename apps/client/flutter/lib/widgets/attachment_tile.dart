@@ -73,7 +73,8 @@ class AttachmentTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       '${formatBytes(attachment.size)} · ${_statusLabel(attachment.status, attachment.direction)}'
-                      '${attachment.attemptCount > 0 ? ' · attempt ${attachment.attemptCount}' : ''}',
+                      '${attachment.attemptCount > 0 ? ' · attempt ${attachment.attemptCount}' : ''}'
+                      '${attachment.lastErrorCode == null ? '' : ' · ${_failureLabel(attachment.lastErrorCode!)}'}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -170,6 +171,16 @@ class AttachmentTile extends StatelessWidget {
         'cancelled' => 'Cancelled',
         _ => status,
       };
+
+  static String _failureLabel(String code) => switch (code) {
+    'ATTACHMENT_ACK_TIMEOUT' => 'waiting for peer acknowledgement',
+    'ATTACHMENT_PEER_UNAVAILABLE' => 'peer unavailable',
+    'ATTACHMENT_INTEGRITY_FAILED' => 'integrity check failed',
+    'ATTACHMENT_STORAGE_FAILED' => 'local storage failed',
+    'ATTACHMENT_MESSAGE_PENDING' => 'waiting for message',
+    'ATTACHMENT_DEPENDENCY_MISSING' => 'waiting for conversation',
+    _ => 'retry available',
+  };
 }
 
 class _AttachmentImagePreview extends StatefulWidget {

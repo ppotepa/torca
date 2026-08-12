@@ -134,6 +134,7 @@ impl AttachmentRepository for SqlCipherAttachmentStore {
                     created_at_ms: row.get(5)?,
                     updated_at_ms: row.get(6)?,
                     attempt_count: row.get(7)?,
+                    last_error_code: row.get(10)?,
                 })
             })
             .optional()
@@ -160,6 +161,9 @@ impl AttachmentRepository for SqlCipherAttachmentStore {
                     attempts,
                     offset,
                     digest,
+                    attachment.attempts().last().and_then(|attempt| {
+                        attempt.error_code.as_ref().map(ToString::to_string)
+                    }),
                 ],
             )
             .map_err(|_| AttachmentError::RepositoryFailure)?;
@@ -185,6 +189,7 @@ impl AttachmentRepository for SqlCipherAttachmentStore {
                     created_at_ms: row.get(5)?,
                     updated_at_ms: row.get(6)?,
                     attempt_count: row.get(7)?,
+                    last_error_code: row.get(10)?,
                 })
             })
             .map_err(|_| AttachmentError::RepositoryFailure)?;
@@ -203,6 +208,7 @@ struct AttachmentRow {
     created_at_ms: i64,
     updated_at_ms: i64,
     attempt_count: i64,
+    last_error_code: Option<String>,
 }
 impl AttachmentRow {
     fn into_attachment(self) -> Result<Attachment, AttachmentError> {
@@ -218,6 +224,7 @@ impl AttachmentRow {
             .map_err(|_| AttachmentError::RepositoryFailure)?;
         let attempt_count =
             u32::try_from(self.attempt_count).map_err(|_| AttachmentError::RepositoryFailure)?;
+        let _last_error_code = self.last_error_code;
         let attempts = (1..=attempt_count)
             .map(|number| AttachmentAttempt { number, at: updated_at, error_code: None })
             .collect();
@@ -252,6 +259,7 @@ fn execute_insert(
                 attempts,
                 0_i64,
                 Option::<&[u8]>::None,
+                Option::<&str>::None,
             ],
         )
         .map_err(|_| AttachmentError::RepositoryFailure)?;

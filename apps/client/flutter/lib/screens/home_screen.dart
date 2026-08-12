@@ -247,17 +247,26 @@ class _HomeScreenState extends State<HomeScreen> {
         return _ConversationList(
           conversations: conversations,
           contacts: snapshot.contacts,
-          selectedConversationId: null,
+          selectedConversationId: _selectedConversationId,
           onContactInfo: _openContactDetails,
           onAction: _handleConversationAction,
-          onSelected: (conversation) => Navigator.of(context).push<void>(
-            MaterialPageRoute(
-              builder: (_) => ConversationScreen(
-                gateway: widget.gateway,
-                conversation: conversation,
+          onSelected: (conversation) {
+            // Keep selection in the shell even when the narrow layout uses a
+            // route.  This lets a later resize restore the same conversation
+            // instead of falling back to the contacts/list view.
+            setState(() {
+              _selectedConversationId = conversation.id;
+              _selectedContactId = conversation.contactId;
+            });
+            Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => ConversationScreen(
+                  gateway: widget.gateway,
+                  conversation: conversation,
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       }
       final selected = _selectedConversation(conversations);

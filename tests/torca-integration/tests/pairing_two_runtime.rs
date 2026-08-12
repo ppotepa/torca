@@ -283,9 +283,11 @@ fn two_runtimes_commit_contacts_only_after_durable_acknowledgements() {
         TestSecrets::default(),
     );
 
+    // The relay invitation is available before either local onion service has
+    // published. This is the cold-start path used by Android and desktop.
     let invitation = creator
-        .create_invitation(creator_session_id, context(&creator_engine, "Alice"), now)
-        .expect("create");
+        .create_invitation_pending_route(creator_session_id, now)
+        .expect("create pending route");
     // Reconstructing the process runtime must retain the protected ephemeral transport state,
     // not strand an otherwise valid relay invitation after an Activity/service/process restart.
     let (_discarded_coordinator, _engine, _approval, creator_secrets) = creator.into_parts();
@@ -297,14 +299,25 @@ fn two_runtimes_commit_contacts_only_after_durable_acknowledgements() {
     );
     assert_eq!(creator.restore_active_sessions().expect("restore creator"), 1);
     joiner
-        .join_invitation(
+        .join_invitation_pending_route(
             joiner_session_id,
             invitation.code,
-            context(&joiner_engine, "Bob"),
-            now,
             Some(*invitation.ticket.as_bytes()),
         )
-        .expect("join");
+        .expect("join pending route");
+
+    // Publishing either route later resumes the unchanged authenticated
+    // offer/approval protocol; no contact exists before both routes arrive.
+    assert!(
+        creator
+            .publish_local_offer(creator_session_id, context(&creator_engine, "Alice"))
+            .expect("publish creator route")
+    );
+    assert!(
+        joiner
+            .publish_local_offer(joiner_session_id, context(&joiner_engine, "Bob"))
+            .expect("publish joiner route")
+    );
     let _ = creator.poll(creator_session_id, now).expect("creator offer exchange");
     let _ = joiner.poll(joiner_session_id, now).expect("joiner offer and approval");
     let _ = creator.poll(creator_session_id, now).expect("creator receives approval");

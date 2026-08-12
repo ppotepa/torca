@@ -18,6 +18,7 @@ pub struct AttachmentProjectionRow {
     pub attempt_count: u32,
     pub updated_at_ms: i64,
     pub direction: String,
+    pub last_error_code: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,7 +66,8 @@ impl SqlCipherAttachmentProjection {
                     row.get::<_, i64>(7)?,
                     row.get::<_, i64>(8)?,
                     row.get::<_, i64>(9)?,
-                    row.get::<_, i64>(10)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, i64>(11)?,
                 ))
             })
             .map_err(|_| AttachmentProjectionError::Storage)?;
@@ -80,6 +82,7 @@ impl SqlCipherAttachmentProjection {
                 updated_at_ms,
                 attempt_count,
                 offset,
+                last_error_code,
                 direction,
             ) = row.map_err(|_| AttachmentProjectionError::Storage)?;
             Ok(AttachmentProjectionRow {
@@ -96,6 +99,7 @@ impl SqlCipherAttachmentProjection {
                     .map_err(|_| AttachmentProjectionError::InvalidStoredState)?,
                 updated_at_ms,
                 direction: direction_label(direction)?.into(),
+                last_error_code,
             })
         })
         .collect()

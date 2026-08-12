@@ -23,12 +23,21 @@ const ONION_SERVICE_TIMEOUT: Duration = Duration::from_secs(8);
 // Arti can self-heal a temporary directory/circuit loss.  Keep the published
 // endpoint during this window; after it expires the durable publisher performs
 // a controlled re-publication without restarting the Tor client.
-const ONION_DEGRADED_GRACE: Duration = Duration::from_secs(75);
-// A genuinely stuck publisher emits no state/problem transitions. Unlike a
-// merely slow cold start, that gives us an objective recovery signal. Three
-// minutes is well above observed descriptor publication time while remaining
-// bounded for unattended Android/desktop recovery.
-const ONION_PUBLISHING_STALL: Duration = Duration::from_secs(180);
+// Descriptor uploads can remain degraded while Arti still has working
+// introduction points. Give its internal retry loop enough time to recover;
+// a client-side restart here would lose the service's progress.
+const ONION_DEGRADED_GRACE: Duration = Duration::from_secs(300);
+// A descriptor publication normally advances through several internal Arti
+// states.  It must not be allowed to wait forever, however: a stalled
+// publication leaves a client unable to accept peer sessions while the rest
+// of the runtime looks healthy.  Recovery only replaces the onion service on
+// the already bootstrapped Tor client.
+// Descriptor publication is eventually consistent and can legitimately take
+// several minutes on a cold Android/relay deployment.  A shorter deadline
+// turns healthy Arti progress into a destructive republish loop: every retry
+// throws away introduction-point work and starts from zero.  Keep the service
+// alive for ten minutes before declaring it genuinely stalled.
+const ONION_PUBLISHING_GRACE: Duration = Duration::from_secs(600);
 const MAX_ONION_PUBLICATION_ATTEMPTS: u32 = 2;
 // A recovery attempt must never occupy the application runtime owner.  The
 // Tor service itself applies its own bounded retry policy; this is the bound
@@ -76,8 +85,8 @@ enum OnionWaitOutcome {
 #[derive(Default)]
 struct OnionRecoveryTracker {
     degraded_since: Option<Instant>,
-    publishing_progress_at: Option<Instant>,
-    publishing_revision: Option<u64>,
+    publishing_since: Option<Instant>,
+    publication_revision: Option<u64>,
     was_reachable: bool,
 }
 
@@ -92,27 +101,23 @@ impl OnionRecoveryTracker {
             OnionServiceHealth::Reachable => {
                 self.was_reachable = true;
                 self.degraded_since = None;
-                self.publishing_progress_at = None;
-                self.publishing_revision = Some(publication_revision);
+                self.publishing_since = None;
+                self.publication_revision = Some(publication_revision);
                 None
             }
             OnionServiceHealth::Publishing => {
-                // Arti may need several minutes on a cold Android network to
-                // establish introduction points and upload a descriptor.
-                // Restarting a live service here discards that work and turns
-                // slow publication into a permanent restart loop.
                 self.degraded_since = None;
-                if self.publishing_revision != Some(publication_revision) {
-                    self.publishing_revision = Some(publication_revision);
-                    self.publishing_progress_at = Some(now);
+                if self.publication_revision != Some(publication_revision) {
+                    self.publication_revision = Some(publication_revision);
+                    self.publishing_since = Some(now);
                     return None;
                 }
-                let since = self.publishing_progress_at.get_or_insert(now);
-                (now.duration_since(*since) >= ONION_PUBLISHING_STALL)
+                let since = self.publishing_since.get_or_insert(now);
+                (now.duration_since(*since) >= ONION_PUBLISHING_GRACE)
                     .then_some(OnionRepublishReason::PublishingStalled)
             }
             OnionServiceHealth::Degraded => {
-                self.publishing_progress_at = None;
+                self.publishing_since = None;
                 let since = self.degraded_since.get_or_insert(now);
                 (now.duration_since(*since) >= ONION_DEGRADED_GRACE)
                     .then_some(OnionRepublishReason::DegradedTimeout)
@@ -179,6 +184,7 @@ impl OnionPublisher {
         client: Arc<TorService>,
         target: SocketAddr,
         endpoint: SharedTorEndpoint,
+        observer: Option<TorBootstrapObserver>,
     ) -> Result<Self, std::io::Error> {
         let (commands, receiver) = mpsc::sync_channel(1);
         let (event_sender, events) = mpsc::sync_channel(1);
@@ -191,7 +197,7 @@ impl OnionPublisher {
                     {
                         Ok(address) => {
                             endpoint.set(Some(address));
-                            match wait_for_onion_recovery(&client, &receiver) {
+                            match wait_for_onion_recovery(&client, &receiver, observer.as_ref()) {
                                 OnionWaitOutcome::Shutdown => {
                                     client.stop_onion_service();
                                     endpoint.set(None);
@@ -209,6 +215,20 @@ impl OnionPublisher {
                             (OnionRepublishReason::LaunchFailed, false)
                         }
                     };
+
+                    if let Some(observer) = &observer {
+                        observer(TorBootstrapEvent {
+                            stage: TorBootstrapStage::OnionService,
+                            progress: 8,
+                            attempt: failures.saturating_add(1),
+                            retry_after_ms: None,
+                            code: "ONION_SERVICE_RETRYING",
+                            summary: format!(
+                                "Onion publication recovery scheduled after {}",
+                                reason.code()
+                            ),
+                        });
+                    }
 
                     if was_reachable {
                         failures = 0;
@@ -285,8 +305,10 @@ impl OnionPublisher {
 fn wait_for_onion_recovery(
     client: &TorService,
     receiver: &Receiver<OnionWorkerCommand>,
+    observer: Option<&TorBootstrapObserver>,
 ) -> OnionWaitOutcome {
     let mut tracker = OnionRecoveryTracker::default();
+    let mut last_health = None;
     loop {
         match receiver.recv_timeout(Duration::from_secs(1)) {
             Ok(OnionWorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
@@ -294,11 +316,42 @@ fn wait_for_onion_recovery(
             }
             Err(RecvTimeoutError::Timeout) => {}
         }
-        if let Some(reason) = tracker.observe(
-            client.onion_service_health(),
-            client.onion_publication_revision(),
-            Instant::now(),
-        ) {
+        let health = client.onion_service_health();
+        if last_health != Some(health) {
+            if let Some(observer) = observer {
+                let (progress, code, summary) = match health {
+                    OnionServiceHealth::Reachable => {
+                        (100, "ONION_SERVICE_READY", "Private onion service is reachable")
+                    }
+                    OnionServiceHealth::Degraded => (
+                        60,
+                        "ONION_SERVICE_DEGRADED",
+                        "Onion service is reachable with degraded publication",
+                    ),
+                    OnionServiceHealth::Publishing => {
+                        (8, "ONION_SERVICE_PUBLISHING", "Publishing private onion service")
+                    }
+                    OnionServiceHealth::Failed => {
+                        (0, "ONION_SERVICE_FAILED", "Onion service publication failed")
+                    }
+                    OnionServiceHealth::Stopped => {
+                        (0, "ONION_SERVICE_STOPPED", "Onion service stopped")
+                    }
+                };
+                observer(TorBootstrapEvent {
+                    stage: TorBootstrapStage::OnionService,
+                    progress,
+                    attempt: 1,
+                    retry_after_ms: None,
+                    code,
+                    summary: summary.into(),
+                });
+            }
+            last_health = Some(health);
+        }
+        if let Some(reason) =
+            tracker.observe(health, client.onion_publication_revision(), Instant::now())
+        {
             eprintln!(
                 "torca-tor: onion publication requires recovery reason={} was_reachable={}",
                 reason.code(),
@@ -337,6 +390,7 @@ pub struct OwnedTorDriver {
     next_restart_at: Option<Timestamp>,
     state: TorState,
     last_diagnostic: Option<String>,
+    observer: Option<TorBootstrapObserver>,
 }
 
 impl OwnedTorDriver {
@@ -382,6 +436,7 @@ impl OwnedTorDriver {
             next_restart_at: None,
             state: TorState::Starting,
             last_diagnostic: None,
+            observer: observer.clone(),
         };
         if let Err(error) = driver.start(peer_target, now, observer) {
             let diagnostic = driver
@@ -399,6 +454,7 @@ impl OwnedTorDriver {
         now: Timestamp,
         observer: Option<TorBootstrapObserver>,
     ) -> Result<(), RuntimeDriverError> {
+        self.observer = observer.clone();
         self.endpoint.set(None);
         self.state = TorState::Starting;
         match TorService::bootstrap_observed(
@@ -414,7 +470,7 @@ impl OwnedTorDriver {
                 self.state = TorState::Ready;
                 self.last_diagnostic = None;
                 notify_onion(&observer, 1, 5, None, "ONION_SERVICE_PUBLISHING");
-                self.start_onion_publisher(client)?;
+                self.start_onion_publisher(client, observer)?;
                 Ok(())
             }
             Err(error) => {
@@ -451,13 +507,17 @@ impl OwnedTorDriver {
         Ok(())
     }
 
-    fn start_onion_publisher(&mut self, client: Arc<TorService>) -> Result<(), RuntimeDriverError> {
+    fn start_onion_publisher(
+        &mut self,
+        client: Arc<TorService>,
+        observer: Option<TorBootstrapObserver>,
+    ) -> Result<(), RuntimeDriverError> {
         if let Some(worker) = self.onion_publisher.take() {
             worker.shutdown();
         }
         self.endpoint.set(None);
         self.onion_publisher = Some(
-            OnionPublisher::spawn(client, self.peer_target, self.endpoint.clone())
+            OnionPublisher::spawn(client, self.peer_target, self.endpoint.clone(), observer)
                 .map_err(|_| RuntimeDriverError::Tor)?,
         );
         Ok(())
@@ -515,7 +575,7 @@ impl OwnedTorDriver {
                 self.next_restart_at = None;
                 self.state = TorState::Ready;
                 self.last_diagnostic = None;
-                self.start_onion_publisher(client)
+                self.start_onion_publisher(client, self.observer.clone())
             }
             Err(error) => {
                 self.last_diagnostic = Some(format!("Arti recovery bootstrap failed: {error}"));
@@ -623,27 +683,50 @@ impl TorDriver for OwnedTorDriver {
 #[cfg(test)]
 mod tests {
     use super::{
-        ONION_DEGRADED_GRACE, ONION_PUBLISHING_STALL, OnionRecoveryTracker, OnionRepublishReason,
+        ONION_DEGRADED_GRACE, ONION_PUBLISHING_GRACE, OnionRecoveryTracker, OnionRepublishReason,
     };
     use crate::OnionServiceHealth;
     use std::time::{Duration, Instant};
 
     #[test]
-    fn publishing_progress_resets_stall_deadline() {
+    fn publishing_without_a_new_revision_requests_controlled_republication() {
         let start = Instant::now();
         let mut tracker = OnionRecoveryTracker::default();
         assert_eq!(tracker.observe(OnionServiceHealth::Publishing, 1, start), None);
         assert_eq!(
-            tracker.observe(OnionServiceHealth::Publishing, 2, start + ONION_PUBLISHING_STALL),
+            tracker.observe(
+                OnionServiceHealth::Publishing,
+                1,
+                start + ONION_PUBLISHING_GRACE - Duration::from_secs(1)
+            ),
+            None
+        );
+        assert_eq!(
+            tracker.observe(OnionServiceHealth::Publishing, 1, start + ONION_PUBLISHING_GRACE),
+            Some(OnionRepublishReason::PublishingStalled)
+        );
+    }
+
+    #[test]
+    fn a_new_publication_revision_restarts_the_publishing_deadline() {
+        let start = Instant::now();
+        let mut tracker = OnionRecoveryTracker::default();
+        assert_eq!(tracker.observe(OnionServiceHealth::Publishing, 1, start), None);
+        assert_eq!(
+            tracker.observe(
+                OnionServiceHealth::Publishing,
+                2,
+                start + ONION_PUBLISHING_GRACE - Duration::from_secs(1)
+            ),
             None
         );
         assert_eq!(
             tracker.observe(
                 OnionServiceHealth::Publishing,
                 2,
-                start + ONION_PUBLISHING_STALL + ONION_PUBLISHING_STALL
+                start + ONION_PUBLISHING_GRACE * 2 - Duration::from_secs(2)
             ),
-            Some(OnionRepublishReason::PublishingStalled)
+            None
         );
     }
 
