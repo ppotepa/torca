@@ -198,6 +198,28 @@ class TorcaStrings {
   String get cancelInvitation =>
       _pl ? 'Anuluj zaproszenie' : 'Cancel invitation';
   String get copy => _pl ? 'Kopiuj' : 'Copy';
+  String get noContactsYet => _pl ? 'Brak kontaktow' : 'No contacts yet';
+  String get createInvitationForContact => _pl
+      ? 'Utworz zaproszenie, aby dodac prywatny kontakt.'
+      : 'Create an invitation to add a private contact.';
+  String contactsCount(int count) => _pl
+      ? '$count kontaktow'
+      : '$count private ${count == 1 ? 'contact' : 'contacts'}';
+  String get openChat => _pl ? 'Otworz czat' : 'Open chat';
+  String get contactInformation =>
+      _pl ? 'Informacje o kontakcie' : 'Contact information';
+  String get noInvitations => _pl ? 'Brak zaproszen' : 'No invitations';
+  String get recentInvitations =>
+      _pl ? 'Ostatnie zaproszenia' : 'Recent invitations';
+  String get createdInvitation =>
+      _pl ? 'Utworzone zaproszenie' : 'Created invitation';
+  String get joinedInvitation =>
+      _pl ? 'Dolaczone zaproszenie' : 'Joined invitation';
+  String invitationCode(String code) => _pl ? 'Kod $code' : 'Code $code';
+  String get notMeasured => _pl ? 'Nie zmierzono' : 'Not measured';
+  String get never => _pl ? 'Nigdy' : 'Never';
+  String get presence => _pl ? 'Obecnosc' : 'Presence';
+  String get lastSeen => _pl ? 'Ostatnio widziany' : 'Last seen';
   String get nativeBridge => _pl ? 'Most natywny' : 'Native bridge';
   String get localIdentityCheck => _pl ? 'Lokalna tozsamosc' : 'Local identity';
   String get onionService => _pl ? 'Usluga onion' : 'Onion service';

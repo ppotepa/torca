@@ -146,8 +146,8 @@ class _ContactsSection extends StatelessWidget {
     if (contacts.isEmpty) {
       return _SectionEmptyState(
         icon: context.torcaIcons.contacts,
-        title: 'No contacts yet',
-        message: 'Create an invitation to add a private contact.',
+        title: context.strings.noContactsYet,
+        message: context.strings.createInvitationForContact,
       );
     }
     return LayoutBuilder(
@@ -169,9 +169,7 @@ class _ContactsSection extends StatelessWidget {
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
-            Text(
-              '${contacts.length} private ${contacts.length == 1 ? 'contact' : 'contacts'}',
-            ),
+            Text(context.strings.contactsCount(contacts.length)),
             const SizedBox(height: 12),
             for (final contact in contacts)
               GestureDetector(
@@ -199,12 +197,12 @@ class _ContactsSection extends StatelessWidget {
                           showLabel: false,
                         ),
                         IconButton(
-                          tooltip: 'Open chat',
+                          tooltip: context.strings.openChat,
                           onPressed: () => onOpenConversation(contact),
                           icon: Icon(context.torcaIcons.chats),
                         ),
                         IconButton(
-                          tooltip: 'Contact information',
+                          tooltip: context.strings.contactInformation,
                           onPressed: () => onOpenDetails(contact),
                           icon: Icon(context.torcaIcons.contactInfo),
                         ),
@@ -282,13 +280,13 @@ class _InvitationsSection extends StatelessWidget {
       if (pairings.isEmpty)
         _SectionEmptyState(
           icon: context.torcaIcons.invitations,
-          title: 'No invitations',
+          title: context.strings.noInvitations,
           message:
               'Your active invitations and pairing requests will appear here.',
         )
       else ...<Widget>[
         Text(
-          'Recent invitations',
+          context.strings.recentInvitations,
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
@@ -302,10 +300,10 @@ class _InvitationsSection extends StatelessWidget {
               ),
               title: Text(
                 pairing.typedRole == PairingRole.creator
-                    ? 'Created invitation'
-                    : 'Joined invitation',
+                    ? context.strings.createdInvitation
+                    : context.strings.joinedInvitation,
               ),
-              subtitle: Text('Code ${pairing.code}'),
+              subtitle: Text(context.strings.invitationCode(pairing.code)),
               trailing: Chip(label: Text(pairing.state)),
               onTap: () => onOpenInvitation(pairing),
             ),
@@ -336,7 +334,10 @@ class _ContactContextPanel extends StatelessWidget {
         const SizedBox(height: 4),
         Text(_contactPresence(contact)),
         const SizedBox(height: 20),
-        const Text('Connection', style: TextStyle(fontWeight: FontWeight.w600)),
+        Text(
+          context.strings.connection,
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
         const SizedBox(height: 6),
         const SizedBox(height: 8),
         ConnectionIndicator(
@@ -344,18 +345,24 @@ class _ContactContextPanel extends StatelessWidget {
           blocked: contact.typedStatus == ContactStatus.blocked,
         ),
         const SizedBox(height: 16),
-        _ContextValue(label: 'Quality', value: contact.peerHealth.quality),
+        _ContextValue(
+          label: context.strings.quality,
+          value: contact.peerHealth.quality,
+        ),
         _ContextValue(
           label: 'Round trip',
           value: contact.peerHealth.rttMs == null
-              ? 'Not measured'
+              ? context.strings.notMeasured
               : '${contact.peerHealth.rttMs} ms',
         ),
-        _ContextValue(label: 'Presence', value: contact.presenceState),
         _ContextValue(
-          label: 'Last seen',
+          label: context.strings.presence,
+          value: contact.presenceState,
+        ),
+        _ContextValue(
+          label: context.strings.lastSeen,
           value: contact.lastSeenAtMs == null
-              ? 'Never'
+              ? context.strings.never
               : DateTime.fromMillisecondsSinceEpoch(
                   contact.lastSeenAtMs!,
                 ).toLocal().toString(),
