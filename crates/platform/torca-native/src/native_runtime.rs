@@ -561,10 +561,10 @@ impl TorcaRuntime {
         self.host_onion_status_summary = None;
         self.host_onion_retry_at = None;
         self.host_start_deadline = None;
-        if let Some(host) = self.host.take() {
-            if host.shutdown().is_err() {
-                self.last_result_json = error_result("secure runtime shutdown failed");
-            }
+        if let Some(host) = self.host.take()
+            && host.shutdown().is_err()
+        {
+            self.last_result_json = error_result("secure runtime shutdown failed");
         }
         let Some(actor) = self.actor.take() else {
             if let Some(logger) = &self.logger {
@@ -895,10 +895,10 @@ impl TorcaRuntime {
                     panic_message(payload)
                 ))),
             };
-            if let Err(send_error) = sender.send(HostStartEvent::Finished(result)) {
-                if let HostStartEvent::Finished(Ok((_handle, owner))) = send_error.0 {
-                    let _ = owner.shutdown();
-                }
+            if let Err(send_error) = sender.send(HostStartEvent::Finished(result))
+                && let HostStartEvent::Finished(Ok((_handle, owner))) = send_error.0
+            {
+                let _ = owner.shutdown();
             }
         });
     }
@@ -954,6 +954,7 @@ impl TorcaRuntime {
         }
     }
 
+    #[allow(clippy::while_let_loop)]
     fn advance_runtime_start(&mut self) {
         let mut outcome = None;
         loop {

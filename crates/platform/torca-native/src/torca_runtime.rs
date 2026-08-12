@@ -118,7 +118,7 @@ impl IdempotencyLedger {
             let expired = self
                 .entries
                 .get(&request_id)
-                .map_or(true, |entry| now.duration_since(entry.completed_at) >= self.ttl);
+                .is_none_or(|entry| now.duration_since(entry.completed_at) >= self.ttl);
             if !expired && self.entries.len() <= self.max_entries {
                 break;
             }
@@ -228,6 +228,8 @@ pub extern "C" fn torca_alloc(length: usize) -> *mut u8 {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `data` must be a pointer and length previously returned by this library.
 pub unsafe extern "C" fn torca_free(data: *mut u8, length: usize) {
     if data.is_null() || length == 0 {
         return;
@@ -521,15 +523,12 @@ impl ActorState {
             && name != "notifications.poll"
             && name != "runtime.poll"
             && name != "diagnostics.get"
+            && let Value::Object(object) = &mut snapshot
         {
-            if let Value::Object(object) = &mut snapshot {
-                object.insert("runtimeId".into(), Value::String(self.runtime_id.clone()));
-                object.insert("revision".into(), Value::from(self.revision));
-                object.insert(
-                    "notificationCursor".into(),
-                    Value::from(self.runtime.notification_cursor),
-                );
-            }
+            object.insert("runtimeId".into(), Value::String(self.runtime_id.clone()));
+            object.insert("revision".into(), Value::from(self.revision));
+            object
+                .insert("notificationCursor".into(), Value::from(self.runtime.notification_cursor));
         }
         let operation_result =
             serde_json::from_str::<Value>(&self.runtime.last_result_json).unwrap_or(Value::Null);
@@ -585,6 +584,9 @@ impl ActorState {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be a valid handle returned by `torca_runtime_acquire` and
+/// must not be used after this call.
 pub unsafe extern "C" fn torca_runtime_release(handle: *mut TorcaRuntimeHandle) {
     if !handle.is_null() {
         unsafe {
@@ -594,6 +596,8 @@ pub unsafe extern "C" fn torca_runtime_release(handle: *mut TorcaRuntimeHandle) 
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be valid and `request` must reference `request_length` readable bytes.
 pub unsafe extern "C" fn torca_runtime_invoke(
     handle: *mut TorcaRuntimeHandle,
     request: *const u8,
@@ -666,6 +670,9 @@ pub unsafe extern "C" fn torca_runtime_invoke(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be a valid runtime handle and the returned pointer is valid
+/// until the next invocation on that handle.
 pub unsafe extern "C" fn torca_runtime_response_ptr(
     handle: *const TorcaRuntimeHandle,
 ) -> *const u8 {
@@ -676,6 +683,8 @@ pub unsafe extern "C" fn torca_runtime_response_ptr(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be a valid runtime handle.
 pub unsafe extern "C" fn torca_runtime_response_len(handle: *const TorcaRuntimeHandle) -> usize {
     let Some(handle) = (unsafe { handle.as_ref() }) else {
         return 0;

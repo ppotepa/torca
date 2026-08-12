@@ -18,12 +18,12 @@ pub(crate) fn platform_services() -> Result<Box<dyn PlatformServices>, NativeCom
 
         let root = windows_app_root()?;
         let relay = relay_endpoint()?;
-        return Ok(Box::new(WindowsPlatformServices::new(
+        Ok(Box::new(WindowsPlatformServices::new(
             root.join("data"),
             root.join("cache"),
             root.join("logs"),
             relay,
-        )));
+        )))
     }
 
     #[cfg(target_os = "android")]
