@@ -220,6 +220,11 @@ class TorcaStrings {
   String get never => _pl ? 'Nigdy' : 'Never';
   String get presence => _pl ? 'Obecnosc' : 'Presence';
   String get lastSeen => _pl ? 'Ostatnio widziany' : 'Last seen';
+  String get searchMessages => _pl ? 'Szukaj wiadomosci' : 'Search messages';
+  String get refresh => _pl ? 'Odswiez' : 'Refresh';
+  String get removeAttachment => _pl ? 'Usun zalacznik' : 'Remove attachment';
+  String get scanQr => _pl ? 'Skanuj QR' : 'Scan QR';
+  String get contactDetails => _pl ? 'Szczegoly kontaktu' : 'Contact details';
   String get nativeBridge => _pl ? 'Most natywny' : 'Native bridge';
   String get localIdentityCheck => _pl ? 'Lokalna tozsamosc' : 'Local identity';
   String get onionService => _pl ? 'Usluga onion' : 'Onion service';

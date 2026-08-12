@@ -81,7 +81,7 @@ class ConversationSummaryTile extends StatelessWidget {
             ),
             if (contact != null)
               IconButton(
-                tooltip: 'Contact details',
+                tooltip: context.strings.contactDetails,
                 icon: Icon(context.torcaIcons.info, size: 19),
                 onPressed: onContactInfo,
               ),

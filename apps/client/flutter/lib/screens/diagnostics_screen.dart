@@ -151,17 +151,17 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       title: Text(context.strings.diagnostics),
       actions: <Widget>[
         IconButton(
-          tooltip: 'Run self-test',
+          tooltip: context.strings.runSelfTest,
           onPressed: _loading ? null : _selfTest,
           icon: Icon(context.torcaIcons.diagnostics),
         ),
         IconButton(
-          tooltip: 'Export diagnostics',
+          tooltip: context.strings.exportDiagnostics,
           onPressed: _loading ? null : _export,
           icon: Icon(context.torcaIcons.save),
         ),
         IconButton(
-          tooltip: 'Refresh',
+          tooltip: context.strings.refresh,
           onPressed: _loading ? null : _refresh,
           icon: Icon(context.torcaIcons.retry),
         ),

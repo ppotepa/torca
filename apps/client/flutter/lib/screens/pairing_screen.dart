@@ -538,7 +538,7 @@ class _JoinCard extends StatelessWidget {
               prefixIcon: Icon(context.torcaIcons.identity),
               suffixIcon: scanEnabled || scanBusy
                   ? IconButton(
-                      tooltip: 'Scan QR',
+                      tooltip: context.strings.scanQr,
                       onPressed: scanEnabled ? onScan : null,
                       icon: scanBusy
                           ? const SizedBox(

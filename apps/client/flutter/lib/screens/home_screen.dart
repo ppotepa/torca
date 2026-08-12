@@ -215,7 +215,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     _visibleConversations(snapshot).isNotEmpty)
             ? null
             : FloatingActionButton(
-                tooltip: 'Pair contact',
+                tooltip: context.strings.pairContact,
                 onPressed: _openJoinInvitation,
                 child: Icon(context.torcaIcons.addContact),
               ),

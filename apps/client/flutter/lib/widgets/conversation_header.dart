@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 
 class ConversationHeader extends StatelessWidget {
   const ConversationHeader({
@@ -64,7 +65,7 @@ class ConversationHeader extends StatelessWidget {
         if (!compact) ...<Widget>[
           const Spacer(),
           IconButton(
-            tooltip: 'Connection details',
+            tooltip: context.strings.connectionDetails,
             onPressed: onConnectionDetails,
             icon: Icon(context.torcaIcons.info),
           ),

@@ -147,7 +147,7 @@ class _AttachmentTray extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'Remove attachment',
+                tooltip: context.strings.removeAttachment,
                 visualDensity: VisualDensity.compact,
                 onPressed: () => onRemove(item),
                 icon: Icon(context.torcaIcons.close),

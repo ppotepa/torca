@@ -561,7 +561,7 @@ class _ConversationPaneState extends State<ConversationPane>
                       label: Text('$_jumpMessageCount'),
                       child: FloatingActionButton.small(
                         heroTag: null,
-                        tooltip: 'Jump to latest message',
+                        tooltip: context.strings.jumpToLatest,
                         onPressed: _scrollToBottom,
                         child: Icon(context.torcaIcons.jumpToLatest),
                       ),
@@ -598,7 +598,7 @@ class _ConversationPaneState extends State<ConversationPane>
                   Row(
                     children: <Widget>[
                       IconButton(
-                        tooltip: 'Attach files',
+                        tooltip: context.strings.attachFiles,
                         onPressed:
                             pickingAttachment || sendingAttachment || _searching
                             ? null
@@ -656,7 +656,7 @@ class _ConversationPaneState extends State<ConversationPane>
         child: Padding(
           padding: const EdgeInsets.only(right: 8),
           child: IconButton(
-            tooltip: 'Search messages',
+            tooltip: context.strings.searchMessages,
             onPressed: () => setState(() => _searching = true),
             icon: Icon(context.torcaIcons.search),
           ),
