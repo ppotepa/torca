@@ -285,6 +285,12 @@ where
                         message_kind,
                         ciphertext,
                     })?;
+                    // A sender may be waiting for this ACK while we are
+                    // waiting for a different outbound ACK.  Confirm the
+                    // frame after it has been durably queued in the inbound
+                    // buffer; otherwise simultaneous uploads can deadlock
+                    // both peers until their ACK timeouts expire.
+                    self.send_ack(contact_id, envelope_id, AckStatus::Accepted)?;
                 }
                 Ok(_) => {}
                 Err(error) => {
