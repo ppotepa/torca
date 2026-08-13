@@ -232,6 +232,9 @@ pub trait PeerSessionPort: Send + 'static {
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
+    /// Invalidates stale transport sessions and resets reconnect backoff after
+    /// an OS route/network change.
+    fn network_changed(&mut self, _now: Timestamp) {}
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
@@ -336,6 +339,11 @@ pub trait AttachmentExportPort: Send + 'static {
         attachment_id: AttachmentId,
         destination: PathBuf,
     ) -> Result<(), RuntimeDriverError>;
+    fn export_attachment_preview(
+        &mut self,
+        attachment_id: AttachmentId,
+        destination: PathBuf,
+    ) -> Result<(), RuntimeDriverError>;
 }
 
 /// Compatibility composition for the process runtime. New use cases should
@@ -412,6 +420,7 @@ enum RuntimeCommand {
     RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     ExportAttachment(AttachmentId, PathBuf, Sender<Result<(), RuntimeDriverError>>),
+    ExportAttachmentPreview(AttachmentId, PathBuf, Sender<Result<(), RuntimeDriverError>>),
     AttachmentSnapshot(Sender<Result<Vec<AttachmentView>, RuntimeDriverError>>),
     NetworkSnapshot(Sender<Result<NetworkSnapshot, RuntimeDriverError>>),
     Diagnostics(Sender<String>),
@@ -495,6 +504,15 @@ impl RuntimeHandle {
         destination: PathBuf,
     ) -> Result<(), RuntimeDriverError> {
         request_blocking(&self.sender, |r| RuntimeCommand::ExportAttachment(id, destination, r))
+    }
+    pub fn export_attachment_preview(
+        &self,
+        id: AttachmentId,
+        destination: PathBuf,
+    ) -> Result<(), RuntimeDriverError> {
+        request_blocking(&self.sender, |r| {
+            RuntimeCommand::ExportAttachmentPreview(id, destination, r)
+        })
     }
     pub fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
         request_query(&self.sender, RuntimeCommand::AttachmentSnapshot)
@@ -678,6 +696,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 pairing.network_changed(now);
+                communication.network_changed(now);
                 record(
                     diagnostics,
                     sequence,
@@ -1094,6 +1113,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         }
         RuntimeCommand::ExportAttachment(id, destination, r) => {
             let _ = r.send(communication.export_attachment(id, destination));
+        }
+        RuntimeCommand::ExportAttachmentPreview(id, destination, r) => {
+            let _ = r.send(communication.export_attachment_preview(id, destination));
         }
         RuntimeCommand::AttachmentSnapshot(r) => {
             let _ = r.send(communication.attachment_snapshot());

@@ -207,6 +207,13 @@ where
         Ok(())
     }
 
+    fn network_changed(&mut self, now: Timestamp) {
+        let _ = self.link.network_changed(now);
+        for health in self.health.values_mut() {
+            health.snapshot.reconnect_attempt = 0;
+        }
+    }
+
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
         application_peer_state(self.link.connection_state(contact_id))
     }

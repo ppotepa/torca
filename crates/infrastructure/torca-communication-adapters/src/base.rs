@@ -73,6 +73,10 @@ where
         self.link.maintenance(contacts, now).map(|_| ()).map_err(|_| CommunicationError::Peer)
     }
 
+    fn network_changed(&mut self, now: Timestamp) {
+        let _ = self.link.network_changed(now);
+    }
+
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
         application_peer_state(self.link.connection_state(contact_id))
     }

@@ -389,7 +389,7 @@ class NavigationBadgesDto {
 class ContactDto {
   const ContactDto({
     required this.id,
-    this.displayName = 'Contact',
+    required this.displayName,
     required this.onionAddress,
     required this.status,
     required this.connectionState,
@@ -404,7 +404,7 @@ class ContactDto {
     final peerHealth = value['peerHealth'];
     return ContactDto(
       id: _requiredString(value, 'id'),
-      displayName: value['displayName'] as String? ?? 'Contact',
+      displayName: _requiredString(value, 'displayName'),
       onionAddress: _requiredString(value, 'onionAddress'),
       status: _requiredString(value, 'status'),
       connectionState: _requiredString(value, 'connectionState'),
@@ -850,11 +850,13 @@ class QueueAttachmentCommandDto extends BridgeCommandDto {
   const QueueAttachmentCommandDto({
     required this.conversationIdHex,
     required this.sourcePath,
+    this.previewSourcePath,
     required this.name,
     required this.mediaType,
     required this.size,
   });
   final String conversationIdHex, sourcePath, name, mediaType;
+  final String? previewSourcePath;
   final int size;
 }
 
@@ -870,6 +872,14 @@ class CancelAttachmentCommandDto extends BridgeCommandDto {
 
 class ExportAttachmentCommandDto extends BridgeCommandDto {
   const ExportAttachmentCommandDto({
+    required this.attachmentIdHex,
+    required this.destinationPath,
+  });
+  final String attachmentIdHex, destinationPath;
+}
+
+class ExportAttachmentPreviewCommandDto extends BridgeCommandDto {
+  const ExportAttachmentPreviewCommandDto({
     required this.attachmentIdHex,
     required this.destinationPath,
   });
@@ -1062,6 +1072,7 @@ class RuntimeRequestDto {
       return _command('attachment.queue', <String, Object?>{
         'conversationIdHex': command.conversationIdHex,
         'sourcePath': command.sourcePath,
+        'previewSourcePath': command.previewSourcePath,
         'name': command.name,
         'mediaType': command.mediaType,
         'size': command.size,
@@ -1079,6 +1090,12 @@ class RuntimeRequestDto {
     }
     if (command is ExportAttachmentCommandDto) {
       return _command('attachment.export', <String, Object?>{
+        'attachmentIdHex': command.attachmentIdHex,
+        'destinationPath': command.destinationPath,
+      });
+    }
+    if (command is ExportAttachmentPreviewCommandDto) {
+      return _command('attachment.preview.export', <String, Object?>{
         'attachmentIdHex': command.attachmentIdHex,
         'destinationPath': command.destinationPath,
       });

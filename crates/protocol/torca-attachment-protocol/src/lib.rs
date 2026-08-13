@@ -6,8 +6,12 @@ use torca_attachments::{AttachmentId, AttachmentName, MAX_ATTACHMENT_BYTES, Medi
 use torca_foundation::OpaqueId;
 
 const MAGIC: &[u8; 4] = b"TCAT";
-const VERSION: u16 = 1;
+// Metadata gained a bounded visual preview in version 2.  Attachment peers
+// negotiate a single product protocol version, so rejecting v1 is safer than
+// silently claiming preview support to an older binary.
+const VERSION: u16 = 2;
 pub const MAX_ATTACHMENT_CHUNK: usize = 64 * 1024;
+pub const MAX_ATTACHMENT_PREVIEW: usize = 32 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttachmentFrameKind {
@@ -26,6 +30,17 @@ pub struct AttachmentMetadataFrame {
     pub media_type: MediaType,
     pub size: u64,
     pub digest: [u8; 32],
+    pub preview: Option<AttachmentPreviewFrame>,
+}
+
+/// A small visual representation sent with metadata, ahead of the full
+/// chunked payload.  It lets a receiver render an image/poster while the
+/// durable attachment job continues in the background.
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttachmentPreviewFrame {
+    pub media_type: MediaType,
+    pub bytes: Vec<u8>,
 }
 
 #[must_use]
@@ -94,6 +109,16 @@ impl AttachmentCodec {
                 put_bytes(metadata.media_type.as_str().as_bytes(), &mut output)?;
                 output.extend_from_slice(&metadata.size.to_be_bytes());
                 output.extend_from_slice(&metadata.digest);
+                match &metadata.preview {
+                    Some(preview) => {
+                        validate_preview(preview)?;
+                        output.push(1);
+                        put_bytes(preview.media_type.as_str().as_bytes(), &mut output)?;
+                        output.extend_from_slice(&(preview.bytes.len() as u32).to_be_bytes());
+                        output.extend_from_slice(&preview.bytes);
+                    }
+                    None => output.push(0),
+                }
             }
             AttachmentFrame::Chunk(chunk) => {
                 validate_chunk(chunk)?;
@@ -134,6 +159,26 @@ impl AttachmentCodec {
                     .map_err(|_| AttachmentProtocolError::InvalidUtf8)?;
                 let media = String::from_utf8(cursor.bytes(MediaType::MAX_BYTES)?)
                     .map_err(|_| AttachmentProtocolError::InvalidUtf8)?;
+                let size = cursor.u64()?;
+                let digest = cursor.array32()?;
+                let preview = match cursor.u8()? {
+                    0 => None,
+                    1 => {
+                        let media_type = String::from_utf8(cursor.bytes(MediaType::MAX_BYTES)?)
+                            .map_err(|_| AttachmentProtocolError::InvalidUtf8)?;
+                        let length = usize::try_from(cursor.u32()?)
+                            .map_err(|_| AttachmentProtocolError::InvalidMetadata)?;
+                        if length == 0 || length > MAX_ATTACHMENT_PREVIEW {
+                            return Err(AttachmentProtocolError::InvalidMetadata);
+                        }
+                        Some(AttachmentPreviewFrame {
+                            media_type: MediaType::new(media_type)
+                                .map_err(|_| AttachmentProtocolError::InvalidMetadata)?,
+                            bytes: cursor.take(length)?.to_vec(),
+                        })
+                    }
+                    _ => return Err(AttachmentProtocolError::InvalidMetadata),
+                };
                 let metadata = AttachmentMetadataFrame {
                     attachment_id,
                     message_id,
@@ -141,8 +186,9 @@ impl AttachmentCodec {
                         .map_err(|_| AttachmentProtocolError::InvalidMetadata)?,
                     media_type: MediaType::new(media)
                         .map_err(|_| AttachmentProtocolError::InvalidMetadata)?,
-                    size: cursor.u64()?,
-                    digest: cursor.array32()?,
+                    size,
+                    digest,
+                    preview,
                 };
                 validate_metadata(&metadata)?;
                 AttachmentFrame::Metadata(metadata)
@@ -182,6 +228,19 @@ impl AttachmentCodec {
 
 fn validate_metadata(metadata: &AttachmentMetadataFrame) -> Result<(), AttachmentProtocolError> {
     if metadata.size == 0 || metadata.size > MAX_ATTACHMENT_BYTES {
+        return Err(AttachmentProtocolError::InvalidMetadata);
+    }
+    if let Some(preview) = &metadata.preview {
+        validate_preview(preview)?;
+    }
+    Ok(())
+}
+
+fn validate_preview(preview: &AttachmentPreviewFrame) -> Result<(), AttachmentProtocolError> {
+    if preview.bytes.is_empty()
+        || preview.bytes.len() > MAX_ATTACHMENT_PREVIEW
+        || !preview.media_type.as_str().starts_with("image/")
+    {
         return Err(AttachmentProtocolError::InvalidMetadata);
     }
     Ok(())
@@ -269,6 +328,10 @@ mod tests {
             media_type: MediaType::new("image/jpeg").expect("valid media type"),
             size: 3,
             digest: [7; 32],
+            preview: Some(AttachmentPreviewFrame {
+                media_type: MediaType::new("image/jpeg").expect("valid preview media type"),
+                bytes: vec![1, 2, 3],
+            }),
         });
         let encoded = AttachmentCodec::encode(&frame).expect("encode succeeds");
         assert_eq!(AttachmentCodec::decode(&encoded).expect("decode succeeds"), frame);

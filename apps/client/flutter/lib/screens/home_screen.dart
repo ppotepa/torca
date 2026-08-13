@@ -15,6 +15,7 @@ import '../widgets/contact_actions.dart';
 import '../widgets/conversation_actions.dart';
 import '../widgets/conversation_summary_tile.dart';
 import '../widgets/runtime_network_status.dart';
+import 'connection_details_screen.dart';
 import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
 import 'diagnostics_screen.dart';
@@ -320,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
               width: contactWidth,
               child: _ContactContextPanel(
                 contact: contact,
-                onOpen: () => _openContactDetails(contact),
+                onOpenConversation: () => _openConversationForContact(contact),
               ),
             ),
           ],
@@ -421,6 +422,15 @@ class _HomeScreenState extends State<HomeScreen> {
         _openConversationForContact(contact);
       case ContactAction.contactDetails:
         _openContactDetails(contact);
+      case ContactAction.connectionDetails:
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => ConnectionDetailsScreen(
+              gateway: widget.gateway,
+              contactId: contact.id,
+            ),
+          ),
+        );
       case ContactAction.rename:
         await ContactActions.rename(context, widget.gateway, contact);
       case ContactAction.blockToggle:
@@ -472,7 +482,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _openContactDetails(ContactDto contact) {
     if (MediaQuery.sizeOf(context).width >= _wideLayoutBreakpoint) {
-      setState(() => _selectedContactId = contact.id);
+      // The desktop context panel is derived from the selected conversation.
+      // Keep that selection in sync with the explicit info action; otherwise
+      // pressing "i" beside one conversation can leave details for a
+      // previously selected contact visible in the fourth pane.
+      ConversationDto? conversation;
+      for (final candidate in widget.gateway.snapshots.value.conversations) {
+        if (candidate.contactId == contact.id) {
+          conversation = candidate;
+          break;
+        }
+      }
+      setState(() {
+        _selectedContactId = contact.id;
+        if (conversation != null) {
+          _section = _HomeSection.chats;
+          _selectedConversationId = conversation.id;
+        } else {
+          _section = _HomeSection.contacts;
+        }
+      });
       return;
     }
     Navigator.of(context).push<void>(

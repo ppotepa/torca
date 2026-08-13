@@ -79,6 +79,7 @@ pub enum EngineCommand {
         session_id: PairingSessionId,
         contact_id: ContactId,
         conversation_id: ConversationId,
+        display_name: String,
         credential: PeerCredential,
         at: Timestamp,
     },
@@ -180,7 +181,9 @@ pub trait RelationshipRepository:
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
+        display_name: &str,
         credential: PeerCredential,
+        at: Timestamp,
     ) -> Result<(), EngineError>;
     /// Clears one complete local relationship from this repository.
     fn remove_relationship(&mut self, contact_id: ContactId) -> Result<(), EngineError>;
@@ -240,7 +243,9 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
+        _display_name: &str,
         credential: PeerCredential,
+        _at: Timestamp,
     ) -> Result<(), EngineError> {
         if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
             return Err(EngineError("pairing relationship identifiers do not match".into()));
@@ -418,6 +423,7 @@ where
                 session_id,
                 contact_id,
                 conversation_id,
+                display_name,
                 credential,
                 at,
             } => {
@@ -462,7 +468,13 @@ where
                 let contact =
                     Contact::new(contact_id, proposal.public_identity, proposal.route, at);
                 let conversation = DirectConversation::new(conversation_id, contact_id, at);
-                self.relationships.insert_pairing_result(contact, conversation, credential)?;
+                self.relationships.insert_pairing_result(
+                    contact,
+                    conversation,
+                    &display_name,
+                    credential,
+                    at,
+                )?;
                 let _ = self.pairings.update(session);
                 Ok(EngineResult::PairingCompleted { contact_id, conversation_id })
             }

@@ -33,11 +33,11 @@ const MAX_PENDING_ACKS: usize = 256;
 const RECONNECT_BASE_MS: u64 = 1_000;
 const RECONNECT_MAX_MS: u64 = 60_000;
 const POLL_SLEEP: Duration = Duration::from_millis(10);
-// Keep the mutex cooperative, but allow a Tor circuit enough time to deliver an
-// attachment frame.  The old 500 ms ceiling worked for small text envelopes
-// but made every video/image chunk look lost on a normal onion-service RTT.
-// The caller's delivery timeout remains the authoritative retry deadline.
-const MAX_ACK_WAIT_SLICE: Duration = Duration::from_secs(5);
+// Never let one attachment chunk monopolize the shared peer lane. ACKs that
+// arrive after this cooperative slice are retained in `pending_acks` and the
+// durable job retries the same stable frame idempotently. A five-second slice
+// allowed a video transfer to freeze text/control synchronization.
+const MAX_ACK_WAIT_SLICE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PeerConnectionState {
@@ -206,6 +206,35 @@ where
         self.plan_disconnected(contacts, now)?;
         self.run_due_reconnects(now, &mut report)?;
         Ok(report)
+    }
+
+    /// Existing Tor streams belong to the previous route. Close them and make
+    /// every known relationship immediately eligible for one serialized dial.
+    pub fn network_changed(&mut self, now: Timestamp) {
+        let mut contacts = self
+            .incoming
+            .keys()
+            .chain(self.outgoing.keys())
+            .chain(self.reconnect.keys())
+            .copied()
+            .collect::<Vec<_>>();
+        contacts.sort_unstable();
+        contacts.dedup();
+        for (_, mut session) in std::mem::take(&mut self.incoming) {
+            let _ = session.close();
+        }
+        for (_, mut session) in std::mem::take(&mut self.outgoing) {
+            let _ = session.close();
+        }
+        self.pending.clear();
+        self.pending_acks.clear();
+        self.reconnect.clear();
+        for contact_id in contacts {
+            self.reconnect.insert(
+                contact_id,
+                ReconnectEntry { failures: 0, next_attempt_at: now, in_progress: false },
+            );
+        }
     }
 
     /// Sends one encrypted application envelope and waits for the matching protocol ACK. Incoming

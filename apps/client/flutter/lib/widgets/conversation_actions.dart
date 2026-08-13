@@ -14,7 +14,14 @@ enum ConversationAction {
 
 /// Actions available directly from a contact.  Contacts without a previously
 /// opened conversation deliberately do not expose history-specific actions.
-enum ContactAction { open, contactDetails, rename, blockToggle, remove }
+enum ContactAction {
+  open,
+  contactDetails,
+  connectionDetails,
+  rename,
+  blockToggle,
+  remove,
+}
 
 abstract final class ContactActionMenu {
   static Future<ContactAction?> showTouch(
@@ -39,6 +46,12 @@ abstract final class ContactActionMenu {
             ContactAction.contactDetails,
             context.torcaIcons.contactInfo,
             context.strings.contactInformation,
+          ),
+          _tile(
+            context,
+            ContactAction.connectionDetails,
+            context.torcaIcons.diagnostics,
+            context.strings.connectionDetails,
           ),
           _tile(
             context,
@@ -87,6 +100,11 @@ abstract final class ContactActionMenu {
           ContactAction.contactDetails,
           context.torcaIcons.contactInfo,
           context.strings.contactInformation,
+        ),
+        _item(
+          ContactAction.connectionDetails,
+          context.torcaIcons.diagnostics,
+          context.strings.connectionDetails,
         ),
         _item(ContactAction.rename, context.torcaIcons.edit, 'Rename contact'),
         const PopupMenuDivider(),

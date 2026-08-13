@@ -171,13 +171,14 @@ class _TorcaAppState extends State<TorcaApp> {
             pairing.typedState == PairingState.completed) {
           final name = pairing.remoteDisplayName?.trim();
           final label = name == null || name.isEmpty ? 'Contact' : name;
+          final message = pairing.typedRole == PairingRole.creator
+              ? '$label was added to Contacts'
+              : '$label accepted your join request';
           final context = _navigatorKey.currentContext;
           if (mounted && context != null) {
             ScaffoldMessenger.of(context)
               ..hideCurrentSnackBar()
-              ..showSnackBar(
-                SnackBar(content: Text('$label accepted your invitation')),
-              );
+              ..showSnackBar(SnackBar(content: Text(message)));
           }
         }
       }
@@ -213,6 +214,12 @@ class _TorcaAppState extends State<TorcaApp> {
       });
       return;
     }
+    // Claim before pushing the route.  Snapshot updates can arrive between
+    // candidate selection and showDialog; without this reservation another
+    // entry point could open a second surface for the same pairing session.
+    final modalRegistry = PairingModalRegistry.instance;
+    if (modalRegistry.owns(pairing.id)) return;
+    modalRegistry.claim(pairing.id);
     _pairingPromptOpen = true;
     try {
       await showDialog<void>(
@@ -226,6 +233,7 @@ class _TorcaAppState extends State<TorcaApp> {
             IncomingPairingDialog(gateway: widget.gateway, pairing: pairing),
       );
     } finally {
+      modalRegistry.release(pairing.id);
       _pairingPromptOpen = false;
       _pairingSnapshotChanged();
     }

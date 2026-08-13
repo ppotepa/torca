@@ -54,25 +54,28 @@ void main() {
     );
   });
 
-  test('rejects oversized non-image files before creating a staging copy', () async {
-    final source = File(
-      '${Directory.systemTemp.path}${Platform.pathSeparator}'
-      'torca-processing-oversized-${DateTime.now().microsecondsSinceEpoch}.txt',
-    );
-    await source.writeAsString('too large');
-    addTearDown(() async {
-      if (await source.exists()) await source.delete();
-    });
+  test(
+    'rejects oversized non-image files before creating a staging copy',
+    () async {
+      final source = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'torca-processing-oversized-${DateTime.now().microsecondsSinceEpoch}.txt',
+      );
+      await source.writeAsString('too large');
+      addTearDown(() async {
+        if (await source.exists()) await source.delete();
+      });
 
-    await expectLater(
-      const AttachmentProcessor().prepare(
-        sourcePath: source.path,
-        originalName: 'notes.txt',
-        maximumBytes: 2,
-      ),
-      throwsA(isA<AttachmentSizeException>()),
-    );
-  });
+      await expectLater(
+        const AttachmentProcessor().prepare(
+          sourcePath: source.path,
+          originalName: 'notes.txt',
+          maximumBytes: 2,
+        ),
+        throwsA(isA<AttachmentSizeException>()),
+      );
+    },
+  );
 
   test('prepares an image below the configured transport budget', () async {
     final source = image.Image(width: 960, height: 720);
@@ -95,11 +98,18 @@ void main() {
       originalName: 'photo.png',
     );
     expect(prepared.transformed, isTrue);
+    expect(prepared.name, 'photo.png');
     expect(prepared.mediaType, 'image/jpeg');
     expect(prepared.size, lessThanOrEqualTo(50 * 1024));
     expect(await File(prepared.path).exists(), isTrue);
+    expect(prepared.previewPath, isNotNull);
+    expect(
+      await File(prepared.previewPath!).length(),
+      lessThanOrEqualTo(24 * 1024),
+    );
     await prepared.dispose();
     expect(await File(prepared.path).exists(), isFalse);
+    expect(await File(prepared.previewPath!).exists(), isFalse);
   });
 
   test(
@@ -126,6 +136,48 @@ void main() {
       );
       await prepared.dispose();
       expect(await File(prepared.path).exists(), isFalse);
+    },
+  );
+
+  test(
+    'stores a best-effort video cover separately from the payload',
+    () async {
+      final input = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'torca-processing-video-${DateTime.now().microsecondsSinceEpoch}.mp4',
+      );
+      // The MP4 ftyp marker is enough for classification; decoding belongs to
+      // the injected platform extractor rather than this package.
+      await input.writeAsBytes(<int>[
+        0,
+        0,
+        0,
+        24,
+        ...'ftypisom'.codeUnits,
+        ...List<int>.filled(32, 0),
+      ]);
+      final cover = image.fill(
+        image.Image(width: 32, height: 24),
+        color: image.ColorRgb8(40, 80, 120),
+      );
+      final coverBytes = Uint8List.fromList(image.encodeJpg(cover));
+      addTearDown(() async {
+        if (await input.exists()) await input.delete();
+      });
+
+      final prepared = await const AttachmentProcessor().prepare(
+        sourcePath: input.path,
+        originalName: 'clip.mp4',
+        videoPreviewExtractor: (_) async => coverBytes,
+      );
+      expect(prepared.kind, AttachmentMediaKind.video);
+      expect(prepared.previewPath, isNotNull);
+      expect(
+        await File(prepared.previewPath!).length(),
+        lessThanOrEqualTo(24 * 1024),
+      );
+      await prepared.dispose();
+      expect(await File(prepared.previewPath!).exists(), isFalse);
     },
   );
 }

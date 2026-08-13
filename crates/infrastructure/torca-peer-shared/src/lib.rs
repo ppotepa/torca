@@ -38,6 +38,11 @@ where
         self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.maintenance(contacts, now)
     }
 
+    pub fn network_changed(&self, now: Timestamp) -> Result<(), PeerLinkError> {
+        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.network_changed(now);
+        Ok(())
+    }
+
     pub fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
         self.inner
             .lock()

@@ -84,6 +84,18 @@ void main() {
     );
   });
 
+  test('contact decoder rejects a missing display name', () {
+    expect(
+      () => ContactDto.fromJson(<String, dynamic>{
+        'id': 'contact-1',
+        'onionAddress': '${'a' * 56}.onion',
+        'status': 'active',
+        'connectionState': 'disconnected',
+      }),
+      throwsA(isA<ContractDecodeException>()),
+    );
+  });
+
   test('conversation page cursor includes message id and timestamp', () {
     final request = RuntimeRequestDto.conversationPage(
       '03',

@@ -63,6 +63,7 @@ class AttachmentTile extends StatelessWidget {
     required this.onCancel,
     required this.onOpen,
     required this.onSave,
+    this.onPreview,
     this.loadPreview,
     this.operationBusy = false,
     super.key,
@@ -73,6 +74,11 @@ class AttachmentTile extends StatelessWidget {
   final VoidCallback onCancel;
   final VoidCallback onOpen;
   final VoidCallback onSave;
+
+  /// Opens an in-app visual preview.  It deliberately remains separate from
+  /// [onOpen], which delegates the fully materialized file to the operating
+  /// system's default application.
+  final VoidCallback? onPreview;
   final bool operationBusy;
   final Future<String?> Function()? loadPreview;
 
@@ -99,10 +105,15 @@ class AttachmentTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          if (attachment.mediaType.startsWith('image/')) ...<Widget>[
-            _AttachmentImagePreview(
+          if (_hasVisualPreview(attachment.mediaType)) ...<Widget>[
+            _AttachmentVisualPreview(
               attachmentId: attachment.id,
-              loadPreview: available ? loadPreview : null,
+              mediaType: attachment.mediaType,
+              // Preview metadata is available independently of the complete
+              // attachment payload, so receiver-side cards can render it
+              // while chunks are still syncing.
+              loadPreview: loadPreview,
+              onTap: onPreview,
             ),
             const SizedBox(height: 8),
           ],
@@ -207,6 +218,9 @@ class AttachmentTile extends StatelessWidget {
     return context.torcaIcons.file;
   }
 
+  static bool _hasVisualPreview(String mediaType) =>
+      mediaType.startsWith('image/') || mediaType.startsWith('video/');
+
   static String _statusLabel(String status, String direction) =>
       switch (status) {
         'prepared' => 'Preparing secure copy',
@@ -233,21 +247,25 @@ class AttachmentTile extends StatelessWidget {
   };
 }
 
-class _AttachmentImagePreview extends StatefulWidget {
-  const _AttachmentImagePreview({
+class _AttachmentVisualPreview extends StatefulWidget {
+  const _AttachmentVisualPreview({
     required this.attachmentId,
+    required this.mediaType,
     required this.loadPreview,
+    this.onTap,
   });
 
   final String attachmentId;
+  final String mediaType;
   final Future<String?> Function()? loadPreview;
+  final VoidCallback? onTap;
 
   @override
-  State<_AttachmentImagePreview> createState() =>
-      _AttachmentImagePreviewState();
+  State<_AttachmentVisualPreview> createState() =>
+      _AttachmentVisualPreviewState();
 }
 
-class _AttachmentImagePreviewState extends State<_AttachmentImagePreview> {
+class _AttachmentVisualPreviewState extends State<_AttachmentVisualPreview> {
   Future<String?>? _path;
 
   @override
@@ -257,7 +275,7 @@ class _AttachmentImagePreviewState extends State<_AttachmentImagePreview> {
   }
 
   @override
-  void didUpdateWidget(covariant _AttachmentImagePreview oldWidget) {
+  void didUpdateWidget(covariant _AttachmentVisualPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.attachmentId != widget.attachmentId ||
         (oldWidget.loadPreview == null && widget.loadPreview != null)) {
@@ -268,33 +286,46 @@ class _AttachmentImagePreviewState extends State<_AttachmentImagePreview> {
   @override
   Widget build(BuildContext context) => SizedBox.square(
     dimension: 128,
-    child: DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      ),
-      child: _path == null
-          ? Icon(context.torcaIcons.image, size: 32)
-          : FutureBuilder<String?>(
-              future: _path,
-              builder: (context, snapshot) {
-                final path = snapshot.data;
-                if (path == null)
-                  return Icon(context.torcaIcons.image, size: 32);
-                return ClipRect(
-                  child: Image.file(
-                    File(path),
-                    width: 128,
-                    height: 128,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
-                        Icon(context.torcaIcons.image, size: 32),
-                  ),
-                );
-              },
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.onTap,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outlineVariant,
             ),
+          ),
+          child: _path == null
+              ? _fallback(context)
+              : FutureBuilder<String?>(
+                  future: _path,
+                  builder: (context, snapshot) {
+                    final path = snapshot.data;
+                    if (path == null) {
+                      return _fallback(context);
+                    }
+                    return ClipRect(
+                      child: Image.file(
+                        File(path),
+                        width: 128,
+                        height: 128,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => _fallback(context),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ),
     ),
   );
+
+  Widget _fallback(BuildContext context) =>
+      widget.mediaType.startsWith('video/')
+      ? Icon(context.torcaIcons.video, size: 32)
+      : Icon(context.torcaIcons.image, size: 32);
 }
 
 String formatBytes(int bytes) {

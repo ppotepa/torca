@@ -19,7 +19,6 @@ use torca_pairing_driver::{PairingWorkerDriver, RuntimePairingDriver};
 use torca_platform::{PlatformServices, SecretNamespace};
 use torca_rendezvous_client::{RendezvousClient, SharedTorRelayTransport};
 use torca_runtime::{RelayProbe, RelayServiceInfo, RuntimeHandle, RuntimeOwner};
-use torca_storage_sqlite::SqlCipherRelationshipAdmin;
 use torca_tor::{OwnedTorDriver, SharedTorEndpoint};
 use torca_tor::{PeerListener, TorBootstrapObserver};
 
@@ -155,8 +154,6 @@ fn spawn_runtime_for(
         },
     )
     .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
-    let metadata = SqlCipherRelationshipAdmin::open(&database_path, &database_key)
-        .map_err(|_| NativeCompositionError::new("open pairing contact metadata store failed"))?;
     let relay = platform
         .relay_endpoint()
         .map_err(NativeCompositionError::new)
@@ -180,8 +177,7 @@ fn spawn_runtime_for(
             platform.open_secret_store(SecretNamespace::Runtime),
         ),
         connectivity.clone(),
-    )?
-    .with_contact_metadata(metadata);
+    )?;
     let pairing = PairingWorkerDriver::spawn(pairing)
         .map_err(|_| NativeCompositionError::new("spawn pairing supervisor failed"))?;
     Ok(RuntimeOwner::spawn_with_connectivity(

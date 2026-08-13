@@ -896,6 +896,11 @@ fn bridge_command(
             message_id_hex: generated()?,
             conversation_id_hex: text("conversationIdHex")?,
             source_path: text("sourcePath")?,
+            preview_source_path: payload
+                .get("previewSourcePath")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
             name: text("name")?,
             media_type: text("mediaType")?,
             size: payload
@@ -911,6 +916,10 @@ fn bridge_command(
             Ok(BridgeCommand::CancelAttachment { attachment_id_hex: text("attachmentIdHex")? })
         }
         "attachment.export" => Ok(BridgeCommand::ExportAttachment {
+            attachment_id_hex: text("attachmentIdHex")?,
+            destination_path: text("destinationPath")?,
+        }),
+        "attachment.preview.export" => Ok(BridgeCommand::ExportAttachmentPreview {
             attachment_id_hex: text("attachmentIdHex")?,
             destination_path: text("destinationPath")?,
         }),

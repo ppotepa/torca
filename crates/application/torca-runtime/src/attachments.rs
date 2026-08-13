@@ -7,6 +7,7 @@ pub struct AttachmentSendRequest {
     pub message_id: OpaqueId,
     pub conversation_id: OpaqueId,
     pub source_path: String,
+    pub preview_source_path: Option<String>,
     pub name: String,
     pub media_type: String,
     pub size: u64,

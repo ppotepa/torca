@@ -4,6 +4,11 @@
 #include <cwchar>
 #include <filesystem>
 #include <system_error>
+#include <vector>
+
+#include <objidl.h>
+#include <shobjidl_core.h>
+#include <wincodec.h>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -31,6 +36,107 @@ bool ResetRuntimeData() {
   if (error) return false;
   std::filesystem::create_directories(root, error);
   return !error;
+}
+
+std::wstring Utf8ToWide(const std::string& value) {
+  if (value.empty()) return {};
+  const int length = ::MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
+      nullptr, 0);
+  if (length <= 0) return {};
+  std::wstring result(static_cast<size_t>(length), L'\0');
+  if (::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+                            static_cast<int>(value.size()), result.data(), length) <= 0) {
+    return {};
+  }
+  return result;
+}
+
+std::vector<uint8_t> EncodeJpegThumbnail(HBITMAP bitmap) {
+  IWICImagingFactory* factory = nullptr;
+  IWICBitmap* source = nullptr;
+  IStream* stream = nullptr;
+  IWICBitmapEncoder* encoder = nullptr;
+  IWICBitmapFrameEncode* frame = nullptr;
+  IPropertyBag2* properties = nullptr;
+  std::vector<uint8_t> bytes;
+
+  if (FAILED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&factory))) ||
+      FAILED(factory->CreateBitmapFromHBITMAP(bitmap, nullptr,
+                                              WICBitmapUsePremultipliedAlpha, &source)) ||
+      FAILED(::CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
+      FAILED(factory->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &encoder)) ||
+      FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) ||
+      FAILED(encoder->CreateNewFrame(&frame, &properties))) {
+    goto cleanup;
+  }
+  if (properties != nullptr) {
+    PROPBAG2 option = {};
+    option.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
+    VARIANT quality;
+    ::VariantInit(&quality);
+    quality.vt = VT_R4;
+    quality.fltVal = 0.62F;
+    const HRESULT property_result = properties->Write(1, &option, &quality);
+    ::VariantClear(&quality);
+    if (FAILED(property_result)) goto cleanup;
+  }
+  if (FAILED(frame->Initialize(properties))) goto cleanup;
+  {
+    UINT width = 0;
+    UINT height = 0;
+    GUID pixel_format = GUID_WICPixelFormat24bppBGR;
+    if (FAILED(source->GetSize(&width, &height)) || FAILED(frame->SetSize(width, height)) ||
+        FAILED(frame->SetPixelFormat(&pixel_format)) || FAILED(frame->WriteSource(source, nullptr)) ||
+        FAILED(frame->Commit()) || FAILED(encoder->Commit())) {
+      goto cleanup;
+    }
+  }
+  {
+    HGLOBAL memory = nullptr;
+    if (FAILED(::GetHGlobalFromStream(stream, &memory)) || memory == nullptr) goto cleanup;
+    const SIZE_T length = ::GlobalSize(memory);
+    const auto* data = static_cast<const uint8_t*>(::GlobalLock(memory));
+    if (data == nullptr || length == 0 || length > 24U * 1024U) {
+      if (data != nullptr) ::GlobalUnlock(memory);
+      goto cleanup;
+    }
+    bytes.assign(data, data + length);
+    ::GlobalUnlock(memory);
+  }
+
+cleanup:
+  if (properties != nullptr) properties->Release();
+  if (frame != nullptr) frame->Release();
+  if (encoder != nullptr) encoder->Release();
+  if (stream != nullptr) stream->Release();
+  if (source != nullptr) source->Release();
+  if (factory != nullptr) factory->Release();
+  return bytes;
+}
+
+std::vector<uint8_t> VideoThumbnail(const std::string& source_path) {
+  const std::wstring path = Utf8ToWide(source_path);
+  if (path.empty()) return {};
+  const HRESULT initialized = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  const bool should_uninitialize = SUCCEEDED(initialized);
+  IShellItemImageFactory* image_factory = nullptr;
+  HBITMAP bitmap = nullptr;
+  std::vector<uint8_t> preview;
+  const HRESULT item_result = ::SHCreateItemFromParsingName(
+      path.c_str(), nullptr, IID_PPV_ARGS(&image_factory));
+  if (SUCCEEDED(item_result) && image_factory != nullptr &&
+      SUCCEEDED(image_factory->GetImage(SIZE{320, 320},
+                                        SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK,
+                                        &bitmap)) &&
+      bitmap != nullptr) {
+    preview = EncodeJpegThumbnail(bitmap);
+  }
+  if (bitmap != nullptr) ::DeleteObject(bitmap);
+  if (image_factory != nullptr) image_factory->Release();
+  if (should_uninitialize) ::CoUninitialize();
+  return preview;
 }
 }  // namespace
 
@@ -66,6 +172,37 @@ bool FlutterWindow::OnCreate() {
           result->NotImplemented();
         }
       });
+  media_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "torca/media",
+      &flutter::StandardMethodCodec::GetInstance());
+  media_channel_->SetMethodCallHandler(
+      [](const auto& call, auto result) {
+        if (call.method_name() != "videoThumbnail") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+        if (arguments == nullptr) {
+          result->Success();
+          return;
+        }
+        const auto iterator = arguments->find(flutter::EncodableValue("sourcePath"));
+        if (iterator == arguments->end()) {
+          result->Success();
+          return;
+        }
+        const auto* source_path = std::get_if<std::string>(&iterator->second);
+        if (source_path == nullptr) {
+          result->Success();
+          return;
+        }
+        const std::vector<uint8_t> thumbnail = VideoThumbnail(*source_path);
+        if (thumbnail.empty()) {
+          result->Success();
+        } else {
+          result->Success(flutter::EncodableValue(thumbnail));
+        }
+      });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -82,6 +219,7 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
+    media_channel_ = nullptr;
     runtime_channel_ = nullptr;
     flutter_controller_ = nullptr;
   }

@@ -105,7 +105,13 @@ class _AttachmentTray extends StatelessWidget {
       itemBuilder: (context, index) {
         final item = attachments[index];
         final prepared = item.prepared;
-        final isImage = prepared.kind == AttachmentMediaKind.image;
+        // A video processor can provide a lightweight JPEG cover via
+        // `previewPath`; the composer should render it exactly like an image
+        // preview instead of regressing to a generic file icon.  This keeps
+        // the tray independent from the platform-specific frame extractor.
+        final previewPath = prepared.kind == AttachmentMediaKind.image
+            ? prepared.path
+            : prepared.previewPath;
         return SizedBox(
           width: 190,
           child: Row(
@@ -117,8 +123,8 @@ class _AttachmentTray extends StatelessWidget {
                 child: SizedBox(
                   width: 52,
                   height: 52,
-                  child: isImage
-                      ? Image.file(File(prepared.path), fit: BoxFit.cover)
+                  child: previewPath != null
+                      ? Image.file(File(previewPath), fit: BoxFit.cover)
                       : ColoredBox(
                           color: Theme.of(context).colorScheme.surface,
                           child: Icon(_iconFor(context, prepared.kind)),
@@ -138,7 +144,7 @@ class _AttachmentTray extends StatelessWidget {
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                     Text(
-                      '${prepared.mediaType} · ${formatBytes(prepared.size)}',
+                      '${_kindLabel(prepared.kind)} · ${formatBytes(prepared.size)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelSmall,
@@ -170,6 +176,17 @@ class _AttachmentTray extends StatelessWidget {
         AttachmentMediaKind.image => context.torcaIcons.image,
         AttachmentMediaKind.binary => context.torcaIcons.file,
       };
+
+  static String _kindLabel(AttachmentMediaKind kind) => switch (kind) {
+    AttachmentMediaKind.image => 'Image',
+    AttachmentMediaKind.video => 'Video',
+    AttachmentMediaKind.audio => 'Audio',
+    AttachmentMediaKind.pdf => 'PDF document',
+    AttachmentMediaKind.document => 'Document',
+    AttachmentMediaKind.archive => 'Archive',
+    AttachmentMediaKind.text => 'Text file',
+    AttachmentMediaKind.binary => 'File',
+  };
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

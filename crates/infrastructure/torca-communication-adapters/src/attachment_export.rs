@@ -17,6 +17,7 @@ use torca_messaging::MessageRepository;
 use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherStore};
 
 const CACHE_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-CACHE-V1";
+const PREVIEW_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-PREVIEW-V1";
 const NONCE_BYTES: usize = 24;
 // "Open" creates a plaintext hand-off for the OS. Keep that exposure window short; explicit
 // Save As destinations are user-owned and never participate in this cleanup namespace.
@@ -124,6 +125,87 @@ where
         }
         fs::rename(temporary, destination).map_err(|_| CommunicationError::Attachment)
     }
+
+    fn export_attachment_preview(
+        &mut self,
+        id: AttachmentId,
+        destination: PathBuf,
+    ) -> Result<(), CommunicationError> {
+        let attachment = self
+            .metadata
+            .get(id)
+            .map_err(|_| CommunicationError::Attachment)?
+            .ok_or(CommunicationError::Attachment)?;
+        let message = self
+            .messages
+            .get(attachment.message_id())
+            .map_err(|_| CommunicationError::Attachment)?
+            .ok_or(CommunicationError::Attachment)?;
+        let conversation =
+            ConversationRepository::get(&self.relationships, message.conversation_id())
+                .map_err(|_| CommunicationError::Relationship)?
+                .ok_or(CommunicationError::Relationship)?;
+        let credential = self
+            .relationships
+            .credential_for_contact(conversation.contact_id())
+            .map_err(|_| CommunicationError::Relationship)?
+            .ok_or(CommunicationError::Relationship)?;
+        let stored =
+            self.cache.read(preview_blob_id(id)).map_err(|_| CommunicationError::Attachment)?;
+        if stored.len() <= NONCE_BYTES {
+            return Err(CommunicationError::Attachment);
+        }
+        let nonce =
+            Nonce(stored[..NONCE_BYTES].try_into().map_err(|_| CommunicationError::Attachment)?);
+        let plaintext = self
+            .secrets
+            .open_peer_payload(
+                credential.secret_handle(),
+                nonce,
+                &preview_aad(id),
+                &Ciphertext(stored[NONCE_BYTES..].to_vec()),
+            )
+            .map_err(|_| CommunicationError::Attachment)?;
+        let media_length = plaintext
+            .get(..2)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_be_bytes)
+            .map(usize::from)
+            .ok_or(CommunicationError::Attachment)?;
+        let payload = plaintext
+            .get(2_usize.checked_add(media_length).ok_or(CommunicationError::Attachment)?..)
+            .filter(|bytes| !bytes.is_empty())
+            .ok_or(CommunicationError::Attachment)?;
+        let parent = destination.parent().ok_or(CommunicationError::Attachment)?;
+        if !parent.is_dir() {
+            return Err(CommunicationError::Attachment);
+        }
+        let temporary = parent.join(format!(".torca-preview-{id}.tmp"));
+        let mut file = fs::File::create(&temporary).map_err(|_| CommunicationError::Attachment)?;
+        file.write_all(payload).map_err(|_| CommunicationError::Attachment)?;
+        file.sync_all().map_err(|_| CommunicationError::Attachment)?;
+        if destination.exists() {
+            fs::remove_file(&destination).map_err(|_| CommunicationError::Attachment)?;
+        }
+        fs::rename(temporary, destination).map_err(|_| CommunicationError::Attachment)
+    }
+}
+
+fn preview_blob_id(id: AttachmentId) -> AttachmentId {
+    let mut hash = Sha256::new();
+    hash.update(b"TORCA-ATTACHMENT-PREVIEW-BLOB-V1");
+    hash.update(id.to_opaque().as_bytes());
+    let digest = hash.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    AttachmentId::from_opaque(torca_foundation::OpaqueId::from_bytes(bytes))
+}
+
+fn preview_aad(id: AttachmentId) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(PREVIEW_AAD_LABEL.len() + 16);
+    aad.extend_from_slice(PREVIEW_AAD_LABEL);
+    aad.extend_from_slice(id.to_opaque().as_bytes());
+    aad
 }
 
 fn cleanup_stale_controlled_exports(parent: &Path, now: SystemTime, max_age: Duration) {

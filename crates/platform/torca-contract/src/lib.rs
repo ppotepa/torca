@@ -108,6 +108,7 @@ pub enum BridgeCommand {
         message_id_hex: String,
         conversation_id_hex: String,
         source_path: String,
+        preview_source_path: Option<String>,
         name: String,
         media_type: String,
         size: u64,
@@ -120,6 +121,10 @@ pub enum BridgeCommand {
         attachment_id_hex: String,
     },
     ExportAttachment {
+        attachment_id_hex: String,
+        destination_path: String,
+    },
+    ExportAttachmentPreview {
         attachment_id_hex: String,
         destination_path: String,
     },
@@ -431,6 +436,7 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
             message_id_hex,
             conversation_id_hex,
             source_path,
+            preview_source_path,
             name,
             media_type,
             size,
@@ -440,6 +446,7 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
             message_id: parse_id(&message_id_hex)?,
             conversation_id: parse_id(&conversation_id_hex)?,
             source_path,
+            preview_source_path,
             name,
             media_type,
             size,
@@ -453,6 +460,12 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         }
         BridgeCommand::ExportAttachment { attachment_id_hex, destination_path } => {
             ApplicationCommand::ExportAttachment {
+                attachment_id: parse_id(&attachment_id_hex)?,
+                destination_path,
+            }
+        }
+        BridgeCommand::ExportAttachmentPreview { attachment_id_hex, destination_path } => {
+            ApplicationCommand::ExportAttachmentPreview {
                 attachment_id: parse_id(&attachment_id_hex)?,
                 destination_path,
             }

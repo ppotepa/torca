@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::Read;
 
 use crate::peer_envelope;
+use torca_attachment_protocol::{AttachmentPreviewFrame, MAX_ATTACHMENT_PREVIEW};
 use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
 use torca_attachment_transfer::{AttachmentTransfer, AttachmentTransferError};
 use torca_attachments::{
@@ -94,6 +95,20 @@ where
             bytes.fill(0);
             return Err(CommunicationError::Attachment);
         }
+        let preview = match &request.preview_source_path {
+            Some(path) => {
+                let preview = std::fs::read(path).map_err(|_| CommunicationError::Attachment)?;
+                if preview.is_empty() || preview.len() > MAX_ATTACHMENT_PREVIEW {
+                    return Err(CommunicationError::Attachment);
+                }
+                Some(AttachmentPreviewFrame {
+                    media_type: MediaType::new("image/jpeg")
+                        .map_err(|_| CommunicationError::Attachment)?,
+                    bytes: preview,
+                })
+            }
+            None => None,
+        };
         let attachment = Attachment::prepare(
             AttachmentId::from_opaque(request.attachment_id),
             MessageId::from_opaque(request.message_id),
@@ -111,6 +126,7 @@ where
                 attachment,
                 torca_conversations::ConversationId::from_opaque(request.conversation_id),
                 &bytes,
+                preview,
                 now,
             )
             .map(|_| ())

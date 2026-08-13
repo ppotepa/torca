@@ -63,4 +63,43 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
     expect(find.byIcon(TorcaIconSet.modern.file), findsOneWidget);
   });
+
+  testWidgets('video transfer card accepts a lightweight cover preview', (
+    tester,
+  ) async {
+    var previewRequested = 0;
+    var previewOpened = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: AttachmentTile(
+            attachment: const AttachmentDto(
+              id: '03',
+              messageId: '04',
+              name: 'clip.mp4',
+              mediaType: 'video/mp4',
+              size: 1024,
+              status: 'sending',
+              offset: 0,
+            ),
+            onRetry: () {},
+            onCancel: () {},
+            onOpen: () {},
+            onSave: () {},
+            onPreview: () => previewOpened++,
+            loadPreview: () async {
+              previewRequested++;
+              return null;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(previewRequested, 1);
+    await tester.tap(find.byIcon(TorcaIconSet.modern.video).first);
+    expect(previewOpened, 1);
+  });
 }

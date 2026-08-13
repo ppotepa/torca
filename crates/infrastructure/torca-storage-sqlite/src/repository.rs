@@ -345,7 +345,9 @@ impl RelationshipRepository for SqlCipherStore {
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
+        display_name: &str,
         credential: PeerCredential,
+        at: Timestamp,
     ) -> Result<(), EngineError> {
         if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
             return Err(EngineError("pairing relationship identifiers do not match".into()));
@@ -370,6 +372,17 @@ impl RelationshipRepository for SqlCipherStore {
                 .map_err(relationship_error)?;
             insert_conversation(&self.backend, &conversation).map_err(relationship_error)?;
             insert_peer_credential(&self.backend, credential).map_err(relationship_error)?;
+            self.backend
+                .connection()
+                .execute(
+                    include_str!("../sql/commands/contact_metadata_upsert.sql"),
+                    rusqlite::params![
+                        contact.id().to_opaque().as_bytes().as_slice(),
+                        display_name,
+                        at.to_unix_millis()
+                    ],
+                )
+                .map_err(|_| relationship_failure())?;
             Ok::<(), EngineError>(())
         })();
 
@@ -655,6 +668,7 @@ fn data_error(message: &str) -> IdentityRepositoryError {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::params;
     use torca_client_engine::RelationshipRepository;
     use torca_contacts::{
         Contact, ContactId, ContactRepository, ContactRoute, PeerCredential,
@@ -707,11 +721,17 @@ mod tests {
             PeerCredential::new(contact.id(), OpaqueId::from_u128(24), OpaqueId::from_u128(25))
                 .expect("credential");
         store
-            .insert_pairing_result(contact.clone(), conversation.clone(), credential)
+            .insert_pairing_result(
+                contact.clone(),
+                conversation.clone(),
+                "Peer name",
+                credential,
+                Timestamp::from_unix_millis(100).expect("timestamp"),
+            )
             .expect("insert relationship");
         assert_eq!(
             ContactRepository::get(&store, contact.id()).expect("get contact"),
-            Some(contact)
+            Some(contact.clone())
         );
         assert_eq!(
             ConversationRepository::get(&store, conversation.id()).expect("get conversation"),
@@ -722,5 +742,15 @@ mod tests {
                 .expect("get credential"),
             Some(credential)
         );
+        let stored_name: String = store
+            .backend
+            .connection()
+            .query_row(
+                include_str!("../sql/queries/contact_metadata_name.sql"),
+                params![contact.id().to_opaque().as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .expect("pairing display name");
+        assert_eq!(stored_name, "Peer name");
     }
 }

@@ -14,7 +14,6 @@ use torca_pairing_coordinator::{
     PairingPollReport, PairingRendezvousPort, PairingRuntime, PairingRuntimeError,
 };
 use torca_runtime::{PairingDriver, PairingInvitationView, RuntimeDriverError};
-use torca_storage_sqlite::SqlCipherRelationshipAdmin;
 use torca_tor::SharedTorEndpoint;
 
 pub struct RuntimePairingDriver<R, C, A, S> {
@@ -22,7 +21,6 @@ pub struct RuntimePairingDriver<R, C, A, S> {
     engine: EngineHandle,
     tor_endpoint: SharedTorEndpoint,
     random: RustCryptoProvider,
-    contact_metadata: Option<SqlCipherRelationshipAdmin>,
     poll_schedule: BTreeMap<PairingSessionId, PairingPollSchedule>,
 }
 
@@ -58,14 +56,8 @@ where
             engine,
             tor_endpoint,
             random: RustCryptoProvider,
-            contact_metadata: None,
             poll_schedule: BTreeMap::new(),
         }
-    }
-    #[must_use]
-    pub fn with_contact_metadata(mut self, metadata: SqlCipherRelationshipAdmin) -> Self {
-        self.contact_metadata = Some(metadata);
-        self
     }
     fn context(&mut self) -> Result<LocalPairingContext, RuntimeDriverError> {
         let identity = self
@@ -197,15 +189,6 @@ where
             match self.runtime.poll(session_id, now) {
                 Ok(report) => {
                     let had_activity = report != PairingPollReport::default();
-                    if let (Some(completed), Some(metadata)) =
-                        (report.completed_contact, self.contact_metadata.as_mut())
-                    {
-                        let _ = metadata.rename_contact(
-                            completed.contact_id,
-                            completed.display_name,
-                            now,
-                        );
-                    }
                     self.schedule_success(session_id, now, had_activity);
                 }
                 Err(torca_pairing_coordinator::PairingRuntimeError::SessionNotFound) => {

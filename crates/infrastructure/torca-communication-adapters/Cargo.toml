@@ -12,6 +12,7 @@ sha2 = "0.10"
 torca-attachments = { path = "../../domains/torca-attachments" }
 torca-attachment-sqlite = { path = "../torca-attachment-sqlite" }
 torca-attachment-transfer = { path = "../torca-attachment-transfer" }
+torca-attachment-protocol = { path = "../../protocol/torca-attachment-protocol" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-communication-driver = { path = "../../application/torca-communication-driver" }
 torca-contacts = { path = "../../domains/torca-contacts" }

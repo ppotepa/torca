@@ -14,7 +14,7 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use torca_attachment_protocol::{
     AttachmentChunkFrame, AttachmentCodec, AttachmentCompleteFrame, AttachmentFrame,
-    AttachmentMetadataFrame, AttachmentResumeFrame, MAX_ATTACHMENT_CHUNK,
+    AttachmentMetadataFrame, AttachmentPreviewFrame, AttachmentResumeFrame, MAX_ATTACHMENT_CHUNK,
 };
 use torca_attachment_sqlite::SqlCipherAttachmentStore;
 use torca_attachments::{
@@ -37,6 +37,7 @@ const NONCE_BYTES: usize = 24;
 const PEER_AAD_LABEL: &[u8] = b"TORCA-PEER-DATA-V1";
 const CACHE_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-CACHE-V1";
 const STAGING_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-STAGING-V1";
+const PREVIEW_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-PREVIEW-V1";
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,6 +155,7 @@ where
         mut attachment: Attachment,
         conversation_id: ConversationId,
         plaintext: &[u8],
+        preview: Option<AttachmentPreviewFrame>,
         at: Timestamp,
     ) -> Result<[u8; 32], AttachmentTransferError> {
         if attachment.status() != AttachmentStatus::Prepared
@@ -181,6 +183,9 @@ where
         self.metadata
             .update_transfer_progress(attachment.id(), 0, Some(digest), at)
             .map_err(map_attachment)?;
+        if let Some(preview) = preview {
+            self.store_preview(credential.secret_handle(), attachment.id(), &preview)?;
+        }
         Ok(digest)
     }
 
@@ -370,6 +375,7 @@ where
         }
 
         if state.offset == 0 && !self.metadata_acked.contains(&attachment.id()) {
+            let preview = self.load_preview(credential.secret_handle(), attachment.id())?;
             let frame = AttachmentFrame::Metadata(AttachmentMetadataFrame {
                 attachment_id: attachment.id(),
                 message_id: attachment.message_id().to_opaque(),
@@ -377,6 +383,7 @@ where
                 media_type: attachment.media_type().clone(),
                 size: attachment.size(),
                 digest,
+                preview,
             });
             self.start_frame(
                 attachment.id(),
@@ -513,6 +520,10 @@ where
             return Err(AttachmentTransferError::InvalidState);
         }
 
+        if let Some(preview) = metadata.preview.as_ref() {
+            let credential = self.credential(contact_id)?;
+            self.store_preview(credential.secret_handle(), metadata.attachment_id, preview)?;
+        }
         let mut attachment = Attachment::prepare(
             metadata.attachment_id,
             message_id,
@@ -700,6 +711,65 @@ where
             .map_err(|_| AttachmentTransferError::Crypto)
     }
 
+    fn store_preview(
+        &mut self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+        preview: &AttachmentPreviewFrame,
+    ) -> Result<(), AttachmentTransferError> {
+        let media = preview.media_type.as_str().as_bytes();
+        let media_length =
+            u16::try_from(media.len()).map_err(|_| AttachmentTransferError::Storage)?;
+        let mut plaintext = Vec::with_capacity(2 + media.len() + preview.bytes.len());
+        plaintext.extend_from_slice(&media_length.to_be_bytes());
+        plaintext.extend_from_slice(media);
+        plaintext.extend_from_slice(&preview.bytes);
+        let nonce = self.secrets.peer_nonce().map_err(|_| AttachmentTransferError::Crypto)?;
+        let ciphertext = self
+            .secrets
+            .seal_peer_payload(handle, nonce, &preview_aad(attachment_id), &plaintext)
+            .map_err(|_| AttachmentTransferError::Crypto)?;
+        let stored = pack_ciphertext(nonce, ciphertext);
+        self.cache
+            .put_atomic(preview_blob_id(attachment_id), &stored)
+            .map_err(|_| AttachmentTransferError::Storage)
+    }
+
+    fn load_preview(
+        &self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+    ) -> Result<Option<AttachmentPreviewFrame>, AttachmentTransferError> {
+        let stored = match self.cache.read(preview_blob_id(attachment_id)) {
+            Ok(value) => value,
+            Err(torca_file_storage::BlobStoreError::NotFound) => return Ok(None),
+            Err(_) => return Err(AttachmentTransferError::Storage),
+        };
+        let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
+        let plaintext = self
+            .secrets
+            .open_peer_payload(handle, nonce, &preview_aad(attachment_id), &ciphertext)
+            .map_err(|_| AttachmentTransferError::Crypto)?;
+        let media_length = plaintext
+            .get(..2)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_be_bytes)
+            .map(usize::from)
+            .ok_or(AttachmentTransferError::Storage)?;
+        let media_end =
+            2_usize.checked_add(media_length).ok_or(AttachmentTransferError::Storage)?;
+        let media = plaintext.get(2..media_end).ok_or(AttachmentTransferError::Storage)?;
+        let bytes = plaintext.get(media_end..).ok_or(AttachmentTransferError::Storage)?;
+        let media_type = std::str::from_utf8(media)
+            .ok()
+            .and_then(|value| torca_attachments::MediaType::new(value).ok())
+            .ok_or(AttachmentTransferError::Storage)?;
+        if bytes.is_empty() || bytes.len() > torca_attachment_protocol::MAX_ATTACHMENT_PREVIEW {
+            return Err(AttachmentTransferError::Storage);
+        }
+        Ok(Some(AttachmentPreviewFrame { media_type, bytes: bytes.to_vec() }))
+    }
+
     fn store_staging_chunk(
         &mut self,
         handle: OpaqueId,
@@ -796,6 +866,19 @@ fn stable_frame_id(id: AttachmentId, kind: u8, offset: u64) -> OpaqueId {
     if value.is_nil() { OpaqueId::from_u128(1) } else { value }
 }
 
+/// Uses a domain-separated deterministic key in the same encrypted blob
+/// store as the payload.  It is not exposed to UI or peers; the encryption AAD
+/// below binds it back to the authoritative attachment id.
+fn preview_blob_id(id: AttachmentId) -> AttachmentId {
+    let mut hash = Sha256::new();
+    hash.update(b"TORCA-ATTACHMENT-PREVIEW-BLOB-V1");
+    hash.update(id.to_opaque().as_bytes());
+    let digest = hash.finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    AttachmentId::from_opaque(OpaqueId::from_bytes(bytes))
+}
+
 fn sha256(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
@@ -818,6 +901,13 @@ fn peer_aad(envelope_id: OpaqueId, local_identity: OpaqueId, remote_identity: Op
 fn cache_aad(id: AttachmentId) -> Vec<u8> {
     let mut aad = Vec::with_capacity(CACHE_AAD_LABEL.len() + 16);
     aad.extend_from_slice(CACHE_AAD_LABEL);
+    aad.extend_from_slice(id.to_opaque().as_bytes());
+    aad
+}
+
+fn preview_aad(id: AttachmentId) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(PREVIEW_AAD_LABEL.len() + 16);
+    aad.extend_from_slice(PREVIEW_AAD_LABEL);
     aad.extend_from_slice(id.to_opaque().as_bytes());
     aad
 }

@@ -21,6 +21,7 @@ void main() {
               contacts: <ContactDto>[
                 ContactDto(
                   id: '01',
+                  displayName: 'Peer',
                   onionAddress: 'peer.onion',
                   status: 'active',
                   connectionState: 'ready',

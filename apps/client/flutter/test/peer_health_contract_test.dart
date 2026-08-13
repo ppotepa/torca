@@ -37,6 +37,7 @@ void main() {
       );
       const contact = ContactDto(
         id: '00000000000000000000000000000001',
+        displayName: 'Peer',
         onionAddress: 'example.onion',
         status: 'active',
         connectionState: 'ready',

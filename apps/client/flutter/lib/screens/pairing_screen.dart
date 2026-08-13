@@ -23,11 +23,18 @@ Future<void> showPairingSessionModal(
   EngineGateway gateway,
   PairingDto pairing,
 ) async {
-  await showDialog<void>(
-    context: context,
-    requestFocus: true,
-    builder: (_) => _PairingSessionModal(gateway: gateway, pairing: pairing),
-  );
+  final registry = PairingModalRegistry.instance;
+  if (registry.owns(pairing.id)) return;
+  registry.claim(pairing.id);
+  try {
+    await showDialog<void>(
+      context: context,
+      requestFocus: true,
+      builder: (_) => _PairingSessionModal(gateway: gateway, pairing: pairing),
+    );
+  } finally {
+    registry.release(pairing.id);
+  }
 }
 
 /// Opens the creator flow from the Invitations section. Joining is deliberately
@@ -94,7 +101,9 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _create());
     } else {
       _code.text = widget.initialCode ?? '';
-      WidgetsBinding.instance.addPostFrameCallback((_) => _focusCodeInput());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _focusCodeInput(reconnect: true),
+      );
     }
   }
 
@@ -115,19 +124,20 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     if (mounted) setState(() {});
   }
 
-  void _focusCodeInput() {
+  Future<void> _focusCodeInput({bool reconnect = false}) async {
     if (!mounted) return;
-    // Let Flutter own the IME connection. Calling the private text-input
-    // channel from a modal route can make Android show the keyboard while the
-    // EditableText connection is already stale, so keystrokes disappear.
-    // Android may attach the dialog route one frame after the modal widget is
-    // built. Requesting focus twice (on the next frame and after a short
-    // scheduler turn) makes the EditableText/IME connection deterministic
-    // without touching the private text-input channel.
-    _focus.requestFocus();
-    Future<void>.delayed(const Duration(milliseconds: 80), () {
-      if (mounted && !_focus.hasFocus) _focus.requestFocus();
-    });
+    // MIUI can preserve FocusNode.hasFocus while dropping EditableText's IME
+    // connection after a dialog/camera route transition. Reconnect once after
+    // the route is laid out; ordinary taps only show the existing connection.
+    if (reconnect) {
+      _focus.unfocus();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+    }
+    if (!mounted) return;
+    FocusScope.of(context).requestFocus(_focus);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    if (!mounted || !_focus.hasFocus) return;
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.show');
   }
 
   Future<void> _create() async {
@@ -276,6 +286,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
                   pairing: pairing,
                   inviteUri: _inviteUri,
                   busy: _operations.anyWithPrefix('pairing:${pairing.id}:'),
+                  error: _error,
                   onApprove: () => _run(
                     'pairing:${pairing.id}:approve',
                     PairingAction.approve.command(pairing.id),
@@ -439,8 +450,8 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
         title: pairing?.typedRole == PairingRole.creator
             ? 'Invitation'
             : 'Join request',
-        height: 500,
-        scrollable: false,
+        height: 560,
+        scrollable: true,
         child: pairing == null
             ? _TerminalPairingContent(
                 completed: widget.pairing.typedState == PairingState.approved,
@@ -449,18 +460,10 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  if (_actions.error != null) ...<Widget>[
-                    Text(
-                      _actions.error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
                   _PairingSessionDetails(
                     pairing: pairing,
                     busy: _actions.busy,
+                    error: _actions.error,
                     onApprove: () =>
                         _actions.run(PairingAction.approve, pairing.id),
                     onReject: () =>
@@ -582,12 +585,14 @@ class _PairingSessionDetails extends StatelessWidget {
     required this.onApprove,
     required this.onReject,
     required this.onCancel,
+    this.error,
     this.onDone,
   });
   final PairingDto pairing;
   final String? inviteUri;
   final bool busy;
   final VoidCallback onApprove, onReject, onCancel;
+  final String? error;
   final VoidCallback? onDone;
 
   bool get _canReview =>
@@ -601,6 +606,13 @@ class _PairingSessionDetails extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
+      if (error != null) ...<Widget>[
+        Text(
+          error!,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+        const SizedBox(height: 12),
+      ],
       if (pairing.remoteFingerprint != null) ...<Widget>[
         Container(
           padding: const EdgeInsets.all(14),

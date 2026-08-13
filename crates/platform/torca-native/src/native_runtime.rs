@@ -98,6 +98,8 @@ pub struct TorcaRuntime {
     network_changed_pending: bool,
     last_onion_log_state: Option<(String, Option<String>)>,
     last_relay_log_state: Option<(String, Option<String>)>,
+    last_peer_log_state: HashMap<String, (String, u32)>,
+    last_attachment_log_state: HashMap<String, (String, u64, u32)>,
     network_ready_logged: bool,
     pub(crate) last_result_json: String,
     pub(crate) snapshot_json: String,
@@ -182,6 +184,8 @@ impl TorcaRuntime {
             network_changed_pending: false,
             last_onion_log_state: None,
             last_relay_log_state: None,
+            last_peer_log_state: HashMap::new(),
+            last_attachment_log_state: HashMap::new(),
             network_ready_logged: false,
             last_result_json: success_result("initialized"),
             snapshot_json: empty_snapshot_json(),
@@ -379,6 +383,46 @@ impl TorcaRuntime {
             self.log("relay", level, "relay_connection", &code, &message);
             self.last_relay_log_state = Some(current.clone());
         }
+        for contact in &snapshot.contacts {
+            let current =
+                (contact.peer_health.state.clone(), contact.peer_health.reconnect_attempt);
+            if self.last_peer_log_state.get(&contact.id) != Some(&current) {
+                let code = format!("PEER_{}", current.0.to_ascii_uppercase());
+                self.log(
+                    "messaging",
+                    if current.0 == "ready" { Level::Info } else { Level::Warn },
+                    "peer_connection",
+                    &code,
+                    &format!(
+                        "contact={} state={} reconnect_attempt={}",
+                        contact.id, current.0, current.1
+                    ),
+                );
+                self.last_peer_log_state.insert(contact.id.clone(), current);
+            }
+        }
+        for attachment in &snapshot.attachments {
+            let current = (attachment.status.clone(), attachment.offset, attachment.attempt_count);
+            if self.last_attachment_log_state.get(&attachment.id) != Some(&current) {
+                self.log(
+                    "messaging",
+                    if attachment.status == "failed" { Level::Error } else { Level::Info },
+                    "attachment_transfer",
+                    "ATTACHMENT_STATE_CHANGED",
+                    &format!(
+                        "attachment={} direction={} status={} offset={}/{} attempt={} error={}",
+                        attachment.id,
+                        attachment.direction,
+                        attachment.status,
+                        attachment.offset,
+                        attachment.size,
+                        attachment.attempt_count,
+                        attachment.last_error_code.as_deref().unwrap_or("none")
+                    ),
+                );
+                self.last_attachment_log_state.insert(attachment.id.clone(), current);
+            }
+        }
 
         let tor = snapshot
             .bootstrap_steps
@@ -437,6 +481,13 @@ impl TorcaRuntime {
             step.started_at_ms = self.host_start_started_at_ms;
             step.last_progress_at_ms = self.host_last_progress_at_ms;
             step.retry_at_ms = self.host_retry_at.and_then(instant_to_unix_ms);
+        }
+        // Once RuntimeOwner is attached, its live OnionService probe is the
+        // authority. The startup observer is intentionally finite and keeping
+        // projecting its last percentage produced false STALLED states minutes
+        // after Arti had already reported Reachable.
+        if self.application_runtime.has_runtime() {
+            return;
         }
         let onion_stalled = self.host_onion_attempt > 0
             && self.host_onion_progress < 100

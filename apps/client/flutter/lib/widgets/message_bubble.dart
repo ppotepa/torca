@@ -118,32 +118,24 @@ class MessageBubble extends StatelessWidget {
                           children: <Widget>[
                             if (outbound && message.sentAtMs != null)
                               _LifecycleMilestone(
-                                kind: _LifecycleKind.sent,
-                                milliseconds: message.sentAtMs!,
-                              ),
-                            if (outbound &&
-                                message.deliveredAtMs != null) ...<Widget>[
-                              const SizedBox(width: 5),
-                              _LifecycleMilestone(
-                                kind: _LifecycleKind.delivered,
-                                milliseconds: message.deliveredAtMs!,
-                              ),
-                            ],
-                            if (outbound &&
-                                message.readAtMs != null) ...<Widget>[
-                              const SizedBox(width: 5),
-                              _LifecycleMilestone(
-                                kind: _LifecycleKind.read,
-                                milliseconds: message.readAtMs!,
-                              ),
-                            ],
-                            if (!outbound || message.sentAtMs == null)
+                                kind: message.readAtMs != null
+                                    ? _LifecycleKind.read
+                                    : message.deliveredAtMs != null
+                                    ? _LifecycleKind.delivered
+                                    : _LifecycleKind.sent,
+                                milliseconds:
+                                    message.readAtMs ??
+                                    message.deliveredAtMs ??
+                                    message.sentAtMs!,
+                              )
+                            else ...<Widget>[
                               MessageTimestamp(
                                 milliseconds: message.createdAtMs,
                               ),
-                            if (outbound) ...<Widget>[
-                              const SizedBox(width: 5),
-                              MessageStatusIndicator(status: message.status),
+                              if (outbound) ...<Widget>[
+                                const SizedBox(width: 5),
+                                MessageStatusIndicator(status: message.status),
+                              ],
                             ],
                           ],
                         ),

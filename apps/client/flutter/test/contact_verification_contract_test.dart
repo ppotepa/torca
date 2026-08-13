@@ -5,6 +5,7 @@ void main() {
   test('contact verification defaults to unverified', () {
     const contact = ContactDto(
       id: '1',
+      displayName: 'Alice',
       onionAddress: 'example.onion',
       status: 'active',
       connectionState: 'ready',
@@ -16,6 +17,7 @@ void main() {
   test('contact verification can carry a local verification timestamp', () {
     const contact = ContactDto(
       id: '1',
+      displayName: 'Alice',
       onionAddress: 'example.onion',
       status: 'active',
       connectionState: 'ready',

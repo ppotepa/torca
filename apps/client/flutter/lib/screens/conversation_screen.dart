@@ -12,6 +12,7 @@ import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
+import '../platform/video_thumbnail_service.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_header.dart';
@@ -526,8 +527,24 @@ class _ConversationPaneState extends State<ConversationPane>
                                   ),
                                   onOpen: () => _openAttachment(attachment),
                                   onSave: () => _saveAttachment(attachment),
-                                  loadPreview:
+                                  // A v2 preview is a small, separately
+                                  // encrypted JPEG.  It is available before
+                                  // the complete attachment, for both images
+                                  // and videos.  Images open in-app; a video
+                                  // card uses the same cover image but opens
+                                  // the final media in the platform player.
+                                  onPreview:
                                       attachment.mediaType.startsWith('image/')
+                                      ? () => _previewAttachment(attachment)
+                                      : attachment.mediaType.startsWith(
+                                          'video/',
+                                        )
+                                      ? () => _openAttachment(attachment)
+                                      : null,
+                                  loadPreview:
+                                      _hasVisualAttachmentPreview(
+                                        attachment.mediaType,
+                                      )
                                       ? () => _loadAttachmentPreview(attachment)
                                       : null,
                                 );
@@ -948,6 +965,7 @@ class _ConversationPaneState extends State<ConversationPane>
             extension: file.extension,
             maximumBytes: maxBytes,
             maximumVideoBytes: maximumVideoBytes,
+            videoPreviewExtractor: VideoThumbnailService.extract,
           );
         } on AttachmentSizeException catch (error) {
           _showError(
@@ -990,6 +1008,7 @@ class _ConversationPaneState extends State<ConversationPane>
           QueueAttachmentCommandDto(
             conversationIdHex: widget.conversation.id,
             sourcePath: prepared.path,
+            previewSourcePath: prepared.previewPath,
             name: prepared.name,
             mediaType: prepared.mediaType,
             size: prepared.size,
@@ -1054,6 +1073,16 @@ class _ConversationPaneState extends State<ConversationPane>
         '${Directory.systemTemp.path}${torcaPathSeparator}torca-preview-${attachment.id}.jpg';
     final file = File(path);
     if (await file.exists() && await file.length() > 0) return path;
+    final preview = await widget.gateway.execute(
+      ExportAttachmentPreviewCommandDto(
+        attachmentIdHex: attachment.id,
+        destinationPath: path,
+      ),
+    );
+    if (preview.ok && await file.exists()) return path;
+    // Attachments created by an older peer/build have no v2 preview.  A fully
+    // available image remains previewable via the original payload.
+    if (attachment.typedStatus != AttachmentStatus.available) return null;
     final result = await widget.gateway.execute(
       ExportAttachmentCommandDto(
         attachmentIdHex: attachment.id,
@@ -1063,9 +1092,52 @@ class _ConversationPaneState extends State<ConversationPane>
     return result.ok && await file.exists() ? path : null;
   }
 
+  Future<void> _previewAttachment(AttachmentDto attachment) async {
+    final path = await _loadAttachmentPreview(attachment);
+    if (!mounted || path == null) {
+      if (mounted) _showError('Could not load image preview');
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960, maxHeight: 760),
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 5,
+                  child: Center(child: Image.file(File(path))),
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: IconButton.filledTonal(
+                  tooltip: context.strings.close,
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: Icon(context.torcaIcons.close),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openAttachment(AttachmentDto attachment) async {
     await _operations.run('attachment:${attachment.id}:open', () async {
-      final ext = _safeExtension(attachment.name);
+      // The display name intentionally stays faithful to the user's selected
+      // filename even when an image was recompressed.  The temporary file used
+      // for the platform opener must instead use the authoritative MIME type
+      // so an optimised PNG (now JPEG bytes) is opened correctly.
+      final ext =
+          _contentExtension(attachment.mediaType) ??
+          _safeExtension(attachment.name);
       final path =
           '${Directory.systemTemp.path}${torcaPathSeparator}torca-${attachment.id}$ext';
       final result = await widget.gateway.execute(
@@ -1097,6 +1169,23 @@ class _ConversationPaneState extends State<ConversationPane>
         ? value.toLowerCase()
         : '';
   }
+
+  String? _contentExtension(String mediaType) => switch (mediaType) {
+    'image/jpeg' => '.jpg',
+    'image/png' => '.png',
+    'image/gif' => '.gif',
+    'image/webp' => '.webp',
+    'video/mp4' => '.mp4',
+    'video/webm' => '.webm',
+    'audio/mpeg' => '.mp3',
+    'audio/ogg' => '.ogg',
+    'audio/wav' => '.wav',
+    'application/pdf' => '.pdf',
+    _ => null,
+  };
+
+  bool _hasVisualAttachmentPreview(String mediaType) =>
+      mediaType.startsWith('image/') || mediaType.startsWith('video/');
 
   Future<void> _attachmentCommand(
     String attachmentId,

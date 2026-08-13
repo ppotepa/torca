@@ -221,7 +221,7 @@ class _ContactsSection extends StatelessWidget {
             Expanded(
               child: _ContactContextPanel(
                 contact: active,
-                onOpen: () => onOpenDetails(active),
+                onOpenConversation: () => onOpenConversation(active),
               ),
             ),
           ],
@@ -314,60 +314,77 @@ class _InvitationsSection extends StatelessWidget {
 }
 
 class _ContactContextPanel extends StatelessWidget {
-  const _ContactContextPanel({required this.contact, required this.onOpen});
+  const _ContactContextPanel({
+    required this.contact,
+    required this.onOpenConversation,
+  });
 
   final ContactDto contact;
-  final VoidCallback onOpen;
+  final VoidCallback onOpenConversation;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        TorcaAvatar(label: contact.displayName, size: 56),
-        const SizedBox(height: 14),
-        Text(
-          contact.displayName,
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 4),
-        Text(_contactPresence(contact)),
-        const SizedBox(height: 20),
-        Text(
-          context.strings.connection,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 6),
-        const SizedBox(height: 8),
-        ConnectionIndicator(
-          state: contact.connectionState,
-          blocked: contact.typedStatus == ContactStatus.blocked,
-        ),
-        const SizedBox(height: 16),
-        _ContextValue(
-          label: context.strings.quality,
-          value: contact.peerHealth.quality,
-        ),
-        _ContextValue(
-          label: 'Round trip',
-          value: contact.peerHealth.rttMs == null
-              ? context.strings.notMeasured
-              : '${contact.peerHealth.rttMs} ms',
-        ),
-        _ContextValue(
-          label: context.strings.presence,
-          value: contact.presenceState,
-        ),
-        _ContextValue(
-          label: context.strings.lastSeen,
-          value: contact.lastSeenAtMs == null
-              ? context.strings.never
-              : DateTime.fromMillisecondsSinceEpoch(
-                  contact.lastSeenAtMs!,
-                ).toLocal().toString(),
-        ),
-      ],
+    child: SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          TorcaAvatar(label: contact.displayName, size: 56),
+          const SizedBox(height: 14),
+          Text(
+            contact.displayName,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 4),
+          Text(_contactPresence(contact)),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              FilledButton.icon(
+                onPressed: contact.typedStatus == ContactStatus.blocked
+                    ? null
+                    : onOpenConversation,
+                icon: Icon(context.torcaIcons.chats),
+                label: Text(context.strings.openChat),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            context.strings.connection,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          const SizedBox(height: 8),
+          ConnectionIndicator(
+            state: contact.connectionState,
+            blocked: contact.typedStatus == ContactStatus.blocked,
+          ),
+          const SizedBox(height: 16),
+          _ContextValue(
+            label: context.strings.quality,
+            value: contact.peerHealth.quality,
+          ),
+          _ContextValue(
+            label: 'Round trip',
+            value: contact.peerHealth.rttMs == null
+                ? context.strings.notMeasured
+                : '${contact.peerHealth.rttMs} ms',
+          ),
+          _ContextValue(
+            label: context.strings.presence,
+            value: contact.presenceState,
+          ),
+          _ContextValue(
+            label: context.strings.lastSeen,
+            value: contact.lastSeenAtMs == null
+                ? context.strings.never
+                : _formatLastSeenDetails(contact.lastSeenAtMs!),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -399,6 +416,15 @@ String _contactPresence(ContactDto contact) {
   if (milliseconds == null) return 'Offline';
   final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
   return 'Last seen ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+}
+
+String _formatLastSeenDetails(int milliseconds) {
+  final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+  final hour = date.hour.toString().padLeft(2, '0');
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')} $hour:$minute';
 }
 
 class _SectionEmptyState extends StatelessWidget {

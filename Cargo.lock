@@ -5473,6 +5473,7 @@ name = "torca-communication-adapters"
 version = "0.2.0-alpha.0"
 dependencies = [
  "sha2",
+ "torca-attachment-protocol",
  "torca-attachment-sqlite",
  "torca-attachment-transfer",
  "torca-attachments",

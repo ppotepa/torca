@@ -36,17 +36,26 @@ void main() {
     expect(find.text('Hello'), findsOneWidget);
     expect(find.text('You'), findsOneWidget);
     expect(find.text('Earlier message'), findsOneWidget);
-    for (final lifecycle in const <String>['Sent ', 'Delivered ', 'Read ']) {
-      expect(
-        find.byWidgetPredicate(
-          (widget) =>
-              widget is Tooltip &&
-              (widget.message?.startsWith(lifecycle) ?? false),
-        ),
-        findsOneWidget,
-      );
-    }
-    expect(find.byTooltip('Read'), findsOneWidget);
+    // The compact footer presents exactly the furthest known receipt.  Earlier
+    // milestones remain diagnostic detail, rather than duplicating Delivered
+    // and Read in the message bubble.
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Tooltip && (widget.message?.startsWith('Read ') ?? false),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Tooltip &&
+            ((widget.message?.startsWith('Sent ') ?? false) ||
+                (widget.message?.startsWith('Delivered ') ?? false)),
+      ),
+      findsNothing,
+    );
+    expect(find.byTooltip('Read'), findsNothing);
     expect(find.text('outbound'), findsNothing);
     expect(find.text('Delivered'), findsNothing);
   });

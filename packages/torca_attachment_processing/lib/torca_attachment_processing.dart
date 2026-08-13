@@ -38,13 +38,17 @@ class AttachmentSizeException extends AttachmentSelectionException {
 class AttachmentProcessingPolicy {
   const AttachmentProcessingPolicy({
     this.targetImageBytes = 50 * 1024,
+    this.targetPreviewBytes = 24 * 1024,
     this.maximumImageEdge = 1280,
+    this.maximumPreviewEdge = 320,
     this.minimumImageEdge = 160,
     this.maximumSourceBytes = 64 * 1024 * 1024,
   });
 
   final int targetImageBytes;
+  final int targetPreviewBytes;
   final int maximumImageEdge;
+  final int maximumPreviewEdge;
   final int minimumImageEdge;
   final int maximumSourceBytes;
 }
@@ -65,6 +69,7 @@ class PreparedAttachment {
     required this.size,
     required this.transformed,
     this.cleanupPath,
+    this.previewPath,
   });
 
   final String path;
@@ -80,11 +85,20 @@ class PreparedAttachment {
   /// it into encrypted storage.
   final String? cleanupPath;
 
+  /// App-owned JPEG preview for metadata transfer.  It is independent from
+  /// [path], whose bytes remain the complete attachment payload.
+  final String? previewPath;
+
   Future<void> dispose() async {
-    final ownedPath = cleanupPath ?? (transformed ? path : null);
-    if (ownedPath == null) return;
-    final file = File(ownedPath);
-    if (await file.exists()) await file.delete();
+    final ownedPaths = <String>{
+      if (cleanupPath != null) cleanupPath!,
+      if (cleanupPath == null && transformed) path,
+      if (previewPath != null) previewPath!,
+    };
+    for (final ownedPath in ownedPaths) {
+      final file = File(ownedPath);
+      if (await file.exists()) await file.delete();
+    }
   }
 }
 
@@ -99,6 +113,7 @@ class AttachmentProcessor {
     String? extension,
     int? maximumBytes,
     int? maximumVideoBytes,
+    VideoPreviewExtractor? videoPreviewExtractor,
   }) async {
     final sourceFile = File(sourcePath);
     final size = await sourceFile.length();
@@ -136,6 +151,9 @@ class AttachmentProcessor {
         'torca-attachment-${DateTime.now().microsecondsSinceEpoch}.$normalizedExtension',
       );
       await sourceFile.copy(staged.path);
+      final previewPath = inspection.kind == AttachmentMediaKind.video
+          ? await _createVideoPreview(staged.path, videoPreviewExtractor)
+          : null;
       return PreparedAttachment(
         path: staged.path,
         name: originalName,
@@ -144,27 +162,70 @@ class AttachmentProcessor {
         size: size,
         transformed: false,
         cleanupPath: staged.path,
+        previewPath: previewPath,
       );
     }
 
     final source = await sourceFile.readAsBytes();
-    final encoded = await compute(_compressImage, _ImageJob(source, policy));
-    final stem = originalName.replaceFirst(RegExp(r'\.[^.]+$'), '');
+    final processed = await compute(_processImage, _ImageJob(source, policy));
     final target = File(
       '${Directory.systemTemp.path}${Platform.pathSeparator}'
       'torca-image-${DateTime.now().microsecondsSinceEpoch}.jpg',
     );
-    await target.writeAsBytes(encoded, flush: true);
+    await target.writeAsBytes(processed.payload, flush: true);
+    final preview = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'torca-preview-${DateTime.now().microsecondsSinceEpoch}.jpg',
+    );
+    await preview.writeAsBytes(processed.preview, flush: true);
     return PreparedAttachment(
       path: target.path,
-      name: '$stem.jpg',
+      // The media type describes the bytes on the wire; the name is a user
+      // label and must survive optimisation.  Renaming a selected photo to a
+      // generated `.jpg` made the sender and receiver lose the file identity
+      // the user deliberately chose.
+      name: originalName,
       mediaType: 'image/jpeg',
       kind: AttachmentMediaKind.image,
-      size: encoded.length,
+      size: processed.payload.length,
       transformed: true,
+      previewPath: preview.path,
     );
   }
+
+  Future<String?> _createVideoPreview(
+    String stagedVideoPath,
+    VideoPreviewExtractor? extractor,
+  ) async {
+    if (extractor == null) return null;
+    try {
+      final bytes = await extractor(stagedVideoPath);
+      if (bytes == null ||
+          bytes.isEmpty ||
+          bytes.length > policy.targetPreviewBytes) {
+        return null;
+      }
+      final decoded = image.decodeImage(bytes);
+      if (decoded == null) return null;
+      final preview = _encodePreview(decoded, policy);
+      final target = File(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'torca-video-preview-${DateTime.now().microsecondsSinceEpoch}.jpg',
+      );
+      await target.writeAsBytes(preview, flush: true);
+      return target.path;
+    } on Object {
+      // Preview extraction is purely progressive enhancement.  A platform
+      // decoder must never make an otherwise valid attachment unsendable.
+      return null;
+    }
+  }
 }
+
+/// Platform-owned extraction keeps codec dependencies out of the shared
+/// processor.  Callers may return null when a platform or container is not
+/// supported; the attachment then uses the normal video card fallback.
+typedef VideoPreviewExtractor = Future<Uint8List?> Function(String sourcePath);
 
 const _blockedExtensions = <String>{
   // A shortcut is data, not the target selected by the user.  Never resolve it
@@ -304,7 +365,13 @@ class _ImageJob {
   final AttachmentProcessingPolicy policy;
 }
 
-Uint8List _compressImage(_ImageJob job) {
+class _ProcessedImage {
+  const _ProcessedImage(this.payload, this.preview);
+  final Uint8List payload;
+  final Uint8List preview;
+}
+
+_ProcessedImage _processImage(_ImageJob job) {
   final source = image.decodeImage(job.bytes);
   if (source == null) throw const FormatException('Unsupported image');
   var decoded = image.bakeOrientation(source);
@@ -322,7 +389,10 @@ Uint8List _compressImage(_ImageJob job) {
     for (final quality in const <int>[82, 72, 62, 52, 42, 34, 28]) {
       final encoded = image.encodeJpg(decoded, quality: quality);
       if (encoded.length <= job.policy.targetImageBytes) {
-        return Uint8List.fromList(encoded);
+        return _ProcessedImage(
+          Uint8List.fromList(encoded),
+          _encodePreview(decoded, job.policy),
+        );
       }
     }
     if (decoded.width <= 240 && decoded.height <= 240) {
@@ -342,4 +412,30 @@ Uint8List _compressImage(_ImageJob job) {
       interpolation: image.Interpolation.average,
     );
   }
+}
+
+Uint8List _encodePreview(
+  image.Image source,
+  AttachmentProcessingPolicy policy,
+) {
+  final landscape = source.width >= source.height;
+  var preview = image.copyResize(
+    source,
+    width: landscape ? policy.maximumPreviewEdge : null,
+    height: landscape ? null : policy.maximumPreviewEdge,
+    interpolation: image.Interpolation.average,
+  );
+  for (final quality in const <int>[74, 62, 50, 40, 32]) {
+    final encoded = image.encodeJpg(preview, quality: quality);
+    if (encoded.length <= policy.targetPreviewBytes) {
+      return Uint8List.fromList(encoded);
+    }
+  }
+  preview = image.copyResize(
+    preview,
+    width: landscape ? 160 : null,
+    height: landscape ? null : 160,
+    interpolation: image.Interpolation.average,
+  );
+  return Uint8List.fromList(image.encodeJpg(preview, quality: 28));
 }

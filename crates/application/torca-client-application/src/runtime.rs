@@ -95,6 +95,7 @@ pub enum ApplicationCommand {
         message_id: OpaqueId,
         conversation_id: OpaqueId,
         source_path: String,
+        preview_source_path: Option<String>,
         name: String,
         media_type: String,
         size: u64,
@@ -107,6 +108,10 @@ pub enum ApplicationCommand {
         attachment_id: OpaqueId,
     },
     ExportAttachment {
+        attachment_id: OpaqueId,
+        destination_path: String,
+    },
+    ExportAttachmentPreview {
         attachment_id: OpaqueId,
         destination_path: String,
     },
@@ -440,7 +445,10 @@ impl ClientApplicationRuntime {
             ApplicationCommand::QueueAttachment { attachment_id, .. }
             | ApplicationCommand::RetryAttachment { attachment_id }
             | ApplicationCommand::CancelAttachment { attachment_id }
-            | ApplicationCommand::ExportAttachment { attachment_id, .. } => Some(*attachment_id),
+            | ApplicationCommand::ExportAttachment { attachment_id, .. }
+            | ApplicationCommand::ExportAttachmentPreview { attachment_id, .. } => {
+                Some(*attachment_id)
+            }
             _ => None,
         };
         let mut invite_uri = None;
@@ -681,6 +689,7 @@ impl ClientApplicationRuntime {
                 message_id,
                 conversation_id,
                 source_path,
+                preview_source_path,
                 name,
                 media_type,
                 size,
@@ -691,6 +700,7 @@ impl ClientApplicationRuntime {
                     message_id,
                     conversation_id,
                     source_path,
+                    preview_source_path,
                     name,
                     media_type,
                     size,
@@ -714,6 +724,15 @@ impl ClientApplicationRuntime {
                     )
                     .map_err(string_error)?;
                 "attachment_exported"
+            }
+            ApplicationCommand::ExportAttachmentPreview { attachment_id, destination_path } => {
+                self.runtime()?
+                    .export_attachment_preview(
+                        AttachmentId::from_opaque(attachment_id),
+                        PathBuf::from(destination_path),
+                    )
+                    .map_err(string_error)?;
+                "attachment_preview_exported"
             }
             ApplicationCommand::RefreshSnapshot => {
                 let _ = self.application.snapshot().map_err(string_error)?;

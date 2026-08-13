@@ -657,6 +657,7 @@ where
             session_id,
             contact_id,
             conversation_id,
+            display_name: display_name.clone(),
             credential,
             at: now,
         });

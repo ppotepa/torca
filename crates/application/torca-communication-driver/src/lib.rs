@@ -210,6 +210,7 @@ pub trait PeerLinkRuntime: Send {
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
+    fn network_changed(&mut self, _now: Timestamp) {}
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
     fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError>;
     fn reject(&mut self, envelope: &InboundEnvelope) -> Result<(), CommunicationError>;
@@ -288,6 +289,11 @@ pub trait AttachmentRuntime: Send {
 }
 pub trait AttachmentExportRuntime: Send {
     fn export_attachment(
+        &mut self,
+        attachment_id: AttachmentId,
+        destination: PathBuf,
+    ) -> Result<(), CommunicationError>;
+    fn export_attachment_preview(
         &mut self,
         attachment_id: AttachmentId,
         destination: PathBuf,
@@ -389,56 +395,92 @@ impl TorcaCommunicationDriver {
         self.peer.peer_health(contact_id)
     }
 
-    fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
-        if let Some(envelope) = self.deferred_attachments.pop_front() {
+    /// Defers an attachment frame without letting it block text/control ingress.
+    ///
+    /// An attachment metadata frame is allowed to arrive before its companion
+    /// text message.  In that case the attachment runtime deliberately returns
+    /// a dependency error because it cannot safely bind the file to a
+    /// conversation yet.  Treating that as a communication-tick failure used
+    /// to starve the following text frames indefinitely.
+    fn defer_attachment(&mut self, envelope: InboundEnvelope) {
+        if self.deferred_attachments.len() >= MAX_DEFERRED_ATTACHMENTS {
+            eprintln!(
+                "torca-attachment: deferred inbound queue full; awaiting peer retransmission contact={} envelope={}",
+                envelope.contact_id, envelope.envelope_id
+            );
+            return;
+        }
+        self.deferred_attachments.push_back(envelope);
+    }
+
+    /// Processes one inbound attachment independently from the main inbound
+    /// stream.  A failed attachment is a durable transfer concern, not a
+    /// reason to stop message, receipt, probe or pairing processing.
+    fn process_attachment_inbound(
+        &mut self,
+        envelope: InboundEnvelope,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        let contact_id = envelope.contact_id;
+        let envelope_id = envelope.envelope_id;
+        // Keep the lock-result and its potential guard in a small scope.  A
+        // `TryLockError` can itself retain a guard, so mutating the deferred
+        // queue inside the match would overlap the immutable mutex borrow.
+        let should_defer = {
             match self.attachments.try_lock() {
-                Ok(mut attachments) => {
-                    attachments.process_inbound(envelope.clone(), now)?;
-                    refresh_attachment_cache(&self.attachment_snapshot_cache, &**attachments);
-                }
-                Err(std::sync::TryLockError::WouldBlock) => {
-                    self.deferred_attachments.push_front(envelope);
-                }
+                Ok(mut attachments) => match attachments.process_inbound(envelope.clone(), now) {
+                    Ok(()) => {
+                        refresh_attachment_cache(&self.attachment_snapshot_cache, &**attachments);
+                        false
+                    }
+                    Err(CommunicationError::AttachmentStage(
+                        AttachmentFailureStage::Dependency,
+                    )) => true,
+                    Err(error) => {
+                        // Do not ACK malformed/temporary failures.  The peer-side
+                        // durable sender will retry after its own ACK deadline.
+                        // Crucially, leave the rest of the inbound batch running.
+                        eprintln!(
+                            "torca-attachment: inbound failed contact={} envelope={} code={error}",
+                            contact_id, envelope_id
+                        );
+                        false
+                    }
+                },
+                Err(std::sync::TryLockError::WouldBlock) => true,
                 Err(std::sync::TryLockError::Poisoned(_)) => {
                     return Err(CommunicationError::Attachment);
                 }
             }
+        };
+        if should_defer {
+            // The text frame may still be waiting in the peer inbox and will
+            // be consumed in this same maintenance turn.
+            self.defer_attachment(envelope);
         }
+        Ok(())
+    }
+
+    fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         for _ in 0..INBOUND_BATCH {
             let Some(envelope) = self.peer.take_inbound()? else { break };
             match envelope.message_kind {
                 TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND => self.inbound.process(envelope, now)?,
-                ATTACHMENT_MESSAGE_KIND => {
-                    let contact_id = envelope.contact_id;
-                    let envelope_id = envelope.envelope_id;
-                    match self.attachments.try_lock() {
-                        Ok(mut attachments) => {
-                            if let Err(error) = attachments.process_inbound(envelope, now) {
-                                eprintln!(
-                                    "torca-attachment: inbound failed contact={} envelope={} code={error}",
-                                    contact_id, envelope_id
-                                );
-                                return Err(error);
-                            }
-                            refresh_attachment_cache(
-                                &self.attachment_snapshot_cache,
-                                &**attachments,
-                            );
-                        }
-                        Err(std::sync::TryLockError::WouldBlock) => {
-                            if self.deferred_attachments.len() >= MAX_DEFERRED_ATTACHMENTS {
-                                return Err(CommunicationError::Attachment);
-                            }
-                            self.deferred_attachments.push_back(envelope);
-                        }
-                        Err(std::sync::TryLockError::Poisoned(_)) => {
-                            return Err(CommunicationError::Attachment);
-                        }
-                    }
-                }
+                ATTACHMENT_MESSAGE_KIND => self.process_attachment_inbound(envelope, now)?,
                 PROBE_MESSAGE_KIND => self.peer.accept_probe(&envelope, now)?,
                 _ => self.peer.reject(&envelope)?,
             }
+        }
+
+        // Run deferred attachment frames only after text/control frames from
+        // this batch.  This resolves the normal "attachment metadata arrived
+        // first" race without delaying messages behind a file transfer.
+        let deferred = self.deferred_attachments.len().min(INBOUND_BATCH);
+        for _ in 0..deferred {
+            let Some(envelope) = self.deferred_attachments.pop_front() else {
+                break;
+            };
+            self.process_attachment_inbound(envelope, now)?;
         }
         Ok(())
     }
@@ -489,6 +531,10 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             self.attachment_scheduler.record_attempt(now);
         }
         Ok(())
+    }
+
+    fn network_changed(&mut self, now: Timestamp) {
+        self.peer.network_changed(now);
     }
 
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
@@ -649,6 +695,13 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
         destination: PathBuf,
     ) -> Result<(), RuntimeDriverError> {
         self.attachment_export.export_attachment(id, destination).map_err(map_runtime)
+    }
+    fn export_attachment_preview(
+        &mut self,
+        id: AttachmentId,
+        destination: PathBuf,
+    ) -> Result<(), RuntimeDriverError> {
+        self.attachment_export.export_attachment_preview(id, destination).map_err(map_runtime)
     }
 }
 
