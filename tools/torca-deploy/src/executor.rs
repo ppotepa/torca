@@ -132,7 +132,14 @@ impl DeployExecutor {
                 });
             }
             run.relay_endpoint.clone_from(&status.endpoint);
-            run.advance(DeployStage::RelayReachable, "relay Docker protocol health verified");
+            run.advance(
+                DeployStage::RelayReachable,
+                if status.onion_ready {
+                    "relay protocol healthy and onion publication confirmed"
+                } else {
+                    "relay protocol healthy; onion publication continues in background"
+                },
+            );
             self.checkpoint(run)?;
             run.advance(
                 DeployStage::EndpointVerified,

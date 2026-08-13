@@ -8,6 +8,9 @@ use crate::domain::{BuildPolicy, OnionPolicy};
 use crate::paths::{PathError, RuntimePaths};
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const REQUIRED_HEALTHY_CHECKS: u8 = 3;
+
 #[derive(Clone, Debug)]
 pub struct RelayStatus {
     pub endpoint: Option<String>,
@@ -64,10 +67,10 @@ impl<'a> RelayController<'a> {
             )
             .map_err(RelayError::Io)?;
         }
-        // A local health-check only proves that the relay process is listening.
-        // Do not hand its endpoint to freshly reset clients until the hidden
-        // service descriptor has reached the network as well.
-        self.wait_ready(Duration::from_secs(600))
+        // The endpoint is allocated before descriptor publication completes.
+        // Client installation must not wait several minutes for Tor consensus;
+        // clients supervise relay reachability and reconnect independently.
+        self.wait_ready(STARTUP_TIMEOUT)
     }
 
     pub fn stop(&self) -> Result<(), RelayError> {
@@ -109,8 +112,9 @@ impl<'a> RelayController<'a> {
         let mut next_heartbeat = Instant::now();
         let mut last = String::new();
         let mut last_reported = None;
+        let mut consecutive_healthy = 0_u8;
         while Instant::now() < deadline {
-            let ps = self.command(
+            let ps = self.quiet_command(
                 "docker",
                 &[
                     "compose",
@@ -123,8 +127,10 @@ impl<'a> RelayController<'a> {
             )?;
             if ps.success && !ps.text.trim().is_empty() {
                 let id = ps.text.trim().lines().last().unwrap_or_default();
-                let health = self
-                    .command("docker", &["inspect", "--format", "{{.State.Health.Status}}", id])?;
+                let health = self.quiet_command(
+                    "docker",
+                    &["inspect", "--format", "{{.State.Health.Status}}", id],
+                )?;
                 health.text.trim().clone_into(&mut last);
                 let endpoint = self.paths.endpoint();
                 let onion_ready = endpoint
@@ -146,11 +152,16 @@ impl<'a> RelayController<'a> {
                 }
                 if matches!(last.as_str(), "healthy" | "none") {
                     if endpoint.as_deref().is_some_and(RuntimePaths::validate_endpoint) {
-                        let check = self.command(
+                        let check = self.quiet_command(
                             "docker",
                             &["exec", id, "/usr/local/bin/torca-relay", "health-check"],
                         )?;
-                        if check.success && onion_ready {
+                        if startup_gate_passed(&mut consecutive_healthy, check.success) {
+                            if !onion_ready {
+                                eprintln!(
+                                    "torca-deploy: relay protocol is healthy after {consecutive_healthy} checks; onion publication continues in background"
+                                );
+                            }
                             return Ok(RelayStatus {
                                 endpoint,
                                 running: true,
@@ -200,6 +211,22 @@ impl<'a> RelayController<'a> {
             .map_err(RelayError::Process)
     }
 
+    fn quiet_command(
+        &self,
+        program: &str,
+        arguments: &[&str],
+    ) -> Result<crate::process::CommandOutput, RelayError> {
+        self.runner
+            .run_quiet(&CommandSpec {
+                program: program.into(),
+                arguments: arguments.iter().map(|value| (*value).to_owned()).collect(),
+                working_directory: self.paths.repo_root.clone(),
+                timeout: Duration::from_secs(60),
+                environment: std::collections::BTreeMap::new(),
+            })
+            .map_err(RelayError::Process)
+    }
+
     fn require_compose(&self) -> Result<(), RelayError> {
         if !self.paths.docker_compose.is_file() {
             return Err(RelayError::ComposeFile(self.paths.docker_compose.clone()));
@@ -244,6 +271,15 @@ impl<'a> RelayController<'a> {
 
 fn relay_ready_matches(path: &Path, endpoint: &str) -> bool {
     std::fs::read_to_string(path).map(|value| value.trim() == endpoint).unwrap_or(false)
+}
+
+fn startup_gate_passed(consecutive_healthy: &mut u8, protocol_healthy: bool) -> bool {
+    if protocol_healthy {
+        *consecutive_healthy = consecutive_healthy.saturating_add(1);
+    } else {
+        *consecutive_healthy = 0;
+    }
+    *consecutive_healthy >= REQUIRED_HEALTHY_CHECKS
 }
 
 #[derive(Debug, Error)]
@@ -323,5 +359,17 @@ mod tests {
         assert!(!relay_ready_matches(&marker, "new.onion:443"));
         assert!(relay_ready_matches(&marker, "old.onion:443"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_gate_requires_three_consecutive_protocol_checks() {
+        let mut healthy = 0;
+        assert!(!startup_gate_passed(&mut healthy, true));
+        assert!(!startup_gate_passed(&mut healthy, true));
+        assert!(!startup_gate_passed(&mut healthy, false));
+        assert_eq!(healthy, 0);
+        assert!(!startup_gate_passed(&mut healthy, true));
+        assert!(!startup_gate_passed(&mut healthy, true));
+        assert!(startup_gate_passed(&mut healthy, true));
     }
 }
