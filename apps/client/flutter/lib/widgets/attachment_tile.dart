@@ -41,7 +41,9 @@ class AttachmentPendingTile extends StatelessWidget {
                   Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
                   Text(
-                    outbound ? 'Preparing upload' : 'Preparing download',
+                    outbound
+                        ? context.strings.preparingUpload
+                        : context.strings.preparingDownload,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -85,7 +87,7 @@ class AttachmentTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = attachment.size <= 0 ? 1 : attachment.size;
-    final transferred = attachment.offset.clamp(0, total);
+    final transferred = attachment.offset.clamp(0, total).toInt();
     final progress = (transferred / total).clamp(0.0, 1.0);
     final failed = attachment.typedStatus == AttachmentStatus.failed;
     final available = attachment.typedStatus == AttachmentStatus.available;
@@ -109,6 +111,7 @@ class AttachmentTile extends StatelessWidget {
             _AttachmentVisualPreview(
               attachmentId: attachment.id,
               mediaType: attachment.mediaType,
+              revision: attachment.updatedAtMs,
               // Preview metadata is available independently of the complete
               // attachment payload, so receiver-side cards can render it
               // while chunks are still syncing.
@@ -133,9 +136,7 @@ class AttachmentTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${formatBytes(attachment.size)} · ${_statusLabel(attachment.status, attachment.direction)}'
-                      '${attachment.attemptCount > 0 ? ' · attempt ${attachment.attemptCount}' : ''}'
-                      '${attachment.lastErrorCode == null ? '' : ' · ${_failureLabel(attachment.lastErrorCode!)}'}',
+                      '${attachment.mediaType} / ${formatBytes(attachment.size)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -157,9 +158,12 @@ class AttachmentTile extends StatelessWidget {
             LinearProgressIndicator(value: available ? 1 : progress),
             const SizedBox(height: 4),
             Text(
-              available
-                  ? formatBytes(attachment.size)
-                  : '${formatBytes(transferred)} / ${formatBytes(attachment.size)}',
+              _transferSummary(
+                context,
+                attachment,
+                transferred: transferred,
+                available: available,
+              ),
               style: Theme.of(context).textTheme.labelSmall,
             ),
           ],
@@ -221,29 +225,60 @@ class AttachmentTile extends StatelessWidget {
   static bool _hasVisualPreview(String mediaType) =>
       mediaType.startsWith('image/') || mediaType.startsWith('video/');
 
-  static String _statusLabel(String status, String direction) =>
+  static String _statusLabel(
+    BuildContext context,
+    String status,
+    String direction,
+  ) =>
       switch (status) {
-        'prepared' => 'Preparing secure copy',
-        'encrypting' => 'Encrypting',
+        'prepared' => context.strings.preparingSecureCopy,
+        'encrypting' => context.strings.encrypting,
         'queued' =>
-          direction == 'inbound' ? 'Waiting to receive' : 'Waiting for peer',
+          direction == 'inbound'
+              ? context.strings.waitingToReceive
+              : context.strings.waitingForPeer,
         'transferring' || 'sending' =>
-          direction == 'inbound' ? 'Receiving securely' : 'Sending securely',
-        'receiving' => 'Receiving securely',
-        'available' => 'Verified on device',
-        'failed' => 'Transfer failed',
-        'cancelled' => 'Cancelled',
+          direction == 'inbound'
+              ? context.strings.receivingSecurely
+              : context.strings.sendingSecurely,
+        'receiving' => context.strings.receivingSecurely,
+        // A message receipt may reach the projection before its attachment
+        // state refresh. Keep delivery wording in MessageBubble's footer;
+        // this card describes file availability only.
+        'delivered' => context.strings.attachmentSyncing,
+        'available' => context.strings.verifiedOnDevice,
+        'failed' => context.strings.transferFailed,
+        'cancelled' => context.strings.cancelled,
         _ => status,
       };
 
-  static String _failureLabel(String code) => switch (code) {
-    'ATTACHMENT_ACK_TIMEOUT' => 'waiting for peer acknowledgement',
-    'ATTACHMENT_PEER_UNAVAILABLE' => 'peer unavailable',
-    'ATTACHMENT_INTEGRITY_FAILED' => 'integrity check failed',
-    'ATTACHMENT_STORAGE_FAILED' => 'local storage failed',
-    'ATTACHMENT_MESSAGE_PENDING' => 'waiting for message',
-    'ATTACHMENT_DEPENDENCY_MISSING' => 'waiting for conversation',
-    _ => 'retry available',
+  static String _transferSummary(
+    BuildContext context,
+    AttachmentDto attachment, {
+    required int transferred,
+    required bool available,
+  }) {
+    final status = _statusLabel(context, attachment.status, attachment.direction);
+    final progress = available
+        ? formatBytes(attachment.size)
+        : '${formatBytes(transferred)} / ${formatBytes(attachment.size)}';
+    final attempt = attachment.attemptCount > 0
+        ? ' / attempt ${attachment.attemptCount}'
+        : '';
+    final failure = attachment.lastErrorCode == null
+        ? ''
+        : ' / ${_failureLabel(context, attachment.lastErrorCode!)}';
+    return '$status / $progress$attempt$failure';
+  }
+
+  static String _failureLabel(BuildContext context, String code) => switch (code) {
+    'ATTACHMENT_ACK_TIMEOUT' => context.strings.attachmentAckTimeout,
+    'ATTACHMENT_PEER_UNAVAILABLE' => context.strings.attachmentPeerUnavailable,
+    'ATTACHMENT_INTEGRITY_FAILED' => context.strings.attachmentIntegrityFailed,
+    'ATTACHMENT_STORAGE_FAILED' => context.strings.attachmentStorageFailed,
+    'ATTACHMENT_MESSAGE_PENDING' => context.strings.attachmentMessagePending,
+    'ATTACHMENT_DEPENDENCY_MISSING' => context.strings.attachmentDependencyMissing,
+    _ => context.strings.attachmentRetryAvailable,
   };
 }
 
@@ -251,12 +286,17 @@ class _AttachmentVisualPreview extends StatefulWidget {
   const _AttachmentVisualPreview({
     required this.attachmentId,
     required this.mediaType,
+    required this.revision,
     required this.loadPreview,
     this.onTap,
   });
 
   final String attachmentId;
   final String mediaType;
+  /// Changes whenever metadata, chunk progress or preview availability is
+  /// projected from the runtime. A prior `null` result must not become a
+  /// permanent empty thumbnail while the transfer continues.
+  final int revision;
   final Future<String?> Function()? loadPreview;
   final VoidCallback? onTap;
 
@@ -278,6 +318,7 @@ class _AttachmentVisualPreviewState extends State<_AttachmentVisualPreview> {
   void didUpdateWidget(covariant _AttachmentVisualPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.attachmentId != widget.attachmentId ||
+        oldWidget.revision != widget.revision ||
         (oldWidget.loadPreview == null && widget.loadPreview != null)) {
       _path = widget.loadPreview?.call();
     }

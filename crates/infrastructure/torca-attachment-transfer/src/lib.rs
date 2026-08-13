@@ -7,13 +7,13 @@
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use torca_attachment_protocol::{
-    AttachmentChunkFrame, AttachmentCodec, AttachmentCompleteFrame, AttachmentFrame,
+    AttachmentCancelFrame, AttachmentChunkFrame, AttachmentCodec, AttachmentCompleteFrame, AttachmentFrame,
     AttachmentMetadataFrame, AttachmentPreviewFrame, AttachmentResumeFrame, MAX_ATTACHMENT_CHUNK,
 };
 use torca_attachment_sqlite::SqlCipherAttachmentStore;
@@ -37,7 +37,10 @@ const NONCE_BYTES: usize = 24;
 const PEER_AAD_LABEL: &[u8] = b"TORCA-PEER-DATA-V1";
 const CACHE_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-CACHE-V1";
 const STAGING_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-STAGING-V1";
+const OUTGOING_STAGING_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-OUTGOING-STAGING-V1";
 const PREVIEW_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-PREVIEW-V1";
+const FINAL_CHUNK_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-FINAL-CHUNK-V1";
+const FINAL_MANIFEST: &[u8] = b"TORCA-ATTACHMENT-CHUNKS-V1";
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +96,7 @@ pub struct AttachmentTransfer<R, M, S, K, C, P> {
     ack_timeout: Duration,
     pending_outgoing: BTreeMap<AttachmentId, PendingOutgoingFrame>,
     metadata_acked: BTreeSet<AttachmentId>,
+    cancel_confirmed: BTreeSet<AttachmentId>,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +112,7 @@ enum OutgoingFramePhase {
     Metadata,
     Chunk { next_offset: u64, digest: [u8; 32] },
     Complete,
+    Cancel,
 }
 
 impl<R, M, S, K, C, P> AttachmentTransfer<R, M, S, K, C, P>
@@ -145,6 +150,7 @@ where
             ack_timeout,
             pending_outgoing: BTreeMap::new(),
             metadata_acked: BTreeSet::new(),
+            cancel_confirmed: BTreeSet::new(),
         })
     }
 
@@ -163,6 +169,31 @@ where
         {
             return Err(AttachmentTransferError::InvalidState);
         }
+        self.prepare_outgoing_reader(
+            attachment,
+            conversation_id,
+            std::io::Cursor::new(plaintext),
+            preview,
+            at,
+        )
+    }
+
+    /// Stages an attachment from a reader without loading the source blob into
+    /// the communication adapter's heap.  Each source chunk is authenticated
+    /// and committed before the next one is read, so a picker/content-provider
+    /// stream can be closed as soon as staging finishes while retry continues
+    /// from the durable app-owned chunks.
+    pub fn prepare_outgoing_reader<T: Read>(
+        &mut self,
+        mut attachment: Attachment,
+        conversation_id: ConversationId,
+        mut source: T,
+        preview: Option<AttachmentPreviewFrame>,
+        at: Timestamp,
+    ) -> Result<[u8; 32], AttachmentTransferError> {
+        if attachment.status() != AttachmentStatus::Prepared || attachment.size() == 0 {
+            return Err(AttachmentTransferError::InvalidState);
+        }
         // The attachment is staged before its companion text message is
         // committed.  Resolving the recipient through that future message
         // made every new attachment fail with `Message` on the first send.
@@ -175,16 +206,63 @@ where
             .map_err(|_| AttachmentTransferError::Relationship)?
             .ok_or(AttachmentTransferError::Relationship)?;
         let credential = self.credential(contact.id())?;
-        let digest = sha256(plaintext);
         attachment.begin_encryption(at).map_err(map_attachment)?;
-        self.store_final_cache(credential.secret_handle(), attachment.id(), plaintext)?;
-        attachment.mark_queued(at).map_err(map_attachment)?;
-        self.metadata.insert(attachment.clone()).map_err(map_attachment)?;
-        self.metadata
+        // Promote the durable staging chunks into the final encrypted cache.
+        // Each record is independently authenticated, so retries and export
+        // never need to materialize the complete attachment in memory.
+        let staging_result = self.stage_outgoing_reader(
+            credential.secret_handle(),
+            attachment.id(),
+            attachment.size(),
+            &mut source,
+        );
+        let digest = match staging_result {
+            Ok(digest) => digest,
+            Err(error) => {
+                self.remove_outgoing_staging(attachment.id());
+                self.remove_final_chunks(attachment.id());
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.promote_outgoing_chunks(
+            credential.secret_handle(),
+            attachment.id(),
+            attachment.size(),
+        ) {
+            self.remove_outgoing_staging(attachment.id());
+            self.remove_final_chunks(attachment.id());
+            return Err(error);
+        }
+        if let Err(error) = attachment.mark_queued(at) {
+            self.remove_outgoing_staging(attachment.id());
+            self.remove_final_chunks(attachment.id());
+            let _ = self.cache.remove(attachment.id());
+            return Err(map_attachment(error));
+        }
+        if let Err(error) = self.metadata.insert(attachment.clone()) {
+            self.remove_outgoing_staging(attachment.id());
+            self.remove_final_chunks(attachment.id());
+            let _ = self.cache.remove(attachment.id());
+            return Err(map_attachment(error));
+        }
+        if let Err(error) = self
+            .metadata
             .update_transfer_progress(attachment.id(), 0, Some(digest), at)
-            .map_err(map_attachment)?;
+        {
+            self.remove_outgoing_staging(attachment.id());
+            self.remove_final_chunks(attachment.id());
+            let _ = self.cache.remove(attachment.id());
+            return Err(map_attachment(error));
+        }
         if let Some(preview) = preview {
-            self.store_preview(credential.secret_handle(), attachment.id(), &preview)?;
+            if let Err(error) =
+                self.store_preview(credential.secret_handle(), attachment.id(), &preview)
+            {
+                self.remove_outgoing_staging(attachment.id());
+                self.remove_final_chunks(attachment.id());
+                let _ = self.cache.remove(attachment.id());
+                return Err(error);
+            }
         }
         Ok(digest)
     }
@@ -213,6 +291,7 @@ where
                     AttachmentStatus::Queued
                         | AttachmentStatus::Failed
                         | AttachmentStatus::Transferring
+                        | AttachmentStatus::Cancelled
                 ) {
                     continue;
                 }
@@ -272,6 +351,7 @@ where
             AttachmentFrame::Complete(complete) => {
                 self.accept_complete(contact.id(), credential, complete, now)?
             }
+            AttachmentFrame::Cancel(cancel) => self.accept_cancel(cancel, now)?,
             AttachmentFrame::Resume(AttachmentResumeFrame { .. }) => {
                 InboundAttachmentResult::Duplicate
             }
@@ -293,6 +373,15 @@ where
     pub fn forget_outgoing(&mut self, attachment_id: AttachmentId) {
         self.pending_outgoing.remove(&attachment_id);
         self.metadata_acked.remove(&attachment_id);
+        self.cancel_confirmed.remove(&attachment_id);
+    }
+
+    /// Requests an idempotent remote cancellation. The durable attachment row
+    /// is transitioned to `Cancelled` by the control adapter immediately
+    /// afterwards; maintenance observes that state and retries the wire frame
+    /// until the peer acknowledges it.
+    pub fn cancel_outgoing(&mut self, attachment_id: AttachmentId) {
+        self.forget_outgoing(attachment_id);
     }
 
     fn advance_outgoing(
@@ -328,7 +417,17 @@ where
                             attachment.mark_available(now).map_err(map_attachment)?;
                             self.metadata.update(attachment.clone()).map_err(map_attachment)?;
                             self.metadata_acked.remove(&attachment.id());
+                            self.remove_outgoing_staging(attachment.id());
                             Ok(AdvanceOutcome::Completed)
+                        }
+                        OutgoingFramePhase::Cancel => {
+                            self.metadata_acked.remove(&attachment.id());
+                            self.remove_outgoing_staging(attachment.id());
+                            let _ = self.cache.remove(attachment.id());
+                            self.remove_final_chunks(attachment.id());
+                            let _ = self.cache.remove(preview_blob_id(attachment.id()));
+                            self.cancel_confirmed.insert(attachment.id());
+                            Ok(AdvanceOutcome::Waiting)
                         }
                     };
                 }
@@ -352,6 +451,25 @@ where
                 }
             }
         }
+        if attachment.status() == AttachmentStatus::Cancelled {
+            if self.cancel_confirmed.contains(&attachment.id()) {
+                return Ok(AdvanceOutcome::Waiting);
+            }
+            let contact = self.contact_for_message(attachment.message_id())?;
+            let credential = self.credential(contact.id())?;
+            self.start_frame(
+                attachment.id(),
+                &contact,
+                &credential,
+                stable_frame_id(attachment.id(), 5, 0),
+                AttachmentFrame::Cancel(AttachmentCancelFrame {
+                    attachment_id: attachment.id(),
+                }),
+                OutgoingFramePhase::Cancel,
+                now,
+            )?;
+            return Ok(AdvanceOutcome::Waiting);
+        }
         if matches!(attachment.status(), AttachmentStatus::Queued | AttachmentStatus::Failed) {
             attachment.begin_transfer(now).map_err(map_attachment)?;
             self.metadata.update(attachment.clone()).map_err(map_attachment)?;
@@ -367,13 +485,6 @@ where
             .map_err(map_attachment)?
             .ok_or(AttachmentTransferError::InvalidState)?;
         let digest = state.content_digest.ok_or(AttachmentTransferError::InvalidState)?;
-        let plaintext = self.load_final_cache(credential.secret_handle(), attachment.id())?;
-        if u64::try_from(plaintext.len()).ok() != Some(attachment.size())
-            || sha256(&plaintext) != digest
-        {
-            return self.fail_outgoing(attachment, now, AttachmentTransferError::DigestMismatch);
-        }
-
         if state.offset == 0 && !self.metadata_acked.contains(&attachment.id()) {
             let preview = self.load_preview(credential.secret_handle(), attachment.id())?;
             let frame = AttachmentFrame::Metadata(AttachmentMetadataFrame {
@@ -398,15 +509,26 @@ where
         }
 
         if state.offset < attachment.size() {
-            let start = usize::try_from(state.offset)
+            let bytes = self.load_outgoing_chunk(
+                credential.secret_handle(),
+                attachment.id(),
+                state.offset,
+                attachment.size(),
+            )?;
+            let chunk_len = u64::try_from(bytes.len())
                 .map_err(|_| AttachmentTransferError::OffsetMismatch)?;
-            let end = start.saturating_add(MAX_ATTACHMENT_CHUNK).min(plaintext.len());
+            let next = state
+                .offset
+                .checked_add(chunk_len)
+                .ok_or(AttachmentTransferError::OffsetMismatch)?;
+            if bytes.is_empty() || next > attachment.size() {
+                return self.fail_outgoing(attachment, now, AttachmentTransferError::OffsetMismatch);
+            }
             let frame = AttachmentFrame::Chunk(AttachmentChunkFrame {
                 attachment_id: attachment.id(),
                 offset: state.offset,
-                bytes: plaintext[start..end].to_vec(),
+                bytes,
             });
-            let next = u64::try_from(end).map_err(|_| AttachmentTransferError::OffsetMismatch)?;
             self.start_frame(
                 attachment.id(),
                 &contact,
@@ -436,11 +558,14 @@ where
 
     fn fail_outgoing<T>(
         &mut self,
-        attachment: Attachment,
-        now: Timestamp,
+        _attachment: Attachment,
+        _now: Timestamp,
         error: AttachmentTransferError,
     ) -> Result<T, AttachmentTransferError> {
-        let _ = self.record_outgoing_failure(attachment.id(), now, &error);
+        // `maintain_outgoing` is the sole durable failure owner.  Recording
+        // here as well caused one transport error to increment attempts
+        // twice, shortened the retry window and made a healthy peer look
+        // unstable in the UI.
         Err(error)
     }
 
@@ -611,19 +736,50 @@ where
         if state.offset != attachment.size() || state.content_digest != Some(complete.digest) {
             return Err(AttachmentTransferError::InvalidState);
         }
-        let plaintext = self.load_staging_plaintext(
+        let digest = self.promote_inbound_chunks(
             credential.secret_handle(),
             complete.attachment_id,
             attachment.size(),
         )?;
-        if sha256(&plaintext) != complete.digest {
+        if digest != complete.digest {
+            self.remove_final_chunks(complete.attachment_id);
             return Err(AttachmentTransferError::DigestMismatch);
         }
-        self.store_final_cache(credential.secret_handle(), complete.attachment_id, &plaintext)?;
         attachment.mark_available(now).map_err(map_attachment)?;
         self.metadata.update(attachment).map_err(map_attachment)?;
         self.remove_staging(complete.attachment_id);
         Ok(InboundAttachmentResult::Completed)
+    }
+
+    fn accept_cancel(
+        &mut self,
+        cancel: AttachmentCancelFrame,
+        now: Timestamp,
+    ) -> Result<InboundAttachmentResult, AttachmentTransferError> {
+        let Some(mut attachment) =
+            self.metadata.get(cancel.attachment_id).map_err(map_attachment)?
+        else {
+            // Cancellation is idempotent. A peer may retry after local orphan
+            // cleanup or after this device already acknowledged the request.
+            self.remove_staging(cancel.attachment_id);
+            self.remove_final_chunks(cancel.attachment_id);
+            let _ = self.cache.remove(cancel.attachment_id);
+            let _ = self.cache.remove(preview_blob_id(cancel.attachment_id));
+            return Ok(InboundAttachmentResult::Duplicate);
+        };
+        if attachment.status() == AttachmentStatus::Available {
+            // Never allow a late cancel to remove verified content.
+            return Ok(InboundAttachmentResult::Duplicate);
+        }
+        if attachment.status() != AttachmentStatus::Cancelled {
+            attachment.cancel(now).map_err(map_attachment)?;
+            self.metadata.update(attachment).map_err(map_attachment)?;
+        }
+        self.remove_staging(cancel.attachment_id);
+        self.remove_final_chunks(cancel.attachment_id);
+        let _ = self.cache.remove(cancel.attachment_id);
+        let _ = self.cache.remove(preview_blob_id(cancel.attachment_id));
+        Ok(InboundAttachmentResult::Accepted)
     }
 
     fn contact_for_message(
@@ -681,34 +837,266 @@ where
             .map_err(|_| AttachmentTransferError::Crypto)
     }
 
-    fn store_final_cache(
+    fn store_final_manifest(
         &mut self,
-        handle: OpaqueId,
         attachment_id: AttachmentId,
-        plaintext: &[u8],
+        size: u64,
     ) -> Result<(), AttachmentTransferError> {
-        let nonce = self.secrets.peer_nonce().map_err(|_| AttachmentTransferError::Crypto)?;
-        let aad = cache_aad(attachment_id);
-        let ciphertext = self
-            .secrets
-            .seal_peer_payload(handle, nonce, &aad, plaintext)
-            .map_err(|_| AttachmentTransferError::Crypto)?;
+        let mut manifest = Vec::with_capacity(FINAL_MANIFEST.len() + 8);
+        manifest.extend_from_slice(FINAL_MANIFEST);
+        manifest.extend_from_slice(&size.to_be_bytes());
         self.cache
-            .put_atomic(attachment_id, &pack_ciphertext(nonce, ciphertext))
+            .put_atomic(attachment_id, &manifest)
             .map_err(|_| AttachmentTransferError::Storage)
     }
 
-    fn load_final_cache(
+    fn store_final_chunk(
         &self,
         handle: OpaqueId,
         attachment_id: AttachmentId,
+        offset: u64,
+        plaintext: &[u8],
+    ) -> Result<(), AttachmentTransferError> {
+        let nonce = self.secrets.peer_nonce().map_err(|_| AttachmentTransferError::Crypto)?;
+        let ciphertext = self
+            .secrets
+            .seal_peer_payload(handle, nonce, &final_chunk_aad(attachment_id, offset), plaintext)
+            .map_err(|_| AttachmentTransferError::Crypto)?;
+        let directory = self.final_chunk_directory(attachment_id);
+        fs::create_dir_all(&directory).map_err(|_| AttachmentTransferError::Io)?;
+        let target = directory.join(format!("{offset:020}.chunk"));
+        let temporary = directory.join(format!(".{offset:020}.tmp"));
+        let bytes = pack_ciphertext(nonce, ciphertext);
+        let mut file = File::create(&temporary).map_err(|_| AttachmentTransferError::Io)?;
+        file.write_all(&bytes).map_err(|_| AttachmentTransferError::Io)?;
+        file.sync_all().map_err(|_| AttachmentTransferError::Io)?;
+        fs::rename(&temporary, &target).map_err(|_| AttachmentTransferError::Io)?;
+        sync_directory(&directory)
+    }
+
+    fn promote_outgoing_chunks(
+        &mut self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+        size: u64,
+    ) -> Result<(), AttachmentTransferError> {
+        let mut offset = 0_u64;
+        while offset < size {
+            let chunk = self.load_outgoing_chunk(handle, attachment_id, offset, size)?;
+            if chunk.is_empty() {
+                return Err(AttachmentTransferError::OffsetMismatch);
+            }
+            let len = match u64::try_from(chunk.len()) {
+                Ok(value) => value,
+                Err(_) => {
+                    let mut chunk = chunk;
+                    chunk.fill(0);
+                    return Err(AttachmentTransferError::OffsetMismatch);
+                }
+            };
+            let result = self.store_final_chunk(handle, attachment_id, offset, &chunk);
+            let mut chunk = chunk;
+            chunk.fill(0);
+            result?;
+            offset = match offset.checked_add(len) {
+                Some(value) => value,
+                None => return Err(AttachmentTransferError::OffsetMismatch),
+            };
+        }
+        if offset != size {
+            return Err(AttachmentTransferError::OffsetMismatch);
+        }
+        self.store_final_manifest(attachment_id, size)
+    }
+
+    fn promote_inbound_chunks(
+        &mut self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+        size: u64,
+    ) -> Result<[u8; 32], AttachmentTransferError> {
+        let directory = self.staging_directory(attachment_id);
+        let mut digest = Sha256::new();
+        let mut offset = 0_u64;
+        while offset < size {
+            let path = directory.join(format!("{offset:020}.chunk"));
+            let stored = fs::read(path).map_err(|_| AttachmentTransferError::Io)?;
+            let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
+            let mut chunk = self
+                .secrets
+                .open_peer_payload(handle, nonce, &staging_aad(attachment_id, offset), &ciphertext)
+                .map_err(|_| AttachmentTransferError::Crypto)?;
+            if chunk.is_empty() || chunk.len() > MAX_ATTACHMENT_CHUNK {
+                chunk.fill(0);
+                return Err(AttachmentTransferError::InvalidState);
+            }
+            let len = match u64::try_from(chunk.len()) {
+                Ok(value) => value,
+                Err(_) => {
+                    chunk.fill(0);
+                    return Err(AttachmentTransferError::InvalidState);
+                }
+            };
+            digest.update(&chunk);
+            let result = self.store_final_chunk(handle, attachment_id, offset, &chunk);
+            chunk.fill(0);
+            result?;
+            offset = match offset.checked_add(len) {
+                Some(value) => value,
+                None => return Err(AttachmentTransferError::InvalidState),
+            };
+        }
+        if offset != size {
+            return Err(AttachmentTransferError::OffsetMismatch);
+        }
+        self.store_final_manifest(attachment_id, size)?;
+        Ok(digest.finalize().into())
+    }
+
+    fn load_final_chunk(
+        &self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+        offset: u64,
     ) -> Result<Vec<u8>, AttachmentTransferError> {
-        let stored =
-            self.cache.read(attachment_id).map_err(|_| AttachmentTransferError::Storage)?;
+        let path = self.final_chunk_directory(attachment_id).join(format!("{offset:020}.chunk"));
+        let stored = fs::read(path).map_err(|_| AttachmentTransferError::Io)?;
         let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
-        self.secrets
-            .open_peer_payload(handle, nonce, &cache_aad(attachment_id), &ciphertext)
-            .map_err(|_| AttachmentTransferError::Crypto)
+        let chunk = self
+            .secrets
+            .open_peer_payload(handle, nonce, &final_chunk_aad(attachment_id, offset), &ciphertext)
+            .map_err(|_| AttachmentTransferError::Crypto)?;
+        if chunk.is_empty() || chunk.len() > MAX_ATTACHMENT_CHUNK {
+            return Err(AttachmentTransferError::InvalidState);
+        }
+        Ok(chunk)
+    }
+
+    fn stage_outgoing_reader<T: Read>(
+        &mut self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+        expected_size: u64,
+        source: &mut T,
+    ) -> Result<[u8; 32], AttachmentTransferError> {
+        let directory = self.outgoing_staging_directory(attachment_id);
+        fs::create_dir_all(&directory).map_err(|_| AttachmentTransferError::Io)?;
+        let mut digest = Sha256::new();
+        let mut offset = 0_u64;
+        let mut buffer = vec![0_u8; MAX_ATTACHMENT_CHUNK];
+        let result = (|| -> Result<[u8; 32], AttachmentTransferError> {
+            loop {
+                let read = source.read(&mut buffer).map_err(|_| AttachmentTransferError::Io)?;
+                if read == 0 {
+                    break;
+                }
+                let read_u64 = u64::try_from(read).map_err(|_| AttachmentTransferError::OffsetMismatch)?;
+                let end = offset
+                    .checked_add(read_u64)
+                    .ok_or(AttachmentTransferError::OffsetMismatch)?;
+                if end > expected_size {
+                    self.remove_outgoing_staging(attachment_id);
+                    return Err(AttachmentTransferError::OffsetMismatch);
+                }
+                digest.update(&buffer[..read]);
+                if let Err(error) = self.store_outgoing_chunk(handle, attachment_id, offset, &buffer[..read]) {
+                    self.remove_outgoing_staging(attachment_id);
+                    return Err(error);
+                }
+                offset = end;
+            }
+            if offset != expected_size {
+                self.remove_outgoing_staging(attachment_id);
+                return Err(AttachmentTransferError::OffsetMismatch);
+            }
+            if let Err(error) = sync_directory(&directory) {
+                self.remove_outgoing_staging(attachment_id);
+                return Err(error);
+            }
+            Ok(digest.finalize().into())
+        })();
+        buffer.fill(0);
+        result
+    }
+
+    fn store_outgoing_chunk(
+        &mut self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+        offset: u64,
+        plaintext: &[u8],
+    ) -> Result<(), AttachmentTransferError> {
+        let nonce = self.secrets.peer_nonce().map_err(|_| AttachmentTransferError::Crypto)?;
+        let ciphertext = self
+            .secrets
+            .seal_peer_payload(handle, nonce, &outgoing_staging_aad(attachment_id, offset), plaintext)
+            .map_err(|_| AttachmentTransferError::Crypto)?;
+        let directory = self.outgoing_staging_directory(attachment_id);
+        let target = directory.join(format!("{offset:020}.chunk"));
+        let temporary = directory.join(format!(".{offset:020}.tmp"));
+        let bytes = pack_ciphertext(nonce, ciphertext);
+        let mut file = File::create(&temporary).map_err(|_| AttachmentTransferError::Io)?;
+        file.write_all(&bytes).map_err(|_| AttachmentTransferError::Io)?;
+        file.sync_all().map_err(|_| AttachmentTransferError::Io)?;
+        fs::rename(&temporary, &target).map_err(|_| AttachmentTransferError::Io)?;
+        Ok(())
+    }
+
+    fn load_outgoing_chunk(
+        &self,
+        handle: OpaqueId,
+        attachment_id: AttachmentId,
+        offset: u64,
+        size: u64,
+    ) -> Result<Vec<u8>, AttachmentTransferError> {
+        let path = self.outgoing_staging_directory(attachment_id).join(format!("{offset:020}.chunk"));
+        match fs::read(path) {
+            Ok(stored) => {
+                let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
+                self.secrets
+                    .open_peer_payload(handle, nonce, &outgoing_staging_aad(attachment_id, offset), &ciphertext)
+                    .map_err(|_| AttachmentTransferError::Crypto)
+            }
+            // Existing jobs created by a previous application version do not
+            // have a chunk directory. Keep them transferable through the
+            // bounded compatibility path; all new jobs use final chunks.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let stored = self
+                    .cache
+                    .read(attachment_id)
+                    .map_err(|_| AttachmentTransferError::Storage)?;
+                if let Some(final_size) = parse_final_manifest(&stored) {
+                    if final_size != size {
+                        return Err(AttachmentTransferError::DigestMismatch);
+                    }
+                    return self.load_final_chunk(handle, attachment_id, offset);
+                }
+                let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
+                let mut plaintext = self
+                    .secrets
+                    .open_peer_payload(handle, nonce, &cache_aad(attachment_id), &ciphertext)
+                    .map_err(|_| AttachmentTransferError::Crypto)?;
+                if u64::try_from(plaintext.len()).ok() != Some(size) {
+                    plaintext.fill(0);
+                    return Err(AttachmentTransferError::DigestMismatch);
+                }
+                let start = match usize::try_from(offset) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        plaintext.fill(0);
+                        return Err(AttachmentTransferError::OffsetMismatch);
+                    }
+                };
+                let end = start.saturating_add(MAX_ATTACHMENT_CHUNK).min(plaintext.len());
+                let result = plaintext
+                    .get(start..end)
+                    .map(ToOwned::to_owned)
+                    .ok_or(AttachmentTransferError::OffsetMismatch);
+                plaintext.fill(0);
+                result
+            }
+            Err(_) => Err(AttachmentTransferError::Io),
+        }
     }
 
     fn store_preview(
@@ -795,48 +1183,28 @@ where
         Ok(())
     }
 
-    fn load_staging_plaintext(
-        &self,
-        handle: OpaqueId,
-        attachment_id: AttachmentId,
-        expected_size: u64,
-    ) -> Result<Vec<u8>, AttachmentTransferError> {
-        let directory = self.staging_directory(attachment_id);
-        let mut offset = 0_u64;
-        let mut plaintext = Vec::with_capacity(
-            usize::try_from(expected_size).map_err(|_| AttachmentTransferError::InvalidState)?,
-        );
-        while offset < expected_size {
-            let path = directory.join(format!("{offset:020}.chunk"));
-            let stored = fs::read(path).map_err(|_| AttachmentTransferError::Io)?;
-            let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
-            let chunk = self
-                .secrets
-                .open_peer_payload(handle, nonce, &staging_aad(attachment_id, offset), &ciphertext)
-                .map_err(|_| AttachmentTransferError::Crypto)?;
-            if chunk.is_empty() || chunk.len() > MAX_ATTACHMENT_CHUNK {
-                return Err(AttachmentTransferError::InvalidState);
-            }
-            offset = offset
-                .checked_add(
-                    u64::try_from(chunk.len())
-                        .map_err(|_| AttachmentTransferError::InvalidState)?,
-                )
-                .ok_or(AttachmentTransferError::InvalidState)?;
-            plaintext.extend_from_slice(&chunk);
-        }
-        if offset != expected_size {
-            return Err(AttachmentTransferError::OffsetMismatch);
-        }
-        Ok(plaintext)
-    }
-
     fn staging_directory(&self, id: AttachmentId) -> PathBuf {
         self.staging_root.join(id.to_string())
     }
 
+    fn outgoing_staging_directory(&self, id: AttachmentId) -> PathBuf {
+        self.staging_root.join("outgoing").join(id.to_string())
+    }
+
+    fn final_chunk_directory(&self, id: AttachmentId) -> PathBuf {
+        self.staging_root.join("final").join(id.to_string())
+    }
+
     fn remove_staging(&self, id: AttachmentId) {
         let _ = fs::remove_dir_all(self.staging_directory(id));
+    }
+
+    fn remove_outgoing_staging(&self, id: AttachmentId) {
+        let _ = fs::remove_dir_all(self.outgoing_staging_directory(id));
+    }
+
+    fn remove_final_chunks(&self, id: AttachmentId) {
+        let _ = fs::remove_dir_all(self.final_chunk_directory(id));
     }
 }
 
@@ -877,6 +1245,27 @@ fn preview_blob_id(id: AttachmentId) -> AttachmentId {
     let mut bytes = [0_u8; 16];
     bytes.copy_from_slice(&digest[..16]);
     AttachmentId::from_opaque(OpaqueId::from_bytes(bytes))
+}
+
+fn parse_final_manifest(stored: &[u8]) -> Option<u64> {
+    let size = stored.strip_prefix(FINAL_MANIFEST)?.get(..8)?;
+    Some(u64::from_be_bytes(size.try_into().ok()?))
+}
+
+fn final_chunk_aad(id: AttachmentId, offset: u64) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(FINAL_CHUNK_AAD_LABEL.len() + 24);
+    aad.extend_from_slice(FINAL_CHUNK_AAD_LABEL);
+    aad.extend_from_slice(id.to_opaque().as_bytes());
+    aad.extend_from_slice(&offset.to_be_bytes());
+    aad
+}
+
+fn outgoing_staging_aad(id: AttachmentId, offset: u64) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(OUTGOING_STAGING_AAD_LABEL.len() + 16 + 8);
+    aad.extend_from_slice(OUTGOING_STAGING_AAD_LABEL);
+    aad.extend_from_slice(id.to_opaque().as_bytes());
+    aad.extend_from_slice(&offset.to_be_bytes());
+    aad
 }
 
 fn sha256(bytes: &[u8]) -> [u8; 32] {

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -21,24 +22,27 @@ class PairingActionController extends ChangeNotifier {
   final EngineGateway _gateway;
   bool _disposed = false;
   bool _busy = false;
-  String? _error;
+  BridgeResultDto? _failure;
 
   bool get busy => _busy;
-  String? get error => _error;
+  String? error(BuildContext context) => _failure == null
+      ? null
+      : BridgeErrorPresenter.localized(
+          context,
+          _failure!,
+          fallback: 'Pairing operation failed',
+        );
 
   Future<bool> run(PairingAction action, String sessionId) async {
     if (_busy || _disposed) return false;
     _busy = true;
-    _error = null;
+    _failure = null;
     notifyListeners();
     final result = await _gateway.execute(action.command(sessionId));
     if (_disposed) return result.ok;
     _busy = false;
     if (!result.ok) {
-      _error = BridgeErrorPresenter.message(
-        result,
-        fallback: 'Pairing operation failed',
-      );
+      _failure = result;
     }
     notifyListeners();
     return result.ok;

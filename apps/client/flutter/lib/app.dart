@@ -169,13 +169,15 @@ class _TorcaAppState extends State<TorcaApp> {
         if (previous != null &&
             previous != PairingState.completed &&
             pairing.typedState == PairingState.completed) {
-          final name = pairing.remoteDisplayName?.trim();
-          final label = name == null || name.isEmpty ? 'Contact' : name;
-          final message = pairing.typedRole == PairingRole.creator
-              ? '$label was added to Contacts'
-              : '$label accepted your join request';
           final context = _navigatorKey.currentContext;
           if (mounted && context != null) {
+            final name = pairing.remoteDisplayName?.trim();
+            final label = name == null || name.isEmpty
+                ? context.strings.contactLabel
+                : name;
+            final message = pairing.typedRole == PairingRole.creator
+                ? context.strings.contactAddedToContacts(label)
+                : context.strings.contactAcceptedJoin(label);
             ScaffoldMessenger.of(context)
               ..hideCurrentSnackBar()
               ..showSnackBar(SnackBar(content: Text(message)));

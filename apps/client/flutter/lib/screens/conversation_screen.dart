@@ -24,6 +24,7 @@ import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
 
 part 'conversation_widgets.dart';
+part 'conversation_formatters.dart';
 
 class ConversationScreen extends StatelessWidget {
   const ConversationScreen({
@@ -38,7 +39,7 @@ class ConversationScreen extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
     valueListenable: gateway.snapshots,
     builder: (context, snapshot, _) {
-      final contact = _contactFor(snapshot, conversation);
+      final contact = contactForSnapshot(snapshot, conversation);
       return Scaffold(
         appBar: RuntimeAppBar(
           titleSpacing: 0,
@@ -343,7 +344,8 @@ class _ConversationPaneState extends State<ConversationPane>
       );
       if (mounted && !result.ok) {
         _showError(
-          BridgeErrorPresenter.message(
+          BridgeErrorPresenter.localized(
+            context,
             result,
             fallback: 'Could not mark conversation as read',
           ),
@@ -363,7 +365,7 @@ class _ConversationPaneState extends State<ConversationPane>
         for (final message in _timeline.messages) message.id: message,
       };
       final reply = _replyingTo;
-      final contact = _contactFor(snapshot, widget.conversation);
+      final contact = contactForSnapshot(snapshot, widget.conversation);
       final sending = _operations.isActive('message:send');
       final sendingAttachment = _operations.isActive('attachment:send');
       final pickingAttachment = _operations.isActive('attachment:pick');
@@ -411,7 +413,7 @@ class _ConversationPaneState extends State<ConversationPane>
                       final message = messages[index];
                       final previous = index == 0 ? null : messages[index - 1];
                       final showDate =
-                          previous == null || !_sameDay(previous, message);
+                          previous == null || !sameDay(previous, message);
                       final showUnread =
                           !_searching && message.id == _unreadBoundaryMessageId;
                       final grouped =
@@ -542,7 +544,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                       ? () => _openAttachment(attachment)
                                       : null,
                                   loadPreview:
-                                      _hasVisualAttachmentPreview(
+                                      hasVisualAttachmentPreview(
                                         attachment.mediaType,
                                       )
                                       ? () => _loadAttachmentPreview(attachment)
@@ -804,7 +806,8 @@ class _ConversationPaneState extends State<ConversationPane>
       );
       if (mounted && !result.ok) {
         _showError(
-          BridgeErrorPresenter.message(
+          BridgeErrorPresenter.localized(
+            context,
             result,
             fallback: 'Could not retry message',
           ),
@@ -853,7 +856,7 @@ class _ConversationPaneState extends State<ConversationPane>
         children: <Widget>[
           _detail('ID', message.id),
           _detail('Direction', message.direction),
-          _detail('Status', _messageStatusLabel(message.status)),
+          _detail('Status', messageStatusLabel(message.status, context.strings)),
           _detail('Queued / received', _date(message.createdAtMs)),
           if (message.sentAtMs != null)
             _detail('Sent', _date(message.sentAtMs!)),
@@ -908,7 +911,8 @@ class _ConversationPaneState extends State<ConversationPane>
           );
         } else {
           _showError(
-            BridgeErrorPresenter.message(
+            BridgeErrorPresenter.localized(
+              context,
               result,
               fallback: 'Could not queue message',
             ),
@@ -1021,7 +1025,7 @@ class _ConversationPaneState extends State<ConversationPane>
           // here made retry impossible and forced the user to pick the file
           // again.
           _showError(
-            '${item.originalName}: ${BridgeErrorPresenter.message(response, fallback: 'Could not queue attachment')}',
+            '${item.originalName}: ${BridgeErrorPresenter.localized(context, response, fallback: context.strings.couldNotQueueAttachment)}',
           );
           continue;
         }
@@ -1034,7 +1038,9 @@ class _ConversationPaneState extends State<ConversationPane>
       if (mounted && queued > 1) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('$queued attachments queued')));
+        ).showSnackBar(
+          SnackBar(content: Text(context.strings.attachmentsQueued(queued))),
+        );
       }
     });
   }
@@ -1042,7 +1048,7 @@ class _ConversationPaneState extends State<ConversationPane>
   Future<void> _saveAttachment(AttachmentDto attachment) async {
     await _operations.run('attachment:${attachment.id}:save', () async {
       final path = await FilePicker.saveFile(
-        dialogTitle: 'Save attachment',
+        dialogTitle: context.strings.saveAttachment,
         fileName: attachment.name,
       );
       if (path == null || !mounted) return;
@@ -1059,7 +1065,8 @@ class _ConversationPaneState extends State<ConversationPane>
         );
       } else {
         _showError(
-          BridgeErrorPresenter.message(
+          BridgeErrorPresenter.localized(
+            context,
             result,
             fallback: 'Could not save attachment',
           ),
@@ -1136,8 +1143,8 @@ class _ConversationPaneState extends State<ConversationPane>
       // for the platform opener must instead use the authoritative MIME type
       // so an optimised PNG (now JPEG bytes) is opened correctly.
       final ext =
-          _contentExtension(attachment.mediaType) ??
-          _safeExtension(attachment.name);
+          contentExtension(attachment.mediaType) ??
+          safeExtension(attachment.name);
       final path =
           '${Directory.systemTemp.path}${torcaPathSeparator}torca-${attachment.id}$ext';
       final result = await widget.gateway.execute(
@@ -1149,7 +1156,8 @@ class _ConversationPaneState extends State<ConversationPane>
       if (!mounted) return;
       if (!result.ok) {
         _showError(
-          BridgeErrorPresenter.message(
+          BridgeErrorPresenter.localized(
+            context,
             result,
             fallback: 'Could not open attachment',
           ),
@@ -1161,32 +1169,6 @@ class _ConversationPaneState extends State<ConversationPane>
     });
   }
 
-  String _safeExtension(String name) {
-    final dot = name.lastIndexOf('.');
-    if (dot < 0 || dot == name.length - 1) return '';
-    final value = name.substring(dot);
-    return RegExp(r'^\.[A-Za-z0-9]{1,10}$').hasMatch(value)
-        ? value.toLowerCase()
-        : '';
-  }
-
-  String? _contentExtension(String mediaType) => switch (mediaType) {
-    'image/jpeg' => '.jpg',
-    'image/png' => '.png',
-    'image/gif' => '.gif',
-    'image/webp' => '.webp',
-    'video/mp4' => '.mp4',
-    'video/webm' => '.webm',
-    'audio/mpeg' => '.mp3',
-    'audio/ogg' => '.ogg',
-    'audio/wav' => '.wav',
-    'application/pdf' => '.pdf',
-    _ => null,
-  };
-
-  bool _hasVisualAttachmentPreview(String mediaType) =>
-      mediaType.startsWith('image/') || mediaType.startsWith('video/');
-
   Future<void> _attachmentCommand(
     String attachmentId,
     String action,
@@ -1196,7 +1178,8 @@ class _ConversationPaneState extends State<ConversationPane>
       final result = await widget.gateway.execute(command);
       if (mounted && !result.ok) {
         _showError(
-          BridgeErrorPresenter.message(
+          BridgeErrorPresenter.localized(
+            context,
             result,
             fallback: context.strings.attachmentOperationFailed,
           ),
@@ -1209,27 +1192,4 @@ class _ConversationPaneState extends State<ConversationPane>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  String _messageStatusLabel(String status) => switch (status) {
-    'queued' => 'Queued — waiting for a direct peer connection',
-    'sending' => 'Sending…',
-    'sent' => 'Sent',
-    'delivered' => 'Delivered',
-    'read' => 'Read',
-    'failed' => 'Delivery failed',
-    'cancelled' => 'Cancelled',
-    _ => status,
-  };
-}
-
-bool _sameDay(MessageDto first, MessageDto second) {
-  final a = DateTime.fromMillisecondsSinceEpoch(first.createdAtMs).toLocal();
-  final b = DateTime.fromMillisecondsSinceEpoch(second.createdAtMs).toLocal();
-  return a.year == b.year && a.month == b.month && a.day == b.day;
-}
-
-ContactDto? _contactFor(AppSnapshotDto snapshot, ConversationDto conversation) {
-  for (final contact in snapshot.contacts) {
-    if (contact.id == conversation.contactId) return contact;
-  }
-  return null;
 }

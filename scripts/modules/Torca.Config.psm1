@@ -16,6 +16,7 @@ function Get-TorcaPaths {
         RelayErrorLog = Join-Path $runtime 'logs/relay.error.log'
         RelayEndpoint = Join-Path $runtime 'stack/relay_endpoint.txt'
         RelayReady = Join-Path $runtime 'stack/relay_ready.txt'
+        RelayStatus = Join-Path $runtime 'stack/relay_status.json'
         ArtifactsRoot = Join-Path $RepoRoot 'artifacts'
         RelayExecutable = Join-Path $RepoRoot 'target/release/torca-relay.exe'
         DockerCompose = Join-Path $RepoRoot 'infra/docker/compose.yml'

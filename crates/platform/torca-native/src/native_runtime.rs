@@ -429,15 +429,18 @@ impl TorcaRuntime {
             .iter()
             .find(|step| step.id == "tor_network")
             .map(|step| (step.state.clone(), step.code.clone()));
-        let network_ready = tor.as_ref().is_some_and(|(state, _)| state == "ready")
-            && relay.as_ref().is_some_and(|(state, _)| state == "ready");
+        // `NETWORK_READY` is the point at which the local Tor runtime is
+        // usable. Relay and local onion publication are independent,
+        // recoverable capabilities; requiring either one here used to leave a
+        // fully functioning local application permanently on warming-up.
+        let network_ready = tor.as_ref().is_some_and(|(state, _)| state == "ready");
         if network_ready && !self.network_ready_logged {
             self.log(
                 "bootstrap",
                 Level::Info,
                 "network",
                 "NETWORK_READY",
-                "Tor and relay are ready; local onion publication continues independently",
+                "Tor runtime is ready; relay and local onion continue in the background",
             );
             self.network_ready_logged = true;
         }

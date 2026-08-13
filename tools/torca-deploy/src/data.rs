@@ -18,42 +18,129 @@ impl<'a> DataController<'a> {
             return Ok(());
         }
         for device in devices {
+            // A reset must never race the process which owns SQLite, the
+            // protected-secret files, or Arti's state directory.  Stop the
+            // client first; launch happens as a later, separately
+            // checkpointed stage.
+            self.stop_client(device)?;
             match device.target {
                 crate::domain::Target::Windows => {
                     let root = std::env::var_os("LOCALAPPDATA")
                         .map(std::path::PathBuf::from)
                         .ok_or(DataError::MissingLocalAppData)?
                         .join("Torca");
-                    if root.is_dir() {
-                        let backup_root =
-                            root.parent().unwrap_or(&self.paths.runtime_root).join("Torca-backups");
-                        std::fs::create_dir_all(&backup_root).map_err(DataError::Io)?;
-                        let backup = backup_root.join(format!("{}-{}", chrono_stamp(), device.id));
-                        std::fs::rename(&root, backup).map_err(DataError::Io)?;
-                    }
+                    self.reset_windows(&root, &device.id, policy)?;
                 }
                 crate::domain::Target::Android => {
-                    let output = self.runner.run(&CommandSpec {
-                        program: "adb".into(),
-                        arguments: vec![
-                            "-s".into(),
-                            device.id.clone(),
-                            "shell".into(),
-                            "pm".into(),
-                            "clear".into(),
-                            "com.torca.torca_app".into(),
-                        ],
-                        working_directory: self.paths.repo_root.clone(),
-                        timeout: Duration::from_secs(60),
-                        environment: std::collections::BTreeMap::new(),
-                    })?;
-                    if !output.success {
-                        return Err(DataError::Command(output.text));
-                    }
+                    self.reset_android(device, policy)?;
                 }
             }
         }
         Ok(())
+    }
+
+    fn stop_client(&self, device: &Device) -> Result<(), DataError> {
+        match device.target {
+            crate::domain::Target::Windows => crate::windows_client::WorkspaceWindowsClient::new(
+                self.paths,
+                self.runner,
+            )
+            .stop()
+            .map_err(DataError::WindowsClient),
+            crate::domain::Target::Android => {
+                let output = self.command(&device.id, &["shell", "am", "force-stop", "com.torca.torca_app"])?;
+                if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
+            }
+        }
+    }
+
+    fn reset_windows(
+        &self,
+        root: &std::path::Path,
+        device_id: &str,
+        policy: ClientDataPolicy,
+    ) -> Result<(), DataError> {
+        if !root.is_dir() {
+            return Ok(());
+        }
+        match policy {
+            // A profile reset intentionally retains `runtime/`: it contains
+            // Arti directory cache and onion state, so a client-data reset
+            // does not turn into an unnecessary cold Tor bootstrap.
+            ClientDataPolicy::ResetProfile => {
+                for name in ["data", "protected-secrets"] {
+                    self.move_to_backup(&root.join(name), device_id)?;
+                }
+            }
+            ClientDataPolicy::ResetAll => self.move_to_backup(root, device_id)?,
+            ClientDataPolicy::Preserve => {}
+        }
+        Ok(())
+    }
+
+    fn reset_android(&self, device: &Device, policy: ClientDataPolicy) -> Result<(), DataError> {
+        match policy {
+            // The Android host keeps profile data below no_backup/torca while
+            // Arti's reusable state is below no_backup/torca/runtime.  `pm
+            // clear` removes both; use the app UID for the narrow reset.
+            ClientDataPolicy::ResetProfile => {
+                let output = self.command(
+                    &device.id,
+                    &[
+                        "shell",
+                        "run-as",
+                        "com.torca.torca_app",
+                        "sh",
+                        "-c",
+                        "rm -rf no_backup/torca/data no_backup/torca/protected-secrets",
+                    ],
+                )?;
+                if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
+            }
+            ClientDataPolicy::ResetAll => {
+                let output = self.command(&device.id, &["shell", "pm", "clear", "com.torca.torca_app"])?;
+                if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
+            }
+            ClientDataPolicy::Preserve => Ok(()),
+        }
+    }
+
+    fn move_to_backup(&self, source: &std::path::Path, device_id: &str) -> Result<(), DataError> {
+        if !source.exists() {
+            return Ok(());
+        }
+        let parent = source.parent().unwrap_or(&self.paths.runtime_root);
+        let base = if source
+            .file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new("Torca"))
+        {
+            parent
+        } else {
+            parent.parent().unwrap_or(parent)
+        };
+        let backup_root = base.join("Torca-backups");
+        std::fs::create_dir_all(&backup_root).map_err(DataError::Io)?;
+        let backup = backup_root.join(format!("{}-{}-{}", chrono_stamp(), device_id, source.file_name().and_then(|name| name.to_str()).unwrap_or("data")));
+        std::fs::rename(source, backup).map_err(DataError::Io)
+    }
+
+    fn command(
+        &self,
+        device: &str,
+        arguments: &[&str],
+    ) -> Result<crate::process::CommandOutput, DataError> {
+        self.runner
+            .run(&CommandSpec {
+                program: "adb".into(),
+                arguments: std::iter::once("-s".into())
+                    .chain(std::iter::once(device.into()))
+                    .chain(arguments.iter().map(|argument| (*argument).into()))
+                    .collect(),
+                working_directory: self.paths.repo_root.clone(),
+                timeout: Duration::from_secs(60),
+                environment: std::collections::BTreeMap::new(),
+            })
+            .map_err(DataError::Process)
     }
 }
 #[derive(Debug, Error)]
@@ -66,6 +153,8 @@ pub enum DataError {
     Io(std::io::Error),
     #[error("LOCALAPPDATA is not available for Windows data reset")]
     MissingLocalAppData,
+    #[error("Windows client stop failed: {0}")]
+    WindowsClient(#[from] crate::windows_client::WindowsClientError),
 }
 
 fn chrono_stamp() -> String {

@@ -197,7 +197,10 @@ if (Test-Path -LiteralPath $flutterLib) {
     foreach ($file in $uiFiles) {
         $text = Get-Content -LiteralPath $file.FullName -Raw
         $lineCount = (Get-Content -LiteralPath $file.FullName).Count
-        if ($lineCount -gt 1200) {
+        # Generated ABI projections are intentionally large and are governed
+        # by the contract generator drift check below, not the hand-written
+        # feature-file maintainability threshold.
+        if ($lineCount -gt 1200 -and $file.FullName -notmatch '[\\/]generated[\\/]') {
             throw "Flutter source file exceeds the 1200-line maintainability gate: $($file.FullName) ($lineCount lines)"
         }
         if ($text.Contains('Platform.is')) {
@@ -235,6 +238,33 @@ if (Test-Path -LiteralPath $flutterLib) {
             throw "Continuous status animation must honor OS and Torca reduce-motion policy: $relative"
         }
     }
+}
+
+$localizationRoot = Join-Path $flutterLib 'l10n'
+$localizationConfig = Join-Path (Split-Path $flutterLib -Parent) 'l10n.yaml'
+if (-not (Test-Path -LiteralPath $localizationConfig -PathType Leaf)) {
+    throw "Flutter localization config is missing: $localizationConfig"
+}
+$arbFiles = @{
+    en = (Join-Path $localizationRoot 'app_en.arb')
+    pl = (Join-Path $localizationRoot 'app_pl.arb')
+}
+$arbKeys = @{}
+foreach ($locale in $arbFiles.Keys) {
+    $arbPath = $arbFiles[$locale]
+    if (-not (Test-Path -LiteralPath $arbPath -PathType Leaf)) {
+        throw "Flutter ARB catalog is missing: $arbPath"
+    }
+    try {
+        $catalog = Get-Content -LiteralPath $arbPath -Raw | ConvertFrom-Json
+        $arbKeys[$locale] = @($catalog.PSObject.Properties.Name | Where-Object { $_ -notlike '@@*' } | Sort-Object)
+    } catch {
+        throw "Flutter ARB catalog is invalid: $arbPath ($($_.Exception.Message))"
+    }
+}
+$arbDifferences = @(Compare-Object $arbKeys.en $arbKeys.pl)
+if ($arbDifferences.Count -gt 0) {
+    throw 'Flutter ARB catalogs en/pl have different message keys.'
 }
 
 $artiOwners = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Recurse -File -Include '*.rs','*.toml' |

@@ -29,6 +29,7 @@ Future<void> showPairingSessionModal(
   try {
     await showDialog<void>(
       context: context,
+      barrierDismissible: true,
       requestFocus: true,
       builder: (_) => _PairingSessionModal(gateway: gateway, pairing: pairing),
     );
@@ -44,6 +45,7 @@ Future<void> showInvitationGeneratorModal(
   EngineGateway gateway,
 ) => showDialog<void>(
   context: context,
+  barrierDismissible: true,
   requestFocus: true,
   builder: (_) => _PairingComposerModal(
     gateway: gateway,
@@ -58,6 +60,7 @@ Future<void> showJoinInvitationModal(
   String? initialCode,
 }) => showDialog<void>(
   context: context,
+  barrierDismissible: true,
   requestFocus: true,
   builder: (_) => _PairingComposerModal(
     gateway: gateway,
@@ -221,7 +224,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
         : null;
     final code = parser == null ? raw : await parser.parsePairingUri(raw);
     if (code == null) {
-      setState(() => _error = 'Enter a six-character code or scan a Torca QR.');
+      setState(() => _error = context.strings.enterSixCharacterCode);
       return;
     }
     final ticket = RegExp(
@@ -239,8 +242,8 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       SnackBar(
         content: Text(
           result!.kind == 'pairing_queued'
-              ? 'Saved locally. It will be sent when your private endpoint is ready.'
-              : 'Join request sent. You will be notified when it is accepted.',
+              ? context.strings.invitationSavedLocally
+              : context.strings.invitationJoinSent,
         ),
       ),
     );
@@ -258,10 +261,11 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       if (result?.ok != true && mounted) {
         setState(
           () => _error = result == null
-              ? 'Invitation operation failed'
-              : BridgeErrorPresenter.message(
+              ? context.strings.invitationOperationFailed
+              : BridgeErrorPresenter.localized(
+                  context,
                   result!,
-                  fallback: 'Invitation operation failed',
+                  fallback: context.strings.invitationOperationFailed,
                 ),
         );
       }
@@ -272,8 +276,8 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   @override
   Widget build(BuildContext context) => AppModal(
     title: widget.mode == _PairingComposerMode.create
-        ? 'Your invitation'
-        : 'Join invitation',
+        ? context.strings.yourInvitation
+        : context.strings.joinInvitation,
     height: widget.mode == _PairingComposerMode.create ? 620 : 360,
     scrollable: widget.mode == _PairingComposerMode.create,
     child: widget.mode == _PairingComposerMode.create
@@ -363,10 +367,10 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
       children: <Widget>[
         Text(
           busy
-              ? 'Generating a private invitation…'
+              ? context.strings.invitationGenerating
               : queued
-              ? 'Invitation queued for the secure network.'
-              : 'Invitation is waiting for the network.',
+              ? context.strings.invitationQueued
+              : context.strings.invitationWaitingForNetwork,
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.titleMedium,
         ),
@@ -463,7 +467,7 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
                   _PairingSessionDetails(
                     pairing: pairing,
                     busy: _actions.busy,
-                    error: _actions.error,
+                    error: _actions.error(context),
                     onApprove: () =>
                         _actions.run(PairingAction.approve, pairing.id),
                     onReject: () =>
@@ -508,14 +512,14 @@ class _JoinCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Text(
-            'Join an invitation',
+            context.strings.joinInvitation,
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 4),
           Text(
             scanEnabled || scanBusy
-                ? 'Paste the six-character code or scan the QR shown on the other device.'
-                : 'Paste the six-character code from the other device.',
+                ? context.strings.enterSixCharacterCode
+                : context.strings.enterSixCharacterCode,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -535,7 +539,7 @@ class _JoinCard extends StatelessWidget {
             // after editing, so pasted QR URIs remain supported as well.
             textInputAction: TextInputAction.join,
             decoration: InputDecoration(
-              labelText: 'Invitation code',
+            labelText: context.strings.invitationCode,
               hintText: 'ABC123',
               errorText: error,
               prefixIcon: Icon(context.torcaIcons.identity),
@@ -568,7 +572,9 @@ class _JoinCard extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : Icon(context.torcaIcons.send),
-              label: Text(busy ? 'Checking invitation...' : 'Join invitation'),
+              label: Text(
+                busy ? context.strings.checkingInvitation : context.strings.joinInvitation,
+              ),
             ),
           ),
         ],

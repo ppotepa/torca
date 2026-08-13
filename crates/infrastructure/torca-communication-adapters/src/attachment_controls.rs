@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::BufReader;
 
 use crate::peer_envelope;
 use torca_attachment_protocol::{AttachmentPreviewFrame, MAX_ATTACHMENT_PREVIEW};
@@ -83,18 +83,6 @@ where
         }
         let maximum =
             usize::try_from(MAX_ATTACHMENT_BYTES).map_err(|_| CommunicationError::Attachment)?;
-        let mut bytes = Vec::with_capacity(
-            usize::try_from(request.size).map_err(|_| CommunicationError::Attachment)?,
-        );
-        File::open(&request.source_path)
-            .map_err(|_| CommunicationError::Attachment)?
-            .take(u64::try_from(maximum).unwrap_or(u64::MAX).saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(|_| CommunicationError::Attachment)?;
-        if bytes.len() > maximum || u64::try_from(bytes.len()).ok() != Some(request.size) {
-            bytes.fill(0);
-            return Err(CommunicationError::Attachment);
-        }
         let preview = match &request.preview_source_path {
             Some(path) => {
                 let preview = std::fs::read(path).map_err(|_| CommunicationError::Attachment)?;
@@ -120,18 +108,19 @@ where
             now,
         )
         .map_err(|_| CommunicationError::Attachment)?;
+        let source = File::open(&request.source_path)
+            .map_err(|_| CommunicationError::Attachment)?;
         let result = self
             .transfer
-            .prepare_outgoing(
+            .prepare_outgoing_reader(
                 attachment,
                 torca_conversations::ConversationId::from_opaque(request.conversation_id),
-                &bytes,
+                BufReader::new(source),
                 preview,
                 now,
             )
             .map(|_| ())
             .map_err(|_| CommunicationError::Attachment);
-        bytes.fill(0);
         result
     }
 
@@ -164,7 +153,7 @@ where
             .get(id)
             .map_err(|_| CommunicationError::Attachment)?
             .ok_or(CommunicationError::Attachment)?;
-        self.transfer.forget_outgoing(id);
+        self.transfer.cancel_outgoing(id);
         attachment.cancel(now).map_err(|_| CommunicationError::Attachment)?;
         self.control.update(attachment).map_err(|_| CommunicationError::Attachment)
     }

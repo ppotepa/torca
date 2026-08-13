@@ -159,7 +159,7 @@ function Reset-TorcaRelayOnionIdentity {
     if (Test-Path -LiteralPath $torRoot) {
         Remove-Item -LiteralPath $torRoot -Recurse -Force
     }
-    foreach ($file in @($Paths.RelayEndpoint, $Paths.RelayReady)) {
+    foreach ($file in @($Paths.RelayEndpoint, $Paths.RelayReady, $Paths.RelayStatus)) {
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
     }
     Write-TorcaStackStage -Name 'Relay onion identity' -State 'running' -Detail 'Previous relay identity removed; generating a new v3 onion address'
@@ -180,7 +180,7 @@ function Reset-TorcaRelayDirectoryCache {
     if (Test-Path -LiteralPath $cacheRoot) {
         Remove-Item -LiteralPath $cacheRoot -Recurse -Force
     }
-    foreach ($file in @($Paths.RelayEndpoint, $Paths.RelayReady)) {
+    foreach ($file in @($Paths.RelayEndpoint, $Paths.RelayReady, $Paths.RelayStatus)) {
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
     }
     Write-TorcaStackStage -Name 'Relay Tor cache' -State 'running' -Detail 'Directory cache cleared; onion identity preserved'

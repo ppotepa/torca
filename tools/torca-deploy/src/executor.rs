@@ -170,7 +170,7 @@ impl DeployExecutor {
                 .collect::<Vec<_>>();
             let report =
                 crate::diagnostics::collect_runtime(&paths, self.runner.as_ref(), &android);
-            if report.files.is_empty() {
+            if !report.has_payload() {
                 return Err(DeployError::DiagnosticsEmpty);
             }
             return Ok(());
@@ -247,7 +247,9 @@ impl DeployExecutor {
             );
             self.checkpoint(run)?;
             for (device, receipt) in receipts {
-                launch.wait_network_ready(device, receipt).map_err(DeployError::Launch)?;
+                launch
+                    .wait_network_ready(device, receipt, run.plan.validation)
+                    .map_err(DeployError::Launch)?;
             }
         }
         Ok(())

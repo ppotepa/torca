@@ -49,12 +49,28 @@ class FfiEngineGateway
         RuntimeShutdownGateway {
   FfiEngineGateway._(this._worker, this._snapshots, this._eventsController) {
     _worker.events.listen((event) {
-      final value = jsonDecode(event);
-      if (value is Map<String, dynamic> && value['eventId'] != null) {
-        _eventsController.add(RuntimeEventDto.fromJson(value));
-      } else {
-        final snapshot = _decodeSnapshot(event);
-        if (snapshot != null) _snapshots.value = snapshot;
+      try {
+        final value = jsonDecode(event);
+        if (value is Map<String, dynamic> && value['eventId'] != null) {
+          _eventsController.add(RuntimeEventDto.fromJson(value));
+        } else {
+          _snapshots.value = _decodeSnapshot(event);
+        }
+      } on ContractDecodeException catch (error, stackTrace) {
+        // Do not silently retain an old, partly compatible snapshot. The
+        // stream remains alive, while Diagnostics and the visible runtime
+        // error channel receive an actionable contract failure.
+        _eventsController.addError(error, stackTrace);
+      } on FormatException catch (error, stackTrace) {
+        _eventsController.addError(
+          ContractDecodeException('Invalid native runtime event: $error'),
+          stackTrace,
+        );
+      } on Object catch (error, stackTrace) {
+        _eventsController.addError(
+          ContractDecodeException('Invalid native runtime payload: $error'),
+          stackTrace,
+        );
       }
     });
   }
@@ -196,13 +212,29 @@ class FfiEngineGateway
   @override
   Future<String> diagnosticsJson() async {
     final response = await _worker.invoke(RuntimeRequestDto.diagnostics);
-    final value = jsonDecode(response);
-    if (value is! Map<String, dynamic> || value['status'] != 'succeeded') {
-      throw StateError('Native diagnostics query failed');
+    try {
+      final value = jsonDecode(response);
+      if (value is! Map<String, dynamic> || value['status'] != 'succeeded') {
+        throw const ContractDecodeException(
+          'Native diagnostics response was not successful',
+        );
+      }
+      final snapshot = value['snapshot'];
+      if (snapshot != null && snapshot is! Map<String, dynamic>) {
+        throw const ContractDecodeException(
+          'Native diagnostics snapshot is not an object',
+        );
+      }
+      return jsonEncode(
+        snapshot ?? const <String, Object?>{'events': []},
+      );
+    } on ContractDecodeException {
+      rethrow;
+    } on FormatException catch (error) {
+      throw ContractDecodeException('Invalid diagnostics response: $error');
+    } on TypeError catch (error) {
+      throw ContractDecodeException('Invalid diagnostics field type: $error');
     }
-    return jsonEncode(
-      value['snapshot'] ?? const <String, Object?>{'events': []},
-    );
   }
 
   @override
@@ -221,13 +253,36 @@ class FfiEngineGateway
   }
 
   BridgeResultDto _applyResponse(String raw) {
+    try {
+      return _applyResponseUnchecked(raw);
+    } on ContractDecodeException {
+      return _contractDecodeFailure();
+    } on FormatException {
+      return _contractDecodeFailure();
+    } on TypeError {
+      return _contractDecodeFailure();
+    }
+  }
+
+  BridgeResultDto _applyResponseUnchecked(String raw) {
     final value = jsonDecode(raw);
-    if (value is! Map<String, dynamic>) return _unavailable();
+    if (value is! Map<String, dynamic>) {
+      throw const ContractDecodeException('Bridge response is not an object');
+    }
     final status = value['status'] as String?;
     final snapshot = value['snapshot'];
     if (snapshot is Map) {
-      final decoded = _decodeSnapshot(jsonEncode(snapshot));
-      if (decoded != null) _snapshots.value = decoded;
+      try {
+        _snapshots.value = _decodeSnapshot(jsonEncode(snapshot));
+      } on ContractDecodeException {
+        return const BridgeResultDto(
+          ok: false,
+          kind: 'error:contract.decode.failed',
+          errorCode: 'CONTRACT_DECODE_FAILED',
+          messageKey: 'contract.decode.failed',
+          retryable: false,
+        );
+      }
     }
     if (status == 'succeeded') {
       return BridgeResultDto(
@@ -250,6 +305,14 @@ class FfiEngineGateway
       inviteUri: value['inviteUri'] as String?,
     );
   }
+
+  BridgeResultDto _contractDecodeFailure() => const BridgeResultDto(
+    ok: false,
+    kind: 'error:contract.decode.failed',
+    errorCode: 'CONTRACT_DECODE_FAILED',
+    messageKey: 'contract.decode.failed',
+    retryable: false,
+  );
 
   ConversationPageDto _decodePage(String raw) =>
       decodeConversationPageResponse(raw);
@@ -625,15 +688,19 @@ class _WorkerBindings {
   }
 }
 
-AppSnapshotDto? _decodeSnapshot(String raw) {
+AppSnapshotDto _decodeSnapshot(String raw) {
   try {
     final value = jsonDecode(raw);
-    if (value is! Map<String, dynamic>) return null;
+    if (value is! Map<String, dynamic>) {
+      throw const ContractDecodeException('Snapshot is not a contract object');
+    }
     return AppSnapshotDto.fromJson(value);
-  } on FormatException {
-    return null;
-  } on TypeError {
-    return null;
+  } on ContractDecodeException {
+    rethrow;
+  } on FormatException catch (error) {
+    throw ContractDecodeException('Invalid snapshot: ${error.message}');
+  } on TypeError catch (error) {
+    throw ContractDecodeException('Invalid snapshot field type: $error');
   }
 }
 

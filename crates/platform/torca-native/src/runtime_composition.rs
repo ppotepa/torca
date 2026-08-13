@@ -40,8 +40,13 @@ struct TorRelayProbe {
 
 impl RelayProbe for TorRelayProbe {
     fn probe(&self) -> Result<(), ErrorCode> {
+        // The probe and pairing share one durable transport.  In particular a
+        // fresh profile starts with no stream at all: observing `Disconnected`
+        // forever would prevent the first real relay connection from ever
+        // being attempted. `relay_info` serialises that initial reconnect and
+        // retries one broken stream before returning the authoritative result.
         self.transport
-            .try_relay_info(Duration::from_secs(2))
+            .relay_info(Duration::from_secs(2))
             .map(|info| {
                 if let Ok(mut current) = self.info.lock() {
                     *current = Some(RelayServiceInfo {

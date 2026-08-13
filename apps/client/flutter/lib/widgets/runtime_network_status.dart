@@ -390,7 +390,7 @@ class _EthernetLed extends StatelessWidget {
       width: 5,
       height: 9,
       decoration: BoxDecoration(
-        color: active ? color : context.semanticColors.inactiveIndicator,
+                    color: active ? color : context.semanticColors.activityIdle,
         borderRadius: BorderRadius.circular(
           context.torcaTokens.terminal ? 0 : 1,
         ),

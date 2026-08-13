@@ -49,6 +49,10 @@ fn main() {
         eprintln!("missing contract projection {}: {error}", expected_path.display());
         std::process::exit(1);
     });
+    validate_dart_projection(&template).unwrap_or_else(|error| {
+        eprintln!("canonical contract projection is incomplete: {error}");
+        std::process::exit(1);
+    });
     let expected =
         render_dart_template(&template, contract_version.unwrap()).unwrap_or_else(|error| {
             eprintln!("{error}: {}", expected_path.display());
@@ -146,6 +150,28 @@ fn render_dart_template(template: &str, contract_version: u64) -> Result<String,
         ));
     }
     Ok(template.replace(CONTRACT_VERSION_MARKER, &contract_version.to_string()))
+}
+
+/// Keep the hand-authored projection from silently regressing to raw wire
+/// strings. The generator owns this structural guard even though the enum
+/// bodies remain in the canonical template for now; a missing typed surface
+/// is a contract drift, not a harmless formatting change.
+fn validate_dart_projection(template: &str) -> Result<(), String> {
+    for marker in [
+        "enum PairingRole",
+        "enum PairingState",
+        "enum ContactStatus",
+        "enum MessageStatus",
+        "enum AttachmentStatus",
+        "typedState",
+        "pairingStateFromWire",
+        "attachmentStatusFromWire",
+    ] {
+        if !template.contains(marker) {
+            return Err(format!("missing typed projection marker `{marker}`"));
+        }
+    }
+    Ok(())
 }
 
 fn render_release_manifest(manifest: &str, contract_version: u64) -> Result<String, String> {

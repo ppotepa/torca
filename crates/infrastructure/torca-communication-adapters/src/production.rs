@@ -190,6 +190,7 @@ where
         export_messages,
         export_metadata,
         export_cache,
+        staging_root.to_path_buf(),
         ManagedPeerSecrets::new(RustCryptoProvider, inputs.export_secret_store),
     );
 

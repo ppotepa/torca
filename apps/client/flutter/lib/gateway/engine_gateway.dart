@@ -14,17 +14,30 @@ class RuntimeEventDto {
     required this.body,
   });
 
-  factory RuntimeEventDto.fromJson(Map<String, dynamic> value) =>
-      RuntimeEventDto(
-        cursor: (value['cursor'] as num?)?.toInt() ?? 0,
-        eventId: value['eventId'] as String? ?? '',
-        kind: value['kind'] as String? ?? '',
-        conversationId: value['conversationId'] as String? ?? '',
-        contactDisplayName: value['contactDisplayName'] as String? ?? '',
-        createdAtMs: (value['createdAtMs'] as num?)?.toInt() ?? 0,
-        title: value['title'] as String? ?? 'Torca',
-        body: value['body'] as String? ?? '',
-      );
+  factory RuntimeEventDto.fromJson(Map<String, dynamic> value) {
+    final eventId = value['eventId'];
+    final kind = value['kind'];
+    final createdAt = value['createdAtMs'];
+    if (eventId is! String || eventId.isEmpty) {
+      throw const FormatException('Runtime event is missing eventId');
+    }
+    if (kind is! String || kind.isEmpty) {
+      throw const FormatException('Runtime event is missing kind');
+    }
+    if (createdAt is! num) {
+      throw const FormatException('Runtime event is missing createdAtMs');
+    }
+    return RuntimeEventDto(
+      cursor: (value['cursor'] as num?)?.toInt() ?? 0,
+      eventId: eventId,
+      kind: kind,
+      conversationId: value['conversationId'] as String? ?? '',
+      contactDisplayName: value['contactDisplayName'] as String? ?? '',
+      createdAtMs: createdAt.toInt(),
+      title: value['title'] as String? ?? 'Torca',
+      body: value['body'] as String? ?? '',
+    );
+  }
 
   final int cursor;
   final String eventId;
@@ -64,24 +77,38 @@ class ClientBuildInfo {
     this.capabilities = const ClientCapabilitiesDto(),
   });
 
-  factory ClientBuildInfo.fromJson(Map<String, dynamic> value) =>
-      ClientBuildInfo(
-        productVersion: value['productVersion'] as String? ?? 'development',
-        buildId: value['buildId'] as String? ?? 'dev',
-        sourceCommit: value['sourceCommit'] as String? ?? 'working-tree',
-        sourceFingerprint:
-            value['sourceFingerprint'] as String? ?? 'development',
-        relayEndpointHash: value['relayEndpointHash'] as String? ?? 'unknown',
-        targetPlatform: value['targetPlatform'] as String? ?? 'unknown',
-        targetArchitecture: value['targetArchitecture'] as String? ?? 'unknown',
-        contractSchema: value['contractSchema'] as int? ?? 0,
-        wireVersion: value['wireVersion'] as int? ?? 0,
-        capabilities: ClientCapabilitiesDto.fromJson(
-          value['capabilities'] is Map<String, dynamic>
-              ? value['capabilities'] as Map<String, dynamic>
-              : const <String, dynamic>{},
-        ),
-      );
+  factory ClientBuildInfo.fromJson(Map<String, dynamic> value) {
+    String requiredString(String key) {
+      final field = value[key];
+      if (field is String && field.isNotEmpty) return field;
+      throw FormatException('Runtime metadata is missing $key');
+    }
+
+    int requiredInt(String key) {
+      final field = value[key];
+      if (field is num) return field.toInt();
+      throw FormatException('Runtime metadata is missing $key');
+    }
+
+    final capabilities = value['capabilities'];
+    if (capabilities != null && capabilities is! Map<String, dynamic>) {
+      throw const FormatException('Runtime metadata capabilities are invalid');
+    }
+    return ClientBuildInfo(
+      productVersion: requiredString('productVersion'),
+      buildId: requiredString('buildId'),
+      sourceCommit: requiredString('sourceCommit'),
+      sourceFingerprint: requiredString('sourceFingerprint'),
+      relayEndpointHash: requiredString('relayEndpointHash'),
+      targetPlatform: requiredString('targetPlatform'),
+      targetArchitecture: requiredString('targetArchitecture'),
+      contractSchema: requiredInt('contractSchema'),
+      wireVersion: requiredInt('wireVersion'),
+      capabilities: ClientCapabilitiesDto.fromJson(
+        capabilities as Map<String, dynamic>? ?? const <String, dynamic>{},
+      ),
+    );
+  }
 
   final String productVersion;
   final String buildId;

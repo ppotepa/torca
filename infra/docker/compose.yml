@@ -19,6 +19,7 @@ services:
       # reachability. It is deliberately not Docker's liveness condition:
       # the broker must stay running and recover while Tor warms up.
       TORCA_RELAY_READY_FILE: /var/lib/torca/relay_ready.txt
+      TORCA_RELAY_STATUS_FILE: /var/lib/torca/relay_status.json
       # Must exceed the application's 30-second adaptive pairing poll delay.
       # It bounds an idle broker stream without manufacturing reconnect storms.
       TORCA_RELAY_IO_TIMEOUT_MS: "45000"

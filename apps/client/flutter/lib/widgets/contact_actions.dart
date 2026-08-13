@@ -138,7 +138,7 @@ class ContactActions {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            BridgeErrorPresenter.message(result, fallback: fallback),
+            BridgeErrorPresenter.localized(context, result, fallback: fallback),
           ),
         ),
       );

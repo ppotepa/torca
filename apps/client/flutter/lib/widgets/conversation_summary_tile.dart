@@ -48,7 +48,9 @@ class ConversationSummaryTile extends StatelessWidget {
         ),
         title: Row(
           children: <Widget>[
-            Expanded(child: Text(contact?.displayName ?? 'Contact')),
+            Expanded(
+              child: Text(contact?.displayName ?? context.strings.contactLabel),
+            ),
             if (conversation.lastActivityAtMs > 0)
               Text(
                 _timeLabel(conversation.lastActivityAtMs),

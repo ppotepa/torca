@@ -1,6 +1,51 @@
+import 'package:flutter/widgets.dart';
+
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 
 abstract final class BridgeErrorPresenter {
+  /// Returns a localized user-facing message without exposing the native
+  /// diagnostic text. The non-localized helper below remains for controllers
+  /// that do not own a BuildContext (they should pass a localized fallback
+  /// when presenting the result).
+  static String localized(
+    BuildContext context,
+    BridgeResultDto result, {
+    String? fallback,
+  }) {
+    if (result.ok) return '';
+    final strings = TorcaStrings.of(context);
+    final code = (result.errorCode ?? result.messageKey ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll('.', '_');
+    final message = switch (code) {
+      'relay_not_ready' => strings.relayNotReady,
+      'relay_degraded' => strings.relayDegraded,
+      'profile_not_ready' => strings.profileNotReady,
+      'identity_changed' => strings.identityChanged,
+      'pairing_expired' => strings.pairingExpired,
+      'already_exists' => strings.itemAlreadyExists,
+      'not_found' => strings.itemNotFound,
+      'invalid_input' => strings.invalidInput,
+      'storage_failure' => strings.storageFailure,
+      'attachment_failure' => strings.attachmentOperationFailed,
+      'attachment_ack_timeout',
+      'communication_attachment_ack_timeout' => strings.attachmentAckTimeout,
+      'attachment_peer_unavailable',
+      'communication_attachment_peer_unavailable' =>
+        strings.attachmentPeerUnavailable,
+      'attachment_integrity_failed',
+      'communication_attachment_integrity_failed' =>
+        strings.attachmentIntegrityFailed,
+      'network_unavailable' => strings.networkUnavailable,
+      'runtime_unavailable' => strings.runtimeUnavailable,
+      'contract_decode_failed' => strings.contractDecodeFailed,
+      _ => fallback ?? strings.operationFailed,
+    };
+    return message;
+  }
+
   static String message(
     BridgeResultDto result, {
     String fallback = 'The operation could not be completed.',
@@ -55,15 +100,16 @@ abstract final class BridgeErrorPresenter {
         'The secure Tor peer connection is currently unavailable.',
       'runtime_unavailable' =>
         'The secure Torca runtime is currently unavailable.',
+      'contract_decode_failed' =>
+        'The installed client and native runtime use incompatible data. Rebuild and redeploy both clients.',
       'operation_conflict' =>
         'The operation is not valid in the current state.',
       _ => null,
     };
     if (typed != null) return typed;
-    final explicit = result.error?.trim();
-    if (explicit != null && explicit.isNotEmpty && !explicit.contains('.')) {
-      return explicit;
-    }
+    // `error` is diagnostic transport data, not a user-facing API. Showing
+    // it here leaked backend wording and made the UI depend on error text.
+    // New codes must be mapped above (or localized through messageKey).
     return fallback;
   }
 }

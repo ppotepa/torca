@@ -196,6 +196,109 @@ enum PendingOperationDependency {
   unknown,
 }
 
+// Generated wire adapters. Keep protocol spellings in one place so a Dart
+// enum rename cannot silently change the external contract.
+extension PairingRoleWire on PairingRole {
+  String get wireValue => switch (this) {
+    PairingRole.creator => 'creator',
+    PairingRole.joiner => 'joiner',
+    PairingRole.unknown => 'unknown',
+  };
+}
+PairingRole pairingRoleFromWire(String value) => switch (value.toLowerCase()) {
+  'creator' => PairingRole.creator,
+  'joiner' => PairingRole.joiner,
+  _ => PairingRole.unknown,
+};
+
+extension PairingStateWire on PairingState {
+  String get wireValue => switch (this) {
+    PairingState.open => 'open',
+    PairingState.peerJoined => 'peer_joined',
+    PairingState.awaitingApproval => 'awaiting_approval',
+    PairingState.approved => 'approved',
+    PairingState.completed => 'completed',
+    PairingState.rejected => 'rejected',
+    PairingState.cancelled => 'cancelled',
+    PairingState.expired => 'expired',
+    PairingState.unknown => 'unknown',
+  };
+}
+PairingState pairingStateFromWire(String value) => switch (
+  value.toLowerCase().replaceAll('-', '_'),
+) {
+  'open' => PairingState.open,
+  'peer_joined' => PairingState.peerJoined,
+  'awaiting_approval' => PairingState.awaitingApproval,
+  'approved' => PairingState.approved,
+  'completed' => PairingState.completed,
+  'rejected' => PairingState.rejected,
+  'cancelled' => PairingState.cancelled,
+  'expired' => PairingState.expired,
+  _ => PairingState.unknown,
+};
+
+extension ContactStatusWire on ContactStatus {
+  String get wireValue => switch (this) {
+    ContactStatus.active => 'active',
+    ContactStatus.blocked => 'blocked',
+    ContactStatus.removed => 'removed',
+    ContactStatus.unknown => 'unknown',
+  };
+}
+ContactStatus contactStatusFromWire(String value) => switch (value.toLowerCase()) {
+  'active' => ContactStatus.active,
+  'blocked' => ContactStatus.blocked,
+  'removed' => ContactStatus.removed,
+  _ => ContactStatus.unknown,
+};
+
+extension MessageStatusWire on MessageStatus {
+  String get wireValue => switch (this) {
+    MessageStatus.queued => 'queued',
+    MessageStatus.sending => 'sending',
+    MessageStatus.sent => 'sent',
+    MessageStatus.delivered => 'delivered',
+    MessageStatus.read => 'read',
+    MessageStatus.failed => 'failed',
+    MessageStatus.cancelled => 'cancelled',
+    MessageStatus.unknown => 'unknown',
+  };
+}
+MessageStatus messageStatusFromWire(String value) => switch (value.toLowerCase()) {
+  'queued' => MessageStatus.queued,
+  'sending' => MessageStatus.sending,
+  'sent' => MessageStatus.sent,
+  'delivered' => MessageStatus.delivered,
+  'read' => MessageStatus.read,
+  'failed' => MessageStatus.failed,
+  'cancelled' => MessageStatus.cancelled,
+  _ => MessageStatus.unknown,
+};
+
+extension AttachmentStatusWire on AttachmentStatus {
+  String get wireValue => switch (this) {
+    AttachmentStatus.prepared => 'prepared',
+    AttachmentStatus.encrypting => 'encrypting',
+    AttachmentStatus.queued => 'queued',
+    AttachmentStatus.transferring => 'transferring',
+    AttachmentStatus.available => 'available',
+    AttachmentStatus.failed => 'failed',
+    AttachmentStatus.cancelled => 'cancelled',
+    AttachmentStatus.unknown => 'unknown',
+  };
+}
+AttachmentStatus attachmentStatusFromWire(String value) => switch (value.toLowerCase()) {
+  'prepared' => AttachmentStatus.prepared,
+  'encrypting' => AttachmentStatus.encrypting,
+  'queued' => AttachmentStatus.queued,
+  'transferring' => AttachmentStatus.transferring,
+  'available' => AttachmentStatus.available,
+  'failed' => AttachmentStatus.failed,
+  'cancelled' => AttachmentStatus.cancelled,
+  _ => AttachmentStatus.unknown,
+};
+
 class PairingDto {
   const PairingDto({
     required this.id,
@@ -228,23 +331,9 @@ class PairingDto {
   final bool localApproved, remoteApproved;
   final String? remoteIdentityId, remoteDisplayName, remoteFingerprint;
 
-  PairingRole get typedRole => switch (role) {
-    'creator' => PairingRole.creator,
-    'joiner' => PairingRole.joiner,
-    _ => PairingRole.unknown,
-  };
+  PairingRole get typedRole => pairingRoleFromWire(role);
 
-  PairingState get typedState => switch (state) {
-    'open' => PairingState.open,
-    'peerjoined' => PairingState.peerJoined,
-    'awaitingapproval' => PairingState.awaitingApproval,
-    'approved' => PairingState.approved,
-    'completed' => PairingState.completed,
-    'rejected' => PairingState.rejected,
-    'cancelled' => PairingState.cancelled,
-    'expired' => PairingState.expired,
-    _ => PairingState.unknown,
-  };
+  PairingState get typedState => pairingStateFromWire(state);
 }
 
 class PeerHealthDto {

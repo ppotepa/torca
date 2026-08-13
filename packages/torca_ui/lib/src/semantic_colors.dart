@@ -6,7 +6,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     required this.connectionReady,
     required this.connectionConnecting,
     required this.connectionOffline,
+    required this.success,
     required this.warning,
+    required this.error,
     required this.destructive,
     required this.messageInbound,
     required this.messageOutbound,
@@ -15,13 +17,16 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     required this.separator,
     required this.activityTransmit,
     required this.activityReceive,
+    required this.activityIdle,
     required this.inactiveIndicator,
   });
 
   final Color connectionReady;
   final Color connectionConnecting;
   final Color connectionOffline;
+  final Color success;
   final Color warning;
+  final Color error;
   final Color destructive;
   final Color messageInbound;
   final Color messageOutbound;
@@ -30,6 +35,7 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
   final Color separator;
   final Color activityTransmit;
   final Color activityReceive;
+  final Color activityIdle;
   final Color inactiveIndicator;
 
   factory TorcaSemanticColors.fromScheme(ColorScheme scheme) =>
@@ -37,7 +43,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
         connectionReady: scheme.primary,
         connectionConnecting: scheme.tertiary,
         connectionOffline: scheme.outline,
+        success: scheme.primary,
         warning: scheme.tertiary,
+        error: scheme.error,
         destructive: scheme.error,
         messageInbound: scheme.surfaceContainerHighest,
         messageOutbound: scheme.primaryContainer,
@@ -46,6 +54,7 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
         separator: scheme.outlineVariant,
         activityTransmit: scheme.primary,
         activityReceive: scheme.tertiary,
+        activityIdle: scheme.surfaceContainerHighest,
         inactiveIndicator: scheme.surfaceContainerHighest,
       );
 
@@ -54,7 +63,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     Color? connectionReady,
     Color? connectionConnecting,
     Color? connectionOffline,
+    Color? success,
     Color? warning,
+    Color? error,
     Color? destructive,
     Color? messageInbound,
     Color? messageOutbound,
@@ -63,12 +74,15 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     Color? separator,
     Color? activityTransmit,
     Color? activityReceive,
+    Color? activityIdle,
     Color? inactiveIndicator,
   }) => TorcaSemanticColors(
     connectionReady: connectionReady ?? this.connectionReady,
     connectionConnecting: connectionConnecting ?? this.connectionConnecting,
     connectionOffline: connectionOffline ?? this.connectionOffline,
+    success: success ?? this.success,
     warning: warning ?? this.warning,
+    error: error ?? this.error,
     destructive: destructive ?? this.destructive,
     messageInbound: messageInbound ?? this.messageInbound,
     messageOutbound: messageOutbound ?? this.messageOutbound,
@@ -77,6 +91,7 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
     separator: separator ?? this.separator,
     activityTransmit: activityTransmit ?? this.activityTransmit,
     activityReceive: activityReceive ?? this.activityReceive,
+    activityIdle: activityIdle ?? this.activityIdle,
     inactiveIndicator: inactiveIndicator ?? this.inactiveIndicator,
   );
 
@@ -91,7 +106,9 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
         other.connectionConnecting,
       ),
       connectionOffline: mix(connectionOffline, other.connectionOffline),
+      success: mix(success, other.success),
       warning: mix(warning, other.warning),
+      error: mix(error, other.error),
       destructive: mix(destructive, other.destructive),
       messageInbound: mix(messageInbound, other.messageInbound),
       messageOutbound: mix(messageOutbound, other.messageOutbound),
@@ -100,6 +117,7 @@ class TorcaSemanticColors extends ThemeExtension<TorcaSemanticColors> {
       separator: mix(separator, other.separator),
       activityTransmit: mix(activityTransmit, other.activityTransmit),
       activityReceive: mix(activityReceive, other.activityReceive),
+      activityIdle: mix(activityIdle, other.activityIdle),
       inactiveIndicator: mix(inactiveIndicator, other.inactiveIndicator),
     );
   }

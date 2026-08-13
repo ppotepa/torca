@@ -10,6 +10,11 @@ use torca_tor::{OnionServiceHealth, TorService};
 
 const TOR_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(180);
 const ONION_PUBLISH_TIMEOUT: Duration = Duration::from_secs(60);
+const ONION_E2E_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+// A cold descriptor publication must fail fast enough for the durable worker
+// to recreate the service.  Without this bound `Publishing` could leave the
+// relay health marker absent forever while deploy waited for its outer timeout.
+const ONION_REACHABILITY_TIMEOUT: Duration = Duration::from_secs(180);
 const ONION_DEGRADED_GRACE: Duration = Duration::from_secs(75);
 const ONION_RETRY_BACKOFF: [Duration; 4] = [
     Duration::from_secs(5),
@@ -44,8 +49,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ready_file = std::env::var_os("TORCA_RELAY_READY_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| endpoint_file.with_file_name("relay_ready.txt"));
+    let status_file = std::env::var_os("TORCA_RELAY_STATUS_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| endpoint_file.with_file_name("relay_status.json"));
     clear_file(&endpoint_file);
     clear_file(&ready_file);
+    clear_file(&status_file);
     let local_target = SocketAddr::from(([127, 0, 0, 1], bind.port()));
 
     // The local broker is useful and healthy before its public onion address
@@ -55,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // public reachability and let this durable worker recover in place.
     let _onion_worker =
         thread::Builder::new().name("torca-relay-onion".into()).spawn(move || {
-            publish_onion_forever(state_root, local_target, endpoint_file, ready_file);
+            publish_onion_forever(state_root, local_target, endpoint_file, ready_file, status_file);
         })?;
     server.run()?;
     Ok(())
@@ -66,11 +75,13 @@ fn publish_onion_forever(
     local_target: SocketAddr,
     endpoint_file: PathBuf,
     ready_file: PathBuf,
+    status_file: PathBuf,
 ) {
     let mut failures = 0_u32;
     loop {
         clear_file(&endpoint_file);
         clear_file(&ready_file);
+        clear_file(&status_file);
         eprintln!("torca-relay: bootstrapping in-process Arti backend");
         let attempt = (|| -> Result<(), String> {
             let tor = TorService::bootstrap(state_root.clone(), TOR_BOOTSTRAP_TIMEOUT)
@@ -79,13 +90,15 @@ fn publish_onion_forever(
                 .publish_onion_service(local_target, ONION_PUBLISH_TIMEOUT)
                 .map_err(|error| error.to_string())?;
             write_endpoint(&endpoint_file, &endpoint).map_err(|error| error.to_string())?;
+            write_status(&status_file, &endpoint, "publishing", false, 0);
             eprintln!("torca-relay: onion allocated at {endpoint}:443; awaiting reachability");
-            wait_for_onion_reachability(&tor, &ready_file, &endpoint)
+            wait_for_onion_reachability(&tor, &ready_file, &status_file, &endpoint)
         })();
         match attempt {
             Ok(()) => failures = 0,
             Err(error) => {
                 clear_file(&ready_file);
+                clear_file(&status_file);
                 failures = failures.saturating_add(1);
                 let index = usize::try_from(failures.saturating_sub(1))
                     .unwrap_or(usize::MAX)
@@ -104,12 +117,14 @@ fn publish_onion_forever(
 fn wait_for_onion_reachability(
     tor: &TorService,
     ready_file: &PathBuf,
+    status_file: &PathBuf,
     endpoint: &str,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
     let mut last_reported = None;
     let mut degraded_since = None;
     let mut was_reachable = false;
+    let mut e2e_verified = false;
     loop {
         let health = tor.onion_service_health();
         let state_changed = last_reported != Some(health);
@@ -119,11 +134,54 @@ fn wait_for_onion_reachability(
                 started.elapsed().as_secs()
             );
             last_reported = Some(health);
+            write_status(
+                status_file,
+                endpoint,
+                onion_health_state(health),
+                e2e_verified,
+                started.elapsed().as_millis(),
+            );
+        }
+        if !e2e_verified
+            && started.elapsed() >= ONION_REACHABILITY_TIMEOUT
+            && matches!(
+                health,
+                OnionServiceHealth::Publishing
+                    | OnionServiceHealth::Reachable
+                    | OnionServiceHealth::Degraded
+            )
+        {
+            clear_file(ready_file);
+            return Err(format!(
+                "onion endpoint did not pass E2E health within {} seconds",
+                ONION_REACHABILITY_TIMEOUT.as_secs()
+            ));
         }
         match health {
             OnionServiceHealth::Reachable => {
                 degraded_since = None;
                 was_reachable = true;
+                if !e2e_verified {
+                    match verify_onion_endpoint(tor, endpoint) {
+                        Ok(()) => {
+                            e2e_verified = true;
+                            write_status(
+                                status_file,
+                                endpoint,
+                                "reachable",
+                                true,
+                                started.elapsed().as_millis(),
+                            );
+                            eprintln!("torca-relay: onion endpoint E2E probe passed");
+                        }
+                        Err(error) => {
+                            clear_file(ready_file);
+                            eprintln!("torca-relay: onion endpoint E2E probe pending: {error}");
+                            thread::sleep(Duration::from_secs(2));
+                            continue;
+                        }
+                    }
+                }
                 if state_changed || !ready_file.exists() {
                     write_endpoint(ready_file, endpoint).map_err(|error| error.to_string())?;
                     eprintln!("torca-relay: onion reachable at {endpoint}:443");
@@ -162,11 +220,77 @@ fn wait_for_onion_reachability(
     }
 }
 
+fn onion_health_state(health: OnionServiceHealth) -> &'static str {
+    match health {
+        OnionServiceHealth::Publishing => "publishing",
+        OnionServiceHealth::Reachable => "reachable",
+        OnionServiceHealth::Degraded => "degraded",
+        OnionServiceHealth::Failed => "failed",
+        OnionServiceHealth::Stopped => "stopped",
+    }
+}
+
+/// Proves the same path that clients use: this Arti instance dials the newly
+/// published onion address and receives a relay protocol Health response.
+/// The publication health flag alone only describes Arti's descriptor state;
+/// it does not prove that the relay listener is reachable through the onion.
+fn verify_onion_endpoint(tor: &TorService, endpoint: &str) -> Result<(), String> {
+    let mut stream = tor
+        .connect_onion_with_timeout(endpoint, 443, ONION_E2E_PROBE_TIMEOUT)
+        .map_err(|error| format!("connect onion endpoint for E2E probe: {error}"))?;
+    stream
+        .set_read_timeout(Some(ONION_E2E_PROBE_TIMEOUT))
+        .map_err(|error| format!("set E2E probe read timeout: {error}"))?;
+    stream
+        .set_write_timeout(Some(ONION_E2E_PROBE_TIMEOUT))
+        .map_err(|error| format!("set E2E probe write timeout: {error}"))?;
+    stream
+        .write_all(&RelayCodec::encode_request(&RelayRequest::Health).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("write E2E probe: {error}"))?;
+    let mut header = [0_u8; RELAY_HEADER_LEN];
+    stream
+        .read_exact(&mut header)
+        .map_err(|error| format!("read E2E probe header: {error}"))?;
+    let frame_len = RelayCodec::frame_len_from_header(&header).map_err(|error| error.to_string())?;
+    let mut frame = Vec::with_capacity(frame_len);
+    frame.extend_from_slice(&header);
+    frame.resize(frame_len, 0);
+    stream
+        .read_exact(&mut frame[RELAY_HEADER_LEN..])
+        .map_err(|error| format!("read E2E probe response: {error}"))?;
+    match RelayCodec::decode_response(&frame).map_err(|error| error.to_string())? {
+        RelayResponse::Healthy => Ok(()),
+        response => Err(format!("unexpected E2E probe response: {response:?}")),
+    }
+}
+
 fn write_endpoint(path: &PathBuf, endpoint: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, format!("{endpoint}:443\n"))
+}
+
+fn write_status(
+    path: &PathBuf,
+    endpoint: &str,
+    state: &str,
+    e2e_verified: bool,
+    elapsed_ms: u128,
+) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Endpoint is validated before publication and therefore cannot contain
+    // JSON control characters. Keep this file dependency-free for the small
+    // relay image while still exposing one machine-readable readiness source.
+    let body = format!(
+        "{{\"schema\":1,\"endpoint\":\"{endpoint}:443\",\"state\":\"{state}\",\"e2eVerified\":{e2e_verified},\"elapsedMs\":{elapsed_ms}}}\n"
+    );
+    let temporary = path.with_extension("json.tmp");
+    if std::fs::write(&temporary, body).is_ok() {
+        let _ = std::fs::rename(temporary, path);
+    }
 }
 
 fn clear_file(path: &PathBuf) {

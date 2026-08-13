@@ -15,7 +15,23 @@ pub fn collect_runtime(
     runner: &dyn CommandRunner,
     android_devices: &[String],
 ) -> DiagnosticsReport {
-    let _ = std::fs::create_dir_all(&paths.relay_logs);
+    // Every collection is an immutable incident snapshot.  Reusing one
+    // `logs/` directory mixed old Android/logcat files with a new relay run,
+    // which made a failure impossible to diagnose reliably.
+    let incident_root = paths.new_incident_dir();
+    let _ = std::fs::create_dir_all(&incident_root);
+    let _ = std::fs::create_dir_all(incident_root.join("relay"));
+    let _ = std::fs::create_dir_all(incident_root.join("relay/state"));
+    write_manifest(paths, &incident_root, android_devices);
+    for (source, name) in [
+        (&paths.relay_endpoint, "relay_endpoint.txt"),
+        (&paths.relay_ready, "relay_ready.txt"),
+        (&paths.relay_status, "relay_status.json"),
+    ] {
+        if source.is_file() {
+            let _ = fs::copy(source, incident_root.join("relay/state").join(name));
+        }
+    }
     if paths.docker_compose.is_file() {
         if let Ok(output) = runner.run(&CommandSpec {
             program: "docker".into(),
@@ -33,12 +49,13 @@ pub fn collect_runtime(
             timeout: Duration::from_secs(60),
             environment: std::collections::BTreeMap::new(),
         }) {
-            let _ = std::fs::write(paths.relay_logs.join("relay.log"), output.text);
+            let _ = std::fs::write(incident_root.join("relay/relay.log"), output.text);
         }
     }
-    collect_windows_native_logs(paths);
+    collect_windows_native_logs(&incident_root);
     for device in android_devices {
-        collect_android_native_logs(paths, runner, device);
+        let _ = std::fs::create_dir_all(incident_root.join(format!("android-{device}")));
+        collect_android_native_logs(&incident_root, paths, runner, device);
         let mut arguments = vec!["-s".into(), device.clone(), "logcat".into(), "-d".into()];
         if let Some(process_id) = android_process_id(runner, paths, device) {
             arguments.extend(["--pid".into(), process_id]);
@@ -52,23 +69,28 @@ pub fn collect_runtime(
             environment: std::collections::BTreeMap::new(),
         }) {
             let _ =
-                std::fs::write(paths.relay_logs.join(format!("android-{device}.log")), output.text);
+                std::fs::write(incident_root.join(format!("android-{device}/logcat.log")), output.text);
         }
     }
-    DiagnosticsReport::collect(&paths.relay_logs)
+    DiagnosticsReport::collect(incident_root)
 }
 
 const ANDROID_PACKAGE: &str = "com.torca.torca_app";
 const ANDROID_LOG_ROOT: &str = "/sdcard/Android/data/com.torca.torca_app/files/torca/logs";
 
-fn collect_windows_native_logs(paths: &RuntimePaths) {
+fn collect_windows_native_logs(incident_root: &Path) {
     let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") else { return };
     let source = PathBuf::from(local_app_data).join("Torca").join("logs");
-    copy_tree(&source, &paths.relay_logs.join("windows-native"));
+    copy_tree(&source, &incident_root.join("windows/native"));
 }
 
-fn collect_android_native_logs(paths: &RuntimePaths, runner: &dyn CommandRunner, device: &str) {
-    let target = paths.relay_logs.join(format!("android-{device}")).join("native");
+fn collect_android_native_logs(
+    incident_root: &Path,
+    paths: &RuntimePaths,
+    runner: &dyn CommandRunner,
+    device: &str,
+) {
+    let target = incident_root.join(format!("android-{device}")).join("native");
     let listing = runner.run(&CommandSpec {
         program: "adb".into(),
         arguments: vec![
@@ -117,6 +139,28 @@ fn collect_android_native_logs(paths: &RuntimePaths, runner: &dyn CommandRunner,
     }
 }
 
+fn write_manifest(paths: &RuntimePaths, incident_root: &Path, android_devices: &[String]) {
+    let manifest = serde_json::json!({
+        "schema": 1,
+        "createdAtMs": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+        "repoRoot": paths.repo_root.display().to_string(),
+        "relayEndpoint": paths.endpoint(),
+        "relayStatus": paths.relay_status.display().to_string(),
+        "androidDevices": android_devices,
+    });
+    let _ = fs::write(
+        incident_root.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap_or_default(),
+    );
+    let deployment_state = paths.runtime_root.join("deploy/current.json");
+    if deployment_state.is_file() {
+        let _ = fs::copy(deployment_state, incident_root.join("deploy-state.json"));
+    }
+}
+
 fn android_process_id(
     runner: &dyn CommandRunner,
     paths: &RuntimePaths,
@@ -151,6 +195,15 @@ impl DiagnosticsReport {
 
     pub fn summary(&self) -> String {
         format!("{} diagnostic files under {}", self.files.len(), self.root.display())
+    }
+
+    /// A manifest proves that collection started, not that it actually
+    /// captured an incident.  Callers must use this for success/failure.
+    pub fn has_payload(&self) -> bool {
+        self.files.iter().any(|path| {
+            path.file_name().is_some_and(|name| name != std::ffi::OsStr::new("manifest.json"))
+                && fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+        })
     }
 }
 

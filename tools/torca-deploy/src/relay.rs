@@ -8,8 +8,12 @@ use crate::domain::{BuildPolicy, OnionPolicy};
 use crate::paths::{PathError, RuntimePaths};
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
-const REQUIRED_HEALTHY_CHECKS: u8 = 3;
+// Deployment only needs a live local relay process and a valid endpoint for
+// the newly built clients. Onion publication is deliberately asynchronous:
+// waiting for it here delayed installation/launch for minutes even though the
+// application can bootstrap its local profile without it.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(45);
+const REQUIRED_HEALTHY_CHECKS: u8 = 2;
 
 #[derive(Clone, Debug)]
 pub struct RelayStatus {
@@ -44,6 +48,19 @@ impl<'a> RelayController<'a> {
         ) || should_build;
         if destructive {
             self.compose(&["down", "--timeout", "60", "--remove-orphans"])?;
+            // Never let a previous endpoint/ready marker satisfy the next
+            // warm-up loop.  The relay writes both files asynchronously while
+            // publishing its onion; retaining them made a rotated identity
+            // look ready before the new descriptor existed.
+            for marker in [
+                &self.paths.relay_endpoint,
+                &self.paths.relay_ready,
+                &self.paths.relay_status,
+            ] {
+                if marker.exists() {
+                    fs::remove_file(marker).map_err(RelayError::Io)?;
+                }
+            }
         }
         match onion {
             OnionPolicy::RepairDirectoryCache => {
@@ -136,16 +153,20 @@ impl<'a> RelayController<'a> {
                 let onion_ready = endpoint
                     .as_deref()
                     .is_some_and(|value| relay_ready_matches(&self.paths.relay_ready, value));
-                let state = format!("container={last}, onion_ready={onion_ready}");
+                let onion_state = read_publication_state(&self.paths.relay_status)
+                    .unwrap_or_else(|| "unknown".into());
+                let state =
+                    format!("container={last}, onion_state={onion_state}, onion_ready={onion_ready}");
                 if last_reported.as_deref() != Some(state.as_str()) {
                     eprintln!("torca-deploy: relay warm-up {state}");
                     last_reported = Some(state);
                 }
                 if Instant::now() >= next_heartbeat {
                     eprintln!(
-                        "torca-deploy: relay warm-up heartbeat elapsed_s={} health={} onion_ready={}",
+                        "torca-deploy: relay warm-up heartbeat elapsed_s={} health={} onion_state={} onion_ready={}",
                         started.elapsed().as_secs(),
                         last,
+                        onion_state,
                         onion_ready
                     );
                     next_heartbeat = Instant::now() + Duration::from_secs(10);
@@ -273,6 +294,11 @@ fn relay_ready_matches(path: &Path, endpoint: &str) -> bool {
     std::fs::read_to_string(path).map(|value| value.trim() == endpoint).unwrap_or(false)
 }
 
+fn read_publication_state(path: &Path) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    value.get("state").and_then(serde_json::Value::as_str).map(str::to_owned)
+}
+
 fn startup_gate_passed(consecutive_healthy: &mut u8, protocol_healthy: bool) -> bool {
     if protocol_healthy {
         *consecutive_healthy = consecutive_healthy.saturating_add(1);
@@ -362,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_gate_requires_three_consecutive_protocol_checks() {
+    fn startup_gate_requires_two_consecutive_protocol_checks() {
         let mut healthy = 0;
         assert!(!startup_gate_passed(&mut healthy, true));
         assert!(!startup_gate_passed(&mut healthy, true));

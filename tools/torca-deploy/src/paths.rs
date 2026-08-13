@@ -9,6 +9,7 @@ pub struct RuntimePaths {
     pub stack_root: PathBuf,
     pub relay_endpoint: PathBuf,
     pub relay_ready: PathBuf,
+    pub relay_status: PathBuf,
     pub relay_logs: PathBuf,
     pub docker_compose: PathBuf,
     pub artifacts: PathBuf,
@@ -38,6 +39,7 @@ impl RuntimePaths {
             stack_root: stack_root.clone(),
             relay_endpoint: stack_root.join("relay_endpoint.txt"),
             relay_ready: stack_root.join("relay_ready.txt"),
+            relay_status: stack_root.join("relay_status.json"),
             relay_logs: runtime_root.join("logs"),
             docker_compose: repo_root.join("infra/docker/compose.yml"),
             artifacts: repo_root.join("artifacts"),
@@ -61,6 +63,14 @@ impl RuntimePaths {
             .ok()
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
+    }
+
+    pub fn new_incident_dir(&self) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        self.relay_logs.join("incidents").join(format!("{stamp}-{}", std::process::id()))
     }
 
     pub fn validate_endpoint(endpoint: &str) -> bool {

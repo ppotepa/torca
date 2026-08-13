@@ -84,21 +84,21 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'New pairing request',
+                    context.strings.newPairingRequest,
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 10),
                   _IdentitySummary(pairing: pairing ?? widget.pairing),
                   const SizedBox(height: 14),
-                  const Text(
-                    'This device joined your invitation. Review the contact details before accepting.',
+                  Text(
+                    context.strings.pairingRequestDescription,
                     textAlign: TextAlign.center,
                   ),
-                  if (_actions.error != null) ...<Widget>[
+                  if (_actions.error(context) != null) ...<Widget>[
                     const SizedBox(height: 12),
                     Text(
-                      _actions.error!,
+                      _actions.error(context)!,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.error,
@@ -164,7 +164,7 @@ class _IdentitySummary extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            name == null || name.isEmpty ? 'New device' : name,
+            name == null || name.isEmpty ? context.strings.newDevice : name,
             style: Theme.of(context).textTheme.titleLarge,
           ),
           if (pairing.remoteIdentityId != null) ...<Widget>[

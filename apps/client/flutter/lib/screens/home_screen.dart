@@ -54,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
   _HomeSection _section = _HomeSection.chats;
   double _conversationListWidth = 340;
   double _contactPanelWidth = 300;
+  final Set<String> _openingContactIds = <String>{};
 
   Future<void> _showBuildInfo(
     ClientBuildInfo? client,
@@ -473,7 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            BridgeErrorPresenter.message(result, fallback: fallbackError),
+            BridgeErrorPresenter.localized(context, result, fallback: fallbackError),
           ),
         ),
       );
@@ -524,53 +525,62 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _ensureAndOpenConversation(ContactDto contact) async {
-    ConversationDto? conversation;
-    for (final candidate in widget.gateway.snapshots.value.conversations) {
-      if (candidate.contactId == contact.id) {
-        conversation = candidate;
-        break;
-      }
-    }
-    if (conversation == null) {
-      final result = await widget.gateway.execute(
-        StartConversationCommandDto(contactIdHex: contact.id),
-      );
-      if (!result.ok) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Could not start conversation with ${contact.displayName}.',
-              ),
-            ),
-          );
+    // A row tap, its chat icon and a delayed snapshot can all request the
+    // same explicit conversation at once. Keep the UI intent idempotent too,
+    // rather than relying solely on the runtime command's idempotency.
+    if (!_openingContactIds.add(contact.id)) return;
+    try {
+      ConversationDto? conversation;
+      for (final candidate in widget.gateway.snapshots.value.conversations) {
+        if (candidate.contactId == contact.id) {
+          conversation = candidate;
+          break;
         }
+      }
+      if (conversation == null) {
+        final result = await widget.gateway.execute(
+          StartConversationCommandDto(contactIdHex: contact.id),
+        );
+        if (!result.ok) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Could not start conversation with ${contact.displayName}.',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        final conversationId = result.resourceId;
+        if (conversationId == null || conversationId.isEmpty) return;
+        conversation = ConversationDto(
+          id: conversationId,
+          contactId: contact.id,
+          status: 'active',
+        );
+      }
+      if (!mounted) return;
+      if (MediaQuery.sizeOf(context).width < _wideLayoutBreakpoint) {
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => ConversationScreen(
+              gateway: widget.gateway,
+              conversation: conversation!,
+            ),
+          ),
+        );
         return;
       }
-      final conversationId = result.resourceId;
-      if (conversationId == null || conversationId.isEmpty) return;
-      conversation = ConversationDto(
-        id: conversationId,
-        contactId: contact.id,
-        status: 'active',
-      );
+      setState(() {
+        _section = _HomeSection.chats;
+        _selectedConversationId = conversation!.id;
+        _selectedContactId = contact.id;
+      });
+    } finally {
+      _openingContactIds.remove(contact.id);
     }
-    if (MediaQuery.sizeOf(context).width < _wideLayoutBreakpoint) {
-      Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => ConversationScreen(
-            gateway: widget.gateway,
-            conversation: conversation!,
-          ),
-        ),
-      );
-      return;
-    }
-    setState(() {
-      _section = _HomeSection.chats;
-      _selectedConversationId = conversation!.id;
-      _selectedContactId = contact.id;
-    });
   }
 
   void _openJoinInvitation() =>

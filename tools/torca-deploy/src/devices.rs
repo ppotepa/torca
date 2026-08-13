@@ -43,6 +43,11 @@ impl<'a> DeviceController<'a> {
                 }
             }
         }
+        for target in targets {
+            if !result.iter().any(|device| device.target == *target) {
+                return Err(DeviceError::RequestedTargetUnavailable(*target));
+            }
+        }
         Ok(result)
     }
 }
@@ -52,4 +57,6 @@ pub enum DeviceError {
     Command(String),
     #[error("device process error: {0}")]
     Process(#[from] ProcessError),
+    #[error("requested {0} deployment target is unavailable")]
+    RequestedTargetUnavailable(Target),
 }

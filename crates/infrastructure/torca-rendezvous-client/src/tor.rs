@@ -31,11 +31,11 @@ impl SharedTorRelayTransport {
         Self { inner: Arc::new(Mutex::new(TorRelayTransport::new(client, hostname, port))) }
     }
 
-    /// Sends a bounded health request through the existing stream. Recovery is
-    /// deliberately left to foreground transport operations so this path
-    /// cannot hold the shared lock during a Tor dial.
+    /// Sends a bounded health request through the same serialized connection
+    /// owner used by pairing. A fresh profile has no stream yet, so the first
+    /// health request is also allowed to establish it.
     pub fn check_health(&self, timeout: Duration) -> Result<(), RelayTransportError> {
-        self.try_relay_info(timeout).map(|_| ())
+        self.relay_info(timeout).map(|_| ())
     }
 
     /// Non-blocking health/info sample for the background supervisor. It never

@@ -6,10 +6,11 @@ use torca_attachments::{AttachmentId, AttachmentName, MAX_ATTACHMENT_BYTES, Medi
 use torca_foundation::OpaqueId;
 
 const MAGIC: &[u8; 4] = b"TCAT";
-// Metadata gained a bounded visual preview in version 2.  Attachment peers
-// negotiate a single product protocol version, so rejecting v1 is safer than
-// silently claiming preview support to an older binary.
-const VERSION: u16 = 2;
+// Metadata gained a bounded visual preview in version 2; v3 adds an explicit
+// cancel frame so a receiver can release durable temporary chunks immediately.
+// Attachment peers negotiate one product protocol version, so rejecting an
+// older wire is safer than silently treating cancellation as a timeout.
+const VERSION: u16 = 3;
 pub const MAX_ATTACHMENT_CHUNK: usize = 64 * 1024;
 pub const MAX_ATTACHMENT_PREVIEW: usize = 32 * 1024;
 
@@ -19,6 +20,7 @@ pub enum AttachmentFrameKind {
     Chunk = 2,
     Resume = 3,
     Complete = 4,
+    Cancel = 5,
 }
 
 #[must_use]
@@ -65,6 +67,14 @@ pub struct AttachmentCompleteFrame {
     pub digest: [u8; 32],
 }
 
+/// Cancels an in-flight transfer without deleting another attachment that may
+/// share the same conversation. The attachment id is the entire authority.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AttachmentCancelFrame {
+    pub attachment_id: AttachmentId,
+}
+
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AttachmentFrame {
@@ -72,6 +82,7 @@ pub enum AttachmentFrame {
     Chunk(AttachmentChunkFrame),
     Resume(AttachmentResumeFrame),
     Complete(AttachmentCompleteFrame),
+    Cancel(AttachmentCancelFrame),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,6 +148,10 @@ impl AttachmentCodec {
                 output.push(AttachmentFrameKind::Complete as u8);
                 output.extend_from_slice(complete.attachment_id.to_opaque().as_bytes());
                 output.extend_from_slice(&complete.digest);
+            }
+            AttachmentFrame::Cancel(cancel) => {
+                output.push(AttachmentFrameKind::Cancel as u8);
+                output.extend_from_slice(cancel.attachment_id.to_opaque().as_bytes());
             }
         }
         Ok(output)
@@ -216,6 +231,9 @@ impl AttachmentCodec {
             4 => AttachmentFrame::Complete(AttachmentCompleteFrame {
                 attachment_id: AttachmentId::from_opaque(cursor.id()?),
                 digest: cursor.array32()?,
+            }),
+            5 => AttachmentFrame::Cancel(AttachmentCancelFrame {
+                attachment_id: AttachmentId::from_opaque(cursor.id()?),
             }),
             value => return Err(AttachmentProtocolError::UnknownKind(value)),
         };

@@ -107,8 +107,13 @@ impl Logger {
             }
         }
         logger.write_json_file("run.start.json", &format!(
-            "{{\"schema\":1,\"status\":\"running\",\"started_at_ms\":{},\"run_id\":\"{}\",\"device_id\":\"{}\",\"build_id\":\"{}\",\"platform\":\"{}\"}}\n",
-            started_ms, escape(&logger.run_id), escape(&logger.device_id), escape(&logger.build_id), platform_name()))?;
+            "{{\"schema\":1,\"status\":\"running\",\"started_at_ms\":{},\"run_id\":\"{}\",\"incident_id\":\"{}\",\"device_id\":\"{}\",\"build_id\":\"{}\",\"platform\":\"{}\"}}\n",
+            started_ms,
+            escape(&logger.run_id),
+            escape(&logger.run_id),
+            escape(&logger.device_id),
+            escape(&logger.build_id),
+            platform_name()))?;
         logger.enforce_retention();
         Ok(logger)
     }
@@ -146,9 +151,10 @@ impl Logger {
         let domain = sanitize_component(domain);
         let context = context_json.map_or_else(|| "{}".into(), redact);
         let line = format!(
-            "{{\"schema\":1,\"ts_ms\":{},\"level\":\"{}\",\"run_id\":\"{}\",\"device_id\":\"{}\",\"build_id\":\"{}\",\"domain\":\"{}\",\"component\":\"{}\",\"code\":\"{}\",\"message\":\"{}\",\"context\":{}}}\n",
+            "{{\"schema\":1,\"ts_ms\":{},\"level\":\"{}\",\"run_id\":\"{}\",\"incident_id\":\"{}\",\"device_id\":\"{}\",\"build_id\":\"{}\",\"domain\":\"{}\",\"component\":\"{}\",\"code\":\"{}\",\"message\":\"{}\",\"context\":{}}}\n",
             now_ms(),
             level.as_str(),
+            escape(&self.run_id),
             escape(&self.run_id),
             escape(&self.device_id),
             escape(&self.build_id),
@@ -201,8 +207,13 @@ impl Logger {
         let reason = redact(reason);
         let duration = now_ms().saturating_sub(self.started_ms);
         self.write_json_file("run.end.json", &format!(
-            "{{\"schema\":1,\"status\":\"{}\",\"ended_at_ms\":{},\"duration_ms\":{},\"run_id\":\"{}\",\"reason\":\"{}\"}}\n",
-            status, now_ms(), duration, escape(&self.run_id), escape(&reason)))
+            "{{\"schema\":1,\"status\":\"{}\",\"ended_at_ms\":{},\"duration_ms\":{},\"run_id\":\"{}\",\"incident_id\":\"{}\",\"reason\":\"{}\"}}\n",
+            status,
+            now_ms(),
+            duration,
+            escape(&self.run_id),
+            escape(&self.run_id),
+            escape(&reason)))
     }
 
     pub fn directory(&self) -> PathBuf {

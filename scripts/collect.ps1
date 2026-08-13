@@ -204,7 +204,7 @@ if ($collectStack) {
         New-Item -ItemType Directory -Force -Path $directory | Out-Null
     }
     $stackSources = [System.Collections.Generic.List[object]]::new()
-    foreach ($file in @($paths.RelayEndpoint, $paths.RelayReady)) {
+    foreach ($file in @($paths.RelayEndpoint, $paths.RelayReady, $paths.RelayStatus)) {
         if (Test-Path -LiteralPath $file -PathType Leaf) {
             $name = Split-Path $file -Leaf
             $destination = Join-Path $relayStateDestination $name
@@ -514,6 +514,7 @@ Write-JsonFile (Join-Path $collectRoot 'file-inventory.json') $fileInventory
 $manifest = [ordered]@{
     schema = 3
     collectionId = $collectionId
+    incidentId = $collectionId
     startedAt = $collectionStartedAt.ToString('o')
     collectedAt = [DateTime]::UtcNow.ToString('o')
     requestedTarget = $Target
@@ -554,7 +555,9 @@ All paths below `sources/` identify the producer before the log type:
 - `relay/state` - configured/ready endpoint and consistency report.
 - `host/discovery` - raw device discovery evidence.
 
-`collection-manifest.json` is authoritative for completeness and errors.
+`collection-manifest.json` is authoritative for completeness and errors. Its
+`incidentId` is the collection folder identity and is also recorded as
+`incident_id` in every native runtime run manifest/event.
 `checksums.sha256` covers every included file.
 '@ | Set-Content -LiteralPath (Join-Path $collectRoot 'README.md') -Encoding utf8
 Set-Content -LiteralPath (Join-Path $collectRoot 'collector.log') -Value ("Torca diagnostic collection $collectionId`nProfile: $Profile`nCollected: $([DateTime]::UtcNow.ToString('o'))") -Encoding utf8

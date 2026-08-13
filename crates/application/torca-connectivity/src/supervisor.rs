@@ -7,7 +7,7 @@
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use torca_foundation::ErrorCode;
 use torca_probing::ProbeStatus;
@@ -193,13 +193,30 @@ fn run(
                         failures,
                     },
                 );
-                let index = usize::try_from(failures.saturating_sub(1))
-                    .unwrap_or(usize::MAX)
-                    .min(RETRY_BACKOFF.len() - 1);
-                next_at = Instant::now() + RETRY_BACKOFF[index];
+                next_at = Instant::now() + retry_delay(failures);
             }
         }
     }
+}
+
+/// Adds bounded full-jitter to the exponential retry schedule.  Independent
+/// clients otherwise reconnect at exactly the same five/15/30/60 second
+/// boundaries after a relay or network outage, creating avoidable bursts on
+/// the onion service.  The wake command still bypasses this delay after an
+/// explicit network-change notification.
+fn retry_delay(failures: u32) -> Duration {
+    let index = usize::try_from(failures.saturating_sub(1))
+        .unwrap_or(usize::MAX)
+        .min(RETRY_BACKOFF.len() - 1);
+    let base = RETRY_BACKOFF[index];
+    let jitter_window = (base / 2).max(Duration::from_secs(1));
+    let jitter_millis = u64::try_from(jitter_window.as_millis()).unwrap_or(u64::MAX);
+    let entropy = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::from(duration.subsec_nanos()))
+        .unwrap_or(0);
+    let offset = if jitter_millis == 0 { 0 } else { entropy % jitter_millis };
+    base + Duration::from_millis(offset)
 }
 
 fn set_state(state: &RwLock<RelayHealthSnapshot>, next: RelayHealthSnapshot) {

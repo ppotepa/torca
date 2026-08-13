@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../theme/app_semantic_colors.dart';
 import 'message_status_indicator.dart';
 import 'message_timestamp.dart';
@@ -68,7 +69,9 @@ class MessageBubble extends StatelessWidget {
               4,
             ),
             child: Semantics(
-              label: outbound ? 'Outgoing message' : 'Incoming message',
+              label: outbound
+                  ? context.strings.outgoingMessage
+                  : context.strings.incomingMessage,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onSecondaryTapDown: onSecondaryTapDown,
@@ -89,7 +92,10 @@ class MessageBubble extends StatelessWidget {
                           children: <Widget>[
                             Expanded(
                               child: Text(
-                                senderLabel ?? (outbound ? 'You' : 'Contact'),
+                                senderLabel ??
+                                    (outbound
+                                        ? context.strings.senderYou
+                                        : context.strings.senderContact),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.labelMedium
@@ -117,17 +123,7 @@ class MessageBubble extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: <Widget>[
                             if (outbound && message.sentAtMs != null)
-                              _LifecycleMilestone(
-                                kind: message.readAtMs != null
-                                    ? _LifecycleKind.read
-                                    : message.deliveredAtMs != null
-                                    ? _LifecycleKind.delivered
-                                    : _LifecycleKind.sent,
-                                milliseconds:
-                                    message.readAtMs ??
-                                    message.deliveredAtMs ??
-                                    message.sentAtMs!,
-                              )
+                              _LifecycleTimeline(message: message)
                             else ...<Widget>[
                               MessageTimestamp(
                                 milliseconds: message.createdAtMs,
@@ -166,9 +162,12 @@ class _LifecycleMilestone extends StatelessWidget {
     final value =
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     final (description, icon) = switch (kind) {
-      _LifecycleKind.sent => ('Sent', context.torcaIcons.sent),
-      _LifecycleKind.delivered => ('Delivered', context.torcaIcons.delivered),
-      _LifecycleKind.read => ('Read', context.torcaIcons.read),
+      _LifecycleKind.sent => (context.strings.sent, context.torcaIcons.sent),
+      _LifecycleKind.delivered => (
+        context.strings.delivered,
+        context.torcaIcons.delivered,
+      ),
+      _LifecycleKind.read => (context.strings.read, context.torcaIcons.read),
     };
     return Tooltip(
       message: '$description $value',
@@ -182,4 +181,31 @@ class _LifecycleMilestone extends StatelessWidget {
       ),
     );
   }
+}
+
+class _LifecycleTimeline extends StatelessWidget {
+  const _LifecycleTimeline({required this.message});
+
+  final MessageDto message;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 6,
+    children: <Widget>[
+      _LifecycleMilestone(
+        kind: _LifecycleKind.sent,
+        milliseconds: message.sentAtMs!,
+      ),
+      if (message.deliveredAtMs != null)
+        _LifecycleMilestone(
+          kind: _LifecycleKind.delivered,
+          milliseconds: message.deliveredAtMs!,
+        ),
+      if (message.readAtMs != null)
+        _LifecycleMilestone(
+          kind: _LifecycleKind.read,
+          milliseconds: message.readAtMs!,
+        ),
+    ],
+  );
 }

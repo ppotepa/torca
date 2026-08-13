@@ -18,6 +18,8 @@ use torca_storage_sqlite::{SqlCipherMessageStore, SqlCipherStore};
 
 const CACHE_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-CACHE-V1";
 const PREVIEW_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-PREVIEW-V1";
+const FINAL_CHUNK_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-FINAL-CHUNK-V1";
+const FINAL_MANIFEST: &[u8] = b"TORCA-ATTACHMENT-CHUNKS-V1";
 const NONCE_BYTES: usize = 24;
 // "Open" creates a plaintext hand-off for the OS. Keep that exposure window short; explicit
 // Save As destinations are user-owned and never participate in this cleanup namespace.
@@ -28,6 +30,7 @@ pub struct AttachmentExportAdapter<P> {
     messages: SqlCipherMessageStore,
     metadata: SqlCipherAttachmentStore,
     cache: FileBlobStore,
+    staging_root: PathBuf,
     secrets: ManagedPeerSecrets<RustCryptoProvider, P>,
 }
 
@@ -37,9 +40,10 @@ impl<P> AttachmentExportAdapter<P> {
         messages: SqlCipherMessageStore,
         metadata: SqlCipherAttachmentStore,
         cache: FileBlobStore,
+        staging_root: PathBuf,
         secrets: ManagedPeerSecrets<RustCryptoProvider, P>,
     ) -> Self {
-        Self { relationships, messages, metadata, cache, secrets }
+        Self { relationships, messages, metadata, cache, staging_root, secrets }
     }
 }
 
@@ -81,6 +85,18 @@ where
             .map_err(|_| CommunicationError::Relationship)?
             .ok_or(CommunicationError::Relationship)?;
         let stored = self.cache.read(id).map_err(|_| CommunicationError::Attachment)?;
+        if let Some(size) = parse_final_manifest(&stored) {
+            if size != attachment.size() {
+                return Err(CommunicationError::Attachment);
+            }
+            return self.export_chunked_cache(
+                id,
+                size,
+                credential.secret_handle(),
+                expected,
+                destination,
+            );
+        }
         if stored.len() <= NONCE_BYTES {
             return Err(CommunicationError::Attachment);
         }
@@ -124,6 +140,96 @@ where
             fs::remove_file(&destination).map_err(|_| CommunicationError::Attachment)?;
         }
         fs::rename(temporary, destination).map_err(|_| CommunicationError::Attachment)
+    }
+
+    fn export_chunked_cache(
+        &self,
+        id: AttachmentId,
+        size: u64,
+        handle: torca_foundation::OpaqueId,
+        expected: [u8; 32],
+        destination: PathBuf,
+    ) -> Result<(), CommunicationError> {
+        let parent = destination.parent().ok_or(CommunicationError::Attachment)?;
+        if !parent.is_dir() {
+            return Err(CommunicationError::Attachment);
+        }
+        if destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_controlled_open_export_name)
+        {
+            cleanup_stale_controlled_exports(parent, SystemTime::now(), TEMP_EXPORT_MAX_AGE);
+        }
+        let temporary = parent.join(format!(".torca-export-{id}.tmp"));
+        let result = (|| -> Result<(), CommunicationError> {
+            let mut file = fs::File::create(&temporary).map_err(|_| CommunicationError::Attachment)?;
+            let mut digest = Sha256::new();
+            let mut offset = 0_u64;
+            while offset < size {
+                let path = self
+                    .staging_root
+                    .join("final")
+                    .join(id.to_string())
+                    .join(format!("{offset:020}.chunk"));
+                let stored = fs::read(path).map_err(|_| CommunicationError::Attachment)?;
+                if stored.len() <= NONCE_BYTES {
+                    return Err(CommunicationError::Attachment);
+                }
+                let nonce = Nonce(
+                    stored[..NONCE_BYTES]
+                        .try_into()
+                        .map_err(|_| CommunicationError::Attachment)?,
+                );
+                let mut chunk = self
+                    .secrets
+                    .open_peer_payload(
+                        handle,
+                        nonce,
+                        &final_chunk_aad(id, offset),
+                        &Ciphertext(stored[NONCE_BYTES..].to_vec()),
+                    )
+                    .map_err(|_| CommunicationError::Attachment)?;
+                if chunk.is_empty() || chunk.len() > torca_attachment_protocol::MAX_ATTACHMENT_CHUNK {
+                    chunk.fill(0);
+                    return Err(CommunicationError::Attachment);
+                }
+                let len = match u64::try_from(chunk.len()) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        chunk.fill(0);
+                        return Err(CommunicationError::Attachment);
+                    }
+                };
+                offset = match offset.checked_add(len) {
+                    Some(value) => value,
+                    None => {
+                        chunk.fill(0);
+                        return Err(CommunicationError::Attachment);
+                    }
+                };
+                if offset > size {
+                    chunk.fill(0);
+                    return Err(CommunicationError::Attachment);
+                }
+                digest.update(&chunk);
+                let write_result = file.write_all(&chunk).map_err(|_| CommunicationError::Attachment);
+                chunk.fill(0);
+                write_result?;
+            }
+            if offset != size || <[u8; 32]>::from(digest.finalize()) != expected {
+                return Err(CommunicationError::Attachment);
+            }
+            file.sync_all().map_err(|_| CommunicationError::Attachment)?;
+            if destination.exists() {
+                fs::remove_file(&destination).map_err(|_| CommunicationError::Attachment)?;
+            }
+            fs::rename(&temporary, &destination).map_err(|_| CommunicationError::Attachment)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
 
     fn export_attachment_preview(
@@ -205,6 +311,19 @@ fn preview_aad(id: AttachmentId) -> Vec<u8> {
     let mut aad = Vec::with_capacity(PREVIEW_AAD_LABEL.len() + 16);
     aad.extend_from_slice(PREVIEW_AAD_LABEL);
     aad.extend_from_slice(id.to_opaque().as_bytes());
+    aad
+}
+
+fn parse_final_manifest(stored: &[u8]) -> Option<u64> {
+    let size = stored.strip_prefix(FINAL_MANIFEST)?.get(..8)?;
+    Some(u64::from_be_bytes(size.try_into().ok()?))
+}
+
+fn final_chunk_aad(id: AttachmentId, offset: u64) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(FINAL_CHUNK_AAD_LABEL.len() + 24);
+    aad.extend_from_slice(FINAL_CHUNK_AAD_LABEL);
+    aad.extend_from_slice(id.to_opaque().as_bytes());
+    aad.extend_from_slice(&offset.to_be_bytes());
     aad
 }
 

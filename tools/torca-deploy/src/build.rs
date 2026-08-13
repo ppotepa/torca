@@ -31,22 +31,26 @@ pub fn verify_artifact_manifest(
         .map_err(|error| format!("read artifact manifest {}: {error}", manifest_path.display()))?;
     let manifest: serde_json::Value = serde_json::from_str(&content)
         .map_err(|error| format!("parse artifact manifest {}: {error}", manifest_path.display()))?;
-    if let Some(current_endpoint) = paths.endpoint() {
-        let recorded_endpoint =
-            manifest.get("endpoint").and_then(serde_json::Value::as_str).ok_or_else(|| {
-                format!(
-                    "artifact manifest {} does not record the relay endpoint",
-                    manifest_path.display()
-                )
-            })?;
-        if recorded_endpoint != current_endpoint {
-            return Err(format!(
-                "artifact endpoint mismatch for {}: manifest={}, current={}",
-                artifact.display(),
-                recorded_endpoint,
-                current_endpoint
-            ));
-        }
+    let current_endpoint = paths.endpoint().ok_or_else(|| {
+        format!(
+            "current relay endpoint is unavailable; refusing to reuse artifact {}",
+            artifact.display()
+        )
+    })?;
+    let recorded_endpoint =
+        manifest.get("endpoint").and_then(serde_json::Value::as_str).ok_or_else(|| {
+            format!(
+                "artifact manifest {} does not record the relay endpoint",
+                manifest_path.display()
+            )
+        })?;
+    if recorded_endpoint != current_endpoint {
+        return Err(format!(
+            "artifact endpoint mismatch for {}: manifest={}, current={}",
+            artifact.display(),
+            recorded_endpoint,
+            current_endpoint
+        ));
     }
     let expected = manifest
         .get("artifacts")
@@ -218,10 +222,19 @@ impl<'a> BuildController<'a> {
                 }));
             }
         }
+        let source_commit = self.source_commit();
+        let build_id = build_identity(
+            &source_commit,
+            endpoint,
+            configuration,
+            targets,
+        );
         let manifest = serde_json::json!({
             "configuration": configuration.to_string(),
             "targets": targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "endpoint": endpoint,
+            "buildId": build_id,
+            "sourceCommit": source_commit,
             "artifacts": artifacts,
             "builtAt": format!("{:?}", std::time::SystemTime::now()),
         });
@@ -231,6 +244,22 @@ impl<'a> BuildController<'a> {
         )
         .map_err(BuildError::Io)?;
         Ok(())
+    }
+
+    fn source_commit(&self) -> String {
+        self.runner
+            .run_quiet(&CommandSpec {
+                program: "git".into(),
+                arguments: vec!["rev-parse".into(), "HEAD".into()],
+                working_directory: self.paths.repo_root.clone(),
+                timeout: Duration::from_secs(15),
+                environment: BTreeMap::new(),
+            })
+            .ok()
+            .filter(|output| output.success)
+            .map(|output| output.text.trim().to_owned())
+            .filter(|commit| !commit.is_empty())
+            .unwrap_or_else(|| "unknown".into())
     }
 
     fn build_android_native(
@@ -369,8 +398,13 @@ impl AndroidToolchain {
         let mut environment = BTreeMap::new();
         let existing_path = env::var_os("PATH").unwrap_or_default();
         let perl_dir = self.unix_perl.parent().expect("perl has a parent");
-        let path = env::join_paths([self.ndk_bin.as_path(), perl_dir, Path::new(&existing_path)])
-            .expect("Windows PATH components are valid");
+        // `PATH` is a list of components, not one path.  Treating the whole
+        // inherited value as a single component silently discarded the
+        // MSYS/Git Perl precedence and let a native Windows Perl get selected
+        // by openssl-sys (which then rejects Unix-style paths).
+        let mut path_components = vec![self.ndk_bin.clone(), perl_dir.to_path_buf()];
+        path_components.extend(env::split_paths(&existing_path));
+        let path = env::join_paths(path_components).expect("Windows PATH components are valid");
         environment.insert("PATH".into(), path.to_string_lossy().into_owned());
         // OpenSSL writes this value into a Makefile evaluated by MSYS `sh`.
         // An absolute Windows path would lose its backslashes there, so keep a
@@ -378,17 +412,23 @@ impl AndroidToolchain {
         // at the beginning of PATH.
         environment.insert("PERL".into(), "perl".into());
         environment.insert("TORCA_RELAY_ENDPOINT".into(), endpoint.into());
-        environment.insert(format!("CC_{}", target.triple), "clang".into());
+        // Use the NDK's API-qualified compiler wrapper for every native C
+        // dependency too (not only Cargo's final linker).  `openssl-sys`
+        // invokes `CC_<target>` directly; a bare host `clang` then needs
+        // extra CFLAGS and previously received both API 21 and API 23.
+        environment.insert(
+            format!("CC_{}", target.triple),
+            self.ndk_bin.join(target.linker).to_string_lossy().into_owned(),
+        );
         environment.insert(format!("AR_{}", target.triple), "llvm-ar".into());
         environment.insert(
             format!("CARGO_TARGET_{}_LINKER", target.triple.replace('-', "_").to_uppercase()),
             self.ndk_bin.join(target.linker).to_string_lossy().into_owned(),
         );
-        // Do not inherit CFLAGS from an older PowerShell deployment.  In
-        // particular, cargo-ndk's default API 21 combined with an inherited
-        // API 23 target makes OpenSSL's Configure receive contradictory flags.
-        environment
-            .insert(format!("CFLAGS_{}", target.triple), format!("--target={}23", target.triple));
+        // Do not add a CFLAGS target here. The API-qualified wrapper above
+        // already selects it. Adding another `--target` causes OpenSSL's
+        // Configure step to see contradictory API levels when Cargo/NDK has
+        // provided its own default.
         environment
     }
 }
@@ -443,6 +483,17 @@ fn hash_file(path: &std::path::Path) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
     Some(format!("{:x}", Sha256::digest(bytes)))
 }
+
+fn build_identity(
+    source_commit: &str,
+    endpoint: &str,
+    configuration: Configuration,
+    targets: &[Target],
+) -> String {
+    let target_list = targets.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
+    let material = format!("{source_commit}\n{endpoint}\n{configuration}\n{target_list}");
+    format!("{:X}", Sha256::digest(material.as_bytes()))
+}
 #[derive(Debug, Error)]
 pub enum BuildError {
     #[error("build requires a valid relay endpoint")]
@@ -487,7 +538,10 @@ mod tests {
         paths.ensure().expect("runtime paths");
         let artifact = root.join("torca_app.exe");
         std::fs::write(&artifact, b"first build").expect("artifact");
+        let endpoint = format!("{}.onion:443", "a".repeat(56));
+        std::fs::write(&paths.relay_endpoint, &endpoint).expect("relay endpoint");
         let manifest = serde_json::json!({
+            "endpoint": endpoint,
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,

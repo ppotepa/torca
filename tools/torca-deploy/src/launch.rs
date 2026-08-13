@@ -1,5 +1,5 @@
 use crate::devices::Device;
-use crate::domain::Configuration;
+use crate::domain::{Configuration, ValidationLevel};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 use crate::windows_client::{WindowsClientError, WorkspaceWindowsClient};
@@ -128,22 +128,42 @@ impl<'a> LaunchController<'a> {
         &self,
         device: &Device,
         receipt: LaunchReceipt,
+        validation: ValidationLevel,
     ) -> Result<(), LaunchError> {
-        let deadline = std::time::Instant::now() + Duration::from_secs(180);
+        if matches!(validation, ValidationLevel::Skip) {
+            return Ok(());
+        }
+        // Quick deploy validation proves that the newly launched app has a
+        // live local runtime.  It must not wait for onion publication or a
+        // remote relay circuit: those recover independently in the client.
+        // Full validation additionally waits for Tor bootstrap evidence.
+        let require_tor = matches!(validation, ValidationLevel::Full);
+        let timeout = if require_tor { 180 } else { 45 };
+        let deadline = std::time::Instant::now() + Duration::from_secs(timeout);
         let started = std::time::Instant::now();
         let mut next_heartbeat = started;
+        let mut consecutive_ready = 0_u8;
         while std::time::Instant::now() < deadline {
             if !self.process_is_running(device)? {
                 return Err(LaunchError::ProcessExited(device.id.clone()));
             }
             let ready = match device.target {
-                crate::domain::Target::Windows => Self::windows_network_ready(receipt.started_at),
+                crate::domain::Target::Windows => {
+                    Self::windows_network_ready(receipt.started_at, require_tor)
+                }
                 crate::domain::Target::Android => {
-                    self.android_network_ready(&device.id, receipt.started_at)
+                    self.android_network_ready(&device.id, receipt.started_at, require_tor)
                 }
             }?;
             if ready {
-                return Ok(());
+                consecutive_ready += 1;
+                // Two observations avoid accepting one stale/transient log
+                // line, while keeping the quick path bounded and responsive.
+                if consecutive_ready >= 2 {
+                    return Ok(());
+                }
+            } else {
+                consecutive_ready = 0;
             }
             if std::time::Instant::now() >= next_heartbeat {
                 eprintln!(
@@ -153,7 +173,7 @@ impl<'a> LaunchController<'a> {
                 );
                 next_heartbeat = std::time::Instant::now() + Duration::from_secs(10);
             }
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(Duration::from_secs(1));
         }
         Err(LaunchError::HealthTimeout(device.id.clone()))
     }
@@ -209,7 +229,10 @@ impl<'a> LaunchController<'a> {
         Ok(output.success && !output.text.trim().is_empty() && !output.text.contains("No tasks"))
     }
 
-    fn windows_network_ready(launched_at: SystemTime) -> Result<bool, LaunchError> {
+    fn windows_network_ready(
+        launched_at: SystemTime,
+        require_tor: bool,
+    ) -> Result<bool, LaunchError> {
         let Some(local) = std::env::var_os("LOCALAPPDATA") else {
             return Ok(false);
         };
@@ -220,13 +243,14 @@ impl<'a> LaunchController<'a> {
         let Some(path) = logs.last() else {
             return Ok(false);
         };
-        Ok(file_is_fresh(path, launched_at) && read_network_ready(path))
+        Ok(file_is_fresh(path, launched_at) && read_network_ready(path, require_tor))
     }
 
     fn android_network_ready(
         &self,
         device: &str,
         launched_at: SystemTime,
+        require_tor: bool,
     ) -> Result<bool, LaunchError> {
         let files = self.command(
             "adb",
@@ -251,10 +275,7 @@ impl<'a> LaunchController<'a> {
             && output.success
             && output.text.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).any(
                 |value| {
-                    matches!(
-                        value.get("code").and_then(Value::as_str),
-                        Some("LOCAL_READY") | Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY")
-                    )
+                    ready_code(value.get("code").and_then(Value::as_str), require_tor)
                 },
             ))
     }
@@ -323,18 +344,23 @@ fn collect_named(root: &std::path::Path, name: &str, out: &mut Vec<std::path::Pa
     }
 }
 
-fn read_network_ready(path: &std::path::Path) -> bool {
+fn read_network_ready(path: &std::path::Path, require_tor: bool) -> bool {
     let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
     content.lines().rev().take(120).filter_map(|line| serde_json::from_str::<Value>(line).ok()).any(
         |value| {
-            matches!(
-                value.get("code").and_then(Value::as_str),
-                Some("LOCAL_READY") | Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY")
-            )
+            ready_code(value.get("code").and_then(Value::as_str), require_tor)
         },
     )
+}
+
+fn ready_code(code: Option<&str>, require_tor: bool) -> bool {
+    if require_tor {
+        matches!(code, Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY"))
+    } else {
+        matches!(code, Some("LOCAL_READY") | Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY"))
+    }
 }
 
 #[cfg(windows)]

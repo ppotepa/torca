@@ -261,7 +261,21 @@ class _InvitationsSection extends StatelessWidget {
   final Future<void> Function(PairingDto pairing) onOpenInvitation;
 
   @override
-  Widget build(BuildContext context) => ListView(
+  Widget build(BuildContext context) {
+    // Historical sessions remain in the runtime audit projection, but should
+    // not occupy the actionable Invitations list after acceptance/expiry.
+    final activePairings = pairings
+        .where(
+          (pairing) => switch (pairing.typedState) {
+            PairingState.completed ||
+            PairingState.rejected ||
+            PairingState.cancelled ||
+            PairingState.expired => false,
+            _ => true,
+          },
+        )
+        .toList(growable: false);
+    return ListView(
     padding: const EdgeInsets.all(24),
     children: <Widget>[
       Text(
@@ -277,12 +291,11 @@ class _InvitationsSection extends StatelessWidget {
         label: Text(context.strings.generateInvitation),
       ),
       const SizedBox(height: 24),
-      if (pairings.isEmpty)
+      if (activePairings.isEmpty)
         _SectionEmptyState(
           icon: context.torcaIcons.invitations,
           title: context.strings.noInvitations,
-          message:
-              'Your active invitations and pairing requests will appear here.',
+          message: context.strings.activeInvitationsDescription,
         )
       else ...<Widget>[
         Text(
@@ -290,7 +303,7 @@ class _InvitationsSection extends StatelessWidget {
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
-        for (final pairing in pairings.reversed)
+        for (final pairing in activePairings.reversed)
           Card(
             child: ListTile(
               leading: Icon(
@@ -304,13 +317,16 @@ class _InvitationsSection extends StatelessWidget {
                     : context.strings.joinedInvitation,
               ),
               subtitle: Text(context.strings.invitationCode(pairing.code)),
-              trailing: Chip(label: Text(pairing.state)),
+              trailing: Chip(
+                label: Text(context.strings.pairingStateLabel(pairing.typedState)),
+              ),
               onTap: () => onOpenInvitation(pairing),
             ),
           ),
       ],
     ],
   );
+  }
 }
 
 class _ContactContextPanel extends StatelessWidget {
@@ -568,7 +584,8 @@ class _ProfileSetupState extends State<_ProfileSetup> {
         _error = failure == null && result != null && result.ok
             ? null
             : failure?.toString() ??
-                  BridgeErrorPresenter.message(
+                  BridgeErrorPresenter.localized(
+                    context,
                     result ?? const BridgeResultDto(ok: false, kind: 'error'),
                     fallback: 'Could not save nickname',
                   );

@@ -144,7 +144,7 @@ class _AttachmentTray extends StatelessWidget {
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                     Text(
-                      '${_kindLabel(prepared.kind)} · ${formatBytes(prepared.size)}',
+                      '${_kindLabel(prepared.kind)} / ${formatBytes(prepared.size)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelSmall,

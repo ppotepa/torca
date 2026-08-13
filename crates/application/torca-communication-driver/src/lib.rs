@@ -403,6 +403,15 @@ impl TorcaCommunicationDriver {
     /// conversation yet.  Treating that as a communication-tick failure used
     /// to starve the following text frames indefinitely.
     fn defer_attachment(&mut self, envelope: InboundEnvelope) {
+        // A peer can retransmit while a metadata envelope is already waiting
+        // for its companion message. Keep exactly one copy; otherwise a
+        // short ordering race can fill the bounded queue with the same frame
+        // and delay unrelated attachments.
+        if self.deferred_attachments.iter().any(|queued| {
+            queued.contact_id == envelope.contact_id && queued.envelope_id == envelope.envelope_id
+        }) {
+            return;
+        }
         if self.deferred_attachments.len() >= MAX_DEFERRED_ATTACHMENTS {
             eprintln!(
                 "torca-attachment: deferred inbound queue full; awaiting peer retransmission contact={} envelope={}",
