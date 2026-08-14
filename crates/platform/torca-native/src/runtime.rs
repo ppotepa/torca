@@ -7,6 +7,7 @@ mod native_runtime;
 mod notification_json;
 mod platform_selector;
 mod runtime_composition;
+mod runtime_event_wake;
 mod torca_runtime;
 
 pub use torca_runtime::*;
