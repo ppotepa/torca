@@ -1,6 +1,8 @@
 //! Single-writer client engine coordinating identity, pairing and messaging.
 
 use core::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -22,8 +24,8 @@ use torca_identity::{
     UpdateProfile,
 };
 use torca_messaging::{
-    InMemoryMessageRepository, Message, MessageBody, MessageId, MessageReaction,
-    MessageRepository, ReplyReference,
+    InMemoryMessageRepository, Message, MessageBody, MessageId, MessageReaction, MessageRepository,
+    ReplyReference,
 };
 use torca_pairing::{
     InMemoryPairingRepository, PairingCode, PairingRepository, PairingSession, PairingSessionId,
@@ -120,7 +122,9 @@ pub enum EngineCommand {
         body: MessageBody,
         at: Timestamp,
     },
-    SetMessageReaction { reaction: MessageReaction },
+    SetMessageReaction {
+        reaction: MessageReaction,
+    },
     BeginMessageSend {
         message_id: MessageId,
         at: Timestamp,
@@ -536,18 +540,20 @@ where
                 Ok(EngineResult::ContactRemoved { contact_id })
             }
             EngineCommand::ArchiveConversation { conversation_id, at } => {
-                let mut conversation = ConversationRepository::get(&self.relationships, conversation_id)
-                    .map_err(map_error)?
-                    .ok_or_else(|| EngineError("conversation not found".into()))?;
+                let mut conversation =
+                    ConversationRepository::get(&self.relationships, conversation_id)
+                        .map_err(map_error)?
+                        .ok_or_else(|| EngineError("conversation not found".into()))?;
                 conversation.archive(at).map_err(map_error)?;
                 ConversationRepository::update(&mut self.relationships, conversation)
                     .map_err(map_error)?;
                 Ok(EngineResult::ConversationUpdated { conversation_id })
             }
             EngineCommand::RestoreConversation { conversation_id, at } => {
-                let mut conversation = ConversationRepository::get(&self.relationships, conversation_id)
-                    .map_err(map_error)?
-                    .ok_or_else(|| EngineError("conversation not found".into()))?;
+                let mut conversation =
+                    ConversationRepository::get(&self.relationships, conversation_id)
+                        .map_err(map_error)?
+                        .ok_or_else(|| EngineError("conversation not found".into()))?;
                 conversation.restore(at).map_err(map_error)?;
                 ConversationRepository::update(&mut self.relationships, conversation)
                     .map_err(map_error)?;
@@ -638,9 +644,9 @@ where
             }
         }
         for conversation_id in conversation_ids {
-            snapshot
-                .reactions
-                .extend(self.messages.reactions_for_conversation(conversation_id).map_err(map_error)?);
+            snapshot.reactions.extend(
+                self.messages.reactions_for_conversation(conversation_id).map_err(map_error)?,
+            );
         }
         Ok(snapshot)
     }
@@ -650,9 +656,7 @@ where
         let mut reactions = Vec::new();
         for conversation in &conversations {
             reactions.extend(
-                self.messages
-                    .reactions_for_conversation(conversation.id())
-                    .map_err(map_error)?,
+                self.messages.reactions_for_conversation(conversation.id()).map_err(map_error)?,
             );
         }
         Ok(ClientSnapshot {
@@ -722,6 +726,7 @@ enum ActorRequest {
 #[derive(Clone)]
 pub struct EngineHandle {
     sender: SyncSender<ActorRequest>,
+    projection_events: Arc<AtomicU64>,
 }
 impl EngineHandle {
     pub fn dispatch(&self, command: EngineCommand) -> Result<EngineResult, EngineError> {
@@ -745,6 +750,12 @@ impl EngineHandle {
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| EngineError("engine overview timed out".into()))?
     }
+
+    /// Cumulative successful receipt/reaction projection commands. This is a
+    /// logical operation count, not an estimate of SQL statements or energy.
+    pub fn projection_event_count(&self) -> u64 {
+        self.projection_events.load(Ordering::Acquire)
+    }
 }
 
 pub struct ClientEngineActor {
@@ -755,7 +766,11 @@ impl ClientEngineActor {
     pub fn spawn<E: EngineRuntime>(mut engine: E) -> (EngineHandle, Self) {
         let (sender, receiver): (SyncSender<ActorRequest>, Receiver<ActorRequest>) =
             mpsc::sync_channel(256);
-        let handle = EngineHandle { sender: sender.clone() };
+        let projection_events = Arc::new(AtomicU64::new(0));
+        let handle = EngineHandle {
+            sender: sender.clone(),
+            projection_events: Arc::clone(&projection_events),
+        };
         let join = thread::spawn(move || {
             loop {
                 let request = match receiver.recv_timeout(Duration::from_secs(1)) {
@@ -765,7 +780,16 @@ impl ClientEngineActor {
                 };
                 match request {
                     ActorRequest::Dispatch(command, response) => {
-                        let _ = response.send(engine.dispatch(command));
+                        let counts_projection = matches!(
+                            &command,
+                            EngineCommand::ApplyReceipt(_)
+                                | EngineCommand::SetMessageReaction { .. }
+                        );
+                        let result = engine.dispatch(command);
+                        if counts_projection && result.is_ok() {
+                            projection_events.fetch_add(1, Ordering::Release);
+                        }
+                        let _ = response.send(result);
                     }
                     ActorRequest::Snapshot(response) => {
                         let _ = response.send(engine.snapshot());

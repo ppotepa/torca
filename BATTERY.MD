@@ -28,7 +28,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs and ready-to-disconnected transitions now feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues now expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
-| Runtime Energy Ledger | Partial | diagnostics count scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, inbound text, attachment metadata/blob writes, peer and relay probes; transport evidence is policy-visible, while receipt/reaction projection writes and physical TX/RX totals remain |
+| Runtime Energy Ledger | Implemented core | diagnostics count scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, inbound text, attachment metadata/blob writes, projection events, peer and relay probes; physical TX/RX byte totals remain intentionally outside the app ledger |
 
 The current implementation is therefore a transitional state, but its idle
 path is already event/deadline driven. Event waiting, pairing scheduling,
@@ -486,9 +486,9 @@ Counters are incremented only on existing execution paths. Scheduler wakeups,
 native event/FFI wakeups, radio listener wakeups, snapshot builds, DB reads,
 command-induced DB writes, text/control worker job writes, attachment metadata
 writes, inbound text inserts, attachment metadata writes, attachment blob
-writes, peer probes and relay probes are wired today. TX/RX frame counts,
-active-peer duration, wake-lock duration and receipt/reaction projection writes
-are not emitted yet and must not be populated with estimates:
+writes, receipt/reaction projection events, peer probes and relay probes are
+wired today. Active-peer duration, wake-lock duration and physical TX/RX byte
+totals are not emitted yet and must not be populated with estimates:
 
 ```text
 runtime_wakeups_by_reason
@@ -504,6 +504,7 @@ snapshot_builds
 db_reads
 db_writes
 blob_writes
+projection_events
 ffi_wakes
 ```
 
@@ -514,11 +515,12 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 1. **Partial:** keep `torca-runtime-policy`, fake clock, reducer, lease book,
    evidence ledger and event hub small and dependency-light. Finish budgets
    and production scheduler ownership before adding new policy concepts.
-2. **Partial:** scheduler, native event/FFI-wake, radio listener wake,
+2. **Implemented core:** scheduler, native event/FFI-wake, radio listener wake,
    snapshot/DB-read, command-induced DB-write, text/control worker-write,
    attachment-metadata-write, blob-write, inbound-text-write, peer-probe and
    relay-probe counters are wired, with a dedicated CI idle scheduler gate.
-   Add receipt/reaction projection counters before attempting Arti dormancy.
+   receipt/reaction projection events are counted at the engine boundary;
+   physical byte and duration measurements remain deliberately out of scope.
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. The native actor also blocks
    until a command or the earliest durable pending-operation deadline. The

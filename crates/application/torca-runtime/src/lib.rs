@@ -880,6 +880,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut active_delivery_leases = BTreeSet::<OpaqueId>::new();
     let mut last_worker_database_writes = 0_u64;
     let mut last_blob_writes = 0_u64;
+    let mut last_projection_events = 0_u64;
     loop {
         match wait_for_runtime_command(&receiver, next_maintenance_at) {
             RuntimeWait::Command(RuntimeCommand::Shutdown(response)) => {
@@ -1118,6 +1119,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
         }
         last_blob_writes = blob_writes;
+        let projection_events = engine.projection_event_count();
+        if projection_events > last_projection_events {
+            for _ in last_projection_events..projection_events {
+                diagnostics.count(RuntimeCounter::ProjectionEvent);
+            }
+        }
+        last_projection_events = projection_events;
         if !active_attachment_leases.is_empty()
             && let Ok(views) = communication.attachment_snapshot()
         {

@@ -136,6 +136,7 @@ pub struct RuntimeCounters {
     pub db_reads: u64,
     pub db_writes: u64,
     pub blob_writes: u64,
+    pub projection_events: u64,
     pub radio_wakeups: u64,
 }
 
@@ -149,6 +150,7 @@ pub enum RuntimeCounter {
     DbRead,
     DbWrite,
     BlobWrite,
+    ProjectionEvent,
     RadioWake,
 }
 
@@ -192,6 +194,7 @@ impl DiagnosticBuffer {
             RuntimeCounter::DbRead => &mut self.counters.db_reads,
             RuntimeCounter::DbWrite => &mut self.counters.db_writes,
             RuntimeCounter::BlobWrite => &mut self.counters.blob_writes,
+            RuntimeCounter::ProjectionEvent => &mut self.counters.projection_events,
             RuntimeCounter::RadioWake => &mut self.counters.radio_wakeups,
         };
         *value = value.saturating_add(1);
@@ -225,7 +228,7 @@ impl DiagnosticBuffer {
         let counters = self.counters;
         let _ = write!(
             output,
-            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"radioWakeups\":{}}}}}",
+            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{}}}}}",
             counters.scheduler_wakeups,
             counters.snapshot_builds,
             counters.peer_probes,
@@ -234,6 +237,7 @@ impl DiagnosticBuffer {
             counters.db_reads,
             counters.db_writes,
             counters.blob_writes,
+            counters.projection_events,
             counters.radio_wakeups,
         );
         output
@@ -285,9 +289,12 @@ mod tests {
         diagnostics.count(RuntimeCounter::DbWrite);
         diagnostics.count(RuntimeCounter::DbWrite);
         diagnostics.count(RuntimeCounter::BlobWrite);
+        diagnostics.count(RuntimeCounter::ProjectionEvent);
         assert_eq!(diagnostics.counters().db_writes, 2);
         assert_eq!(diagnostics.counters().blob_writes, 1);
+        assert_eq!(diagnostics.counters().projection_events, 1);
         assert!(diagnostics.export_json().contains("\"dbWrites\":2"));
         assert!(diagnostics.export_json().contains("\"blobWrites\":1"));
+        assert!(diagnostics.export_json().contains("\"projectionEvents\":1"));
     }
 }
