@@ -40,6 +40,22 @@ void main() {
     expect(terminalTokens.terminal, isTrue);
     expect(terminalTokens.radiusMedium, lessThan(modernTokens.radiusMedium));
     expect(
+      modern.iconButtonTheme.style?.shape?.resolve(<WidgetState>{}),
+      isA<CircleBorder>(),
+    );
+    expect(
+      modern.iconButtonTheme.style?.fixedSize?.resolve(<WidgetState>{}),
+      const Size.square(48),
+    );
+    final terminalIconShape = terminal.iconButtonTheme.style?.shape?.resolve(
+      <WidgetState>{},
+    );
+    expect(terminalIconShape, isA<RoundedRectangleBorder>());
+    expect(
+      (terminalIconShape! as RoundedRectangleBorder).borderRadius,
+      BorderRadius.zero,
+    );
+    expect(
       terminal.extension<TorcaIconSet>()!.chats,
       isNot(modern.extension<TorcaIconSet>()!.chats),
     );

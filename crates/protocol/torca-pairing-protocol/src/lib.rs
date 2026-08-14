@@ -14,6 +14,8 @@ pub const MAX_PUBLIC_KEY_LEN: usize = 512;
 pub const MAX_DISPLAY_NAME_LEN: usize = 256;
 pub const MAX_ONION_ADDRESS_LEN: usize = 255;
 pub const MAX_APPROVAL_PROOF_LEN: usize = 512;
+pub const MAX_AVATAR_PAYLOAD_LEN: usize = 32 * 1024;
+pub const MAX_AVATAR_VERSION_LEN: usize = 64;
 const MAGIC: &[u8; 4] = b"TRCP";
 const VERSION: u16 = 3;
 
@@ -40,6 +42,31 @@ pub struct PairingOffer {
     pub onion_address: String,
     pub capability_id: OpaqueId,
     pub transcript_nonce: [u8; 32],
+    pub avatar: Option<AvatarEnvelope>,
+}
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AvatarEnvelope {
+    pub schema: u8,
+    pub generator_version: String,
+    pub catalog_version: String,
+    pub genome_hash: [u8; 32],
+    pub compressed_genome: Vec<u8>,
+}
+impl AvatarEnvelope {
+    pub fn validate(&self) -> Result<(), PairingProtocolError> {
+        if self.schema == 0
+            || self.generator_version.is_empty()
+            || self.generator_version.len() > MAX_AVATAR_VERSION_LEN
+            || self.catalog_version.is_empty()
+            || self.catalog_version.len() > MAX_AVATAR_VERSION_LEN
+            || self.compressed_genome.is_empty()
+            || self.compressed_genome.len() > MAX_AVATAR_PAYLOAD_LEN
+        {
+            return Err(PairingProtocolError::InvalidAvatar);
+        }
+        Ok(())
+    }
 }
 impl PairingOffer {
     pub fn validate(&self) -> Result<(), PairingProtocolError> {
@@ -62,6 +89,9 @@ impl PairingOffer {
             || !self.onion_address.to_ascii_lowercase().ends_with(".onion")
         {
             return Err(PairingProtocolError::InvalidOnionAddress);
+        }
+        if let Some(avatar) = &self.avatar {
+            avatar.validate()?;
         }
         Ok(())
     }
@@ -211,6 +241,18 @@ fn encode_offer(o: &PairingOffer, out: &mut Vec<u8>) -> Result<(), PairingProtoc
     put_bytes(o.onion_address.as_bytes(), out)?;
     out.extend_from_slice(&o.capability_id.into_bytes());
     out.extend_from_slice(&o.transcript_nonce);
+    match &o.avatar {
+        None => out.push(0),
+        Some(avatar) => {
+            avatar.validate()?;
+            out.push(1);
+            out.push(avatar.schema);
+            put_bytes(avatar.generator_version.as_bytes(), out)?;
+            put_bytes(avatar.catalog_version.as_bytes(), out)?;
+            out.extend_from_slice(&avatar.genome_hash);
+            put_bytes(&avatar.compressed_genome, out)?;
+        }
+    }
     Ok(())
 }
 fn decode_offer(c: &mut Cursor<'_>) -> Result<PairingOffer, PairingProtocolError> {
@@ -225,6 +267,19 @@ fn decode_offer(c: &mut Cursor<'_>) -> Result<PairingOffer, PairingProtocolError
         .map_err(|_| PairingProtocolError::InvalidOnionAddress)?;
     let capability_id = OpaqueId::from_bytes(c.array_16()?);
     let transcript_nonce = c.array_32()?;
+    let avatar = match c.u8()? {
+        0 => None,
+        1 => Some(AvatarEnvelope {
+            schema: c.u8()?,
+            generator_version: String::from_utf8(c.bytes(MAX_AVATAR_VERSION_LEN)?)
+                .map_err(|_| PairingProtocolError::InvalidAvatar)?,
+            catalog_version: String::from_utf8(c.bytes(MAX_AVATAR_VERSION_LEN)?)
+                .map_err(|_| PairingProtocolError::InvalidAvatar)?,
+            genome_hash: c.array_32()?,
+            compressed_genome: c.bytes(MAX_AVATAR_PAYLOAD_LEN)?,
+        }),
+        _ => return Err(PairingProtocolError::InvalidAvatar),
+    };
     Ok(PairingOffer {
         identity_id,
         key_id,
@@ -235,6 +290,7 @@ fn decode_offer(c: &mut Cursor<'_>) -> Result<PairingOffer, PairingProtocolError
         onion_address,
         capability_id,
         transcript_nonce,
+        avatar,
     })
 }
 fn encode_approval(a: &PairingApproval, out: &mut Vec<u8>) -> Result<(), PairingProtocolError> {
@@ -309,6 +365,7 @@ pub enum PairingProtocolError {
     InvalidPublicKeyLength,
     InvalidDisplayName,
     InvalidOnionAddress,
+    InvalidAvatar,
     InvalidApprovalProofLength,
     PayloadTooLarge { actual: usize },
     FieldTooLarge,
@@ -324,7 +381,9 @@ impl fmt::Display for PairingProtocolError {
 impl std::error::Error for PairingProtocolError {}
 #[cfg(test)]
 mod tests {
-    use super::{PairingCompletionAck, PairingEnvelope, PairingOffer, PairingPayload};
+    use super::{
+        AvatarEnvelope, PairingCompletionAck, PairingEnvelope, PairingOffer, PairingPayload,
+    };
     use torca_foundation::OpaqueId;
     fn offer(pairing: u128) -> PairingEnvelope {
         PairingEnvelope {
@@ -339,6 +398,7 @@ mod tests {
                 onion_address: format!("{}.onion", "a".repeat(56)),
                 capability_id: OpaqueId::from_u128(4),
                 transcript_nonce: [9; 32],
+                avatar: None,
             }),
         }
     }
@@ -362,5 +422,27 @@ mod tests {
         };
         let encoded = envelope.encode().expect("encode");
         assert_eq!(PairingEnvelope::decode(&encoded).expect("decode"), envelope);
+    }
+
+    #[test]
+    fn avatar_envelope_round_trips_and_rejects_oversized_payloads() {
+        let mut e = offer(2);
+        if let PairingPayload::Offer(ref mut value) = e.payload {
+            value.avatar = Some(AvatarEnvelope {
+                schema: 1,
+                generator_version: "4.7.0".into(),
+                catalog_version: "4.4".into(),
+                genome_hash: [3; 32],
+                compressed_genome: vec![8; 16],
+            });
+        }
+        let encoded = e.encode().expect("encode");
+        assert_eq!(PairingEnvelope::decode(&encoded).expect("decode"), e);
+
+        if let PairingPayload::Offer(ref mut value) = e.payload {
+            value.avatar.as_mut().expect("avatar").compressed_genome =
+                vec![0; super::MAX_AVATAR_PAYLOAD_LEN + 1];
+        }
+        assert!(e.encode().is_err());
     }
 }

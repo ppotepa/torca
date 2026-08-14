@@ -244,6 +244,7 @@ pub enum DeployStage {
     ClientDataReset,
     ClientsInstalled,
     ClientsLaunched,
+    RuntimeReady,
     NetworkReady,
     Completed,
     Interrupted,

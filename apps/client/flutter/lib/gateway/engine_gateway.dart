@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 
 import '../generated/torca_contract.dart';
 
@@ -56,6 +57,12 @@ abstract interface class EngineGateway {
   Future<BridgeResultDto> execute(BridgeCommandDto command);
   Future<String> diagnosticsJson();
   Future<void> dispose();
+}
+
+/// Optional targeted avatar capability. The root snapshot intentionally carries
+/// only descriptors; callers fetch the compressed genome only when rendering it.
+abstract interface class AvatarGenomeProvider {
+  Future<AvatarGenomeEnvelope?> loadAvatarGenome({String? identityId});
 }
 
 abstract interface class GatewayAvailability {
@@ -229,7 +236,11 @@ abstract interface class RuntimeShutdownGateway {
 }
 
 class StartupFailureGateway
-    implements EngineGateway, RuntimeShutdownGateway, GatewayAvailability {
+    implements
+        EngineGateway,
+        RuntimeShutdownGateway,
+        GatewayAvailability,
+        AvatarGenomeProvider {
   StartupFailureGateway(this.reason);
 
   final String reason;
@@ -258,6 +269,10 @@ class StartupFailureGateway
 
   @override
   Future<String> diagnosticsJson() async => '{"events":[]}';
+
+  @override
+  Future<AvatarGenomeEnvelope?> loadAvatarGenome({String? identityId}) async =>
+      null;
 
   @override
   Future<void> shutdown() async {}

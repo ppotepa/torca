@@ -1,9 +1,53 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
+
+class ConversationHeaderSurface extends StatelessWidget {
+  const ConversationHeaderSurface({
+    required this.child,
+    this.radioActive = false,
+    this.padding = const EdgeInsets.fromLTRB(16, 10, 8, 10),
+    super.key,
+  });
+
+  final Widget child;
+  final bool radioActive;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final surface = colors.surface.withValues(alpha: 0.90);
+    final fill = radioActive
+        ? Color.alphaBlend(colors.error.withValues(alpha: 0.12), surface)
+        : surface;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: fill,
+            border: Border(
+              bottom: BorderSide(
+                color: colors.outlineVariant.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 60),
+            child: Padding(padding: padding, child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class ConversationHeader extends StatelessWidget {
   const ConversationHeader({
@@ -12,6 +56,8 @@ class ConversationHeader extends StatelessWidget {
     this.gateway,
     this.radio,
     this.session,
+    this.sending = false,
+    this.receiving = false,
     this.compact = false,
     super.key,
   });
@@ -22,55 +68,39 @@ class ConversationHeader extends StatelessWidget {
   final EngineGateway? gateway;
   final RadioContactDto? radio;
   final RadioSessionDto? session;
+  final bool sending;
+  final bool receiving;
 
   @override
   Widget build(BuildContext context) {
     final value = contact;
     final blocked = value?.typedStatus == ContactStatus.blocked;
     final name = value?.displayName ?? 'Contact';
+    final radioState = session?.typedState ?? radio?.typedState;
     return Row(
       mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
       children: <Widget>[
-        TorcaAvatar(label: name, size: compact ? 32 : 40),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: compact
-                    ? Theme.of(context).textTheme.titleSmall
-                    : Theme.of(context).textTheme.titleMedium,
-              ),
-              if (value != null)
-                blocked
-                    ? Text(
-                        'Blocked',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      )
-                    : InkWell(
-                        onTap: onConnectionDetails,
-                        child: Text(
-                          _presenceLabel(context, value),
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color:
-                                    value.typedPresenceState ==
-                                        PresenceState.online
-                                    ? Theme.of(context).colorScheme.primary
-                                    : null,
-                              ),
-                        ),
-                      ),
-            ],
+        TorcaDeviceAvatar(
+          label: name,
+          identityId: value?.remoteIdentityId,
+          size: compact ? 32 : 40,
+          presentation: AvatarActivityPresentation.resolve(
+            blocked: blocked,
+            talking: radioState == RadioState.receiving,
+            listening: radioState == RadioState.transmitting,
+            sending: sending,
+            receiving: receiving,
+            waking: radioState == RadioState.connecting,
+            online: value?.presenceState == 'online',
+            error: radioState == RadioState.reconnecting,
           ),
         ),
+        const SizedBox(width: 10),
+        if (compact)
+          Flexible(child: _contactText(context, value, name, blocked))
+        else
+          Expanded(child: _contactText(context, value, name, blocked)),
         if (!compact) ...<Widget>[
-          const Spacer(),
           if (value != null && gateway != null && radio != null)
             _RadioHeaderAction(
               gateway: gateway!,
@@ -96,6 +126,42 @@ class ConversationHeader extends StatelessWidget {
       ],
     );
   }
+
+  Widget _contactText(
+    BuildContext context,
+    ContactDto? value,
+    String name,
+    bool blocked,
+  ) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: compact
+            ? Theme.of(context).textTheme.titleSmall
+            : Theme.of(context).textTheme.titleMedium,
+      ),
+      if (value != null)
+        blocked
+            ? Text('Blocked', style: Theme.of(context).textTheme.bodySmall)
+            : InkWell(
+                onTap: onConnectionDetails,
+                child: Text(
+                  _presenceLabel(context, value),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: value.typedPresenceState == PresenceState.online
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                ),
+              ),
+    ],
+  );
 }
 
 class _RadioHeaderAction extends StatelessWidget {

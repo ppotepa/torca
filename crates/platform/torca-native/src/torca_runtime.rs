@@ -520,6 +520,9 @@ impl ActorState {
                 }
             }
             ("query", "diagnostics.get") => self.runtime.diagnostics_json(),
+            ("query", "avatars.get") => {
+                self.runtime.avatar_genome_json(payload.get("identityId").and_then(Value::as_str))
+            }
             ("query", "pairing.parse") => {
                 let uri = payload.get("uri").and_then(Value::as_str).unwrap_or_default();
                 self.runtime.parse_pairing_uri(uri)
@@ -982,9 +985,11 @@ fn bridge_command(
                 .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
         }),
         "contacts.acknowledge_new" => Ok(BridgeCommand::AcknowledgeNewContacts),
-        "profile.set" => {
-            Ok(BridgeCommand::UpdateProfile { display_name: text("displayName")?, at_ms: now()? })
-        }
+        "profile.set" => Ok(BridgeCommand::UpdateProfile {
+            display_name: text("displayName")?,
+            avatar_envelope_json: payload.get("avatarEnvelope").map(serde_json::Value::to_string),
+            at_ms: now()?,
+        }),
         "runtime.attention.set" => Ok(BridgeCommand::SetAttention {
             surface: text("surface")?,
             focused_resource_id: payload

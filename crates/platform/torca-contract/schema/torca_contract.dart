@@ -339,6 +339,9 @@ class PairingDto {
     this.remoteIdentityId,
     this.remoteDisplayName,
     this.remoteFingerprint,
+    this.remoteAvatarHash,
+    this.remoteAvatarGeneratorVersion,
+    this.remoteAvatarCatalogVersion,
   });
   factory PairingDto.fromJson(Map<String, dynamic> value) => PairingDto(
     id: _requiredString(value, 'id'),
@@ -352,11 +355,20 @@ class PairingDto {
     remoteIdentityId: value['remoteIdentityId'] as String?,
     remoteDisplayName: value['remoteDisplayName'] as String?,
     remoteFingerprint: value['remoteFingerprint'] as String?,
+    remoteAvatarHash: value['remoteAvatarHash'] as String?,
+    remoteAvatarGeneratorVersion:
+        value['remoteAvatarGeneratorVersion'] as String?,
+    remoteAvatarCatalogVersion: value['remoteAvatarCatalogVersion'] as String?,
   );
   final String id, code, inviteUri, role, state;
   final int expiresAtMs;
   final bool localApproved, remoteApproved;
-  final String? remoteIdentityId, remoteDisplayName, remoteFingerprint;
+  final String? remoteIdentityId,
+      remoteDisplayName,
+      remoteFingerprint,
+      remoteAvatarHash,
+      remoteAvatarGeneratorVersion,
+      remoteAvatarCatalogVersion;
 
   PairingRole get typedRole => pairingRoleFromWire(role);
 
@@ -505,6 +517,7 @@ class NavigationBadgesDto {
 class ContactDto {
   const ContactDto({
     required this.id,
+    this.remoteIdentityId = '',
     required this.displayName,
     required this.onionAddress,
     required this.status,
@@ -520,6 +533,7 @@ class ContactDto {
     final peerHealth = value['peerHealth'];
     return ContactDto(
       id: _requiredString(value, 'id'),
+      remoteIdentityId: _requiredString(value, 'remoteIdentityId'),
       displayName: _requiredString(value, 'displayName'),
       onionAddress: _requiredString(value, 'onionAddress'),
       status: _requiredString(value, 'status'),
@@ -536,6 +550,7 @@ class ContactDto {
     );
   }
   final String id,
+      remoteIdentityId,
       displayName,
       onionAddress,
       status,
@@ -797,6 +812,7 @@ class RadioSessionDto {
     required this.floor,
     required this.burstElapsedMs,
     required this.maxBurstMs,
+    this.inputLevelMilli = 0,
   });
 
   factory RadioSessionDto.fromJson(Map<String, dynamic> value) =>
@@ -807,10 +823,12 @@ class RadioSessionDto {
         floor: value['floor'] as String? ?? 'none',
         burstElapsedMs: _integer(value['burstElapsedMs']),
         maxBurstMs: _integer(value['maxBurstMs'], 10000),
+        inputLevelMilli: _integer(value['inputLevelMilli']).clamp(0, 1000),
       );
 
   final String contactId, sessionId, state, floor;
   final int burstElapsedMs, maxBurstMs;
+  final int inputLevelMilli;
   RadioState get typedState => _radioState(state);
   RadioFloor get typedFloor => switch (floor) {
     'none' => RadioFloor.none,
@@ -1098,8 +1116,12 @@ class SetAttentionCommandDto extends BridgeCommandDto {
 }
 
 class UpdateProfileCommandDto extends BridgeCommandDto {
-  const UpdateProfileCommandDto({required this.displayName});
+  const UpdateProfileCommandDto({
+    required this.displayName,
+    this.avatarEnvelope,
+  });
   final String displayName;
+  final Map<String, Object?>? avatarEnvelope;
 }
 
 class CreatePairingCommandDto extends BridgeCommandDto {
@@ -1393,6 +1415,19 @@ class RuntimeRequestDto {
     payload: <String, Object?>{},
   );
 
+  static const RuntimeRequestDto avatars = RuntimeRequestDto._(
+    kind: 'query',
+    name: 'avatars.get',
+    payload: <String, Object?>{},
+  );
+
+  static RuntimeRequestDto avatarForIdentity(String identityId) =>
+      RuntimeRequestDto._(
+        kind: 'query',
+        name: 'avatars.get',
+        payload: <String, Object?>{'identityId': identityId},
+      );
+
   final String kind;
   final String name;
   final Map<String, Object?> payload;
@@ -1414,6 +1449,7 @@ class RuntimeRequestDto {
     if (command is UpdateProfileCommandDto) {
       return _command('profile.set', <String, Object?>{
         'displayName': command.displayName,
+        'avatarEnvelope': command.avatarEnvelope,
       });
     }
     if (command is CreatePairingCommandDto) {

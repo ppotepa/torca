@@ -23,6 +23,8 @@ dependencies:
   window_manager: ^0.5.2
   torca_ui:
     path: ../../../packages/torca_ui
+  torca_avatar:
+    path: ../../../packages/torca_avatar
   torca_attachment_processing:
     path: ../../../packages/torca_attachment_processing
 

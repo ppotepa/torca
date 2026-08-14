@@ -9,6 +9,7 @@ import 'package:torca_app/navigation/app_navigation_controller.dart';
 import 'package:torca_app/screens/pairing_screen.dart';
 import 'package:torca_app/settings/local_preferences.dart';
 import 'package:torca_app/widgets/pairing_modal_registry.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'fake_engine_gateway.dart';
 
 TorcaApp _app(EngineGateway gateway) => TorcaApp(
@@ -145,6 +146,7 @@ void main() {
 
     await tester.tap(find.text('Open join'));
     await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
 
     expect(find.byType(TextField), findsOneWidget);
     expect(find.byTooltip('Scan QR'), findsNothing);
@@ -184,8 +186,25 @@ void main() {
   testWidgets('profile setup is the initial recoverable route', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(_app(FakeEngineGateway()));
+    await tester.pumpWidget(
+      _app(
+        FakeEngineGateway(
+          initialSnapshot: const AppSnapshotDto(
+            identity: IdentityDto(id: 'local-device'),
+            torState: 'ready',
+            bootstrapPhase: 'ready_for_profile',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('Choose your nickname'), findsWidgets);
+    expect(find.text('THIS IS YOUR UGLY FACE'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('profile-device-avatar')),
+      findsOneWidget,
+    );
+    expect(find.byType(TorcaDeviceAvatar), findsOneWidget);
     expect(find.text('Torca'), findsOneWidget);
   });
 

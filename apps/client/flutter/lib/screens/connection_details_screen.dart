@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
@@ -47,10 +48,19 @@ class ConnectionDetailsScreen extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
-                TorcaAvatar(
+                TorcaDeviceAvatar(
                   label: contact.displayName,
+                  identityId: contact.remoteIdentityId,
                   size: 52,
-                  child: Icon(context.torcaIcons.contacts),
+                  presentation: AvatarActivityPresentation.resolve(
+                    blocked: contact.typedStatus == ContactStatus.blocked,
+                    online: contact.presenceState == 'online',
+                    waking:
+                        contact.peerHealth.typedState ==
+                        TransportState.connecting,
+                    error:
+                        contact.peerHealth.typedState == TransportState.failed,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

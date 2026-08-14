@@ -26,16 +26,17 @@ String? contentExtension(String mediaType) => switch (mediaType) {
 bool hasVisualAttachmentPreview(String mediaType) =>
     mediaType.startsWith('image/') || mediaType.startsWith('video/');
 
-String messageStatusLabel(String status, TorcaStrings strings) => switch (status) {
-  'queued' => strings.messageQueued,
-  'sending' => strings.sendingSecurely,
-  'sent' => strings.sent,
-  'delivered' => strings.delivered,
-  'read' => strings.read,
-  'failed' => strings.deliveryFailed,
-  'cancelled' => strings.cancelled,
-  _ => status,
-};
+String messageStatusLabel(String status, TorcaStrings strings) =>
+    switch (status) {
+      'queued' => strings.messageQueued,
+      'sending' => strings.sendingSecurely,
+      'sent' => strings.sent,
+      'delivered' => strings.delivered,
+      'read' => strings.read,
+      'failed' => strings.deliveryFailed,
+      'cancelled' => strings.cancelled,
+      _ => status,
+    };
 
 bool sameDay(MessageDto first, MessageDto second) {
   final a = DateTime.fromMillisecondsSinceEpoch(first.createdAtMs).toLocal();

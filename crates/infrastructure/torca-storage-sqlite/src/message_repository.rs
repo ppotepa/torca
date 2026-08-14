@@ -413,12 +413,12 @@ impl MessageRepository for SqlCipherMessageStore {
         rows.map(|row| {
             let (message_id, conversation_id, actor_id, emoji, active, updated_at_ms) =
                 row.map_err(|_| MessageError::RepositoryFailure)?;
-            let message_id = MessageId::from_opaque(
-                OpaqueId::from_bytes(message_id.try_into().map_err(|_| MessageError::RepositoryFailure)?),
-            );
-            let conversation_id = ConversationId::from_opaque(
-                OpaqueId::from_bytes(conversation_id.try_into().map_err(|_| MessageError::RepositoryFailure)?),
-            );
+            let message_id = MessageId::from_opaque(OpaqueId::from_bytes(
+                message_id.try_into().map_err(|_| MessageError::RepositoryFailure)?,
+            ));
+            let conversation_id = ConversationId::from_opaque(OpaqueId::from_bytes(
+                conversation_id.try_into().map_err(|_| MessageError::RepositoryFailure)?,
+            ));
             let actor_id = OpaqueId::from_bytes(
                 actor_id.try_into().map_err(|_| MessageError::RepositoryFailure)?,
             );

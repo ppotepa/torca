@@ -47,20 +47,31 @@ class ConversationScreen extends StatelessWidget {
       final radioSession = snapshot.radio.session?.contactId == contact?.id
           ? snapshot.radio.session
           : null;
-      final recording = radioSession?.typedState == RadioState.transmitting;
+      final radioContact = contact == null
+          ? null
+          : snapshot.radio.forContact(contact.id);
+      final radioState = radioSession?.typedState ?? radioContact?.typedState;
+      final radioActive =
+          radioState == RadioState.transmitting ||
+          radioState == RadioState.receiving;
+      final transfer = _avatarTransferState(snapshot, conversation.id);
       return Scaffold(
         appBar: RuntimeAppBar(
           titleSpacing: 0,
-          backgroundColor: recording
-              ? Theme.of(context).colorScheme.error.withValues(alpha: 0.10)
-              : null,
+          blurBackground: true,
+          backgroundColor: radioActive
+              ? Color.alphaBlend(
+                  Theme.of(context).colorScheme.error.withValues(alpha: 0.12),
+                  Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
+                )
+              : Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
           title: ConversationHeader(
             contact: contact,
             gateway: gateway,
-            radio: contact == null
-                ? null
-                : snapshot.radio.forContact(contact.id),
+            radio: radioContact,
             session: radioSession,
+            sending: transfer.$1,
+            receiving: transfer.$2,
             compact: true,
             onConnectionDetails: contact == null
                 ? () {}
@@ -438,6 +449,7 @@ class _ConversationPaneState extends State<ConversationPane>
       final radioSession = snapshot.radio.session?.contactId == contact?.id
           ? snapshot.radio.session
           : null;
+      final radioState = radioSession?.typedState ?? radioContact?.typedState;
       final radioTimeline = contact == null
           ? const <RadioTimelineEventDto>[]
           : snapshot.radio.timeline
@@ -446,28 +458,27 @@ class _ConversationPaneState extends State<ConversationPane>
       final sending = _operations.isActive('message:send');
       final sendingAttachment = _operations.isActive('attachment:send');
       final pickingAttachment = _operations.isActive('attachment:pick');
+      final transfer = _avatarTransferState(snapshot, widget.conversation.id);
 
       return Column(
         children: <Widget>[
           if (widget.showHeader) ...<Widget>[
-            ColoredBox(
-              color: radioSession?.typedState == RadioState.transmitting
-                  ? Theme.of(context).colorScheme.error.withValues(alpha: 0.10)
-                  : Colors.transparent,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-                child: ConversationHeader(
-                  contact: contact,
-                  gateway: widget.gateway,
-                  radio: radioContact,
-                  session: radioSession,
-                  onConnectionDetails: contact == null
-                      ? () {}
-                      : () => _openConnectionDetails(contact.id),
-                ),
+            ConversationHeaderSurface(
+              radioActive:
+                  radioState == RadioState.transmitting ||
+                  radioState == RadioState.receiving,
+              child: ConversationHeader(
+                contact: contact,
+                gateway: widget.gateway,
+                radio: radioContact,
+                session: radioSession,
+                sending: transfer.$1,
+                receiving: transfer.$2,
+                onConnectionDetails: contact == null
+                    ? () {}
+                    : () => _openConnectionDetails(contact.id),
               ),
             ),
-            const Divider(height: 1),
           ],
           if (contact != null &&
               (radioContact?.localEnabled == true || radioTimeline.isNotEmpty))
@@ -1384,4 +1395,28 @@ class _ConversationPaneState extends State<ConversationPane>
   void _showError(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
+}
+
+(bool, bool) _avatarTransferState(
+  AppSnapshotDto snapshot,
+  String conversationId,
+) {
+  final messageIds = snapshot.messages
+      .where((message) => message.conversationId == conversationId)
+      .map((message) => message.id)
+      .toSet();
+  var sending = false;
+  var receiving = false;
+  for (final attachment in snapshot.attachments) {
+    if (!messageIds.contains(attachment.messageId) ||
+        attachment.typedStatus != AttachmentStatus.transferring) {
+      continue;
+    }
+    if (attachment.typedDirection == AttachmentDirection.outbound) {
+      sending = true;
+    } else if (attachment.typedDirection == AttachmentDirection.inbound) {
+      receiving = true;
+    }
+  }
+  return (sending, receiving);
 }

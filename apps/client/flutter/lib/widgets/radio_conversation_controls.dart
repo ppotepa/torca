@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,6 +36,8 @@ class RadioConversationStatus extends StatelessWidget {
 
   Widget _status(BuildContext context, RadioContactDto radio) {
     final state = session?.typedState ?? radio.typedState;
+    final transmissionActive =
+        state == RadioState.receiving || state == RadioState.transmitting;
     final prominent =
         state == RadioState.receiving ||
         state == RadioState.transmitting ||
@@ -55,9 +58,17 @@ class RadioConversationStatus extends StatelessWidget {
       RadioState.reconnecting => context.strings.radioReconnecting,
       _ => context.strings.radioUnavailable,
     };
+    final background = transmissionActive
+        ? colors.errorContainer
+        : prominent
+        ? colors.primaryContainer
+        : colors.surfaceContainerLow;
+    final foreground = transmissionActive
+        ? colors.onErrorContainer
+        : colors.onSurface;
     return Container(
       width: double.infinity,
-      color: prominent ? colors.primaryContainer : colors.surfaceContainerLow,
+      color: background,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: <Widget>[
@@ -66,17 +77,25 @@ class RadioConversationStatus extends StatelessWidget {
                 ? context.torcaIcons.online
                 : context.torcaIcons.radio,
             size: 18,
+            color: foreground,
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: foreground),
+            ),
           ),
           if (session != null &&
               (state == RadioState.transmitting ||
                   state == RadioState.receiving))
             Text(
               '${(session!.burstElapsedMs / 1000).clamp(0, 10).toStringAsFixed(1)} / 10 s',
-              style: Theme.of(context).textTheme.labelMedium,
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(color: foreground),
             ),
         ],
       ),
@@ -149,18 +168,29 @@ class RadioPushToTalk extends StatefulWidget {
 }
 
 class _RadioPushToTalkState extends State<RadioPushToTalk>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   Timer? _burstTimer;
   int? _activePointerId;
   bool _pointerHeld = false;
   bool _transmissionActive = false;
   bool _commandBusy = false;
   bool _releaseRequested = false;
+  late final AnimationController _pulse;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 720),
+    );
+  }
+
+  @override
+  void didUpdateWidget(RadioPushToTalk oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncPulse();
   }
 
   @override
@@ -178,6 +208,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _burstTimer?.cancel();
+    _pulse.dispose();
     unawaited(_release(force: true));
     super.dispose();
   }
@@ -189,6 +220,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         state == RadioState.requestingFloor ||
         state == RadioState.startingCapture ||
         state == RadioState.transmitting;
+    final visualActive = active || _pointerHeld;
     final canPress =
         !_commandBusy &&
         !widget.disabled &&
@@ -220,30 +252,34 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
             : null,
         child: Tooltip(
           message: _tooltip(context, state),
-          child: SizedBox.square(
-            dimension: 48,
-            child: Stack(
-              alignment: Alignment.center,
-              children: <Widget>[
-                if (active)
-                  SizedBox.square(
-                    dimension: 46,
-                    child: CircularProgressIndicator(
-                      value: progress,
-                      strokeWidth: 3,
-                    ),
-                  ),
-                Icon(
-                  context.torcaIcons.pushToTalk,
-                  color: canPress || active
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).disabledColor,
-                ),
-              ],
-            ),
+          child: _PttButtonVisual(
+            active: visualActive,
+            enabled: canPress || active,
+            progress: progress,
+            inputLevel: (widget.session?.inputLevelMilli ?? 0) / 1000,
+            pulse: _pulse,
           ),
         ),
       ),
+    );
+  }
+
+  void _setPulseActive(bool active) {
+    if (active && !_pulse.isAnimating) {
+      _pulse.repeat();
+    } else if (!active && _pulse.isAnimating) {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
+  void _syncPulse() {
+    final state = widget.session?.typedState ?? widget.radio.typedState;
+    _setPulseActive(
+      _pointerHeld ||
+          state == RadioState.requestingFloor ||
+          state == RadioState.startingCapture ||
+          state == RadioState.transmitting,
     );
   }
 
@@ -265,6 +301,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       _pointerHeld = true;
       _releaseRequested = false;
     });
+    _setPulseActive(true);
     final permission =
         widget.requestPermission ?? MicrophonePermission.ensureGranted;
     if (!await permission()) {
@@ -273,6 +310,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
           _activePointerId = null;
           _pointerHeld = false;
         });
+        _syncPulse();
         _showError(context.strings.microphonePermissionRequired);
       }
       return;
@@ -314,6 +352,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _pointerHeld = false;
         _transmissionActive = false;
       });
+      _syncPulse();
       _showError(
         BridgeErrorPresenter.localized(
           context,
@@ -329,9 +368,15 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
     _releaseRequested = true;
     _activePointerId = null;
     _pointerHeld = false;
-    if (!_transmissionActive) return;
+    if (!_transmissionActive) {
+      _syncPulse();
+      return;
+    }
     _burstTimer?.cancel();
-    if (mounted) setState(() => _transmissionActive = false);
+    if (mounted) {
+      setState(() => _transmissionActive = false);
+      _syncPulse();
+    }
     unawaited(HapticFeedback.selectionClick());
     if (_commandBusy) return;
     await widget.gateway.execute(
@@ -343,5 +388,109 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _PttButtonVisual extends StatelessWidget {
+  const _PttButtonVisual({
+    required this.active,
+    required this.enabled,
+    required this.progress,
+    required this.inputLevel,
+    required this.pulse,
+  });
+
+  final bool active;
+  final bool enabled;
+  final double progress;
+  final double inputLevel;
+  final AnimationController pulse;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final terminal = context.torcaTokens.terminal;
+    final radius = terminal ? BorderRadius.zero : BorderRadius.circular(999);
+    return SizedBox.square(
+      key: const ValueKey<String>('radio-ptt-button'),
+      dimension: 48,
+      child: AnimatedBuilder(
+        animation: pulse,
+        builder: (context, child) {
+          final wave = math.sin(pulse.value * math.pi);
+          final level = inputLevel.clamp(0.0, 1.0);
+          // A quiet voice still leaves a clearly visible halo. Louder input
+          // expands it far enough to remain visible below the user's finger.
+          // The halo is intentionally much larger than the control. Its
+          // radius must remain visible while a thumb covers the PTT button.
+          // Preserve the amplitude response, but render it at 3x the original
+          // radius requested for the conversation interaction.
+          final haloScale = (1.18 + (level * 0.62) + (wave * 0.10)) * 3;
+          return Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: <Widget>[
+              if (active)
+                Transform.scale(
+                  scale: haloScale,
+                  child: Container(
+                    key: const ValueKey<String>('radio-ptt-halo'),
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: context.torcaColors.connectionReady.withValues(
+                        alpha: 0.16 + (level * 0.12),
+                      ),
+                      border: Border.all(
+                        color: context.torcaColors.connectionReady.withValues(
+                          alpha: 0.48,
+                        ),
+                        width: 2,
+                      ),
+                      borderRadius: radius,
+                    ),
+                  ),
+                ),
+              if (active && progress > 0)
+                SizedBox.square(
+                  dimension: 48,
+                  child: CircularProgressIndicator(
+                    value: progress,
+                    strokeWidth: 2.5,
+                    color: colors.onError,
+                    backgroundColor: colors.onError.withValues(alpha: 0.20),
+                  ),
+                ),
+              child!,
+            ],
+          );
+        },
+        child: AnimatedContainer(
+          duration: context.torcaTokens.animationDuration,
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: colors.error.withValues(alpha: enabled ? 1 : 0.38),
+            borderRadius: radius,
+            border: Border.all(
+              color: colors.onError.withValues(alpha: active ? 0.85 : 0.24),
+            ),
+            boxShadow: active
+                ? <BoxShadow>[
+                    BoxShadow(
+                      color: colors.error.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                    ),
+                  ]
+                : const <BoxShadow>[],
+          ),
+          child: Icon(
+            active ? Icons.mic : Icons.mic_none,
+            color: colors.onError.withValues(alpha: enabled ? 1 : 0.65),
+            size: 24,
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import 'tokens.dart';
@@ -5,6 +7,7 @@ import 'tokens.dart';
 class TorcaAvatar extends StatelessWidget {
   const TorcaAvatar({
     required this.label,
+    this.bytes,
     this.size = 40,
     this.child,
     this.backgroundColor,
@@ -13,6 +16,8 @@ class TorcaAvatar extends StatelessWidget {
   });
 
   final String label;
+
+  final Uint8List? bytes;
   final double size;
   final Widget? child;
   final Color? backgroundColor;
@@ -30,16 +35,25 @@ class TorcaAvatar extends StatelessWidget {
         context.torcaTokens.terminal ? 0 : size / 2,
       ),
     ),
+    clipBehavior: Clip.antiAlias,
     child: IconTheme(
       data: IconThemeData(color: foregroundColor),
       child: DefaultTextStyle.merge(
         style: TextStyle(color: foregroundColor),
         child:
             child ??
-            Text(
-              _initials(label),
-              style: Theme.of(context).textTheme.labelMedium,
-            ),
+            (bytes == null
+                ? Text(
+                    _initials(label),
+                    style: Theme.of(context).textTheme.labelMedium,
+                  )
+                : Image.memory(
+                    bytes!,
+                    width: double.infinity,
+                    height: double.infinity,
+                    fit: BoxFit.cover,
+                    filterQuality: FilterQuality.none,
+                  )),
       ),
     ),
   );

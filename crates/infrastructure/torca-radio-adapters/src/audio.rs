@@ -21,6 +21,7 @@ pub struct AudioPipeline {
     outbound: Arc<ArrayQueue<AudioFrame>>,
     inbound: Arc<ArrayQueue<AudioFrame>>,
     capture_enabled: Arc<AtomicBool>,
+    capture_level_milli: Arc<AtomicU32>,
     playback_frame_active: Arc<AtomicBool>,
     start_cue_generation: Arc<AtomicU32>,
     end_cue_requested: Arc<AtomicBool>,
@@ -36,6 +37,7 @@ impl Default for AudioPipeline {
             outbound: Arc::new(ArrayQueue::new(MAX_RADIO_BURST_FRAMES)),
             inbound: Arc::new(ArrayQueue::new(INBOUND_AUDIO_QUEUE_FRAMES)),
             capture_enabled: Arc::new(AtomicBool::new(false)),
+            capture_level_milli: Arc::new(AtomicU32::new(0)),
             playback_frame_active: Arc::new(AtomicBool::new(false)),
             start_cue_generation: Arc::new(AtomicU32::new(1)),
             end_cue_requested: Arc::new(AtomicBool::new(false)),
@@ -55,6 +57,19 @@ impl AudioPipeline {
 
     pub(crate) fn set_capture_enabled(&self, enabled: bool) {
         self.capture_enabled.store(enabled, Ordering::Release);
+        if !enabled {
+            self.capture_level_milli.store(0, Ordering::Release);
+        }
+    }
+
+    fn set_capture_level(&self, level: f32) {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let milli = (level.clamp(0.0, 1.0) * 1000.0).round() as u32;
+        self.capture_level_milli.store(milli.min(1000), Ordering::Release);
+    }
+
+    pub fn capture_level_milli(&self) -> u16 {
+        u16::try_from(self.capture_level_milli.load(Ordering::Acquire)).unwrap_or(1000).min(1000)
     }
 
     fn capture_enabled(&self) -> bool {
@@ -120,6 +135,7 @@ impl AudioPipeline {
         self.set_playback_frame_active(false);
         self.end_cue_requested.store(false, Ordering::Release);
         self.end_cue_finished.store(false, Ordering::Release);
+        self.capture_level_milli.store(0, Ordering::Release);
     }
 }
 
@@ -162,6 +178,10 @@ impl RadioAudioPort for RadioAudioAdapter {
 
     fn microphone_ready(&self) -> Result<bool, RadioApplicationError> {
         Ok(self.platform.microphone_ready())
+    }
+
+    fn capture_level_milli(&self) -> u16 {
+        self.pipeline.capture_level_milli()
     }
 
     fn begin_capture(
@@ -239,7 +259,7 @@ impl RadioAudioPort for RadioAudioAdapter {
 #[cfg(any(target_os = "windows", target_os = "android"))]
 mod platform {
     use super::{
-        ArrayQueue, AudioFrame, AudioPipeline, RADIO_SAMPLES_PER_FRAME, RadioApplicationError,
+        AudioFrame, AudioPipeline, RADIO_SAMPLES_PER_FRAME, RadioApplicationError,
         RadioAudioDeviceProjection, RadioAudioProjection, decode_mulaw, encode_mulaw,
     };
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -452,6 +472,7 @@ mod platform {
         accumulated_samples: u32,
         frame: AudioFrame,
         position: usize,
+        envelope: f32,
     }
 
     impl CaptureResampler {
@@ -463,10 +484,11 @@ mod platform {
                 accumulated_samples: 0,
                 frame: [0xff; RADIO_SAMPLES_PER_FRAME],
                 position: 0,
+                envelope: 0.0,
             }
         }
 
-        fn push(&mut self, sample: f32, output: &ArrayQueue<AudioFrame>) {
+        fn push(&mut self, sample: f32, pipeline: &AudioPipeline) {
             self.accumulator += sample;
             self.accumulated_samples = self.accumulated_samples.saturating_add(1);
             self.phase = self.phase.saturating_add(8_000);
@@ -479,13 +501,20 @@ mod platform {
             self.accumulator = 0.0;
             self.accumulated_samples = 0;
             let pcm = (average.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
+            let level = average.abs().clamp(0.0, 1.0);
+            self.envelope = if level > self.envelope {
+                self.envelope * 0.62 + level * 0.38
+            } else {
+                self.envelope * 0.94 + level * 0.06
+            };
+            pipeline.set_capture_level(self.envelope);
             self.frame[self.position] = encode_mulaw(pcm);
             self.position += 1;
             if self.position == RADIO_SAMPLES_PER_FRAME {
                 let frame = self.frame;
-                if output.push(frame).is_err() {
-                    let _ = output.pop();
-                    let _ = output.push(frame);
+                if pipeline.outbound.push(frame).is_err() {
+                    let _ = pipeline.outbound.pop();
+                    let _ = pipeline.outbound.push(frame);
                 }
                 self.position = 0;
             }
@@ -636,7 +665,7 @@ mod platform {
                     }
                     for values in data.chunks_exact(channels) {
                         let sample = values.iter().copied().sum::<f32>() / channel_count;
-                        state.push(sample, &pipeline.outbound);
+                        state.push(sample, &pipeline);
                     }
                 },
                 move |error| input_error(Arc::clone(&fault), error),
@@ -663,7 +692,7 @@ mod platform {
                     }
                     for values in data.chunks_exact(channels) {
                         let sum = values.iter().map(|value| f32::from(*value)).sum::<f32>();
-                        state.push(sum / channel_count / f32::from(i16::MAX), &pipeline.outbound);
+                        state.push(sum / channel_count / f32::from(i16::MAX), &pipeline);
                     }
                 },
                 move |error| input_error(Arc::clone(&fault), error),
@@ -691,7 +720,7 @@ mod platform {
                     for values in data.chunks_exact(channels) {
                         let sum = values.iter().map(|value| f32::from(*value)).sum::<f32>();
                         let average = sum / channel_count;
-                        state.push((average - 32_768.0) / 32_768.0, &pipeline.outbound);
+                        state.push((average - 32_768.0) / 32_768.0, &pipeline);
                     }
                 },
                 move |error| input_error(Arc::clone(&fault), error),

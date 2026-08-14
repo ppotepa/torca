@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
@@ -52,8 +53,20 @@ class ConversationSummaryTile extends StatelessWidget {
       onSecondaryTapDown: onSecondaryTapDown,
       child: ListTile(
         selected: selected,
-        leading: TorcaAvatar(
+        leading: TorcaDeviceAvatar(
           label: contact?.displayName ?? context.strings.contactLabel,
+          identityId: contact?.remoteIdentityId,
+          presentation: AvatarActivityPresentation.resolve(
+            blocked: contact?.typedStatus == ContactStatus.blocked,
+            talking:
+                (radioSession?.typedState ?? radio?.typedState) ==
+                RadioState.receiving,
+            listening:
+                (radioSession?.typedState ?? radio?.typedState) ==
+                RadioState.transmitting,
+            attention: conversation.unreadCount > 0,
+            online: contact?.presenceState == 'online',
+          ),
         ),
         title: Row(
           children: <Widget>[

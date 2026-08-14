@@ -23,7 +23,7 @@ use torca_client_engine::EngineHandle;
 pub use torca_client_engine::{ClientSnapshot, EngineCommand, EngineError, EngineResult};
 use torca_contacts::ContactId;
 use torca_foundation::OpaqueId;
-use torca_identity::{fingerprint_for, safety_number};
+use torca_identity::{IdentityId, fingerprint_for, safety_number};
 pub use torca_probing::{ProbeStatus, ProbeTarget};
 pub use torca_radio::{
     RadioEventActor, RadioFloor, RadioState, RadioTimelineEventKind, RemoteRadioState,
@@ -108,6 +108,15 @@ impl ClientApplicationHandle {
         self.engine.snapshot()
     }
 
+    /// Loads a paired peer's immutable genome without adding payloads to the
+    /// root snapshot.
+    pub fn avatar_genome_for_identity(
+        &self,
+        identity_id: IdentityId,
+    ) -> Result<Option<torca_client_engine::AvatarGenomeRecord>, EngineError> {
+        self.engine.avatar_genome_for_identity(identity_id)
+    }
+
     /// Returns the actor handle for composition of infrastructure workers.
     pub fn engine_handle(&self) -> EngineHandle {
         self.engine.clone()
@@ -183,6 +192,7 @@ mod tests {
 
         let result = runtime.execute(ApplicationCommand::UpdateProfile {
             display_name: "offline-user".into(),
+            avatar_envelope_json: None,
             at_ms: 1,
         });
 
@@ -197,6 +207,40 @@ mod tests {
                     .map(|profile| profile.display_name().as_str().to_owned()))
                 .as_deref(),
             Some("offline-user")
+        );
+        actor.shutdown().expect("actor shutdown");
+    }
+
+    #[test]
+    fn profile_persists_content_addressed_avatar_envelope() {
+        let (engine, actor) = ClientEngineActor::spawn(ClientEngine::default());
+        let application = ClientApplicationHandle::new(engine);
+        let runtime = ClientApplicationRuntime::new(application.clone());
+        runtime
+            .bootstrap_identity("00000000000000000000000000000002".parse().expect("identity id"), 0)
+            .expect("identity bootstrap");
+        let envelope = serde_json::json!({
+            "schema": 1,
+            "generatorVersion": "4.7.0",
+            "catalogVersion": "4.4",
+            "genomeHash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "compressedGenome": "AQID"
+        });
+        runtime
+            .execute(ApplicationCommand::UpdateProfile {
+                display_name: "avatar-user".into(),
+                avatar_envelope_json: Some(envelope.to_string()),
+                at_ms: 1,
+            })
+            .expect("profile and avatar");
+        assert_eq!(
+            application
+                .overview()
+                .expect("overview")
+                .avatar_genome
+                .expect("avatar genome")
+                .compressed_genome,
+            vec![1, 2, 3]
         );
         actor.shutdown().expect("actor shutdown");
     }

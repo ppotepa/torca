@@ -2,7 +2,7 @@ use core::fmt;
 use std::path::Path;
 
 use rusqlite::{OptionalExtension, params};
-use torca_client_engine::{EngineError, RelationshipRepository};
+use torca_client_engine::{AvatarGenomeRecord, EngineError, RelationshipRepository};
 use torca_contacts::{
     Contact, ContactError, ContactId, ContactRepository, ContactRoute, ContactStatus,
     PeerCredential, PeerCredentialRepository,
@@ -73,6 +73,74 @@ impl SqlCipherStore {
 
     pub fn cipher_version(&self) -> &str {
         self.backend.cipher_version()
+    }
+
+    pub fn upsert_avatar_genome(
+        &mut self,
+        record: &AvatarGenomeRecord,
+        at: Timestamp,
+    ) -> Result<(), EngineError> {
+        if record.compressed_genome.is_empty() || record.compressed_genome.len() > 32 * 1024 {
+            return Err(EngineError("avatar genome payload exceeds storage limit".into()));
+        }
+        self.backend
+            .connection()
+            .execute(
+                include_str!("../sql/commands/avatar_genome_upsert.sql"),
+                params![
+                    record.genome_hash.as_slice(),
+                    i64::from(record.schema_version),
+                    record.generator_version,
+                    record.catalog_version,
+                    record.compressed_genome,
+                    at.to_unix_millis(),
+                ],
+            )
+            .map_err(|_| EngineError("avatar genome persistence failed".into()))?;
+        Ok(())
+    }
+
+    pub fn avatar_genome(
+        &self,
+        genome_hash: [u8; 32],
+    ) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        self.backend
+            .connection()
+            .query_row(
+                include_str!("../sql/queries/avatar_genome_select.sql"),
+                params![genome_hash.as_slice()],
+                |row| {
+                    let payload: Vec<u8> = row.get(3)?;
+                    Ok(AvatarGenomeRecord {
+                        genome_hash,
+                        schema_version: row.get::<_, i64>(0)? as u8,
+                        generator_version: row.get(1)?,
+                        catalog_version: row.get(2)?,
+                        compressed_genome: payload,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| EngineError("avatar genome lookup failed".into()))
+    }
+
+    pub fn local_avatar_genome(&self) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        self.backend
+            .connection()
+            .query_row(include_str!("../sql/queries/avatar_genome_latest.sql"), [], |row| {
+                let hash: Vec<u8> = row.get(0)?;
+                let genome_hash: [u8; 32] =
+                    hash.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok(AvatarGenomeRecord {
+                    genome_hash,
+                    schema_version: row.get::<_, i64>(1)? as u8,
+                    generator_version: row.get(2)?,
+                    catalog_version: row.get(3)?,
+                    compressed_genome: row.get(4)?,
+                })
+            })
+            .optional()
+            .map_err(|_| EngineError("avatar genome lookup failed".into()))
     }
 }
 
@@ -363,12 +431,64 @@ impl ConversationRepository for SqlCipherStore {
 }
 
 impl RelationshipRepository for SqlCipherStore {
+    fn upsert_avatar_genome(
+        &mut self,
+        record: AvatarGenomeRecord,
+        at: Timestamp,
+    ) -> Result<(), EngineError> {
+        SqlCipherStore::upsert_avatar_genome(self, &record, at)?;
+        self.backend
+            .connection()
+            .execute(
+                include_str!("../sql/commands/local_avatar_bind.sql"),
+                params![record.genome_hash.as_slice()],
+            )
+            .map_err(|_| EngineError("local avatar binding failed".into()))?;
+        Ok(())
+    }
+
+    fn avatar_genome(&self, hash: [u8; 32]) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        SqlCipherStore::avatar_genome(self, hash)
+    }
+
+    fn avatar_genome_for_identity(
+        &self,
+        identity_id: IdentityId,
+    ) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        let identity = identity_id.to_opaque().into_bytes();
+        self.backend
+            .connection()
+            .query_row(
+                include_str!("../sql/queries/avatar_genome_for_identity.sql"),
+                params![identity.as_slice()],
+                |row| {
+                    let hash: Vec<u8> = row.get(0)?;
+                    let genome_hash: [u8; 32] =
+                        hash.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    Ok(AvatarGenomeRecord {
+                        genome_hash,
+                        schema_version: row.get::<_, i64>(1)? as u8,
+                        generator_version: row.get(2)?,
+                        catalog_version: row.get(3)?,
+                        compressed_genome: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| EngineError("contact avatar genome lookup failed".into()))
+    }
+
+    fn local_avatar_genome(&self) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        SqlCipherStore::local_avatar_genome(self)
+    }
+
     fn insert_pairing_result(
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
         display_name: &str,
         credential: PeerCredential,
+        avatar: Option<AvatarGenomeRecord>,
         at: Timestamp,
     ) -> Result<(), EngineError> {
         if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
@@ -394,6 +514,19 @@ impl RelationshipRepository for SqlCipherStore {
                 .map_err(relationship_error)?;
             insert_conversation(&self.backend, &conversation).map_err(relationship_error)?;
             insert_peer_credential(&self.backend, credential).map_err(relationship_error)?;
+            if let Some(avatar) = avatar.as_ref() {
+                SqlCipherStore::upsert_avatar_genome(self, avatar, at)?;
+                self.backend
+                    .connection()
+                    .execute(
+                        include_str!("../sql/commands/contact_avatar_bind.sql"),
+                        params![
+                            contact.id().to_opaque().as_bytes().as_slice(),
+                            avatar.genome_hash.as_slice()
+                        ],
+                    )
+                    .map_err(|_| relationship_failure())?;
+            }
             self.backend
                 .connection()
                 .execute(
@@ -703,7 +836,7 @@ mod tests {
         ProfileName, PublicIdentity,
     };
 
-    use crate::{DatabaseKey, SqlCipherStore};
+    use crate::{AvatarGenomeRecord, DatabaseKey, SqlCipherStore};
 
     fn remote_identity() -> PublicIdentity {
         let key = IdentityKey::new(KeyId::from_u128(12), KeyAlgorithm::Ed25519, vec![9; 32])
@@ -725,6 +858,26 @@ mod tests {
     }
 
     #[test]
+    fn avatar_genome_is_content_addressed_and_survives_lookup() {
+        let key = DatabaseKey::new([0x26; 32]);
+        let mut store = SqlCipherStore::open_in_memory(&key).expect("open store");
+        let record = AvatarGenomeRecord {
+            genome_hash: [4; 32],
+            schema_version: 1,
+            generator_version: "4.7.0".into(),
+            catalog_version: "4.4".into(),
+            compressed_genome: vec![1, 2, 3],
+        };
+        RelationshipRepository::upsert_avatar_genome(
+            &mut store,
+            record.clone(),
+            Timestamp::UNIX_EPOCH,
+        )
+        .expect("save");
+        assert_eq!(store.avatar_genome(record.genome_hash).expect("lookup"), Some(record));
+    }
+
+    #[test]
     fn contact_conversation_and_credential_round_trip_through_sqlcipher() {
         let key = DatabaseKey::new([0x25; 32]);
         let mut store = SqlCipherStore::open_in_memory(&key).expect("open store");
@@ -742,12 +895,33 @@ mod tests {
         let credential =
             PeerCredential::new(contact.id(), OpaqueId::from_u128(24), OpaqueId::from_u128(25))
                 .expect("credential");
+        let avatar = AvatarGenomeRecord {
+            genome_hash: [8; 32],
+            schema_version: 1,
+            generator_version: "4.7.0".into(),
+            catalog_version: "4.4".into(),
+            compressed_genome: vec![7, 8, 9],
+        };
+        let local_avatar = AvatarGenomeRecord {
+            genome_hash: [6; 32],
+            schema_version: 1,
+            generator_version: "4.7.0".into(),
+            catalog_version: "4.4".into(),
+            compressed_genome: vec![4, 5, 6],
+        };
+        RelationshipRepository::upsert_avatar_genome(
+            &mut store,
+            local_avatar.clone(),
+            Timestamp::UNIX_EPOCH,
+        )
+        .expect("local avatar");
         store
             .insert_pairing_result(
                 contact.clone(),
                 conversation.clone(),
                 "Peer name",
                 credential,
+                Some(avatar.clone()),
                 Timestamp::from_unix_millis(100).expect("timestamp"),
             )
             .expect("insert relationship");
@@ -774,5 +948,17 @@ mod tests {
             )
             .expect("pairing display name");
         assert_eq!(stored_name, "Peer name");
+        assert_eq!(
+            RelationshipRepository::avatar_genome_for_identity(
+                &store,
+                contact.remote_identity().identity_id(),
+            )
+            .expect("contact avatar"),
+            Some(avatar),
+        );
+        assert_eq!(
+            RelationshipRepository::local_avatar_genome(&store).expect("local avatar lookup"),
+            Some(local_avatar),
+        );
     }
 }

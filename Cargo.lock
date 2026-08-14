@@ -5661,6 +5661,8 @@ dependencies = [
 name = "torca-client-application"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "base64",
+ "serde_json",
  "torca-attachments",
  "torca-bootstrap",
  "torca-client-engine",
@@ -5765,6 +5767,7 @@ dependencies = [
 name = "torca-contract"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "hex",
  "serde",
  "serde_json",
  "torca-client-application",
@@ -5974,6 +5977,7 @@ dependencies = [
  "torca-foundation",
  "torca-pairing",
  "torca-pairing-coordinator",
+ "torca-pairing-protocol",
  "torca-runtime",
  "torca-storage-sqlite",
  "torca-tor",

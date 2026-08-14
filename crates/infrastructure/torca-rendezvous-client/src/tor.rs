@@ -8,7 +8,11 @@ use torca_tor::TorServiceHandle;
 use crate::stream::exchange_stream;
 use crate::{RelayTransport, RelayTransportError, RelayTransportFailureKind};
 
-const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+// Building an onion circuit is materially slower than a direct TCP connect,
+// especially immediately after a cold client bootstrap. Keep this bounded,
+// but do not classify an otherwise healthy relay as unavailable at the old
+// eight-second boundary.
+const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Relay transport whose TCP stream is opened through the in-process Arti client.
 pub struct TorRelayTransport {

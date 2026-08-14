@@ -13,6 +13,7 @@ use torca_pairing_coordinator::{
     LocalPairingContext, PairingApprovalPort, PairingCryptoPort, PairingPeerSecretStore,
     PairingPollReport, PairingRendezvousPort, PairingRuntime, PairingRuntimeError,
 };
+use torca_pairing_protocol::AvatarEnvelope;
 use torca_runtime::{PairingDriver, PairingInvitationView, RuntimeDriverError};
 use torca_tor::SharedTorEndpoint;
 
@@ -59,12 +60,8 @@ where
         }
     }
     fn context(&mut self) -> Result<LocalPairingContext, RuntimeDriverError> {
-        let identity = self
-            .engine
-            .snapshot()
-            .map_err(|_| RuntimeDriverError::Engine)?
-            .identity
-            .ok_or(RuntimeDriverError::Pairing)?;
+        let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+        let identity = snapshot.identity.ok_or(RuntimeDriverError::Pairing)?;
         // The local onion endpoint is a readiness dependency, not a protocol
         // rejection. Keep it retryable so a cold Android Tor bootstrap does
         // not create a permanent pairing failure.
@@ -77,6 +74,13 @@ where
             public_identity: identity.public().clone(),
             onion_address,
             capability_id: self.random_id()?,
+            avatar: snapshot.avatar_genome.map(|record| AvatarEnvelope {
+                schema: record.schema_version,
+                generator_version: record.generator_version,
+                catalog_version: record.catalog_version,
+                genome_hash: record.genome_hash,
+                compressed_genome: record.compressed_genome,
+            }),
         })
     }
 

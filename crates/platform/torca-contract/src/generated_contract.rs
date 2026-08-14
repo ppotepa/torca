@@ -48,6 +48,7 @@ pub const QUERIES: &[&str] = &[
     "diagnostics.get",
     "pairing.parse",
     "pairing.encode",
+    "avatars.get",
 ];
 
 pub fn contains(kind: &str, name: &str) -> bool {

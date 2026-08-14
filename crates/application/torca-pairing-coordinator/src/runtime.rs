@@ -6,11 +6,12 @@ use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityKey, KeyAlgorithm, PublicIdentity};
 use torca_pairing::{
-    PairingCode, PairingRole, PairingSession, PairingSessionId, PairingState, PeerProposal,
+    AvatarGenomeReference, PairingCode, PairingRole, PairingSession, PairingSessionId,
+    PairingState, PeerProposal,
 };
 use torca_pairing_protocol::{
-    PairingApproval, PairingCancellation, PairingCompletion, PairingCompletionAck, PairingEnvelope,
-    PairingInviteTicket, PairingOffer, PairingPayload, PairingRejection,
+    AvatarEnvelope, PairingApproval, PairingCancellation, PairingCompletion, PairingCompletionAck,
+    PairingEnvelope, PairingInviteTicket, PairingOffer, PairingPayload, PairingRejection,
 };
 
 use crate::{
@@ -29,6 +30,8 @@ pub struct LocalPairingContext {
     pub display_name: String,
     pub onion_address: String,
     pub capability_id: OpaqueId,
+    /// Immutable avatar genome exchanged with the signed offer when available.
+    pub avatar: Option<AvatarEnvelope>,
 }
 
 #[must_use]
@@ -842,6 +845,7 @@ where
             onion_address: local.onion_address,
             capability_id: local.capability_id,
             transcript_nonce,
+            avatar: local.avatar,
         };
         offer.validate().map_err(|_| PairingRuntimeError::InvalidOffer)?;
         Ok(PairingEnvelope { pairing_id: context.0, payload: PairingPayload::Offer(offer) })
@@ -876,7 +880,18 @@ fn peer_proposal(offer: &PairingOffer) -> Result<PeerProposal, PairingRuntimeErr
     );
     let route = ContactRoute::new(offer.onion_address.clone(), offer.capability_id)
         .map_err(|_| PairingRuntimeError::InvalidOffer)?;
-    Ok(PeerProposal { public_identity, display_name: offer.display_name.clone(), route })
+    Ok(PeerProposal {
+        public_identity,
+        display_name: offer.display_name.clone(),
+        route,
+        avatar: offer.avatar.as_ref().map(|avatar| AvatarGenomeReference {
+            schema_version: avatar.schema,
+            generator_version: avatar.generator_version.clone(),
+            catalog_version: avatar.catalog_version.clone(),
+            genome_hash: avatar.genome_hash,
+            compressed_genome: avatar.compressed_genome.clone(),
+        }),
+    })
 }
 
 struct PersistedPairingState {

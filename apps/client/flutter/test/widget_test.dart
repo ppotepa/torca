@@ -2,9 +2,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/app.dart';
 import 'package:torca_app/navigation/app_navigation_controller.dart';
 import 'package:torca_app/settings/local_preferences.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'fake_engine_gateway.dart';
 
 void main() {
+  setUp(() => AvatarDeviceSeed.overridePlatformIdentifier('widget-test'));
+  tearDown(() => AvatarDeviceSeed.overridePlatformIdentifier(null));
+
   testWidgets('Torca app renders its profile setup route', (
     WidgetTester tester,
   ) async {

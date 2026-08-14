@@ -29,6 +29,12 @@ use crate::composition::{NativeCompositionError, load_or_create_database_key};
 // Keep interactive requests below the application command deadline. Long-lived
 // recovery is handled by the pairing supervisor instead of one blocking call.
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(8);
+// Onion circuits routinely need several seconds even after directory
+// bootstrap. A two-second health exchange produced a false degraded verdict
+// on Windows while Android was already connected to the same healthy relay.
+// Use the same bounded request budget as foreground pairing; the transport
+// still serializes the one reconnect lane.
+const RELAY_HEALTH_TIMEOUT: Duration = NETWORK_TIMEOUT;
 const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const COMPILED_RELAY_ENDPOINT: &str = match option_env!("TORCA_RELAY_ENDPOINT") {
     Some(value) => value,
@@ -48,7 +54,7 @@ impl RelayProbe for TorRelayProbe {
         // being attempted. `relay_info` serialises that initial reconnect and
         // retries one broken stream before returning the authoritative result.
         self.transport
-            .relay_info(Duration::from_secs(2))
+            .relay_info(RELAY_HEALTH_TIMEOUT)
             .map(|info| {
                 if let Ok(mut current) = self.info.lock() {
                     *current = Some(RelayServiceInfo {

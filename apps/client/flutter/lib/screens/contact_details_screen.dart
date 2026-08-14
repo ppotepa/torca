@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
@@ -143,7 +144,14 @@ class ContactDetailsContent extends StatelessWidget {
       children: <Widget>[
         Card(
           child: ListTile(
-            leading: TorcaAvatar(label: contact.displayName),
+            leading: TorcaDeviceAvatar(
+              label: contact.displayName,
+              identityId: contact.remoteIdentityId,
+              presentation: AvatarActivityPresentation.resolve(
+                blocked: contact.typedStatus == ContactStatus.blocked,
+                online: contact.presenceState == 'online',
+              ),
+            ),
             title: Text(contact.displayName),
             subtitle: Text(
               contact.typedStatus == ContactStatus.blocked

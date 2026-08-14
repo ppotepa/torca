@@ -161,6 +161,10 @@ pub trait RadioAudioPort: Send {
         Ok(())
     }
     fn microphone_ready(&self) -> Result<bool, RadioApplicationError>;
+    /// Smoothed microphone envelope in the inclusive range 0..=1000.
+    fn capture_level_milli(&self) -> u16 {
+        0
+    }
     fn begin_capture(
         &mut self,
         contact_id: ContactId,
@@ -260,6 +264,7 @@ pub struct RadioSessionProjection {
     pub floor: RadioFloor,
     pub burst_elapsed_ms: u32,
     pub max_burst_ms: u32,
+    pub input_level_milli: u16,
 }
 
 #[must_use]
@@ -779,6 +784,7 @@ impl RadioCoordinator {
                 floor: session.floor,
                 burst_elapsed_ms: u32::try_from(elapsed.max(0)).unwrap_or(u32::MAX).min(10_000),
                 max_burst_ms: 10_000,
+                input_level_milli: self.audio.capture_level_milli().min(1000),
             })
         });
         RadioProjection {
