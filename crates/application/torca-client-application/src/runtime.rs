@@ -6,6 +6,7 @@ use torca_attachments::AttachmentId;
 use torca_bootstrap::{BootstrapSnapshot, BootstrapState, BootstrapStepId, BootstrapStepState};
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
+use torca_delivery::ReactionPayload;
 use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
 };
@@ -14,7 +15,6 @@ use torca_messaging::{MessageBody, MessageId, MessageReaction, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_radio_coordinator::{HostRadioLifecycle, RadioProjection, SharedRadioCoordinator};
-use torca_delivery::ReactionPayload;
 use torca_runtime_policy::AttentionContext;
 
 use crate::{
@@ -758,7 +758,7 @@ impl ClientApplicationRuntime {
                 // network runtime must not reject or lose the user's message; the durable
                 // delivery store will be drained when the runtime becomes available.
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.wake_delivery();
+                    runtime.wake_delivery_for(message_id);
                 }
                 result_kind(&value)
             }
@@ -771,7 +771,7 @@ impl ClientApplicationRuntime {
                     })
                     .map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.wake_delivery();
+                    runtime.wake_delivery_for(message_id);
                 }
                 result_kind(&value)
             }
@@ -784,6 +784,7 @@ impl ClientApplicationRuntime {
                     })
                     .map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.release_delivery(message_id);
                     runtime.wake_delivery();
                 }
                 result_kind(&value)
@@ -798,7 +799,7 @@ impl ClientApplicationRuntime {
                     })
                     .map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.wake_delivery();
+                    runtime.wake_delivery_for(message_id);
                 }
                 result_kind(&value)
             }
@@ -837,11 +838,11 @@ impl ClientApplicationRuntime {
                             .queue_reaction(
                                 conversation.contact_id(),
                                 ReactionPayload {
-                                reaction_id: MessageReaction::deterministic_id(
-                                    MessageId::from_opaque(message_id),
-                                    actor_id,
-                                    &reaction_emoji,
-                                ),
+                                    reaction_id: MessageReaction::deterministic_id(
+                                        MessageId::from_opaque(message_id),
+                                        actor_id,
+                                        &reaction_emoji,
+                                    ),
                                     message_id,
                                     conversation_id,
                                     actor_id,

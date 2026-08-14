@@ -22,7 +22,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` now crosses the generated contract and feeds the policy kernel for top-level Chats/Contacts/Invitations surfaces; focused contact viewport wiring remains |
-| Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments now create renewable runtime leases and release on terminal state; durable message/delivery and relay executor ownership remains |
+| Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; full deadline ownership is still pending |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
@@ -475,10 +475,11 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 4. **Partial / next:** replace the remaining one-second fallback with a single
    deadline selected from Tor, communication, peer, pairing, attachment and
    radio executors. Do not create independent feature timers.
-5. **Partial / next:** attachment leases now survive route changes and renew
-   while queued/transferring. Extend the same authoritative ownership to
-   pending messages, delivery, pairing and radio; attention leases remain
-   advisory and must never be the only owner of durable work.
+5. **Partial / next:** attachment and pending-message leases now survive
+   route changes and are renewed by their explicit commands/runtime work.
+   Finish ACK-driven release plus authoritative pairing, delivery and radio
+   executor ownership; attention leases remain advisory and must never be the
+   only owner of durable work.
 6. **Partial:** evidence suppresses cosmetic peer probes and explicit peer
    deadlines exist. Integrate TX/RX/ACK/chunk evidence and preserve a
    single-flight probe budget.

@@ -439,6 +439,8 @@ enum RuntimeCommand {
     Diagnostics(Sender<String>),
     NetworkChanged,
     Wake,
+    WakeDelivery(OpaqueId),
+    ReleaseDelivery(OpaqueId),
     Shutdown(Sender<()>),
 }
 
@@ -554,6 +556,16 @@ impl RuntimeHandle {
     }
     pub fn wake_delivery(&self) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::Wake);
+    }
+
+    /// Wakes durable delivery and grants a temporary lease for this message.
+    /// The lease is independent of the currently visible Flutter route.
+    pub fn wake_delivery_for(&self, message_id: OpaqueId) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::WakeDelivery(message_id));
+    }
+
+    pub fn release_delivery(&self, message_id: OpaqueId) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::ReleaseDelivery(message_id));
     }
 
     /// Notify the actor that the platform network changed. This resets the
@@ -781,6 +793,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     HealthState::Starting,
                     "RELAY_NETWORK_CHANGED",
                 );
+            }
+            Ok(RuntimeCommand::WakeDelivery(message_id)) => {
+                acquire_delivery_lease(policy, message_id);
+                refresh_contacts = true;
+            }
+            Ok(RuntimeCommand::ReleaseDelivery(message_id)) => {
+                policy.release_lease(delivery_lease_owner(message_id));
             }
             Ok(command) => {
                 refresh_contacts = true;
@@ -1064,6 +1083,21 @@ fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshne
 }
 
 const ATTACHMENT_OWNER_NAMESPACE: u128 = 0xA77A_C4A4_0000_0000_0000_0000_0000_0001;
+const DELIVERY_OWNER_NAMESPACE: u128 = 0xD311_0000_0000_0000_0000_0000_0000_0001;
+
+fn delivery_lease_owner(message_id: OpaqueId) -> OpaqueId {
+    OpaqueId::from_u128(message_id.to_u128() ^ DELIVERY_OWNER_NAMESPACE)
+}
+
+fn acquire_delivery_lease(policy: &mut RuntimeGovernor, message_id: OpaqueId) {
+    policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Delivery(message_id),
+        class: WorkClass::Delivery,
+        reason: DemandReason::PendingMessage,
+        owner: delivery_lease_owner(message_id),
+        expires_at: std::time::Instant::now() + Duration::from_secs(10 * 60),
+    });
+}
 
 fn attachment_lease_owner(attachment_id: OpaqueId) -> OpaqueId {
     OpaqueId::from_u128(attachment_id.to_u128() ^ ATTACHMENT_OWNER_NAMESPACE)
@@ -1380,6 +1414,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(diagnostics.export_json());
         }
         RuntimeCommand::Wake => {}
+        RuntimeCommand::WakeDelivery(_) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
         RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),

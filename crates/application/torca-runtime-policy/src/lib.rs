@@ -70,6 +70,7 @@ pub enum ResourceScope {
     Onion,
     Relay,
     Peer(OpaqueId),
+    Delivery(OpaqueId),
     Pairing(OpaqueId),
     Attachment(OpaqueId),
     Radio(OpaqueId),
