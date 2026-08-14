@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::BufReader;
+use std::time::Duration;
 
 use crate::peer_envelope;
 use torca_attachment_protocol::{AttachmentPreviewFrame, MAX_ATTACHMENT_PREVIEW};
@@ -160,6 +161,21 @@ where
 
     fn snapshot_projection(&self) -> Result<Option<Vec<AttachmentView>>, CommunicationError> {
         self.projection_snapshot().map(Some)
+    }
+
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        let rows = self.projection.list().ok()?;
+        rows.into_iter()
+            .filter(|row| row.direction == "outbound")
+            .filter_map(|row| {
+                let id = AttachmentId::from_opaque(row.id);
+                self.control
+                    .get(id)
+                    .ok()
+                    .flatten()
+                    .and_then(|attachment| self.transfer.next_maintenance_delay_for(&attachment, now))
+            })
+            .min()
     }
 
     fn database_write_count(&self) -> u64 {
