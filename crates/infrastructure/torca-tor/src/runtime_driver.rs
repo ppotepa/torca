@@ -636,10 +636,16 @@ impl TorDriver for OwnedTorDriver {
 
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         // During bootstrap, publication and recovery we still need to reap
-        // worker results and advance bounded retry deadlines. Once Tor and
-        // the onion listener are both healthy there is no periodic work left
-        // for the application owner; Arti and the listener are event-driven.
-        if self.bootstrap_worker.is_some() || self.next_restart_at.is_some() {
+        // worker results and advance bounded retry deadlines. The publisher's
+        // completion channel still uses the one-second fallback until it gets
+        // a direct runtime wake callback; peer/radio listeners are event-driven.
+        if self.bootstrap_worker.is_some()
+            || self.next_restart_at.is_some()
+            // The publisher currently reports exhaustion through its
+            // maintenance-owned channel. Keep this bounded fallback until
+            // that worker receives a direct wake callback.
+            || self.onion_publisher.is_some()
+        {
             return Some(Duration::from_secs(1));
         }
         match self.onion_service_state() {
