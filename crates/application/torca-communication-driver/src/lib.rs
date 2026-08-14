@@ -243,7 +243,11 @@ pub trait PeerLinkRuntime: Send {
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
     fn network_changed(&mut self, _now: Timestamp) {}
+    fn disconnect_contact(&mut self, _contact_id: ContactId) {}
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
     fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError>;
@@ -667,6 +671,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
 
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
         [
+            self.peer.next_maintenance_delay(now),
             self.text.next_maintenance_delay(now),
             self.control.next_maintenance_delay(now),
             self.attachment_scheduler.next_delay(now),
@@ -775,7 +780,7 @@ impl RelationshipAdminPort for TorcaCommunicationDriver {
     }
     fn block_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.relationships.block_contact(id, now).map_err(map_runtime)?;
-        self.peer.shutdown();
+        self.peer.disconnect_contact(id);
         Ok(())
     }
     fn unblock_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
@@ -786,7 +791,7 @@ impl RelationshipAdminPort for TorcaCommunicationDriver {
     }
     fn remove_contact(&mut self, id: ContactId) -> Result<(), RuntimeDriverError> {
         self.relationships.remove_contact(id).map_err(map_runtime)?;
-        self.peer.shutdown();
+        self.peer.disconnect_contact(id);
         Ok(())
     }
 }
