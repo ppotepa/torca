@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::domain::{
     BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, LaunchPolicy,
-    OnionPolicy, Target, ValidationLevel,
+    OnionPolicy, PrivacyPolicy, Target, ValidationLevel,
 };
 
 #[derive(Debug, Parser)]
@@ -57,6 +57,9 @@ pub struct PlanArgs {
     pub validation: ValidationArg,
     #[arg(long, value_enum, default_value = "restart")]
     pub launch: LaunchArg,
+    /// Android screen-capture policy. Strict is the default.
+    #[arg(long, value_enum, default_value = "strict")]
+    pub privacy: PrivacyArg,
     #[arg(long)]
     pub dry_run: bool,
 }
@@ -129,6 +132,13 @@ pub enum LaunchArg {
     Restart,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum PrivacyArg {
+    Strict,
+    #[value(name = "allow-capture")]
+    AllowCapture,
+}
+
 impl PlanArgs {
     pub fn plan(&self, action: DeployAction) -> DeployPlan {
         DeployPlan {
@@ -172,6 +182,10 @@ impl PlanArgs {
                 LaunchArg::Skip => LaunchPolicy::Skip,
                 LaunchArg::Start => LaunchPolicy::Start,
                 LaunchArg::Restart => LaunchPolicy::Restart,
+            },
+            privacy: match self.privacy {
+                PrivacyArg::Strict => PrivacyPolicy::Strict,
+                PrivacyArg::AllowCapture => PrivacyPolicy::AllowCapture,
             },
         }
     }

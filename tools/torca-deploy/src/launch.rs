@@ -1,5 +1,5 @@
 use crate::devices::Device;
-use crate::domain::{Configuration, ValidationLevel};
+use crate::domain::{Configuration, PrivacyPolicy, ValidationLevel};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 use crate::windows_client::{WindowsClientError, WorkspaceWindowsClient};
@@ -34,6 +34,7 @@ impl<'a> LaunchController<'a> {
         &self,
         device: &Device,
         configuration: Configuration,
+        privacy: PrivacyPolicy,
     ) -> Result<LaunchReceipt, LaunchError> {
         let started_at = SystemTime::now();
         match device.target {
@@ -75,6 +76,9 @@ impl<'a> LaunchController<'a> {
                         "android.intent.action.MAIN".into(),
                         "-c".into(),
                         "android.intent.category.LAUNCHER".into(),
+                        "--ez".into(),
+                        "torca.allow_screen_capture".into(),
+                        matches!(privacy, PrivacyPolicy::AllowCapture).to_string(),
                     ],
                     working_directory: self.paths.repo_root.clone(),
                     timeout: Duration::from_secs(30),

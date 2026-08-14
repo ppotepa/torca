@@ -104,6 +104,17 @@ pub enum LaunchPolicy {
     Restart,
 }
 
+/// Controls Android's OS-level screen capture protection for a deployment.
+/// Strict is the safe default; AllowCapture is an explicit local-development
+/// opt-out and does not change Torca transport or message privacy.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivacyPolicy {
+    #[default]
+    Strict,
+    AllowCapture,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DeployPlan {
     pub action: DeployAction,
@@ -115,6 +126,8 @@ pub struct DeployPlan {
     pub client_data: ClientDataPolicy,
     pub validation: ValidationLevel,
     pub launch: LaunchPolicy,
+    #[serde(default)]
+    pub privacy: PrivacyPolicy,
 }
 
 impl DeployPlan {
@@ -133,6 +146,7 @@ impl DeployPlan {
             client_data: ClientDataPolicy::Preserve,
             validation: ValidationLevel::Quick,
             launch: LaunchPolicy::Restart,
+            privacy: PrivacyPolicy::Strict,
         }
     }
 
@@ -308,5 +322,18 @@ mod tests {
         );
         plan.client_data = ClientDataPolicy::ResetAll;
         assert_eq!(plan.normalized().client_data, ClientDataPolicy::Preserve);
+    }
+
+    #[test]
+    fn privacy_is_strict_by_default_and_is_preserved_by_normalization() {
+        let plan = DeployPlan::normal(
+            DeployAction::RunInstalled,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        assert_eq!(plan.privacy, PrivacyPolicy::Strict);
+        let mut relaxed = plan;
+        relaxed.privacy = PrivacyPolicy::AllowCapture;
+        assert_eq!(relaxed.normalized().privacy, PrivacyPolicy::AllowCapture);
     }
 }

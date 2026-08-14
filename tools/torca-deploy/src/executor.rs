@@ -243,7 +243,7 @@ impl DeployExecutor {
                     .iter()
                     .map(|device| {
                         launch
-                            .launch(device, run.plan.configuration)
+                            .launch(device, run.plan.configuration, run.plan.privacy)
                             .map(|receipt| (device, receipt))
                             .map_err(DeployError::Launch)
                     })

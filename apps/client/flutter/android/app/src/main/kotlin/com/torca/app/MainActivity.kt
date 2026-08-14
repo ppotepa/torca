@@ -25,6 +25,9 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         const val EXTRA_CONVERSATION_ID = "torca.conversation_id"
+        const val EXTRA_ALLOW_SCREEN_CAPTURE = "torca.allow_screen_capture"
+        private const val PRIVACY_PREFERENCES = "torca.privacy"
+        private const val ALLOW_SCREEN_CAPTURE = "allow_screen_capture"
         const val REQUEST_MICROPHONE_PERMISSION = 1002
         @Volatile var isVisible: Boolean = false
         init { System.loadLibrary("torca_native") }
@@ -33,9 +36,7 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         AndroidKeystoreBridge.initialize(applicationContext)
         super.onCreate(savedInstanceState)
-        // Torca never exposes private conversation content to screenshots, screen recording,
-        // recent-app thumbnails or OS capture surfaces from the Android activity.
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        applyScreenCapturePolicy(intent)
         pendingConversationId = intent?.getStringExtra(EXTRA_CONVERSATION_ID)
         val service = Intent(applicationContext, TorcaForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -141,9 +142,27 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        applyScreenCapturePolicy(intent)
         val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID) ?: return
         pendingConversationId = conversationId
         notificationChannel?.invokeMethod("openConversation", conversationId)
+    }
+
+    private fun applyScreenCapturePolicy(source: Intent?) {
+        val preferences = getSharedPreferences(PRIVACY_PREFERENCES, MODE_PRIVATE)
+        if (source?.hasExtra(EXTRA_ALLOW_SCREEN_CAPTURE) == true) {
+            preferences.edit()
+                .putBoolean(ALLOW_SCREEN_CAPTURE, source.getBooleanExtra(EXTRA_ALLOW_SCREEN_CAPTURE, false))
+                .apply()
+        }
+        val allowCapture = preferences.getBoolean(ALLOW_SCREEN_CAPTURE, false)
+        if (allowCapture) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            // Strict is the safe default: private conversation content is not exposed to
+            // screenshots, screen recording, recent-app thumbnails, or OS capture surfaces.
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 
     override fun onRequestPermissionsResult(

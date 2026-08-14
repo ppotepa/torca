@@ -151,7 +151,7 @@ fn show_and_execute(
     let plan = planner::normalize(plan);
     plan.validate()?;
     println!(
-        "Plan: {}\n  targets: {:?}\n  configuration: {}\n  client build: {:?}\n  relay build: {:?}\n  onion: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  mode: {:?}",
+        "Plan: {}\n  targets: {:?}\n  configuration: {}\n  client build: {:?}\n  relay build: {:?}\n  onion: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  mode: {:?}",
         plan.action,
         plan.targets,
         plan.configuration,
@@ -161,6 +161,7 @@ fn show_and_execute(
         plan.client_data,
         plan.validation,
         plan.launch,
+        plan.privacy,
         mode
     );
     if mode == ExecutionMode::DryRun {

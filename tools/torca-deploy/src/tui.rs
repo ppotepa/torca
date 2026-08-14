@@ -16,7 +16,7 @@ use ratatui::{
 
 use crate::domain::{
     BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, LaunchPolicy,
-    OnionPolicy, Target, ValidationLevel,
+    OnionPolicy, PrivacyPolicy, Target, ValidationLevel,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,6 +112,7 @@ enum Field {
     Configuration,
     ClientData,
     Onion,
+    Privacy,
 }
 
 fn edit_plan(
@@ -127,6 +128,7 @@ fn edit_plan(
         ClientDataPolicy::Preserve
     };
     let mut onion = OnionPolicy::Ensure;
+    let mut privacy = PrivacyPolicy::Strict;
     let mut input = InputGuard::default();
     loop {
         terminal.draw(|frame| {
@@ -146,12 +148,14 @@ fn edit_plan(
                 OnionPolicy::RepairDirectoryCache => "Repair Tor directory cache",
                 OnionPolicy::RotateIdentity => "Rotate onion identity (rebuild all)",
             };
+            let privacy_label = privacy_label(privacy);
             let text = format!(
-                "Action: {action}\n\n{} Target: {target_label}\n{} Build: {configuration}\n{} Data: {data_label}\n{} Onion: {onion_label}\n\n←/→ change   Tab/↑/↓ field   Enter review   Esc back",
+                "Action: {action}\n\n{} Target: {target_label}\n{} Build: {configuration}\n{} Data: {data_label}\n{} Onion: {onion_label}\n{} Privacy: {privacy_label}\n\n←/→ change   Tab/↑/↓ field   Enter review   Esc back",
                 marker(matches!(field, Field::Target)),
                 marker(matches!(field, Field::Configuration)),
                 marker(matches!(field, Field::ClientData)),
                 marker(matches!(field, Field::Onion)),
+                marker(matches!(field, Field::Privacy)),
             );
             frame.render_widget(
                 Paragraph::new(text)
@@ -183,6 +187,13 @@ fn edit_plan(
                         Field::Onion => {
                             onion = cycle_onion(onion, direction);
                         }
+                        Field::Privacy => {
+                            privacy = if privacy == PrivacyPolicy::Strict {
+                                PrivacyPolicy::AllowCapture
+                            } else {
+                                PrivacyPolicy::Strict
+                            };
+                        }
                     }
                 }
                 KeyCode::Enter => {
@@ -194,6 +205,7 @@ fn edit_plan(
                     let mut plan = DeployPlan::normal(action, targets, configuration);
                     plan.client_data = client_data;
                     plan.onion = onion;
+                    plan.privacy = privacy;
                     plan.client_build = if action == DeployAction::RunInstalled {
                         BuildPolicy::Reuse
                     } else {
@@ -229,7 +241,8 @@ fn next_field(field: Field) -> Field {
         Field::Target => Field::Configuration,
         Field::Configuration => Field::ClientData,
         Field::ClientData => Field::Onion,
-        Field::Onion => Field::Target,
+        Field::Onion => Field::Privacy,
+        Field::Privacy => Field::Target,
     }
 }
 
@@ -239,6 +252,7 @@ fn previous_field(field: Field) -> Field {
         Field::Configuration => Field::Target,
         Field::ClientData => Field::Configuration,
         Field::Onion => Field::ClientData,
+        Field::Privacy => Field::Onion,
     }
 }
 
@@ -279,6 +293,13 @@ fn cycle_onion(current: OnionPolicy, direction: i8) -> OnionPolicy {
         2 => OnionPolicy::RepairDirectoryCache,
         3 => OnionPolicy::RotateIdentity,
         _ => OnionPolicy::Ensure,
+    }
+}
+
+fn privacy_label(policy: PrivacyPolicy) -> &'static str {
+    match policy {
+        PrivacyPolicy::Strict => "Strict (block screenshots/recording)",
+        PrivacyPolicy::AllowCapture => "Allow screenshots/recording",
     }
 }
 
@@ -345,8 +366,11 @@ fn confirm(
         terminal.draw(|frame| {
             let area = frame.area();
             let text = format!(
-                "Action: {}\nTargets: Windows, Android\nBuild: {}\nOnion: {:?}\n\nPress y to execute, n/Esc to cancel",
-                plan.action, plan.configuration, plan.onion
+                "Action: {}\nTargets: Windows, Android\nBuild: {}\nOnion: {:?}\nPrivacy: {}\n\nPress y to execute, n/Esc to cancel",
+                plan.action,
+                plan.configuration,
+                plan.onion,
+                privacy_label(plan.privacy)
             );
             frame.render_widget(
                 Paragraph::new(text)
