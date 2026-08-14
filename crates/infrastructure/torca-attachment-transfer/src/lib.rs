@@ -43,6 +43,7 @@ const PREVIEW_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-PREVIEW-V1";
 const FINAL_CHUNK_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-FINAL-CHUNK-V1";
 const FINAL_MANIFEST: &[u8] = b"TORCA-ATTACHMENT-CHUNKS-V1";
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
+const ACTIVE_ACK_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AttachmentTransferError {
@@ -163,6 +164,43 @@ where
 
     pub fn blob_write_count(&self) -> u64 {
         self.cache.write_count()
+    }
+
+    /// Returns the next useful deadline for one durable outgoing attachment.
+    /// Terminal rows have no deadline. Active frames retain a short ACK poll
+    /// only while real transfer work is in flight, failed rows expose their
+    /// durable retry backoff, and a remotely confirmed cancel becomes idle.
+    pub fn next_maintenance_delay_for(
+        &self,
+        attachment: &Attachment,
+        now: Timestamp,
+    ) -> Option<Duration> {
+        match attachment.status() {
+            AttachmentStatus::Queued => Some(Duration::ZERO),
+            AttachmentStatus::Transferring => Some(self.pending_frame_delay(attachment.id(), now)),
+            AttachmentStatus::Failed => {
+                let elapsed = now.duration_since(attachment.updated_at()).unwrap_or_default();
+                Some(retry_delay(attachment).saturating_sub(elapsed))
+            }
+            AttachmentStatus::Cancelled => {
+                if self.cancel_confirmed.contains(&attachment.id()) {
+                    None
+                } else {
+                    Some(self.pending_frame_delay(attachment.id(), now))
+                }
+            }
+            AttachmentStatus::Prepared
+            | AttachmentStatus::Encrypting
+            | AttachmentStatus::Available => None,
+        }
+    }
+
+    fn pending_frame_delay(&self, attachment_id: AttachmentId, now: Timestamp) -> Duration {
+        let Some(pending) = self.pending_outgoing.get(&attachment_id) else {
+            return Duration::ZERO;
+        };
+        let elapsed = now.duration_since(pending.sent_at).unwrap_or_default();
+        ACTIVE_ACK_POLL_INTERVAL.min(self.ack_timeout.saturating_sub(elapsed))
     }
 
     /// Copies a selected source into the app-private encrypted cache and makes transfer state
@@ -1237,11 +1275,15 @@ enum AdvanceOutcome {
     Completed,
 }
 
-fn retry_due(attachment: &Attachment, now: Timestamp) -> bool {
+fn retry_delay(attachment: &Attachment) -> Duration {
     let attempts = u32::try_from(attachment.attempts().len()).unwrap_or(u32::MAX);
     let exponent = attempts.saturating_sub(1).min(6);
-    let delay = Duration::from_secs(1_u64 << exponent).min(RETRY_MAX_DELAY);
-    now.duration_since(attachment.updated_at()).is_some_and(|elapsed| elapsed >= delay)
+    Duration::from_secs(1_u64 << exponent).min(RETRY_MAX_DELAY)
+}
+
+fn retry_due(attachment: &Attachment, now: Timestamp) -> bool {
+    now.duration_since(attachment.updated_at())
+        .is_some_and(|elapsed| elapsed >= retry_delay(attachment))
 }
 
 fn stable_frame_id(id: AttachmentId, kind: u8, offset: u64) -> OpaqueId {
