@@ -1,5 +1,6 @@
 use core::{ptr, slice, str};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -19,6 +20,7 @@ const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const IDEMPOTENCY_MAX_ENTRIES: usize = 1024;
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(15 * 60);
+const ANDROID_NOTIFICATION_WAITER_ID: u64 = u64::MAX;
 const BUILD_ID: &str = match option_env!("TORCA_BUILD_ID") {
     Some(value) => value,
     None => "dev",
@@ -50,6 +52,7 @@ pub(crate) const fn compiled_build_id() -> &'static str {
 static REGISTRY: OnceLock<Mutex<Option<Arc<RuntimeHandleInner>>>> = OnceLock::new();
 static METADATA: OnceLock<Vec<u8>> = OnceLock::new();
 static INITIALIZATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static NEXT_WAITER_ID: AtomicU64 = AtomicU64::new(1);
 
 enum ActorMessage {
     Invoke {
@@ -76,6 +79,7 @@ struct RuntimeHandleInner {
 pub struct TorcaRuntimeHandle {
     inner: Arc<RuntimeHandleInner>,
     response: Mutex<Vec<u8>>,
+    waiter_id: u64,
 }
 
 struct ActorState {
@@ -279,7 +283,20 @@ pub extern "C" fn torca_runtime_acquire() -> *mut TorcaRuntimeHandle {
             return ptr::null_mut();
         }
     };
-    Box::into_raw(Box::new(TorcaRuntimeHandle { inner, response: Mutex::new(Vec::new()) }))
+    Box::into_raw(Box::new(TorcaRuntimeHandle {
+        inner,
+        response: Mutex::new(Vec::new()),
+        waiter_id: next_waiter_id(),
+    }))
+}
+
+fn next_waiter_id() -> u64 {
+    loop {
+        let waiter_id = NEXT_WAITER_ID.fetch_add(1, Ordering::Relaxed);
+        if waiter_id != 0 && waiter_id != ANDROID_NOTIFICATION_WAITER_ID {
+            return waiter_id;
+        }
+    }
 }
 
 fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
@@ -718,16 +735,17 @@ pub unsafe extern "C" fn torca_runtime_invoke(
     ABI_OK
 }
 
-/// Blocks without waking the runtime actor until its revision or notification
-/// cursor changes. The caller should issue one normal `runtime.poll` after a
-/// successful wait. A return value of `1` means changed, `0` means timeout.
+/// Blocks without waking the runtime actor until its published actor revision
+/// advances. `RuntimeEventHub` stores that actor revision in its cursor field;
+/// the hub's own revision is only an internal publish counter and must never be
+/// compared with the application revision returned by `runtime.poll`.
 #[unsafe(no_mangle)]
 /// # Safety
 /// `handle` must be a valid handle returned by `torca_runtime_acquire`.
 pub unsafe extern "C" fn torca_runtime_wait_for_revision(
     handle: *const TorcaRuntimeHandle,
     after_revision: u64,
-    after_cursor: u64,
+    _after_cursor: u64,
     timeout_ms: u32,
 ) -> i32 {
     let Some(handle) = (unsafe { handle.as_ref() }) else {
@@ -736,24 +754,44 @@ pub unsafe extern "C" fn torca_runtime_wait_for_revision(
     if handle.inner.startup_error.is_some() {
         return -2;
     }
-    let result = if timeout_ms == 0 {
-        handle.inner.event_hub.wait_indefinitely(0, after_revision, after_cursor)
-    } else {
-        handle.inner.event_hub.wait(
-            0,
-            after_revision,
-            after_cursor,
-            Duration::from_millis(u64::from(timeout_ms)),
-        )
-    };
-    match result {
+    match wait_for_actor_revision(
+        &handle.inner.event_hub,
+        handle.waiter_id,
+        after_revision,
+        timeout_ms,
+    ) {
         Some(_) => 1,
         None => 0,
     }
 }
 
-/// Cancels an in-flight revision wait so a Flutter/Android worker can shut
-/// down immediately instead of waiting for an artificial polling timeout.
+fn wait_for_actor_revision(
+    event_hub: &RuntimeEventHub,
+    waiter_id: u64,
+    after_revision: u64,
+    timeout_ms: u32,
+) -> Option<(u64, u64)> {
+    // Snapshot the hub's private publish counter before entering the wait. If
+    // a publish races this read, either that counter or the actor revision is
+    // newer and the condvar predicate returns immediately. Once caught up,
+    // both values are equal to the caller's observed state and the thread
+    // blocks without polling.
+    let (after_hub_revision, _) = event_hub.current()?;
+    if timeout_ms == 0 {
+        event_hub.wait_indefinitely(waiter_id, after_hub_revision, after_revision)
+    } else {
+        event_hub.wait(
+            waiter_id,
+            after_hub_revision,
+            after_revision,
+            Duration::from_millis(u64::from(timeout_ms)),
+        )
+    }
+}
+
+/// Cancels only the waiter associated with this runtime handle. Flutter and
+/// the Android foreground service use different waiter IDs, so destroying one
+/// presentation consumer cannot strand or spuriously cancel the other.
 #[unsafe(no_mangle)]
 /// # Safety
 /// `handle` must be a valid handle returned by `torca_runtime_acquire`.
@@ -763,7 +801,7 @@ pub unsafe extern "C" fn torca_runtime_cancel_revision_wait(
     let Some(handle) = (unsafe { handle.as_ref() }) else {
         return -1;
     };
-    handle.inner.event_hub.cancel(0);
+    handle.inner.event_hub.cancel(handle.waiter_id);
     ABI_OK
 }
 
@@ -890,7 +928,7 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeRuntimeRevi
         .lock()
         .ok()
         .and_then(|guard| guard.as_ref().and_then(|inner| inner.event_hub.current()))
-        .map_or(0, |(revision, _)| revision as jni::sys::jlong)
+        .map_or(0, |(_, revision)| revision as jni::sys::jlong)
 }
 
 #[cfg(target_os = "android")]
@@ -899,23 +937,25 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeWaitForRevi
     _env: *mut jni::sys::JNIEnv,
     _class: jni::sys::jclass,
     after_revision: jni::sys::jlong,
-    after_cursor: jni::sys::jlong,
+    _after_cursor: jni::sys::jlong,
     timeout_ms: jni::sys::jint,
 ) -> jni::sys::jint {
-    let handle = torca_runtime_acquire();
-    if handle.is_null() {
+    let registry = REGISTRY.get_or_init(|| Mutex::new(None));
+    let Some(inner) = registry.lock().ok().and_then(|guard| guard.as_ref().cloned()) else {
         return -1;
-    }
-    let result = unsafe {
-        torca_runtime_wait_for_revision(
-            handle,
-            after_revision.max(0) as u64,
-            after_cursor.max(0) as u64,
-            timeout_ms.max(0) as u32,
-        )
     };
-    unsafe { torca_runtime_release(handle) };
-    result
+    if inner.startup_error.is_some() {
+        return -2;
+    }
+    match wait_for_actor_revision(
+        &inner.event_hub,
+        ANDROID_NOTIFICATION_WAITER_ID,
+        after_revision.max(0) as u64,
+        timeout_ms.max(0) as u32,
+    ) {
+        Some(_) => 1,
+        None => 0,
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -924,13 +964,12 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeCancelRevis
     _env: *mut jni::sys::JNIEnv,
     _class: jni::sys::jclass,
 ) -> jni::sys::jint {
-    let handle = torca_runtime_acquire();
-    if handle.is_null() {
+    let registry = REGISTRY.get_or_init(|| Mutex::new(None));
+    let Some(inner) = registry.lock().ok().and_then(|guard| guard.as_ref().cloned()) else {
         return -1;
-    }
-    let result = unsafe { torca_runtime_cancel_revision_wait(handle) };
-    unsafe { torca_runtime_release(handle) };
-    result
+    };
+    inner.event_hub.cancel(ANDROID_NOTIFICATION_WAITER_ID);
+    ABI_OK
 }
 
 fn send_with_timeout<T>(
@@ -1239,5 +1278,22 @@ mod tests {
         assert!(!operation_counts_for_revision("query", "conversation.page"));
         assert!(operation_counts_for_revision("command", "profile.set"));
         assert!(operation_counts_for_revision("lifecycle", "foregrounded"));
+    }
+
+    #[test]
+    fn actor_revision_wait_blocks_once_the_caller_is_caught_up() {
+        let hub = RuntimeEventHub::default();
+        hub.publish(7);
+        assert_eq!(wait_for_actor_revision(&hub, 42, 6, 1), Some((1, 7)));
+        assert_eq!(wait_for_actor_revision(&hub, 42, 7, 1), None);
+    }
+
+    #[test]
+    fn waiter_cancellation_is_isolated() {
+        let hub = RuntimeEventHub::default();
+        hub.cancel(11);
+        hub.publish(1);
+        assert_eq!(hub.wait(11, 0, 0, Duration::ZERO), None);
+        assert_eq!(hub.wait(12, 0, 0, Duration::ZERO), Some((1, 1)));
     }
 }
