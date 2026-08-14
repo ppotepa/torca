@@ -231,7 +231,7 @@ pub trait PairingDriver: Send + 'static {
     /// can sleep until a command or network event arrives; it must not wake
     /// just to discover that there is no pairing work.
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
-        Some(Duration::from_secs(1))
+        None
     }
     fn network_changed(&mut self, _now: Timestamp) {}
     fn shutdown(&mut self);
@@ -1206,6 +1206,7 @@ fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshne
 
 const ATTACHMENT_OWNER_NAMESPACE: u128 = 0xA77A_C4A4_0000_0000_0000_0000_0000_0001;
 const DELIVERY_OWNER_NAMESPACE: u128 = 0xD311_0000_0000_0000_0000_0000_0000_0001;
+const PAIRING_OWNER_NAMESPACE: u128 = 0xA117_0000_0000_0000_0000_0000_0000_0001;
 
 fn delivery_lease_owner(message_id: OpaqueId) -> OpaqueId {
     OpaqueId::from_u128(message_id.to_u128() ^ DELIVERY_OWNER_NAMESPACE)
@@ -1223,6 +1224,20 @@ fn acquire_delivery_lease(policy: &mut RuntimeGovernor, message_id: OpaqueId) {
 
 fn attachment_lease_owner(attachment_id: OpaqueId) -> OpaqueId {
     OpaqueId::from_u128(attachment_id.to_u128() ^ ATTACHMENT_OWNER_NAMESPACE)
+}
+
+fn pairing_lease_owner(session_id: PairingSessionId) -> OpaqueId {
+    OpaqueId::from_u128(session_id.to_opaque().to_u128() ^ PAIRING_OWNER_NAMESPACE)
+}
+
+fn acquire_pairing_lease(policy: &mut RuntimeGovernor, session_id: PairingSessionId) {
+    policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Relay,
+        class: WorkClass::RelayConnect,
+        reason: DemandReason::ActivePairing,
+        owner: pairing_lease_owner(session_id),
+        expires_at: std::time::Instant::now() + Duration::from_secs(5 * 60),
+    });
 }
 
 fn acquire_attachment_lease(
@@ -1368,18 +1383,21 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 ) {
     match command {
         RuntimeCommand::CreatePairing(id, r) => {
+            acquire_pairing_lease(policy, id);
             wake_relay(relay_health);
             let result = pairing.create(id, now);
             record_pairing_result(&result, "CREATE", diagnostics, sequence, now);
             let _ = r.send(result);
         }
         RuntimeCommand::JoinPairing(id, code, ticket, r) => {
+            acquire_pairing_lease(policy, id);
             wake_relay(relay_health);
             let result = pairing.join(id, code, ticket, now);
             record_pairing_result(&result, "JOIN", diagnostics, sequence, now);
             let _ = r.send(result);
         }
         RuntimeCommand::ApprovePairing(id, r) => {
+            acquire_pairing_lease(policy, id);
             wake_relay(relay_health);
             let result = pairing.approve(id, now);
             record_pairing_result(&result, "APPROVE", diagnostics, sequence, now);
@@ -1388,12 +1406,18 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::RejectPairing(id, r) => {
             wake_relay(relay_health);
             let result = pairing.reject(id);
+            if result.is_ok() {
+                policy.release_lease(pairing_lease_owner(id));
+            }
             record_pairing_result(&result, "REJECT", diagnostics, sequence, now);
             let _ = r.send(result);
         }
         RuntimeCommand::CancelPairing(id, r) => {
             wake_relay(relay_health);
             let result = pairing.cancel(id);
+            if result.is_ok() {
+                policy.release_lease(pairing_lease_owner(id));
+            }
             record_pairing_result(&result, "CANCEL", diagnostics, sequence, now);
             let _ = r.send(result);
         }
