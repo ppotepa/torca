@@ -431,21 +431,20 @@ impl MediaWorker {
     fn next_wait_duration(&self) -> Duration {
         if let Some(live) = self.live.as_ref() {
             let now = Instant::now();
-            let mut deadline = now + AUDIO_FRAME_INTERVAL;
-            if live.authenticated {
-                deadline = deadline.min(live.last_received_at + CONNECTION_IDLE_LIMIT);
-                if let Some(oldest) = live.oldest_unacked_at {
-                    deadline = deadline.min(oldest + AUDIO_RETRANSMIT_AFTER);
-                }
-                if let Some(started) = live.local_burst_started_at {
-                    deadline =
-                        deadline.min(started + Duration::from_millis(MAX_RADIO_BURST_MS.into()));
-                }
-                let keep_alive_at = (live.last_media_activity_at + KEEP_ALIVE_INTERVAL)
-                    .max(live.last_keep_alive_at + KEEP_ALIVE_INTERVAL);
-                deadline = deadline.min(keep_alive_at);
-            }
-            return deadline.saturating_duration_since(now);
+            let wait = active_media_wait(
+                now,
+                live.authenticated,
+                live.last_received_at,
+                live.oldest_unacked_at,
+                live.local_burst_started_at,
+                live.last_media_activity_at,
+                live.last_keep_alive_at,
+            );
+            // Align the next socket read timeout with the selected deadline;
+            // otherwise a 20-ms stale timeout could postpone an ACK or burst
+            // boundary that is due sooner.
+            let _ = live.stream.set_read_timeout(Some(wait.max(Duration::from_millis(1))));
+            return wait;
         }
         if let Some(pending) = &self.pending {
             if pending.initiate_connection {
@@ -706,6 +705,31 @@ impl MediaWorker {
         }
         self.audio.clear();
     }
+}
+
+fn active_media_wait(
+    now: Instant,
+    authenticated: bool,
+    last_received_at: Instant,
+    oldest_unacked_at: Option<Instant>,
+    local_burst_started_at: Option<Instant>,
+    last_media_activity_at: Instant,
+    last_keep_alive_at: Instant,
+) -> Duration {
+    let mut deadline = now + AUDIO_FRAME_INTERVAL;
+    if authenticated {
+        deadline = deadline.min(last_received_at + CONNECTION_IDLE_LIMIT);
+        if let Some(oldest) = oldest_unacked_at {
+            deadline = deadline.min(oldest + AUDIO_RETRANSMIT_AFTER);
+        }
+        if let Some(started) = local_burst_started_at {
+            deadline = deadline.min(started + Duration::from_millis(MAX_RADIO_BURST_MS.into()));
+        }
+        let keep_alive_at = (last_media_activity_at + KEEP_ALIVE_INTERVAL)
+            .max(last_keep_alive_at + KEEP_ALIVE_INTERVAL);
+        deadline = deadline.min(keep_alive_at);
+    }
+    deadline.saturating_duration_since(now)
 }
 
 fn fill_playback_queue(jitter: &mut JitterBuffer, audio: &AudioPipeline) {
@@ -1331,6 +1355,29 @@ fn was_completed_burst(history: &VecDeque<RadioOperationId>, burst_id: RadioOper
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inactive_media_uses_the_audio_frame_bound() {
+        let now = Instant::now();
+        assert_eq!(active_media_wait(now, false, now, None, None, now, now), AUDIO_FRAME_INTERVAL);
+    }
+
+    #[test]
+    fn active_media_selects_the_earliest_retransmit_or_burst_deadline() {
+        let now = Instant::now();
+        assert_eq!(
+            active_media_wait(
+                now,
+                true,
+                now + Duration::from_secs(10),
+                Some(now - Duration::from_millis(247)),
+                Some(now - Duration::from_millis(u64::from(MAX_RADIO_BURST_MS) - 7)),
+                now,
+                now,
+            ),
+            Duration::from_millis(3)
+        );
+    }
 
     #[test]
     fn audio_nonce_is_stable_and_sequence_specific() {
