@@ -60,6 +60,23 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<String> _pinnedConversationIds = <String>{};
   final Set<String> _mutedConversationIds = <String>{};
   final Set<String> _loadingConversationFlags = <String>{};
+  int _attentionGeneration = 0;
+
+  void _reportAttention(_HomeSection section) {
+    final surface = switch (section) {
+      _HomeSection.chats => 'chats',
+      _HomeSection.contacts => 'contacts',
+      _HomeSection.invitations => 'pairing:00000000000000000000000000000000',
+    };
+    unawaited(
+      widget.gateway.execute(
+        SetAttentionCommandDto(
+          surface: surface,
+          generation: ++_attentionGeneration,
+        ),
+      ),
+    );
+  }
 
   Future<void> _showBuildInfo(
     ClientBuildInfo? client,
@@ -163,6 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onDestinationSelected: (index) {
           final section = _HomeSection.values[index];
           setState(() => _section = section);
+          _reportAttention(section);
           if (section == _HomeSection.contacts) {
             unawaited(
               widget.gateway.execute(const AcknowledgeNewContactsCommandDto()),
@@ -614,6 +632,18 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(_ensureAndOpenConversation(contact));
   }
 
+  void _reportConversationAttention(String conversationId) {
+    unawaited(
+      widget.gateway.execute(
+        SetAttentionCommandDto(
+          surface: 'conversation:$conversationId',
+          focusedResourceId: conversationId,
+          generation: ++_attentionGeneration,
+        ),
+      ),
+    );
+  }
+
   Future<void> _ensureAndOpenConversation(ContactDto contact) async {
     // A row tap, its chat icon and a delayed snapshot can all request the
     // same explicit conversation at once. Keep the UI intent idempotent too,
@@ -652,6 +682,7 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
       if (!mounted) return;
+      _reportConversationAttention(conversation.id);
       if (MediaQuery.sizeOf(context).width < _wideLayoutBreakpoint) {
         Navigator.of(context).push<void>(
           MaterialPageRoute(

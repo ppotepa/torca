@@ -15,6 +15,7 @@ use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_radio_coordinator::{HostRadioLifecycle, RadioProjection, SharedRadioCoordinator};
 use torca_delivery::ReactionPayload;
+use torca_runtime_policy::AttentionContext;
 
 use crate::{
     ApplicationReadModels, ApplicationSnapshotContext, AttachmentSendRequest,
@@ -25,6 +26,9 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApplicationCommand {
+    SetAttention {
+        context: AttentionContext,
+    },
     SetNotifications {
         enabled: bool,
     },
@@ -503,6 +507,7 @@ impl ClientApplicationRuntime {
         command: ApplicationCommand,
     ) -> Result<ApplicationCommandResult, String> {
         let mut resource_id = match &command {
+            ApplicationCommand::SetAttention { .. } => None,
             ApplicationCommand::CreatePairing { session_id }
             | ApplicationCommand::JoinPairing { session_id, .. }
             | ApplicationCommand::ApprovePairing { session_id }
@@ -524,6 +529,13 @@ impl ClientApplicationRuntime {
         };
         let mut invite_uri = None;
         let kind = match command {
+            ApplicationCommand::SetAttention { context } => {
+                self.runtime
+                    .as_ref()
+                    .ok_or_else(|| "runtime unavailable".to_owned())?
+                    .set_attention(context);
+                "attention_updated"
+            }
             ApplicationCommand::SetNotifications { .. } => "notifications_updated",
             ApplicationCommand::SetReadReceipts { .. } => "read_receipts_updated",
             ApplicationCommand::AcknowledgeNewContacts => "contacts_acknowledged",

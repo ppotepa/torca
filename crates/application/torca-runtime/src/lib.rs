@@ -18,7 +18,7 @@ use torca_connectivity::{
 use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationId;
 use torca_diagnostics::{
-    Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState,
+    Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState, RuntimeCounter,
 };
 use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
@@ -28,6 +28,7 @@ use torca_delivery::ReactionPayload;
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
 use torca_runtime_policy::Freshness;
+use torca_runtime_policy::{AttentionContext, PolicyEvent, RuntimeGovernor};
 
 const IDLE_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const ACTIVE_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
@@ -405,6 +406,7 @@ impl RelayHealthPort for RuntimeRelayHealthPort {
 }
 
 enum RuntimeCommand {
+    SetAttention(AttentionContext),
     CreatePairing(PairingSessionId, Sender<Result<PairingInvitationView, RuntimeDriverError>>),
     JoinPairing(
         PairingSessionId,
@@ -442,6 +444,10 @@ pub struct RuntimeHandle {
     sender: SyncSender<RuntimeCommand>,
 }
 impl RuntimeHandle {
+    pub fn set_attention(&self, context: AttentionContext) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetAttention(context));
+    }
+
     pub fn create_pairing(
         &self,
         id: PairingSessionId,
@@ -613,6 +619,7 @@ impl RuntimeOwner {
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
             let mut diagnostics = DiagnosticBuffer::new(256);
+            let mut policy = RuntimeGovernor::new(std::time::Instant::now());
             let mut sequence = 1_u128;
             let startup = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
             match communication.recover(startup) {
@@ -649,6 +656,7 @@ impl RuntimeOwner {
                 &mut tor,
                 &mut diagnostics,
                 &mut sequence,
+                &mut policy,
                 relay_health,
                 relay_info,
                 connectivity,
@@ -685,6 +693,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     tor: &mut T,
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
+    policy: &mut RuntimeGovernor,
     relay_health: Option<RelayHealthHandle>,
     relay_info: Option<Arc<dyn RelayProbe>>,
     connectivity: ConnectivityObserver,
@@ -710,6 +719,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             Ok(RuntimeCommand::Shutdown(response)) => {
                 let _ = response.send(());
                 break;
+            }
+            Ok(RuntimeCommand::SetAttention(context)) => {
+                policy.apply(
+                    PolicyEvent::Attention(context),
+                    std::time::Instant::now(),
+                );
             }
             Ok(RuntimeCommand::NetworkChanged) => {
                 refresh_contacts = true;
@@ -750,9 +765,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
+        diagnostics.count(RuntimeCounter::SchedulerWakeup);
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
         if refresh_contacts {
             if let Ok(snapshot) = engine.snapshot() {
+                diagnostics.count(RuntimeCounter::SnapshotBuild);
                 contacts = snapshot
                     .contacts
                     .iter()
@@ -1236,6 +1253,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(diagnostics.export_json());
         }
         RuntimeCommand::Wake => {}
+        RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),
     }

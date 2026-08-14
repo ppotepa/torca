@@ -1084,6 +1084,19 @@ sealed class BridgeCommandDto {
   const BridgeCommandDto();
 }
 
+class SetAttentionCommandDto extends BridgeCommandDto {
+  const SetAttentionCommandDto({
+    required this.surface,
+    this.focusedResourceId,
+    this.visibleContactIds = const <String>[],
+    required this.generation,
+  });
+  final String surface;
+  final String? focusedResourceId;
+  final List<String> visibleContactIds;
+  final int generation;
+}
+
 class UpdateProfileCommandDto extends BridgeCommandDto {
   const UpdateProfileCommandDto({required this.displayName});
   final String displayName;
@@ -1390,6 +1403,14 @@ class RuntimeRequestDto {
 
   static RuntimeRequestDto? command(BridgeCommandDto command) {
     if (command is RefreshSnapshotCommandDto) return snapshot;
+    if (command is SetAttentionCommandDto) {
+      return _command('runtime.attention.set', <String, Object?>{
+        'surface': command.surface,
+        'focusedResourceId': command.focusedResourceId,
+        'visibleContactIds': command.visibleContactIds,
+        'generation': command.generation,
+      });
+    }
     if (command is UpdateProfileCommandDto) {
       return _command('profile.set', <String, Object?>{
         'displayName': command.displayName,

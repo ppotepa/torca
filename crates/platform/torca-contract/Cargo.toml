@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-client-application = { path = "../../application/torca-client-application" }
+torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }
 torca-pairing = { path = "../../domains/torca-pairing" }

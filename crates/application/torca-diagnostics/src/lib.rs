@@ -121,11 +121,40 @@ pub struct DiagnosticBuffer {
     capacity: usize,
     events: VecDeque<DiagnosticEvent>,
     health: BTreeMap<Component, ComponentHealth>,
+    counters: RuntimeCounters,
 }
+
+/// Application-controlled work counters used by the battery regression gate.
+/// These are deliberately abstract counts, not claims about physical mWh.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeCounters {
+    pub scheduler_wakeups: u64,
+    pub snapshot_builds: u64,
+    pub peer_probes: u64,
+    pub relay_probes: u64,
+    pub ffi_wakes: u64,
+    pub db_reads: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeCounter {
+    SchedulerWakeup,
+    SnapshotBuild,
+    PeerProbe,
+    RelayProbe,
+    FfiWake,
+    DbRead,
+}
+
 impl DiagnosticBuffer {
     /// Creates a buffer with at least one event slot.
     pub fn new(capacity: usize) -> Self {
-        Self { capacity: capacity.max(1), events: VecDeque::new(), health: BTreeMap::new() }
+        Self {
+            capacity: capacity.max(1),
+            events: VecDeque::new(),
+            health: BTreeMap::new(),
+            counters: RuntimeCounters::default(),
+        }
     }
     /// Records an event and updates health.
     pub fn record(&mut self, event: DiagnosticEvent) {
@@ -146,6 +175,20 @@ impl DiagnosticBuffer {
     /// Returns the current health snapshot.
     pub fn health(&self) -> HealthSnapshot {
         HealthSnapshot { components: self.health.values().cloned().collect() }
+    }
+    pub fn count(&mut self, counter: RuntimeCounter) {
+        let value = match counter {
+            RuntimeCounter::SchedulerWakeup => &mut self.counters.scheduler_wakeups,
+            RuntimeCounter::SnapshotBuild => &mut self.counters.snapshot_builds,
+            RuntimeCounter::PeerProbe => &mut self.counters.peer_probes,
+            RuntimeCounter::RelayProbe => &mut self.counters.relay_probes,
+            RuntimeCounter::FfiWake => &mut self.counters.ffi_wakes,
+            RuntimeCounter::DbRead => &mut self.counters.db_reads,
+        };
+        *value = value.saturating_add(1);
+    }
+    pub fn counters(&self) -> RuntimeCounters {
+        self.counters
     }
     /// Exports deterministic JSON without private message or key fields.
     pub fn export_json(&self) -> String {
@@ -170,7 +213,17 @@ impl DiagnosticBuffer {
             }
             output.push('}');
         }
-        output.push_str("]}");
+        let counters = self.counters;
+        let _ = write!(
+            output,
+            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{}}}}}",
+            counters.scheduler_wakeups,
+            counters.snapshot_builds,
+            counters.peer_probes,
+            counters.relay_probes,
+            counters.ffi_wakes,
+            counters.db_reads,
+        );
         output
     }
 }

@@ -25,6 +25,7 @@ pub const COMMANDS: &[&str] = &[
     "message.cancel",
     "message.edit",
     "message.reaction",
+    "runtime.attention.set",
     "notifications.set",
     "privacy.read_receipts.set",
     "contacts.acknowledge_new",

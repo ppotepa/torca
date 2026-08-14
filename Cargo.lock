@@ -5676,6 +5676,7 @@ dependencies = [
  "torca-radio",
  "torca-radio-coordinator",
  "torca-runtime",
+ "torca-runtime-policy",
 ]
 
 [[package]]
@@ -5773,6 +5774,7 @@ dependencies = [
  "torca-messaging",
  "torca-pairing",
  "torca-pairing-protocol",
+ "torca-runtime-policy",
 ]
 
 [[package]]

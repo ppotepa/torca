@@ -941,6 +941,29 @@ fn bridge_command(
         "profile.set" => {
             Ok(BridgeCommand::UpdateProfile { display_name: text("displayName")?, at_ms: now()? })
         }
+        "runtime.attention.set" => Ok(BridgeCommand::SetAttention {
+            surface: text("surface")?,
+            focused_resource_id: payload
+                .get("focusedResourceId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            visible_contact_ids: payload
+                .get("visibleContactIds")
+                .and_then(Value::as_array)
+                .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            generation: payload
+                .get("generation")
+                .and_then(Value::as_u64)
+                .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
+        }),
         "pairing.create" => Ok(BridgeCommand::CreatePairing { session_id_hex: generated()? }),
         "pairing.join" => Ok(BridgeCommand::JoinPairing {
             session_id_hex: generated()?,

@@ -13,6 +13,7 @@ use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageDirection, MessageReaction, MessageStatus};
 use torca_pairing::{PairingRole, PairingState};
 use torca_pairing_protocol::encode_invite_uri;
+use torca_runtime_policy::{AttentionContext, AttentionSurface};
 
 pub mod generated {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/generated_contract.rs"));
@@ -37,6 +38,12 @@ pub fn notification_poll_request_json(request_id: &str, after_cursor: u64) -> St
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BridgeCommand {
+    SetAttention {
+        surface: String,
+        focused_resource_id: Option<String>,
+        visible_contact_ids: Vec<String>,
+        generation: u64,
+    },
     SetNotifications {
         enabled: bool,
     },
@@ -481,6 +488,25 @@ pub struct BridgeAttachment {
 
 pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationCommand, String> {
     Ok(match command {
+        BridgeCommand::SetAttention {
+            surface,
+            focused_resource_id,
+            visible_contact_ids,
+            generation,
+        } => ApplicationCommand::SetAttention {
+            context: AttentionContext {
+                surface: decode_attention_surface(&surface)?,
+                focused_resource: focused_resource_id
+                    .as_deref()
+                    .map(parse_id)
+                    .transpose()?,
+                visible_contact_ids: visible_contact_ids
+                    .iter()
+                    .map(|value| parse_id(value))
+                    .collect::<Result<Vec<_>, _>>()?,
+                generation,
+            },
+        },
         BridgeCommand::SetNotifications { enabled } => {
             ApplicationCommand::SetNotifications { enabled }
         }
@@ -812,6 +838,36 @@ const fn conversation_status_name(value: ConversationStatus) -> &'static str {
 
 fn parse_id(value: &str) -> Result<OpaqueId, String> {
     value.parse::<OpaqueId>().map_err(string_error)
+}
+
+fn decode_attention_surface(value: &str) -> Result<AttentionSurface, String> {
+    let resource = |name: &str| {
+        value
+            .strip_prefix(name)
+            .and_then(|suffix| suffix.strip_prefix(':'))
+            .ok_or_else(|| format!("invalid attention surface: {value}"))
+            .and_then(parse_id)
+    };
+    match value {
+        "background" => Ok(AttentionSurface::Background),
+        "home" => Ok(AttentionSurface::Home),
+        "chats" => Ok(AttentionSurface::Chats),
+        "contacts" => Ok(AttentionSurface::Contacts),
+        "diagnostics" => Ok(AttentionSurface::Diagnostics),
+        value if value.starts_with("conversation:") => {
+            Ok(AttentionSurface::Conversation(resource("conversation")?))
+        }
+        value if value.starts_with("connection_details:") => {
+            Ok(AttentionSurface::ConnectionDetails(resource("connection_details")?))
+        }
+        value if value.starts_with("pairing:") => {
+            Ok(AttentionSurface::Pairing(resource("pairing")?))
+        }
+        value if value.starts_with("radio:") => {
+            Ok(AttentionSurface::Radio(resource("radio")?))
+        }
+        _ => Err(format!("invalid attention surface: {value}")),
+    }
 }
 
 fn parse_ticket(value: &str) -> Result<[u8; 16], String> {
