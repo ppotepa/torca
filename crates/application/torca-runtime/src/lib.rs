@@ -33,7 +33,6 @@ use torca_runtime_policy::{
     WorkDemand,
 };
 
-const IDLE_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const ACTIVE_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
 const COMMAND_WAIT: Duration = Duration::from_secs(10);
 const QUERY_WAIT: Duration = Duration::from_secs(5);
@@ -254,6 +253,8 @@ pub trait PeerSessionPort: Send + 'static {
     /// Invalidates stale transport sessions and resets reconnect backoff after
     /// an OS route/network change.
     fn network_changed(&mut self, _now: Timestamp) {}
+    /// Installs a non-blocking wake path for inbound listener activity.
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
@@ -383,6 +384,12 @@ pub trait CommunicationDriver:
 }
 pub trait TorDriver: Send + 'static {
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    /// Returns the next Tor lifecycle deadline. A healthy, reachable and
+    /// idle Tor service has no application-owned deadline and must wait for a
+    /// command or an explicit network event instead of being polled.
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
     fn state(&self) -> TorState;
     fn onion_address(&self) -> Option<String>;
     fn onion_service_state(&self) -> OnionServiceState {
@@ -586,6 +593,53 @@ pub struct RuntimeOwner {
     join: Option<JoinHandle<()>>,
     relay_worker: Option<RelayHealthWorker>,
 }
+
+enum RuntimeWait {
+    Command(RuntimeCommand),
+    Timeout,
+    Closed,
+}
+
+fn wait_for_runtime_command(
+    receiver: &Receiver<RuntimeCommand>,
+    deadline: Option<std::time::Instant>,
+) -> RuntimeWait {
+    match deadline {
+        Some(deadline) => match receiver
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        {
+            Ok(command) => RuntimeWait::Command(command),
+            Err(RecvTimeoutError::Timeout) => RuntimeWait::Timeout,
+            Err(RecvTimeoutError::Disconnected) => RuntimeWait::Closed,
+        },
+        None => match receiver.recv() {
+            Ok(command) => RuntimeWait::Command(command),
+            Err(_) => RuntimeWait::Closed,
+        },
+    }
+}
+
+fn next_runtime_delay(
+    active_transport: bool,
+    tor: Option<Duration>,
+    pairing: Option<Duration>,
+    communication: Option<Duration>,
+    lease: Option<Duration>,
+    peer_probe: Option<Duration>,
+) -> Option<Duration> {
+    [
+        active_transport.then_some(ACTIVE_MAINTENANCE_INTERVAL),
+        tor,
+        pairing,
+        communication,
+        lease,
+        peer_probe,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+}
+
 impl RuntimeOwner {
     pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         engine: EngineHandle,
@@ -639,6 +693,13 @@ impl RuntimeOwner {
         });
         let relay_health = relay_worker.as_ref().map(RelayHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
+        let wake_sender = sender.clone();
+        communication.set_waker(Arc::new(move || {
+            // The accept worker must never block on the runtime mailbox. A
+            // full queue only coalesces this wake; the next command or
+            // deadline will drain the listener as well.
+            let _ = wake_sender.try_send(RuntimeCommand::Wake);
+        }));
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
             let mut diagnostics = DiagnosticBuffer::new(256);
@@ -732,7 +793,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut probes = ProbeSupervisor::default();
     let mut peer_probes = PeerProbeSupervisor::default();
     let mut transport_activity = TransportActivityLedger::default();
-    let mut next_maintenance_at = std::time::Instant::now();
+    let mut next_maintenance_at = Some(std::time::Instant::now());
     let mut peer_probe_deadline = None;
     let mut contacts = Vec::<ContactId>::new();
     let mut refresh_contacts = true;
@@ -741,13 +802,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut active_attachment_leases = BTreeSet::<OpaqueId>::new();
     let mut active_delivery_leases = BTreeSet::<OpaqueId>::new();
     loop {
-        let wait = next_maintenance_at.saturating_duration_since(std::time::Instant::now());
-        match receiver.recv_timeout(wait) {
-            Ok(RuntimeCommand::Shutdown(response)) => {
+        match wait_for_runtime_command(&receiver, next_maintenance_at) {
+            RuntimeWait::Command(RuntimeCommand::Shutdown(response)) => {
                 let _ = response.send(());
                 break;
             }
-            Ok(RuntimeCommand::SetAttention(context)) => {
+            RuntimeWait::Command(RuntimeCommand::SetAttention(context)) => {
                 let now = std::time::Instant::now();
                 if let Some(owner) = attention_owner.take() {
                     policy.release_lease(owner);
@@ -784,7 +844,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
                 policy.apply(PolicyEvent::Attention(context), now);
             }
-            Ok(RuntimeCommand::NetworkChanged) => {
+            RuntimeWait::Command(RuntimeCommand::NetworkChanged) => {
                 refresh_contacts = true;
                 if let Some(relay) = &relay_health {
                     relay.network_changed();
@@ -801,16 +861,16 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     "RELAY_NETWORK_CHANGED",
                 );
             }
-            Ok(RuntimeCommand::WakeDelivery(message_id)) => {
+            RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id)) => {
                 active_delivery_leases.insert(message_id);
                 acquire_delivery_lease(policy, message_id);
                 refresh_contacts = true;
             }
-            Ok(RuntimeCommand::ReleaseDelivery(message_id)) => {
+            RuntimeWait::Command(RuntimeCommand::ReleaseDelivery(message_id)) => {
                 active_delivery_leases.remove(&message_id);
                 policy.release_lease(delivery_lease_owner(message_id));
             }
-            Ok(command) => {
+            RuntimeWait::Command(command) => {
                 refresh_contacts = true;
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 handle_command(
@@ -831,8 +891,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     now,
                 );
             }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+            RuntimeWait::Timeout => {}
+            RuntimeWait::Closed => break,
         }
         diagnostics.count(RuntimeCounter::SchedulerWakeup);
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
@@ -1028,25 +1088,22 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         last_peer_states = current;
         last_peer_successes = current_successes;
 
-        let mut next_delay =
-            if active_transport { ACTIVE_MAINTENANCE_INTERVAL } else { IDLE_MAINTENANCE_INTERVAL };
-        if let Some(pairing_delay) = pairing.next_maintenance_delay(now) {
-            next_delay = next_delay.min(pairing_delay);
-        }
-        if let Some(communication_delay) = communication.next_maintenance_delay(now) {
-            next_delay = next_delay.min(communication_delay);
-        }
-        if let Some(expiry) = policy.next_lease_expiry() {
-            next_delay =
-                next_delay.min(expiry.saturating_duration_since(std::time::Instant::now()));
-        }
-        if !active_transport
-            && let Some(deadline) = peer_probe_deadline
-            && let Some(delay) = deadline.duration_since(now)
-        {
-            next_delay = next_delay.min(delay);
-        }
-        next_maintenance_at = std::time::Instant::now() + next_delay;
+        let lease_delay = policy
+            .next_lease_expiry()
+            .map(|expiry| expiry.saturating_duration_since(std::time::Instant::now()));
+        let peer_delay = (!active_transport)
+            .then_some(peer_probe_deadline)
+            .flatten()
+            .and_then(|deadline| deadline.duration_since(now));
+        let next_delay = next_runtime_delay(
+            active_transport,
+            tor.next_maintenance_delay(now),
+            pairing.next_maintenance_delay(now),
+            communication.next_maintenance_delay(now),
+            lease_delay,
+            peer_delay,
+        );
+        next_maintenance_at = next_delay.map(|delay| std::time::Instant::now() + delay);
     }
 }
 
@@ -1615,6 +1672,34 @@ const fn relay_event_code(state: ProbeStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_scheduler_has_no_application_deadline() {
+        assert_eq!(next_runtime_delay(false, None, None, None, None, None), None);
+    }
+
+    #[test]
+    fn active_scheduler_keeps_media_cadence() {
+        assert_eq!(
+            next_runtime_delay(true, None, None, None, None, None),
+            Some(ACTIVE_MAINTENANCE_INTERVAL)
+        );
+    }
+
+    #[test]
+    fn scheduler_selects_earliest_executor_deadline() {
+        assert_eq!(
+            next_runtime_delay(
+                false,
+                Some(Duration::from_secs(5)),
+                Some(Duration::from_secs(3)),
+                Some(Duration::from_secs(7)),
+                Some(Duration::from_secs(2)),
+                Some(Duration::from_secs(4)),
+            ),
+            Some(Duration::from_secs(2))
+        );
+    }
 
     #[test]
     fn contact_activity_is_monotonic_and_redacted() {

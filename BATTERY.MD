@@ -23,18 +23,19 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
 | Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
-| Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; delivery/control outboxes and lease expiry now expose deadlines, while the remaining communication fallback still needs removal |
+| Central deadline scheduler | Partial | fixed 100-ms tick and healthy-Tor 1-s fallback were removed; delivery/control outboxes, Tor lifecycle and lease expiry expose deadlines, while radio/Tor-worker event sources remain |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
-| Blocking/deadline radio worker | Partial | idle command waiting and listener acceptance are blocking; active media still uses a 10-ms read cadence |
+| Blocking/deadline radio worker | Partial | idle command waiting and peer listener acceptance are blocking; radio-media listener wake wiring and active media still need follow-up work |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds/DB reads, actual peer probes and relay probe executions; radio/FFI/DB-write counters and idle regression gate remain |
 
 The current implementation is therefore a transitional state. Event waiting,
 pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
-idle radio blocking, a bounded kernel-blocked peer listener and demand-woken
-relay health have landed. Full deadline ownership, feature leases, attention
-propagation, evidence-driven peer health and Arti dormancy remain outstanding.
+idle radio blocking, a bounded kernel-blocked peer listener with runtime wake
+propagation and demand-woken relay health have landed. Full deadline ownership,
+feature leases, attention propagation, evidence-driven peer health and Arti
+dormancy remain outstanding.
 
 The central model is:
 
@@ -398,8 +399,9 @@ target removes unconditional idle iteration:
 - No armed session: block indefinitely.
 - Pending connection: block until command, accept event, or reconnect deadline.
 - Active session: block until audio/playback/keepalive deadline.
-- `PeerListener` uses one cancellable blocking accept worker and a bounded
-  queue; listener-ready event propagation into the scheduler is still pending.
+- `PeerListener` uses one cancellable blocking accept worker, a bounded queue
+  and runtime wake callback; the dedicated radio-media listener still needs
+  the same event path.
 - Shutdown cancels both listener and media waiter.
 
 Keepalive policy:
@@ -476,11 +478,11 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. Add shutdown, missed-revision
    and waiter-generation regression tests.
-4. **Partial / next:** delivery/control outboxes now expose persisted retry
-   deadlines and the runtime merges them with pairing/peer deadlines. Replace
-   the remaining one-second safety fallback with a single deadline selected
-   from Tor, communication, attachment and radio executors. Do not create
-   independent feature timers.
+4. **Partial:** delivery/control outboxes, Tor lifecycle and lease expiry now
+   expose deadlines; the runtime blocks when no deadline exists and wakes on
+   peer-listener events. Finish completion events from Tor workers and the
+   dedicated radio-media listener before deleting every fallback path. Do not
+   create independent feature timers.
 5. **Partial / next:** attachment and pending-message leases now survive
    route changes, renew during runtime maintenance and release when durable
    terminal state is observed. Finish pairing and radio executor ownership;
@@ -491,11 +493,11 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    single-flight probe budget.
 7. **Partial:** relay healthy heartbeats are removed. Add operation-scoped
    relay leases and revalidation without blocking local readiness.
-8. **Partial:** idle radio waits on its command channel and `PeerListener` now
-   accepts on a dedicated blocking worker with a bounded queue and cancellable
-   shutdown. Finish wiring listener-ready events into the deadline scheduler,
-   exact active-media deadlines and keep the default idle path at zero worker
-   iterations.
+8. **Partial:** idle radio waits on its command channel and peer
+   `PeerListener` accepts on a dedicated blocking worker with a bounded queue,
+   cancellable shutdown and runtime wake propagation. Finish wiring the
+   dedicated radio-media listener, exact active-media deadlines and keep the
+   default idle path at zero worker iterations.
 9. **Planned / measurement-gated:** evaluate Arti soft dormancy only after
    reliability soak tests pass. It is optional and not a release blocker.
 10. **Optional experiments:** deterministic dial ownership, viewport contact

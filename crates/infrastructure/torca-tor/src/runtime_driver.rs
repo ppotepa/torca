@@ -634,6 +634,24 @@ impl TorDriver for OwnedTorDriver {
         Ok(())
     }
 
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        // During bootstrap, publication and recovery we still need to reap
+        // worker results and advance bounded retry deadlines. Once Tor and
+        // the onion listener are both healthy there is no periodic work left
+        // for the application owner; Arti and the listener are event-driven.
+        if self.bootstrap_worker.is_some() || self.next_restart_at.is_some() {
+            return Some(Duration::from_secs(1));
+        }
+        match self.onion_service_state() {
+            OnionServiceState::Reachable => None,
+            OnionServiceState::Unknown
+            | OnionServiceState::Publishing
+            | OnionServiceState::Degraded
+            | OnionServiceState::Failed
+            | OnionServiceState::Stopped => Some(Duration::from_secs(1)),
+        }
+    }
+
     fn state(&self) -> TorState {
         self.state
     }

@@ -77,6 +77,10 @@ where
         let _ = self.link.network_changed(now);
     }
 
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        let _ = self.link.set_waker(waker);
+    }
+
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
         application_peer_state(self.link.connection_state(contact_id))
     }

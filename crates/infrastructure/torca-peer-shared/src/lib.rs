@@ -30,6 +30,10 @@ where
     S: ContactRepository + PeerCredentialRepository,
     K: HandshakeSigner,
 {
+    pub fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
+        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.set_waker(waker)
+    }
+
     pub fn maintenance(
         &self,
         contacts: &[ContactId],

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -212,6 +213,10 @@ where
         for health in self.health.values_mut() {
             health.snapshot.reconnect_attempt = 0;
         }
+    }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        let _ = self.link.set_waker(waker);
     }
 
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {

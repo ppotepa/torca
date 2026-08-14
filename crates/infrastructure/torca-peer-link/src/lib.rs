@@ -6,6 +6,7 @@
 
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -157,6 +158,12 @@ where
     pub fn with_connectivity(mut self, connectivity: ConnectivityObserver) -> Self {
         self.connectivity = Some(connectivity);
         self
+    }
+
+    /// Wakes the runtime owner as soon as the listener queues an inbound
+    /// stream, avoiding a periodic accept poll.
+    pub fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
+        self.listener.set_waker(waker).map_err(|_| PeerLinkError::Listener)
     }
 
     pub fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {

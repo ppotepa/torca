@@ -214,6 +214,7 @@ pub trait PeerLinkRuntime: Send {
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
     fn network_changed(&mut self, _now: Timestamp) {}
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
     fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError>;
     fn reject(&mut self, envelope: &InboundEnvelope) -> Result<(), CommunicationError>;
@@ -424,6 +425,11 @@ impl TorcaCommunicationDriver {
         self
     }
 
+    /// Connects infrastructure listener events to the single runtime owner.
+    pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.peer.set_waker(waker);
+    }
+
     fn attachment_runtime(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, Box<dyn AttachmentRuntime>>, CommunicationError> {
@@ -608,6 +614,10 @@ impl PeerSessionPort for TorcaCommunicationDriver {
 
     fn network_changed(&mut self, now: Timestamp) {
         self.peer.network_changed(now);
+    }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.peer.set_waker(waker);
     }
 
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
