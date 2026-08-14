@@ -33,12 +33,11 @@ const MAX_INBOUND_EVENTS: usize = 256;
 const MAX_PENDING_ACKS: usize = 256;
 const RECONNECT_BASE_MS: u64 = 1_000;
 const RECONNECT_MAX_MS: u64 = 60_000;
-const POLL_SLEEP: Duration = Duration::from_millis(10);
-// Never let one attachment chunk monopolize the shared peer lane. ACKs that
-// arrive after this cooperative slice are retained in `pending_acks` and the
-// durable job retries the same stable frame idempotently. A five-second slice
-// allowed a video transfer to freeze text/control synchronization.
+const ACK_POLL_INITIAL: Duration = Duration::from_millis(10);
+const ACK_POLL_MAX: Duration = Duration::from_millis(80);
 const MAX_ACK_WAIT_SLICE: Duration = Duration::from_secs(1);
+
+type PeerWake = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PeerConnectionState {
@@ -140,6 +139,7 @@ pub struct PeerLink<S, K> {
     inbound: VecDeque<InboundPeerEnvelope>,
     activity: BTreeMap<ContactId, PeerActivitySnapshot>,
     connectivity: Option<ConnectivityObserver>,
+    wakers: Vec<PeerWake>,
 }
 
 impl<S, K> PeerLink<S, K>
@@ -147,7 +147,7 @@ where
     S: ContactRepository + PeerCredentialRepository,
     K: HandshakeSigner,
 {
-    pub const fn new(
+    pub fn new(
         listener: PeerListener,
         relationships: S,
         signer: K,
@@ -169,6 +169,7 @@ where
             inbound: VecDeque::new(),
             activity: BTreeMap::new(),
             connectivity: None,
+            wakers: Vec::new(),
         }
     }
 
@@ -178,10 +179,28 @@ where
         self
     }
 
-    /// Wakes the runtime owner as soon as the listener queues an inbound
-    /// stream, avoiding a periodic accept poll.
-    pub fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
-        self.listener.set_waker(waker).map_err(|_| PeerLinkError::Listener)
+    /// Registers a wake consumer. Production installs the process runtime
+    /// owner and the native presentation bridge; both receive the same real
+    /// listener/stream events without introducing a polling timer.
+    pub fn set_waker(&mut self, waker: PeerWake) -> Result<(), PeerLinkError> {
+        self.wakers.push(waker);
+        let combined = self.combined_waker();
+        self.listener
+            .set_waker(Arc::clone(&combined))
+            .map_err(|_| PeerLinkError::Listener)?;
+        for transport in &mut self.pending {
+            transport.set_waker(Arc::clone(&combined)).map_err(|_| PeerLinkError::Protocol)?;
+        }
+        Ok(())
+    }
+
+    fn combined_waker(&self) -> PeerWake {
+        let callbacks = self.wakers.clone();
+        Arc::new(move || {
+            for callback in &callbacks {
+                callback();
+            }
+        })
     }
 
     pub fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
@@ -327,11 +346,13 @@ where
         self.send_envelope(contact_id, envelope_id, message_kind, ciphertext)?;
         let wait_slice = timeout.min(wait_limit);
         let deadline = Instant::now().checked_add(wait_slice).ok_or(PeerLinkError::AckTimeout)?;
+        let mut poll_delay = ACK_POLL_INITIAL;
         loop {
             if let Some(ack) = self.poll_envelope_ack(contact_id, envelope_id)? {
                 return Ok(ack);
             }
-            if Instant::now() >= deadline {
+            let instant = Instant::now();
+            if instant >= deadline {
                 let now = system_timestamp()?;
                 if timeout <= MAX_ACK_WAIT_SLICE {
                     self.mark_disconnected(contact_id);
@@ -339,7 +360,8 @@ where
                 }
                 return Err(PeerLinkError::AckTimeout);
             }
-            thread::sleep(POLL_SLEEP);
+            thread::sleep(poll_delay.min(deadline.saturating_duration_since(instant)));
+            poll_delay = poll_delay.saturating_mul(2).min(ACK_POLL_MAX);
         }
     }
 
@@ -530,9 +552,11 @@ where
     }
 
     fn accept_pending(&mut self, report: &mut PeerLinkReport) -> Result<(), PeerLinkError> {
+        let waker = self.combined_waker();
         while self.pending.len() < MAX_PENDING_INCOMING {
             match self.listener.try_accept_transport().map_err(map_tor)? {
                 Some(transport) => {
+                    transport.set_waker(Arc::clone(&waker)).map_err(|_| PeerLinkError::Protocol)?;
                     self.pending.push(transport);
                     report.accepted += 1;
                 }
@@ -657,6 +681,11 @@ where
             contact.route().onion_address(),
             TOR_PEER_VIRTUAL_PORT,
         );
+        if !self.wakers.is_empty() {
+            transport
+                .set_waker(self.combined_waker())
+                .map_err(|_| PeerLinkError::Protocol)?;
+        }
         let mut session = PeerSession::new(transport, verifier, policy);
         let session_id = self.random_id()?;
         let nonce = self.random_32()?;
