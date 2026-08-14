@@ -505,7 +505,7 @@ impl RuntimeEventHub {
         };
         let (mut state, _) =
             self.changed.wait_timeout_while(state, timeout, |state| !ready(state)).ok()?;
-        if state.cancelled.contains(&waiter) {
+        if state.cancelled.remove(&waiter) {
             state.stats.cancellations = state.stats.cancellations.saturating_add(1);
             return None;
         }
@@ -516,6 +516,33 @@ impl RuntimeEventHub {
             state.stats.timeouts = state.stats.timeouts.saturating_add(1);
             None
         }
+    }
+
+    /// Waits without a timeout until a revision/cursor change or cancellation.
+    /// Cancellation is one-shot so a worker can be stopped and later started
+    /// again with the same runtime event hub.
+    pub fn wait_indefinitely(
+        &self,
+        waiter: u64,
+        after_revision: u64,
+        after_cursor: u64,
+    ) -> Option<(u64, u64)> {
+        let mut state = self.state.lock().ok()?;
+        state.stats.waits = state.stats.waits.saturating_add(1);
+        let ready = |state: &HubState| {
+            state.revision > after_revision
+                || state.cursor > after_cursor
+                || state.cancelled.contains(&waiter)
+        };
+        while !ready(&state) {
+            state = self.changed.wait(state).ok()?;
+        }
+        if state.cancelled.remove(&waiter) {
+            state.stats.cancellations = state.stats.cancellations.saturating_add(1);
+            return None;
+        }
+        state.stats.wakeups = state.stats.wakeups.saturating_add(1);
+        Some((state.revision, state.cursor))
     }
 
     /// Cancels a waiter token. Existing waits are woken by publishing.
@@ -614,6 +641,23 @@ mod tests {
         hub.cancel(9);
         assert_eq!(hub.wait(9, 0, 0, Duration::ZERO), None);
         assert_eq!(hub.current(), Some((0, 0)));
+        // Cancellation is one-shot; the same waiter token can be reused.
+        hub.publish(1);
+        assert_eq!(hub.wait(9, 0, 0, Duration::ZERO), Some((1, 1)));
+    }
+
+    #[test]
+    fn event_hub_indefinite_wait_wakes_on_revision() {
+        let hub = std::sync::Arc::new(RuntimeEventHub::default());
+        let producer = std::thread::spawn({
+            let hub = std::sync::Arc::clone(&hub);
+            move || {
+                std::thread::sleep(Duration::from_millis(1));
+                hub.publish(3);
+            }
+        });
+        assert_eq!(hub.wait_indefinitely(4, 0, 0), Some((1, 3)));
+        producer.join().expect("producer");
     }
 
     #[test]

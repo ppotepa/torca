@@ -736,12 +736,17 @@ pub unsafe extern "C" fn torca_runtime_wait_for_revision(
     if handle.inner.startup_error.is_some() {
         return -2;
     }
-    let timeout = if timeout_ms == 0 {
-        Duration::from_secs(30)
+    let result = if timeout_ms == 0 {
+        handle.inner.event_hub.wait_indefinitely(0, after_revision, after_cursor)
     } else {
-        Duration::from_millis(u64::from(timeout_ms))
+        handle.inner.event_hub.wait(
+            0,
+            after_revision,
+            after_cursor,
+            Duration::from_millis(u64::from(timeout_ms)),
+        )
     };
-    match handle.inner.event_hub.wait(0, after_revision, after_cursor, timeout) {
+    match result {
         Some(_) => 1,
         None => 0,
     }
@@ -909,6 +914,21 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeWaitForRevi
             timeout_ms.max(0) as u32,
         )
     };
+    unsafe { torca_runtime_release(handle) };
+    result
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeCancelRevisionWait(
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+) -> jni::sys::jint {
+    let handle = torca_runtime_acquire();
+    if handle.is_null() {
+        return -1;
+    }
+    let result = unsafe { torca_runtime_cancel_revision_wait(handle) };
     unsafe { torca_runtime_release(handle) };
     result
 }

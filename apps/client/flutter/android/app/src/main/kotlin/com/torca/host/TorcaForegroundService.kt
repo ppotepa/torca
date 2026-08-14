@@ -176,6 +176,7 @@ class TorcaForegroundService : Service() {
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         notificationHandler.removeCallbacks(notificationPoller)
         notificationHandler.removeCallbacks(networkChangeRunnable)
+        NativeRuntimeBridge.nativeCancelRevisionWait()
         notificationThread.quitSafely()
         super.onDestroy()
     }
@@ -362,7 +363,9 @@ class TorcaForegroundService : Service() {
         const val NOTIFICATION_CURSOR_PREFERENCES = "torca_notification_cursor"
         const val NOTIFICATION_CURSOR = "cursor"
         const val NOTIFICATION_RUNTIME_ID = "runtime_id"
-        const val EVENT_WAIT_TIMEOUT_MS = 30_000
+        // Zero selects the native condvar wait. It returns only on a runtime
+        // revision/cursor change or explicit service shutdown cancellation.
+        const val EVENT_WAIT_TIMEOUT_MS = 0
         const val RUNTIME_WAIT_MS = 250L
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
         const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
@@ -415,4 +418,5 @@ object NativeRuntimeBridge {
         afterCursor: Long,
         timeoutMs: Int,
     ): Int
+    @JvmStatic external fun nativeCancelRevisionWait(): Int
 }

@@ -16,8 +16,8 @@ Last reconciled with the source tree on 2026-08-14.
 | --- | --- | --- |
 | Policy kernel and fake-clock tests | Implemented | `crates/application/torca-runtime-policy` |
 | Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native`; native actor now blocks until a command or the earliest durable pending-operation deadline |
-| Flutter revision waiter | Implemented core | event isolate waits for native revisions through `torca_runtime_wait_for_revision`; disposal calls the explicit cancellation ABI. The ABI still has a 30-second safety timeout, but a timeout performs no snapshot/notification query and immediately re-enters the wait |
-| Android notification waiter | Implemented core | foreground service waits for native runtime changes on a dedicated `HandlerThread`; the 30-second ABI safety timeout is only a liveness fallback, not a notification poll interval |
+| Flutter revision waiter | Implemented | event isolate waits indefinitely for native revisions through `torca_runtime_wait_for_revision` with `timeoutMs=0`; disposal calls the explicit cancellation ABI |
+| Android notification waiter | Implemented | foreground service waits indefinitely for native runtime changes on a dedicated `HandlerThread`; `onDestroy()` cancels the native waiter before quitting |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
@@ -35,10 +35,11 @@ path is already event/deadline driven. Event waiting, pairing scheduling,
 demand-created peer reconnects, adaptive runtime waiting, idle radio blocking,
 bounded kernel-blocked peer/radio listeners, onion publisher completion
 wakeups with runtime propagation and demand-woken relay health have landed.
-The revision waiters still use a bounded 30-second safety timeout so a broken
-native handle cannot strand a platform worker forever; this timeout does not
-trigger a snapshot or notification query and is therefore not an idle polling
-loop.
+The revision waiters now block on the native condition variable with
+`timeoutMs=0`. Cancellation is one-shot, so a stopped Flutter isolate or
+Android service can be started again on the same runtime without inheriting a
+permanent cancelled waiter. A finite timeout remains available to diagnostic
+callers, but it is not used by the idle platform workers.
 The remaining work is integration hardening: feature-owned leases, complete
 attention propagation, richer evidence recording, executor-owned relay/radio
 leases and the remaining ledger counters. Arti dormancy remains deliberately
@@ -513,10 +514,9 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. The native actor also blocks
    until a command or the earliest durable pending-operation deadline. The
-   platform ABI retains a 30-second safety timeout that only re-enters the
-   wait. Keep shutdown, missed-revision and waiter-generation regression tests
-   current; a true unbounded condvar ABI is optional hardening, not a battery
-   prerequisite.
+   platform ABI uses the unbounded condvar path for idle workers and exposes
+   explicit cancellation for shutdown. Keep shutdown, missed-revision,
+   one-shot-cancellation and waiter-generation regression tests current.
 4. **Partial:** delivery/control outboxes, Tor lifecycle and lease expiry now
    expose deadlines; the runtime blocks when no deadline exists and wakes on
    peer/radio listener and onion-publisher events. Finish deterministic tests
