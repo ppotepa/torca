@@ -924,9 +924,13 @@ impl ClientApplicationRuntime {
                 "attachment_preview_exported"
             }
             ApplicationCommand::SetRadioEnabled { contact_id, enabled, at_ms } => {
+                let contact = ContactId::from_opaque(contact_id);
                 self.radio()?
-                    .set_enabled(ContactId::from_opaque(contact_id), enabled, timestamp(at_ms)?)
+                    .set_enabled(contact, enabled, timestamp(at_ms)?)
                     .map_err(string_error)?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.set_radio_demand(contact, enabled);
+                }
                 if enabled { "radio_enabled" } else { "radio_disabled" }
             }
             ApplicationCommand::ConfigureRadioAudio { input_device_id, output_device_id } => {
@@ -939,17 +943,29 @@ impl ClientApplicationRuntime {
                 "radio_audio_configured"
             }
             ApplicationCommand::BeginRadioTransmission { contact_id } => {
-                let request_id = self
-                    .radio()?
-                    .begin_transmission(ContactId::from_opaque(contact_id))
-                    .map_err(string_error)?;
+                let contact = ContactId::from_opaque(contact_id);
+                let request_id = self.radio()?.begin_transmission(contact).map_err(string_error);
+                let request_id = match request_id {
+                    Ok(request_id) => request_id,
+                    Err(error) => {
+                        if let Some(runtime) = self.runtime.as_ref() {
+                            runtime.set_radio_transmission(contact, false);
+                        }
+                        return Err(error);
+                    }
+                };
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.set_radio_transmission(contact, true);
+                }
                 resource_id = Some(request_id.to_opaque());
                 "radio_transmission_requested"
             }
             ApplicationCommand::EndRadioTransmission { contact_id } => {
-                self.radio()?
-                    .end_transmission(ContactId::from_opaque(contact_id))
-                    .map_err(string_error)?;
+                let contact = ContactId::from_opaque(contact_id);
+                self.radio()?.end_transmission(contact).map_err(string_error)?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.set_radio_transmission(contact, false);
+                }
                 "radio_transmission_ended"
             }
             ApplicationCommand::RefreshSnapshot => {

@@ -22,7 +22,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
-| Feature-owned leases | Partial | focused conversation/radio attention gates peer probes; queued/retried attachments, message delivery and pairing operations now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
+| Feature-owned leases | Partial | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; radio enable/transmit commands now create separate radio leases and peer probes honor them; terminal cleanup and full relay/radio executor ownership remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
@@ -524,9 +524,12 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    corresponding event source is covered. Do not create independent timers.
 5. **Partial / next:** attachment, pending-message and active pairing leases
    now survive route changes; pairing leases expire with the five-minute
-   invitation window and release on reject/cancel. Finish radio executor
-   ownership and terminal pairing reconciliation; attention leases remain
-   advisory and must never be the only owner of durable work.
+   invitation window and release on reject/cancel. Radio enable and
+   transmission commands now own separate `ResourceScope::Radio` leases, and
+   peer health work accepts an active radio lease as demand. Successful
+   approval, rejection and cancellation release the pairing lease. Finish
+   radio executor consumption and stale-lease cleanup; attention leases
+   remain advisory and must never be the only owner of durable work.
 6. **Partial:** evidence suppresses cosmetic peer probes and removes their
    deadlines while Live/Recent; explicit stale/failed deadlines preserve a
    single-flight probe budget. Integrate more TX/RX/chunk evidence and add a

@@ -453,6 +453,8 @@ enum RuntimeCommand {
     NetworkSnapshot(Sender<Result<NetworkSnapshot, RuntimeDriverError>>),
     Diagnostics(Sender<String>),
     NetworkChanged,
+    SetRadioDemand(ContactId, bool),
+    SetRadioTransmission(ContactId, bool),
     Wake,
     WakeDelivery(OpaqueId),
     ReleaseDelivery(OpaqueId),
@@ -587,6 +589,20 @@ impl RuntimeHandle {
     /// relay supervisor immediately instead of waiting for its backoff timer.
     pub fn network_changed(&self) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::NetworkChanged);
+    }
+
+    /// Keeps the selected radio peer leased independently of the Flutter route.
+    pub fn set_radio_demand(&self, contact_id: ContactId, enabled: bool) {
+        let _ =
+            send_with_timeout(&self.sender, RuntimeCommand::SetRadioDemand(contact_id, enabled));
+    }
+
+    /// Keeps a short lease while a push-to-talk transmission is being negotiated.
+    pub fn set_radio_transmission(&self, contact_id: ContactId, active: bool) {
+        let _ = send_with_timeout(
+            &self.sender,
+            RuntimeCommand::SetRadioTransmission(contact_id, active),
+        );
     }
 }
 
@@ -888,6 +904,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     "RELAY_NETWORK_CHANGED",
                 );
             }
+            RuntimeWait::Command(RuntimeCommand::SetRadioDemand(contact_id, enabled)) => {
+                if enabled {
+                    acquire_radio_lease(policy, contact_id);
+                } else {
+                    policy.release_lease(radio_lease_owner(contact_id));
+                }
+            }
+            RuntimeWait::Command(RuntimeCommand::SetRadioTransmission(contact_id, active)) => {
+                if active {
+                    acquire_radio_transmission_lease(policy, contact_id);
+                } else {
+                    policy.release_lease(radio_transmission_lease_owner(contact_id));
+                }
+            }
             RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id)) => {
                 active_delivery_leases.insert(message_id);
                 acquire_delivery_lease(policy, message_id);
@@ -1164,10 +1194,7 @@ fn maintain_peer_probes<C: PeerSessionPort>(
                 peer_id: contact_id.to_opaque(),
                 ready: health.state == PeerConnectionStatus::Ready,
                 eligible: communication.peer_probe_eligible(contact_id)
-                    && policy.has_active_lease(
-                        ResourceScope::Peer(contact_id.to_opaque()),
-                        std::time::Instant::now(),
-                    ),
+                    && has_peer_or_radio_lease(policy, contact_id),
                 freshness: peer_freshness(health.last_success_at, now),
                 reported_rtt_ms: health.rtt_ms,
             }
@@ -1192,6 +1219,12 @@ fn maintain_peer_probes<C: PeerSessionPort>(
     Ok((supervisor.next_deadline(), true))
 }
 
+fn has_peer_or_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) -> bool {
+    let now = std::time::Instant::now();
+    policy.has_active_lease(ResourceScope::Peer(contact_id.to_opaque()), now)
+        || policy.has_active_lease(ResourceScope::Radio(contact_id.to_opaque()), now)
+}
+
 fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshness {
     let Some(last_success_at) = last_success_at else { return Freshness::Unknown };
     let Some(age) = now.duration_since(last_success_at) else { return Freshness::Stale };
@@ -1207,6 +1240,8 @@ fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshne
 const ATTACHMENT_OWNER_NAMESPACE: u128 = 0xA77A_C4A4_0000_0000_0000_0000_0000_0001;
 const DELIVERY_OWNER_NAMESPACE: u128 = 0xD311_0000_0000_0000_0000_0000_0000_0001;
 const PAIRING_OWNER_NAMESPACE: u128 = 0xA117_0000_0000_0000_0000_0000_0000_0001;
+const RADIO_OWNER_NAMESPACE: u128 = 0xA1D1_0000_0000_0000_0000_0000_0000_0001;
+const RADIO_TRANSMISSION_OWNER_NAMESPACE: u128 = 0xA1D2_0000_0000_0000_0000_0000_0000_0001;
 
 fn delivery_lease_owner(message_id: OpaqueId) -> OpaqueId {
     OpaqueId::from_u128(message_id.to_u128() ^ DELIVERY_OWNER_NAMESPACE)
@@ -1228,6 +1263,37 @@ fn attachment_lease_owner(attachment_id: OpaqueId) -> OpaqueId {
 
 fn pairing_lease_owner(session_id: PairingSessionId) -> OpaqueId {
     OpaqueId::from_u128(session_id.to_opaque().to_u128() ^ PAIRING_OWNER_NAMESPACE)
+}
+
+fn radio_lease_owner(contact_id: ContactId) -> OpaqueId {
+    OpaqueId::from_u128(contact_id.to_opaque().to_u128() ^ RADIO_OWNER_NAMESPACE)
+}
+
+fn radio_transmission_lease_owner(contact_id: ContactId) -> OpaqueId {
+    OpaqueId::from_u128(contact_id.to_opaque().to_u128() ^ RADIO_TRANSMISSION_OWNER_NAMESPACE)
+}
+
+fn acquire_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
+    policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Radio(contact_id.to_opaque()),
+        class: WorkClass::Radio,
+        reason: DemandReason::RadioSession,
+        owner: radio_lease_owner(contact_id),
+        // An enabled radio is an explicit user demand. It is process-local and
+        // is released when the toggle is disabled; the long bound prevents an
+        // accidental policy expiry while the UI remains open.
+        expires_at: std::time::Instant::now() + Duration::from_secs(365 * 24 * 60 * 60),
+    });
+}
+
+fn acquire_radio_transmission_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
+    policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Radio(contact_id.to_opaque()),
+        class: WorkClass::Radio,
+        reason: DemandReason::RadioSession,
+        owner: radio_transmission_lease_owner(contact_id),
+        expires_at: std::time::Instant::now() + Duration::from_secs(30),
+    });
 }
 
 fn acquire_pairing_lease(policy: &mut RuntimeGovernor, session_id: PairingSessionId) {
@@ -1400,6 +1466,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             acquire_pairing_lease(policy, id);
             wake_relay(relay_health);
             let result = pairing.approve(id, now);
+            if result.is_ok() {
+                policy.release_lease(pairing_lease_owner(id));
+            }
             record_pairing_result(&result, "APPROVE", diagnostics, sequence, now);
             let _ = r.send(result);
         }
@@ -1563,6 +1632,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::WakeDelivery(_) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
         RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),
+        RuntimeCommand::SetRadioDemand(_, _) | RuntimeCommand::SetRadioTransmission(_, _) => {
+            unreachable!()
+        }
         RuntimeCommand::Shutdown(_) => unreachable!(),
     }
 }
@@ -1766,5 +1838,35 @@ mod tests {
         let activity = ledger.peers.get(&contact).expect("contact activity");
         assert_eq!(activity.sequence, 2);
         assert_eq!(activity.last_activity_at, Some(at));
+    }
+
+    #[test]
+    fn radio_demand_lease_authorizes_peer_health_work() {
+        let mut policy = RuntimeGovernor::new(std::time::Instant::now());
+        let contact = ContactId::from_opaque(OpaqueId::from_u128(42));
+        assert!(!has_peer_or_radio_lease(&mut policy, contact));
+
+        acquire_radio_lease(&mut policy, contact);
+        assert!(has_peer_or_radio_lease(&mut policy, contact));
+
+        policy.release_lease(radio_lease_owner(contact));
+        assert!(!has_peer_or_radio_lease(&mut policy, contact));
+    }
+
+    #[test]
+    fn radio_transmission_lease_is_separate_from_toggle_lease() {
+        let mut policy = RuntimeGovernor::new(std::time::Instant::now());
+        let contact = ContactId::from_opaque(OpaqueId::from_u128(7));
+        acquire_radio_transmission_lease(&mut policy, contact);
+        assert!(policy.has_active_lease(
+            ResourceScope::Radio(contact.to_opaque()),
+            std::time::Instant::now(),
+        ));
+
+        policy.release_lease(radio_transmission_lease_owner(contact));
+        assert!(!policy.has_active_lease(
+            ResourceScope::Radio(contact.to_opaque()),
+            std::time::Instant::now(),
+        ));
     }
 }
