@@ -1,48 +1,71 @@
 # Torca documentation
 
-Torca keeps a deliberately small set of maintained documentation because the implementation is changing quickly. The purpose of these documents is to preserve stable product intent, ownership and trust boundaries without duplicating the source tree.
+Torca keeps a small set of maintained documents plus a few detailed engineering ledgers. This page explains which document answers which question and prevents release plans, progress notes and evergreen architecture/security documentation from competing as sources of truth.
 
-## Maintained documents
+## Start here
 
-- [`../README.md`](../README.md) — product overview, system shape and development entrypoints.
-- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — medium-depth architecture and ownership model.
-- [`../SECURITY.md`](../SECURITY.md) — current security posture and explicit non-guarantees.
-- [`security/threat-model.md`](security/threat-model.md) — assets, trust boundaries, threats and review triggers.
-- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — placement rules, workflows and documentation policy.
-- [`../ROADMAP.md`](../ROADMAP.md) — product/engineering direction rather than release bookkeeping.
-- [`diagnostics.md`](diagnostics.md) — canonical logging producers, bundle layout and collection integrity.
+- [`../README.md`](../README.md) — product overview, current capabilities and canonical development entry point.
+- [`STATUS.md`](STATUS.md) — concise maturity, validation and remaining-confidence summary.
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor workflow, ownership rules and documentation policy.
 
-Short README files at major repository roots (`apps`, `crates`, `services`, `tests`) are navigation aids only. They should point toward the same central model rather than introduce alternative architecture descriptions.
+## Maintained evergreen documents
 
-## What belongs in documentation
+These describe long-lived behavior and should be updated when the corresponding product boundary changes:
 
-Document stable facts such as:
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — component ownership, dependency direction, client/relay split and runtime model.
+- [`../SECURITY.md`](../SECURITY.md) — current security posture, guarantees, limits and reporting guidance.
+- [`security/threat-model.md`](security/threat-model.md) — assets, trust boundaries, threats, controls and review triggers.
+- [`../PRIVACY.md`](../PRIVACY.md) — local data, network data, notifications/diagnostics and user choices.
+- [`../ROADMAP.md`](../ROADMAP.md) — long-lived product and engineering direction.
+- [`diagnostics.md`](diagnostics.md) — current diagnostic producers and the Rust deployer collection contract.
+- [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) — principal dependency attribution guidance.
 
-- what Torca is trying to become;
+When an evergreen document disagrees with the current source, treat the source and enforced/generated contracts as authoritative and fix the documentation.
+
+## Current engineering handoff
+
+- [`../0.3.md`](../0.3.md) — current architecture-track plan and invariants.
+- [`../0.3_PROGRESS.md`](../0.3_PROGRESS.md) — detailed implementation and validation ledger for the current track.
+
+The `0.3` label is a planning/work-track label. The package version in `Cargo.toml` is separate build metadata; neither label by itself establishes release maturity.
+
+## Focused working records
+
+These are useful design/acceptance records, but they are not evergreen product specifications:
+
+- [`../BATTERY.MD`](../BATTERY.MD) — attention/demand/evidence/deadline runtime design and battery-hardening status.
+- [`../CONNECTIVITY_HARDENING.md`](../CONNECTIVITY_HARDENING.md) — connectivity supervision invariants and implementation notes.
+- [`../FINALIZE.md`](../FINALIZE.md) — detailed 0.3 implementation/release-gate checklist.
+- [`FINALIZE_MANUAL_RUNBOOK.md`](FINALIZE_MANUAL_RUNBOOK.md) — real-device manual acceptance procedure.
+
+These files may contain dated checkpoints or historical implementation detail. Once a principle becomes stable, move the durable conclusion into the appropriate evergreen document instead of treating the working record as a permanent specification.
+
+## Navigation READMEs
+
+Short README files under `apps`, `crates`, `services`, `tests` and similar top-level directories are navigation aids. They should explain ownership and point back to the maintained architecture rather than re-document individual APIs or duplicate build instructions.
+
+## Documentation rules
+
+Prefer documenting stable facts such as:
+
+- what Torca is and is not trying to be;
 - which layer owns a responsibility;
 - which trust boundary is crossed;
 - why the client/relay split exists;
-- what a contributor should use as a public workflow;
-- security guarantees and non-guarantees;
-- long-lived product/non-goal direction.
+- which workflow is canonical for contributors;
+- security and privacy guarantees/non-guarantees; and
+- what evidence is required before a validation claim is made.
 
-## What should stay in code/history
+Avoid maintaining prose copies of rapidly changing implementation details such as exact schema/contract versions, migration counts, timeout constants, generated DTO field lists, complete crate inventories, temporary refactor names or test counts. Those are better represented by source, generated schemas, tests, CI configuration and Git history.
 
-Avoid maintaining prose copies of:
+## Status and validation language
 
-- exact contract or wire version numbers;
-- exact database migration counts;
-- timeout/retry constants;
-- generated command/DTO field lists;
-- individual class/method inventories;
-- temporary refactor/batch names;
-- implementation progress percentages;
-- release-specific source audits after their work is merged.
+Use precise evidence language:
 
-These details are better represented by source, generated schemas, tests, release metadata and Git history.
+- **implemented** means the source path is present and composed;
+- **source-validated** means named static/build/test gates were actually run;
+- **platform-built** means the named platform artifact was built;
+- **device-validated** means the named scenario was exercised on real devices; and
+- **audited** should only be used for an actual independent security review.
 
-## History
-
-Older version plans, batch trackers, source audits and ADRs were useful while their changes were being implemented but became misleading once the architecture moved on. They are retained by Git history rather than kept in the active tree as competing sources of truth.
-
-If historical reasoning becomes relevant again, recover it from the commit that introduced the behavior and rewrite the still-valid principle into the appropriate evergreen document.
+Do not turn a checked box in a planning document into a stronger claim than the evidence supports.
