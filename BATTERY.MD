@@ -16,7 +16,7 @@ Last reconciled with the source tree on 2026-08-14.
 | --- | --- | --- |
 | Policy kernel and fake-clock tests | Implemented | `crates/application/torca-runtime-policy` |
 | Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native` |
-| Flutter revision waiter | Implemented | event isolate waits through `torca_runtime_wait_for_revision` |
+| Flutter revision waiter | Implemented | event isolate waits through `torca_runtime_wait_for_revision`; bootstrap and pending states no longer use a 250-ms poll loop |
 | Android notification waiter | Implemented | foreground service waits for native runtime changes |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
@@ -25,7 +25,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Feature-owned leases | Planned | relay, delivery, attachment and radio executors do not yet acquire/release governor leases |
 | Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; full deadline ownership is still pending |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
-| Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals |
+| Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
 | Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |
 | Arti soft dormancy | Planned | no production `set_dormant` activity-mode integration exists |
 | Runtime Energy Ledger | Planned | acceptance counters and idle regression gate are not fully wired |
@@ -407,10 +407,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 
 1. **Partial:** add `torca-runtime-policy`, fake clock, policy reducer, lease book, evidence ledger, event hub and tests. Finish production budgets, scheduler ownership and stats.
 2. **Planned:** add counters to existing execution paths without introducing timers.
-3. **Implemented core:** Flutter and Android use cancellable native event waiters. Continue shutdown/race regression coverage.
+3. **Implemented core:** Flutter and Android use cancellable native event waiters, including bootstrap/pending states. Continue shutdown/race regression coverage.
 4. **Partial:** replace the central Rust 100-ms tick with adaptive idle/active waits. Next, let every executor publish its next deadline and remove the remaining fallback cadence.
 5. **Planned:** add `AttentionContext`, viewport and policy state to the generated contract and navigation owner.
-6. **Partial:** demand-created peer reconnects exist. Finish lease-owned peer lifetime and deterministic stream resolution.
+6. **Partial:** demand-created peer reconnects and explicit peer deadlines exist. Finish lease-owned peer lifetime and deterministic stream resolution.
 7. **Partial:** relay healthy heartbeats are removed; finish explicit lease ownership and operation-scoped wake/revalidation.
 8. **Planned and measurement-gated:** add Arti soft dormancy and optional background rendezvous windows.
 9. **Partial:** idle radio now blocks on its command channel; finish listener wake integration and exact active-media deadlines.

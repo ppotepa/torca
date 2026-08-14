@@ -556,31 +556,33 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         {
             eprintln!("torca-radio: background maintenance failed code={error}");
         }
-        let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         // Attachment delivery is a durable, independently retryable job.  A
         // single peer/ACK failure must not abort the communication tick and
         // starve text/control delivery.  The adapter persists Failed and its
         // next-attempt time before returning the error.
         if self.attachment_scheduler.due(now) {
-            if !self.attachment_job_active.swap(true, Ordering::AcqRel) {
-                let attachments = Arc::clone(&self.attachments);
-                let active = Arc::clone(&self.attachment_job_active);
-                let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
-                let messages = snapshot.messages.clone();
-                thread::spawn(move || {
-                    let result = attachments
-                        .lock()
-                        .map_err(|_| CommunicationError::Attachment)
-                        .and_then(|mut runtime| {
-                            runtime.maintenance_outgoing(&messages, now, ATTACHMENT_BATCH)?;
-                            refresh_attachment_cache(&projection_cache, &**runtime);
-                            Ok(())
-                        });
-                    if let Err(error) = result {
-                        eprintln!("torca-attachment: maintenance failed code={error}");
-                    }
-                    active.store(false, Ordering::Release);
-                });
+            if !self.attachment_job_active.load(Ordering::Acquire) {
+                let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+                if !self.attachment_job_active.swap(true, Ordering::AcqRel) {
+                    let attachments = Arc::clone(&self.attachments);
+                    let active = Arc::clone(&self.attachment_job_active);
+                    let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
+                    let messages = snapshot.messages.clone();
+                    thread::spawn(move || {
+                        let result = attachments
+                            .lock()
+                            .map_err(|_| CommunicationError::Attachment)
+                            .and_then(|mut runtime| {
+                                runtime.maintenance_outgoing(&messages, now, ATTACHMENT_BATCH)?;
+                                refresh_attachment_cache(&projection_cache, &**runtime);
+                                Ok(())
+                            });
+                        if let Err(error) = result {
+                            eprintln!("torca-attachment: maintenance failed code={error}");
+                        }
+                        active.store(false, Ordering::Release);
+                    });
+                }
             }
             self.attachment_scheduler.record_attempt(now);
         }

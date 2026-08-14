@@ -98,6 +98,13 @@ impl PeerProbeSupervisor {
             schedule.next_at = now.checked_add(delay).unwrap_or(now);
         }
     }
+
+    /// Returns the next probe deadline owned by this single-flight lane.
+    /// Callers can sleep until this timestamp instead of polling the lane at
+    /// a fixed cadence.
+    pub fn next_deadline(&self) -> Option<Timestamp> {
+        self.schedules.values().map(|schedule| schedule.next_at).min()
+    }
 }
 
 #[cfg(test)]

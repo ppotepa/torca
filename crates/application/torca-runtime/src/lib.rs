@@ -701,7 +701,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut peer_probes = PeerProbeSupervisor::default();
     let mut transport_activity = TransportActivityLedger::default();
     let mut next_maintenance_at = std::time::Instant::now();
-    let mut active_transport = false;
+    let mut peer_probe_deadline = None;
+    let mut contacts = Vec::<ContactId>::new();
+    let mut refresh_contacts = true;
     loop {
         let wait = next_maintenance_at.saturating_duration_since(std::time::Instant::now());
         match receiver.recv_timeout(wait) {
@@ -710,6 +712,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 break;
             }
             Ok(RuntimeCommand::NetworkChanged) => {
+                refresh_contacts = true;
                 if let Some(relay) = &relay_health {
                     relay.network_changed();
                 }
@@ -726,6 +729,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 );
             }
             Ok(command) => {
+                refresh_contacts = true;
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 handle_command(
                     command,
@@ -747,6 +751,17 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             Err(RecvTimeoutError::Disconnected) => break,
         }
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+        if refresh_contacts {
+            if let Ok(snapshot) = engine.snapshot() {
+                contacts = snapshot
+                    .contacts
+                    .iter()
+                    .filter(|contact| contact.status() == ContactStatus::Active)
+                    .map(torca_contacts::Contact::id)
+                    .collect();
+            }
+            refresh_contacts = false;
+        }
         let relay_snapshot = relay_health
             .as_ref()
             .map_or_else(RelayHealthSnapshot::default, RelayHealthHandle::snapshot);
@@ -817,61 +832,60 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 onion_event_code(onion_state),
             );
         }
-        if let Ok(snapshot) = engine.snapshot() {
-            let contacts: Vec<_> = snapshot
-                .contacts
-                .iter()
-                .filter(|c| c.status() == ContactStatus::Active)
-                .map(torca_contacts::Contact::id)
-                .collect();
-            observe_maintenance(
-                communication.maintenance(&contacts, now).and_then(|()| {
-                    maintain_peer_probes(communication, &contacts, &mut peer_probes, now)
-                }),
-                &mut communication_failed,
-                diagnostics,
-                sequence,
+        let maintenance_result = communication.maintenance(&contacts, now).and_then(|()| {
+            peer_probe_deadline = maintain_peer_probes(
+                communication,
+                &contacts,
+                &mut peer_probes,
                 now,
-                Component::Peer,
-                "COMMUNICATION_MAINTENANCE_FAILED",
-                "COMMUNICATION_MAINTENANCE_RECOVERED",
-            );
-            let mut current = BTreeMap::new();
-            let mut current_successes = BTreeMap::new();
-            for id in contacts {
-                let state = communication.connection_state(id);
-                if last_peer_states.get(&id) != Some(&state) {
-                    transport_activity.mark_peer(id, now);
-                    record(
-                        diagnostics,
-                        sequence,
-                        now,
-                        Component::Peer,
-                        map_peer_health(state),
-                        "PEER_STATE_CHANGED",
-                    );
-                }
-                let health = communication.peer_health(id);
-                if health.last_success_at.is_some()
-                    && last_peer_successes.get(&id) != Some(&health.last_success_at)
-                {
-                    transport_activity.mark_peer(id, now);
-                }
-                current.insert(id, state);
-                connectivity.set_peer_ready(id.to_opaque(), state == PeerConnectionStatus::Ready);
-                current_successes.insert(id, health.last_success_at);
+            )?;
+            Ok(())
+        });
+        observe_maintenance(
+            maintenance_result,
+            &mut communication_failed,
+            diagnostics,
+            sequence,
+            now,
+            Component::Peer,
+            "COMMUNICATION_MAINTENANCE_FAILED",
+            "COMMUNICATION_MAINTENANCE_RECOVERED",
+        );
+        let mut current = BTreeMap::new();
+        let mut current_successes = BTreeMap::new();
+        for id in contacts.iter().copied() {
+            let state = communication.connection_state(id);
+            if last_peer_states.get(&id) != Some(&state) {
+                transport_activity.mark_peer(id, now);
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Peer,
+                    map_peer_health(state),
+                    "PEER_STATE_CHANGED",
+                );
             }
-            active_transport = current.values().any(|state| {
-                matches!(
-                    state,
-                    PeerConnectionStatus::Connecting
-                        | PeerConnectionStatus::Handshaking
-                        | PeerConnectionStatus::Reconnecting
-                )
-            });
-            last_peer_states = current;
-            last_peer_successes = current_successes;
+            let health = communication.peer_health(id);
+            if health.last_success_at.is_some()
+                && last_peer_successes.get(&id) != Some(&health.last_success_at)
+            {
+                transport_activity.mark_peer(id, now);
+            }
+            current.insert(id, state);
+            connectivity.set_peer_ready(id.to_opaque(), state == PeerConnectionStatus::Ready);
+            current_successes.insert(id, health.last_success_at);
         }
+        let active_transport = current.values().any(|state| {
+            matches!(
+                state,
+                PeerConnectionStatus::Connecting
+                    | PeerConnectionStatus::Handshaking
+                    | PeerConnectionStatus::Reconnecting
+            )
+        });
+        last_peer_states = current;
+        last_peer_successes = current_successes;
 
         let mut next_delay = if active_transport {
             ACTIVE_MAINTENANCE_INTERVAL
@@ -880,6 +894,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         };
         if let Some(pairing_delay) = pairing.next_maintenance_delay(now) {
             next_delay = next_delay.min(pairing_delay);
+        }
+        if !active_transport
+            && let Some(deadline) = peer_probe_deadline
+            && let Some(delay) = deadline.duration_since(now)
+        {
+            next_delay = next_delay.min(delay);
         }
         next_maintenance_at = std::time::Instant::now() + next_delay;
     }
@@ -893,7 +913,7 @@ fn maintain_peer_probes<C: PeerSessionPort>(
     contacts: &[ContactId],
     supervisor: &mut PeerProbeSupervisor,
     now: Timestamp,
-) -> Result<(), RuntimeDriverError> {
+) -> Result<Option<Timestamp>, RuntimeDriverError> {
     if let Some(contact_id) = communication.take_peer_probe_completion(now)? {
         let health = communication.peer_health(contact_id);
         supervisor.complete(
@@ -917,12 +937,14 @@ fn maintain_peer_probes<C: PeerSessionPort>(
         })
         .collect::<Vec<_>>();
     supervisor.reconcile(&candidates, now);
-    let Some(request) = supervisor.next_due(&candidates, now) else { return Ok(()) };
+    let Some(request) = supervisor.next_due(&candidates, now) else {
+        return Ok(supervisor.next_deadline());
+    };
     let Some(contact_id) =
         contacts.iter().copied().find(|contact_id| contact_id.to_opaque() == request.peer_id)
     else {
         supervisor.complete(request.peer_id, false, now);
-        return Ok(());
+        return Ok(supervisor.next_deadline());
     };
     if let Err(error) =
         communication.begin_peer_probe(contact_id, request.probe_id, request.reported_rtt_ms)
@@ -930,7 +952,7 @@ fn maintain_peer_probes<C: PeerSessionPort>(
         supervisor.complete(request.peer_id, false, now);
         return Err(error);
     }
-    Ok(())
+    Ok(supervisor.next_deadline())
 }
 
 fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshness {

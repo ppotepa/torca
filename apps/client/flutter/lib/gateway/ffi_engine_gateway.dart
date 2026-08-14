@@ -554,9 +554,6 @@ void _workerMainImpl(List<Object?> arguments) {
       void pollSnapshot() {
         final target = eventsPort;
         if (target == null) return;
-        var next = const Duration(seconds: 1);
-        var settled = false;
-        var pendingWork = true;
         try {
           final raw = bindings.invoke(
             handle,
@@ -581,13 +578,6 @@ void _workerMainImpl(List<Object?> arguments) {
               lastSnapshotJson = encoded;
               target.send(encoded);
             }
-            final phase = snapshot['bootstrapPhase'];
-            final pending = snapshot['pendingOperations'];
-            settled = phase == 'ready' || phase == 'degraded';
-            pendingWork = pending is List && pending.isNotEmpty;
-            if (!settled || pendingWork) {
-              next = const Duration(milliseconds: 250);
-            }
           }
           final events = poll['events'];
           if (events is List) {
@@ -608,37 +598,30 @@ void _workerMainImpl(List<Object?> arguments) {
         } on Object {
           // The next scheduled poll retries after a transient native failure.
         }
-        if (settled && !pendingWork) {
-          final waiter = waiterPort;
-          if (waiter == null) {
-            snapshotTimer = Timer(const Duration(seconds: 1), pollSnapshot);
-            return;
-          }
-          final reply = ReceivePort();
-          waiter.send(<String, Object?>{
-            'revision': runtimeRevision,
-            'cursor': runtimeRevision,
-            'timeoutMs': 30_000,
-            'reply': reply.sendPort,
-          });
-          reply.first
-              .timeout(const Duration(seconds: 31))
-              .then<void>(
-                (_) {
-                  reply.close();
-                  snapshotTimer = Timer(Duration.zero, pollSnapshot);
-                },
-                onError: (Object _, StackTrace __) {
-                  reply.close();
-                  snapshotTimer = Timer(
-                    const Duration(seconds: 1),
-                    pollSnapshot,
-                  );
-                },
-              );
+        final waiter = waiterPort;
+        if (waiter == null) {
+          snapshotTimer = Timer(const Duration(seconds: 1), pollSnapshot);
           return;
         }
-        snapshotTimer = Timer(next, pollSnapshot);
+        final reply = ReceivePort();
+        waiter.send(<String, Object?>{
+          'revision': runtimeRevision,
+          'cursor': notificationCursor,
+          'timeoutMs': 30_000,
+          'reply': reply.sendPort,
+        });
+        reply.first
+            .timeout(const Duration(seconds: 31))
+            .then<void>(
+              (_) {
+                reply.close();
+                snapshotTimer = Timer(Duration.zero, pollSnapshot);
+              },
+              onError: (Object _, StackTrace __) {
+                reply.close();
+                snapshotTimer = Timer(const Duration(seconds: 1), pollSnapshot);
+              },
+            );
       }
 
       snapshotTimer ??= Timer(Duration.zero, pollSnapshot);
