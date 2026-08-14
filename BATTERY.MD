@@ -21,7 +21,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Implemented core | `PeerProbeSupervisor` consumes freshness; peer TX/RX/ACK/handshake/failure counters now feed policy evidence. Attachment chunks are authenticated envelope frames and therefore already refresh the peer evidence; a separate chunk metric is optional diagnostics only |
-| Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation reports up to seven visible contacts, focused conversation routes report on entry and on mobile route return, while focused-contact generation race tests remain |
+| Attention/viewport contract from Flutter | Implemented core | `runtime.attention.set` crosses the generated contract; top-level navigation reports up to seven visible contacts, focused conversation routes report on entry and on mobile route return, and both policy and runtime lease ownership reject stale generations |
 | Feature-owned leases | Partial | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; relay health is now gated by the active relay lease and radio enable/transmit commands create separate radio leases; full radio executor cleanup and route-generation tests remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, radio control/state-sync retry, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Implemented core | production runtime uses a demand-driven supervisor: no initial/healthy probe exists without a relay lease; pairing/network events wake one lane and retry backoff is bounded |
@@ -40,9 +40,9 @@ The revision waiters now block on the native condition variable with
 Android service can be started again on the same runtime without inheriting a
 permanent cancelled waiter. A finite timeout remains available to diagnostic
 callers, but it is not used by the idle platform workers.
-The remaining work is integration hardening: complete attention-generation
-tests and radio executor cleanup. Arti dormancy remains deliberately
-measurement-gated and is not required for the no-idle-polling guarantee.
+The remaining work is integration hardening and platform soak testing for
+radio/lease recovery. Arti dormancy remains deliberately measurement-gated
+and is not required for the no-idle-polling guarantee.
 
 The central model is:
 
@@ -531,19 +531,20 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    peer/radio listener and onion-publisher events. Finish deterministic tests
    for Tor worker completion and delete any remaining fallback only after the
    corresponding event source is covered. Do not create independent timers.
-5. **Partial / next:** attachment, pending-message and active pairing leases
+5. **Implemented core:** attachment, pending-message and active pairing leases
    now survive route changes; pairing leases expire with the five-minute
    invitation window and release on reject/cancel. Radio enable and
    transmission commands now own separate `ResourceScope::Radio` leases, and
    peer health work accepts an active radio lease as demand. Successful
-   approval, rejection and cancellation release the pairing lease. Finish
-   radio executor consumption and stale-lease cleanup; attention leases
-   remain advisory and must never be the only owner of durable work.
-6. **Partial:** evidence suppresses cosmetic peer probes and removes their
-   deadlines while Live/Recent; handshake transitions, successful probe ACKs
-   and ready-to-disconnected transitions now update the policy ledger.
-   Integrate more TX/RX/chunk evidence and add a trace proving no wakeup
-   occurs while all focused peers remain fresh.
+   approval, rejection and cancellation release the pairing lease. Radio
+   executor state/session cleanup is idempotent on disable, disconnect and
+   shutdown; attention leases remain advisory and must never be the only owner
+   of durable work. Keep platform soak tests as the remaining confidence gate.
+6. **Implemented core:** evidence suppresses cosmetic peer probes and removes
+   their deadlines while Live/Recent; handshake transitions, successful probe
+   ACKs, peer TX/RX/ACK counters and ready-to-disconnected transitions update
+   the policy ledger. Attachment chunks are ordinary authenticated peer
+   frames, so they refresh evidence without a second timer.
 7. **Implemented core:** relay healthy heartbeats and startup probes without
    demand are removed. The production supervisor sleeps until a relay lease,
    pairing operation or demanded network change; revalidation remains

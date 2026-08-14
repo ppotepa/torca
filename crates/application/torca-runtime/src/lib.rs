@@ -875,6 +875,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut contacts = Vec::<ContactId>::new();
     let mut refresh_contacts = true;
     let mut attention_owner = None;
+    let mut attention_generation = 0_u64;
     let mut last_relay_probe_count = 0_u64;
     let mut active_attachment_leases = BTreeSet::<OpaqueId>::new();
     let mut active_delivery_leases = BTreeSet::<OpaqueId>::new();
@@ -888,6 +889,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 break;
             }
             RuntimeWait::Command(RuntimeCommand::SetAttention(context)) => {
+                if context.generation < attention_generation {
+                    // The policy reducer also rejects stale attention, but
+                    // the runtime-owned lease must obey the same ordering or
+                    // an old route could release a newer route's demand.
+                    continue;
+                }
+                attention_generation = context.generation;
                 let now = std::time::Instant::now();
                 if let Some(owner) = attention_owner.take() {
                     policy.release_lease(owner);
