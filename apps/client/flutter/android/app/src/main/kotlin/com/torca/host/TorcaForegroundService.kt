@@ -225,8 +225,9 @@ class TorcaForegroundService : Service() {
                     true
                 }
                 else -> {
+                    val changed = defaultNetworkFingerprint != fingerprint
                     defaultNetworkFingerprint = fingerprint
-                    false
+                    changed
                 }
             }
         }

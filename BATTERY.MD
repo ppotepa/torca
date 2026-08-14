@@ -140,7 +140,11 @@ resume failures already seen in production testing.
   the client or clearing its cache/state. The low-level API exists; automatic
   runtime policy integration is intentionally not enabled yet.
 - Relay, peer connections, pairing, attachments, and radio remain separate executors controlled by policy permits.
-- Android uses `NetworkCallback`, network capabilities, and Power Saver events. `ConnectivityDiagnosticsManager` is not a baseline dependency because ordinary messaging applications do not receive its callbacks.
+- Android uses `NetworkCallback` and a fingerprint of route capabilities
+  (`validated`, `internet`, `metered`, Wi-Fi/cellular); changes to that
+  fingerprint wake recovery even when the `Network` object is unchanged.
+  Power Saver propagation and `ConnectivityDiagnosticsManager` remain deferred
+  because they are not required for the no-idle-polling baseline.
 - There is no legacy runtime mode and no parallel old scheduler. Each old polling/tick path is removed when its replacement lands.
 - Relay continues to store only invitations. It does not become a message mailbox.
 - Background delivery without push is best-effort and may wait for a rendezvous window or for the recipient to open Torca.
