@@ -7,7 +7,7 @@ use crate::{application_envelope, application_peer_state, peer_envelope};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_communication_driver::{
     CommunicationError, ControlDeliveryRuntime, InboundEnvelope, InboundMessagingRuntime,
-    PeerConnectionStatus, PeerLinkRuntime, RECEIPT_MESSAGE_KIND, ReadStateRuntime,
+    PeerConnectionStatus, PeerLinkRuntime, RECEIPT_MESSAGE_KIND, REACTION_MESSAGE_KIND, ReadStateRuntime,
     TEXT_MESSAGE_KIND, TextDeliveryRuntime, plan_read_receipts,
 };
 use torca_contacts::{
@@ -22,7 +22,7 @@ use torca_crypto::{Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, Protec
 use torca_delivery::{
     ApplicationPayload, ApplicationPayloadCodec, DeliveryAck, DeliveryReceiptKind,
     DeliveryTransport, DeliveryTransportError, DeliveryWorker, DurableDeliveryStore,
-    InboundMessageStore, ReceiptPayload, TextPayload,
+    InboundMessageStore, ReceiptPayload, ReactionPayload, TextPayload,
 };
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
@@ -39,7 +39,7 @@ const STALE_CLAIM_AGE: Duration = Duration::from_secs(120);
 /// Process-shared protected peer-secret manager. It serializes cryptographic operations without
 /// exposing pairwise key bytes to delivery or UI layers.
 pub struct SharedPeerCrypto<C, P> {
-    inner: Arc<Mutex<ManagedPeerSecrets<C, P>>>,
+    pub(crate) inner: Arc<Mutex<ManagedPeerSecrets<C, P>>>,
 }
 impl<C, P> Clone for SharedPeerCrypto<C, P> {
     fn clone(&self) -> Self {
@@ -158,6 +158,27 @@ impl<T: ControlTransport + Send + 'static> SharedControlWorker<T> {
             Err(_) => Err(CommunicationError::Control),
         }
     }
+    pub fn ensure_reaction(
+        &self,
+        contact_id: ContactId,
+        reaction: ReactionPayload,
+        at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        let job_id = reaction.reaction_id;
+        let payload = ApplicationPayloadCodec::encode(&ApplicationPayload::Reaction(reaction))
+            .map_err(|_| CommunicationError::Control)?;
+        let result = self.inner.lock().map_err(|_| CommunicationError::Control)?.queue(
+            job_id,
+            contact_id.to_opaque(),
+            ControlKind::Reaction,
+            &payload,
+            at,
+        );
+        match result {
+            Ok(()) | Err(ControlDeliveryError::Duplicate) => Ok(()),
+            Err(_) => Err(CommunicationError::Control),
+        }
+    }
 }
 impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedControlWorker<T> {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
@@ -177,6 +198,14 @@ impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedCont
             .run_once(now, limit)
             .map(|_| ())
             .map_err(|_| CommunicationError::Control)
+    }
+    fn queue_reaction(
+        &mut self,
+        contact_id: ContactId,
+        reaction: ReactionPayload,
+        at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.ensure_reaction(contact_id, reaction, at)
     }
 }
 
@@ -309,7 +338,7 @@ where
     P: ProtectedSecretStore,
 {
     fn send_control(&mut self, job: &ControlJob) -> Result<ControlAck, ControlTransportError> {
-        if job.kind != ControlKind::Receipt {
+        if !matches!(job.kind, ControlKind::Receipt | ControlKind::Reaction) {
             return Err(ControlTransportError);
         }
         let contact_id = ContactId::from_opaque(job.contact_id);
@@ -321,7 +350,7 @@ where
             &self.crypto,
             credential.secret_handle(),
             job.job_id,
-            RECEIPT_MESSAGE_KIND,
+            if job.kind == ControlKind::Reaction { REACTION_MESSAGE_KIND } else { RECEIPT_MESSAGE_KIND },
             self.local_identity_id,
             contact.remote_identity().identity_id().to_opaque(),
             &job.payload,
@@ -331,7 +360,7 @@ where
             .send_and_wait_ack(
                 contact_id,
                 job.job_id,
-                RECEIPT_MESSAGE_KIND,
+                if job.kind == ControlKind::Reaction { REACTION_MESSAGE_KIND } else { RECEIPT_MESSAGE_KIND },
                 encrypted,
                 self.ack_timeout,
             )
@@ -450,6 +479,26 @@ where
                     .send_ack(contact.id(), envelope.envelope_id, AckStatus::Accepted)
                     .map_err(|_| CommunicationError::Peer)
             }
+            (REACTION_MESSAGE_KIND, ApplicationPayload::Reaction(reaction)) => {
+                if reaction.reaction_id != envelope.envelope_id {
+                    return self.reject(&envelope);
+                }
+                let domain = torca_messaging::MessageReaction::new(
+                    MessageId::from_opaque(reaction.message_id),
+                    torca_conversations::ConversationId::from_opaque(reaction.conversation_id),
+                    reaction.actor_id,
+                    reaction.emoji,
+                    reaction.active,
+                    reaction.at,
+                )
+                .map_err(|_| CommunicationError::Inbound)?;
+                let _ = self.engine
+                    .dispatch(EngineCommand::SetMessageReaction { reaction: domain })
+                    .map_err(|_| CommunicationError::Engine)?;
+                self.link
+                    .send_ack(contact.id(), envelope.envelope_id, AckStatus::Accepted)
+                    .map_err(|_| CommunicationError::Peer)
+            }
             _ => self.reject(&envelope),
         }
     }
@@ -482,7 +531,7 @@ fn inbound_message(
     ))
 }
 
-fn load_contact<R: ContactRepository>(
+pub(crate) fn load_contact<R: ContactRepository>(
     repository: &R,
     contact_id: ContactId,
 ) -> Result<Contact, CommunicationError> {
@@ -492,7 +541,7 @@ fn load_contact<R: ContactRepository>(
         .ok_or(CommunicationError::Peer)
 }
 
-fn load_credential<R: PeerCredentialRepository>(
+pub(crate) fn load_credential<R: PeerCredentialRepository>(
     repository: &R,
     contact_id: ContactId,
 ) -> Result<PeerCredential, CommunicationError> {
@@ -502,7 +551,7 @@ fn load_credential<R: PeerCredentialRepository>(
         .ok_or(CommunicationError::Peer)
 }
 
-fn seal<C, P>(
+pub(crate) fn seal<C, P>(
     crypto: &SharedPeerCrypto<C, P>,
     handle: OpaqueId,
     envelope_id: OpaqueId,
@@ -531,7 +580,7 @@ where
     Ok(output)
 }
 
-fn open<C, P>(
+pub(crate) fn open<C, P>(
     crypto: &SharedPeerCrypto<C, P>,
     handle: OpaqueId,
     envelope_id: OpaqueId,

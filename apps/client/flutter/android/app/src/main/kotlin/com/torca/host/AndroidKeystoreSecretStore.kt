@@ -163,6 +163,9 @@ object AndroidKeystoreBridge {
             error("could not create Torca runtime directory")
         }
         check(nativeBindRuntime()) { "could not bind Android runtime bridge" }
+        check(nativeInitializeAudioContext(appContext)) {
+            "could not initialize Android audio context"
+        }
     }
 
     @JvmStatic
@@ -197,4 +200,5 @@ object AndroidKeystoreBridge {
     }
 
     @JvmStatic external fun nativeBindRuntime(): Boolean
+    @JvmStatic external fun nativeInitializeAudioContext(context: Context): Boolean
 }

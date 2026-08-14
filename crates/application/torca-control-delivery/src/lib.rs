@@ -14,12 +14,14 @@ const MAX_DELAY: Duration = Duration::from_secs(60);
 pub enum ControlKind {
     Receipt = 1,
     Attachment = 2,
+    Reaction = 3,
 }
 impl ControlKind {
     pub const fn from_storage(value: i64) -> Option<Self> {
         match value {
             1 => Some(Self::Receipt),
             2 => Some(Self::Attachment),
+            3 => Some(Self::Reaction),
             _ => None,
         }
     }

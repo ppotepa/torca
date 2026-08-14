@@ -4,6 +4,7 @@
 //! application crates consume the stable Torca API exposed by the runtime
 //! layer instead of importing Arti types directly.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Once;
@@ -26,6 +27,8 @@ pub use peer_transport::TorPeerTransport;
 pub use runtime_driver::{OwnedTorDriver, SharedTorEndpoint};
 
 pub const TOR_PEER_VIRTUAL_PORT: u16 = 17491;
+/// Dedicated virtual onion port for latency-sensitive Radio Mode media.
+pub const TOR_RADIO_VIRTUAL_PORT: u16 = 17492;
 const BOOTSTRAP_RETRY_BACKOFF: [Duration; 2] = [Duration::from_secs(5), Duration::from_secs(15)];
 const MAX_BOOTSTRAP_ATTEMPTS: u32 = 3;
 
@@ -138,6 +141,17 @@ impl TorServiceHandle {
     ) -> Result<TorStream, TorError> {
         self.current()?.connect_onion_with_timeout(hostname, port, timeout)
     }
+
+    /// Registers a loopback target behind one virtual port of the already
+    /// published onion identity. Registration does not create another onion
+    /// service or restart Tor.
+    pub fn register_onion_route(
+        &self,
+        virtual_port: u16,
+        target: SocketAddr,
+    ) -> Result<(), TorError> {
+        self.current()?.register_onion_route(virtual_port, target)
+    }
 }
 
 pub type TorBootstrapObserver = Arc<dyn Fn(TorBootstrapEvent) + Send + Sync>;
@@ -169,6 +183,7 @@ pub struct TorService {
     onion_service: Mutex<Option<Arc<tor_hsservice::RunningOnionService>>>,
     onion_health: Arc<RwLock<OnionServiceHealth>>,
     onion_publication_revision: Arc<AtomicU64>,
+    onion_routes: Arc<RwLock<BTreeMap<u16, SocketAddr>>>,
 }
 
 static RUSTLS_PROVIDER: Once = Once::new();
@@ -298,7 +313,23 @@ impl TorService {
             onion_service: Mutex::new(None),
             onion_health: Arc::new(RwLock::new(OnionServiceHealth::Stopped)),
             onion_publication_revision: Arc::new(AtomicU64::new(0)),
+            onion_routes: Arc::new(RwLock::new(BTreeMap::new())),
         })
+    }
+
+    pub fn register_onion_route(
+        &self,
+        virtual_port: u16,
+        target: SocketAddr,
+    ) -> Result<(), TorError> {
+        if virtual_port == 0 || !target.ip().is_loopback() {
+            return Err(TorError("invalid onion port route".into()));
+        }
+        self.onion_routes
+            .write()
+            .map_err(|_| TorError("onion port router is unavailable".into()))?
+            .insert(virtual_port, target);
+        Ok(())
     }
 
     /// Publishes a stable onion service and forwards accepted streams to the
@@ -309,6 +340,22 @@ impl TorService {
         target: SocketAddr,
         timeout: std::time::Duration,
     ) -> Result<String, TorError> {
+        self.publish_onion_service_on_port(TOR_PEER_VIRTUAL_PORT, target, timeout)
+    }
+
+    /// Publishes (or extends) the stable onion service with an explicit
+    /// virtual port routed to a loopback listener.
+    ///
+    /// Peer listeners use [`TOR_PEER_VIRTUAL_PORT`], while the rendezvous
+    /// relay intentionally exposes port 443. Keeping the port explicit avoids
+    /// advertising one endpoint and silently rejecting it in the route table.
+    pub fn publish_onion_service_on_port(
+        &self,
+        virtual_port: u16,
+        target: SocketAddr,
+        timeout: std::time::Duration,
+    ) -> Result<String, TorError> {
+        self.register_onion_route(virtual_port, target)?;
         if let Ok(service) = self.onion_service.lock() {
             if let Some(running) = service.as_ref() {
                 return running
@@ -320,6 +367,7 @@ impl TorService {
         let client = Arc::clone(&self.client);
         let onion_health = Arc::clone(&self.onion_health);
         let onion_publication_revision = Arc::clone(&self.onion_publication_revision);
+        let onion_routes = Arc::clone(&self.onion_routes);
         // Publish the initial state before the observer can receive Arti's
         // first status event.  Setting it after `block_on` used to overwrite
         // a fast `Running` event with `Publishing`, leaving an already
@@ -352,10 +400,24 @@ impl TorService {
                 let mut streams = tor_hsservice::handle_rend_requests(requests);
                 tokio::spawn(async move {
                     while let Some(request) = streams.next().await {
-                        let address = target;
+                        let address = match request.request() {
+                            tor_proto::stream::IncomingStreamRequest::Begin(begin) => onion_routes
+                                .read()
+                                .ok()
+                                .and_then(|routes| routes.get(&begin.port()).copied()),
+                            _ => None,
+                        };
                         tokio::spawn(async move {
-                            let Ok(mut local) = tokio::net::TcpStream::connect(address).await
-                            else {
+                            let Some(address) = address else {
+                                let _ = request
+                                    .reject(tor_cell::relaycell::msg::End::new_misc())
+                                    .await;
+                                return;
+                            };
+                            let Ok(mut local) = tokio::net::TcpStream::connect(address).await else {
+                                let _ = request
+                                    .reject(tor_cell::relaycell::msg::End::new_misc())
+                                    .await;
                                 return;
                             };
                             let Ok(mut remote) = request
@@ -528,26 +590,33 @@ impl TorService {
                 .map_err(|error| TorError(format!("read Arti bridge address: {error}")))?;
             let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
-                let result = async {
-                    let (mut local, _) = listener
+                let connection = async {
+                    let (local, _) = listener
                         .accept()
                         .await
                         .map_err(|error| TorError(format!("accept Arti bridge stream: {error}")))?;
-                    let mut remote =
+                    let remote =
                         tokio::time::timeout(connect_timeout, client.connect((hostname, port)))
                             .await
                             .map_err(|_| TorError("connect to onion service timed out".into()))?
                             .map_err(|error| {
                                 TorError(format!("connect to onion service: {error}"))
                             })?;
-                    let _ = ready_sender.send(Ok(()));
-                    tokio::io::copy_bidirectional(&mut local, &mut remote)
-                        .await
-                        .map_err(|error| TorError(format!("copy Arti stream: {error}")))?;
-                    Ok::<(), TorError>(())
+                    Ok::<_, TorError>((local, remote))
                 }
                 .await;
-                let _ = result;
+                match connection {
+                    Ok((mut local, mut remote)) => {
+                        let _ = ready_sender.send(Ok(()));
+                        let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+                    }
+                    Err(error) => {
+                        // Preserve the authoritative Arti failure. Dropping
+                        // the sender reduced every DNS/descriptor/circuit
+                        // problem to the useless "bridge stopped" message.
+                        let _ = ready_sender.send(Err(error));
+                    }
+                }
             });
             Ok::<_, TorError>((address, ready_receiver))
         })?;

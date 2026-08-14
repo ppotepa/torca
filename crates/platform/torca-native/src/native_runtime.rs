@@ -21,6 +21,7 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_logging::{Level, Logger, default_root};
 use torca_messaging::MessageDirection;
 use torca_messaging::MessageId;
+use torca_radio_coordinator::SharedRadioCoordinator;
 use torca_runtime::{RuntimeHandle, RuntimeOwner, TorState};
 use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
 
@@ -40,7 +41,8 @@ const NETWORK_START_OBSERVE_TIMEOUT: Duration = Duration::from_secs(120);
 const NETWORK_MAX_ATTEMPTS: u32 = 3;
 const ONION_PROGRESS_STALL_AFTER: Duration = Duration::from_secs(120);
 
-type HostStartResult = Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError>;
+type HostStartResult =
+    Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError>;
 
 enum HostStartEvent {
     Progress(TorBootstrapEvent),
@@ -100,6 +102,7 @@ pub struct TorcaRuntime {
     last_relay_log_state: Option<(String, Option<String>)>,
     last_peer_log_state: HashMap<String, (String, u32)>,
     last_attachment_log_state: HashMap<String, (String, u64, u32)>,
+    last_radio_log_state: HashMap<String, String>,
     network_ready_logged: bool,
     pub(crate) last_result_json: String,
     pub(crate) snapshot_json: String,
@@ -109,6 +112,7 @@ pub struct TorcaRuntime {
     /// Contacts present when this process attached are not new notifications.
     /// Newly completed pairings are emitted exactly once during this runtime run.
     contact_notification_seen: HashSet<String>,
+    pairing_notification_seen: HashSet<String>,
     pub(crate) notification_cursor: u64,
     notification_events: Vec<torca_contract::NotificationEvent>,
     notifications_enabled: bool,
@@ -186,6 +190,7 @@ impl TorcaRuntime {
             last_relay_log_state: None,
             last_peer_log_state: HashMap::new(),
             last_attachment_log_state: HashMap::new(),
+            last_radio_log_state: HashMap::new(),
             network_ready_logged: false,
             last_result_json: success_result("initialized"),
             snapshot_json: empty_snapshot_json(),
@@ -193,6 +198,7 @@ impl TorcaRuntime {
             logger,
             notification_seen: HashMap::new(),
             contact_notification_seen,
+            pairing_notification_seen: HashSet::new(),
             notification_cursor: 0,
             notification_events: Vec::new(),
             notifications_enabled,
@@ -237,6 +243,13 @@ impl TorcaRuntime {
             eprintln!("Torca native engine initialization failed: initial snapshot unavailable");
             return Err("initial native snapshot unavailable".to_owned());
         }
+        runtime.log(
+            "bootstrap",
+            Level::Info,
+            "runtime",
+            "LOCAL_READY",
+            "Local runtime and initial snapshot are ready",
+        );
         Ok(runtime)
     }
 
@@ -276,6 +289,16 @@ impl TorcaRuntime {
             }
         }
         let is_profile = matches!(&command, torca_contract::BridgeCommand::UpdateProfile { .. });
+        let radio_operation = match &command {
+            torca_contract::BridgeCommand::SetRadioEnabled { .. } => Some("radio.set_enabled"),
+            torca_contract::BridgeCommand::BeginRadioTransmission { .. } => {
+                Some("radio.begin_transmission")
+            }
+            torca_contract::BridgeCommand::EndRadioTransmission { .. } => {
+                Some("radio.end_transmission")
+            }
+            _ => None,
+        };
         if is_profile {
             self.log_profile(request_id, "PROFILE_REQUEST_RECEIVED");
             self.log_profile(request_id, "PROFILE_COMMAND_QUEUED");
@@ -290,13 +313,30 @@ impl TorcaRuntime {
             if is_profile {
                 self.log_profile(request_id, "PROFILE_STORAGE_FAILED");
             }
-            self.log(
-                "bridge",
-                Level::Error,
-                "command",
-                "BRIDGE_COMMAND_FAILED",
-                "Bridge command rejected by native engine",
-            );
+            if let (Some(logger), Some(operation)) = (&self.logger, radio_operation) {
+                let context = json!({
+                    "operation": operation,
+                    "errorCode": &result.error_code,
+                    "error": &result.error,
+                })
+                .to_string();
+                let _ = logger.event_with_context(
+                    "radio",
+                    Level::Error,
+                    "command",
+                    "BRIDGE_COMMAND_FAILED",
+                    "Radio command rejected by native engine",
+                    Some(&context),
+                );
+            } else {
+                self.log(
+                    "bridge",
+                    Level::Error,
+                    "command",
+                    "BRIDGE_COMMAND_FAILED",
+                    "Bridge command rejected by native engine",
+                );
+            }
             self.last_result_json = bridge_result_json(&result);
             return ABI_ERROR;
         }
@@ -424,6 +464,43 @@ impl TorcaRuntime {
             }
         }
 
+        for radio in &snapshot.radio.contacts {
+            let current = format!(
+                "local_enabled={} remote_state={} state={}",
+                radio.local_enabled, radio.remote_state, radio.state
+            );
+            if self.last_radio_log_state.get(&radio.contact_id) != Some(&current) {
+                let level = if radio.state == "ready" || radio.state == "receiving" {
+                    Level::Info
+                } else if radio.state == "reconnecting" || radio.state == "unavailable" {
+                    Level::Warn
+                } else {
+                    Level::Debug
+                };
+                self.log(
+                    "radio",
+                    level,
+                    "session",
+                    "RADIO_STATE_CHANGED",
+                    &format!("contact={} {}", radio.contact_id, current),
+                );
+                self.last_radio_log_state.insert(radio.contact_id.clone(), current);
+            }
+        }
+        let session_state = snapshot.radio.session.as_ref().map_or_else(
+            || "none".to_owned(),
+            |session| {
+                format!(
+                    "contact={} state={} floor={} burst_elapsed_ms={}",
+                    session.contact_id, session.state, session.floor, session.burst_elapsed_ms
+                )
+            },
+        );
+        if self.last_radio_log_state.get("active_session") != Some(&session_state) {
+            self.log("radio", Level::Info, "session", "RADIO_SESSION_CHANGED", &session_state);
+            self.last_radio_log_state.insert("active_session".into(), session_state);
+        }
+
         let tor = snapshot
             .bootstrap_steps
             .iter()
@@ -446,8 +523,19 @@ impl TorcaRuntime {
         }
     }
 
-    pub(crate) fn reconcile_pending_operations(&self) {
+    pub(crate) fn reconcile_pending_operations(&mut self) -> bool {
+        let before_snapshot = self.snapshot_json.clone();
+        let before_cursor = self.notification_cursor;
         let _ = self.application_runtime.advance_pending_operations();
+
+        // Pending work is completed by the application runtime without a
+        // foreground FFI command. Refresh the read model here so the actor can
+        // publish one revision for contacts, messages, receipts and radio
+        // projections created by that background work. Without this refresh
+        // the event hub compares the same stale JSON before/after maintenance
+        // and Flutter waits for its 30-second safety timeout.
+        let _ = self.refresh_snapshot();
+        self.snapshot_json != before_snapshot || self.notification_cursor != before_cursor
     }
 
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
@@ -740,6 +828,38 @@ impl TorcaRuntime {
             .iter()
             .map(|contact| (contact.id.clone(), contact.display_name.clone()))
             .collect::<HashMap<_, _>>();
+        for pairing in &snapshot.pairings {
+            if pairing.role != "creator"
+                || !matches!(pairing.state.as_str(), "peer_joined" | "awaiting_approval")
+                || !self.pairing_notification_seen.insert(pairing.id.clone())
+            {
+                continue;
+            }
+            self.notification_cursor = self.notification_cursor.saturating_add(1);
+            let event_id = crate::torca_runtime::secure_id_hex()
+                .unwrap_or_else(|_| format!("notification-{}", self.notification_cursor));
+            let intent = torca_notifications::notification_intent(
+                torca_notifications::NotificationEvent::PairingApprovalRequested {
+                    pairing_id: OpaqueId::from_u128(self.notification_cursor as u128),
+                },
+                torca_notifications::NotificationPrivacy::Redacted,
+                None,
+            );
+            self.notification_events.push(torca_contract::NotificationEvent {
+                cursor: self.notification_cursor,
+                event_id,
+                kind: "pairing_request".into(),
+                conversation_id: String::new(),
+                contact_display_name: pairing
+                    .remote_display_name
+                    .clone()
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| "New contact request".into()),
+                created_at_ms: pairing.expires_at_ms.saturating_sub(5 * 60 * 1_000),
+                title: intent.as_ref().map_or_else(|| "Torca".into(), |value| value.title.clone()),
+                body: intent.as_ref().map_or_else(String::new, |value| value.body.clone()),
+            });
+        }
         for contact in &snapshot.contacts {
             if !self.contact_notification_seen.insert(contact.id.clone()) {
                 continue;
@@ -822,6 +942,17 @@ impl TorcaRuntime {
             return ABI_ERROR;
         }
         self.log("runtime", Level::Info, "lifecycle", "LIFECYCLE_EVENT", event);
+        let radio_lifecycle = match event {
+            "foregrounded" | "host_started" => {
+                Some(torca_radio_coordinator::HostRadioLifecycle::Foreground)
+            }
+            "backgrounded" => Some(torca_radio_coordinator::HostRadioLifecycle::Background),
+            "terminating" => Some(torca_radio_coordinator::HostRadioLifecycle::Terminating),
+            _ => None,
+        };
+        if let Some(lifecycle) = radio_lifecycle {
+            let _ = self.application_runtime.radio_lifecycle(lifecycle);
+        }
         if event == "network_changed" {
             if let Some(host) = &self.host {
                 host.network_changed();
@@ -967,7 +1098,7 @@ impl TorcaRuntime {
                 ))),
             };
             if let Err(send_error) = sender.send(HostStartEvent::Finished(result))
-                && let HostStartEvent::Finished(Ok((_handle, owner))) = send_error.0
+                && let HostStartEvent::Finished(Ok((_handle, owner, _radio))) = send_error.0
             {
                 let _ = owner.shutdown();
             }
@@ -1058,12 +1189,13 @@ impl TorcaRuntime {
             self.host_start_started_at = None;
             self.host_start_deadline = None;
             match result {
-                Ok((handle, owner)) => {
+                Ok((handle, owner, radio)) => {
                     if self.network_changed_pending {
                         handle.network_changed();
                         self.network_changed_pending = false;
                     }
                     self.application_runtime.attach_runtime(handle);
+                    self.application_runtime.attach_radio(radio);
                     self.host = Some(owner);
                     self.host_retry_at = None;
                     self.host_failures = 0;

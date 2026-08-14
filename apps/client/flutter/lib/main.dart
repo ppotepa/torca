@@ -90,6 +90,25 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
             );
           }
         });
+        preferences.attachRuntimeAudioSetting((inputId, outputId) async {
+          final result = await gateway.execute(
+            ConfigureRadioAudioCommandDto(
+              inputDeviceId: inputId,
+              outputDeviceId: outputId,
+            ),
+          );
+          if (!result.ok) {
+            throw StateError(
+              result.error ?? 'audio device configuration failed',
+            );
+          }
+        });
+        await gateway.execute(
+          ConfigureRadioAudioCommandDto(
+            inputDeviceId: preferences.audioInputDeviceId,
+            outputDeviceId: preferences.audioOutputDeviceId,
+          ),
+        );
       }
       final navigation = AppNavigationController();
       _navigation = navigation;

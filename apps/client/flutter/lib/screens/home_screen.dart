@@ -14,7 +14,9 @@ import '../widgets/connection_indicator.dart';
 import '../widgets/contact_actions.dart';
 import '../widgets/conversation_actions.dart';
 import '../widgets/conversation_summary_tile.dart';
+import '../widgets/radio_indicator.dart';
 import '../widgets/runtime_network_status.dart';
+import '../widgets/transfer_center.dart';
 import 'connection_details_screen.dart';
 import 'contact_details_screen.dart';
 import 'conversation_screen.dart';
@@ -55,6 +57,9 @@ class _HomeScreenState extends State<HomeScreen> {
   double _conversationListWidth = 340;
   double _contactPanelWidth = 300;
   final Set<String> _openingContactIds = <String>{};
+  final Set<String> _pinnedConversationIds = <String>{};
+  final Set<String> _mutedConversationIds = <String>{};
+  final Set<String> _loadingConversationFlags = <String>{};
 
   Future<void> _showBuildInfo(
     ClientBuildInfo? client,
@@ -121,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
     valueListenable: widget.gateway.snapshots,
     builder: (context, snapshot, _) {
+      _loadConversationFlags(snapshot.conversations);
       final availability = widget.gateway is GatewayAvailability
           ? widget.gateway as GatewayAvailability
           : null;
@@ -199,6 +205,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
         actions: <Widget>[
+          TransferCenterButton(
+            gateway: widget.gateway,
+            attachments: snapshot.attachments,
+          ),
           AppOverflowMenu(
             hasIdentity: snapshot.identity != null,
             onSelected: (action) => _handleAppAction(action, snapshot),
@@ -229,6 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _HomeSection.chats => _chats(snapshot),
     _HomeSection.contacts => _ContactsSection(
       contacts: snapshot.contacts,
+      radio: snapshot.radio,
       selectedContactId: _selectedContactId,
       onOpenDetails: _openContactDetails,
       onOpenConversation: _openConversationForContact,
@@ -249,6 +260,9 @@ class _HomeScreenState extends State<HomeScreen> {
         return _ConversationList(
           conversations: conversations,
           contacts: snapshot.contacts,
+          radio: snapshot.radio,
+          pinnedConversationIds: _pinnedConversationIds,
+          mutedConversationIds: _mutedConversationIds,
           selectedConversationId: _selectedConversationId,
           onContactInfo: _openContactDetails,
           onAction: _handleConversationAction,
@@ -265,6 +279,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 builder: (_) => ConversationScreen(
                   gateway: widget.gateway,
                   conversation: conversation,
+                  preferences: widget.preferences,
                 ),
               ),
             );
@@ -285,6 +300,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: _ConversationList(
               conversations: conversations,
               contacts: snapshot.contacts,
+              radio: snapshot.radio,
+              pinnedConversationIds: _pinnedConversationIds,
+              mutedConversationIds: _mutedConversationIds,
               selectedConversationId: selected?.id,
               onContactInfo: _openContactDetails,
               onAction: _handleConversationAction,
@@ -307,6 +325,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     key: ValueKey(selected.id),
                     gateway: widget.gateway,
                     conversation: selected,
+                    preferences: widget.preferences,
                   ),
           ),
           if (contextPanel) ...<Widget>[
@@ -323,6 +342,13 @@ class _HomeScreenState extends State<HomeScreen> {
               child: _ContactContextPanel(
                 contact: contact,
                 onOpenConversation: () => _openConversationForContact(contact),
+                onOpenConnectionDetails: () => _openContactDetails(contact),
+                onRename: () =>
+                    _handleContactAction(contact, ContactAction.rename),
+                onToggleBlock: () =>
+                    _handleContactAction(contact, ContactAction.blockToggle),
+                onRemove: () =>
+                    _handleContactAction(contact, ContactAction.remove),
               ),
             ),
           ],
@@ -338,7 +364,34 @@ class _HomeScreenState extends State<HomeScreen> {
                 conversation.lastMessageBody != null ||
                 conversation.id == _selectedConversationId,
           )
-          .toList(growable: false);
+          .toList(growable: false)
+        ..sort((a, b) {
+          final pinOrder =
+              (_pinnedConversationIds.contains(b.id) ? 1 : 0) -
+              (_pinnedConversationIds.contains(a.id) ? 1 : 0);
+          if (pinOrder != 0) return pinOrder;
+          return b.lastActivityAtMs.compareTo(a.lastActivityAtMs);
+        });
+
+  void _loadConversationFlags(List<ConversationDto> conversations) {
+    for (final conversation in conversations) {
+      if (!_loadingConversationFlags.add(conversation.id)) continue;
+      Future.wait<bool>(<Future<bool>>[
+        widget.preferences.conversationPinned(conversation.id),
+        widget.preferences.conversationMuted(conversation.id),
+      ]).then((values) {
+        if (!mounted) return;
+        setState(() {
+          if (values[0]) {
+            _pinnedConversationIds.add(conversation.id);
+          }
+          if (values[1]) {
+            _mutedConversationIds.add(conversation.id);
+          }
+        });
+      });
+    }
+  }
 
   ContactDto? _contactFor(List<ContactDto> contacts, String id) {
     for (final contact in contacts) {
@@ -366,7 +419,10 @@ class _HomeScreenState extends State<HomeScreen> {
       case AppOverflowAction.settings:
         Navigator.of(context).push<void>(
           MaterialPageRoute(
-            builder: (_) => SettingsScreen(preferences: widget.preferences),
+            builder: (_) => SettingsScreen(
+              preferences: widget.preferences,
+              gateway: widget.gateway,
+            ),
           ),
         );
       case AppOverflowAction.about:
@@ -407,6 +463,36 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           'Could not clear conversation history',
         );
+      case ConversationAction.archive:
+        await _execute(
+          ArchiveConversationCommandDto(conversationIdHex: conversation.id),
+          'Could not archive conversation',
+        );
+      case ConversationAction.restore:
+        await _execute(
+          RestoreConversationCommandDto(conversationIdHex: conversation.id),
+          'Could not restore conversation',
+        );
+      case ConversationAction.pinToggle:
+        final pinned = !_pinnedConversationIds.contains(conversation.id);
+        setState(() {
+          if (pinned) {
+            _pinnedConversationIds.add(conversation.id);
+          } else {
+            _pinnedConversationIds.remove(conversation.id);
+          }
+        });
+        await widget.preferences.setConversationPinned(conversation.id, pinned);
+      case ConversationAction.muteToggle:
+        final muted = !_mutedConversationIds.contains(conversation.id);
+        setState(() {
+          if (muted) {
+            _mutedConversationIds.add(conversation.id);
+          } else {
+            _mutedConversationIds.remove(conversation.id);
+          }
+        });
+        await widget.preferences.setConversationMuted(conversation.id, muted);
       case ConversationAction.blockToggle:
         await ContactActions.toggleBlock(context, widget.gateway, contact);
       case ConversationAction.remove:
@@ -474,7 +560,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            BridgeErrorPresenter.localized(context, result, fallback: fallbackError),
+            BridgeErrorPresenter.localized(
+              context,
+              result,
+              fallback: fallbackError,
+            ),
           ),
         ),
       );
@@ -568,6 +658,7 @@ class _HomeScreenState extends State<HomeScreen> {
             builder: (_) => ConversationScreen(
               gateway: widget.gateway,
               conversation: conversation!,
+              preferences: widget.preferences,
             ),
           ),
         );

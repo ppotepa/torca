@@ -33,7 +33,6 @@ struct PairingPollSchedule {
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_POLL_BACKOFF: Duration = Duration::from_secs(30);
-const WORKER_TICK: Duration = Duration::from_millis(250);
 /// Allow the first Tor stream establishment to complete before classifying a
 /// command as pending. The outer runtime command timeout is ten seconds, so
 /// this leaves a small margin for response propagation while avoiding the old
@@ -198,6 +197,13 @@ where
             }
         }
         Ok(())
+    }
+
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.poll_schedule
+            .values()
+            .map(|schedule| schedule.next_at.duration_since(now).unwrap_or_default())
+            .min()
     }
     fn network_changed(&mut self, now: Timestamp) {
         self.runtime.network_changed();
@@ -374,7 +380,10 @@ impl PairingDriver for PairingWorkerDriver {
 
 fn run_pairing_worker<D: PairingDriver>(driver: &mut D, receiver: &Receiver<PairingWorkerCommand>) {
     loop {
-        let command = match receiver.recv_timeout(WORKER_TICK) {
+        let timeout = worker_timestamp()
+            .and_then(|now| driver.next_maintenance_delay(now))
+            .unwrap_or(Duration::from_secs(3_600));
+        let command = match receiver.recv_timeout(timeout) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(now) = worker_timestamp() {

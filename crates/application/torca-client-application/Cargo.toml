@@ -14,13 +14,16 @@ torca-client-engine = { path = "../torca-client-engine" }
 torca-bootstrap = { path = "../torca-bootstrap" }
 torca-runtime = { path = "../torca-runtime" }
 torca-probing = { path = "../torca-probing" }
+torca-radio-coordinator = { path = "../torca-radio-coordinator" }
 torca-attachments = { path = "../../domains/torca-attachments" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }
+torca-delivery = { path = "../torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-pairing = { path = "../../domains/torca-pairing" }
+torca-radio = { path = "../../domains/torca-radio" }
 
 [lints]
 workspace = true

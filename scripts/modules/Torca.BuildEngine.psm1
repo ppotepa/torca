@@ -584,19 +584,20 @@ function Build-TorcaNative {
     $env:PATH = "$ndkBin;$msysPerlRoot;$oldPath"
     # MSYS make interprets absolute Windows compiler paths as escape sequences.
     # Build each ABI directly so the compiler is resolved by name from PATH.
-    Set-Item -Path 'Env:CC_aarch64-linux-android' -Value 'clang'
-    Set-Item -Path 'Env:CC_x86_64-linux-android' -Value 'clang'
-    Set-Item -Path 'Env:AR_aarch64-linux-android' -Value 'llvm-ar'
-    Set-Item -Path 'Env:AR_x86_64-linux-android' -Value 'llvm-ar'
     try {
         foreach ($androidTarget in @(
-            [pscustomobject]@{ Triple = 'aarch64-linux-android'; Abi = 'arm64-v8a'; Linker = (Join-Path $ndkBin 'aarch64-linux-android23-clang.cmd') },
-            [pscustomobject]@{ Triple = 'x86_64-linux-android'; Abi = 'x86_64'; Linker = (Join-Path $ndkBin 'x86_64-linux-android23-clang.cmd') }
+            # CPAL's Android AAudio backend requires API 26.
+            [pscustomobject]@{ Triple = 'aarch64-linux-android'; Abi = 'arm64-v8a'; Linker = (Join-Path $ndkBin 'aarch64-linux-android26-clang.cmd') },
+            [pscustomobject]@{ Triple = 'x86_64-linux-android'; Abi = 'x86_64'; Linker = (Join-Path $ndkBin 'x86_64-linux-android26-clang.cmd') }
         )) {
             $linkerVariable = 'CARGO_TARGET_' + $androidTarget.Triple.Replace('-', '_').ToUpperInvariant() + '_LINKER'
             Set-Item -Path ("Env:$linkerVariable") -Value $androidTarget.Linker
-            $cflagsVariable = 'CFLAGS_' + $androidTarget.Triple
-            Set-Item -Path ("Env:$cflagsVariable") -Value ('--target=' + $androidTarget.Triple + '23')
+            # OpenSSL executes CC_<target> inside an MSYS make shell. Keep
+            # it as a command name so MSYS never mangles an absolute path.
+            Set-Item -Path ("Env:CC_$($androidTarget.Triple)") -Value (Split-Path $androidTarget.Linker -Leaf)
+            Set-Item -Path ("Env:AR_$($androidTarget.Triple)") -Value 'llvm-ar'
+            Set-Item -Path ("Env:RANLIB_$($androidTarget.Triple)") -Value 'llvm-ranlib'
+            Remove-Item -Path ("Env:CFLAGS_$($androidTarget.Triple)") -ErrorAction SilentlyContinue
             $cargoArguments = @('build', '-p', 'torca-native', '--target', $androidTarget.Triple, '--locked')
             if ($Configuration -eq 'release') { $cargoArguments += '--release' }
             Invoke-TorcaExternal "Rust native Android $Configuration $($androidTarget.Abi)" { cargo @cargoArguments }

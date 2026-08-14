@@ -40,6 +40,16 @@ class TorcaStrings {
       ? 'Pokazuj powiadomienia o prywatnych wiadomościach bez ich treści.'
       : 'Show private-message notifications without message content.';
   String get desktop => _pl ? 'Pulpit' : 'Desktop';
+  String get audio => _pl ? 'Dźwięk' : 'Audio';
+  String get microphone => _pl ? 'Mikrofon' : 'Microphone';
+  String get audioOutput => _pl ? 'Wyjście audio' : 'Audio output';
+  String get systemDefaultAudioDevice =>
+      _pl ? 'Domyślne urządzenie systemowe' : 'System default device';
+  String defaultAudioDevice(String name) =>
+      _pl ? '$name (domyślne)' : '$name (default)';
+  String get audioDeviceUnavailable => _pl
+      ? 'Nie można użyć wybranego urządzenia audio.'
+      : 'The selected audio device is unavailable.';
   String get closeToTray => _pl ? 'Zamykaj do zasobnika' : 'Close to tray';
   String get closeToTrayDescription => _pl
       ? 'Pozostaw Torca uruchomioną po zamknięciu głównego okna. Wyłącz, aby zamknięcie okna kończyło aplikację.'
@@ -50,8 +60,10 @@ class TorcaStrings {
   String get message => _pl ? 'Wiadomość' : 'Message';
   String get senderYou => _pl ? 'Ty' : 'You';
   String get senderContact => _pl ? 'Kontakt' : 'Contact';
-  String get outgoingMessage => _pl ? 'Wiadomość wychodząca' : 'Outgoing message';
-  String get incomingMessage => _pl ? 'Wiadomość przychodząca' : 'Incoming message';
+  String get outgoingMessage =>
+      _pl ? 'Wiadomość wychodząca' : 'Outgoing message';
+  String get incomingMessage =>
+      _pl ? 'Wiadomość przychodząca' : 'Incoming message';
   String get sent => _pl ? 'Wysłano' : 'Sent';
   String get delivered => _pl ? 'Dostarczono' : 'Delivered';
   String get read => _pl ? 'Odczytano' : 'Read';
@@ -82,6 +94,12 @@ class TorcaStrings {
   String get connectionDetails =>
       _pl ? 'Szczegóły połączenia' : 'Connection details';
   String get contactActions => _pl ? 'Akcje kontaktu' : 'Contact actions';
+  String get verification => _pl ? 'Weryfikacja' : 'Verification';
+  String get verified => _pl ? 'Zweryfikowano' : 'Verified';
+  String get verifyContact => _pl ? 'Zweryfikuj kontakt' : 'Verify contact';
+  String get resetVerification =>
+      _pl ? 'Resetuj weryfikację' : 'Reset verification';
+  String get unverified => _pl ? 'Niezweryfikowany' : 'Unverified';
   String get renameContact => _pl ? 'Zmień nazwę kontaktu' : 'Rename contact';
   String get unblockContact => _pl ? 'Odblokuj kontakt' : 'Unblock contact';
   String get blockContact => _pl ? 'Zablokuj kontakt' : 'Block contact';
@@ -100,6 +118,21 @@ class TorcaStrings {
   String get removeContactDescription => _pl
       ? 'Usuwa to lokalną relację, historię rozmowy, oczekujące operacje i chronione dane uwierzytelniające kontaktu.'
       : 'This removes the local relationship, conversation history, pending work and protected peer credential.';
+  String get chooseNickname =>
+      _pl ? 'Wybierz pseudonim' : 'Choose your nickname';
+  String get nicknameIntro => _pl
+      ? 'Bezpieczna sieć Tor jest gotowa. Ta nazwa będzie widoczna dla kontaktów.'
+      : 'The secure Tor network is ready. This name will be shown to contacts.';
+  String deviceFingerprint(String fingerprint) => _pl
+      ? 'Odcisk urządzenia\n$fingerprint'
+      : 'Device fingerprint\n$fingerprint';
+  String get nickname => _pl ? 'Pseudonim' : 'Nickname';
+  String get saving => _pl ? 'Zapisywanie…' : 'Saving…';
+  String get continueLabel => _pl ? 'Dalej' : 'Continue';
+  String get nicknameRequired =>
+      _pl ? 'Pseudonim jest wymagany' : 'Nickname is required';
+  String get couldNotSaveNickname =>
+      _pl ? 'Nie udało się zapisać pseudonimu' : 'Could not save nickname';
   String get couldNotRenameContact =>
       _pl ? 'Nie udało się zmienić nazwy kontaktu' : 'Could not rename contact';
   String get couldNotBlockContact =>
@@ -124,10 +157,12 @@ class TorcaStrings {
       _pl ? 'Zaproszenie wygasło.' : 'The pairing invitation has expired.';
   String get itemAlreadyExists =>
       _pl ? 'Ten element już istnieje.' : 'This item already exists.';
-  String get itemNotFound =>
-      _pl ? 'Element nie jest już dostępny.' : 'The item is no longer available.';
-  String get invalidInput =>
-      _pl ? 'Podana wartość jest nieprawidłowa.' : 'The supplied value is not valid.';
+  String get itemNotFound => _pl
+      ? 'Element nie jest już dostępny.'
+      : 'The item is no longer available.';
+  String get invalidInput => _pl
+      ? 'Podana wartość jest nieprawidłowa.'
+      : 'The supplied value is not valid.';
   String get storageFailure => _pl
       ? 'Nie udało się zakończyć operacji na szyfrowanym magazynie.'
       : 'Encrypted local storage could not complete the operation.';
@@ -140,8 +175,9 @@ class TorcaStrings {
   String get contractDecodeFailed => _pl
       ? 'Klient i runtime używają niezgodnych danych. Zbuduj i wdroż oba ponownie.'
       : 'The client and native runtime use incompatible data. Rebuild and redeploy both.';
-  String get operationFailed =>
-      _pl ? 'Nie udało się wykonać operacji.' : 'The operation could not be completed.';
+  String get operationFailed => _pl
+      ? 'Nie udało się wykonać operacji.'
+      : 'The operation could not be completed.';
   String get yourIdentity => _pl ? 'Twoja tożsamość' : 'Your identity';
   String get localIdentity => _pl ? 'Tożsamość lokalna' : 'Local identity';
   String get displayName => _pl ? 'Nazwa wyświetlana' : 'Display name';
@@ -149,7 +185,8 @@ class TorcaStrings {
   String get unavailable => _pl ? 'Niedostępne' : 'Unavailable';
   String get applicationMenu => _pl ? 'Menu aplikacji' : 'Application menu';
   String get newPairing => _pl ? 'Nowe parowanie' : 'New pairing';
-  String get newPairingRequest => _pl ? 'Nowa prośba parowania' : 'New pairing request';
+  String get newPairingRequest =>
+      _pl ? 'Nowa prośba parowania' : 'New pairing request';
   String get newDevice => _pl ? 'Nowe urządzenie' : 'New device';
   String get pairingRequestDescription => _pl
       ? 'To urządzenie dołączyło do Twojego zaproszenia. Sprawdź dane kontaktu przed akceptacją.'
@@ -175,7 +212,19 @@ class TorcaStrings {
   String get messageDetails => _pl ? 'Szczegoly wiadomosci' : 'Message details';
   String get close => _pl ? 'Zamknij' : 'Close';
   String get messageCopied => _pl ? 'Wiadomosc skopiowana' : 'Message copied';
+  String get cancelMessage => _pl ? 'Anuluj wiadomosc' : 'Cancel message';
+  String get messageCancelled =>
+      _pl ? 'Wiadomosc anulowana' : 'Message cancelled';
+  String get editMessage => _pl ? 'Edytuj wiadomosc' : 'Edit message';
+  String get messageEdited => _pl ? 'Wiadomosc zmieniona' : 'Message edited';
+  String get forwardMessage => _pl ? 'Przekaż wiadomość' : 'Forward message';
+  String get reactToMessage => _pl ? 'Reakcja' : 'React';
+  String get chooseConversation =>
+      _pl ? 'Wybierz rozmowę' : 'Choose conversation';
   String get attachmentSaved => _pl ? 'Zalacznik zapisany' : 'Attachment saved';
+  String get transfers => _pl ? 'Transfery' : 'Transfers';
+  String get noActiveTransfers =>
+      _pl ? 'Brak aktywnych transferow.' : 'No active transfers.';
   String get diagnosticsExported =>
       _pl ? 'Diagnostyka wyeksportowana' : 'Diagnostics exported';
   String get exportFailed => _pl ? 'Eksport nieudany' : 'Export failed';
@@ -186,10 +235,49 @@ class TorcaStrings {
       _pl ? 'Eksportuj diagnostyke' : 'Export diagnostics';
   String get noMessagesYet => _pl ? 'Brak wiadomosci' : 'No messages yet';
   String get contactLabel => _pl ? 'Kontakt' : 'Contact';
+  String get radioMode => _pl ? 'Tryb radio' : 'Radio mode';
+  String get radioModeDescription => _pl
+      ? 'Krotkie, maksymalnie 10-sekundowe transmisje PTT. Radio dziala dopiero, gdy obie strony je wlacza.'
+      : 'Short push-to-talk transmissions of up to 10 seconds. Radio becomes available only after both contacts enable it.';
+  String get radioWaitingForPeer => _pl
+      ? 'Oczekiwanie, az kontakt wlaczy radio'
+      : 'Waiting for the contact to enable Radio';
+  String get radioConnecting => _pl
+      ? 'Laczenie prywatnego kanalu audio...'
+      : 'Connecting the private audio channel...';
+  String get radioReady => _pl ? 'Przytrzymaj, aby mowic' : 'Hold to talk';
+  String get radioRequestingFloor =>
+      _pl ? 'Rezerwowanie kanalu...' : 'Requesting the channel...';
+  String get radioTransmitting => _pl ? 'Nadajesz' : 'Transmitting';
+  String radioReceiving(String name) =>
+      _pl ? '$name nadaje' : '$name is transmitting';
+  String get radioReconnecting =>
+      _pl ? 'Radio laczy sie ponownie...' : 'Radio is reconnecting...';
+  String get radioUnavailable => _pl
+      ? 'Radio jest chwilowo niedostepne'
+      : 'Radio is temporarily unavailable';
+  String get microphonePermissionRequired => _pl
+      ? 'Dostep do mikrofonu jest wymagany do nadawania.'
+      : 'Microphone access is required to transmit.';
+  String get couldNotUpdateRadio =>
+      _pl ? 'Nie udalo sie zmienic trybu radio' : 'Could not update Radio mode';
+  String get couldNotStartRadio => _pl
+      ? 'Nie udalo sie rozpoczac transmisji'
+      : 'Could not start transmission';
+  String radioEnabledBy(String actor) =>
+      _pl ? '$actor wlaczyl(a) tryb radio' : '$actor enabled Radio mode';
+  String radioDisabledBy(String actor) =>
+      _pl ? '$actor wylaczyl(a) tryb radio' : '$actor disabled Radio mode';
+  String get radioChannelReady => _pl
+      ? 'Prywatny kanal radio jest gotowy'
+      : 'Private Radio channel is ready';
+  String get radioChannelInterrupted =>
+      _pl ? 'Kanal radio zostal przerwany' : 'Radio channel was interrupted';
+  String get radioChannelRestored =>
+      _pl ? 'Kanal radio zostal przywrocony' : 'Radio channel was restored';
 
-  String contactAddedToContacts(String name) => _pl
-      ? '$name dodano do kontaktów'
-      : '$name was added to Contacts';
+  String contactAddedToContacts(String name) =>
+      _pl ? '$name dodano do kontaktów' : '$name was added to Contacts';
 
   String contactAcceptedJoin(String name) => _pl
       ? '$name zaakceptował(a) zaproszenie'
@@ -227,15 +315,17 @@ class TorcaStrings {
   String get generatingInvitation => _pl ? 'Generowanie…' : 'Generating…';
   String get retryGeneration => _pl ? 'Ponow generowanie' : 'Retry generation';
   String get yourInvitation => _pl ? 'Twoje zaproszenie' : 'Your invitation';
-  String get joinInvitation => _pl ? 'Dolacz do zaproszenia' : 'Join invitation';
+  String get joinInvitation =>
+      _pl ? 'Dolacz do zaproszenia' : 'Join invitation';
   String get checkingInvitation =>
       _pl ? 'Sprawdzanie zaproszenia...' : 'Checking invitation...';
   String get invitationCode => _pl ? 'Kod zaproszenia' : 'Invitation code';
   String get enterSixCharacterCode => _pl
       ? 'Wpisz szescioznakowy kod lub zeskanuj kod QR.'
       : 'Enter a six-character code or scan the QR code.';
-  String get invitationGenerating =>
-      _pl ? 'Generowanie prywatnego zaproszenia...' : 'Generating a private invitation...';
+  String get invitationGenerating => _pl
+      ? 'Generowanie prywatnego zaproszenia...'
+      : 'Generating a private invitation...';
   String get invitationWaitingForNetwork => _pl
       ? 'Zaproszenie oczekuje na siec.'
       : 'Invitation is waiting for the network.';
@@ -258,16 +348,21 @@ class TorcaStrings {
   String get attachmentSyncing =>
       _pl ? 'Synchronizacja zalacznika…' : 'Attachment is syncing…';
   String get closeSearch => _pl ? 'Zamknij wyszukiwanie' : 'Close search';
-  String get preparingUpload => _pl ? 'Przygotowanie wysylania' : 'Preparing upload';
+  String get preparingUpload =>
+      _pl ? 'Przygotowanie wysylania' : 'Preparing upload';
   String get preparingDownload =>
       _pl ? 'Przygotowanie pobierania' : 'Preparing download';
   String get preparingSecureCopy =>
       _pl ? 'Przygotowanie bezpiecznej kopii' : 'Preparing secure copy';
   String get encrypting => _pl ? 'Szyfrowanie' : 'Encrypting';
-  String get waitingToReceive => _pl ? 'Oczekiwanie na odbior' : 'Waiting to receive';
-  String get waitingForPeer => _pl ? 'Oczekiwanie na kontakt' : 'Waiting for peer';
-  String get sendingSecurely => _pl ? 'Bezpieczne wysylanie' : 'Sending securely';
-  String get receivingSecurely => _pl ? 'Bezpieczny odbior' : 'Receiving securely';
+  String get waitingToReceive =>
+      _pl ? 'Oczekiwanie na odbior' : 'Waiting to receive';
+  String get waitingForPeer =>
+      _pl ? 'Oczekiwanie na kontakt' : 'Waiting for peer';
+  String get sendingSecurely =>
+      _pl ? 'Bezpieczne wysylanie' : 'Sending securely';
+  String get receivingSecurely =>
+      _pl ? 'Bezpieczny odbior' : 'Receiving securely';
   String get verifiedOnDevice =>
       _pl ? 'Zweryfikowano na urzadzeniu' : 'Verified on device';
   String get transferFailed => _pl ? 'Wysylanie nieudane' : 'Transfer failed';
@@ -275,31 +370,26 @@ class TorcaStrings {
   String get attachmentAckTimeout => _pl
       ? 'oczekiwanie na potwierdzenie kontaktu'
       : 'waiting for peer acknowledgement';
-  String get attachmentPeerUnavailable => _pl
-      ? 'kontakt niedostępny'
-      : 'peer unavailable';
-  String get attachmentIntegrityFailed => _pl
-      ? 'błąd integralności'
-      : 'integrity check failed';
-  String get attachmentStorageFailed => _pl
-      ? 'błąd lokalnego zapisu'
-      : 'local storage failed';
-  String get attachmentMessagePending => _pl
-      ? 'oczekiwanie na wiadomość'
-      : 'waiting for message';
-  String get attachmentDependencyMissing => _pl
-      ? 'oczekiwanie na rozmowę'
-      : 'waiting for conversation';
-  String get attachmentRetryAvailable => _pl
-      ? 'dostępna ponowna próba'
-      : 'retry available';
+  String get attachmentPeerUnavailable =>
+      _pl ? 'kontakt niedostępny' : 'peer unavailable';
+  String get attachmentIntegrityFailed =>
+      _pl ? 'błąd integralności' : 'integrity check failed';
+  String get attachmentStorageFailed =>
+      _pl ? 'błąd lokalnego zapisu' : 'local storage failed';
+  String get attachmentMessagePending =>
+      _pl ? 'oczekiwanie na wiadomość' : 'waiting for message';
+  String get attachmentDependencyMissing =>
+      _pl ? 'oczekiwanie na rozmowę' : 'waiting for conversation';
+  String get attachmentRetryAvailable =>
+      _pl ? 'dostępna ponowna próba' : 'retry available';
   String get attachmentOperationFailed =>
       _pl ? 'Operacja zalacznika nieudana' : 'Attachment operation failed';
   String attachmentsQueued(int count) => _pl
       ? 'Dodano do kolejki: $count zalacznikow'
       : '$count ${count == 1 ? 'attachment' : 'attachments'} queued';
-  String get couldNotQueueAttachment =>
-      _pl ? 'Nie udalo sie dodac zalacznika do kolejki' : 'Could not queue attachment';
+  String get couldNotQueueAttachment => _pl
+      ? 'Nie udalo sie dodac zalacznika do kolejki'
+      : 'Could not queue attachment';
   String get saveAttachment => _pl ? 'Zapisz zalacznik' : 'Save attachment';
   String get buildAndConnectionInfo =>
       _pl ? 'Informacje o buildzie i polaczeniu' : 'Build & connection info';
@@ -348,7 +438,8 @@ class TorcaStrings {
   String pairingStateLabel(PairingState state) => switch (state) {
     PairingState.open => _pl ? 'Otwarte' : 'Open',
     PairingState.peerJoined => _pl ? 'Kontakt dolaczyl' : 'Peer joined',
-    PairingState.awaitingApproval => _pl ? 'Czeka na akceptacje' : 'Awaiting approval',
+    PairingState.awaitingApproval =>
+      _pl ? 'Czeka na akceptacje' : 'Awaiting approval',
     PairingState.approved => _pl ? 'Zaakceptowane' : 'Approved',
     PairingState.completed => _pl ? 'Polaczone' : 'Completed',
     PairingState.rejected => _pl ? 'Odrzucone' : 'Rejected',
@@ -356,11 +447,25 @@ class TorcaStrings {
     PairingState.expired => _pl ? 'Wygasle' : 'Expired',
     PairingState.unknown => _pl ? 'Nieznany stan' : 'Unknown',
   };
-  String invitationCode(String code) => _pl ? 'Kod $code' : 'Code $code';
+  String invitationCodeLabel(String code) => _pl ? 'Kod $code' : 'Code $code';
   String get notMeasured => _pl ? 'Nie zmierzono' : 'Not measured';
   String get never => _pl ? 'Nigdy' : 'Never';
   String get presence => _pl ? 'Obecnosc' : 'Presence';
   String get lastSeen => _pl ? 'Ostatnio widziany' : 'Last seen';
+  String get online => _pl ? 'Online' : 'Online';
+  String lastSeenAt(String time) => _pl ? 'Ostatnio $time' : 'Last seen $time';
+  String get clearConversationHistory =>
+      _pl ? 'Wyczyść historię rozmowy' : 'Clear conversation history';
+  String get archiveConversation =>
+      _pl ? 'Archiwizuj rozmowę' : 'Archive conversation';
+  String get restoreConversation =>
+      _pl ? 'Przywróć rozmowę' : 'Restore conversation';
+  String get pinConversation => _pl ? 'Przypnij rozmowę' : 'Pin conversation';
+  String get unpinConversation =>
+      _pl ? 'Odepnij rozmowę' : 'Unpin conversation';
+  String get muteConversation => _pl ? 'Wycisz rozmowę' : 'Mute conversation';
+  String get unmuteConversation =>
+      _pl ? 'Włącz powiadomienia' : 'Unmute conversation';
   String get todayUpper => _pl ? 'DZISIAJ' : 'TODAY';
   String get sampleContactName => 'Alice';
   String get sampleOnline => _pl ? 'online' : 'online';

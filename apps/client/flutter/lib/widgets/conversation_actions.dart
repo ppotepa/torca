@@ -8,6 +8,10 @@ enum ConversationAction {
   contactDetails,
   rename,
   clearHistory,
+  archive,
+  restore,
+  pinToggle,
+  muteToggle,
   blockToggle,
   remove,
 }
@@ -57,21 +61,23 @@ abstract final class ContactActionMenu {
             context,
             ContactAction.rename,
             context.torcaIcons.edit,
-            'Rename contact',
+            context.strings.renameContact,
           ),
           const Divider(height: 1),
           _tile(
             context,
             ContactAction.blockToggle,
             blocked ? context.torcaIcons.success : context.torcaIcons.block,
-            blocked ? 'Unblock contact' : 'Block contact',
+            blocked
+                ? context.strings.unblockContact
+                : context.strings.blockContact,
           ),
           const Divider(height: 1),
           _tile(
             context,
             ContactAction.remove,
             context.torcaIcons.remove,
-            'Remove contact',
+            context.strings.removeContact,
           ),
         ],
       ),
@@ -106,18 +112,24 @@ abstract final class ContactActionMenu {
           context.torcaIcons.diagnostics,
           context.strings.connectionDetails,
         ),
-        _item(ContactAction.rename, context.torcaIcons.edit, 'Rename contact'),
+        _item(
+          ContactAction.rename,
+          context.torcaIcons.edit,
+          context.strings.renameContact,
+        ),
         const PopupMenuDivider(),
         _item(
           ContactAction.blockToggle,
           blocked ? context.torcaIcons.success : context.torcaIcons.block,
-          blocked ? 'Unblock contact' : 'Block contact',
+          blocked
+              ? context.strings.unblockContact
+              : context.strings.blockContact,
         ),
         const PopupMenuDivider(),
         _item(
           ContactAction.remove,
           context.torcaIcons.remove,
-          'Remove contact',
+          context.strings.removeContact,
         ),
       ],
     );
@@ -153,19 +165,26 @@ abstract final class ConversationActionMenu {
   static Future<ConversationAction?> showTouch(
     BuildContext context, {
     required bool blocked,
+    required bool archived,
+    required bool pinned,
+    required bool muted,
   }) => showModalBottomSheet<ConversationAction>(
     context: context,
     useSafeArea: true,
     isScrollControlled: false,
     enableDrag: false,
-    builder: (context) =>
-        SafeArea(child: Wrap(children: _tiles(context, blocked))),
+    builder: (context) => SafeArea(
+      child: Wrap(children: _tiles(context, blocked, archived, pinned, muted)),
+    ),
   );
 
   static Future<ConversationAction?> showDesktop(
     BuildContext context,
     Offset globalPosition, {
     required bool blocked,
+    required bool archived,
+    required bool pinned,
+    required bool muted,
   }) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     return showMenu<ConversationAction>(
@@ -175,71 +194,135 @@ abstract final class ConversationActionMenu {
         Offset.zero & overlay.size,
       ),
       items: <PopupMenuEntry<ConversationAction>>[
-        _item(ConversationAction.open, context.torcaIcons.chats, 'Open'),
+        _item(
+          ConversationAction.open,
+          context.torcaIcons.chats,
+          context.strings.open,
+        ),
         _item(
           ConversationAction.contactDetails,
           context.torcaIcons.contacts,
-          'Contact details',
+          context.strings.contactInformation,
         ),
         _item(
           ConversationAction.rename,
           context.torcaIcons.edit,
-          'Rename contact',
+          context.strings.renameContact,
         ),
         const PopupMenuDivider(),
         _item(
-          ConversationAction.clearHistory,
-          context.torcaIcons.remove,
-          'Clear conversation history',
+          archived ? ConversationAction.restore : ConversationAction.archive,
+          context.torcaIcons.archive,
+          archived
+              ? context.strings.restoreConversation
+              : context.strings.archiveConversation,
         ),
+        _item(
+          ConversationAction.pinToggle,
+          context.torcaIcons.archive,
+          pinned
+              ? context.strings.unpinConversation
+              : context.strings.pinConversation,
+        ),
+        _item(
+          ConversationAction.muteToggle,
+          context.torcaIcons.notifications,
+          muted
+              ? context.strings.unmuteConversation
+              : context.strings.muteConversation,
+        ),
+        if (!archived)
+          _item(
+            ConversationAction.clearHistory,
+            context.torcaIcons.remove,
+            context.strings.clearConversationHistory,
+          ),
         _item(
           ConversationAction.blockToggle,
           blocked ? context.torcaIcons.success : context.torcaIcons.block,
-          blocked ? 'Unblock contact' : 'Block contact',
+          blocked
+              ? context.strings.unblockContact
+              : context.strings.blockContact,
         ),
         const PopupMenuDivider(),
         _item(
           ConversationAction.remove,
           context.torcaIcons.remove,
-          'Remove contact',
+          context.strings.removeContact,
         ),
       ],
     );
   }
 
-  static List<Widget> _tiles(BuildContext context, bool blocked) => <Widget>[
-    _tile(context, ConversationAction.open, context.torcaIcons.chats, 'Open'),
+  static List<Widget> _tiles(
+    BuildContext context,
+    bool blocked,
+    bool archived,
+    bool pinned,
+    bool muted,
+  ) => <Widget>[
+    _tile(
+      context,
+      ConversationAction.open,
+      context.torcaIcons.chats,
+      context.strings.open,
+    ),
+    _tile(
+      context,
+      ConversationAction.pinToggle,
+      context.torcaIcons.archive,
+      pinned
+          ? context.strings.unpinConversation
+          : context.strings.pinConversation,
+    ),
+    _tile(
+      context,
+      ConversationAction.muteToggle,
+      context.torcaIcons.notifications,
+      muted
+          ? context.strings.unmuteConversation
+          : context.strings.muteConversation,
+    ),
     _tile(
       context,
       ConversationAction.contactDetails,
       context.torcaIcons.contacts,
-      'Contact details',
+      context.strings.contactInformation,
     ),
     _tile(
       context,
       ConversationAction.rename,
       context.torcaIcons.edit,
-      'Rename contact',
+      context.strings.renameContact,
     ),
     const Divider(height: 1),
     _tile(
       context,
-      ConversationAction.clearHistory,
-      context.torcaIcons.remove,
-      'Clear conversation history',
+      archived ? ConversationAction.restore : ConversationAction.archive,
+      context.torcaIcons.archive,
+      archived
+          ? context.strings.restoreConversation
+          : context.strings.archiveConversation,
     ),
+    if (!archived)
+      _tile(
+        context,
+        ConversationAction.clearHistory,
+        context.torcaIcons.remove,
+        context.strings.clearConversationHistory,
+      ),
     _tile(
       context,
       ConversationAction.blockToggle,
       blocked ? context.torcaIcons.success : context.torcaIcons.block,
-      blocked ? 'Unblock contact' : 'Block contact',
+      blocked ? context.strings.unblockContact : context.strings.blockContact,
     ),
     const Divider(height: 1),
     _tile(
       context,
       ConversationAction.remove,
       context.torcaIcons.remove,
-      'Remove contact',
+      context.strings.removeContact,
     ),
   ];
 

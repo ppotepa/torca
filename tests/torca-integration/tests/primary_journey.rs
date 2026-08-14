@@ -79,6 +79,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
             session_id: pairing_id,
             contact_id,
             conversation_id,
+            display_name: "Peer".into(),
             credential: pairing_credential,
             at: ts(5),
         })
@@ -89,6 +90,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
                 session_id: pairing_id,
                 contact_id,
                 conversation_id,
+                display_name: "Peer".into(),
                 credential: pairing_credential,
                 at: ts(5),
             })

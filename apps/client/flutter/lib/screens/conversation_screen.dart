@@ -13,12 +13,14 @@ import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
 import '../platform/video_thumbnail_service.dart';
+import '../settings/local_preferences.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/conversation_header.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/operation_tracker.dart';
+import '../widgets/radio_conversation_controls.dart';
 import '../widgets/runtime_network_status.dart';
 import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
@@ -30,21 +32,35 @@ class ConversationScreen extends StatelessWidget {
   const ConversationScreen({
     required this.gateway,
     required this.conversation,
+    this.preferences,
     super.key,
   });
   final EngineGateway gateway;
   final ConversationDto conversation;
+  final LocalPreferences? preferences;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
     valueListenable: gateway.snapshots,
     builder: (context, snapshot, _) {
       final contact = contactForSnapshot(snapshot, conversation);
+      final radioSession = snapshot.radio.session?.contactId == contact?.id
+          ? snapshot.radio.session
+          : null;
+      final recording = radioSession?.typedState == RadioState.transmitting;
       return Scaffold(
         appBar: RuntimeAppBar(
           titleSpacing: 0,
+          backgroundColor: recording
+              ? Theme.of(context).colorScheme.error.withValues(alpha: 0.10)
+              : null,
           title: ConversationHeader(
             contact: contact,
+            gateway: gateway,
+            radio: contact == null
+                ? null
+                : snapshot.radio.forContact(contact.id),
+            session: radioSession,
             compact: true,
             onConnectionDetails: contact == null
                 ? () {}
@@ -54,6 +70,7 @@ class ConversationScreen extends StatelessWidget {
         body: ConversationPane(
           gateway: gateway,
           conversation: conversation,
+          preferences: preferences,
           showHeader: false,
         ),
       );
@@ -74,11 +91,13 @@ class ConversationPane extends StatefulWidget {
   const ConversationPane({
     required this.gateway,
     required this.conversation,
+    this.preferences,
     this.showHeader = true,
     super.key,
   });
   final EngineGateway gateway;
   final ConversationDto conversation;
+  final LocalPreferences? preferences;
   final bool showHeader;
 
   @override
@@ -97,6 +116,7 @@ class _ConversationPaneState extends State<ConversationPane>
 
   late ConversationTimelineController _timeline;
   Timer? _searchDebounce;
+  Timer? _draftDebounce;
   List<MessageDto> _searchResults = const <MessageDto>[];
   bool _searching = false;
   bool _searchBusy = false;
@@ -107,6 +127,7 @@ class _ConversationPaneState extends State<ConversationPane>
   int _lastActivityAtMs = 0;
   String? _unreadBoundaryMessageId;
   MessageDto? _replyingTo;
+  MessageDto? _editingMessage;
 
   @override
   void initState() {
@@ -116,9 +137,11 @@ class _ConversationPaneState extends State<ConversationPane>
     _timeline.addListener(_timelineChanged);
     _operations.addListener(_operationChanged);
     _scrollController.addListener(_scrollChanged);
+    _controller.addListener(_draftChanged);
     widget.gateway.snapshots.addListener(_snapshotChanged);
     _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
     unawaited(_initializeTimeline());
+    unawaited(_restoreDraft());
   }
 
   ConversationTimelineController _newTimeline() =>
@@ -151,6 +174,7 @@ class _ConversationPaneState extends State<ConversationPane>
     }
     if (oldWidget.gateway != widget.gateway ||
         oldWidget.conversation.id != widget.conversation.id) {
+      _saveDraft(oldWidget.conversation.id);
       _drafts[oldWidget.conversation.id] = _controller.text;
       _controller.text = _drafts[widget.conversation.id] ?? '';
       _replyingTo = null;
@@ -165,6 +189,7 @@ class _ConversationPaneState extends State<ConversationPane>
       _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
       _unreadBoundaryMessageId = null;
       unawaited(_initializeTimeline());
+      unawaited(_restoreDraft());
     }
   }
 
@@ -187,13 +212,54 @@ class _ConversationPaneState extends State<ConversationPane>
     }
     _pendingAttachments.clear();
     _searchDebounce?.cancel();
+    _draftDebounce?.cancel();
+    _saveDraft(widget.conversation.id);
     _searchController.dispose();
     _scrollController.removeListener(_scrollChanged);
     _operations.removeListener(_operationChanged);
     _operations.dispose();
     _scrollController.dispose();
+    _controller.removeListener(_draftChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _restoreDraft() async {
+    final preferences = widget.preferences;
+    if (preferences == null) return;
+    final value = await preferences.draftFor(widget.conversation.id);
+    if (!mounted ||
+        value == null ||
+        value.isEmpty ||
+        _controller.text.isNotEmpty) {
+      return;
+    }
+    _controller.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
+  }
+
+  void _draftChanged() {
+    final preferences = widget.preferences;
+    if (preferences == null) return;
+    _draftDebounce?.cancel();
+    _draftDebounce = Timer(const Duration(milliseconds: 300), () {
+      _saveDraft(widget.conversation.id);
+    });
+  }
+
+  void _saveDraft(String conversationId) {
+    final preferences = widget.preferences;
+    if (preferences == null) return;
+    final value = conversationId == widget.conversation.id
+        ? _controller.text
+        : _drafts[conversationId] ?? '';
+    unawaited(
+      value.trim().isEmpty
+          ? preferences.clearDraft(conversationId)
+          : preferences.setDraft(conversationId, value),
+    );
   }
 
   void _timelineChanged() {
@@ -366,6 +432,17 @@ class _ConversationPaneState extends State<ConversationPane>
       };
       final reply = _replyingTo;
       final contact = contactForSnapshot(snapshot, widget.conversation);
+      final radioContact = contact == null
+          ? null
+          : snapshot.radio.forContact(contact.id);
+      final radioSession = snapshot.radio.session?.contactId == contact?.id
+          ? snapshot.radio.session
+          : null;
+      final radioTimeline = contact == null
+          ? const <RadioTimelineEventDto>[]
+          : snapshot.radio.timeline
+                .where((event) => event.contactId == contact.id)
+                .toList(growable: false);
       final sending = _operations.isActive('message:send');
       final sendingAttachment = _operations.isActive('attachment:send');
       final pickingAttachment = _operations.isActive('attachment:pick');
@@ -373,18 +450,41 @@ class _ConversationPaneState extends State<ConversationPane>
       return Column(
         children: <Widget>[
           if (widget.showHeader) ...<Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-              child: ConversationHeader(
-                contact: contact,
-                onConnectionDetails: contact == null
-                    ? () {}
-                    : () => _openConnectionDetails(contact.id),
+            ColoredBox(
+              color: radioSession?.typedState == RadioState.transmitting
+                  ? Theme.of(context).colorScheme.error.withValues(alpha: 0.10)
+                  : Colors.transparent,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                child: ConversationHeader(
+                  contact: contact,
+                  gateway: widget.gateway,
+                  radio: radioContact,
+                  session: radioSession,
+                  onConnectionDetails: contact == null
+                      ? () {}
+                      : () => _openConnectionDetails(contact.id),
+                ),
               ),
             ),
             const Divider(height: 1),
           ],
-          _buildSearchBar(),
+          if (contact != null &&
+              (radioContact?.localEnabled == true || radioTimeline.isNotEmpty))
+            RadioConversationStatus(
+              contact: contact,
+              radio: radioContact,
+              session: radioSession,
+              timeline: radioTimeline,
+            ),
+          _ConversationSearchBar(
+            searching: _searching,
+            busy: _searchBusy,
+            controller: _searchController,
+            onStart: () => setState(() => _searching = true),
+            onChanged: _searchChanged,
+            onClose: _closeSearch,
+          ),
           Expanded(
             child: Stack(
               children: <Widget>[
@@ -448,6 +548,12 @@ class _ConversationPaneState extends State<ConversationPane>
                           if (showUnread) const _UnreadSeparator(),
                           MessageBubble(
                             message: message,
+                            reactions: snapshot.reactions
+                                .where(
+                                  (reaction) =>
+                                      reaction.messageId == message.id,
+                                )
+                                .toList(growable: false),
                             // Never expose the compatibility announcement
                             // (which contains a path/hash) as chat content.
                             // A typed AttachmentDto is rendered below; until
@@ -589,133 +695,34 @@ class _ConversationPaneState extends State<ConversationPane>
             ),
           ),
           const Divider(height: 1),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  if (_pendingAttachments.isNotEmpty) ...<Widget>[
-                    _AttachmentTray(
-                      attachments: _pendingAttachments,
-                      onRemove: (pending) => setState(() {
-                        _pendingAttachments.remove(pending);
-                        unawaited(pending.prepared.dispose());
-                      }),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  if (reply != null) ...<Widget>[
-                    _ReplyComposerPreview(
-                      message: reply,
-                      onCancel: () => setState(() => _replyingTo = null),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  Row(
-                    children: <Widget>[
-                      IconButton(
-                        tooltip: context.strings.attachFiles,
-                        onPressed:
-                            pickingAttachment || sendingAttachment || _searching
-                            ? null
-                            : _pickAttachments,
-                        icon: pickingAttachment
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Icon(context.torcaIcons.attachment),
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: _composerField(
-                          sending || _searching,
-                          reply != null,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        tooltip: sending || sendingAttachment
-                            ? 'Sending'
-                            : 'Send message',
-                        onPressed: sending || sendingAttachment || _searching
-                            ? null
-                            : _sendMessage,
-                        icon: sending || sendingAttachment
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Icon(context.torcaIcons.send),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+          ConversationComposer(
+            gateway: widget.gateway,
+            messageField: _composerField(
+              sending || _searching,
+              reply != null,
+              _editingMessage != null,
             ),
+            contact: contact,
+            radio: radioContact,
+            session: radioSession,
+            pendingAttachments: _pendingAttachments,
+            onRemoveAttachment: (pending) => setState(() {
+              _pendingAttachments.remove(pending);
+              unawaited(pending.prepared.dispose());
+            }),
+            onPickAttachments: _pickAttachments,
+            onSend: _sendMessage,
+            sending: sending,
+            sendingAttachment: sendingAttachment,
+            pickingAttachment: pickingAttachment,
+            searching: _searching,
+            reply: reply,
+            onCancelReply: () => setState(() => _replyingTo = null),
           ),
         ],
       );
     },
   );
-
-  Widget _buildSearchBar() {
-    if (!_searching) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: IconButton(
-            tooltip: context.strings.searchMessages,
-            onPressed: () => setState(() => _searching = true),
-            icon: Icon(context.torcaIcons.search),
-          ),
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              autofocus: true,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Search this conversation',
-                prefixIcon: Icon(context.torcaIcons.search),
-              ),
-              onChanged: _searchChanged,
-            ),
-          ),
-          if (_searchBusy)
-            const Padding(
-              padding: EdgeInsets.all(10),
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          else
-            IconButton(
-              tooltip: context.strings.closeSearch,
-              onPressed: _closeSearch,
-              icon: Icon(context.torcaIcons.close),
-            ),
-        ],
-      ),
-    );
-  }
 
   void _searchChanged(String value) {
     _searchDebounce?.cancel();
@@ -757,14 +764,20 @@ class _ConversationPaneState extends State<ConversationPane>
     );
   }
 
-  Widget _composerField(bool disabled, bool replying) {
+  Widget _composerField(bool disabled, bool replying, bool editing) {
     final field = TextField(
       controller: _controller,
       enabled: !disabled,
       minLines: 1,
       maxLines: 5,
       textInputAction: TextInputAction.newline,
-      decoration: InputDecoration(labelText: replying ? 'Reply' : 'Message'),
+      decoration: InputDecoration(
+        labelText: editing
+            ? context.strings.editMessage
+            : replying
+            ? 'Reply'
+            : 'Message',
+      ),
     );
     if (!isTorcaDesktop) return field;
     return CallbackShortcuts(
@@ -821,8 +834,29 @@ class _ConversationPaneState extends State<ConversationPane>
     Offset? globalPosition,
   }) async {
     final action = globalPosition == null
-        ? await MessageActionMenu.showTouch(context)
-        : await MessageActionMenu.showDesktop(context, globalPosition);
+        ? await MessageActionMenu.showTouch(
+            context,
+            canCancel:
+                message.typedDirection == MessageDirection.outbound &&
+                (message.typedStatus == MessageStatus.queued ||
+                    message.typedStatus == MessageStatus.failed),
+            canEdit:
+                message.typedDirection == MessageDirection.outbound &&
+                (message.typedStatus == MessageStatus.queued ||
+                    message.typedStatus == MessageStatus.failed),
+          )
+        : await MessageActionMenu.showDesktop(
+            context,
+            globalPosition,
+            canCancel:
+                message.typedDirection == MessageDirection.outbound &&
+                (message.typedStatus == MessageStatus.queued ||
+                    message.typedStatus == MessageStatus.failed),
+            canEdit:
+                message.typedDirection == MessageDirection.outbound &&
+                (message.typedStatus == MessageStatus.queued ||
+                    message.typedStatus == MessageStatus.failed),
+          );
     if (!mounted || action == null) return;
     await _applyMessageAction(message, action);
   }
@@ -834,6 +868,8 @@ class _ConversationPaneState extends State<ConversationPane>
     switch (action) {
       case MessageAction.reply:
         if (!_searching) setState(() => _replyingTo = message);
+      case MessageAction.react:
+        await _reactToMessage(message);
       case MessageAction.copy:
         await Clipboard.setData(ClipboardData(text: message.body));
         if (mounted) {
@@ -841,9 +877,109 @@ class _ConversationPaneState extends State<ConversationPane>
             SnackBar(content: Text(context.strings.messageCopied)),
           );
         }
+      case MessageAction.edit:
+        if (!_searching) {
+          setState(() {
+            _editingMessage = message;
+            _replyingTo = null;
+            _controller
+              ..text = message.body
+              ..selection = TextSelection.collapsed(
+                offset: message.body.length,
+              );
+          });
+        }
+      case MessageAction.forward:
+        await _forwardMessage(message);
+      case MessageAction.cancel:
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(context.strings.cancelMessage),
+            content: Text(context.strings.cancelMessage),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(context.strings.close),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(context.strings.cancel),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        await _operations.run('message:${message.id}:cancel', () async {
+          final result = await widget.gateway.execute(
+            CancelMessageCommandDto(messageIdHex: message.id),
+          );
+          if (!mounted) return;
+          if (result.ok) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(context.strings.messageCancelled)),
+            );
+          } else {
+            _showError(
+              BridgeErrorPresenter.localized(
+                context,
+                result,
+                fallback: 'Could not cancel message',
+              ),
+            );
+          }
+        });
       case MessageAction.details:
         await _showMessageDetails(message);
     }
+  }
+
+  Future<void> _reactToMessage(MessageDto message) async {
+    final actorId = widget.gateway.snapshots.value.identity?.id;
+    if (actorId == null || actorId.isEmpty) {
+      _showError('Local identity is not ready');
+      return;
+    }
+    final emoji = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          children: <Widget>[
+            for (final value in const <String>[
+              '👍',
+              '❤️',
+              '😂',
+              '😮',
+              '😢',
+              '👏',
+            ])
+              IconButton(
+                icon: Text(value, style: const TextStyle(fontSize: 26)),
+                onPressed: () => Navigator.of(context).pop(value),
+                tooltip: value,
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || emoji == null) return;
+    final existing = widget.gateway.snapshots.value.reactions.any(
+      (reaction) =>
+          reaction.messageId == message.id &&
+          reaction.actorId == actorId &&
+          reaction.emoji == emoji &&
+          reaction.active,
+    );
+    await widget.gateway.execute(
+      SetMessageReactionCommandDto(
+        messageIdHex: message.id,
+        conversationIdHex: message.conversationId,
+        actorIdHex: actorId,
+        emoji: emoji,
+        active: !existing,
+      ),
+    );
   }
 
   Future<void> _showMessageDetails(MessageDto message) => showDialog<void>(
@@ -856,7 +992,10 @@ class _ConversationPaneState extends State<ConversationPane>
         children: <Widget>[
           _detail('ID', message.id),
           _detail('Direction', message.direction),
-          _detail('Status', messageStatusLabel(message.status, context.strings)),
+          _detail(
+            'Status',
+            messageStatusLabel(message.status, context.strings),
+          ),
           _detail('Queued / received', _date(message.createdAtMs)),
           if (message.sentAtMs != null)
             _detail('Sent', _date(message.sentAtMs!)),
@@ -876,6 +1015,52 @@ class _ConversationPaneState extends State<ConversationPane>
     ),
   );
 
+  Future<void> _forwardMessage(MessageDto message) async {
+    final snapshot = widget.gateway.snapshots.value;
+    final options = snapshot.conversations
+        .where((conversation) => conversation.id != widget.conversation.id)
+        .toList(growable: false);
+    if (!mounted || options.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.strings.chooseConversation)),
+        );
+      }
+      return;
+    }
+    final target = await showDialog<ConversationDto>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(context.strings.chooseConversation),
+        children: options
+            .map(
+              (conversation) => SimpleDialogOption(
+                onPressed: () => Navigator.of(context).pop(conversation),
+                child: Text(
+                  contactForSnapshot(snapshot, conversation)?.displayName ??
+                      context.strings.contactLabel,
+                ),
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
+    if (!mounted || target == null) return;
+    final result = await widget.gateway.execute(
+      QueueMessageCommandDto(conversationIdHex: target.id, body: message.body),
+    );
+    if (!mounted) return;
+    if (!result.ok) {
+      _showError(
+        BridgeErrorPresenter.localized(
+          context,
+          result,
+          fallback: 'Could not forward message',
+        ),
+      );
+    }
+  }
+
   Widget _detail(String label, String value) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Text('$label: $value'),
@@ -889,22 +1074,32 @@ class _ConversationPaneState extends State<ConversationPane>
     final body = _controller.text.trim();
     if ((body.isEmpty && _pendingAttachments.isEmpty) || _searching) return;
     if (body.isNotEmpty) {
+      final editing = _editingMessage;
       final replyTo = _replyingTo?.id;
       var sent = false;
       await _operations.run('message:send', () async {
         final result = await widget.gateway.execute(
-          QueueMessageCommandDto(
-            conversationIdHex: widget.conversation.id,
-            body: body,
-            replyToMessageId: replyTo,
-          ),
+          editing == null
+              ? QueueMessageCommandDto(
+                  conversationIdHex: widget.conversation.id,
+                  body: body,
+                  replyToMessageId: replyTo,
+                )
+              : EditMessageCommandDto(messageIdHex: editing.id, body: body),
         );
         if (!mounted) return;
         if (result.ok) {
           sent = true;
           _controller.clear();
           _drafts.remove(widget.conversation.id);
-          setState(() => _replyingTo = null);
+          final preferences = widget.preferences;
+          if (preferences != null) {
+            unawaited(preferences.clearDraft(widget.conversation.id));
+          }
+          setState(() {
+            _replyingTo = null;
+            _editingMessage = null;
+          });
           await _timeline.refreshLatest();
           WidgetsBinding.instance.addPostFrameCallback(
             (_) => _scrollToBottom(),
@@ -1036,9 +1231,7 @@ class _ConversationPaneState extends State<ConversationPane>
       }
       if (queued > 0) await _timeline.refreshLatest();
       if (mounted && queued > 1) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(context.strings.attachmentsQueued(queued))),
         );
       }
@@ -1191,5 +1384,4 @@ class _ConversationPaneState extends State<ConversationPane>
   void _showError(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
-
 }

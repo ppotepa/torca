@@ -52,11 +52,9 @@ impl<'a> RelayController<'a> {
             // warm-up loop.  The relay writes both files asynchronously while
             // publishing its onion; retaining them made a rotated identity
             // look ready before the new descriptor existed.
-            for marker in [
-                &self.paths.relay_endpoint,
-                &self.paths.relay_ready,
-                &self.paths.relay_status,
-            ] {
+            for marker in
+                [&self.paths.relay_endpoint, &self.paths.relay_ready, &self.paths.relay_status]
+            {
                 if marker.exists() {
                     fs::remove_file(marker).map_err(RelayError::Io)?;
                 }
@@ -155,8 +153,9 @@ impl<'a> RelayController<'a> {
                     .is_some_and(|value| relay_ready_matches(&self.paths.relay_ready, value));
                 let onion_state = read_publication_state(&self.paths.relay_status)
                     .unwrap_or_else(|| "unknown".into());
-                let state =
-                    format!("container={last}, onion_state={onion_state}, onion_ready={onion_ready}");
+                let state = format!(
+                    "container={last}, onion_state={onion_state}, onion_ready={onion_ready}"
+                );
                 if last_reported.as_deref() != Some(state.as_str()) {
                     eprintln!("torca-deploy: relay warm-up {state}");
                     last_reported = Some(state);
@@ -295,7 +294,8 @@ fn relay_ready_matches(path: &Path, endpoint: &str) -> bool {
 }
 
 fn read_publication_state(path: &Path) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     value.get("state").and_then(serde_json::Value::as_str).map(str::to_owned)
 }
 
@@ -391,10 +391,9 @@ mod tests {
     fn startup_gate_requires_two_consecutive_protocol_checks() {
         let mut healthy = 0;
         assert!(!startup_gate_passed(&mut healthy, true));
-        assert!(!startup_gate_passed(&mut healthy, true));
+        assert!(startup_gate_passed(&mut healthy, true));
         assert!(!startup_gate_passed(&mut healthy, false));
         assert_eq!(healthy, 0);
-        assert!(!startup_gate_passed(&mut healthy, true));
         assert!(!startup_gate_passed(&mut healthy, true));
         assert!(startup_gate_passed(&mut healthy, true));
     }

@@ -338,6 +338,28 @@ impl ConversationRepository for SqlCipherStore {
         rows.map(|row| row.map_err(|_| ConversationError::RepositoryFailure)?.into_conversation())
             .collect()
     }
+
+    fn update(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
+        let id = conversation.id().to_opaque().into_bytes();
+        let contact_id = conversation.contact_id().to_opaque().into_bytes();
+        let changed = self
+            .backend
+            .connection()
+            .execute(
+                conversation_sql::UPDATE.sql,
+                params![
+                    id.as_slice(),
+                    contact_id.as_slice(),
+                    encode_conversation_status(conversation.status()),
+                    conversation.updated_at().to_unix_millis(),
+                ],
+            )
+            .map_err(|_| ConversationError::RepositoryFailure)?;
+        if changed == 0 {
+            return Err(ConversationError::NotFound);
+        }
+        Ok(())
+    }
 }
 
 impl RelationshipRepository for SqlCipherStore {

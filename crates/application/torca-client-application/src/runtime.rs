@@ -10,9 +10,11 @@ use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
 };
 use torca_identity::{IdentityId, ProfileName};
-use torca_messaging::{MessageBody, MessageId, ReplyReference};
+use torca_messaging::{MessageBody, MessageId, MessageReaction, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_probing::{ProbeStatus, ProbeTarget};
+use torca_radio_coordinator::{HostRadioLifecycle, RadioProjection, SharedRadioCoordinator};
+use torca_delivery::ReactionPayload;
 
 use crate::{
     ApplicationReadModels, ApplicationSnapshotContext, AttachmentSendRequest,
@@ -76,6 +78,14 @@ pub enum ApplicationCommand {
     ClearConversationHistory {
         conversation_id: OpaqueId,
     },
+    ArchiveConversation {
+        conversation_id: OpaqueId,
+        at_ms: i64,
+    },
+    RestoreConversation {
+        conversation_id: OpaqueId,
+        at_ms: i64,
+    },
     QueueMessage {
         message_id: OpaqueId,
         conversation_id: OpaqueId,
@@ -85,6 +95,23 @@ pub enum ApplicationCommand {
     },
     RetryMessage {
         message_id: OpaqueId,
+        at_ms: i64,
+    },
+    CancelMessage {
+        message_id: OpaqueId,
+        at_ms: i64,
+    },
+    EditMessage {
+        message_id: OpaqueId,
+        body: String,
+        at_ms: i64,
+    },
+    SetMessageReaction {
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        actor_id: OpaqueId,
+        emoji: String,
+        active: bool,
         at_ms: i64,
     },
     MarkConversationRead {
@@ -114,6 +141,21 @@ pub enum ApplicationCommand {
     ExportAttachmentPreview {
         attachment_id: OpaqueId,
         destination_path: String,
+    },
+    SetRadioEnabled {
+        contact_id: OpaqueId,
+        enabled: bool,
+        at_ms: i64,
+    },
+    ConfigureRadioAudio {
+        input_device_id: Option<String>,
+        output_device_id: Option<String>,
+    },
+    BeginRadioTransmission {
+        contact_id: OpaqueId,
+    },
+    EndRadioTransmission {
+        contact_id: OpaqueId,
     },
     RefreshSnapshot,
 }
@@ -170,6 +212,7 @@ impl ClassifiedError for ApplicationError {
 pub struct ClientApplicationRuntime {
     application: ClientApplicationHandle,
     runtime: Option<RuntimeHandle>,
+    radio: Option<SharedRadioCoordinator>,
     bootstrap: Mutex<BootstrapState>,
     read_models: Option<ApplicationReadModels>,
     pending: Mutex<Box<dyn PendingOperationStore>>,
@@ -180,6 +223,7 @@ impl ClientApplicationRuntime {
         Self {
             application,
             runtime: None,
+            radio: None,
             bootstrap: Mutex::new(BootstrapState::new()),
             read_models: None,
             pending: Mutex::new(Box::new(InMemoryPendingOperationStore::default())),
@@ -188,6 +232,23 @@ impl ClientApplicationRuntime {
 
     pub fn attach_runtime(&mut self, runtime: RuntimeHandle) {
         self.runtime = Some(runtime);
+    }
+
+    pub fn attach_radio(&mut self, radio: SharedRadioCoordinator) {
+        self.radio = Some(radio);
+    }
+
+    pub fn radio_lifecycle(&self, lifecycle: HostRadioLifecycle) -> Result<(), ApplicationError> {
+        self.radio
+            .as_ref()
+            .ok_or_else(|| ApplicationError::operation_failed("radio runtime is not ready".into()))?
+            .lifecycle(lifecycle)
+            .map_err(|error| ApplicationError::operation_failed(error.to_string()))
+    }
+
+    pub fn radio_projection(&self) -> Option<RadioProjection> {
+        let now = current_timestamp().ok()?;
+        self.radio.as_ref()?.projection(now).ok()
     }
 
     pub fn attach_read_models(&mut self, read_models: ApplicationReadModels) {
@@ -247,6 +308,11 @@ impl ClientApplicationRuntime {
             .and_then(|runtime| runtime.attachment_snapshot().ok())
             .unwrap_or_default();
         let application = self.application.snapshot()?;
+        if let (Some(radio), Ok(now)) = (self.radio.as_ref(), current_timestamp()) {
+            for contact in &application.contacts {
+                radio.ensure_contact(contact.id(), now);
+            }
+        }
         let (identity_fingerprint, identity_fingerprints, safety_numbers) =
             ApplicationSnapshotContext::security_projection(&application);
         // A secondary queue projection must never make the complete client
@@ -263,6 +329,7 @@ impl ClientApplicationRuntime {
             identity_fingerprints,
             safety_numbers,
             pending_operations,
+            radio: self.radio_projection(),
         })
     }
 
@@ -442,6 +509,10 @@ impl ClientApplicationRuntime {
             | ApplicationCommand::RejectPairing { session_id }
             | ApplicationCommand::CancelPairing { session_id } => Some(*session_id),
             ApplicationCommand::StartConversation { contact_id } => Some(*contact_id),
+            ApplicationCommand::SetRadioEnabled { contact_id, .. }
+            | ApplicationCommand::BeginRadioTransmission { contact_id }
+            | ApplicationCommand::EndRadioTransmission { contact_id } => Some(*contact_id),
+            ApplicationCommand::ConfigureRadioAudio { .. } => None,
             ApplicationCommand::QueueAttachment { attachment_id, .. }
             | ApplicationCommand::RetryAttachment { attachment_id }
             | ApplicationCommand::CancelAttachment { attachment_id }
@@ -633,6 +704,26 @@ impl ClientApplicationRuntime {
                     "conversation_history_clear_queued"
                 }
             }
+            ApplicationCommand::ArchiveConversation { conversation_id, at_ms } => {
+                let value = self
+                    .application
+                    .dispatch(EngineCommand::ArchiveConversation {
+                        conversation_id: ConversationId::from_opaque(conversation_id),
+                        at: timestamp(at_ms)?,
+                    })
+                    .map_err(string_error)?;
+                result_kind(&value)
+            }
+            ApplicationCommand::RestoreConversation { conversation_id, at_ms } => {
+                let value = self
+                    .application
+                    .dispatch(EngineCommand::RestoreConversation {
+                        conversation_id: ConversationId::from_opaque(conversation_id),
+                        at: timestamp(at_ms)?,
+                    })
+                    .map_err(string_error)?;
+                result_kind(&value)
+            }
             ApplicationCommand::QueueMessage {
                 message_id,
                 conversation_id,
@@ -669,6 +760,87 @@ impl ClientApplicationRuntime {
                     .map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
                     runtime.wake_delivery();
+                }
+                result_kind(&value)
+            }
+            ApplicationCommand::CancelMessage { message_id, at_ms } => {
+                let value = self
+                    .application
+                    .dispatch(EngineCommand::CancelMessage {
+                        message_id: MessageId::from_opaque(message_id),
+                        at: timestamp(at_ms)?,
+                    })
+                    .map_err(string_error)?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.wake_delivery();
+                }
+                result_kind(&value)
+            }
+            ApplicationCommand::EditMessage { message_id, body, at_ms } => {
+                let value = self
+                    .application
+                    .dispatch(EngineCommand::EditMessage {
+                        message_id: MessageId::from_opaque(message_id),
+                        body: MessageBody::new(body).map_err(string_error)?,
+                        at: timestamp(at_ms)?,
+                    })
+                    .map_err(string_error)?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.wake_delivery();
+                }
+                result_kind(&value)
+            }
+            ApplicationCommand::SetMessageReaction {
+                message_id,
+                conversation_id,
+                actor_id,
+                emoji,
+                active,
+                at_ms,
+            } => {
+                let reaction_emoji = emoji.clone();
+                let reaction = MessageReaction::new(
+                    MessageId::from_opaque(message_id),
+                    ConversationId::from_opaque(conversation_id),
+                    actor_id,
+                    emoji,
+                    active,
+                    timestamp(at_ms)?,
+                )
+                .map_err(string_error)?;
+                let value = self
+                    .application
+                    .dispatch(EngineCommand::SetMessageReaction { reaction })
+                    .map_err(string_error)?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    if let Some(conversation) = self
+                        .application
+                        .overview()
+                        .map_err(string_error)?
+                        .conversations
+                        .into_iter()
+                        .find(|conversation| conversation.id().to_opaque() == conversation_id)
+                    {
+                        runtime
+                            .queue_reaction(
+                                conversation.contact_id(),
+                                ReactionPayload {
+                                reaction_id: MessageReaction::deterministic_id(
+                                    MessageId::from_opaque(message_id),
+                                    actor_id,
+                                    &reaction_emoji,
+                                ),
+                                    message_id,
+                                    conversation_id,
+                                    actor_id,
+                                    emoji: reaction_emoji,
+                                    active,
+                                    at: timestamp(at_ms)?,
+                                },
+                                timestamp(at_ms)?,
+                            )
+                            .map_err(string_error)?;
+                    }
                 }
                 result_kind(&value)
             }
@@ -734,6 +906,35 @@ impl ClientApplicationRuntime {
                     .map_err(string_error)?;
                 "attachment_preview_exported"
             }
+            ApplicationCommand::SetRadioEnabled { contact_id, enabled, at_ms } => {
+                self.radio()?
+                    .set_enabled(ContactId::from_opaque(contact_id), enabled, timestamp(at_ms)?)
+                    .map_err(string_error)?;
+                if enabled { "radio_enabled" } else { "radio_disabled" }
+            }
+            ApplicationCommand::ConfigureRadioAudio { input_device_id, output_device_id } => {
+                self.radio()?
+                    .configure_audio_devices(
+                        input_device_id.as_deref(),
+                        output_device_id.as_deref(),
+                    )
+                    .map_err(string_error)?;
+                "radio_audio_configured"
+            }
+            ApplicationCommand::BeginRadioTransmission { contact_id } => {
+                let request_id = self
+                    .radio()?
+                    .begin_transmission(ContactId::from_opaque(contact_id))
+                    .map_err(string_error)?;
+                resource_id = Some(request_id.to_opaque());
+                "radio_transmission_requested"
+            }
+            ApplicationCommand::EndRadioTransmission { contact_id } => {
+                self.radio()?
+                    .end_transmission(ContactId::from_opaque(contact_id))
+                    .map_err(string_error)?;
+                "radio_transmission_ended"
+            }
             ApplicationCommand::RefreshSnapshot => {
                 let _ = self.application.snapshot().map_err(string_error)?;
                 "snapshot"
@@ -744,6 +945,10 @@ impl ClientApplicationRuntime {
 
     fn runtime(&self) -> Result<&RuntimeHandle, String> {
         self.runtime.as_ref().ok_or_else(|| "secure network runtime is not ready".into())
+    }
+
+    fn radio(&self) -> Result<&SharedRadioCoordinator, String> {
+        self.radio.as_ref().ok_or_else(|| "radio runtime is not ready".into())
     }
 
     fn enqueue_pending(
@@ -1095,9 +1300,11 @@ fn result_kind(result: &EngineResult) -> &'static str {
         EngineResult::PairingCompleted { .. } => "pairing_completed",
         EngineResult::PairingRemoved => "pairing_removed",
         EngineResult::ConversationStarted { .. } => "conversation_started",
+        EngineResult::ConversationUpdated { .. } => "conversation_updated",
         EngineResult::ContactRemoved { .. } => "contact_removed",
         EngineResult::MessageQueued { .. } => "message_queued",
         EngineResult::MessageUpdated { .. } => "message_updated",
+        EngineResult::ReactionUpdated { .. } => "reaction_updated",
         EngineResult::ReceiptApplied { .. } => "receipt_applied",
     }
 }

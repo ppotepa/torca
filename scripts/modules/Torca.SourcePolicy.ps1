@@ -200,7 +200,10 @@ if (Test-Path -LiteralPath $flutterLib) {
         # Generated ABI projections are intentionally large and are governed
         # by the contract generator drift check below, not the hand-written
         # feature-file maintainability threshold.
-        if ($lineCount -gt 1200 -and $file.FullName -notmatch '[\\/]generated[\\/]') {
+        $isGeneratedFlutterSource =
+            $file.FullName -match '[\\/]generated[\\/]' -or
+            $file.FullName -match '[\\/]l10n[\\/]app_localizations(?:_[a-z_]+)?\.dart$'
+        if ($lineCount -gt 1200 -and -not $isGeneratedFlutterSource) {
             throw "Flutter source file exceeds the 1200-line maintainability gate: $($file.FullName) ($lineCount lines)"
         }
         if ($text.Contains('Platform.is')) {

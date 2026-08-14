@@ -22,7 +22,8 @@ use torca_identity::{
     UpdateProfile,
 };
 use torca_messaging::{
-    InMemoryMessageRepository, Message, MessageBody, MessageId, MessageRepository, ReplyReference,
+    InMemoryMessageRepository, Message, MessageBody, MessageId, MessageReaction,
+    MessageRepository, ReplyReference,
 };
 use torca_pairing::{
     InMemoryPairingRepository, PairingCode, PairingRepository, PairingSession, PairingSessionId,
@@ -88,6 +89,14 @@ pub enum EngineCommand {
         conversation_id: ConversationId,
         at: Timestamp,
     },
+    ArchiveConversation {
+        conversation_id: ConversationId,
+        at: Timestamp,
+    },
+    RestoreConversation {
+        conversation_id: ConversationId,
+        at: Timestamp,
+    },
     RemoveContact {
         contact_id: ContactId,
     },
@@ -106,6 +115,12 @@ pub enum EngineCommand {
         message_id: MessageId,
         at: Timestamp,
     },
+    EditMessage {
+        message_id: MessageId,
+        body: MessageBody,
+        at: Timestamp,
+    },
+    SetMessageReaction { reaction: MessageReaction },
     BeginMessageSend {
         message_id: MessageId,
         at: Timestamp,
@@ -138,10 +153,12 @@ pub enum EngineResult {
     PairingCancelled,
     PairingCompleted { contact_id: ContactId, conversation_id: ConversationId },
     ConversationStarted { conversation_id: ConversationId },
+    ConversationUpdated { conversation_id: ConversationId },
     ContactRemoved { contact_id: ContactId },
     PairingRemoved,
     MessageQueued { message_id: MessageId },
     MessageUpdated { message_id: MessageId },
+    ReactionUpdated { message_id: MessageId },
     ReceiptApplied { message_id: MessageId, changed: bool },
 }
 
@@ -153,6 +170,7 @@ pub struct ClientSnapshot {
     pub contacts: Vec<Contact>,
     pub conversations: Vec<DirectConversation>,
     pub messages: Vec<Message>,
+    pub reactions: Vec<MessageReaction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -225,6 +243,9 @@ impl ConversationRepository for InMemoryRelationshipRepository {
     }
     fn list(&self) -> Result<Vec<DirectConversation>, ConversationError> {
         self.conversations.list()
+    }
+    fn update(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
+        self.conversations.update(conversation)
     }
 }
 impl PeerCredentialRepository for InMemoryRelationshipRepository {
@@ -514,6 +535,24 @@ where
                 self.relationships.remove_relationship(contact_id)?;
                 Ok(EngineResult::ContactRemoved { contact_id })
             }
+            EngineCommand::ArchiveConversation { conversation_id, at } => {
+                let mut conversation = ConversationRepository::get(&self.relationships, conversation_id)
+                    .map_err(map_error)?
+                    .ok_or_else(|| EngineError("conversation not found".into()))?;
+                conversation.archive(at).map_err(map_error)?;
+                ConversationRepository::update(&mut self.relationships, conversation)
+                    .map_err(map_error)?;
+                Ok(EngineResult::ConversationUpdated { conversation_id })
+            }
+            EngineCommand::RestoreConversation { conversation_id, at } => {
+                let mut conversation = ConversationRepository::get(&self.relationships, conversation_id)
+                    .map_err(map_error)?
+                    .ok_or_else(|| EngineError("conversation not found".into()))?;
+                conversation.restore(at).map_err(map_error)?;
+                ConversationRepository::update(&mut self.relationships, conversation)
+                    .map_err(map_error)?;
+                Ok(EngineResult::ConversationUpdated { conversation_id })
+            }
             EngineCommand::QueueMessage { message_id, conversation_id, body, reply_to, at } => {
                 if ConversationRepository::get(&self.relationships, conversation_id)
                     .map_err(map_error)?
@@ -535,6 +574,24 @@ where
                 message.cancel(at).map_err(map_error)?;
                 self.messages.update(message).map_err(map_error)?;
                 Ok(EngineResult::MessageUpdated { message_id })
+            }
+            EngineCommand::EditMessage { message_id, body, at } => {
+                let mut message = self
+                    .messages
+                    .get(message_id)
+                    .map_err(map_error)?
+                    .ok_or_else(|| EngineError("message not found".into()))?;
+                message.edit(body, at).map_err(map_error)?;
+                self.messages.update(message).map_err(map_error)?;
+                Ok(EngineResult::MessageUpdated { message_id })
+            }
+            EngineCommand::SetMessageReaction { reaction } => {
+                let message_id = reaction.message_id();
+                if self.messages.get(message_id).map_err(map_error)?.is_none() {
+                    return Err(EngineError("message not found".into()));
+                }
+                self.messages.upsert_reaction(reaction).map_err(map_error)?;
+                Ok(EngineResult::ReactionUpdated { message_id })
             }
             EngineCommand::BeginMessageSend { message_id, at } => {
                 let mut message = self.load_message(message_id)?;
@@ -573,16 +630,38 @@ where
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         let mut snapshot = self.overview_snapshot()?;
         snapshot.messages = self.messages.list().map_err(map_error)?;
+        let mut conversation_ids = Vec::new();
+        for message in &snapshot.messages {
+            let id = message.conversation_id();
+            if !conversation_ids.contains(&id) {
+                conversation_ids.push(id);
+            }
+        }
+        for conversation_id in conversation_ids {
+            snapshot
+                .reactions
+                .extend(self.messages.reactions_for_conversation(conversation_id).map_err(map_error)?);
+        }
         Ok(snapshot)
     }
 
     pub fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
+        let conversations = ConversationRepository::list(&self.relationships).map_err(map_error)?;
+        let mut reactions = Vec::new();
+        for conversation in &conversations {
+            reactions.extend(
+                self.messages
+                    .reactions_for_conversation(conversation.id())
+                    .map_err(map_error)?,
+            );
+        }
         Ok(ClientSnapshot {
             identity: self.identity.load().map_err(map_error)?,
             pairings: self.pairings.list().map_err(map_error)?,
             contacts: ContactRepository::list(&self.relationships).map_err(map_error)?,
-            conversations: ConversationRepository::list(&self.relationships).map_err(map_error)?,
+            conversations,
             messages: Vec::new(),
+            reactions,
         })
     }
 

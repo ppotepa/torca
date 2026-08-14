@@ -13,8 +13,9 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use torca_attachment_protocol::{
-    AttachmentCancelFrame, AttachmentChunkFrame, AttachmentCodec, AttachmentCompleteFrame, AttachmentFrame,
-    AttachmentMetadataFrame, AttachmentPreviewFrame, AttachmentResumeFrame, MAX_ATTACHMENT_CHUNK,
+    AttachmentCancelFrame, AttachmentChunkFrame, AttachmentCodec, AttachmentCompleteFrame,
+    AttachmentFrame, AttachmentMetadataFrame, AttachmentPreviewFrame, AttachmentResumeFrame,
+    MAX_ATTACHMENT_CHUNK,
 };
 use torca_attachment_sqlite::SqlCipherAttachmentStore;
 use torca_attachments::{
@@ -158,7 +159,7 @@ where
     /// durable before network work begins.
     pub fn prepare_outgoing(
         &mut self,
-        mut attachment: Attachment,
+        attachment: Attachment,
         conversation_id: ConversationId,
         plaintext: &[u8],
         preview: Option<AttachmentPreviewFrame>,
@@ -245,24 +246,22 @@ where
             let _ = self.cache.remove(attachment.id());
             return Err(map_attachment(error));
         }
-        if let Err(error) = self
-            .metadata
-            .update_transfer_progress(attachment.id(), 0, Some(digest), at)
+        if let Err(error) =
+            self.metadata.update_transfer_progress(attachment.id(), 0, Some(digest), at)
         {
             self.remove_outgoing_staging(attachment.id());
             self.remove_final_chunks(attachment.id());
             let _ = self.cache.remove(attachment.id());
             return Err(map_attachment(error));
         }
-        if let Some(preview) = preview {
-            if let Err(error) =
+        if let Some(preview) = preview
+            && let Err(error) =
                 self.store_preview(credential.secret_handle(), attachment.id(), &preview)
-            {
-                self.remove_outgoing_staging(attachment.id());
-                self.remove_final_chunks(attachment.id());
-                let _ = self.cache.remove(attachment.id());
-                return Err(error);
-            }
+        {
+            self.remove_outgoing_staging(attachment.id());
+            self.remove_final_chunks(attachment.id());
+            let _ = self.cache.remove(attachment.id());
+            return Err(error);
         }
         Ok(digest)
     }
@@ -462,9 +461,7 @@ where
                 &contact,
                 &credential,
                 stable_frame_id(attachment.id(), 5, 0),
-                AttachmentFrame::Cancel(AttachmentCancelFrame {
-                    attachment_id: attachment.id(),
-                }),
+                AttachmentFrame::Cancel(AttachmentCancelFrame { attachment_id: attachment.id() }),
                 OutgoingFramePhase::Cancel,
                 now,
             )?;
@@ -515,14 +512,18 @@ where
                 state.offset,
                 attachment.size(),
             )?;
-            let chunk_len = u64::try_from(bytes.len())
-                .map_err(|_| AttachmentTransferError::OffsetMismatch)?;
+            let chunk_len =
+                u64::try_from(bytes.len()).map_err(|_| AttachmentTransferError::OffsetMismatch)?;
             let next = state
                 .offset
                 .checked_add(chunk_len)
                 .ok_or(AttachmentTransferError::OffsetMismatch)?;
             if bytes.is_empty() || next > attachment.size() {
-                return self.fail_outgoing(attachment, now, AttachmentTransferError::OffsetMismatch);
+                return self.fail_outgoing(
+                    attachment,
+                    now,
+                    AttachmentTransferError::OffsetMismatch,
+                );
             }
             let frame = AttachmentFrame::Chunk(AttachmentChunkFrame {
                 attachment_id: attachment.id(),
@@ -580,13 +581,14 @@ where
         };
         if attachment.status() == AttachmentStatus::Transferring {
             attachment
-                .mark_failed(now, ErrorCode::new(transfer_error_code(&error)))
+                .mark_failed(now, ErrorCode::new(transfer_error_code(error)))
                 .map_err(map_attachment)?;
             self.metadata.update(attachment).map_err(map_attachment)?;
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_frame(
         &mut self,
         attachment_id: AttachmentId,
@@ -851,7 +853,7 @@ where
     }
 
     fn store_final_chunk(
-        &self,
+        &mut self,
         handle: OpaqueId,
         attachment_id: AttachmentId,
         offset: u64,
@@ -990,16 +992,18 @@ where
                 if read == 0 {
                     break;
                 }
-                let read_u64 = u64::try_from(read).map_err(|_| AttachmentTransferError::OffsetMismatch)?;
-                let end = offset
-                    .checked_add(read_u64)
-                    .ok_or(AttachmentTransferError::OffsetMismatch)?;
+                let read_u64 =
+                    u64::try_from(read).map_err(|_| AttachmentTransferError::OffsetMismatch)?;
+                let end =
+                    offset.checked_add(read_u64).ok_or(AttachmentTransferError::OffsetMismatch)?;
                 if end > expected_size {
                     self.remove_outgoing_staging(attachment_id);
                     return Err(AttachmentTransferError::OffsetMismatch);
                 }
                 digest.update(&buffer[..read]);
-                if let Err(error) = self.store_outgoing_chunk(handle, attachment_id, offset, &buffer[..read]) {
+                if let Err(error) =
+                    self.store_outgoing_chunk(handle, attachment_id, offset, &buffer[..read])
+                {
                     self.remove_outgoing_staging(attachment_id);
                     return Err(error);
                 }
@@ -1029,7 +1033,12 @@ where
         let nonce = self.secrets.peer_nonce().map_err(|_| AttachmentTransferError::Crypto)?;
         let ciphertext = self
             .secrets
-            .seal_peer_payload(handle, nonce, &outgoing_staging_aad(attachment_id, offset), plaintext)
+            .seal_peer_payload(
+                handle,
+                nonce,
+                &outgoing_staging_aad(attachment_id, offset),
+                plaintext,
+            )
             .map_err(|_| AttachmentTransferError::Crypto)?;
         let directory = self.outgoing_staging_directory(attachment_id);
         let target = directory.join(format!("{offset:020}.chunk"));
@@ -1049,22 +1058,26 @@ where
         offset: u64,
         size: u64,
     ) -> Result<Vec<u8>, AttachmentTransferError> {
-        let path = self.outgoing_staging_directory(attachment_id).join(format!("{offset:020}.chunk"));
+        let path =
+            self.outgoing_staging_directory(attachment_id).join(format!("{offset:020}.chunk"));
         match fs::read(path) {
             Ok(stored) => {
                 let (nonce, ciphertext) = unpack_ciphertext(&stored)?;
                 self.secrets
-                    .open_peer_payload(handle, nonce, &outgoing_staging_aad(attachment_id, offset), &ciphertext)
+                    .open_peer_payload(
+                        handle,
+                        nonce,
+                        &outgoing_staging_aad(attachment_id, offset),
+                        &ciphertext,
+                    )
                     .map_err(|_| AttachmentTransferError::Crypto)
             }
             // Existing jobs created by a previous application version do not
             // have a chunk directory. Keep them transferable through the
             // bounded compatibility path; all new jobs use final chunks.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let stored = self
-                    .cache
-                    .read(attachment_id)
-                    .map_err(|_| AttachmentTransferError::Storage)?;
+                let stored =
+                    self.cache.read(attachment_id).map_err(|_| AttachmentTransferError::Storage)?;
                 if let Some(final_size) = parse_final_manifest(&stored) {
                     if final_size != size {
                         return Err(AttachmentTransferError::DigestMismatch);
@@ -1266,10 +1279,6 @@ fn outgoing_staging_aad(id: AttachmentId, offset: u64) -> Vec<u8> {
     aad.extend_from_slice(id.to_opaque().as_bytes());
     aad.extend_from_slice(&offset.to_be_bytes());
     aad
-}
-
-fn sha256(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
 }
 
 fn peer_aad(envelope_id: OpaqueId, local_identity: OpaqueId, remote_identity: OpaqueId) -> Vec<u8> {

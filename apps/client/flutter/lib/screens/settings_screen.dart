@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../gateway/engine_gateway.dart';
+import '../generated/torca_contract.dart';
 import '../localization/app_locale_mode.dart';
 import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
@@ -11,9 +13,14 @@ import '../theme/app_theme_mode.dart';
 import '../widgets/runtime_network_status.dart';
 
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({required this.preferences, super.key});
+  const SettingsScreen({
+    required this.preferences,
+    required this.gateway,
+    super.key,
+  });
 
   final LocalPreferences preferences;
+  final EngineGateway gateway;
 
   @override
   Widget build(BuildContext context) {
@@ -188,6 +195,16 @@ class SettingsScreen extends StatelessWidget {
                 if (isTorcaWindows) ...<Widget>[
                   const SizedBox(height: 24),
                   Text(
+                    strings.audio,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  _AudioSettingsCard(
+                    gateway: gateway,
+                    preferences: preferences,
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
                     strings.desktop,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
@@ -222,6 +239,91 @@ class SettingsScreen extends StatelessWidget {
         AppLocaleMode.english => strings.languageEnglish,
         AppLocaleMode.polish => strings.languagePolish,
       };
+}
+
+const _systemDefaultDeviceId = '__system_default__';
+
+class _AudioSettingsCard extends StatelessWidget {
+  const _AudioSettingsCard({required this.gateway, required this.preferences});
+
+  final EngineGateway gateway;
+  final LocalPreferences preferences;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
+    valueListenable: gateway.snapshots,
+    builder: (context, snapshot, _) {
+      final audio = snapshot.radio.audio;
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: <Widget>[
+              _deviceDropdown(
+                context,
+                label: context.strings.microphone,
+                devices: audio.inputDevices,
+                selectedId: preferences.audioInputDeviceId,
+                onChanged: preferences.setAudioInputDevice,
+              ),
+              const SizedBox(height: 12),
+              _deviceDropdown(
+                context,
+                label: context.strings.audioOutput,
+                devices: audio.outputDevices,
+                selectedId: preferences.audioOutputDeviceId,
+                onChanged: preferences.setAudioOutputDevice,
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  Widget _deviceDropdown(
+    BuildContext context, {
+    required String label,
+    required List<AudioDeviceDto> devices,
+    required String? selectedId,
+    required Future<void> Function(String? value) onChanged,
+  }) {
+    final availableSelection = devices.any((device) => device.id == selectedId)
+        ? selectedId
+        : _systemDefaultDeviceId;
+    return DropdownButtonFormField<String>(
+      key: ValueKey('$label:$availableSelection:${devices.length}'),
+      initialValue: availableSelection,
+      decoration: InputDecoration(labelText: label),
+      items: <DropdownMenuItem<String>>[
+        DropdownMenuItem<String>(
+          value: _systemDefaultDeviceId,
+          child: Text(context.strings.systemDefaultAudioDevice),
+        ),
+        ...devices.map(
+          (device) => DropdownMenuItem<String>(
+            value: device.id,
+            child: Text(
+              device.isDefault
+                  ? context.strings.defaultAudioDevice(device.name)
+                  : device.name,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+      ],
+      onChanged: (value) async {
+        try {
+          await onChanged(value == _systemDefaultDeviceId ? null : value);
+        } on Object {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.strings.audioDeviceUnavailable)),
+          );
+        }
+      },
+    );
+  }
 }
 
 class _AppearancePreview extends StatelessWidget {

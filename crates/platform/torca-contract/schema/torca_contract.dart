@@ -49,12 +49,13 @@ class BridgeResultDto {
 }
 
 class IdentityDto {
-  const IdentityDto({this.displayName, this.fingerprint});
+  const IdentityDto({this.id, this.displayName, this.fingerprint});
   factory IdentityDto.fromJson(Map<String, dynamic> value) => IdentityDto(
+    id: value['id'] as String?,
     displayName: value['displayName'] as String?,
     fingerprint: value['fingerprint'] as String?,
   );
-  final String? displayName;
+  final String? id, displayName;
   final String? fingerprint;
 }
 
@@ -156,6 +157,25 @@ enum ContactStatus { active, blocked, removed, unknown }
 
 enum PresenceState { online, offline, unknown }
 
+enum RadioRemoteState { unknown, disabled, enabled }
+
+enum RadioState {
+  off,
+  available,
+  waitingForPeer,
+  connecting,
+  ready,
+  requestingFloor,
+  startingCapture,
+  transmitting,
+  receiving,
+  reconnecting,
+  unavailable,
+  unknown,
+}
+
+enum RadioFloor { none, local, remote, unknown }
+
 enum VerificationStatus { verified, unverified, identityChanged, unknown }
 
 enum ConversationStatus { active, archived, unknown }
@@ -205,6 +225,7 @@ extension PairingRoleWire on PairingRole {
     PairingRole.unknown => 'unknown',
   };
 }
+
 PairingRole pairingRoleFromWire(String value) => switch (value.toLowerCase()) {
   'creator' => PairingRole.creator,
   'joiner' => PairingRole.joiner,
@@ -224,19 +245,19 @@ extension PairingStateWire on PairingState {
     PairingState.unknown => 'unknown',
   };
 }
-PairingState pairingStateFromWire(String value) => switch (
-  value.toLowerCase().replaceAll('-', '_'),
-) {
-  'open' => PairingState.open,
-  'peer_joined' => PairingState.peerJoined,
-  'awaiting_approval' => PairingState.awaitingApproval,
-  'approved' => PairingState.approved,
-  'completed' => PairingState.completed,
-  'rejected' => PairingState.rejected,
-  'cancelled' => PairingState.cancelled,
-  'expired' => PairingState.expired,
-  _ => PairingState.unknown,
-};
+
+PairingState pairingStateFromWire(String value) =>
+    switch (value.toLowerCase().replaceAll('-', '_')) {
+      'open' => PairingState.open,
+      'peer_joined' => PairingState.peerJoined,
+      'awaiting_approval' => PairingState.awaitingApproval,
+      'approved' => PairingState.approved,
+      'completed' => PairingState.completed,
+      'rejected' => PairingState.rejected,
+      'cancelled' => PairingState.cancelled,
+      'expired' => PairingState.expired,
+      _ => PairingState.unknown,
+    };
 
 extension ContactStatusWire on ContactStatus {
   String get wireValue => switch (this) {
@@ -246,12 +267,14 @@ extension ContactStatusWire on ContactStatus {
     ContactStatus.unknown => 'unknown',
   };
 }
-ContactStatus contactStatusFromWire(String value) => switch (value.toLowerCase()) {
-  'active' => ContactStatus.active,
-  'blocked' => ContactStatus.blocked,
-  'removed' => ContactStatus.removed,
-  _ => ContactStatus.unknown,
-};
+
+ContactStatus contactStatusFromWire(String value) =>
+    switch (value.toLowerCase()) {
+      'active' => ContactStatus.active,
+      'blocked' => ContactStatus.blocked,
+      'removed' => ContactStatus.removed,
+      _ => ContactStatus.unknown,
+    };
 
 extension MessageStatusWire on MessageStatus {
   String get wireValue => switch (this) {
@@ -265,16 +288,18 @@ extension MessageStatusWire on MessageStatus {
     MessageStatus.unknown => 'unknown',
   };
 }
-MessageStatus messageStatusFromWire(String value) => switch (value.toLowerCase()) {
-  'queued' => MessageStatus.queued,
-  'sending' => MessageStatus.sending,
-  'sent' => MessageStatus.sent,
-  'delivered' => MessageStatus.delivered,
-  'read' => MessageStatus.read,
-  'failed' => MessageStatus.failed,
-  'cancelled' => MessageStatus.cancelled,
-  _ => MessageStatus.unknown,
-};
+
+MessageStatus messageStatusFromWire(String value) =>
+    switch (value.toLowerCase()) {
+      'queued' => MessageStatus.queued,
+      'sending' => MessageStatus.sending,
+      'sent' => MessageStatus.sent,
+      'delivered' => MessageStatus.delivered,
+      'read' => MessageStatus.read,
+      'failed' => MessageStatus.failed,
+      'cancelled' => MessageStatus.cancelled,
+      _ => MessageStatus.unknown,
+    };
 
 extension AttachmentStatusWire on AttachmentStatus {
   String get wireValue => switch (this) {
@@ -288,16 +313,18 @@ extension AttachmentStatusWire on AttachmentStatus {
     AttachmentStatus.unknown => 'unknown',
   };
 }
-AttachmentStatus attachmentStatusFromWire(String value) => switch (value.toLowerCase()) {
-  'prepared' => AttachmentStatus.prepared,
-  'encrypting' => AttachmentStatus.encrypting,
-  'queued' => AttachmentStatus.queued,
-  'transferring' => AttachmentStatus.transferring,
-  'available' => AttachmentStatus.available,
-  'failed' => AttachmentStatus.failed,
-  'cancelled' => AttachmentStatus.cancelled,
-  _ => AttachmentStatus.unknown,
-};
+
+AttachmentStatus attachmentStatusFromWire(String value) =>
+    switch (value.toLowerCase()) {
+      'prepared' => AttachmentStatus.prepared,
+      'encrypting' => AttachmentStatus.encrypting,
+      'queued' => AttachmentStatus.queued,
+      'transferring' => AttachmentStatus.transferring,
+      'available' => AttachmentStatus.available,
+      'failed' => AttachmentStatus.failed,
+      'cancelled' => AttachmentStatus.cancelled,
+      _ => AttachmentStatus.unknown,
+    };
 
 class PairingDto {
   const PairingDto({
@@ -667,6 +694,28 @@ class AttachmentDto {
   };
 }
 
+class ReactionDto {
+  const ReactionDto({
+    required this.messageId,
+    required this.conversationId,
+    required this.actorId,
+    required this.emoji,
+    required this.active,
+    this.updatedAtMs = 0,
+  });
+  factory ReactionDto.fromJson(Map<String, dynamic> value) => ReactionDto(
+    messageId: _requiredString(value, 'messageId'),
+    conversationId: _requiredString(value, 'conversationId'),
+    actorId: _requiredString(value, 'actorId'),
+    emoji: _requiredString(value, 'emoji'),
+    active: value['active'] as bool? ?? true,
+    updatedAtMs: _integer(value['updatedAtMs']),
+  );
+  final String messageId, conversationId, actorId, emoji;
+  final bool active;
+  final int updatedAtMs;
+}
+
 class PendingOperationDto {
   const PendingOperationDto({
     required this.id,
@@ -709,6 +758,173 @@ class PendingOperationDto {
   };
 }
 
+class RadioContactDto {
+  const RadioContactDto({
+    required this.contactId,
+    required this.localEnabled,
+    required this.remoteState,
+    required this.state,
+    required this.changedAtMs,
+  });
+
+  factory RadioContactDto.fromJson(Map<String, dynamic> value) =>
+      RadioContactDto(
+        contactId: _requiredString(value, 'contactId'),
+        localEnabled: value['localEnabled'] as bool? ?? false,
+        remoteState: value['remoteState'] as String? ?? 'unknown',
+        state: value['state'] as String? ?? 'off',
+        changedAtMs: _integer(value['changedAtMs']),
+      );
+
+  final String contactId, remoteState, state;
+  final bool localEnabled;
+  final int changedAtMs;
+
+  RadioRemoteState get typedRemoteState => switch (remoteState) {
+    'disabled' => RadioRemoteState.disabled,
+    'enabled' => RadioRemoteState.enabled,
+    _ => RadioRemoteState.unknown,
+  };
+
+  RadioState get typedState => _radioState(state);
+}
+
+class RadioSessionDto {
+  const RadioSessionDto({
+    required this.contactId,
+    required this.sessionId,
+    required this.state,
+    required this.floor,
+    required this.burstElapsedMs,
+    required this.maxBurstMs,
+  });
+
+  factory RadioSessionDto.fromJson(Map<String, dynamic> value) =>
+      RadioSessionDto(
+        contactId: _requiredString(value, 'contactId'),
+        sessionId: _requiredString(value, 'sessionId'),
+        state: value['state'] as String? ?? 'off',
+        floor: value['floor'] as String? ?? 'none',
+        burstElapsedMs: _integer(value['burstElapsedMs']),
+        maxBurstMs: _integer(value['maxBurstMs'], 10000),
+      );
+
+  final String contactId, sessionId, state, floor;
+  final int burstElapsedMs, maxBurstMs;
+  RadioState get typedState => _radioState(state);
+  RadioFloor get typedFloor => switch (floor) {
+    'none' => RadioFloor.none,
+    'local' => RadioFloor.local,
+    'remote' => RadioFloor.remote,
+    _ => RadioFloor.unknown,
+  };
+}
+
+class AudioDeviceDto {
+  const AudioDeviceDto({
+    required this.id,
+    required this.name,
+    required this.isDefault,
+  });
+
+  factory AudioDeviceDto.fromJson(Map<String, dynamic> value) => AudioDeviceDto(
+    id: _requiredString(value, 'id'),
+    name: _requiredString(value, 'name'),
+    isDefault: value['isDefault'] as bool? ?? false,
+  );
+
+  final String id, name;
+  final bool isDefault;
+}
+
+class RadioAudioDto {
+  const RadioAudioDto({
+    this.inputDevices = const [],
+    this.outputDevices = const [],
+    this.selectedInputId,
+    this.selectedOutputId,
+  });
+
+  factory RadioAudioDto.fromJson(Map<String, dynamic> value) => RadioAudioDto(
+    inputDevices: _objects(
+      value['inputDevices'],
+    ).map(AudioDeviceDto.fromJson).toList(growable: false),
+    outputDevices: _objects(
+      value['outputDevices'],
+    ).map(AudioDeviceDto.fromJson).toList(growable: false),
+    selectedInputId: value['selectedInputId'] as String?,
+    selectedOutputId: value['selectedOutputId'] as String?,
+  );
+
+  final List<AudioDeviceDto> inputDevices, outputDevices;
+  final String? selectedInputId, selectedOutputId;
+}
+
+class RadioDto {
+  const RadioDto({
+    this.activeContactId,
+    this.contacts = const [],
+    this.session,
+    this.timeline = const [],
+    this.audio = const RadioAudioDto(),
+  });
+
+  factory RadioDto.fromJson(Map<String, dynamic> value) {
+    final session = value['session'];
+    final audio = value['audio'];
+    return RadioDto(
+      activeContactId: value['activeContactId'] as String?,
+      contacts: _objects(
+        value['contacts'],
+      ).map(RadioContactDto.fromJson).toList(growable: false),
+      session: session is Map<String, dynamic>
+          ? RadioSessionDto.fromJson(session)
+          : null,
+      timeline: _objects(
+        value['timeline'],
+      ).map(RadioTimelineEventDto.fromJson).toList(growable: false),
+      audio: audio is Map<String, dynamic>
+          ? RadioAudioDto.fromJson(audio)
+          : const RadioAudioDto(),
+    );
+  }
+
+  final String? activeContactId;
+  final List<RadioContactDto> contacts;
+  final RadioSessionDto? session;
+  final List<RadioTimelineEventDto> timeline;
+  final RadioAudioDto audio;
+
+  RadioContactDto? forContact(String contactId) {
+    for (final contact in contacts) {
+      if (contact.contactId == contactId) return contact;
+    }
+    return null;
+  }
+}
+
+class RadioTimelineEventDto {
+  const RadioTimelineEventDto({
+    required this.eventId,
+    required this.contactId,
+    required this.kind,
+    required this.actor,
+    required this.occurredAtMs,
+  });
+
+  factory RadioTimelineEventDto.fromJson(Map<String, dynamic> value) =>
+      RadioTimelineEventDto(
+        eventId: _requiredString(value, 'eventId'),
+        contactId: _requiredString(value, 'contactId'),
+        kind: _requiredString(value, 'kind'),
+        actor: _requiredString(value, 'actor'),
+        occurredAtMs: _integer(value['occurredAtMs']),
+      );
+
+  final String eventId, contactId, kind, actor;
+  final int occurredAtMs;
+}
+
 class AppSnapshotDto {
   const AppSnapshotDto({
     this.runtimeId = '',
@@ -725,8 +941,10 @@ class AppSnapshotDto {
     this.contacts = const [],
     this.conversations = const [],
     this.messages = const [],
+    this.reactions = const [],
     this.attachments = const [],
     this.pendingOperations = const [],
+    this.radio = const RadioDto(),
     this.bootstrapPhase = 'failed',
     this.bootstrapSteps = const [],
   });
@@ -734,6 +952,7 @@ class AppSnapshotDto {
     final identity = value['identity'];
     final transport = value['transport'];
     final navigationBadges = value['navigationBadges'];
+    final radio = value['radio'];
     return AppSnapshotDto(
       runtimeId: value['runtimeId'] as String? ?? '',
       revision: _integer(value['revision']),
@@ -763,12 +982,18 @@ class AppSnapshotDto {
       messages: _objects(
         value['messages'],
       ).map(MessageDto.fromJson).toList(growable: false),
+      reactions: _objects(
+        value['reactions'],
+      ).map(ReactionDto.fromJson).toList(growable: false),
       attachments: _objects(
         value['attachments'],
       ).map(AttachmentDto.fromJson).toList(growable: false),
       pendingOperations: _objects(
         value['pendingOperations'],
       ).map(PendingOperationDto.fromJson).toList(growable: false),
+      radio: radio is Map<String, dynamic>
+          ? RadioDto.fromJson(radio)
+          : const RadioDto(),
       bootstrapPhase: value['bootstrapPhase'] as String? ?? 'failed',
       bootstrapSteps: _objects(
         value['bootstrapSteps'],
@@ -787,8 +1012,10 @@ class AppSnapshotDto {
   final List<ContactDto> contacts;
   final List<ConversationDto> conversations;
   final List<MessageDto> messages;
+  final List<ReactionDto> reactions;
   final List<AttachmentDto> attachments;
   final List<PendingOperationDto> pendingOperations;
+  final RadioDto radio;
   final String bootstrapPhase;
   final List<BootstrapStepDto> bootstrapSteps;
 
@@ -802,6 +1029,21 @@ class AppSnapshotDto {
     _ => BootstrapPhase.unknown,
   };
 }
+
+RadioState _radioState(String value) => switch (value) {
+  'off' => RadioState.off,
+  'available' => RadioState.available,
+  'waiting_for_peer' => RadioState.waitingForPeer,
+  'connecting' => RadioState.connecting,
+  'ready' => RadioState.ready,
+  'requesting_floor' => RadioState.requestingFloor,
+  'starting_capture' => RadioState.startingCapture,
+  'transmitting' => RadioState.transmitting,
+  'receiving' => RadioState.receiving,
+  'reconnecting' => RadioState.reconnecting,
+  'unavailable' => RadioState.unavailable,
+  _ => RadioState.unknown,
+};
 
 TransportState _transportState(String value) => switch (value) {
   'stopped' => TransportState.stopped,
@@ -915,6 +1157,16 @@ class ClearConversationHistoryCommandDto extends BridgeCommandDto {
   final String conversationIdHex;
 }
 
+class ArchiveConversationCommandDto extends BridgeCommandDto {
+  const ArchiveConversationCommandDto({required this.conversationIdHex});
+  final String conversationIdHex;
+}
+
+class RestoreConversationCommandDto extends BridgeCommandDto {
+  const RestoreConversationCommandDto({required this.conversationIdHex});
+  final String conversationIdHex;
+}
+
 class QueueMessageCommandDto extends BridgeCommandDto {
   const QueueMessageCommandDto({
     required this.conversationIdHex,
@@ -928,6 +1180,29 @@ class QueueMessageCommandDto extends BridgeCommandDto {
 class RetryMessageCommandDto extends BridgeCommandDto {
   const RetryMessageCommandDto({required this.messageIdHex});
   final String messageIdHex;
+}
+
+class CancelMessageCommandDto extends BridgeCommandDto {
+  const CancelMessageCommandDto({required this.messageIdHex});
+  final String messageIdHex;
+}
+
+class EditMessageCommandDto extends BridgeCommandDto {
+  const EditMessageCommandDto({required this.messageIdHex, required this.body});
+  final String messageIdHex;
+  final String body;
+}
+
+class SetMessageReactionCommandDto extends BridgeCommandDto {
+  const SetMessageReactionCommandDto({
+    required this.messageIdHex,
+    required this.conversationIdHex,
+    required this.actorIdHex,
+    required this.emoji,
+    this.active = true,
+  });
+  final String messageIdHex, conversationIdHex, actorIdHex, emoji;
+  final bool active;
 }
 
 class MarkConversationReadCommandDto extends BridgeCommandDto {
@@ -973,6 +1248,33 @@ class ExportAttachmentPreviewCommandDto extends BridgeCommandDto {
     required this.destinationPath,
   });
   final String attachmentIdHex, destinationPath;
+}
+
+class SetRadioEnabledCommandDto extends BridgeCommandDto {
+  const SetRadioEnabledCommandDto({
+    required this.contactIdHex,
+    required this.enabled,
+  });
+  final String contactIdHex;
+  final bool enabled;
+}
+
+class ConfigureRadioAudioCommandDto extends BridgeCommandDto {
+  const ConfigureRadioAudioCommandDto({
+    this.inputDeviceId,
+    this.outputDeviceId,
+  });
+  final String? inputDeviceId, outputDeviceId;
+}
+
+class BeginRadioTransmissionCommandDto extends BridgeCommandDto {
+  const BeginRadioTransmissionCommandDto({required this.contactIdHex});
+  final String contactIdHex;
+}
+
+class EndRadioTransmissionCommandDto extends BridgeCommandDto {
+  const EndRadioTransmissionCommandDto({required this.contactIdHex});
+  final String contactIdHex;
 }
 
 class SetNotificationsCommandDto extends BridgeCommandDto {
@@ -1140,6 +1442,16 @@ class RuntimeRequestDto {
         'conversationIdHex': command.conversationIdHex,
       });
     }
+    if (command is ArchiveConversationCommandDto) {
+      return _command('conversation.archive', <String, Object?>{
+        'conversationIdHex': command.conversationIdHex,
+      });
+    }
+    if (command is RestoreConversationCommandDto) {
+      return _command('conversation.restore', <String, Object?>{
+        'conversationIdHex': command.conversationIdHex,
+      });
+    }
     if (command is QueueMessageCommandDto) {
       return _command('message.send', <String, Object?>{
         'conversationIdHex': command.conversationIdHex,
@@ -1150,6 +1462,26 @@ class RuntimeRequestDto {
     if (command is RetryMessageCommandDto) {
       return _command('message.retry', <String, Object?>{
         'messageIdHex': command.messageIdHex,
+      });
+    }
+    if (command is CancelMessageCommandDto) {
+      return _command('message.cancel', <String, Object?>{
+        'messageIdHex': command.messageIdHex,
+      });
+    }
+    if (command is EditMessageCommandDto) {
+      return _command('message.edit', <String, Object?>{
+        'messageIdHex': command.messageIdHex,
+        'body': command.body,
+      });
+    }
+    if (command is SetMessageReactionCommandDto) {
+      return _command('message.reaction', <String, Object?>{
+        'messageIdHex': command.messageIdHex,
+        'conversationIdHex': command.conversationIdHex,
+        'actorIdHex': command.actorIdHex,
+        'emoji': command.emoji,
+        'active': command.active,
       });
     }
     if (command is MarkConversationReadCommandDto) {
@@ -1188,6 +1520,24 @@ class RuntimeRequestDto {
         'attachmentIdHex': command.attachmentIdHex,
         'destinationPath': command.destinationPath,
       });
+    }
+    if (command is SetRadioEnabledCommandDto) {
+      return _command('radio.set_enabled', <String, Object?>{
+        'contactIdHex': command.contactIdHex,
+        'enabled': command.enabled,
+      });
+    }
+    if (command is ConfigureRadioAudioCommandDto) {
+      return _command('radio.audio.configure', <String, Object?>{
+        'inputDeviceId': command.inputDeviceId,
+        'outputDeviceId': command.outputDeviceId,
+      });
+    }
+    if (command is BeginRadioTransmissionCommandDto) {
+      return _contact('radio.transmission.begin', command.contactIdHex);
+    }
+    if (command is EndRadioTransmissionCommandDto) {
+      return _contact('radio.transmission.end', command.contactIdHex);
     }
     if (command is SetNotificationsCommandDto) {
       return _command('notifications.set', <String, Object?>{

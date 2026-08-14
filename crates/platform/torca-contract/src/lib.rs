@@ -4,12 +4,13 @@ use serde::Serialize;
 use torca_client_application::{
     ApplicationCommand, ApplicationError, ApplicationSnapshotContext, BootstrapPhase,
     BootstrapStepId, BootstrapStepState, PeerConnectionStatus, PeerHealthQuality,
-    PendingOperationKind, ProbeStatus, ProbeTarget, TorState,
+    PendingOperationKind, ProbeStatus, ProbeTarget, RadioEventActor, RadioFloor, RadioState,
+    RadioTimelineEventKind, RemoteRadioState, TorState,
 };
 use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationStatus;
 use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
-use torca_messaging::{Message, MessageDirection, MessageStatus};
+use torca_messaging::{Message, MessageDirection, MessageReaction, MessageStatus};
 use torca_pairing::{PairingRole, PairingState};
 use torca_pairing_protocol::encode_invite_uri;
 
@@ -89,6 +90,14 @@ pub enum BridgeCommand {
     ClearConversationHistory {
         conversation_id_hex: String,
     },
+    ArchiveConversation {
+        conversation_id_hex: String,
+        at_ms: i64,
+    },
+    RestoreConversation {
+        conversation_id_hex: String,
+        at_ms: i64,
+    },
     QueueMessage {
         message_id_hex: String,
         conversation_id_hex: String,
@@ -98,6 +107,23 @@ pub enum BridgeCommand {
     },
     RetryMessage {
         message_id_hex: String,
+        at_ms: i64,
+    },
+    CancelMessage {
+        message_id_hex: String,
+        at_ms: i64,
+    },
+    EditMessage {
+        message_id_hex: String,
+        body: String,
+        at_ms: i64,
+    },
+    SetMessageReaction {
+        message_id_hex: String,
+        conversation_id_hex: String,
+        actor_id_hex: String,
+        emoji: String,
+        active: bool,
         at_ms: i64,
     },
     MarkConversationRead {
@@ -128,6 +154,21 @@ pub enum BridgeCommand {
         attachment_id_hex: String,
         destination_path: String,
     },
+    SetRadioEnabled {
+        contact_id_hex: String,
+        enabled: bool,
+        at_ms: i64,
+    },
+    ConfigureRadioAudio {
+        input_device_id: Option<String>,
+        output_device_id: Option<String>,
+    },
+    BeginRadioTransmission {
+        contact_id_hex: String,
+    },
+    EndRadioTransmission {
+        contact_id_hex: String,
+    },
     RefreshSnapshot,
 }
 
@@ -150,6 +191,8 @@ pub struct BridgeSnapshot {
     #[serde(skip)]
     pub identity_name: Option<String>,
     #[serde(skip)]
+    pub identity_id: Option<String>,
+    #[serde(skip)]
     pub identity_fingerprint: Option<String>,
     pub tor_state: String,
     pub transport: BridgeTransportStatus,
@@ -158,8 +201,10 @@ pub struct BridgeSnapshot {
     pub contacts: Vec<BridgeContact>,
     pub conversations: Vec<BridgeConversation>,
     pub messages: Vec<BridgeMessage>,
+    pub reactions: Vec<BridgeReaction>,
     pub attachments: Vec<BridgeAttachment>,
     pub pending_operations: Vec<BridgePendingOperation>,
+    pub radio: BridgeRadio,
     #[serde(skip)]
     pub unread_messages_count: u32,
     #[serde(skip)]
@@ -168,6 +213,70 @@ pub struct BridgeSnapshot {
     pub pairing_attention_count: u32,
     pub bootstrap_phase: String,
     pub bootstrap_steps: Vec<BridgeBootstrapStep>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRadio {
+    pub active_contact_id: Option<String>,
+    pub contacts: Vec<BridgeRadioContact>,
+    pub session: Option<BridgeRadioSession>,
+    pub timeline: Vec<BridgeRadioTimelineEvent>,
+    pub audio: BridgeRadioAudio,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRadioAudio {
+    pub input_devices: Vec<BridgeAudioDevice>,
+    pub output_devices: Vec<BridgeAudioDevice>,
+    pub selected_input_id: Option<String>,
+    pub selected_output_id: Option<String>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeAudioDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRadioTimelineEvent {
+    pub event_id: String,
+    pub contact_id: String,
+    pub kind: String,
+    pub actor: String,
+    pub occurred_at_ms: i64,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRadioContact {
+    pub contact_id: String,
+    pub local_enabled: bool,
+    pub remote_state: String,
+    pub state: String,
+    pub changed_at_ms: i64,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRadioSession {
+    pub contact_id: String,
+    pub session_id: String,
+    pub state: String,
+    pub floor: String,
+    pub burst_elapsed_ms: u32,
+    pub max_burst_ms: u32,
 }
 
 #[must_use]
@@ -334,6 +443,28 @@ pub struct BridgeMessagePage {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BridgeReaction {
+    pub message_id: String,
+    pub conversation_id: String,
+    pub actor_id: String,
+    pub emoji: String,
+    pub active: bool,
+    pub updated_at_ms: i64,
+}
+
+pub fn bridge_reaction_from_domain(reaction: MessageReaction) -> BridgeReaction {
+    BridgeReaction {
+        message_id: reaction.message_id().to_opaque().to_string(),
+        conversation_id: reaction.conversation_id().to_opaque().to_string(),
+        actor_id: reaction.actor_id().to_string(),
+        emoji: reaction.emoji().to_owned(),
+        active: reaction.active(),
+        updated_at_ms: reaction.updated_at().to_unix_millis(),
+    }
+}
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BridgeAttachment {
     pub id: String,
     pub message_id: String,
@@ -408,6 +539,18 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
                 conversation_id: parse_id(&conversation_id_hex)?,
             }
         }
+        BridgeCommand::ArchiveConversation { conversation_id_hex, at_ms } => {
+            ApplicationCommand::ArchiveConversation {
+                conversation_id: parse_id(&conversation_id_hex)?,
+                at_ms,
+            }
+        }
+        BridgeCommand::RestoreConversation { conversation_id_hex, at_ms } => {
+            ApplicationCommand::RestoreConversation {
+                conversation_id: parse_id(&conversation_id_hex)?,
+                at_ms,
+            }
+        }
         BridgeCommand::QueueMessage {
             message_id_hex,
             conversation_id_hex,
@@ -426,6 +569,31 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         BridgeCommand::RetryMessage { message_id_hex, at_ms } => {
             ApplicationCommand::RetryMessage { message_id: parse_id(&message_id_hex)?, at_ms }
         }
+        BridgeCommand::CancelMessage { message_id_hex, at_ms } => {
+            ApplicationCommand::CancelMessage { message_id: parse_id(&message_id_hex)?, at_ms }
+        }
+        BridgeCommand::EditMessage { message_id_hex, body, at_ms } => {
+            ApplicationCommand::EditMessage {
+                message_id: parse_id(&message_id_hex)?,
+                body,
+                at_ms,
+            }
+        }
+        BridgeCommand::SetMessageReaction {
+            message_id_hex,
+            conversation_id_hex,
+            actor_id_hex,
+            emoji,
+            active,
+            at_ms,
+        } => ApplicationCommand::SetMessageReaction {
+            message_id: parse_id(&message_id_hex)?,
+            conversation_id: parse_id(&conversation_id_hex)?,
+            actor_id: parse_id(&actor_id_hex)?,
+            emoji,
+            active,
+            at_ms,
+        },
         BridgeCommand::MarkConversationRead { conversation_id_hex } => {
             ApplicationCommand::MarkConversationRead {
                 conversation_id: parse_id(&conversation_id_hex)?,
@@ -469,6 +637,22 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
                 attachment_id: parse_id(&attachment_id_hex)?,
                 destination_path,
             }
+        }
+        BridgeCommand::SetRadioEnabled { contact_id_hex, enabled, at_ms } => {
+            ApplicationCommand::SetRadioEnabled {
+                contact_id: parse_id(&contact_id_hex)?,
+                enabled,
+                at_ms,
+            }
+        }
+        BridgeCommand::ConfigureRadioAudio { input_device_id, output_device_id } => {
+            ApplicationCommand::ConfigureRadioAudio { input_device_id, output_device_id }
+        }
+        BridgeCommand::BeginRadioTransmission { contact_id_hex } => {
+            ApplicationCommand::BeginRadioTransmission { contact_id: parse_id(&contact_id_hex)? }
+        }
+        BridgeCommand::EndRadioTransmission { contact_id_hex } => {
+            ApplicationCommand::EndRadioTransmission { contact_id: parse_id(&contact_id_hex)? }
         }
         BridgeCommand::RefreshSnapshot => ApplicationCommand::RefreshSnapshot,
     })
@@ -580,8 +764,8 @@ const fn pairing_role_name(value: PairingRole) -> &'static str {
 const fn pairing_state_name(value: PairingState) -> &'static str {
     match value {
         PairingState::Open => "open",
-        PairingState::PeerJoined => "peerjoined",
-        PairingState::AwaitingApproval => "awaitingapproval",
+        PairingState::PeerJoined => "peer_joined",
+        PairingState::AwaitingApproval => "awaiting_approval",
         PairingState::Approved => "approved",
         PairingState::Rejected => "rejected",
         PairingState::Cancelled => "cancelled",
@@ -683,13 +867,23 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
         identity_fingerprints,
         safety_numbers,
         pending_operations,
+        radio,
     } = context;
     let identity_name = snapshot.identity.as_ref().and_then(|identity| {
         identity.profile().map(|profile| profile.display_name().as_str().to_owned())
     });
+    let identity_id = snapshot
+        .identity
+        .as_ref()
+        .map(|identity| identity.public().identity_id().to_string());
     // Root snapshots deliberately omit message history. Conversation page and
     // search queries are the only history transport exposed to presentation.
     let messages = Vec::new();
+    let reactions = snapshot
+        .reactions
+        .into_iter()
+        .map(bridge_reaction_from_domain)
+        .collect();
     let tor_state = tor_state_name(network.tor).to_owned();
     let relay_probe = network.probes.iter().find(|probe| probe.target == ProbeTarget::Relay);
     let relay_state = relay_probe
@@ -704,6 +898,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     BridgeSnapshot {
         contract_version: CONTRACT_VERSION,
         identity_name,
+        identity_id,
         identity_fingerprint,
         tor_state: tor_state.clone(),
         transport: BridgeTransportStatus {
@@ -956,6 +1151,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             })
             .collect(),
         messages,
+        reactions,
         attachments: attachments
             .into_iter()
             .map(|attachment| BridgeAttachment {
@@ -1016,9 +1212,129 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 }
             })
             .collect(),
+        radio: bridge_radio(radio),
         unread_messages_count: 0,
         new_contacts_count: 0,
         pairing_attention_count: 0,
+    }
+}
+
+fn bridge_radio(value: Option<torca_client_application::RadioProjection>) -> BridgeRadio {
+    let Some(value) = value else {
+        return BridgeRadio {
+            active_contact_id: None,
+            contacts: Vec::new(),
+            session: None,
+            timeline: Vec::new(),
+            audio: BridgeRadioAudio::default(),
+        };
+    };
+    BridgeRadio {
+        active_contact_id: value.active_contact_id.map(|id| id.to_string()),
+        contacts: value
+            .contacts
+            .into_iter()
+            .map(|contact| BridgeRadioContact {
+                contact_id: contact.contact_id.to_string(),
+                local_enabled: contact.local_enabled,
+                remote_state: remote_radio_state_name(contact.remote_state).into(),
+                state: radio_state_name(contact.state).into(),
+                changed_at_ms: contact.changed_at.to_unix_millis(),
+            })
+            .collect(),
+        session: value.session.map(|session| BridgeRadioSession {
+            contact_id: session.contact_id.to_string(),
+            session_id: session.session_id.to_string(),
+            state: radio_state_name(session.state).into(),
+            floor: radio_floor_name(session.floor).into(),
+            burst_elapsed_ms: session.burst_elapsed_ms,
+            max_burst_ms: session.max_burst_ms,
+        }),
+        timeline: value
+            .timeline
+            .into_iter()
+            .map(|record| BridgeRadioTimelineEvent {
+                event_id: record.event_id.to_string(),
+                contact_id: record.contact_id.to_string(),
+                kind: radio_event_kind_name(record.event.kind).into(),
+                actor: radio_event_actor_name(record.event.actor).into(),
+                occurred_at_ms: record.event.occurred_at.to_unix_millis(),
+            })
+            .collect(),
+        audio: BridgeRadioAudio {
+            input_devices: value
+                .audio
+                .input_devices
+                .into_iter()
+                .map(|device| BridgeAudioDevice {
+                    id: device.id,
+                    name: device.name,
+                    is_default: device.is_default,
+                })
+                .collect(),
+            output_devices: value
+                .audio
+                .output_devices
+                .into_iter()
+                .map(|device| BridgeAudioDevice {
+                    id: device.id,
+                    name: device.name,
+                    is_default: device.is_default,
+                })
+                .collect(),
+            selected_input_id: value.audio.selected_input_id,
+            selected_output_id: value.audio.selected_output_id,
+        },
+    }
+}
+
+const fn remote_radio_state_name(value: RemoteRadioState) -> &'static str {
+    match value {
+        RemoteRadioState::Unknown => "unknown",
+        RemoteRadioState::Disabled => "disabled",
+        RemoteRadioState::Enabled => "enabled",
+    }
+}
+
+const fn radio_state_name(value: RadioState) -> &'static str {
+    match value {
+        RadioState::Off => "off",
+        RadioState::Available => "available",
+        RadioState::WaitingForPeer => "waiting_for_peer",
+        RadioState::Connecting => "connecting",
+        RadioState::Ready => "ready",
+        RadioState::RequestingFloor => "requesting_floor",
+        RadioState::StartingCapture => "starting_capture",
+        RadioState::Transmitting => "transmitting",
+        RadioState::Receiving => "receiving",
+        RadioState::Reconnecting => "reconnecting",
+        RadioState::Unavailable => "unavailable",
+    }
+}
+
+const fn radio_floor_name(value: RadioFloor) -> &'static str {
+    match value {
+        RadioFloor::None => "none",
+        RadioFloor::Local => "local",
+        RadioFloor::Remote => "remote",
+    }
+}
+
+const fn radio_event_kind_name(value: RadioTimelineEventKind) -> &'static str {
+    match value {
+        RadioTimelineEventKind::Enabled => "enabled",
+        RadioTimelineEventKind::Disabled => "disabled",
+        RadioTimelineEventKind::Ready => "ready",
+        RadioTimelineEventKind::Interrupted => "interrupted",
+        RadioTimelineEventKind::Restored => "restored",
+    }
+}
+
+const fn radio_event_actor_name(value: RadioEventActor) -> &'static str {
+    match value {
+        RadioEventActor::Local => "local",
+        RadioEventActor::Remote => "remote",
+        RadioEventActor::System => "system",
     }
 }
 fn fallback_contact_name(id: ContactId) -> String {
@@ -1032,7 +1348,14 @@ pub fn dart_contract_source() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::generated;
+    use super::{generated, pairing_state_name};
+    use torca_pairing::PairingState;
+
+    #[test]
+    fn pairing_states_use_the_generated_wire_contract() {
+        assert_eq!(pairing_state_name(PairingState::PeerJoined), "peer_joined");
+        assert_eq!(pairing_state_name(PairingState::AwaitingApproval), "awaiting_approval");
+    }
 
     #[test]
     fn generated_operation_allowlist_matches_runtime_surface() {

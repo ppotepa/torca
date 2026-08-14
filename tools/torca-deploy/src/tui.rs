@@ -336,22 +336,6 @@ impl InputGuard {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::KeyModifiers;
-
-    #[test]
-    fn held_navigation_repeat_is_ignored() {
-        let mut guard = InputGuard::default();
-        let press = KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Press);
-        let repeat =
-            KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Repeat);
-        assert_eq!(guard.accept(press), Some(KeyCode::Down));
-        assert_eq!(guard.accept(repeat), None);
-    }
-}
-
 fn confirm(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     plan: &DeployPlan,
@@ -377,5 +361,21 @@ fn confirm(
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn held_navigation_repeat_is_ignored() {
+        let mut guard = InputGuard::default();
+        let press = KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Press);
+        let repeat =
+            KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Repeat);
+        assert_eq!(guard.accept(press), Some(KeyCode::Down));
+        assert_eq!(guard.accept(repeat), None);
     }
 }

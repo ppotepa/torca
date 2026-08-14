@@ -11,7 +11,7 @@ publish = false
 [dependencies]
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-probing = { path = "../torca-probing" }
+torca-runtime-policy = { path = "../torca-runtime-policy" }
 
 [lints]
 workspace = true
-

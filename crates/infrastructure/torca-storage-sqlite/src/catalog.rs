@@ -57,6 +57,10 @@ pub mod conversation_sql {
         name: "conversation.insert",
         sql: include_str!("../sql/commands/conversation_insert.sql"),
     };
+    pub const UPDATE: SqlStatement = SqlStatement {
+        name: "conversation.update",
+        sql: include_str!("../sql/commands/conversation_update.sql"),
+    };
     pub const SELECT_BY_ID: SqlStatement = SqlStatement {
         name: "conversation.select_by_id",
         sql: include_str!("../sql/queries/conversation_select_by_id.sql"),
@@ -112,6 +116,14 @@ pub mod messaging_sql {
     pub const LIST_DOMAIN_MESSAGES: SqlStatement = SqlStatement {
         name: "message.domain_list",
         sql: include_str!("../sql/queries/message_domain_list.sql"),
+    };
+    pub const UPSERT_REACTION: SqlStatement = SqlStatement {
+        name: "message.reaction_upsert",
+        sql: include_str!("../sql/commands/message_reaction_upsert.sql"),
+    };
+    pub const REACTIONS_FOR_CONVERSATION: SqlStatement = SqlStatement {
+        name: "message.reactions_for_conversation",
+        sql: include_str!("../sql/queries/message_reactions_for_conversation.sql"),
     };
     pub const INSERT_OUTBOX: SqlStatement = SqlStatement {
         name: "outbox.insert",

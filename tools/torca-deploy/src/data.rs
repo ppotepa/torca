@@ -41,14 +41,14 @@ impl<'a> DataController<'a> {
 
     fn stop_client(&self, device: &Device) -> Result<(), DataError> {
         match device.target {
-            crate::domain::Target::Windows => crate::windows_client::WorkspaceWindowsClient::new(
-                self.paths,
-                self.runner,
-            )
-            .stop()
-            .map_err(DataError::WindowsClient),
+            crate::domain::Target::Windows => {
+                crate::windows_client::WorkspaceWindowsClient::new(self.paths, self.runner)
+                    .stop()
+                    .map_err(DataError::WindowsClient)
+            }
             crate::domain::Target::Android => {
-                let output = self.command(&device.id, &["shell", "am", "force-stop", "com.torca.torca_app"])?;
+                let output = self
+                    .command(&device.id, &["shell", "am", "force-stop", "com.torca.torca_app"])?;
                 if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
             }
         }
@@ -90,15 +90,17 @@ impl<'a> DataController<'a> {
                         "shell",
                         "run-as",
                         "com.torca.torca_app",
-                        "sh",
-                        "-c",
-                        "rm -rf no_backup/torca/data no_backup/torca/protected-secrets",
+                        "rm",
+                        "-rf",
+                        "no_backup/torca/data",
+                        "no_backup/torca/protected-secrets",
                     ],
                 )?;
                 if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
             }
             ClientDataPolicy::ResetAll => {
-                let output = self.command(&device.id, &["shell", "pm", "clear", "com.torca.torca_app"])?;
+                let output =
+                    self.command(&device.id, &["shell", "pm", "clear", "com.torca.torca_app"])?;
                 if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
             }
             ClientDataPolicy::Preserve => Ok(()),
@@ -110,17 +112,19 @@ impl<'a> DataController<'a> {
             return Ok(());
         }
         let parent = source.parent().unwrap_or(&self.paths.runtime_root);
-        let base = if source
-            .file_name()
-            .is_some_and(|name| name == std::ffi::OsStr::new("Torca"))
-        {
+        let base = if source.file_name().is_some_and(|name| name == std::ffi::OsStr::new("Torca")) {
             parent
         } else {
             parent.parent().unwrap_or(parent)
         };
         let backup_root = base.join("Torca-backups");
         std::fs::create_dir_all(&backup_root).map_err(DataError::Io)?;
-        let backup = backup_root.join(format!("{}-{}-{}", chrono_stamp(), device_id, source.file_name().and_then(|name| name.to_str()).unwrap_or("data")));
+        let backup = backup_root.join(format!(
+            "{}-{}-{}",
+            chrono_stamp(),
+            device_id,
+            source.file_name().and_then(|name| name.to_str()).unwrap_or("data")
+        ));
         std::fs::rename(source, backup).map_err(DataError::Io)
     }
 
@@ -160,4 +164,59 @@ pub enum DataError {
 fn chrono_stamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::devices::AndroidAbi;
+    use crate::domain::Target;
+    use crate::process::{CommandOutput, CommandSpec};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingRunner {
+        commands: Mutex<Vec<CommandSpec>>,
+    }
+
+    impl CommandRunner for RecordingRunner {
+        fn run(&self, command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
+            self.commands.lock().expect("commands").push(command.clone());
+            Ok(CommandOutput { success: true, status: Some(0), text: String::new() })
+        }
+    }
+
+    #[test]
+    fn android_profile_reset_passes_rm_operands_directly() {
+        let root = std::env::temp_dir().join(format!("torca-data-test-{}", std::process::id()));
+        let paths = RuntimePaths::from_repo(root.clone());
+        let runner = RecordingRunner::default();
+        let device = Device {
+            target: Target::Android,
+            id: "phone".into(),
+            android_abi: Some(AndroidAbi::Arm64),
+        };
+
+        DataController::new(&paths, &runner)
+            .reset(&[device], ClientDataPolicy::ResetProfile)
+            .expect("profile reset");
+
+        let commands = runner.commands.lock().expect("commands");
+        assert_eq!(commands.len(), 2);
+        assert_eq!(
+            commands[1].arguments,
+            [
+                "-s",
+                "phone",
+                "shell",
+                "run-as",
+                "com.torca.torca_app",
+                "rm",
+                "-rf",
+                "no_backup/torca/data",
+                "no_backup/torca/protected-secrets",
+            ]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

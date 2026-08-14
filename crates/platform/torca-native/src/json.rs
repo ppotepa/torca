@@ -56,7 +56,8 @@ pub(crate) fn empty_snapshot_json() -> String {
         "onionAddress": Value::Null,
         "bootstrapPhase": "failed",
         "bootstrapSteps": [], "pairings": [], "contacts": [], "conversations": [],
-        "messages": [], "attachments": [], "navigationBadges": { "unreadMessages": 0, "newContacts": 0, "pairingAttention": 0 },
+        "messages": [], "reactions": [], "attachments": [], "navigationBadges": { "unreadMessages": 0, "newContacts": 0, "pairingAttention": 0 },
+        "radio": { "activeContactId": Value::Null, "contacts": [], "session": Value::Null },
         "notificationsEnabled": true
     }).to_string()
 }
@@ -84,10 +85,10 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
 }
 
 fn identity_value(snapshot: &BridgeSnapshot) -> Value {
-    match (&snapshot.identity_name, &snapshot.identity_fingerprint) {
-        (None, None) => Value::Null,
-        (display_name, fingerprint) => {
-            json!({ "displayName": display_name, "fingerprint": fingerprint })
+    match (&snapshot.identity_id, &snapshot.identity_name, &snapshot.identity_fingerprint) {
+        (None, None, None) => Value::Null,
+        (identity_id, display_name, fingerprint) => {
+            json!({ "id": identity_id, "displayName": display_name, "fingerprint": fingerprint })
         }
     }
 }

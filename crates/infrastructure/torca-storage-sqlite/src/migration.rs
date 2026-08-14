@@ -12,7 +12,7 @@ pub const fn migrations() -> &'static [Migration] {
     &MIGRATIONS
 }
 
-const MIGRATIONS: [Migration; 6] = [
+const MIGRATIONS: [Migration; 8] = [
     Migration {
         version: 1,
         name: "baseline",
@@ -42,6 +42,16 @@ const MIGRATIONS: [Migration; 6] = [
         version: 6,
         name: "attachment_failure_code",
         sql: include_str!("../sql/migrations/0006_attachment_failure_code.sql"),
+    },
+    Migration {
+        version: 7,
+        name: "radio_mode",
+        sql: include_str!("../sql/migrations/0007_radio_mode.sql"),
+    },
+    Migration {
+        version: 8,
+        name: "message_reactions",
+        sql: include_str!("../sql/migrations/0008_message_reactions.sql"),
     },
 ];
 

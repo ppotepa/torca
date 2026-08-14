@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 import '../gateway/engine_gateway.dart';
@@ -52,109 +54,21 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
       final contact = _currentContact(snapshot) ?? widget.contact;
       return Scaffold(
         appBar: RuntimeAppBar(title: Text(contact.displayName)),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-          children: <Widget>[
-            Card(
-              child: ListTile(
-                leading: TorcaAvatar(label: contact.displayName),
-                title: Text(contact.displayName),
-                subtitle: Text(
-                  contact.typedStatus == ContactStatus.blocked
-                      ? context.strings.blocked
-                      : context.strings.directTorContact,
-                ),
-                trailing: ConnectionIndicator(
-                  state: contact.connectionState,
-                  blocked: contact.typedStatus == ContactStatus.blocked,
-                ),
+        body: ContactDetailsContent(
+          contact: contact,
+          onStartConversation: widget.onStartConversation,
+          onOpenConnectionDetails: () => Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => ConnectionDetailsScreen(
+                gateway: widget.gateway,
+                contactId: contact.id,
               ),
             ),
-            const SizedBox(height: 12),
-            if (widget.onStartConversation != null) ...<Widget>[
-              FilledButton.icon(
-                onPressed: contact.typedStatus == ContactStatus.blocked
-                    ? null
-                    : widget.onStartConversation,
-                icon: Icon(context.torcaIcons.chats),
-                label: Text(context.strings.startConversation),
-              ),
-              const SizedBox(height: 12),
-            ],
-            _DetailsCard(
-              title: context.strings.connection,
-              children: <Widget>[
-                _ValueRow(
-                  label: context.strings.state,
-                  value: contact.connectionState,
-                ),
-                _ValueRow(
-                  label: context.strings.quality,
-                  value: contact.peerHealth.quality,
-                ),
-                _ValueRow(
-                  label: context.strings.onionAddress,
-                  value: contact.onionAddress,
-                  selectable: true,
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => Navigator.of(context).push<void>(
-                      MaterialPageRoute(
-                        builder: (_) => ConnectionDetailsScreen(
-                          gateway: widget.gateway,
-                          contactId: contact.id,
-                        ),
-                      ),
-                    ),
-                    icon: Icon(context.torcaIcons.diagnostics),
-                    label: Text(context.strings.connectionDetails),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _DetailsCard(
-              title: context.strings.contactActions,
-              children: <Widget>[
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(context.torcaIcons.edit),
-                  title: Text(context.strings.renameContact),
-                  onTap: () => _rename(contact),
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    contact.typedStatus == ContactStatus.blocked
-                        ? context.torcaIcons.success
-                        : context.torcaIcons.block,
-                  ),
-                  title: Text(
-                    contact.typedStatus == ContactStatus.blocked
-                        ? context.strings.unblockContact
-                        : context.strings.blockContact,
-                  ),
-                  onTap: () => _toggleBlock(contact),
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    context.torcaIcons.remove,
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                  title: Text(
-                    context.strings.removeContact,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                  onTap: () => _remove(contact),
-                ),
-              ],
-            ),
-          ],
+          ),
+          onRename: () => _rename(contact),
+          onToggleBlock: () => _toggleBlock(contact),
+          onRemove: () => _remove(contact),
+          onVerify: () => _verify(contact),
         ),
       );
     },
@@ -182,6 +96,183 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
       contact,
     );
     if (mounted && removed) Navigator.of(context).pop();
+  }
+
+  Future<void> _verify(ContactDto contact) async {
+    final command =
+        contact.typedVerificationStatus == VerificationStatus.verified
+        ? ResetContactVerificationCommandDto(contactIdHex: contact.id)
+        : VerifyContactCommandDto(contactIdHex: contact.id);
+    final result = await widget.gateway.execute(command);
+    if (!mounted || result.ok) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.strings.identityChanged)));
+  }
+}
+
+/// Shared contact details content used by mobile routes and desktop panels.
+/// Navigation and mutations stay outside so the same layout never owns a
+/// second copy of contact lifecycle logic.
+class ContactDetailsContent extends StatelessWidget {
+  const ContactDetailsContent({
+    required this.contact,
+    this.onStartConversation,
+    this.onOpenConnectionDetails,
+    this.onVerify,
+    this.onRename,
+    this.onToggleBlock,
+    this.onRemove,
+    this.scrollable = true,
+    super.key,
+  });
+
+  final ContactDto contact;
+  final VoidCallback? onStartConversation;
+  final VoidCallback? onOpenConnectionDetails;
+  final VoidCallback? onVerify;
+  final VoidCallback? onRename;
+  final VoidCallback? onToggleBlock;
+  final VoidCallback? onRemove;
+  final bool scrollable;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Card(
+          child: ListTile(
+            leading: TorcaAvatar(label: contact.displayName),
+            title: Text(contact.displayName),
+            subtitle: Text(
+              contact.typedStatus == ContactStatus.blocked
+                  ? context.strings.blocked
+                  : context.strings.directTorContact,
+            ),
+            trailing: ConnectionIndicator(
+              state: contact.connectionState,
+              blocked: contact.typedStatus == ContactStatus.blocked,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (onStartConversation != null) ...<Widget>[
+          FilledButton.icon(
+            onPressed: contact.typedStatus == ContactStatus.blocked
+                ? null
+                : onStartConversation,
+            icon: Icon(context.torcaIcons.chats),
+            label: Text(context.strings.startConversation),
+          ),
+          const SizedBox(height: 12),
+        ],
+        _DetailsCard(
+          title: context.strings.connection,
+          children: <Widget>[
+            _ValueRow(
+              label: context.strings.state,
+              value: contact.connectionState,
+            ),
+            _ValueRow(
+              label: context.strings.quality,
+              value: contact.peerHealth.quality,
+            ),
+            _ValueRow(
+              label: context.strings.onionAddress,
+              value: contact.onionAddress,
+              selectable: true,
+            ),
+            if (onOpenConnectionDetails != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: onOpenConnectionDetails,
+                  icon: Icon(context.torcaIcons.diagnostics),
+                  label: Text(context.strings.connectionDetails),
+                ),
+              ),
+          ],
+        ),
+        if (onVerify != null) ...<Widget>[
+          const SizedBox(height: 12),
+          _DetailsCard(
+            title: context.strings.verification,
+            children: <Widget>[
+              Text(
+                contact.typedVerificationStatus == VerificationStatus.verified
+                    ? context.strings.verified
+                    : context.strings.unverified,
+              ),
+              if (contact.safetyNumber != null) ...<Widget>[
+                const SizedBox(height: 8),
+                SelectableText(contact.safetyNumber!),
+              ],
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: onVerify,
+                icon: Icon(
+                  contact.typedVerificationStatus == VerificationStatus.verified
+                      ? context.torcaIcons.remove
+                      : context.torcaIcons.success,
+                ),
+                label: Text(
+                  contact.typedVerificationStatus == VerificationStatus.verified
+                      ? context.strings.resetVerification
+                      : context.strings.verifyContact,
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 12),
+        _DetailsCard(
+          title: context.strings.contactActions,
+          children: <Widget>[
+            if (onRename != null)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(context.torcaIcons.edit),
+                title: Text(context.strings.renameContact),
+                onTap: onRename,
+              ),
+            if (onToggleBlock != null)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  contact.typedStatus == ContactStatus.blocked
+                      ? context.torcaIcons.success
+                      : context.torcaIcons.block,
+                ),
+                title: Text(
+                  contact.typedStatus == ContactStatus.blocked
+                      ? context.strings.unblockContact
+                      : context.strings.blockContact,
+                ),
+                onTap: onToggleBlock,
+              ),
+            if (onRemove != null)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  context.torcaIcons.remove,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: Text(
+                  context.strings.removeContact,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                onTap: onRemove,
+              ),
+          ],
+        ),
+      ],
+    );
+    if (!scrollable) return content;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      children: <Widget>[content],
+    );
   }
 }
 

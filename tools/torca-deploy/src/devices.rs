@@ -8,6 +8,22 @@ use thiserror::Error;
 pub struct Device {
     pub target: Target,
     pub id: String,
+    pub android_abi: Option<AndroidAbi>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AndroidAbi {
+    Arm64,
+    X86_64,
+}
+
+impl AndroidAbi {
+    pub const fn package_name(self) -> &'static str {
+        match self {
+            Self::Arm64 => "arm64-v8a",
+            Self::X86_64 => "x86_64",
+        }
+    }
 }
 pub struct DeviceController<'a> {
     paths: &'a RuntimePaths,
@@ -23,6 +39,7 @@ impl<'a> DeviceController<'a> {
             result.push(Device {
                 target: Target::Windows,
                 id: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into()),
+                android_abi: None,
             });
         }
         if targets.contains(&Target::Android) {
@@ -39,7 +56,12 @@ impl<'a> DeviceController<'a> {
             for line in output.text.lines().skip(1) {
                 let id = line.split_whitespace().next().unwrap_or_default();
                 if !id.is_empty() && line.contains("device") {
-                    result.push(Device { target: Target::Android, id: id.into() });
+                    let abi = self.android_abi(id)?;
+                    result.push(Device {
+                        target: Target::Android,
+                        id: id.into(),
+                        android_abi: Some(abi),
+                    });
                 }
             }
         }
@@ -50,6 +72,33 @@ impl<'a> DeviceController<'a> {
         }
         Ok(result)
     }
+
+    fn android_abi(&self, device: &str) -> Result<AndroidAbi, DeviceError> {
+        let output = self.runner.run(&CommandSpec {
+            program: "adb".into(),
+            arguments: vec![
+                "-s".into(),
+                device.into(),
+                "shell".into(),
+                "getprop".into(),
+                "ro.product.cpu.abi".into(),
+            ],
+            working_directory: self.paths.repo_root.clone(),
+            timeout: Duration::from_secs(30),
+            environment: std::collections::BTreeMap::new(),
+        })?;
+        if !output.success {
+            return Err(DeviceError::Command(output.text));
+        }
+        let value = output.text.trim();
+        match value {
+            value if value.contains("arm64-v8a") => Ok(AndroidAbi::Arm64),
+            value if value.contains("x86_64") => Ok(AndroidAbi::X86_64),
+            _ => {
+                Err(DeviceError::UnsupportedAndroidAbi { device: device.into(), abi: value.into() })
+            }
+        }
+    }
 }
 #[derive(Debug, Error)]
 pub enum DeviceError {
@@ -59,4 +108,6 @@ pub enum DeviceError {
     Process(#[from] ProcessError),
     #[error("requested {0} deployment target is unavailable")]
     RequestedTargetUnavailable(Target),
+    #[error("Android device {device} uses unsupported ABI `{abi}`")]
+    UnsupportedAndroidAbi { device: String, abi: String },
 }

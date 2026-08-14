@@ -2,7 +2,7 @@
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
 
 pub const SCHEMA_VERSION: u16 = 1;
-pub const CONTRACT_VERSION: u16 = 17;
+pub const CONTRACT_VERSION: u16 = 19;
 pub const COMMANDS: &[&str] = &[
     "profile.set",
     "pairing.create",
@@ -18,8 +18,13 @@ pub const COMMANDS: &[&str] = &[
     "contact.remove",
     "conversation.start",
     "conversation.clear",
+    "conversation.archive",
+    "conversation.restore",
     "message.send",
     "message.retry",
+    "message.cancel",
+    "message.edit",
+    "message.reaction",
     "notifications.set",
     "privacy.read_receipts.set",
     "contacts.acknowledge_new",
@@ -28,6 +33,10 @@ pub const COMMANDS: &[&str] = &[
     "attachment.retry",
     "attachment.cancel",
     "attachment.export",
+    "radio.set_enabled",
+    "radio.audio.configure",
+    "radio.transmission.begin",
+    "radio.transmission.end",
 ];
 pub const QUERIES: &[&str] = &[
     "snapshot.get",

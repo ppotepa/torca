@@ -86,6 +86,51 @@ pub enum MessageStatus {
 pub struct ReplyReference {
     pub message_id: MessageId,
 }
+
+/// One idempotent reaction state for a message and actor.
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageReaction {
+    message_id: MessageId,
+    conversation_id: ConversationId,
+    actor_id: OpaqueId,
+    emoji: String,
+    active: bool,
+    updated_at: Timestamp,
+}
+impl MessageReaction {
+    pub fn deterministic_id(message_id: MessageId, actor_id: OpaqueId, emoji: &str) -> OpaqueId {
+        let mut bytes = message_id.to_opaque().into_bytes();
+        for (index, value) in actor_id.as_bytes().iter().enumerate() {
+            bytes[index] ^= *value;
+        }
+        for (index, value) in emoji.as_bytes().iter().enumerate() {
+            bytes[index % bytes.len()] ^= *value;
+        }
+        let id = OpaqueId::from_bytes(bytes);
+        if id.is_nil() { OpaqueId::from_u128(1) } else { id }
+    }
+    pub fn new(
+        message_id: MessageId,
+        conversation_id: ConversationId,
+        actor_id: OpaqueId,
+        emoji: impl Into<String>,
+        active: bool,
+        updated_at: Timestamp,
+    ) -> Result<Self, MessageError> {
+        let emoji = emoji.into();
+        if emoji.is_empty() || emoji.len() > 32 || emoji.contains('\0') {
+            return Err(MessageError::InvalidReaction);
+        }
+        Ok(Self { message_id, conversation_id, actor_id, emoji, active, updated_at })
+    }
+    pub const fn message_id(&self) -> MessageId { self.message_id }
+    pub const fn conversation_id(&self) -> ConversationId { self.conversation_id }
+    pub const fn actor_id(&self) -> OpaqueId { self.actor_id }
+    pub fn emoji(&self) -> &str { &self.emoji }
+    pub const fn active(&self) -> bool { self.active }
+    pub const fn updated_at(&self) -> Timestamp { self.updated_at }
+}
 /// One local delivery attempt.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -327,6 +372,17 @@ impl Message {
         self.updated_at = at;
         Ok(())
     }
+    /// Edits a queued or failed outbound message before delivery.
+    pub fn edit(&mut self, body: MessageBody, at: Timestamp) -> Result<(), MessageError> {
+        if self.direction != MessageDirection::Outbound
+            || !matches!(self.status, MessageStatus::Queued | MessageStatus::Failed)
+        {
+            return Err(MessageError::InvalidTransition);
+        }
+        self.body = body;
+        self.updated_at = at;
+        Ok(())
+    }
     /// Cancels a queued or failed message.
     pub fn cancel(&mut self, at: Timestamp) -> Result<(), MessageError> {
         if !matches!(self.status, MessageStatus::Queued | MessageStatus::Failed) {
@@ -346,6 +402,7 @@ pub enum MessageError {
         actual: usize,
     },
     InvalidBody,
+    InvalidReaction,
     InvalidTransition,
     AttemptsExhausted,
     AlreadyExists,
@@ -392,12 +449,18 @@ pub trait MessageRepository {
         conversation_id: ConversationId,
     ) -> Result<Vec<Message>, MessageError>;
     fn list(&self) -> Result<Vec<Message>, MessageError>;
+    fn upsert_reaction(&mut self, reaction: MessageReaction) -> Result<(), MessageError>;
+    fn reactions_for_conversation(
+        &self,
+        conversation_id: ConversationId,
+    ) -> Result<Vec<MessageReaction>, MessageError>;
 }
 
 /// In-memory message repository.
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryMessageRepository {
     messages: BTreeMap<MessageId, Message>,
+    reactions: BTreeMap<(MessageId, OpaqueId, String), MessageReaction>,
 }
 impl MessageRepository for InMemoryMessageRepository {
     fn insert(&mut self, message: Message) -> Result<(), MessageError> {
@@ -430,5 +493,24 @@ impl MessageRepository for InMemoryMessageRepository {
     }
     fn list(&self) -> Result<Vec<Message>, MessageError> {
         Ok(self.messages.values().cloned().collect())
+    }
+    fn upsert_reaction(&mut self, reaction: MessageReaction) -> Result<(), MessageError> {
+        self.reactions.insert(
+            (reaction.message_id(), reaction.actor_id(), reaction.emoji().to_owned()),
+            reaction,
+        );
+        Ok(())
+    }
+    fn reactions_for_conversation(
+        &self,
+        conversation_id: ConversationId,
+    ) -> Result<Vec<MessageReaction>, MessageError> {
+        Ok(self
+            .reactions
+            .values()
+            .filter(|reaction| reaction.conversation_id() == conversation_id)
+            .filter(|reaction| reaction.active())
+            .cloned()
+            .collect())
     }
 }

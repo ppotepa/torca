@@ -1,0 +1,26 @@
+[package]
+name = "torca-radio-adapters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+crossbeam-queue = "0.3.12"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-crypto = { path = "../torca-crypto" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-radio = { path = "../../domains/torca-radio" }
+torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
+torca-radio-protocol = { path = "../../protocol/torca-radio-protocol" }
+torca-tor = { path = "../torca-tor" }
+
+[target.'cfg(any(target_os = "windows", target_os = "android"))'.dependencies]
+cpal = "0.17.1"
+
+[lints]
+workspace = true

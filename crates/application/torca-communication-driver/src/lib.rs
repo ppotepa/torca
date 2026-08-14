@@ -20,6 +20,7 @@ use torca_control_delivery::{ControlKind, PendingControlJob, ReadCandidate};
 use torca_conversations::ConversationId;
 use torca_delivery::{
     ApplicationPayload, ApplicationPayloadCodec, DeliveryReceiptKind, ReceiptPayload,
+    ReactionPayload,
 };
 use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
@@ -36,8 +37,10 @@ pub use torca_runtime::{PeerHealthQuality, PeerHealthSnapshot};
 
 pub const TEXT_MESSAGE_KIND: u16 = 1;
 pub const RECEIPT_MESSAGE_KIND: u16 = 2;
+pub const REACTION_MESSAGE_KIND: u16 = 3;
 pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
 pub const PROBE_MESSAGE_KIND: u16 = 4;
+pub const RADIO_CONTROL_MESSAGE_KIND: u16 = 5;
 const INBOUND_BATCH: usize = 64;
 const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
@@ -251,6 +254,14 @@ pub trait TextDeliveryRuntime: Send {
 pub trait ControlDeliveryRuntime: Send {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
+    fn queue_reaction(
+        &mut self,
+        _contact_id: ContactId,
+        _reaction: ReactionPayload,
+        _at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        Err(CommunicationError::Control)
+    }
 }
 pub trait InboundMessagingRuntime: Send {
     fn process(
@@ -340,6 +351,21 @@ pub trait RelationshipAdminRuntime: Send {
     fn remove_contact(&mut self, contact_id: ContactId) -> Result<(), CommunicationError>;
 }
 
+/// Optional Radio Mode ingress/maintenance boundary. The communication
+/// supervisor only owns authenticated envelope routing; product state stays
+/// in the dedicated application coordinator.
+pub trait RadioInboundRuntime: Send {
+    fn process_control(
+        &mut self,
+        envelope: InboundEnvelope,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError>;
+
+    fn maintenance(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
+
+    fn shutdown(&mut self) {}
+}
+
 pub struct TorcaCommunicationDriver {
     engine: EngineHandle,
     peer: Box<dyn PeerLinkRuntime>,
@@ -353,6 +379,7 @@ pub struct TorcaCommunicationDriver {
     attachment_export: Box<dyn AttachmentExportRuntime>,
     read_state: Box<dyn ReadStateRuntime>,
     relationships: Box<dyn RelationshipAdminRuntime>,
+    radio: Option<Box<dyn RadioInboundRuntime>>,
     attachment_scheduler: AttachmentJobScheduler,
 }
 impl TorcaCommunicationDriver {
@@ -381,8 +408,14 @@ impl TorcaCommunicationDriver {
             attachment_export,
             read_state,
             relationships,
+            radio: None,
             attachment_scheduler: AttachmentJobScheduler::new(),
         }
+    }
+
+    pub fn with_radio(mut self, radio: Box<dyn RadioInboundRuntime>) -> Self {
+        self.radio = Some(radio);
+        self
     }
 
     fn attachment_runtime(
@@ -477,6 +510,13 @@ impl TorcaCommunicationDriver {
                 TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND => self.inbound.process(envelope, now)?,
                 ATTACHMENT_MESSAGE_KIND => self.process_attachment_inbound(envelope, now)?,
                 PROBE_MESSAGE_KIND => self.peer.accept_probe(&envelope, now)?,
+                RADIO_CONTROL_MESSAGE_KIND => {
+                    if let Some(radio) = self.radio.as_mut() {
+                        radio.process_control(envelope, now)?;
+                    } else {
+                        self.peer.reject(&envelope)?;
+                    }
+                }
                 _ => self.peer.reject(&envelope)?,
             }
         }
@@ -511,6 +551,11 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         self.drain_inbound(now).map_err(map_runtime)?;
         self.text.maintenance(now, TEXT_BATCH).map_err(map_runtime)?;
         self.control.maintenance(now, CONTROL_BATCH).map_err(map_runtime)?;
+        if let Some(radio) = self.radio.as_mut()
+            && let Err(error) = radio.maintenance(now)
+        {
+            eprintln!("torca-radio: background maintenance failed code={error}");
+        }
         let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         // Attachment delivery is a durable, independently retryable job.  A
         // single peer/ACK failure must not abort the communication tick and
@@ -571,10 +616,26 @@ impl PeerSessionPort for TorcaCommunicationDriver {
     }
 
     fn shutdown(&mut self) {
+        if let Some(radio) = self.radio.as_mut() {
+            radio.shutdown();
+        }
         if let Ok(mut attachments) = self.attachments.lock() {
             attachments.shutdown();
         }
         self.peer.shutdown();
+    }
+}
+
+impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
+    fn queue_reaction(
+        &mut self,
+        contact_id: ContactId,
+        reaction: ReactionPayload,
+        at: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        self.control
+            .queue_reaction(contact_id, reaction, at)
+            .map_err(map_runtime)
     }
 }
 

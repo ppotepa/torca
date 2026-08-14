@@ -18,6 +18,15 @@ class LocalPreferences extends ChangeNotifier {
   static const _reduceMotionKey = 'appearance.reduce_motion';
   static const _localeModeKey = 'appearance.locale_mode';
   static const _closeToTrayKey = 'desktop.close_to_tray';
+  static const _audioInputDeviceKey = 'desktop.audio_input_device';
+  static const _audioOutputDeviceKey = 'desktop.audio_output_device';
+
+  static String _draftKey(String conversationId) =>
+      'conversation.draft.$conversationId';
+  static String _conversationPinnedKey(String conversationId) =>
+      'conversation.pinned.$conversationId';
+  static String _conversationMutedKey(String conversationId) =>
+      'conversation.muted.$conversationId';
 
   AppThemeMode _themeMode = AppThemeMode.system;
   TorcaAppearance _appearance = const TorcaAppearance();
@@ -26,8 +35,11 @@ class LocalPreferences extends ChangeNotifier {
   bool _notificationsEnabled = true;
   bool _readReceiptsEnabled = true;
   bool _closeToTrayEnabled = true;
+  String? _audioInputDeviceId;
+  String? _audioOutputDeviceId;
   Future<void> Function(bool enabled)? _runtimeNotificationSetter;
   Future<void> Function(bool enabled)? _runtimeReadReceiptSetter;
+  Future<void> Function(String? inputId, String? outputId)? _runtimeAudioSetter;
 
   AppThemeMode get themeMode => _themeMode;
   TorcaAppearance get appearance => _appearance;
@@ -35,6 +47,8 @@ class LocalPreferences extends ChangeNotifier {
   bool get notificationsEnabled => _notificationsEnabled;
   bool get readReceiptsEnabled => _readReceiptsEnabled;
   bool get closeToTrayEnabled => _closeToTrayEnabled;
+  String? get audioInputDeviceId => _audioInputDeviceId;
+  String? get audioOutputDeviceId => _audioOutputDeviceId;
 
   void attachRuntimeNotificationSetting(
     Future<void> Function(bool enabled) setter,
@@ -46,6 +60,12 @@ class LocalPreferences extends ChangeNotifier {
     Future<void> Function(bool enabled) setter,
   ) {
     _runtimeReadReceiptSetter = setter;
+  }
+
+  void attachRuntimeAudioSetting(
+    Future<void> Function(String? inputId, String? outputId) setter,
+  ) {
+    _runtimeAudioSetter = setter;
   }
 
   /// Mirrors the process-runtime setting for presentation and host notification rendering.
@@ -87,6 +107,12 @@ class LocalPreferences extends ChangeNotifier {
     );
     _localeMode = parseAppLocaleMode(await _store.getString(_localeModeKey));
     _closeToTrayEnabled = await _store.getBool(_closeToTrayKey) ?? true;
+    _audioInputDeviceId = _nonEmpty(
+      await _store.getString(_audioInputDeviceKey),
+    );
+    _audioOutputDeviceId = _nonEmpty(
+      await _store.getString(_audioOutputDeviceKey),
+    );
     notifyListeners();
   }
 
@@ -155,7 +181,49 @@ class LocalPreferences extends ChangeNotifier {
     notifyListeners();
     await _store.setBool(_closeToTrayKey, value);
   }
+
+  Future<void> setAudioInputDevice(String? value) async {
+    if (_audioInputDeviceId == value) return;
+    _audioInputDeviceId = value;
+    notifyListeners();
+    await _store.setString(_audioInputDeviceKey, value ?? '');
+    await _runtimeAudioSetter?.call(_audioInputDeviceId, _audioOutputDeviceId);
+  }
+
+  Future<void> setAudioOutputDevice(String? value) async {
+    if (_audioOutputDeviceId == value) return;
+    _audioOutputDeviceId = value;
+    notifyListeners();
+    await _store.setString(_audioOutputDeviceKey, value ?? '');
+    await _runtimeAudioSetter?.call(_audioInputDeviceId, _audioOutputDeviceId);
+  }
+
+  /// Drafts are local-only UI state and are never sent through the runtime
+  /// contract. Empty values remove the persisted draft logically.
+  Future<String?> draftFor(String conversationId) =>
+      _store.getString(_draftKey(conversationId));
+
+  Future<void> setDraft(String conversationId, String value) =>
+      _store.setString(_draftKey(conversationId), value);
+
+  Future<void> clearDraft(String conversationId) =>
+      _store.setString(_draftKey(conversationId), '');
+
+  Future<bool> conversationPinned(String conversationId) async =>
+      await _store.getBool(_conversationPinnedKey(conversationId)) ?? false;
+
+  Future<void> setConversationPinned(String conversationId, bool value) =>
+      _store.setBool(_conversationPinnedKey(conversationId), value);
+
+  Future<bool> conversationMuted(String conversationId) async =>
+      await _store.getBool(_conversationMutedKey(conversationId)) ?? false;
+
+  Future<void> setConversationMuted(String conversationId, bool value) =>
+      _store.setBool(_conversationMutedKey(conversationId), value);
 }
+
+String? _nonEmpty(String? value) =>
+    value == null || value.isEmpty ? null : value;
 
 _PreferencesStore _makeStore(SharedPreferencesAsync? store) {
   if (store != null) return _PlatformPreferencesStore(store);

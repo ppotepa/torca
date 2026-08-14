@@ -21,6 +21,8 @@ torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-receipts = { path = "../../domains/torca-receipts" }
+torca-radio = { path = "../../domains/torca-radio" }
+torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 
 [lints]
 workspace = true

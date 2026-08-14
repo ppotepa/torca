@@ -1,3 +1,4 @@
+use crate::devices::{AndroidAbi, Device};
 use crate::domain::{BuildPolicy, Configuration, Target};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
@@ -110,6 +111,7 @@ impl<'a> BuildController<'a> {
     pub fn build(
         &self,
         targets: &[Target],
+        devices: &[Device],
         configuration: Configuration,
         policy: BuildPolicy,
         endpoint: Option<&str>,
@@ -136,12 +138,13 @@ impl<'a> BuildController<'a> {
             self.command_with_env("cargo", &cargo_args, endpoint, &self.paths.repo_root)?;
         }
         if targets.contains(&Target::Android) {
-            self.build_android_native(configuration, endpoint)?;
+            let android_abis = selected_android_abis(devices);
+            self.build_android_native(configuration, endpoint, &android_abis)?;
             let profile =
                 if matches!(configuration, Configuration::Release) { "release" } else { "debug" };
-            for (abi, triple) in
-                [("arm64-v8a", "aarch64-linux-android"), ("x86_64", "x86_64-linux-android")]
-            {
+            for target in android_targets(&android_abis) {
+                let abi = target.abi.package_name();
+                let triple = target.triple;
                 let source = self
                     .paths
                     .repo_root
@@ -205,14 +208,15 @@ impl<'a> BuildController<'a> {
                 Target::Windows => vec![self.paths.repo_root.join(format!(
                     "apps/client/flutter/build/windows/x64/runner/{mode}/torca_app.exe"
                 ))],
-                Target::Android => vec![
-                    self.paths.repo_root.join(format!(
-                        "apps/client/flutter/build/app/outputs/flutter-apk/app-arm64-v8a-{mode}.apk"
-                    )),
-                    self.paths.repo_root.join(format!(
-                        "apps/client/flutter/build/app/outputs/flutter-apk/app-x86_64-{mode}.apk"
-                    )),
-                ],
+                Target::Android => selected_android_abis(devices)
+                    .into_iter()
+                    .map(|abi| {
+                        self.paths.repo_root.join(format!(
+                            "apps/client/flutter/build/app/outputs/flutter-apk/app-{}-{mode}.apk",
+                            abi.package_name()
+                        ))
+                    })
+                    .collect(),
             };
             for path in paths_for_target {
                 artifacts.push(serde_json::json!({
@@ -223,12 +227,7 @@ impl<'a> BuildController<'a> {
             }
         }
         let source_commit = self.source_commit();
-        let build_id = build_identity(
-            &source_commit,
-            endpoint,
-            configuration,
-            targets,
-        );
+        let build_id = build_identity(&source_commit, endpoint, configuration, targets);
         let manifest = serde_json::json!({
             "configuration": configuration.to_string(),
             "targets": targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
@@ -266,18 +265,10 @@ impl<'a> BuildController<'a> {
         &self,
         configuration: Configuration,
         endpoint: &str,
+        abis: &[AndroidAbi],
     ) -> Result<(), BuildError> {
         let toolchain = AndroidToolchain::discover()?;
-        for target in [
-            AndroidTarget {
-                triple: "aarch64-linux-android",
-                linker: "aarch64-linux-android23-clang.cmd",
-            },
-            AndroidTarget {
-                triple: "x86_64-linux-android",
-                linker: "x86_64-linux-android23-clang.cmd",
-            },
-        ] {
+        for target in android_targets(abis) {
             let mut arguments = vec![
                 "build".to_owned(),
                 "-p".to_owned(),
@@ -368,8 +359,37 @@ impl<'a> BuildController<'a> {
 
 #[derive(Clone, Copy)]
 struct AndroidTarget {
+    abi: AndroidAbi,
     triple: &'static str,
     linker: &'static str,
+}
+
+fn selected_android_abis(devices: &[Device]) -> Vec<AndroidAbi> {
+    let mut selected = devices.iter().filter_map(|device| device.android_abi).collect::<Vec<_>>();
+    selected.sort_by_key(|abi| match abi {
+        AndroidAbi::Arm64 => 0,
+        AndroidAbi::X86_64 => 1,
+    });
+    selected.dedup();
+    if selected.is_empty() { vec![AndroidAbi::Arm64, AndroidAbi::X86_64] } else { selected }
+}
+
+fn android_targets(abis: &[AndroidAbi]) -> Vec<AndroidTarget> {
+    abis.iter()
+        .map(|abi| match abi {
+            AndroidAbi::Arm64 => AndroidTarget {
+                abi: *abi,
+                triple: "aarch64-linux-android",
+                // CPAL's Android AAudio backend requires API 26.
+                linker: "aarch64-linux-android26-clang.cmd",
+            },
+            AndroidAbi::X86_64 => AndroidTarget {
+                abi: *abi,
+                triple: "x86_64-linux-android",
+                linker: "x86_64-linux-android26-clang.cmd",
+            },
+        })
+        .collect()
 }
 
 struct AndroidToolchain {
@@ -412,18 +432,27 @@ impl AndroidToolchain {
         // at the beginning of PATH.
         environment.insert("PERL".into(), "perl".into());
         environment.insert("TORCA_RELAY_ENDPOINT".into(), endpoint.into());
-        // Use the NDK's API-qualified compiler wrapper for every native C
-        // dependency too (not only Cargo's final linker).  `openssl-sys`
-        // invokes `CC_<target>` directly; a bare host `clang` then needs
-        // extra CFLAGS and previously received both API 21 and API 23.
-        environment.insert(
-            format!("CC_{}", target.triple),
-            self.ndk_bin.join(target.linker).to_string_lossy().into_owned(),
-        );
+        // Keep compiler variables as portable command names.  `openssl-sys`
+        // writes `CC_<target>` into a Makefile executed by MSYS sh; an
+        // absolute Windows path is converted to `C:Android...clang.exe` and
+        // fails before the first C file is compiled.  The verified NDK bin
+        // directory is first on PATH, so these names still resolve to the
+        // intended compiler and archiver.
+        environment.insert(format!("CC_{}", target.triple), target.linker.into());
+        environment.insert(format!("CC_{}", target.triple.replace('-', "_")), target.linker.into());
         environment.insert(format!("AR_{}", target.triple), "llvm-ar".into());
+        environment.insert(format!("AR_{}", target.triple.replace('-', "_")), "llvm-ar".into());
+        environment.insert(format!("RANLIB_{}", target.triple), "llvm-ranlib".into());
+        environment
+            .insert(format!("RANLIB_{}", target.triple.replace('-', "_")), "llvm-ranlib".into());
         environment.insert(
             format!("CARGO_TARGET_{}_LINKER", target.triple.replace('-', "_").to_uppercase()),
-            self.ndk_bin.join(target.linker).to_string_lossy().into_owned(),
+            // Keep this portable as well.  Cargo propagates the linker value
+            // to openssl-sys; an absolute Windows path is later consumed by
+            // MSYS `sh`, which strips the backslashes and produces the
+            // unusable `C:Android...` form.  The verified NDK directory is
+            // already first on PATH.
+            target.linker.into(),
         );
         // Do not add a CFLAGS target here. The API-qualified wrapper above
         // already selects it. Adding another `--target` causes OpenSSL's
@@ -575,6 +604,43 @@ mod tests {
             Path::new("/tmp/torca/Debug/app"),
             Target::Android,
         ));
+    }
+
+    #[test]
+    fn connected_android_devices_limit_native_abis() {
+        let devices = [Device {
+            target: Target::Android,
+            id: "phone".into(),
+            android_abi: Some(AndroidAbi::Arm64),
+        }];
+        assert_eq!(selected_android_abis(&devices), vec![AndroidAbi::Arm64]);
+        let targets = android_targets(&selected_android_abis(&devices));
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].linker, "aarch64-linux-android26-clang.cmd");
+    }
+
+    #[test]
+    fn artifact_build_without_devices_produces_both_supported_abis() {
+        assert_eq!(selected_android_abis(&[]), vec![AndroidAbi::Arm64, AndroidAbi::X86_64]);
+    }
+
+    #[test]
+    fn android_toolchain_uses_portable_linker_names_for_msys() {
+        let toolchain = AndroidToolchain {
+            ndk_bin: PathBuf::from(
+                r"C:\Android\android-sdk\ndk\29.0.13113456\toolchains\llvm\prebuilt\windows-x86_64\bin",
+            ),
+            unix_perl: PathBuf::from(r"C:\msys64\usr\bin\perl.exe"),
+        };
+        let environment =
+            toolchain.environment(android_targets(&[AndroidAbi::Arm64])[0], "a.onion:443");
+        assert_eq!(environment["CC_aarch64-linux-android"], "aarch64-linux-android26-clang.cmd");
+        assert_eq!(environment["CC_aarch64_linux_android"], "aarch64-linux-android26-clang.cmd");
+        assert_eq!(
+            environment["CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"],
+            "aarch64-linux-android26-clang.cmd"
+        );
+        assert_eq!(environment["PERL"], "perl");
     }
 
     #[test]

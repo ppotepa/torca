@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
 
@@ -8,6 +9,9 @@ class ConversationHeader extends StatelessWidget {
   const ConversationHeader({
     required this.contact,
     required this.onConnectionDetails,
+    this.gateway,
+    this.radio,
+    this.session,
     this.compact = false,
     super.key,
   });
@@ -15,6 +19,9 @@ class ConversationHeader extends StatelessWidget {
   final ContactDto? contact;
   final VoidCallback onConnectionDetails;
   final bool compact;
+  final EngineGateway? gateway;
+  final RadioContactDto? radio;
+  final RadioSessionDto? session;
 
   @override
   Widget build(BuildContext context) {
@@ -64,14 +71,97 @@ class ConversationHeader extends StatelessWidget {
         ),
         if (!compact) ...<Widget>[
           const Spacer(),
+          if (value != null && gateway != null && radio != null)
+            _RadioHeaderAction(
+              gateway: gateway!,
+              contact: value,
+              radio: radio!,
+              session: session,
+              compact: compact,
+            ),
           IconButton(
             tooltip: context.strings.connectionDetails,
             onPressed: onConnectionDetails,
             icon: Icon(context.torcaIcons.info),
           ),
         ],
+        if (compact && value != null && gateway != null && radio != null)
+          _RadioHeaderAction(
+            gateway: gateway!,
+            contact: value,
+            radio: radio!,
+            session: session,
+            compact: compact,
+          ),
       ],
     );
+  }
+}
+
+class _RadioHeaderAction extends StatelessWidget {
+  const _RadioHeaderAction({
+    required this.gateway,
+    required this.contact,
+    required this.radio,
+    this.session,
+    required this.compact,
+  });
+
+  final EngineGateway gateway;
+  final ContactDto contact;
+  final RadioContactDto radio;
+  final RadioSessionDto? session;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = session?.typedState ?? radio.typedState;
+    final capturing = state == RadioState.transmitting;
+    final receiving = state == RadioState.receiving;
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      label: capturing
+          ? context.strings.radioTransmitting
+          : receiving
+          ? context.strings.radioReceiving(contact.displayName)
+          : context.strings.radioMode,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (capturing)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Icon(
+                Icons.fiber_manual_record,
+                size: 12,
+                color: colors.error,
+              ),
+            ),
+          if (!compact)
+            Text(
+              capturing
+                  ? 'REC'
+                  : receiving
+                  ? 'RX'
+                  : context.strings.radioMode,
+            ),
+          Switch.adaptive(
+            value: radio.localEnabled,
+            onChanged: (enabled) => _setEnabled(context, enabled),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setEnabled(BuildContext context, bool enabled) async {
+    final result = await gateway.execute(
+      SetRadioEnabledCommandDto(contactIdHex: contact.id, enabled: enabled),
+    );
+    if (!context.mounted || result.ok) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.strings.couldNotStartRadio)));
   }
 }
 

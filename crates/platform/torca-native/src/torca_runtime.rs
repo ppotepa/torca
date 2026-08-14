@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 use torca_contract::{BridgeCommand, CONTRACT_VERSION, generated};
 use torca_crypto::{CryptoProvider, RustCryptoProvider};
+use torca_runtime_policy::RuntimeEventHub;
 
 use crate::native_runtime::{ABI_OK, TorcaRuntime};
 
@@ -69,6 +70,7 @@ enum ActorMessage {
 struct RuntimeHandleInner {
     sender: SyncSender<ActorMessage>,
     startup_error: Option<String>,
+    event_hub: Arc<RuntimeEventHub>,
 }
 
 #[repr(C)]
@@ -284,6 +286,8 @@ pub extern "C" fn torca_runtime_acquire() -> *mut TorcaRuntimeHandle {
 
 fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
     let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
+    let event_hub = Arc::new(RuntimeEventHub::default());
+    let actor_event_hub = Arc::clone(&event_hub);
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     thread::Builder::new()
         .name("torca-runtime".into())
@@ -300,6 +304,7 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                         completed: IdempotencyLedger::default(),
                         next_pending_reconcile_at: Instant::now(),
                     },
+                    actor_event_hub,
                 );
             }
             Err(error) => {
@@ -313,31 +318,56 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
         Ok(Err(error)) => Some(error),
         Err(_) => return Err(()),
     };
-    Ok(Arc::new(RuntimeHandleInner { sender, startup_error }))
+    Ok(Arc::new(RuntimeHandleInner { sender, startup_error, event_hub }))
 }
 
-fn actor_loop(receiver: Receiver<ActorMessage>, mut state: ActorState) {
+fn actor_loop(
+    receiver: Receiver<ActorMessage>,
+    mut state: ActorState,
+    event_hub: Arc<RuntimeEventHub>,
+) {
     loop {
         let message = match receiver.recv_timeout(Duration::from_secs(1)) {
             Ok(message) => message,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                state.maintain();
+                if state.maintain() {
+                    state.revision = state.revision.saturating_add(1);
+                    event_hub.publish(state.revision);
+                }
                 continue;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match message {
             ActorMessage::Invoke { request, response } => {
+                let emits_revision = request_emits_runtime_revision(&request);
                 let _ = response.send(state.invoke(&request));
+                if emits_revision {
+                    // Commands can create notifications and durable state
+                    // without waiting for the maintenance deadline. Queries
+                    // are deliberately excluded so Flutter's event wait does
+                    // not wake itself in a poll loop.
+                    state.revision = state.revision.saturating_add(1);
+                    event_hub.publish(state.revision);
+                }
                 // Flutter polls snapshots frequently.  Maintenance must be
                 // deadline-driven, not dependent on finding a one-second gap
                 // in the actor mailbox, otherwise durable pairing work can
                 // remain queued forever while the UI is open.
-                state.maintain();
+                if state.maintain() {
+                    state.revision = state.revision.saturating_add(1);
+                    event_hub.publish(state.revision);
+                }
+                event_hub.publish(state.revision);
             }
             ActorMessage::Lifecycle { event, response } => {
                 let _ = response.send(state.runtime.lifecycle(&event));
-                state.maintain();
+                state.revision = state.revision.saturating_add(1);
+                if state.maintain() {
+                    state.revision = state.revision.saturating_add(1);
+                    event_hub.publish(state.revision);
+                }
+                event_hub.publish(state.revision);
             }
             ActorMessage::Shutdown { response } => {
                 let _ = state.runtime.close();
@@ -346,6 +376,13 @@ fn actor_loop(receiver: Receiver<ActorMessage>, mut state: ActorState) {
             }
         }
     }
+}
+
+fn request_emits_runtime_revision(raw: &str) -> bool {
+    let Ok(request) = serde_json::from_str::<Value>(raw) else {
+        return true;
+    };
+    request.get("kind").and_then(Value::as_str) != Some("query")
 }
 
 #[allow(dead_code)]
@@ -368,14 +405,17 @@ fn dispatch_lifecycle(event: &str) -> i32 {
 }
 
 impl ActorState {
-    fn maintain(&mut self) {
+    fn maintain(&mut self) -> bool {
         if Instant::now() < self.next_pending_reconcile_at {
-            return;
+            return false;
         }
         self.next_pending_reconcile_at = Instant::now() + PENDING_RECONCILE_INTERVAL;
-        // This is the sole reconciliation path.  Snapshot reads are pure and
-        // cannot trigger network traffic or queue mutations.
+        // This is the sole reconciliation path for pending work. It also
+        // refreshes the read model so background completions can wake event
+        // consumers without a foreground query.
+        let before = self.runtime.snapshot_json.clone();
         self.runtime.reconcile_pending_operations();
+        before != self.runtime.snapshot_json
     }
 
     fn invoke(&mut self, raw: &str) -> Vec<u8> {
@@ -669,6 +709,35 @@ pub unsafe extern "C" fn torca_runtime_invoke(
     ABI_OK
 }
 
+/// Blocks without waking the runtime actor until its revision or notification
+/// cursor changes. The caller should issue one normal `runtime.poll` after a
+/// successful wait. A return value of `1` means changed, `0` means timeout.
+#[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be a valid handle returned by `torca_runtime_acquire`.
+pub unsafe extern "C" fn torca_runtime_wait_for_revision(
+    handle: *const TorcaRuntimeHandle,
+    after_revision: u64,
+    after_cursor: u64,
+    timeout_ms: u32,
+) -> i32 {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return -1;
+    };
+    if handle.inner.startup_error.is_some() {
+        return -2;
+    }
+    let timeout = if timeout_ms == 0 {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_millis(u64::from(timeout_ms))
+    };
+    match handle.inner.event_hub.wait(0, after_revision, after_cursor, timeout) {
+        Some(_) => 1,
+        None => 0,
+    }
+}
+
 #[unsafe(no_mangle)]
 /// # Safety
 /// `handle` must be a valid runtime handle and the returned pointer is valid
@@ -781,6 +850,45 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeNotificatio
     env.new_string(payload).map_or(core::ptr::null_mut(), |value| value.into_raw())
 }
 
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeRuntimeRevision(
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+) -> jni::sys::jlong {
+    let registry = REGISTRY.get_or_init(|| Mutex::new(None));
+    registry
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().and_then(|inner| inner.event_hub.current()))
+        .map_or(0, |(revision, _)| revision as jni::sys::jlong)
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeWaitForRevision(
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    after_revision: jni::sys::jlong,
+    after_cursor: jni::sys::jlong,
+    timeout_ms: jni::sys::jint,
+) -> jni::sys::jint {
+    let handle = torca_runtime_acquire();
+    if handle.is_null() {
+        return -1;
+    }
+    let result = unsafe {
+        torca_runtime_wait_for_revision(
+            handle,
+            after_revision.max(0) as u64,
+            after_cursor.max(0) as u64,
+            timeout_ms.max(0) as u32,
+        )
+    };
+    unsafe { torca_runtime_release(handle) };
+    result
+}
+
 fn send_with_timeout<T>(
     sender: &SyncSender<T>,
     mut message: T,
@@ -873,6 +981,14 @@ fn bridge_command(
         "conversation.clear" => Ok(BridgeCommand::ClearConversationHistory {
             conversation_id_hex: text("conversationIdHex")?,
         }),
+        "conversation.archive" => Ok(BridgeCommand::ArchiveConversation {
+            conversation_id_hex: text("conversationIdHex")?,
+            at_ms: now()?,
+        }),
+        "conversation.restore" => Ok(BridgeCommand::RestoreConversation {
+            conversation_id_hex: text("conversationIdHex")?,
+            at_ms: now()?,
+        }),
         "message.send" => Ok(BridgeCommand::QueueMessage {
             message_id_hex: generated()?,
             conversation_id_hex: text("conversationIdHex")?,
@@ -887,6 +1003,22 @@ fn bridge_command(
         "message.retry" => {
             Ok(BridgeCommand::RetryMessage { message_id_hex: text("messageIdHex")?, at_ms: now()? })
         }
+        "message.cancel" => {
+            Ok(BridgeCommand::CancelMessage { message_id_hex: text("messageIdHex")?, at_ms: now()? })
+        }
+        "message.edit" => Ok(BridgeCommand::EditMessage {
+            message_id_hex: text("messageIdHex")?,
+            body: text("body")?,
+            at_ms: now()?,
+        }),
+        "message.reaction" => Ok(BridgeCommand::SetMessageReaction {
+            message_id_hex: text("messageIdHex")?,
+            conversation_id_hex: text("conversationIdHex")?,
+            actor_id_hex: text("actorIdHex")?,
+            emoji: text("emoji")?,
+            active: payload.get("active").and_then(Value::as_bool).unwrap_or(true),
+            at_ms: now()?,
+        }),
         "conversation.read" => {
             let conversation_id_hex = text("conversationIdHex")?;
             Ok(BridgeCommand::MarkConversationRead { conversation_id_hex })
@@ -923,6 +1055,32 @@ fn bridge_command(
             attachment_id_hex: text("attachmentIdHex")?,
             destination_path: text("destinationPath")?,
         }),
+        "radio.set_enabled" => Ok(BridgeCommand::SetRadioEnabled {
+            contact_id_hex: text("contactIdHex")?,
+            enabled: payload
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
+            at_ms: now()?,
+        }),
+        "radio.audio.configure" => Ok(BridgeCommand::ConfigureRadioAudio {
+            input_device_id: payload
+                .get("inputDeviceId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            output_device_id: payload
+                .get("outputDeviceId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+        }),
+        "radio.transmission.begin" => {
+            Ok(BridgeCommand::BeginRadioTransmission { contact_id_hex: text("contactIdHex")? })
+        }
+        "radio.transmission.end" => {
+            Ok(BridgeCommand::EndRadioTransmission { contact_id_hex: text("contactIdHex")? })
+        }
         _ => Err(("CONTRACT_OPERATION_UNKNOWN", "contract.operation.unknown")),
     }
 }

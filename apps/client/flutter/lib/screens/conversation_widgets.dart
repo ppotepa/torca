@@ -1,5 +1,115 @@
 part of 'conversation_screen.dart';
 
+/// Shared composer surface for both the mobile route and desktop pane.
+/// Layout decisions stay here while ConversationPane owns persistence and
+/// command orchestration.
+class ConversationComposer extends StatelessWidget {
+  const ConversationComposer({
+    required this.gateway,
+    required this.messageField,
+    required this.contact,
+    required this.radio,
+    required this.session,
+    required this.pendingAttachments,
+    required this.onRemoveAttachment,
+    required this.onPickAttachments,
+    required this.onSend,
+    required this.sending,
+    required this.sendingAttachment,
+    required this.pickingAttachment,
+    required this.searching,
+    this.reply,
+    this.onCancelReply,
+    super.key,
+  });
+
+  final EngineGateway gateway;
+  final Widget messageField;
+  final ContactDto? contact;
+  final RadioContactDto? radio;
+  final RadioSessionDto? session;
+  final List<_PendingAttachment> pendingAttachments;
+  final ValueChanged<_PendingAttachment> onRemoveAttachment;
+  final VoidCallback onPickAttachments;
+  final VoidCallback onSend;
+  final bool sending;
+  final bool sendingAttachment;
+  final bool pickingAttachment;
+  final bool searching;
+  final MessageDto? reply;
+  final VoidCallback? onCancelReply;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (pendingAttachments.isNotEmpty) ...<Widget>[
+            _AttachmentTray(
+              attachments: pendingAttachments,
+              onRemove: onRemoveAttachment,
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (reply != null) ...<Widget>[
+            _ReplyComposerPreview(
+              message: reply!,
+              onCancel: onCancelReply ?? () {},
+            ),
+            const SizedBox(height: 8),
+          ],
+          Row(
+            children: <Widget>[
+              IconButton(
+                tooltip: context.strings.attachFiles,
+                onPressed: pickingAttachment || sendingAttachment || searching
+                    ? null
+                    : onPickAttachments,
+                icon: pickingAttachment
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(context.torcaIcons.attachment),
+              ),
+              const SizedBox(width: 4),
+              Expanded(child: messageField),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: context.strings.sendMessage,
+                onPressed: sending || sendingAttachment || searching
+                    ? null
+                    : onSend,
+                icon: sending || sendingAttachment
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(context.torcaIcons.send),
+              ),
+              if (contact != null && radio?.localEnabled == true) ...<Widget>[
+                const SizedBox(width: 4),
+                RadioPushToTalk(
+                  gateway: gateway,
+                  contact: contact!,
+                  radio: radio!,
+                  session: session,
+                  disabled: searching,
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _DateSeparator extends StatelessWidget {
   const _DateSeparator({required this.milliseconds});
   final int milliseconds;
@@ -191,4 +301,73 @@ class _AttachmentTray extends StatelessWidget {
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+class _ConversationSearchBar extends StatelessWidget {
+  const _ConversationSearchBar({
+    required this.searching,
+    required this.busy,
+    required this.controller,
+    required this.onStart,
+    required this.onChanged,
+    required this.onClose,
+  });
+
+  final bool searching;
+  final bool busy;
+  final TextEditingController controller;
+  final VoidCallback onStart;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!searching) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: IconButton(
+            tooltip: context.strings.searchMessages,
+            onPressed: onStart,
+            icon: Icon(context.torcaIcons.search),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Search this conversation',
+                prefixIcon: Icon(context.torcaIcons.search),
+              ),
+              onChanged: onChanged,
+            ),
+          ),
+          if (busy)
+            const Padding(
+              padding: EdgeInsets.all(10),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: context.strings.closeSearch,
+              onPressed: onClose,
+              icon: Icon(context.torcaIcons.close),
+            ),
+        ],
+      ),
+    );
+  }
 }

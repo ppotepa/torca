@@ -15,11 +15,13 @@ torca-connectivity = { path = "../torca-connectivity" }
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }
 torca-diagnostics = { path = "../torca-diagnostics" }
+torca-delivery = { path = "../torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-probing = { path = "../torca-probing" }
 torca-presence = { path = "../../domains/torca-presence" }
+torca-runtime-policy = { path = "../torca-runtime-policy" }
 
 [lints]
 workspace = true

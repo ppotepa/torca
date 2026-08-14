@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../localization/torca_strings.dart';
@@ -121,13 +122,27 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
               )
             : null,
       );
-      if (mobile) return content;
-      return Row(
-        children: <Widget>[
-          rail,
-          const VerticalDivider(width: 1),
-          Expanded(child: content),
-        ],
+      final shell = mobile
+          ? content
+          : Row(
+              children: <Widget>[
+                rail,
+                const VerticalDivider(width: 1),
+                Expanded(child: content),
+              ],
+            );
+      return CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.digit1, control: true): () =>
+              widget.onDestinationSelected(0),
+          const SingleActivator(LogicalKeyboardKey.digit2, control: true): () =>
+              widget.onDestinationSelected(1),
+          const SingleActivator(LogicalKeyboardKey.digit3, control: true): () =>
+              widget.onDestinationSelected(2),
+          const SingleActivator(LogicalKeyboardKey.escape): () =>
+              FocusManager.instance.primaryFocus?.unfocus(),
+        },
+        child: shell,
       );
     },
   );

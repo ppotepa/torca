@@ -454,7 +454,7 @@ impl OwnedTorDriver {
         now: Timestamp,
         observer: Option<TorBootstrapObserver>,
     ) -> Result<(), RuntimeDriverError> {
-        self.observer = observer.clone();
+        self.observer.clone_from(&observer);
         self.endpoint.set(None);
         self.state = TorState::Starting;
         match TorService::bootstrap_observed(
@@ -697,7 +697,9 @@ mod tests {
             tracker.observe(
                 OnionServiceHealth::Publishing,
                 1,
-                start + ONION_PUBLISHING_GRACE - Duration::from_secs(1)
+                (start + ONION_PUBLISHING_GRACE)
+                    .checked_sub(Duration::from_secs(1))
+                    .expect("grace period is longer than one second")
             ),
             None
         );
@@ -716,7 +718,9 @@ mod tests {
             tracker.observe(
                 OnionServiceHealth::Publishing,
                 2,
-                start + ONION_PUBLISHING_GRACE - Duration::from_secs(1)
+                (start + ONION_PUBLISHING_GRACE)
+                    .checked_sub(Duration::from_secs(1))
+                    .expect("grace period is longer than one second")
             ),
             None
         );
@@ -724,7 +728,9 @@ mod tests {
             tracker.observe(
                 OnionServiceHealth::Publishing,
                 2,
-                start + ONION_PUBLISHING_GRACE * 2 - Duration::from_secs(2)
+                (start + ONION_PUBLISHING_GRACE * 2)
+                    .checked_sub(Duration::from_secs(2))
+                    .expect("grace period is longer than two seconds")
             ),
             None
         );

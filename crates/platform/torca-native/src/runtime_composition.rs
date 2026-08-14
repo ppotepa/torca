@@ -4,7 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
 use torca_communication_adapters::{
-    ProductionCommunicationInputs, ReadReceiptPolicy, build_production_communication,
+    ProductionCommunicationInputs, ProductionCommunicationOutput, ReadReceiptPolicy,
+    build_production_communication,
 };
 use torca_connectivity::ConnectivityObserver;
 use torca_crypto::{
@@ -17,6 +18,7 @@ use torca_pairing_coordinator::{
 };
 use torca_pairing_driver::{PairingWorkerDriver, RuntimePairingDriver};
 use torca_platform::{PlatformServices, SecretNamespace};
+use torca_radio_coordinator::SharedRadioCoordinator;
 use torca_rendezvous_client::{RendezvousClient, SharedTorRelayTransport};
 use torca_runtime::{RelayProbe, RelayServiceInfo, RuntimeHandle, RuntimeOwner};
 use torca_tor::{OwnedTorDriver, SharedTorEndpoint};
@@ -86,7 +88,7 @@ pub(crate) fn spawn_production_runtime(
     engine: EngineHandle,
     bootstrap_observer: TorBootstrapObserver,
     read_receipt_policy: ReadReceiptPolicy,
-) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
+) -> Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError> {
     let platform = crate::platform_selector::platform_services()?;
     spawn_runtime_for(platform.as_ref(), engine, bootstrap_observer, read_receipt_policy)
 }
@@ -96,7 +98,7 @@ fn spawn_runtime_for(
     engine: EngineHandle,
     bootstrap_observer: TorBootstrapObserver,
     read_receipt_policy: ReadReceiptPolicy,
-) -> Result<(RuntimeHandle, RuntimeOwner), NativeCompositionError> {
+) -> Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError> {
     let paths = platform.app_paths();
     let database_path = paths.data.join("torca.db");
     let mut database_store = platform.open_secret_store(SecretNamespace::Storage);
@@ -139,26 +141,27 @@ fn spawn_runtime_for(
         key_id,
     );
     let connectivity = ConnectivityObserver::default();
-    let communication = build_production_communication(
-        engine.clone(),
-        &database_path,
-        &database_key,
-        &paths.cache.join("attachments"),
-        &paths.data.join("attachments").join("staging"),
-        ProductionCommunicationInputs {
-            signer,
-            peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            listener,
-            tor_client: tor_client.clone(),
-            local_identity_id: identity_id,
-            connectivity: connectivity.clone(),
-            read_receipt_policy,
-        },
-    )
-    .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
+    let ProductionCommunicationOutput { driver: communication, radio } =
+        build_production_communication(
+            engine.clone(),
+            &database_path,
+            &database_key,
+            &paths.cache.join("attachments"),
+            &paths.data.join("attachments").join("staging"),
+            ProductionCommunicationInputs {
+                signer,
+                peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                listener,
+                tor_client: tor_client.clone(),
+                local_identity_id: identity_id,
+                connectivity: connectivity.clone(),
+                read_receipt_policy,
+            },
+        )
+        .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
     let relay = platform
         .relay_endpoint()
         .map_err(NativeCompositionError::new)
@@ -185,14 +188,15 @@ fn spawn_runtime_for(
     )?;
     let pairing = PairingWorkerDriver::spawn(pairing)
         .map_err(|_| NativeCompositionError::new("spawn pairing supervisor failed"))?;
-    Ok(RuntimeOwner::spawn_with_connectivity(
+    let (handle, owner) = RuntimeOwner::spawn_with_connectivity(
         engine,
         pairing,
         communication,
         tor,
         Some(relay_probe),
         connectivity,
-    ))
+    );
+    Ok((handle, owner, radio))
 }
 
 fn bind_peer_listener() -> Result<PeerListener, NativeCompositionError> {

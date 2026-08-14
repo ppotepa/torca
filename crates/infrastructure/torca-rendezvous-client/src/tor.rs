@@ -38,9 +38,11 @@ impl SharedTorRelayTransport {
         self.relay_info(timeout).map(|_| ())
     }
 
-    /// Non-blocking health/info sample for the background supervisor. It never
-    /// waits behind a foreground exchange and never performs a reconnect while
-    /// another operation owns the transport.
+    /// Non-blocking-with-respect-to-ownership health/info sample for the
+    /// background supervisor. It never waits behind a foreground exchange,
+    /// but the owner that acquires an idle disconnected transport performs the
+    /// initial bounded dial. Without that first dial a fresh profile could
+    /// remain disconnected until a user operation tried to use the relay.
     pub fn try_relay_info(&self, timeout: Duration) -> Result<RelayInfo, RelayTransportError> {
         // Health is background work. It must never wait behind a user-facing
         // pairing or delivery exchange, nor start a second reconnect while
@@ -50,7 +52,13 @@ impl SharedTorRelayTransport {
             kind: RelayTransportFailureKind::Busy,
             request_was_sent: false,
         })?;
-        let response = transport.exchange(&RelayRequest::Info, timeout);
+        let response = match transport.exchange(&RelayRequest::Info, timeout) {
+            Ok(response) => Ok(response),
+            Err(error) if !error.request_was_sent => transport
+                .reconnect()
+                .and_then(|()| transport.exchange(&RelayRequest::Info, timeout)),
+            Err(error) => Err(error),
+        };
         match response {
             Ok(RelayResponse::Info(info)) => Ok(info),
             Ok(_) => Err(RelayTransportError {
@@ -58,9 +66,8 @@ impl SharedTorRelayTransport {
                 request_was_sent: true,
             }),
             Err(error) => {
-                // Health observation never reconnects while holding the
-                // shared transport lock. Foreground operations own recovery;
-                // the next probe observes the resulting stream.
+                // A failed exchange invalidates the stream. The next health or
+                // foreground operation owns a single serialized reconnect.
                 transport.invalidate();
                 Err(error)
             }

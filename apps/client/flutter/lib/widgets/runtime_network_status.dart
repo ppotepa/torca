@@ -36,6 +36,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.actions = const <Widget>[],
     this.automaticallyImplyLeading = true,
     this.titleSpacing,
+    this.backgroundColor,
     super.key,
   });
 
@@ -43,6 +44,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final List<Widget> actions;
   final bool automaticallyImplyLeading;
   final double? titleSpacing;
+  final Color? backgroundColor;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -56,6 +58,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
         titleSpacing: titleSpacing,
         automaticallyImplyLeading: automaticallyImplyLeading,
         actions: actions,
+        backgroundColor: backgroundColor,
       );
     }
     final gateway = scope.gateway;
@@ -65,6 +68,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
         title: title,
         titleSpacing: titleSpacing,
         automaticallyImplyLeading: automaticallyImplyLeading,
+        backgroundColor: backgroundColor,
         actions: <Widget>[
           RuntimeNetworkStatus(snapshot: snapshot),
           ...actions,
@@ -390,7 +394,7 @@ class _EthernetLed extends StatelessWidget {
       width: 5,
       height: 9,
       decoration: BoxDecoration(
-                    color: active ? color : context.semanticColors.activityIdle,
+        color: active ? color : context.semanticColors.activityIdle,
         borderRadius: BorderRadius.circular(
           context.torcaTokens.terminal ? 0 : 1,
         ),

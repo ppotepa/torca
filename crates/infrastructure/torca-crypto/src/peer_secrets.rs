@@ -5,7 +5,10 @@ use torca_pairing_coordinator::{
     PairingCredentialError, PairingDerivedSecret, PairingPeerSecretStore,
 };
 
-use crate::{Ciphertext, CryptoProvider, Nonce, ProtectedSecretStore, SealingKey};
+use crate::{
+    Ciphertext, CryptoProvider, Nonce, ProtectedSecretStore, RadioCipherError, RadioSessionCipher,
+    SealingKey,
+};
 
 /// Protected pairwise-secret manager. Secret bytes are loaded only for the duration of one
 /// authenticated-encryption operation and are zeroed before returning.
@@ -135,6 +138,34 @@ where
         bytes.copy_from_slice(&stored);
         stored.fill(0);
         Ok(SealingKey::new(bytes))
+    }
+}
+
+impl<C, S> ManagedPeerSecrets<C, S>
+where
+    C: CryptoProvider + Clone,
+    S: ProtectedSecretStore,
+{
+    /// Derives one in-memory, directional Radio Mode media cipher while the
+    /// protected pairwise key is loaded. The durable key is dropped before
+    /// this method returns.
+    pub fn derive_radio_session_cipher(
+        &self,
+        handle: OpaqueId,
+        session_id: OpaqueId,
+        media_token: &[u8; 32],
+        local_identity: OpaqueId,
+        remote_identity: OpaqueId,
+    ) -> Result<RadioSessionCipher<C>, RadioCipherError> {
+        let pairwise = self.load_key(handle).map_err(|_| RadioCipherError::Derivation)?;
+        RadioSessionCipher::derive(
+            self.crypto.clone(),
+            &pairwise,
+            session_id,
+            media_token,
+            local_identity,
+            remote_identity,
+        )
     }
 }
 

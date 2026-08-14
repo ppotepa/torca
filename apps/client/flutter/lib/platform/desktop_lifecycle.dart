@@ -92,6 +92,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
   Future<void> _notify(RuntimeEventDto event) async {
     if (!preferences.notificationsEnabled || await windowManager.isFocused())
       return;
+    if (event.conversationId.isNotEmpty &&
+        await preferences.conversationMuted(event.conversationId)) {
+      return;
+    }
     final notification = LocalNotification(
       title: event.title,
       body: event.body,

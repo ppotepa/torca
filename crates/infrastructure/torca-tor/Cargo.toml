@@ -16,6 +16,7 @@ safelog = "0.9"
 tor-hsservice = "0.45"
 tor-cell = "0.45"
 tor-rtcompat = { version = "0.45", features = ["tokio", "rustls"] }
+tor-proto = "0.45"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-peer = { path = "../torca-peer" }

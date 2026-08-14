@@ -8,6 +8,7 @@ import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/navigation/app_navigation_controller.dart';
 import 'package:torca_app/screens/pairing_screen.dart';
 import 'package:torca_app/settings/local_preferences.dart';
+import 'package:torca_app/widgets/pairing_modal_registry.dart';
 import 'fake_engine_gateway.dart';
 
 TorcaApp _app(EngineGateway gateway) => TorcaApp(
@@ -41,6 +42,90 @@ void main() {
     expect(find.text('Generate Invitation'), findsNothing);
   });
 
+  testWidgets(
+    'one invitation modal follows the session state and closes on contact',
+    (WidgetTester tester) async {
+      const id = '00000000000000000000000000000081';
+      const open = PairingDto(
+        id: id,
+        code: 'FLOW81',
+        inviteUri: 'torca://pair?v=2&code=FLOW81',
+        role: 'creator',
+        state: 'open',
+        expiresAtMs: 4102444800000,
+        localApproved: false,
+        remoteApproved: false,
+      );
+      final gateway = FakeEngineGateway(
+        initialSnapshot: const AppSnapshotDto(
+          identity: IdentityDto(displayName: 'Alice'),
+          pairings: <PairingDto>[open],
+          bootstrapPhase: 'ready',
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: FilledButton(
+                onPressed: () =>
+                    showPairingSessionModal(context, gateway, open),
+                child: const Text('Open invitation'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open invitation'));
+      await tester.pump();
+      expect(find.text('FLOW81'), findsOneWidget);
+
+      gateway.publish(
+        const AppSnapshotDto(
+          identity: IdentityDto(displayName: 'Alice'),
+          pairings: <PairingDto>[
+            PairingDto(
+              id: id,
+              code: 'FLOW81',
+              inviteUri: 'torca://pair?v=2&code=FLOW81',
+              role: 'creator',
+              state: 'awaiting_approval',
+              expiresAtMs: 4102444800000,
+              localApproved: false,
+              remoteApproved: true,
+              remoteDisplayName: 'Bob',
+              remoteFingerprint: 'AA BB CC DD',
+            ),
+          ],
+          bootstrapPhase: 'ready',
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Bob'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Accept'), findsOneWidget);
+      expect(find.text('FLOW81'), findsNothing);
+
+      gateway.publish(
+        const AppSnapshotDto(
+          identity: IdentityDto(displayName: 'Alice'),
+          contacts: <ContactDto>[
+            ContactDto(
+              id: 'contact-81',
+              displayName: 'Bob',
+              onionAddress: 'bob.onion:443',
+              status: 'active',
+              connectionState: 'connecting',
+            ),
+          ],
+          bootstrapPhase: 'ready',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Invitation'), findsNothing);
+      expect(find.text('Open invitation'), findsOneWidget);
+    },
+  );
+
   testWidgets('desktop join modal does not expose QR scanning', (
     WidgetTester tester,
   ) async {
@@ -64,6 +149,35 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     expect(find.byTooltip('Scan QR'), findsNothing);
     expect(find.text('Join invitation'), findsWidgets);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('Android invitation field reconnects to the software keyboard', (
+    WidgetTester tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () =>
+                showJoinInvitationModal(context, FakeEngineGateway()),
+            child: const Text('Open join'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open join'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(TextField));
+    await tester.pump(const Duration(milliseconds: 80));
+
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tester.enterText(find.byType(TextField), 'AB12CD3');
+    expect(find.text('AB12CD3'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -194,11 +308,11 @@ void main() {
       ),
       pairings: <PairingDto>[
         PairingDto(
-          id: '00000000000000000000000000000002',
+          id: '00000000000000000000000000000092',
           code: 'JOIN2',
           inviteUri: 'torca://pair?v=2&code=JOIN22',
           role: 'creator',
-          state: 'peerjoined',
+          state: 'peer_joined',
           expiresAtMs: 4102444800000,
           localApproved: false,
           remoteApproved: false,
@@ -216,8 +330,7 @@ void main() {
         preferences: LocalPreferences(),
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('New pairing request'), findsOneWidget);
     expect(find.text('Bob'), findsOneWidget);
@@ -225,6 +338,56 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Accept'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, 'Reject'), findsOneWidget);
   });
+
+  testWidgets(
+    'incoming approval waits for the invitation modal and appears after it closes',
+    (WidgetTester tester) async {
+      const pairingId = '00000000000000000000000000000093';
+      final registry = PairingModalRegistry.instance;
+      registry.claim(pairingId);
+      addTearDown(() => registry.release(pairingId));
+      const incoming = AppSnapshotDto(
+        identity: IdentityDto(displayName: 'Alice'),
+        torState: 'ready',
+        transport: TransportStatusDto(
+          tor: TransportIndicatorDto(state: 'ready'),
+          relay: TransportIndicatorDto(state: 'healthy'),
+        ),
+        pairings: <PairingDto>[
+          PairingDto(
+            id: pairingId,
+            code: 'JOIN3',
+            inviteUri: 'torca://pair?v=2&code=JOIN33',
+            role: 'creator',
+            state: 'awaiting_approval',
+            expiresAtMs: 4102444800000,
+            localApproved: false,
+            remoteApproved: true,
+            remoteIdentityId: 'remote-identity',
+            remoteDisplayName: 'Carol',
+            remoteFingerprint: '11 22 33 44',
+          ),
+        ],
+        bootstrapPhase: 'ready',
+      );
+      await tester.pumpWidget(
+        TorcaApp(
+          gateway: FakeEngineGateway(initialSnapshot: incoming),
+          navigation: AppNavigationController(),
+          preferences: LocalPreferences(),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('New pairing request'), findsNothing);
+
+      registry.release(pairingId);
+      await tester.pumpAndSettle();
+
+      expect(find.text('New pairing request'), findsOneWidget);
+      expect(find.text('Carol'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'native startup failure is surfaced instead of silently using memory state',

@@ -30,9 +30,16 @@ class TorcaForegroundService : Service() {
     private lateinit var notificationHandler: Handler
     private var notificationCursor = 0L
     private var notificationRuntimeId = ""
+    // This is the native runtime revision, distinct from the durable
+    // notification cursor.  The service blocks on the revision and only
+    // fetches notifications after a real runtime change.
+    private var runtimeRevision = 0L
     private lateinit var connectivityManager: ConnectivityManager
     private var warmupWakeLock: PowerManager.WakeLock? = null
     private var networkChangePending = false
+    private val networkLock = Any()
+    private var defaultNetwork: Network? = null
+    private var defaultNetworkFingerprint: NetworkFingerprint? = null
     private val networkChangeRunnable = Runnable {
         networkChangePending = false
         if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
@@ -40,12 +47,12 @@ class TorcaForegroundService : Service() {
         }
     }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) = notifyNetworkChanged()
-        override fun onLost(network: Network) = notifyNetworkChanged()
+        override fun onAvailable(network: Network) = observeAvailableNetwork(network)
+        override fun onLost(network: Network) = observeLostNetwork(network)
         override fun onCapabilitiesChanged(
             network: Network,
             capabilities: android.net.NetworkCapabilities,
-        ) = notifyNetworkChanged()
+        ) = observeCapabilities(network, capabilities)
     }
     private val notificationPoller = object : Runnable {
         override fun run() {
@@ -53,8 +60,22 @@ class TorcaForegroundService : Service() {
                 notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
                 return
             }
+            val waitResult = NativeRuntimeBridge.nativeWaitForRevision(
+                runtimeRevision,
+                runtimeRevision,
+                EVENT_WAIT_TIMEOUT_MS,
+            )
+            if (waitResult < 0) {
+                // A transient native restart should not strand the service;
+                // retry at a bounded low-frequency fallback interval.
+                notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
+                return
+            }
+            runtimeRevision = NativeRuntimeBridge.nativeRuntimeRevision().coerceAtLeast(runtimeRevision)
             pollMessageNotifications()
-            notificationHandler.postDelayed(this, NOTIFICATION_POLL_MS)
+            // A timeout simply re-enters the blocking wait. No periodic
+            // notification query is performed when the runtime is idle.
+            notificationHandler.post(this)
         }
     }
 
@@ -165,6 +186,52 @@ class TorcaForegroundService : Service() {
         notificationHandler.postDelayed(networkChangeRunnable, NETWORK_CHANGE_DEBOUNCE_MS)
     }
 
+    /**
+     * Android reports frequent capability updates for an unchanged default
+     * route. They are useful facts but must not make the native runtime close
+     * every Tor and peer stream as if Wi-Fi/LTE had changed.
+     */
+    private fun observeAvailableNetwork(network: Network) {
+        val changed = synchronized(networkLock) {
+            val changed = defaultNetwork != network
+            defaultNetwork = network
+            if (changed) defaultNetworkFingerprint = null
+            changed
+        }
+        if (changed) notifyNetworkChanged()
+    }
+
+    private fun observeLostNetwork(network: Network) {
+        val lostDefault = synchronized(networkLock) {
+            if (defaultNetwork != network) return@synchronized false
+            defaultNetwork = null
+            defaultNetworkFingerprint = null
+            true
+        }
+        if (lostDefault) notifyNetworkChanged()
+    }
+
+    private fun observeCapabilities(
+        network: Network,
+        capabilities: android.net.NetworkCapabilities,
+    ) {
+        val fingerprint = NetworkFingerprint.from(capabilities)
+        val routeReplaced = synchronized(networkLock) {
+            when {
+                defaultNetwork == null || defaultNetwork != network -> {
+                    defaultNetwork = network
+                    defaultNetworkFingerprint = fingerprint
+                    true
+                }
+                else -> {
+                    defaultNetworkFingerprint = fingerprint
+                    false
+                }
+            }
+        }
+        if (routeReplaced) notifyNetworkChanged()
+    }
+
     private fun pollMessageNotifications() {
         val raw = NativeRuntimeBridge.nativeNotificationSnapshotJson(notificationCursor) ?: return
         val snapshot = try { JSONObject(raw) } catch (_: Exception) { return }
@@ -175,6 +242,7 @@ class TorcaForegroundService : Service() {
             // the old value.
             notificationRuntimeId = runtimeId
             notificationCursor = 0L
+            runtimeRevision = 0L
             getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
                 .edit()
                 .putString(NOTIFICATION_RUNTIME_ID, runtimeId)
@@ -194,7 +262,9 @@ class TorcaForegroundService : Service() {
             val eventId = event.optString("eventId")
             val conversationId = event.optString("conversationId")
             val kind = event.optString("kind")
-            if (eventId.isNotEmpty() && conversationId.isNotEmpty()) {
+            if (eventId.isNotEmpty() &&
+                (conversationId.isNotEmpty() || kind == "pairing_request")
+            ) {
                 newEvents.add(
                     RuntimeNotificationEvent(
                         eventId = eventId,
@@ -220,7 +290,9 @@ class TorcaForegroundService : Service() {
             event.eventId.hashCode(),
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(MainActivity.EXTRA_CONVERSATION_ID, event.conversationId)
+                if (event.conversationId.isNotEmpty()) {
+                    putExtra(MainActivity.EXTRA_CONVERSATION_ID, event.conversationId)
+                }
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -234,10 +306,18 @@ class TorcaForegroundService : Service() {
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle(event.contactDisplayName)
             .setContentText(
-                if (event.kind == "contact_added") "New contact added" else "New private message",
+                when (event.kind) {
+                    "contact_added" -> "New contact added"
+                    "pairing_request" -> "Tap to accept or reject the invitation"
+                    else -> "New private message"
+                },
             )
             .setCategory(
-                if (event.kind == "contact_added") Notification.CATEGORY_SOCIAL else Notification.CATEGORY_MESSAGE,
+                if (event.kind == "message_received") {
+                    Notification.CATEGORY_MESSAGE
+                } else {
+                    Notification.CATEGORY_SOCIAL
+                },
             )
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
@@ -282,7 +362,7 @@ class TorcaForegroundService : Service() {
         const val NOTIFICATION_CURSOR_PREFERENCES = "torca_notification_cursor"
         const val NOTIFICATION_CURSOR = "cursor"
         const val NOTIFICATION_RUNTIME_ID = "runtime_id"
-        const val NOTIFICATION_POLL_MS = 1500L
+        const val EVENT_WAIT_TIMEOUT_MS = 30_000
         const val RUNTIME_WAIT_MS = 250L
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
         const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
@@ -295,6 +375,32 @@ class TorcaForegroundService : Service() {
         val contactDisplayName: String,
         val kind: String,
     )
+
+    private data class NetworkFingerprint(
+        val validated: Boolean,
+        val internet: Boolean,
+        val metered: Boolean,
+        val wifi: Boolean,
+        val cellular: Boolean,
+    ) {
+        companion object {
+            fun from(capabilities: android.net.NetworkCapabilities) = NetworkFingerprint(
+                validated = capabilities.hasCapability(
+                    android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED,
+                ),
+                internet = capabilities.hasCapability(
+                    android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET,
+                ),
+                metered = !capabilities.hasCapability(
+                    android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED,
+                ),
+                wifi = capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI),
+                cellular = capabilities.hasTransport(
+                    android.net.NetworkCapabilities.TRANSPORT_CELLULAR,
+                ),
+            )
+        }
+    }
 }
 
 object NativeRuntimeBridge {
@@ -303,4 +409,10 @@ object NativeRuntimeBridge {
     @JvmStatic external fun nativeRuntimeAvailable(): Boolean
     @JvmStatic external fun nativeLifecycleEvent(event: String): Boolean
     @JvmStatic external fun nativeNotificationSnapshotJson(afterCursor: Long): String?
+    @JvmStatic external fun nativeRuntimeRevision(): Long
+    @JvmStatic external fun nativeWaitForRevision(
+        afterRevision: Long,
+        afterCursor: Long,
+        timeoutMs: Int,
+    ): Int
 }

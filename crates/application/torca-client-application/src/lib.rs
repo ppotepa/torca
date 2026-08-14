@@ -25,6 +25,13 @@ use torca_contacts::ContactId;
 use torca_foundation::OpaqueId;
 use torca_identity::{fingerprint_for, safety_number};
 pub use torca_probing::{ProbeStatus, ProbeTarget};
+pub use torca_radio::{
+    RadioEventActor, RadioFloor, RadioState, RadioTimelineEventKind, RemoteRadioState,
+};
+pub use torca_radio_coordinator::{
+    HostRadioLifecycle, RadioContactProjection, RadioProjection, RadioSessionProjection,
+    RadioTimelineRecord, SharedRadioCoordinator,
+};
 pub use torca_runtime::{
     AttachmentSendRequest, AttachmentView, NetworkSnapshot, PeerConnectionStatus,
     PeerHealthQuality, RelayServiceInfo, RuntimeDriverError, RuntimeHandle, TorState,
@@ -50,6 +57,7 @@ pub struct ApplicationSnapshotContext {
     pub identity_fingerprints: BTreeMap<OpaqueId, String>,
     pub safety_numbers: BTreeMap<ContactId, String>,
     pub pending_operations: Vec<PendingOperation>,
+    pub radio: Option<RadioProjection>,
 }
 
 impl ApplicationSnapshotContext {

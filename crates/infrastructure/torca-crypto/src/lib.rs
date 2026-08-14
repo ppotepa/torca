@@ -11,6 +11,7 @@ mod peer_handshake;
 mod peer_secrets;
 mod ports;
 mod production;
+mod radio;
 mod test_support;
 mod types;
 
@@ -23,6 +24,7 @@ pub use peer_handshake::{Ed25519HandshakeVerifier, ManagedHandshakeSigner, Owned
 pub use peer_secrets::{ManagedPeerSecrets, PeerSecretError};
 pub use ports::CryptoProvider;
 pub use production::RustCryptoProvider;
+pub use radio::{RadioCipherError, RadioSessionCipher};
 pub use test_support::DeterministicTestCrypto;
 pub use types::{
     Ciphertext, CryptoError, Nonce, PublicKey, SealingKey, Signature, SigningSecretKey,

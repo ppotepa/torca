@@ -25,13 +25,43 @@ void main() {
     expect(find.text('Message details'), findsOneWidget);
   });
 
+  testWidgets('cancel is offered only for cancellable message jobs', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => MessageActionMenu.showTouch(
+              context,
+              canCancel: true,
+              canEdit: true,
+            ),
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cancel message'), findsOneWidget);
+    expect(find.text('Edit message'), findsOneWidget);
+    expect(find.text('Forward message'), findsOneWidget);
+  });
+
   testWidgets('conversation actions reflect blocked state', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
           builder: (context) => FilledButton(
-            onPressed: () =>
-                ConversationActionMenu.showTouch(context, blocked: true),
+            onPressed: () => ConversationActionMenu.showTouch(
+              context,
+              blocked: true,
+              archived: false,
+              pinned: false,
+              muted: false,
+            ),
             child: const Text('Actions'),
           ),
         ),
@@ -43,5 +73,8 @@ void main() {
     expect(find.text('Unblock contact'), findsOneWidget);
     expect(find.text('Remove contact'), findsOneWidget);
     expect(find.text('Clear conversation history'), findsOneWidget);
+    expect(find.text('Archive conversation'), findsOneWidget);
+    expect(find.text('Pin conversation'), findsOneWidget);
+    expect(find.text('Mute conversation'), findsOneWidget);
   });
 }

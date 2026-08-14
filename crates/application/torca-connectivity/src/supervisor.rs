@@ -73,6 +73,13 @@ impl RelayHealthHandle {
     /// Coalesces repeated Android/network callbacks into one immediate next
     /// probe. A running check remains the only in-flight request.
     pub fn network_changed(&self) {
+        self.wake();
+    }
+
+    /// Wakes the single probe lane after a foreground operation acquires
+    /// relay demand. This is intentionally distinct from network_changed in
+    /// callers, even though both coalesce into one immediate probe.
+    pub fn wake(&self) {
         let _ = self.commands.try_send(Command::Wake);
     }
 }

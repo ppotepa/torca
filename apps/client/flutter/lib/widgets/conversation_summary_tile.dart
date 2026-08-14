@@ -4,6 +4,7 @@ import 'package:torca_ui/torca_ui.dart';
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
 import 'connection_indicator.dart';
+import 'radio_indicator.dart';
 
 class ConversationSummaryTile extends StatelessWidget {
   const ConversationSummaryTile({
@@ -14,6 +15,10 @@ class ConversationSummaryTile extends StatelessWidget {
     required this.onContactInfo,
     required this.onLongPress,
     required this.onSecondaryTapDown,
+    this.radio,
+    this.radioSession,
+    this.pinned = false,
+    this.muted = false,
     super.key,
   });
 
@@ -24,6 +29,10 @@ class ConversationSummaryTile extends StatelessWidget {
   final VoidCallback? onContactInfo;
   final VoidCallback? onLongPress;
   final GestureTapDownCallback? onSecondaryTapDown;
+  final RadioContactDto? radio;
+  final RadioSessionDto? radioSession;
+  final bool pinned;
+  final bool muted;
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +65,8 @@ class ConversationSummaryTile extends StatelessWidget {
                 _timeLabel(conversation.lastActivityAtMs),
                 style: Theme.of(context).textTheme.labelSmall,
               ),
+            if (pinned) Icon(context.torcaIcons.archive, size: 16),
+            if (muted) Icon(context.torcaIcons.notifications, size: 16),
           ],
         ),
         subtitle: Row(
@@ -76,6 +87,11 @@ class ConversationSummaryTile extends StatelessWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
+            RadioIndicator(
+              radio: radio,
+              session: radioSession,
+              contactName: contact?.displayName,
+            ),
             ConnectionIndicator(
               state: contact?.connectionState ?? 'disconnected',
               blocked: blocked,

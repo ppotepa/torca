@@ -30,12 +30,12 @@ abstract final class BridgeErrorPresenter {
       'invalid_input' => strings.invalidInput,
       'storage_failure' => strings.storageFailure,
       'attachment_failure' => strings.attachmentOperationFailed,
-      'attachment_ack_timeout',
+      'attachment_ack_timeout' ||
       'communication_attachment_ack_timeout' => strings.attachmentAckTimeout,
-      'attachment_peer_unavailable',
+      'attachment_peer_unavailable' ||
       'communication_attachment_peer_unavailable' =>
         strings.attachmentPeerUnavailable,
-      'attachment_integrity_failed',
+      'attachment_integrity_failed' ||
       'communication_attachment_integrity_failed' =>
         strings.attachmentIntegrityFailed,
       'network_unavailable' => strings.networkUnavailable,

@@ -12,6 +12,7 @@ pub enum NotificationPrivacy {
 pub enum NotificationEvent {
     IncomingMessage { contact_id: OpaqueId, conversation_id: OpaqueId },
     ContactAdded { contact_id: OpaqueId },
+    PairingApprovalRequested { pairing_id: OpaqueId },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +61,13 @@ pub fn notification_intent(
             },
             navigation_target: Some(contact_id),
         }),
+        NotificationEvent::PairingApprovalRequested { pairing_id } => Some(NotificationIntent {
+            id: pairing_id,
+            replacement_key: pairing_id,
+            title: "New contact request".to_owned(),
+            body: "Open Torca to accept or reject the invitation".to_owned(),
+            navigation_target: None,
+        }),
     }
 }
 
@@ -82,5 +90,18 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn pairing_request_opens_the_application_without_a_conversation_target() {
+        let pairing = OpaqueId::from_u128(3);
+        let intent = notification_intent(
+            NotificationEvent::PairingApprovalRequested { pairing_id: pairing },
+            NotificationPrivacy::Redacted,
+            None,
+        )
+        .expect("pairing request should be visible");
+        assert_eq!(intent.id, pairing);
+        assert_eq!(intent.navigation_target, None);
     }
 }

@@ -6,7 +6,7 @@ use torca_conversations::ConversationId;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{
     DeliveryAttempt, Message, MessageBody, MessageDirection, MessageError, MessageId,
-    MessageRepository, MessageStatus, ReplyReference,
+    MessageReaction, MessageRepository, MessageStatus, ReplyReference,
 };
 
 use crate::{
@@ -366,6 +366,74 @@ impl MessageRepository for SqlCipherMessageStore {
             })
             .map_err(|_| MessageError::RepositoryFailure)?;
         rows.map(|row| row.map_err(|_| MessageError::RepositoryFailure)?.into_message()).collect()
+    }
+
+    fn upsert_reaction(&mut self, reaction: MessageReaction) -> Result<(), MessageError> {
+        let message_id = reaction.message_id().to_opaque().into_bytes();
+        let conversation_id = reaction.conversation_id().to_opaque().into_bytes();
+        let actor_id = reaction.actor_id().into_bytes();
+        self.backend
+            .connection()
+            .execute(
+                messaging_sql::UPSERT_REACTION.sql,
+                params![
+                    message_id.as_slice(),
+                    conversation_id.as_slice(),
+                    actor_id.as_slice(),
+                    reaction.emoji(),
+                    i64::from(reaction.active()),
+                    reaction.updated_at().to_unix_millis(),
+                ],
+            )
+            .map_err(|_| MessageError::RepositoryFailure)?;
+        Ok(())
+    }
+
+    fn reactions_for_conversation(
+        &self,
+        conversation_id: ConversationId,
+    ) -> Result<Vec<MessageReaction>, MessageError> {
+        let conversation_id = conversation_id.to_opaque().into_bytes();
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(messaging_sql::REACTIONS_FOR_CONVERSATION.sql)
+            .map_err(|_| MessageError::RepositoryFailure)?;
+        let rows = statement
+            .query_map(params![conversation_id.as_slice()], |row| {
+                let message_id: Vec<u8> = row.get(0)?;
+                let conversation_id: Vec<u8> = row.get(1)?;
+                let actor_id: Vec<u8> = row.get(2)?;
+                let emoji: String = row.get(3)?;
+                let active: i64 = row.get(4)?;
+                let updated_at_ms: i64 = row.get(5)?;
+                Ok((message_id, conversation_id, actor_id, emoji, active, updated_at_ms))
+            })
+            .map_err(|_| MessageError::RepositoryFailure)?;
+        rows.map(|row| {
+            let (message_id, conversation_id, actor_id, emoji, active, updated_at_ms) =
+                row.map_err(|_| MessageError::RepositoryFailure)?;
+            let message_id = MessageId::from_opaque(
+                OpaqueId::from_bytes(message_id.try_into().map_err(|_| MessageError::RepositoryFailure)?),
+            );
+            let conversation_id = ConversationId::from_opaque(
+                OpaqueId::from_bytes(conversation_id.try_into().map_err(|_| MessageError::RepositoryFailure)?),
+            );
+            let actor_id = OpaqueId::from_bytes(
+                actor_id.try_into().map_err(|_| MessageError::RepositoryFailure)?,
+            );
+            MessageReaction::new(
+                message_id,
+                conversation_id,
+                actor_id,
+                emoji,
+                active != 0,
+                Timestamp::from_unix_millis(updated_at_ms)
+                    .map_err(|_| MessageError::RepositoryFailure)?,
+            )
+            .map_err(|_| MessageError::RepositoryFailure)
+        })
+        .collect()
     }
 }
 

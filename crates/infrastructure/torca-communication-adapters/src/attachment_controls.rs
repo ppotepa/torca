@@ -81,8 +81,6 @@ where
         {
             return Err(CommunicationError::Attachment);
         }
-        let maximum =
-            usize::try_from(MAX_ATTACHMENT_BYTES).map_err(|_| CommunicationError::Attachment)?;
         let preview = match &request.preview_source_path {
             Some(path) => {
                 let preview = std::fs::read(path).map_err(|_| CommunicationError::Attachment)?;
@@ -108,10 +106,9 @@ where
             now,
         )
         .map_err(|_| CommunicationError::Attachment)?;
-        let source = File::open(&request.source_path)
-            .map_err(|_| CommunicationError::Attachment)?;
-        let result = self
-            .transfer
+        let source =
+            File::open(&request.source_path).map_err(|_| CommunicationError::Attachment)?;
+        self.transfer
             .prepare_outgoing_reader(
                 attachment,
                 torca_conversations::ConversationId::from_opaque(request.conversation_id),
@@ -120,8 +117,7 @@ where
                 now,
             )
             .map(|_| ())
-            .map_err(|_| CommunicationError::Attachment);
-        result
+            .map_err(|_| CommunicationError::Attachment)
     }
 
     fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError> {

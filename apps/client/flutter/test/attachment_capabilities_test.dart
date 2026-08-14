@@ -46,6 +46,15 @@ void main() {
 
   test('native metadata exposes one typed capability set', () {
     final info = ClientBuildInfo.fromJson(<String, dynamic>{
+      'productVersion': '0.2.0-alpha.0',
+      'buildId': 'test-build',
+      'sourceCommit': 'test-source',
+      'sourceFingerprint': 'test-fingerprint',
+      'relayEndpointHash': 'test-relay',
+      'targetPlatform': 'test',
+      'targetArchitecture': 'test',
+      'contractSchema': 1,
+      'wireVersion': 1,
       'capabilities': <String, dynamic>{
         'maxAttachmentBytes': 10,
         'maxVideoAttachmentBytes': 7,

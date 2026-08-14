@@ -132,6 +132,8 @@ pub trait ConversationRepository {
     ) -> Result<Option<DirectConversation>, ConversationError>;
     /// Lists conversations.
     fn list(&self) -> Result<Vec<DirectConversation>, ConversationError>;
+    /// Persists a changed conversation aggregate.
+    fn update(&mut self, conversation: DirectConversation) -> Result<(), ConversationError>;
 }
 
 /// In-memory repository.
@@ -170,5 +172,12 @@ impl ConversationRepository for InMemoryConversationRepository {
     }
     fn list(&self) -> Result<Vec<DirectConversation>, ConversationError> {
         Ok(self.conversations.values().cloned().collect())
+    }
+    fn update(&mut self, conversation: DirectConversation) -> Result<(), ConversationError> {
+        if !self.conversations.contains_key(&conversation.id()) {
+            return Err(ConversationError::NotFound);
+        }
+        self.conversations.insert(conversation.id(), conversation);
+        Ok(())
     }
 }

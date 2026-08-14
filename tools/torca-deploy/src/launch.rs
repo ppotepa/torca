@@ -20,6 +20,12 @@ pub struct LaunchReceipt {
     started_at: SystemTime,
 }
 
+impl LaunchReceipt {
+    pub(crate) const fn from_started_at(started_at: SystemTime) -> Self {
+        Self { started_at }
+    }
+}
+
 impl<'a> LaunchController<'a> {
     pub fn new(paths: &'a RuntimePaths, runner: &'a dyn CommandRunner) -> Self {
         Self { paths, runner }
@@ -167,8 +173,9 @@ impl<'a> LaunchController<'a> {
             }
             if std::time::Instant::now() >= next_heartbeat {
                 eprintln!(
-                    "torca-deploy: waiting for {} NETWORK_READY elapsed_s={}",
+                    "torca-deploy: waiting for {} {} elapsed_s={}",
                     device.id,
+                    if require_tor { "TOR_BOOTSTRAP_READY" } else { "LOCAL_READY" },
                     started.elapsed().as_secs()
                 );
                 next_heartbeat = std::time::Instant::now() + Duration::from_secs(10);
@@ -219,7 +226,7 @@ impl<'a> LaunchController<'a> {
                 ],
             ),
         };
-        let output = self.runner.run(&CommandSpec {
+        let output = self.runner.run_quiet(&CommandSpec {
             program: program.into(),
             arguments,
             working_directory: self.paths.repo_root.clone(),
@@ -239,11 +246,14 @@ impl<'a> LaunchController<'a> {
         let root = std::path::PathBuf::from(local).join("Torca/logs/devices");
         let mut logs = Vec::new();
         collect_named(&root, "bootstrap.log", &mut logs);
+        // Keep Tor as a backward-compatible readiness source for clients
+        // built before LOCAL_READY was introduced.
+        collect_named(&root, "tor.log", &mut logs);
         logs.sort_by_key(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
-        let Some(path) = logs.last() else {
-            return Ok(false);
-        };
-        Ok(file_is_fresh(path, launched_at) && read_network_ready(path, require_tor))
+        Ok(logs
+            .iter()
+            .rev()
+            .any(|path| file_is_fresh(path, launched_at) && read_network_ready(path, require_tor)))
     }
 
     fn android_network_ready(
@@ -262,22 +272,22 @@ impl<'a> LaunchController<'a> {
                 "/sdcard/Android/data/com.torca.torca_app/files/torca/logs",
                 "-type",
                 "f",
-                "-name",
-                "bootstrap.log",
             ],
         )?;
-        let path = files.text.lines().last().unwrap_or_default().trim();
-        if path.is_empty() {
+        let paths = latest_android_health_logs(&files.text);
+        if paths.is_empty() {
             return Ok(false);
         }
-        let output = self.command("adb", &["-s", device, "shell", "tail", "-n", "120", path])?;
+        let mut arguments = vec!["-s", device, "shell", "tail", "-n", "120"];
+        arguments.extend(paths);
+        let output = self.command("adb", &arguments)?;
         Ok(file_is_fresh_from_log(&output.text, launched_at)
             && output.success
-            && output.text.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).any(
-                |value| {
-                    ready_code(value.get("code").and_then(Value::as_str), require_tor)
-                },
-            ))
+            && output
+                .text
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .any(|value| ready_code(value.get("code").and_then(Value::as_str), require_tor)))
     }
 
     fn command(
@@ -286,7 +296,7 @@ impl<'a> LaunchController<'a> {
         arguments: &[&str],
     ) -> Result<crate::process::CommandOutput, LaunchError> {
         self.runner
-            .run(&CommandSpec {
+            .run_quiet(&CommandSpec {
                 program: program.into(),
                 arguments: arguments.iter().map(|x| (*x).into()).collect(),
                 working_directory: self.paths.repo_root.clone(),
@@ -315,6 +325,16 @@ fn file_is_fresh(path: &std::path::Path, launched_at: SystemTime) -> bool {
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .is_ok_and(|modified| modified >= launched_at)
+}
+
+fn latest_android_health_logs(content: &str) -> Vec<&str> {
+    let latest =
+        |suffix: &str| content.lines().map(str::trim).filter(|path| path.ends_with(suffix)).max();
+    let mut paths = latest("/bootstrap.log").into_iter().collect::<Vec<_>>();
+    if let Some(path) = latest("/tor.log") {
+        paths.push(path);
+    }
+    paths
 }
 
 fn file_is_fresh_from_log(content: &str, launched_at: SystemTime) -> bool {
@@ -348,18 +368,28 @@ fn read_network_ready(path: &std::path::Path, require_tor: bool) -> bool {
     let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
-    content.lines().rev().take(120).filter_map(|line| serde_json::from_str::<Value>(line).ok()).any(
-        |value| {
-            ready_code(value.get("code").and_then(Value::as_str), require_tor)
-        },
-    )
+    content
+        .lines()
+        .rev()
+        .take(120)
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .any(|value| ready_code(value.get("code").and_then(Value::as_str), require_tor))
 }
 
 fn ready_code(code: Option<&str>, require_tor: bool) -> bool {
     if require_tor {
-        matches!(code, Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY"))
+        matches!(code, Some("TOR_BOOTSTRAP_READY" | "NETWORK_READY"))
     } else {
-        matches!(code, Some("LOCAL_READY") | Some("TOR_BOOTSTRAP_READY") | Some("NETWORK_READY"))
+        matches!(
+            code,
+            // New clients emit LOCAL_READY after composing the local runtime.
+            // TOR_STARTING is the backward-compatible equivalent for an
+            // already-installed client built before that event existed. The
+            // process and visible surface are verified separately, so Quick
+            // validation must not wait for a cold Tor bootstrap merely to
+            // prove that installation and launch succeeded.
+            Some("TOR_STARTING" | "LOCAL_READY" | "TOR_BOOTSTRAP_READY" | "NETWORK_READY")
+        )
     }
 }
 
@@ -377,7 +407,7 @@ fn spawn_windows_detached(
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|error| LaunchError::Io(error))
+        .map_err(LaunchError::Io)
 }
 
 #[cfg(not(windows))]
@@ -415,4 +445,36 @@ pub enum LaunchError {
     WindowsClient(#[from] WindowsClientError),
     #[error("client started but did not expose a visible application surface on {0}")]
     VisibleSurfaceTimeout(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn android_health_uses_only_latest_relevant_run_logs() {
+        let files = concat!(
+            "/logs/2026-08-13/run-000001/bootstrap.log\n",
+            "/logs/2026-08-13/run-000001/tor.log\n",
+            "/logs/2026-08-14/run-000002/bootstrap.log\n",
+            "/logs/2026-08-14/run-000002/tor.log\n",
+            "/logs/2026-08-14/run-000002/runtime.log\n",
+        );
+        assert_eq!(
+            latest_android_health_logs(files),
+            vec![
+                "/logs/2026-08-14/run-000002/bootstrap.log",
+                "/logs/2026-08-14/run-000002/tor.log",
+            ]
+        );
+    }
+
+    #[test]
+    fn quick_and_full_validation_have_distinct_readiness_contracts() {
+        assert!(ready_code(Some("LOCAL_READY"), false));
+        assert!(ready_code(Some("TOR_STARTING"), false));
+        assert!(!ready_code(Some("TOR_STARTING"), true));
+        assert!(!ready_code(Some("LOCAL_READY"), true));
+        assert!(ready_code(Some("TOR_BOOTSTRAP_READY"), true));
+    }
 }

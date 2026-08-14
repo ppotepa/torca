@@ -42,6 +42,8 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
       pixel ? PixelArtIcons.more_horizontal : HeroIcons.ellipsis_horizontal;
   IconData get reply =>
       pixel ? PixelArtIcons.reply : HeroIcons.arrow_uturn_left;
+  IconData get forward =>
+      pixel ? PixelArtIcons.reply : HeroIcons.arrow_uturn_right;
   IconData get copy => pixel ? PixelArtIcons.copy : HeroIcons.square_2_stack;
   IconData get retry => pixel ? PixelArtIcons.reload : HeroIcons.arrow_path;
   IconData get download =>
@@ -57,6 +59,9 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
   IconData get error =>
       pixel ? PixelArtIcons.alert : HeroIcons.exclamation_circle;
   IconData get online => pixel ? PixelArtIcons.radio_signal : HeroIcons.signal;
+  IconData get radio => pixel ? PixelArtIcons.radio_handheld : HeroIcons.radio;
+  IconData get pushToTalk =>
+      pixel ? PixelArtIcons.radio_on : HeroIcons.microphone;
   IconData get file => pixel ? PixelArtIcons.file : HeroIcons.document;
   IconData get image => pixel ? PixelArtIcons.image : HeroIcons.photo;
   IconData get video => pixel ? PixelArtIcons.video : HeroIcons.film;

@@ -16,19 +16,22 @@ use torca_messaging::RetryPolicy;
 use torca_peer_link::PeerLink;
 use torca_peer_protocol::HandshakeSigner;
 use torca_peer_shared::SharedPeerLink;
-use torca_storage_sqlite::SqlCipherReadState;
+use torca_radio_adapters::RadioMediaSystem;
+use torca_radio_coordinator::{RadioCoordinator, SharedRadioCoordinator};
 use torca_storage_sqlite::{
     DatabaseKey, SqlCipherControlOutbox, SqlCipherDurableStore, SqlCipherInboundStore,
     SqlCipherMessageStore, SqlCipherRelationshipAdmin, SqlCipherStore,
 };
+use torca_storage_sqlite::{SqlCipherRadioStore, SqlCipherReadState};
 use torca_tor::PeerListener;
 use torca_tor::TorServiceHandle;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
-    HealthPeerLinkAdapter, InboundTextReceiptAdapter, PrivacyReadStateAdapter, ReadReceiptPolicy,
-    ReceiptPeerTransport, RelationshipAdminAdapter, SharedControlWorker, SharedPeerCrypto,
-    TextPeerTransport, TextWorkerAdapter,
+    HealthPeerLinkAdapter, InboundTextReceiptAdapter, OsRadioEntropy, PeerRadioControl,
+    PrivacyReadStateAdapter, RadioInboundAdapter, ReadReceiptPolicy, ReceiptPeerTransport,
+    RelationshipAdminAdapter, RelationshipRadioMedia, RelationshipRadioPeers, SharedControlWorker,
+    SharedPeerCrypto, TextPeerTransport, TextWorkerAdapter,
 };
 
 const ACK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -42,6 +45,12 @@ pub enum CommunicationBuildError {
     Peer,
     Attachment,
     Cache,
+    Radio,
+}
+
+pub struct ProductionCommunicationOutput {
+    pub driver: TorcaCommunicationDriver,
+    pub radio: SharedRadioCoordinator,
 }
 impl fmt::Display for CommunicationBuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,7 +80,7 @@ pub fn build_production_communication<K, P, AP, EP, RP>(
     cache_root: &Path,
     staging_root: &Path,
     inputs: ProductionCommunicationInputs<K, P, AP, EP, RP>,
-) -> Result<TorcaCommunicationDriver, CommunicationBuildError>
+) -> Result<ProductionCommunicationOutput, CommunicationBuildError>
 where
     K: HandshakeSigner + Send + 'static,
     P: ProtectedSecretStore + Send + 'static,
@@ -89,7 +98,7 @@ where
             ActiveRelationshipStore::new(peer_relationships),
             inputs.signer,
             inputs.local_identity_id,
-            inputs.tor_client,
+            inputs.tor_client.clone(),
         )
         .with_connectivity(inputs.connectivity),
     );
@@ -140,7 +149,7 @@ where
     let inbound = InboundTextReceiptAdapter::new(
         inbound_relationships,
         link.clone(),
-        shared_crypto,
+        shared_crypto.clone(),
         inbound_store,
         control.clone(),
         engine.clone(),
@@ -207,9 +216,54 @@ where
         staging_root.to_path_buf(),
     );
 
+    let radio_state = SqlCipherRadioStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Radio)?;
+    let radio_control_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let radio_control = PeerRadioControl::new(
+        radio_control_relationships,
+        link.clone(),
+        shared_crypto.clone(),
+        inputs.local_identity_id,
+    );
+    let radio_peer_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let radio_peers =
+        RelationshipRadioPeers::new(radio_peer_relationships, inputs.local_identity_id);
+    let radio_media_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let radio_media_directory = RelationshipRadioMedia::new(
+        radio_media_relationships,
+        shared_crypto.clone(),
+        inputs.local_identity_id,
+    );
+    let RadioMediaSystem { media: radio_media, audio: radio_audio } =
+        RadioMediaSystem::start(inputs.tor_client, Box::new(radio_media_directory))
+            .map_err(|_| CommunicationBuildError::Radio)?;
+    let radio = SharedRadioCoordinator::new(
+        RadioCoordinator::restore(
+            Box::new(radio_state),
+            Box::new(radio_control),
+            Box::new(radio_media),
+            Box::new(radio_audio),
+            Box::new(radio_peers),
+            Box::new(OsRadioEntropy),
+        )
+        .map_err(|_| CommunicationBuildError::Radio)?,
+    );
+    let radio_inbound_relationships = SqlCipherStore::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
+    let radio_inbound = RadioInboundAdapter::new(
+        radio_inbound_relationships,
+        link.clone(),
+        shared_crypto,
+        inputs.local_identity_id,
+        radio.clone(),
+    );
+
     let peer = HealthPeerLinkAdapter::new(link, health_relationships, inputs.local_identity_id)
         .map_err(|_| CommunicationBuildError::Peer)?;
-    Ok(TorcaCommunicationDriver::new(
+    let driver = TorcaCommunicationDriver::new(
         engine,
         Box::new(peer),
         Box::new(text),
@@ -219,5 +273,7 @@ where
         Box::new(attachment_export),
         Box::new(PrivacyReadStateAdapter::new(read_state, inputs.read_receipt_policy)),
         Box::new(relationships),
-    ))
+    )
+    .with_radio(Box::new(radio_inbound));
+    Ok(ProductionCommunicationOutput { driver, radio })
 }

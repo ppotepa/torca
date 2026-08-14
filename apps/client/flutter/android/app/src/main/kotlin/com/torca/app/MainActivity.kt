@@ -19,10 +19,13 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var notificationChannel: MethodChannel? = null
     private var mediaChannel: MethodChannel? = null
+    private var audioChannel: MethodChannel? = null
+    private var microphonePermissionResult: MethodChannel.Result? = null
     private var pendingConversationId: String? = null
 
     companion object {
         const val EXTRA_CONVERSATION_ID = "torca.conversation_id"
+        const val REQUEST_MICROPHONE_PERMISSION = 1002
         @Volatile var isVisible: Boolean = false
         init { System.loadLibrary("torca_native") }
     }
@@ -84,6 +87,55 @@ class MainActivity : FlutterActivity() {
                 }.start()
             }
         }
+        audioChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "torca/audio",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasMicrophonePermission" -> result.success(
+                        checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED,
+                    )
+                    "requestMicrophonePermission" -> {
+                        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            result.success(true)
+                        } else if (microphonePermissionResult != null) {
+                            result.error(
+                                "permission_request_active",
+                                "A microphone permission request is already active.",
+                                null,
+                            )
+                        } else {
+                            microphonePermissionResult = result
+                            requestPermissions(
+                                arrayOf(Manifest.permission.RECORD_AUDIO),
+                                REQUEST_MICROPHONE_PERMISSION,
+                            )
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        notificationChannel?.setMethodCallHandler(null)
+        mediaChannel?.setMethodCallHandler(null)
+        audioChannel?.setMethodCallHandler(null)
+        microphonePermissionResult?.error(
+            "activity_destroyed",
+            "The microphone permission request was interrupted.",
+            null,
+        )
+        microphonePermissionResult = null
+        notificationChannel = null
+        mediaChannel = null
+        audioChannel = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -92,6 +144,18 @@ class MainActivity : FlutterActivity() {
         val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID) ?: return
         pendingConversationId = conversationId
         notificationChannel?.invokeMethod("openConversation", conversationId)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_MICROPHONE_PERMISSION) return
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        microphonePermissionResult?.success(granted)
+        microphonePermissionResult = null
     }
 
     override fun onResume() {

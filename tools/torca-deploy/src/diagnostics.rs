@@ -68,8 +68,10 @@ pub fn collect_runtime(
             timeout: Duration::from_secs(60),
             environment: std::collections::BTreeMap::new(),
         }) {
-            let _ =
-                std::fs::write(incident_root.join(format!("android-{device}/logcat.log")), output.text);
+            let _ = std::fs::write(
+                incident_root.join(format!("android-{device}/logcat.log")),
+                output.text,
+            );
         }
     }
     DiagnosticsReport::collect(incident_root)

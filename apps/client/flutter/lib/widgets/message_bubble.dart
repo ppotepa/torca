@@ -16,6 +16,7 @@ class MessageBubble extends StatelessWidget {
     this.quotedBody,
     this.quotedUnavailable = false,
     this.footer = const <Widget>[],
+    this.reactions = const <ReactionDto>[],
     this.showBody = true,
     this.compactTop = false,
     this.senderLabel,
@@ -28,6 +29,7 @@ class MessageBubble extends StatelessWidget {
   final String? quotedBody;
   final bool quotedUnavailable;
   final List<Widget> footer;
+  final List<ReactionDto> reactions;
   final bool showBody;
   final bool compactTop;
   final String? senderLabel;
@@ -113,6 +115,22 @@ class MessageBubble extends StatelessWidget {
                           const SizedBox(height: 7),
                         ],
                         if (showBody) SelectableText(message.body),
+                        if (reactions.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 5),
+                            child: Wrap(
+                              spacing: 4,
+                              children: <Widget>[
+                                for (final reaction in reactions)
+                                  Chip(
+                                    label: Text(reaction.emoji),
+                                    visualDensity: VisualDensity.compact,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                              ],
+                            ),
+                          ),
                         if (footer.isNotEmpty) ...<Widget>[
                           const SizedBox(height: 6),
                           ...footer,
@@ -189,23 +207,12 @@ class _LifecycleTimeline extends StatelessWidget {
   final MessageDto message;
 
   @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: 6,
-    children: <Widget>[
-      _LifecycleMilestone(
-        kind: _LifecycleKind.sent,
-        milliseconds: message.sentAtMs!,
-      ),
-      if (message.deliveredAtMs != null)
-        _LifecycleMilestone(
-          kind: _LifecycleKind.delivered,
-          milliseconds: message.deliveredAtMs!,
-        ),
-      if (message.readAtMs != null)
-        _LifecycleMilestone(
-          kind: _LifecycleKind.read,
-          milliseconds: message.readAtMs!,
-        ),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final (kind, timestamp) = message.readAtMs != null
+        ? (_LifecycleKind.read, message.readAtMs!)
+        : message.deliveredAtMs != null
+        ? (_LifecycleKind.delivered, message.deliveredAtMs!)
+        : (_LifecycleKind.sent, message.sentAtMs!);
+    return _LifecycleMilestone(kind: kind, milliseconds: timestamp);
+  }
 }

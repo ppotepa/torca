@@ -10,6 +10,7 @@ use torca_identity::KeyId;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 static BRIDGE_CLASS_REF: OnceLock<GlobalRef> = OnceLock::new();
+static ANDROID_CONTEXT_REF: OnceLock<GlobalRef> = OnceLock::new();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn JNI_OnLoad(
@@ -40,6 +41,43 @@ pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativeBi
         return 0;
     };
     if BRIDGE_CLASS_REF.set(global).is_ok() || BRIDGE_CLASS_REF.get().is_some() { 1 } else { 0 }
+}
+
+/// Initializes the Android context used by CPAL's AAudio backend.  Flutter
+/// does not install ndk-glue, so this must be done explicitly before any
+/// radio audio device is queried. The global reference keeps the application
+/// context alive for native worker threads.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativeInitializeAudioContext(
+    env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    context: jni::sys::jobject,
+) -> jni::sys::jboolean {
+    let Ok(env) = (unsafe { JNIEnv::from_raw(env) }) else {
+        return 0;
+    };
+    let context = unsafe { JObject::from_raw(context) };
+    let Ok(global) = env.new_global_ref(&context) else {
+        return 0;
+    };
+    if ANDROID_CONTEXT_REF.set(global).is_err() {
+        return 1;
+    }
+    let Some(vm) = JAVA_VM.get() else { return 0 };
+    // ndk-context requires this call exactly once. The OnceLock above makes
+    // repeated service/activity initialization harmless.
+    unsafe {
+        ndk_context::initialize_android_context(
+            vm.get_java_vm_pointer().cast(),
+            ANDROID_CONTEXT_REF
+                .get()
+                .expect("Android context was just initialized")
+                .as_obj()
+                .as_raw()
+                .cast(),
+        );
+    }
+    1
 }
 
 pub(crate) struct AndroidProtectedSecretStore {

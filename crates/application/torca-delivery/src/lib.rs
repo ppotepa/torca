@@ -381,6 +381,7 @@ impl From<DurableDeliveryError> for InboundDeliveryError {
 pub enum ApplicationPayloadKind {
     Text,
     Receipt,
+    Reaction,
 }
 
 #[must_use]
@@ -412,9 +413,22 @@ pub struct ReceiptPayload {
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReactionPayload {
+    pub reaction_id: OpaqueId,
+    pub message_id: OpaqueId,
+    pub conversation_id: OpaqueId,
+    pub actor_id: OpaqueId,
+    pub emoji: String,
+    pub active: bool,
+    pub at: Timestamp,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApplicationPayload {
     Text(TextPayload),
     Receipt(ReceiptPayload),
+    Reaction(ReactionPayload),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -474,6 +488,21 @@ impl ApplicationPayloadCodec {
                 });
                 output.extend_from_slice(&receipt.at.to_unix_millis().to_be_bytes());
             }
+            ApplicationPayload::Reaction(reaction) => {
+                if reaction.emoji.is_empty() || reaction.emoji.len() > 32 || reaction.emoji.contains('\0') {
+                    return Err(ApplicationPayloadError::BodyTooLarge);
+                }
+                output.push(3);
+                output.extend_from_slice(reaction.reaction_id.as_bytes());
+                output.extend_from_slice(reaction.message_id.as_bytes());
+                output.extend_from_slice(reaction.conversation_id.as_bytes());
+                output.extend_from_slice(reaction.actor_id.as_bytes());
+                output.push(u8::from(reaction.active));
+                output.extend_from_slice(&reaction.at.to_unix_millis().to_be_bytes());
+                let emoji = reaction.emoji.as_bytes();
+                output.extend_from_slice(&(emoji.len() as u32).to_be_bytes());
+                output.extend_from_slice(emoji);
+            }
         }
         Ok(output)
     }
@@ -531,6 +560,34 @@ impl ApplicationPayloadCodec {
                     message_id,
                     contact_id,
                     kind,
+                    at,
+                })
+            }
+            3 => {
+                let reaction_id = cursor.id()?;
+                let message_id = cursor.id()?;
+                let conversation_id = cursor.id()?;
+                let actor_id = cursor.id()?;
+                let active = match cursor.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ApplicationPayloadError::InvalidReplyFlag),
+                };
+                let at = timestamp(cursor.i64()?)?;
+                let emoji_len = usize::try_from(cursor.u32()?)
+                    .map_err(|_| ApplicationPayloadError::BodyTooLarge)?;
+                if emoji_len == 0 || emoji_len > 32 {
+                    return Err(ApplicationPayloadError::BodyTooLarge);
+                }
+                let emoji = String::from_utf8(cursor.take(emoji_len)?.to_vec())
+                    .map_err(|_| ApplicationPayloadError::InvalidUtf8)?;
+                ApplicationPayload::Reaction(ReactionPayload {
+                    reaction_id,
+                    message_id,
+                    conversation_id,
+                    actor_id,
+                    emoji,
+                    active,
                     at,
                 })
             }

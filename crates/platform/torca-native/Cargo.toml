@@ -29,10 +29,12 @@ torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
 torca-pairing-driver = { path = "../../infrastructure/torca-pairing-driver" }
 torca-platform = { path = "../torca-platform" }
+torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
 torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
 torca-runtime = { path = "../../application/torca-runtime" }
+torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 torca-connectivity = { path = "../../application/torca-connectivity" }
 torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
 torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor" }
@@ -45,6 +47,7 @@ torca-platform-windows = { path = "../torca-platform-windows" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 torca-platform-android = { path = "../torca-platform-android" }
+ndk-context = "0.1.1"
 
 jni = "0.21.1"
 

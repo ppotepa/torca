@@ -95,11 +95,14 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   String? _inviteUri;
   String? _createdSessionId;
   bool _queued = false;
+  bool _completionCloseScheduled = false;
+  Set<String> _contactsBeforeCreation = const <String>{};
 
   @override
   void initState() {
     super.initState();
     _operations.addListener(_changed);
+    widget.gateway.snapshots.addListener(_snapshotChanged);
     if (widget.mode == _PairingComposerMode.create) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _create());
     } else {
@@ -118,6 +121,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     _operations
       ..removeListener(_changed)
       ..dispose();
+    widget.gateway.snapshots.removeListener(_snapshotChanged);
     _focus.dispose();
     _code.dispose();
     super.dispose();
@@ -125,6 +129,31 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
 
   void _changed() {
     if (mounted) setState(() {});
+  }
+
+  void _snapshotChanged() {
+    if (!mounted || widget.mode != _PairingComposerMode.create) return;
+    final snapshot = widget.gateway.snapshots.value;
+    final pairing = _currentCreated(snapshot);
+    if (pairing != null) _createdPairing = pairing;
+    final contactCreated = snapshot.contacts.any(
+      (contact) => !_contactsBeforeCreation.contains(contact.id),
+    );
+    if (pairing?.typedState == PairingState.completed ||
+        (_createdSessionId != null && pairing == null && contactCreated)) {
+      _closeCompletedInvitation();
+    }
+  }
+
+  void _closeCompletedInvitation() {
+    if (_completionCloseScheduled) return;
+    _completionCloseScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   Future<void> _focusCodeInput({bool reconnect = false}) async {
@@ -144,6 +173,9 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   }
 
   Future<void> _create() async {
+    _contactsBeforeCreation = widget.gateway.snapshots.value.contacts
+        .map((contact) => contact.id)
+        .toSet();
     final result = await _run(
       'pairing:create',
       const CreatePairingCommandDto(),
@@ -329,7 +361,10 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
             error: _error,
             onJoin: _join,
             onScan: _scan,
-            onFocusInput: _focusCodeInput,
+            // Recreate EditableText's Android IME connection on every tap.
+            // Some Android vendors keep FocusNode focused after a modal or
+            // camera route while silently dropping the input connection.
+            onFocusInput: () => _focusCodeInput(reconnect: true),
           ),
   );
 }
@@ -425,13 +460,48 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
   late final PairingActionController _actions = PairingActionController(
     widget.gateway,
   )..addListener(_changed);
+  late final Set<String> _contactsAtOpen = widget
+      .gateway
+      .snapshots
+      .value
+      .contacts
+      .map((contact) => contact.id)
+      .toSet();
+  bool _closeScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.gateway.snapshots.addListener(_snapshotChanged);
+  }
 
   void _changed() {
     if (mounted) setState(() {});
   }
 
+  void _snapshotChanged() {
+    if (!mounted || _closeScheduled) return;
+    final snapshot = widget.gateway.snapshots.value;
+    final pairing = _current(snapshot);
+    final contactCreated = snapshot.contacts.any(
+      (contact) => !_contactsAtOpen.contains(contact.id),
+    );
+    if (pairing?.typedState != PairingState.completed &&
+        !(pairing == null && contactCreated)) {
+      return;
+    }
+    _closeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
   @override
   void dispose() {
+    widget.gateway.snapshots.removeListener(_snapshotChanged);
     _actions
       ..removeListener(_changed)
       ..dispose();
@@ -539,7 +609,7 @@ class _JoinCard extends StatelessWidget {
             // after editing, so pasted QR URIs remain supported as well.
             textInputAction: TextInputAction.join,
             decoration: InputDecoration(
-            labelText: context.strings.invitationCode,
+              labelText: context.strings.invitationCode,
               hintText: 'ABC123',
               errorText: error,
               prefixIcon: Icon(context.torcaIcons.identity),
@@ -573,7 +643,9 @@ class _JoinCard extends StatelessWidget {
                     )
                   : Icon(context.torcaIcons.send),
               label: Text(
-                busy ? context.strings.checkingInvitation : context.strings.joinInvitation,
+                busy
+                    ? context.strings.checkingInvitation
+                    : context.strings.joinInvitation,
               ),
             ),
           ),

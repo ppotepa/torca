@@ -22,6 +22,9 @@ typedef _InvokeNative =
       ffi.Uint32,
     );
 typedef _InvokeDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, int);
+typedef _WaitNative =
+    ffi.Int32 Function(_Handle, ffi.Uint64, ffi.Uint64, ffi.Uint32);
+typedef _WaitDart = int Function(_Handle, int, int, int);
 typedef _ResponsePtrNative = ffi.Pointer<ffi.Uint8> Function(_Handle);
 typedef _ResponsePtrDart = ffi.Pointer<ffi.Uint8> Function(_Handle);
 typedef _ResponseLenNative = ffi.UintPtr Function(_Handle);
@@ -36,6 +39,33 @@ typedef _MetadataPtrNative = ffi.Pointer<ffi.Uint8> Function();
 typedef _MetadataPtrDart = ffi.Pointer<ffi.Uint8> Function();
 typedef _MetadataLenNative = ffi.UintPtr Function();
 typedef _MetadataLenDart = int Function();
+
+void _runtimeWaiterMain(List<Object?> arguments) {
+  final ready = arguments[0] as SendPort;
+  final handle = _Handle.fromAddress(arguments[1] as int);
+  final commandPort = ReceivePort();
+  final library = ffi.DynamicLibrary.open(nativeRuntimeLibraryName());
+  final wait = library.lookupFunction<_WaitNative, _WaitDart>(
+    'torca_runtime_wait_for_revision',
+  );
+  ready.send(commandPort.sendPort);
+  commandPort.listen((message) {
+    if (message is! Map) return;
+    if (message['stop'] == true) {
+      commandPort.close();
+      Isolate.exit();
+    }
+    final reply = message['reply'];
+    if (reply is! SendPort) return;
+    final result = wait(
+      handle,
+      message['revision'] as int,
+      message['cursor'] as int,
+      message['timeoutMs'] as int,
+    );
+    reply.send(result);
+  });
+}
 
 class FfiEngineGateway
     implements
@@ -225,9 +255,7 @@ class FfiEngineGateway
           'Native diagnostics snapshot is not an object',
         );
       }
-      return jsonEncode(
-        snapshot ?? const <String, Object?>{'events': []},
-      );
+      return jsonEncode(snapshot ?? const <String, Object?>{'events': []});
     } on ContractDecodeException {
       rethrow;
     } on FormatException catch (error) {
@@ -498,7 +526,22 @@ void _workerMainImpl(List<Object?> arguments) {
   }
   SendPort? eventsPort;
   Timer? snapshotTimer;
+  final waiterReady = ReceivePort();
+  SendPort? waiterPort;
+  Isolate? waiterIsolate;
+  waiterReady.listen((message) {
+    if (message is SendPort) waiterPort = message;
+  });
+  unawaited(
+    Isolate.spawn(_runtimeWaiterMain, <Object?>[
+      waiterReady.sendPort,
+      handle.address,
+    ], debugName: 'torca-runtime-revision-waiter').then<void>((isolate) {
+      waiterIsolate = isolate;
+    }, onError: (Object _, StackTrace __) {}),
+  );
   var notificationCursor = 0;
+  var runtimeRevision = 0;
   String? lastSnapshotJson;
   ready.send(<String, Object?>{
     'commandPort': commandPort.sendPort,
@@ -512,6 +555,8 @@ void _workerMainImpl(List<Object?> arguments) {
         final target = eventsPort;
         if (target == null) return;
         var next = const Duration(seconds: 1);
+        var settled = false;
+        var pendingWork = true;
         try {
           final raw = bindings.invoke(
             handle,
@@ -521,6 +566,10 @@ void _workerMainImpl(List<Object?> arguments) {
             5000,
           );
           final decoded = jsonDecode(raw);
+          if (decoded is Map && decoded['revision'] is int) {
+            final revision = decoded['revision'] as int;
+            if (revision > runtimeRevision) runtimeRevision = revision;
+          }
           final poll = decoded is Map && decoded['snapshot'] is Map
               ? decoded['snapshot'] as Map
               : const <String, Object?>{};
@@ -534,8 +583,9 @@ void _workerMainImpl(List<Object?> arguments) {
             }
             final phase = snapshot['bootstrapPhase'];
             final pending = snapshot['pendingOperations'];
-            final settled = phase == 'ready' || phase == 'degraded';
-            if (!settled || (pending is List && pending.isNotEmpty)) {
+            settled = phase == 'ready' || phase == 'degraded';
+            pendingWork = pending is List && pending.isNotEmpty;
+            if (!settled || pendingWork) {
               next = const Duration(milliseconds: 250);
             }
           }
@@ -558,6 +608,36 @@ void _workerMainImpl(List<Object?> arguments) {
         } on Object {
           // The next scheduled poll retries after a transient native failure.
         }
+        if (settled && !pendingWork) {
+          final waiter = waiterPort;
+          if (waiter == null) {
+            snapshotTimer = Timer(const Duration(seconds: 1), pollSnapshot);
+            return;
+          }
+          final reply = ReceivePort();
+          waiter.send(<String, Object?>{
+            'revision': runtimeRevision,
+            'cursor': runtimeRevision,
+            'timeoutMs': 30_000,
+            'reply': reply.sendPort,
+          });
+          reply.first
+              .timeout(const Duration(seconds: 31))
+              .then<void>(
+                (_) {
+                  reply.close();
+                  snapshotTimer = Timer(Duration.zero, pollSnapshot);
+                },
+                onError: (Object _, StackTrace __) {
+                  reply.close();
+                  snapshotTimer = Timer(
+                    const Duration(seconds: 1),
+                    pollSnapshot,
+                  );
+                },
+              );
+          return;
+        }
         snapshotTimer = Timer(next, pollSnapshot);
       }
 
@@ -566,6 +646,9 @@ void _workerMainImpl(List<Object?> arguments) {
     }
     if (message['dispose'] == true) {
       snapshotTimer?.cancel();
+      waiterPort?.send(<String, Object?>{'stop': true});
+      waiterReady.close();
+      waiterIsolate?.kill(priority: Isolate.immediate);
       bindings.release(handle);
       (message['reply'] as SendPort?)?.send('ok');
       return;
@@ -617,6 +700,9 @@ class _WorkerBindings {
       _invoke = library.lookupFunction<_InvokeNative, _InvokeDart>(
         'torca_runtime_invoke',
       ),
+      _waitForRevision = library.lookupFunction<_WaitNative, _WaitDart>(
+        'torca_runtime_wait_for_revision',
+      ),
       _responsePtr = library
           .lookupFunction<_ResponsePtrNative, _ResponsePtrDart>(
             'torca_runtime_response_ptr',
@@ -642,6 +728,7 @@ class _WorkerBindings {
   final _AcquireDart _acquire;
   final _ReleaseDart _release;
   final _InvokeDart _invoke;
+  final _WaitDart _waitForRevision;
   final _ResponsePtrDart _responsePtr;
   final _ResponseLenDart _responseLen;
   final _AllocDart _alloc;
@@ -653,6 +740,13 @@ class _WorkerBindings {
   _Handle acquire() => _acquire();
   void release(_Handle handle) => _release(handle);
   int shutdown(int timeoutMs) => _shutdown(timeoutMs);
+
+  int waitForRevision(
+    _Handle handle,
+    int afterRevision,
+    int afterCursor,
+    int timeoutMs,
+  ) => _waitForRevision(handle, afterRevision, afterCursor, timeoutMs);
 
   Map<String, dynamic> metadata() {
     final pointer = _metadataPtr();

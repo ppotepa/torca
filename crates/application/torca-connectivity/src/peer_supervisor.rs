@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use torca_foundation::{OpaqueId, Timestamp};
+use torca_runtime_policy::Freshness;
 
 const HEALTHY_INTERVAL: Duration = Duration::from_secs(30);
 const RETRY_INTERVAL: Duration = Duration::from_secs(10);
@@ -17,6 +18,7 @@ pub struct PeerProbeCandidate {
     pub peer_id: OpaqueId,
     pub ready: bool,
     pub eligible: bool,
+    pub freshness: Freshness,
     pub reported_rtt_ms: Option<u64>,
 }
 
@@ -72,6 +74,7 @@ impl PeerProbeSupervisor {
         let candidate = candidates.iter().find(|candidate| {
             candidate.ready
                 && candidate.eligible
+                && !matches!(candidate.freshness, Freshness::Live | Freshness::Recent)
                 && self
                     .schedules
                     .get(&candidate.peer_id)
@@ -106,6 +109,7 @@ mod tests {
             peer_id: OpaqueId::from_u128(id),
             ready: true,
             eligible: true,
+            freshness: Freshness::Unknown,
             reported_rtt_ms: Some(12),
         }
     }
@@ -125,5 +129,19 @@ mod tests {
             supervisor.next_due(&candidates, retry_at).expect("retry").peer_id,
             first.peer_id
         );
+    }
+
+    #[test]
+    fn live_or_recent_evidence_suppresses_cosmetic_probe() {
+        let now = Timestamp::UNIX_EPOCH;
+        let mut candidate = candidate(1);
+        candidate.freshness = Freshness::Live;
+        let candidates = [candidate];
+        let mut supervisor = PeerProbeSupervisor::default();
+        supervisor.reconcile(&candidates, now);
+        assert!(supervisor.next_due(&candidates, now).is_none());
+
+        candidate.freshness = Freshness::Stale;
+        assert!(supervisor.next_due(&[candidate], now).is_some());
     }
 }

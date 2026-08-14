@@ -25,23 +25,10 @@ impl<'a> InstallController<'a> {
                     Configuration::Debug => "debug",
                     Configuration::Release => "release",
                 };
-                let abi = self
-                    .runner
-                    .run(&CommandSpec {
-                        program: "adb".into(),
-                        arguments: vec![
-                            "-s".into(),
-                            device.id.clone(),
-                            "shell".into(),
-                            "getprop".into(),
-                            "ro.product.cpu.abi".into(),
-                        ],
-                        working_directory: self.paths.repo_root.clone(),
-                        timeout: Duration::from_secs(30),
-                        environment: std::collections::BTreeMap::new(),
-                    })?
-                    .text;
-                let abi = if abi.contains("x86_64") { "x86_64" } else { "arm64-v8a" };
+                let abi = device
+                    .android_abi
+                    .ok_or_else(|| InstallError::MissingAndroidAbi(device.id.clone()))?
+                    .package_name();
                 let apk = self.paths.repo_root.join(format!(
                     "apps/client/flutter/build/app/outputs/flutter-apk/app-{abi}-{mode}.apk"
                 ));
@@ -84,4 +71,6 @@ pub enum InstallError {
     ArtifactVerification(String),
     #[error("install process error: {0}")]
     Process(#[from] ProcessError),
+    #[error("Android ABI was not discovered for device {0}")]
+    MissingAndroidAbi(String),
 }

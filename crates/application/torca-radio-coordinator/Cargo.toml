@@ -1,0 +1,18 @@
+[package]
+name = "torca-radio-coordinator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-radio = { path = "../../domains/torca-radio" }
+torca-radio-protocol = { path = "../../protocol/torca-radio-protocol" }
+
+[lints]
+workspace = true

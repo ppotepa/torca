@@ -43,9 +43,10 @@ class _TorcaAppState extends State<TorcaApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   int _handledPairingRequest = 0;
   final Set<String> _pairingPromptsShown = <String>{};
-  final Map<String, PairingState> _pairingStates = <String, PairingState>{};
-  bool _pairingBaselineCaptured = false;
+  final Set<String> _knownContactIds = <String>{};
+  bool _contactBaselineCaptured = false;
   bool _pairingPromptOpen = false;
+  String? _scheduledPairingPromptId;
 
   @override
   void initState() {
@@ -54,6 +55,7 @@ class _TorcaAppState extends State<TorcaApp> {
     widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
     widget.navigation.newPairingRequest.addListener(_newPairingRequested);
     widget.gateway.snapshots.addListener(_pairingSnapshotChanged);
+    PairingModalRegistry.instance.addListener(_pairingSnapshotChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _conversationRequested();
       _pairingRequested();
@@ -65,20 +67,27 @@ class _TorcaAppState extends State<TorcaApp> {
   @override
   void didUpdateWidget(covariant TorcaApp oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.navigation == widget.navigation) return;
-    oldWidget.navigation.conversationRequest.removeListener(
-      _conversationRequested,
-    );
-    oldWidget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
-    oldWidget.navigation.newPairingRequest.removeListener(_newPairingRequested);
-    widget.navigation.conversationRequest.addListener(_conversationRequested);
-    widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
-    widget.navigation.newPairingRequest.addListener(_newPairingRequested);
-    oldWidget.gateway.snapshots.removeListener(_pairingSnapshotChanged);
-    widget.gateway.snapshots.addListener(_pairingSnapshotChanged);
-    _handledPairingRequest = widget.navigation.newPairingRequest.value;
-    _pairingStates.clear();
-    _pairingBaselineCaptured = false;
+    if (oldWidget.navigation != widget.navigation) {
+      oldWidget.navigation.conversationRequest.removeListener(
+        _conversationRequested,
+      );
+      oldWidget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
+      oldWidget.navigation.newPairingRequest.removeListener(
+        _newPairingRequested,
+      );
+      widget.navigation.conversationRequest.addListener(_conversationRequested);
+      widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
+      widget.navigation.newPairingRequest.addListener(_newPairingRequested);
+      _handledPairingRequest = widget.navigation.newPairingRequest.value;
+    }
+    if (oldWidget.gateway != widget.gateway) {
+      oldWidget.gateway.snapshots.removeListener(_pairingSnapshotChanged);
+      widget.gateway.snapshots.addListener(_pairingSnapshotChanged);
+      _knownContactIds.clear();
+      _pairingPromptsShown.clear();
+      _contactBaselineCaptured = false;
+      _scheduledPairingPromptId = null;
+    }
   }
 
   @override
@@ -89,6 +98,7 @@ class _TorcaAppState extends State<TorcaApp> {
     widget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
     widget.navigation.newPairingRequest.removeListener(_newPairingRequested);
     widget.gateway.snapshots.removeListener(_pairingSnapshotChanged);
+    PairingModalRegistry.instance.removeListener(_pairingSnapshotChanged);
     super.dispose();
   }
 
@@ -116,6 +126,7 @@ class _TorcaAppState extends State<TorcaApp> {
         builder: (_) => ConversationScreen(
           gateway: widget.gateway,
           conversation: conversation!,
+          preferences: widget.preferences,
         ),
       ),
     );
@@ -162,36 +173,33 @@ class _TorcaAppState extends State<TorcaApp> {
           pairing.typedState == PairingState.awaitingApproval);
 
   void _pairingSnapshotChanged() {
-    final pairings = widget.gateway.snapshots.value.pairings;
-    if (_pairingBaselineCaptured) {
-      for (final pairing in pairings) {
-        final previous = _pairingStates[pairing.id];
-        if (previous != null &&
-            previous != PairingState.completed &&
-            pairing.typedState == PairingState.completed) {
+    final snapshot = widget.gateway.snapshots.value;
+    final pairings = snapshot.pairings;
+    if (_contactBaselineCaptured) {
+      for (final contact in snapshot.contacts) {
+        if (!_knownContactIds.contains(contact.id)) {
           final context = _navigatorKey.currentContext;
           if (mounted && context != null) {
-            final name = pairing.remoteDisplayName?.trim();
-            final label = name == null || name.isEmpty
-                ? context.strings.contactLabel
-                : name;
-            final message = pairing.typedRole == PairingRole.creator
-                ? context.strings.contactAddedToContacts(label)
-                : context.strings.contactAcceptedJoin(label);
             ScaffoldMessenger.of(context)
               ..hideCurrentSnackBar()
-              ..showSnackBar(SnackBar(content: Text(message)));
+              ..showSnackBar(
+                SnackBar(
+                  content: Text(
+                    context.strings.contactAddedToContacts(contact.displayName),
+                  ),
+                ),
+              );
           }
         }
       }
     }
-    _pairingStates
+    _knownContactIds
       ..clear()
-      ..addEntries(
-        pairings.map((pairing) => MapEntry(pairing.id, pairing.typedState)),
-      );
-    _pairingBaselineCaptured = true;
-    if (!mounted || _pairingPromptOpen) return;
+      ..addAll(snapshot.contacts.map((contact) => contact.id));
+    _contactBaselineCaptured = true;
+    if (!mounted || _pairingPromptOpen || _scheduledPairingPromptId != null) {
+      return;
+    }
     PairingDto? candidate;
     for (final pairing in pairings) {
       if (_needsPairingDecision(pairing) &&
@@ -202,10 +210,14 @@ class _TorcaAppState extends State<TorcaApp> {
       }
     }
     if (candidate == null) return;
-    _pairingPromptsShown.add(candidate.id);
+    _scheduledPairingPromptId = candidate.id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _showIncomingPairing(candidate!);
     });
+    // Registry ownership can be released outside a frame (for example while
+    // closing a native/deep-link surface). A post-frame callback alone does
+    // not request a frame, so explicitly wake the scheduler.
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   Future<void> _showIncomingPairing(PairingDto pairing) async {
@@ -220,9 +232,14 @@ class _TorcaAppState extends State<TorcaApp> {
     // candidate selection and showDialog; without this reservation another
     // entry point could open a second surface for the same pairing session.
     final modalRegistry = PairingModalRegistry.instance;
-    if (modalRegistry.owns(pairing.id)) return;
-    modalRegistry.claim(pairing.id);
+    if (modalRegistry.owns(pairing.id)) {
+      _scheduledPairingPromptId = null;
+      return;
+    }
     _pairingPromptOpen = true;
+    _scheduledPairingPromptId = null;
+    modalRegistry.claim(pairing.id);
+    _pairingPromptsShown.add(pairing.id);
     try {
       await showDialog<void>(
         context: navigator.context,
@@ -255,7 +272,10 @@ class _TorcaAppState extends State<TorcaApp> {
   void _openSettings() {
     _navigatorKey.currentState?.push<void>(
       MaterialPageRoute(
-        builder: (_) => SettingsScreen(preferences: widget.preferences),
+        builder: (_) => SettingsScreen(
+          preferences: widget.preferences,
+          gateway: widget.gateway,
+        ),
       ),
     );
   }

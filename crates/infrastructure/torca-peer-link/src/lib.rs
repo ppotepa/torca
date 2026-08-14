@@ -193,7 +193,9 @@ where
         Ok(true)
     }
 
-    /// Advances accept/authentication, all active sessions and due reconnect attempts once.
+    /// Advances accept/authentication, active sessions and explicitly demanded
+    /// reconnect attempts once. A contact existing in the address book is not
+    /// itself a demand; send/probe paths create a reconnect entry when needed.
     pub fn maintenance(
         &mut self,
         contacts: &[ContactId],
@@ -203,7 +205,7 @@ where
         self.accept_pending(&mut report)?;
         self.authenticate_pending(now, &mut report)?;
         self.poll_sessions(now, &mut report)?;
-        self.plan_disconnected(contacts, now)?;
+        self.plan_disconnected(contacts);
         self.run_due_reconnects(now, &mut report)?;
         Ok(report)
     }
@@ -330,8 +332,11 @@ where
         Ok(())
     }
 
-    /// Polls one step for an envelope acknowledgement.  Other inbound data
-    /// is queued and acknowledged so concurrent transfers do not deadlock.
+    /// Polls one step for an envelope acknowledgement. Other inbound data is
+    /// queued and acknowledged at the transport boundary so simultaneous
+    /// sends cannot deadlock while both application workers are waiting for
+    /// each other's ACK. The bounded inbox is the receipt boundary; the
+    /// application layer remains responsible for durable/idempotent handling.
     pub fn poll_envelope_ack(
         &mut self,
         contact_id: ContactId,
@@ -382,6 +387,7 @@ where
                     message_kind,
                     ciphertext,
                 })?;
+                self.send_ack(contact_id, envelope_id, AckStatus::Accepted)?;
                 Ok(None)
             }
             Ok(_) => Ok(None),
@@ -822,11 +828,7 @@ where
         Ok(())
     }
 
-    fn plan_disconnected(
-        &mut self,
-        contacts: &[ContactId],
-        now: Timestamp,
-    ) -> Result<(), PeerLinkError> {
+    fn plan_disconnected(&mut self, contacts: &[ContactId]) {
         for &contact_id in contacts {
             match self.connection_state(contact_id) {
                 PeerConnectionState::Ready => {
@@ -834,15 +836,10 @@ where
                 }
                 PeerConnectionState::Disconnected
                 | PeerConnectionState::Reconnecting
-                | PeerConnectionState::Failed => {
-                    if !self.reconnect.contains_key(&contact_id) {
-                        self.schedule_reconnect(contact_id, now)?;
-                    }
-                }
+                | PeerConnectionState::Failed => {}
                 PeerConnectionState::Connecting | PeerConnectionState::Handshaking => {}
             }
         }
-        Ok(())
     }
 
     fn run_due_reconnects(

@@ -185,6 +185,7 @@ impl DeployExecutor {
             BuildController::new(&paths, self.runner.as_ref())
                 .build(
                     &run.plan.targets,
+                    &devices,
                     run.plan.configuration,
                     run.plan.client_build,
                     endpoint.as_deref(),
@@ -220,32 +221,44 @@ impl DeployExecutor {
             run.advance(DeployStage::ClientsInstalled, "selected client artifacts installed");
             self.checkpoint(run)?;
         }
-        if !run.completed.contains(&DeployStage::ClientsLaunched)
-            && !matches!(run.plan.launch, crate::domain::LaunchPolicy::Skip)
-        {
+        if !matches!(run.plan.launch, crate::domain::LaunchPolicy::Skip) {
             // Start every selected client before waiting for health.  The old
             // device-by-device loop made Android wait behind a fully warmed
             // Windows runtime (and vice versa), turning a slow onion publish
             // into a serial deployment stall.
             let launch = LaunchController::new(&paths, self.runner.as_ref());
-            let receipts = devices
-                .iter()
-                .map(|device| {
-                    launch
-                        .launch(device, run.plan.configuration)
-                        .map(|receipt| (device, receipt))
-                        .map_err(DeployError::Launch)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            for (device, _) in &receipts {
-                launch.wait_process(device).map_err(DeployError::Launch)?;
-                launch.wait_visible_surface(device).map_err(DeployError::Launch)?;
-            }
-            run.advance(
-                DeployStage::ClientsLaunched,
-                "selected clients started and exposed a visible surface",
-            );
-            self.checkpoint(run)?;
+            let receipts = if run.completed.contains(&DeployStage::ClientsLaunched) {
+                let started_at = std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_millis(
+                        u64::try_from(run.started_at_ms).unwrap_or(u64::MAX),
+                    );
+                devices
+                    .iter()
+                    .map(|device| {
+                        (device, crate::launch::LaunchReceipt::from_started_at(started_at))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                let receipts = devices
+                    .iter()
+                    .map(|device| {
+                        launch
+                            .launch(device, run.plan.configuration)
+                            .map(|receipt| (device, receipt))
+                            .map_err(DeployError::Launch)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                for (device, _) in &receipts {
+                    launch.wait_process(device).map_err(DeployError::Launch)?;
+                    launch.wait_visible_surface(device).map_err(DeployError::Launch)?;
+                }
+                run.advance(
+                    DeployStage::ClientsLaunched,
+                    "selected clients started and exposed a visible surface",
+                );
+                self.checkpoint(run)?;
+                receipts
+            };
             for (device, receipt) in receipts {
                 launch
                     .wait_network_ready(device, receipt, run.plan.validation)

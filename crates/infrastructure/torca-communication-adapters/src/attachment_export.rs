@@ -47,11 +47,11 @@ impl<P> AttachmentExportAdapter<P> {
     }
 }
 
-impl<P> AttachmentExportRuntime for AttachmentExportAdapter<P>
+impl<P> AttachmentExportAdapter<P>
 where
     P: ProtectedSecretStore + Send + 'static,
 {
-    fn export_attachment(
+    fn export_attachment_impl(
         &mut self,
         id: AttachmentId,
         destination: PathBuf,
@@ -141,7 +141,12 @@ where
         }
         fs::rename(temporary, destination).map_err(|_| CommunicationError::Attachment)
     }
+}
 
+impl<P> AttachmentExportAdapter<P>
+where
+    P: ProtectedSecretStore + Send + 'static,
+{
     fn export_chunked_cache(
         &self,
         id: AttachmentId,
@@ -163,7 +168,8 @@ where
         }
         let temporary = parent.join(format!(".torca-export-{id}.tmp"));
         let result = (|| -> Result<(), CommunicationError> {
-            let mut file = fs::File::create(&temporary).map_err(|_| CommunicationError::Attachment)?;
+            let mut file =
+                fs::File::create(&temporary).map_err(|_| CommunicationError::Attachment)?;
             let mut digest = Sha256::new();
             let mut offset = 0_u64;
             while offset < size {
@@ -177,9 +183,7 @@ where
                     return Err(CommunicationError::Attachment);
                 }
                 let nonce = Nonce(
-                    stored[..NONCE_BYTES]
-                        .try_into()
-                        .map_err(|_| CommunicationError::Attachment)?,
+                    stored[..NONCE_BYTES].try_into().map_err(|_| CommunicationError::Attachment)?,
                 );
                 let mut chunk = self
                     .secrets
@@ -190,7 +194,8 @@ where
                         &Ciphertext(stored[NONCE_BYTES..].to_vec()),
                     )
                     .map_err(|_| CommunicationError::Attachment)?;
-                if chunk.is_empty() || chunk.len() > torca_attachment_protocol::MAX_ATTACHMENT_CHUNK {
+                if chunk.is_empty() || chunk.len() > torca_attachment_protocol::MAX_ATTACHMENT_CHUNK
+                {
                     chunk.fill(0);
                     return Err(CommunicationError::Attachment);
                 }
@@ -213,7 +218,8 @@ where
                     return Err(CommunicationError::Attachment);
                 }
                 digest.update(&chunk);
-                let write_result = file.write_all(&chunk).map_err(|_| CommunicationError::Attachment);
+                let write_result =
+                    file.write_all(&chunk).map_err(|_| CommunicationError::Attachment);
                 chunk.fill(0);
                 write_result?;
             }
@@ -230,6 +236,19 @@ where
             let _ = fs::remove_file(&temporary);
         }
         result
+    }
+}
+
+impl<P> AttachmentExportRuntime for AttachmentExportAdapter<P>
+where
+    P: ProtectedSecretStore + Send + 'static,
+{
+    fn export_attachment(
+        &mut self,
+        id: AttachmentId,
+        destination: PathBuf,
+    ) -> Result<(), CommunicationError> {
+        self.export_attachment_impl(id, destination)
     }
 
     fn export_attachment_preview(

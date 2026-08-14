@@ -24,8 +24,10 @@ use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
 };
 use torca_messaging::{MessageBody, MessageId};
+use torca_delivery::ReactionPayload;
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
+use torca_runtime_policy::Freshness;
 
 const RUNTIME_TICK: Duration = Duration::from_millis(100);
 const COMMAND_WAIT: Duration = Duration::from_secs(10);
@@ -221,6 +223,12 @@ pub trait PairingDriver: Send + 'static {
     fn reject(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError>;
     fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError>;
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    /// Returns the next useful maintenance deadline. `None` means the worker
+    /// can sleep until a command or network event arrives; it must not wake
+    /// just to discover that there is no pairing work.
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        Some(Duration::from_secs(1))
+    }
     fn network_changed(&mut self, _now: Timestamp) {}
     fn shutdown(&mut self);
 }
@@ -355,14 +363,12 @@ pub trait CommunicationDriver:
     + AttachmentTransferPort
     + AttachmentExportPort
 {
-}
-impl<T> CommunicationDriver for T where
-    T: PeerSessionPort
-        + RelationshipAdminPort
-        + ConversationReadPort
-        + AttachmentTransferPort
-        + AttachmentExportPort
-{
+    fn queue_reaction(
+        &mut self,
+        contact_id: ContactId,
+        reaction: ReactionPayload,
+        at: Timestamp,
+    ) -> Result<(), RuntimeDriverError>;
 }
 pub trait TorDriver: Send + 'static {
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
@@ -417,6 +423,7 @@ enum RuntimeCommand {
     ClearConversationHistory(ConversationId, Sender<Result<(), RuntimeDriverError>>),
     MarkConversationRead(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>),
+    QueueReaction(ContactId, ReactionPayload, Timestamp, Sender<Result<(), RuntimeDriverError>>),
     RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     ExportAttachment(AttachmentId, PathBuf, Sender<Result<(), RuntimeDriverError>>),
@@ -491,6 +498,14 @@ impl RuntimeHandle {
     }
     pub fn queue_attachment(&self, value: AttachmentSendRequest) -> Result<(), RuntimeDriverError> {
         request_command(&self.sender, |r| RuntimeCommand::QueueAttachment(value, r))
+    }
+    pub fn queue_reaction(
+        &self,
+        contact_id: ContactId,
+        reaction: ReactionPayload,
+        at: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |r| RuntimeCommand::QueueReaction(contact_id, reaction, at, r))
     }
     pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
         request_command(&self.sender, |r| RuntimeCommand::RetryAttachment(id, r))
@@ -716,6 +731,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     tor,
                     &probes,
                     relay_info.as_ref(),
+                    relay_health.as_ref(),
                     &mut transport_activity,
                     &connectivity,
                     diagnostics,
@@ -873,6 +889,7 @@ fn maintain_peer_probes<C: PeerSessionPort>(
                 peer_id: contact_id.to_opaque(),
                 ready: health.state == PeerConnectionStatus::Ready,
                 eligible: communication.peer_probe_eligible(contact_id),
+                freshness: peer_freshness(health.last_success_at, now),
                 reported_rtt_ms: health.rtt_ms,
             }
         })
@@ -892,6 +909,18 @@ fn maintain_peer_probes<C: PeerSessionPort>(
         return Err(error);
     }
     Ok(())
+}
+
+fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshness {
+    let Some(last_success_at) = last_success_at else { return Freshness::Unknown };
+    let Some(age) = now.duration_since(last_success_at) else { return Freshness::Stale };
+    if age <= Duration::from_secs(15) {
+        Freshness::Live
+    } else if age <= Duration::from_secs(120) {
+        Freshness::Recent
+    } else {
+        Freshness::Stale
+    }
 }
 
 fn observe_maintenance(
@@ -1011,6 +1040,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     tor: &T,
     probes: &ProbeSupervisor,
     relay_info: Option<&Arc<dyn RelayProbe>>,
+    relay_health: Option<&RelayHealthHandle>,
     transport_activity: &mut TransportActivityLedger,
     connectivity: &ConnectivityObserver,
     diagnostics: &mut DiagnosticBuffer,
@@ -1019,26 +1049,31 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 ) {
     match command {
         RuntimeCommand::CreatePairing(id, r) => {
+            wake_relay(relay_health);
             let result = pairing.create(id, now);
             record_pairing_result(&result, "CREATE", diagnostics, sequence, now);
             let _ = r.send(result);
         }
         RuntimeCommand::JoinPairing(id, code, ticket, r) => {
+            wake_relay(relay_health);
             let result = pairing.join(id, code, ticket, now);
             record_pairing_result(&result, "JOIN", diagnostics, sequence, now);
             let _ = r.send(result);
         }
         RuntimeCommand::ApprovePairing(id, r) => {
+            wake_relay(relay_health);
             let result = pairing.approve(id, now);
             record_pairing_result(&result, "APPROVE", diagnostics, sequence, now);
             let _ = r.send(result);
         }
         RuntimeCommand::RejectPairing(id, r) => {
+            wake_relay(relay_health);
             let result = pairing.reject(id);
             record_pairing_result(&result, "REJECT", diagnostics, sequence, now);
             let _ = r.send(result);
         }
         RuntimeCommand::CancelPairing(id, r) => {
+            wake_relay(relay_health);
             let result = pairing.cancel(id);
             record_pairing_result(&result, "CANCEL", diagnostics, sequence, now);
             let _ = r.send(result);
@@ -1105,6 +1140,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             });
             let _ = r.send(result);
         }
+        RuntimeCommand::QueueReaction(contact_id, reaction, at, r) => {
+            let _ = r.send(communication.queue_reaction(contact_id, reaction, at));
+        }
         RuntimeCommand::RetryAttachment(id, r) => {
             let _ = r.send(communication.retry_attachment(id, now));
         }
@@ -1156,6 +1194,12 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::Wake => {}
         RuntimeCommand::NetworkChanged => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),
+    }
+}
+
+fn wake_relay(relay_health: Option<&RelayHealthHandle>) {
+    if let Some(relay_health) = relay_health {
+        relay_health.wake();
     }
 }
 
