@@ -20,12 +20,12 @@ Last reconciled with the source tree on 2026-08-14.
 | Android notification waiter | Implemented | foreground service waits indefinitely for native runtime changes on a dedicated `HandlerThread`; `onDestroy()` cancels the native waiter before quitting |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
-| Health freshness suppressing some peer probes | Implemented core | `PeerProbeSupervisor` consumes freshness; peer TX/RX/ACK/handshake/failure counters now feed policy evidence, while attachment-specific chunk attribution remains |
+| Health freshness suppressing some peer probes | Implemented core | `PeerProbeSupervisor` consumes freshness; peer TX/RX/ACK/handshake/failure counters now feed policy evidence. Attachment chunks are authenticated envelope frames and therefore already refresh the peer evidence; a separate chunk metric is optional diagnostics only |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation reports up to seven visible contacts, focused conversation routes report on entry and on mobile route return, while focused-contact generation race tests remain |
 | Feature-owned leases | Partial | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; relay health is now gated by the active relay lease and radio enable/transmit commands create separate radio leases; full radio executor cleanup and route-generation tests remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, radio control/state-sync retry, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Implemented core | production runtime uses a demand-driven supervisor: no initial/healthy probe exists without a relay lease; pairing/network events wake one lane and retry backoff is bounded |
-| Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs and ready-to-disconnected transitions now feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
+| Fully evidence-driven peer health | Implemented core | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs, peer TX/RX/ACK counters and ready-to-disconnected transitions feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues now expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Implemented core | diagnostics count scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, inbound text, attachment metadata/blob writes, projection events, peer and relay probes; physical TX/RX byte totals remain intentionally outside the app ledger |
@@ -40,9 +40,8 @@ The revision waiters now block on the native condition variable with
 Android service can be started again on the same runtime without inheriting a
 permanent cancelled waiter. A finite timeout remains available to diagnostic
 callers, but it is not used by the idle platform workers.
-The remaining work is integration hardening: executor-owned relay/radio
-leases, complete attention-generation tests, richer TX/RX/chunk evidence and
-the remaining projection counters. Arti dormancy remains deliberately
+The remaining work is integration hardening: complete attention-generation
+tests and radio executor cleanup. Arti dormancy remains deliberately
 measurement-gated and is not required for the no-idle-polling guarantee.
 
 The central model is:
