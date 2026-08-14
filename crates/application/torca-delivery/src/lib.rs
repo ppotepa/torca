@@ -68,6 +68,12 @@ pub trait DurableDeliveryStore {
         claimed_before: Timestamp,
     ) -> Result<usize, DurableDeliveryError>;
     fn record_inbound(&mut self, envelope_id: OpaqueId) -> Result<bool, DurableDeliveryError>;
+
+    /// Returns the next persisted delivery deadline without claiming work.
+    /// `None` means that this store has no pending retry deadline.
+    fn next_due(&self) -> Result<Option<Timestamp>, DurableDeliveryError> {
+        Ok(None)
+    }
 }
 
 pub trait InboundMessageStore {
@@ -131,6 +137,15 @@ impl DurableDeliveryStore for InMemoryDurableDeliveryStore {
             }
         }
         Ok(claimed)
+    }
+
+    fn next_due(&self) -> Result<Option<Timestamp>, DurableDeliveryError> {
+        Ok(self
+            .outbox
+            .values()
+            .filter(|record| record.state == OutboxState::Pending)
+            .map(|record| record.next_attempt_at)
+            .min())
     }
 
     fn reschedule(
@@ -288,6 +303,10 @@ where
         claimed_before: Timestamp,
     ) -> Result<usize, DeliveryWorkerError> {
         self.store.recover_stale_claims(claimed_before).map_err(Into::into)
+    }
+
+    pub fn next_due(&self) -> Result<Option<Timestamp>, DeliveryWorkerError> {
+        self.store.next_due().map_err(Into::into)
     }
 
     #[allow(clippy::single_match_else)]
@@ -489,7 +508,10 @@ impl ApplicationPayloadCodec {
                 output.extend_from_slice(&receipt.at.to_unix_millis().to_be_bytes());
             }
             ApplicationPayload::Reaction(reaction) => {
-                if reaction.emoji.is_empty() || reaction.emoji.len() > 32 || reaction.emoji.contains('\0') {
+                if reaction.emoji.is_empty()
+                    || reaction.emoji.len() > 32
+                    || reaction.emoji.contains('\0')
+                {
                     return Err(ApplicationPayloadError::BodyTooLarge);
                 }
                 output.push(3);

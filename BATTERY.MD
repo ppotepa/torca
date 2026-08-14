@@ -23,7 +23,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
 | Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
-| Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; full deadline ownership is still pending |
+| Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; delivery/control outboxes now expose next persisted deadlines, while the remaining communication fallback still needs removal |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
 | Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |
@@ -473,9 +473,11 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. Add shutdown, missed-revision
    and waiter-generation regression tests.
-4. **Partial / next:** replace the remaining one-second fallback with a single
-   deadline selected from Tor, communication, peer, pairing, attachment and
-   radio executors. Do not create independent feature timers.
+4. **Partial / next:** delivery/control outboxes now expose persisted retry
+   deadlines and the runtime merges them with pairing/peer deadlines. Replace
+   the remaining one-second safety fallback with a single deadline selected
+   from Tor, communication, attachment and radio executors. Do not create
+   independent feature timers.
 5. **Partial / next:** attachment and pending-message leases now survive
    route changes, renew during runtime maintenance and release when durable
    terminal state is observed. Finish pairing and radio executor ownership;

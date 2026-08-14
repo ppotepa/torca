@@ -133,6 +133,10 @@ pub mod messaging_sql {
         name: "outbox.claim_due",
         sql: include_str!("../sql/queries/outbox_claim_due.sql"),
     };
+    pub const NEXT_DUE: SqlStatement = SqlStatement {
+        name: "outbox.next_due",
+        sql: include_str!("../sql/queries/outbox_next_due.sql"),
+    };
     pub const EXISTS: SqlStatement = SqlStatement {
         name: "outbox.exists",
         sql: include_str!("../sql/queries/outbox_exists.sql"),

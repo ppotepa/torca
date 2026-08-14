@@ -98,6 +98,10 @@ pub trait ControlOutboxStore: Send {
     ) -> Result<(), ControlDeliveryError>;
     fn complete(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError>;
     fn dead_letter(&mut self, job_id: OpaqueId) -> Result<(), ControlDeliveryError>;
+
+    fn next_due(&self) -> Result<Option<Timestamp>, ControlDeliveryError> {
+        Ok(None)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,6 +146,10 @@ impl<T: ControlTransport> ControlDeliveryWorker<T> {
 
     pub fn recover_stale(&mut self, before: Timestamp) -> Result<usize, ControlDeliveryError> {
         self.outbox.recover_stale(before)
+    }
+
+    pub fn next_due(&self) -> Result<Option<Timestamp>, ControlDeliveryError> {
+        self.outbox.next_due()
     }
 
     pub fn run_once(

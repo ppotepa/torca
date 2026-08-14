@@ -19,8 +19,8 @@ use torca_contacts::ContactId;
 use torca_control_delivery::{ControlKind, PendingControlJob, ReadCandidate};
 use torca_conversations::ConversationId;
 use torca_delivery::{
-    ApplicationPayload, ApplicationPayloadCodec, DeliveryReceiptKind, ReceiptPayload,
-    ReactionPayload,
+    ApplicationPayload, ApplicationPayloadCodec, DeliveryReceiptKind, ReactionPayload,
+    ReceiptPayload,
 };
 use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
@@ -250,10 +250,16 @@ pub trait PeerLinkRuntime: Send {
 pub trait TextDeliveryRuntime: Send {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
 }
 pub trait ControlDeliveryRuntime: Send {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
     fn queue_reaction(
         &mut self,
         _contact_id: ContactId,
@@ -589,6 +595,17 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         Ok(())
     }
 
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        [
+            self.text.next_maintenance_delay(now),
+            self.control.next_maintenance_delay(now),
+            self.attachment_scheduler.next_delay(now),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
     fn network_changed(&mut self, now: Timestamp) {
         self.peer.network_changed(now);
     }
@@ -635,9 +652,7 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
         reaction: ReactionPayload,
         at: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.control
-            .queue_reaction(contact_id, reaction, at)
-            .map_err(map_runtime)
+        self.control.queue_reaction(contact_id, reaction, at).map_err(map_runtime)
     }
 }
 

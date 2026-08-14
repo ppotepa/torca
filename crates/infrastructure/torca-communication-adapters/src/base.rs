@@ -7,8 +7,8 @@ use crate::{application_envelope, application_peer_state, peer_envelope};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_communication_driver::{
     CommunicationError, ControlDeliveryRuntime, InboundEnvelope, InboundMessagingRuntime,
-    PeerConnectionStatus, PeerLinkRuntime, RECEIPT_MESSAGE_KIND, REACTION_MESSAGE_KIND, ReadStateRuntime,
-    TEXT_MESSAGE_KIND, TextDeliveryRuntime, plan_read_receipts,
+    PeerConnectionStatus, PeerLinkRuntime, REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND,
+    ReadStateRuntime, TEXT_MESSAGE_KIND, TextDeliveryRuntime, plan_read_receipts,
 };
 use torca_contacts::{
     Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
@@ -22,7 +22,7 @@ use torca_crypto::{Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, Protec
 use torca_delivery::{
     ApplicationPayload, ApplicationPayloadCodec, DeliveryAck, DeliveryReceiptKind,
     DeliveryTransport, DeliveryTransportError, DeliveryWorker, DurableDeliveryStore,
-    InboundMessageStore, ReceiptPayload, ReactionPayload, TextPayload,
+    InboundMessageStore, ReactionPayload, ReceiptPayload, TextPayload,
 };
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
@@ -120,6 +120,10 @@ where
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
         self.worker.run_once(now, limit).map(|_| ()).map_err(|_| CommunicationError::Text)
     }
+
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.worker.next_due().ok().flatten().map(|due| due.duration_since(now).unwrap_or_default())
+    }
 }
 
 /// Shared durable control worker so inbound Delivered receipt creation and periodic sender
@@ -198,6 +202,13 @@ impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedCont
             .run_once(now, limit)
             .map(|_| ())
             .map_err(|_| CommunicationError::Control)
+    }
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|worker| worker.next_due().ok().flatten())
+            .map(|due| due.duration_since(now).unwrap_or_default())
     }
     fn queue_reaction(
         &mut self,
@@ -350,7 +361,11 @@ where
             &self.crypto,
             credential.secret_handle(),
             job.job_id,
-            if job.kind == ControlKind::Reaction { REACTION_MESSAGE_KIND } else { RECEIPT_MESSAGE_KIND },
+            if job.kind == ControlKind::Reaction {
+                REACTION_MESSAGE_KIND
+            } else {
+                RECEIPT_MESSAGE_KIND
+            },
             self.local_identity_id,
             contact.remote_identity().identity_id().to_opaque(),
             &job.payload,
@@ -360,7 +375,11 @@ where
             .send_and_wait_ack(
                 contact_id,
                 job.job_id,
-                if job.kind == ControlKind::Reaction { REACTION_MESSAGE_KIND } else { RECEIPT_MESSAGE_KIND },
+                if job.kind == ControlKind::Reaction {
+                    REACTION_MESSAGE_KIND
+                } else {
+                    RECEIPT_MESSAGE_KIND
+                },
                 encrypted,
                 self.ack_timeout,
             )
@@ -492,7 +511,8 @@ where
                     reaction.at,
                 )
                 .map_err(|_| CommunicationError::Inbound)?;
-                let _ = self.engine
+                let _ = self
+                    .engine
                     .dispatch(EngineCommand::SetMessageReaction { reaction: domain })
                     .map_err(|_| CommunicationError::Engine)?;
                 self.link

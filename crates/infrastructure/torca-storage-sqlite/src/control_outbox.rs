@@ -10,6 +10,7 @@ use crate::{DatabaseKey, SqlCipherBackend, StorageBackendError, StorageKernel};
 
 const INSERT_SQL: &str = include_str!("../sql/commands/control_insert.sql");
 const CLAIM_SQL: &str = include_str!("../sql/queries/control_claim_due.sql");
+const NEXT_DUE_SQL: &str = include_str!("../sql/queries/control_next_due.sql");
 const RESCHEDULE_SQL: &str = include_str!("../sql/commands/control_reschedule.sql");
 const COMPLETE_SQL: &str = include_str!("../sql/commands/control_complete.sql");
 const DEAD_LETTER_SQL: &str = include_str!("../sql/commands/control_dead_letter.sql");
@@ -136,6 +137,17 @@ impl ControlOutboxStore for SqlCipherControlOutbox {
             });
         }
         Ok(result)
+    }
+
+    fn next_due(&self) -> Result<Option<Timestamp>, ControlDeliveryError> {
+        self.backend
+            .connection()
+            .query_row(NEXT_DUE_SQL, [], |row| row.get::<_, Option<i64>>(0))
+            .map_err(|_| ControlDeliveryError::Backend)?
+            .map(|value| {
+                Timestamp::from_unix_millis(value).map_err(|_| ControlDeliveryError::Backend)
+            })
+            .transpose()
     }
     fn reschedule(
         &mut self,

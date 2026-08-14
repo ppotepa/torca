@@ -245,6 +245,12 @@ pub trait PeerSessionPort: Send + 'static {
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
+    /// Returns the next durable communication deadline. `None` means that
+    /// this adapter has no known retry deadline and can rely on an external
+    /// wake (user action, inbound data or network change).
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
     /// Invalidates stale transport sessions and resets reconnect backoff after
     /// an OS route/network change.
     fn network_changed(&mut self, _now: Timestamp) {}
@@ -1026,6 +1032,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             if active_transport { ACTIVE_MAINTENANCE_INTERVAL } else { IDLE_MAINTENANCE_INTERVAL };
         if let Some(pairing_delay) = pairing.next_maintenance_delay(now) {
             next_delay = next_delay.min(pairing_delay);
+        }
+        if let Some(communication_delay) = communication.next_maintenance_delay(now) {
+            next_delay = next_delay.min(communication_delay);
         }
         if !active_transport
             && let Some(deadline) = peer_probe_deadline

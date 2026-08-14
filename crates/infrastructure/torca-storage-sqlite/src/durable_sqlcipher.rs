@@ -220,6 +220,15 @@ impl DurableDeliveryStore for SqlCipherDurableStore {
             .collect()
     }
 
+    fn next_due(&self) -> Result<Option<Timestamp>, DurableDeliveryError> {
+        self.backend
+            .connection()
+            .query_row(messaging_sql::NEXT_DUE.sql, [], |row| row.get::<_, Option<i64>>(0))
+            .map_err(storage_error)?
+            .map(|value| timestamp(value, "next_attempt_at"))
+            .transpose()
+    }
+
     fn reschedule(
         &mut self,
         message_id: MessageId,
