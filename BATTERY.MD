@@ -22,7 +22,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` now crosses the generated contract and feeds the policy kernel for top-level Chats/Contacts/Invitations surfaces; focused contact viewport wiring remains |
-| Feature-owned leases | Planned | relay, delivery, attachment and radio executors do not yet acquire/release governor leases |
+| Feature-owned leases | Partial | focused conversation/radio/pairing attention creates governor leases and gates peer probes; durable delivery, attachment and relay executor ownership remains |
 | Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; full deadline ownership is still pending |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
@@ -410,7 +410,7 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 3. **Implemented core:** Flutter and Android use cancellable native event waiters, including bootstrap/pending states. Continue shutdown/race regression coverage.
 4. **Partial:** replace the central Rust 100-ms tick with adaptive idle/active waits. Next, let every executor publish its next deadline and remove the remaining fallback cadence.
 5. **Partial:** `AttentionContext` now crosses the generated contract and top-level navigation reports attention. Add focused conversation/contact viewport updates and generation race tests.
-6. **Partial:** demand-created peer reconnects and explicit peer deadlines exist. Finish lease-owned peer lifetime and deterministic stream resolution.
+6. **Partial:** demand-created peer reconnects and explicit peer deadlines exist; focused conversation/radio/pairing leases now gate cosmetic peer probes. Finish lease-owned peer lifetime and deterministic stream resolution.
 7. **Partial:** relay healthy heartbeats are removed; finish explicit lease ownership and operation-scoped wake/revalidation.
 8. **Planned and measurement-gated:** add Arti soft dormancy and optional background rendezvous windows.
 9. **Partial:** idle radio now blocks on its command channel; finish listener wake integration and exact active-media deadlines.

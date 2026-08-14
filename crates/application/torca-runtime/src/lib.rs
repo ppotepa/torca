@@ -28,7 +28,10 @@ use torca_delivery::ReactionPayload;
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
 use torca_runtime_policy::Freshness;
-use torca_runtime_policy::{AttentionContext, PolicyEvent, RuntimeGovernor};
+use torca_runtime_policy::{
+    AttentionContext, DemandReason, PolicyEvent, ResourceScope, RuntimeGovernor, WorkClass,
+    WorkDemand,
+};
 
 const IDLE_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const ACTIVE_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
@@ -713,6 +716,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut peer_probe_deadline = None;
     let mut contacts = Vec::<ContactId>::new();
     let mut refresh_contacts = true;
+    let mut attention_owner = None;
     loop {
         let wait = next_maintenance_at.saturating_duration_since(std::time::Instant::now());
         match receiver.recv_timeout(wait) {
@@ -721,9 +725,43 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 break;
             }
             Ok(RuntimeCommand::SetAttention(context)) => {
+                let now = std::time::Instant::now();
+                if let Some(owner) = attention_owner.take() {
+                    policy.release_lease(owner);
+                }
+                let owner = OpaqueId::from_u128(context.generation.max(1) as u128);
+                let demand = match context.surface {
+                    torca_runtime_policy::AttentionSurface::Conversation(peer)
+                    | torca_runtime_policy::AttentionSurface::Radio(peer) => Some(WorkDemand {
+                        scope: ResourceScope::Peer(peer),
+                        class: WorkClass::PeerProbe,
+                        reason: if matches!(
+                            context.surface,
+                            torca_runtime_policy::AttentionSurface::Radio(_)
+                        ) {
+                            DemandReason::RadioSession
+                        } else {
+                            DemandReason::VisibleConversation
+                        },
+                        owner,
+                        expires_at: now + Duration::from_secs(5 * 60),
+                    }),
+                    torca_runtime_policy::AttentionSurface::Pairing(_relay) => Some(WorkDemand {
+                        scope: ResourceScope::Relay,
+                        class: WorkClass::RelayProbe,
+                        reason: DemandReason::ActivePairing,
+                        owner,
+                        expires_at: now + Duration::from_secs(5 * 60),
+                    }),
+                    _ => None,
+                };
+                if let Some(demand) = demand {
+                    policy.acquire_lease(demand);
+                    attention_owner = Some(owner);
+                }
                 policy.apply(
                     PolicyEvent::Attention(context),
-                    std::time::Instant::now(),
+                    now,
                 );
             }
             Ok(RuntimeCommand::NetworkChanged) => {
@@ -850,12 +888,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             );
         }
         let maintenance_result = communication.maintenance(&contacts, now).and_then(|()| {
-            peer_probe_deadline = maintain_peer_probes(
-                communication,
-                &contacts,
-                &mut peer_probes,
-                now,
-            )?;
+                peer_probe_deadline = maintain_peer_probes(
+                    communication,
+                    &contacts,
+                    &mut peer_probes,
+                    policy,
+                    now,
+                )?;
             Ok(())
         });
         observe_maintenance(
@@ -929,6 +968,7 @@ fn maintain_peer_probes<C: PeerSessionPort>(
     communication: &mut C,
     contacts: &[ContactId],
     supervisor: &mut PeerProbeSupervisor,
+    policy: &mut RuntimeGovernor,
     now: Timestamp,
 ) -> Result<Option<Timestamp>, RuntimeDriverError> {
     if let Some(contact_id) = communication.take_peer_probe_completion(now)? {
@@ -947,7 +987,8 @@ fn maintain_peer_probes<C: PeerSessionPort>(
             PeerProbeCandidate {
                 peer_id: contact_id.to_opaque(),
                 ready: health.state == PeerConnectionStatus::Ready,
-                eligible: communication.peer_probe_eligible(contact_id),
+                eligible: communication.peer_probe_eligible(contact_id)
+                    && policy.has_active_lease(ResourceScope::Peer(contact_id.to_opaque()), std::time::Instant::now()),
                 freshness: peer_freshness(health.last_success_at, now),
                 reported_rtt_ms: health.rtt_ms,
             }
