@@ -45,6 +45,7 @@ pub struct AttachmentTransferState {
 
 pub struct SqlCipherAttachmentStore {
     backend: SqlCipherBackend,
+    write_count: u64,
 }
 impl SqlCipherAttachmentStore {
     pub fn open(
@@ -63,7 +64,13 @@ impl SqlCipherAttachmentStore {
     fn bootstrap(backend: SqlCipherBackend) -> Result<Self, AttachmentStoreOpenError> {
         let mut kernel = StorageKernel::new(backend);
         kernel.bootstrap().map_err(map_migration)?;
-        Ok(Self { backend: kernel.into_backend() })
+        Ok(Self { backend: kernel.into_backend(), write_count: 0 })
+    }
+
+    /// Number of successful attachment metadata writes performed by this
+    /// store. Blob-file writes are intentionally tracked by their own owner.
+    pub const fn database_write_count(&self) -> u64 {
+        self.write_count
     }
 
     pub fn transfer_state(
@@ -106,7 +113,12 @@ impl SqlCipherAttachmentStore {
                 params![id.as_slice(), offset, digest, at.to_unix_millis()],
             )
             .map_err(|_| AttachmentError::RepositoryFailure)?;
-        if changed == 1 { Ok(()) } else { Err(AttachmentError::NotFound) }
+        if changed == 1 {
+            self.write_count = self.write_count.saturating_add(1);
+            Ok(())
+        } else {
+            Err(AttachmentError::NotFound)
+        }
     }
 }
 
@@ -115,7 +127,9 @@ impl AttachmentRepository for SqlCipherAttachmentStore {
         if self.get(attachment.id())?.is_some() {
             return Err(AttachmentError::AlreadyExists);
         }
-        execute_insert(&self.backend, &attachment)
+        execute_insert(&self.backend, &attachment)?;
+        self.write_count = self.write_count.saturating_add(1);
+        Ok(())
     }
 
     fn get(&self, id: AttachmentId) -> Result<Option<Attachment>, AttachmentError> {
@@ -167,7 +181,12 @@ impl AttachmentRepository for SqlCipherAttachmentStore {
                 ],
             )
             .map_err(|_| AttachmentError::RepositoryFailure)?;
-        if changed == 1 { Ok(()) } else { Err(AttachmentError::NotFound) }
+        if changed == 1 {
+            self.write_count = self.write_count.saturating_add(1);
+            Ok(())
+        } else {
+            Err(AttachmentError::NotFound)
+        }
     }
 
     fn for_message(&self, message_id: MessageId) -> Result<Vec<Attachment>, AttachmentError> {

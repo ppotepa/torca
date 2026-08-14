@@ -155,6 +155,12 @@ where
         })
     }
 
+    /// Returns metadata-store writes; blob and message repository writes are
+    /// intentionally owned by their respective stores.
+    pub fn database_write_count(&self) -> u64 {
+        self.metadata.database_write_count()
+    }
+
     /// Copies a selected source into the app-private encrypted cache and makes transfer state
     /// durable before network work begins.
     pub fn prepare_outgoing(

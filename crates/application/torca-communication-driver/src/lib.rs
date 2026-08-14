@@ -301,6 +301,10 @@ pub trait AttachmentRuntime: Send {
     fn snapshot_projection(&self) -> Result<Option<Vec<AttachmentView>>, CommunicationError> {
         Ok(None)
     }
+    /// Cumulative attachment metadata writes known by the adapter.
+    fn database_write_count(&self) -> u64 {
+        0
+    }
     fn process_inbound(
         &mut self,
         envelope: InboundEnvelope,
@@ -672,7 +676,12 @@ impl PeerSessionPort for TorcaCommunicationDriver {
 
 impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
     fn database_write_count(&self) -> u64 {
-        self.text.database_write_count() + self.control.database_write_count()
+        let attachment_writes = self
+            .attachments
+            .lock()
+            .map(|attachments| attachments.database_write_count())
+            .unwrap_or(0);
+        self.text.database_write_count() + self.control.database_write_count() + attachment_writes
     }
 
     fn queue_reaction(
