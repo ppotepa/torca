@@ -42,6 +42,64 @@ The central model is:
 Attention -> Demand Lease -> Health Evidence -> Deadline Scheduler
 ```
 
+## Architecture review and optimization verdict
+
+Reviewed against the checked-in source tree on 2026-08-14. The core direction
+is appropriate for Torca: event-driven waiting, demand leases, evidence-based
+health and a single deadline owner reduce the two largest current costs (idle
+polling and reconnect storms) without changing the wire protocol.
+
+The plan is intentionally narrowed into three confidence tiers:
+
+1. **Reliability-critical and low-risk:** finish feature-owned leases,
+   evidence recording, executor deadlines, event-wait cancellation and the
+   Energy Ledger. These changes preserve the current always-available Tor
+   behavior and must land first.
+2. **Measurement-gated optimization:** apply Arti soft dormancy only after
+   Android onion resume, pairing, delivery, attachments and radio pass soak
+   tests. Dormancy is not a prerequisite for event-driven runtime savings.
+3. **Optional experiments:** deterministic dial ownership, viewport-driven
+   contact probing and rendezvous windows. They are not part of the minimum
+   battery architecture and must not add latency or reduce delivery
+   reliability. Implement them only when traces demonstrate a concrete
+   problem that the first tier does not solve.
+
+This avoids over-engineering the current system. In particular, a stored
+contact is not a reason to keep a stream open, but the application must remain
+available to inbound traffic in the default `AlwaysAvailable` policy. The
+first release target is therefore **no application-controlled idle work**,
+not a dormant Tor process at all costs.
+
+### Revised decision rules
+
+- Preserve one policy kernel and one scheduler; do not add per-feature timer
+  frameworks.
+- Treat real TX/RX/ACK/handshake/chunk activity as health evidence before
+  scheduling any probe.
+- Keep reliable work (pending messages, attachments, pairing and radio) on
+  explicit leases independent of the current Flutter route.
+- Use cached/stale state for cosmetic lists; refresh only on attention or an
+  explicit user diagnostic action.
+- Keep relay health demand-driven, but never let a missing cosmetic probe block
+  local UI, inbound handling or durable delivery.
+- Do not introduce a relay mailbox, push dependency or protocol change as part
+  of the battery migration.
+
+### What is deliberately deferred
+
+The following remain documented options, not required architecture:
+
+- `TorClient::set_dormant()` and background rendezvous windows;
+- deterministic dial ownership and takeover rules;
+- viewport-level contact IDs and affinity scoring;
+- Android `ConnectivityDiagnosticsManager` integration;
+- abstract energy costs that pretend to be physical battery measurements.
+
+Each deferred item needs a trace, a measurable acceptance test and a rollback
+path before implementation. This keeps the runtime simpler and prevents a
+power optimization from reintroducing the long Android warm-up and onion
+resume failures already seen in production testing.
+
 ## Architectural decisions
 
 - `AttentionContext` is advisory only. It must never control delivery correctness, durable queues, pairing completion, attachments, radio correctness, or inbound traffic.
@@ -405,16 +463,36 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 
 ## Implementation sequence and current progress
 
-1. **Partial:** add `torca-runtime-policy`, fake clock, policy reducer, lease book, evidence ledger, event hub and tests. Finish production budgets, scheduler ownership and stats.
-2. **Partial:** diagnostics count scheduler wakeups and snapshot builds. Add peer/relay/radio/FFI counters and the idle regression gate.
-3. **Implemented core:** Flutter and Android use cancellable native event waiters, including bootstrap/pending states. Continue shutdown/race regression coverage.
-4. **Partial:** replace the central Rust 100-ms tick with adaptive idle/active waits. Next, let every executor publish its next deadline and remove the remaining fallback cadence.
-5. **Partial:** `AttentionContext` now crosses the generated contract and top-level navigation reports attention. Add focused conversation/contact viewport updates and generation race tests.
-6. **Partial:** demand-created peer reconnects and explicit peer deadlines exist; focused conversation/radio/pairing leases now gate cosmetic peer probes. Finish lease-owned peer lifetime and deterministic stream resolution.
-7. **Partial:** relay healthy heartbeats are removed; finish explicit lease ownership and operation-scoped wake/revalidation.
-8. **Planned and measurement-gated:** add Arti soft dormancy and optional background rendezvous windows.
-9. **Partial:** idle radio now blocks on its command channel; finish listener wake integration and exact active-media deadlines.
-10. **Final cleanup:** delete every replaced polling constant, reconnect-all path and obsolete scheduler.
+1. **Partial:** keep `torca-runtime-policy`, fake clock, reducer, lease book,
+   evidence ledger and event hub small and dependency-light. Finish budgets
+   and production scheduler ownership before adding new policy concepts.
+2. **Partial / next:** complete the Energy Ledger with peer, relay, radio,
+   FFI, DB and idle-simulation counters. Make the idle regression gate a CI
+   check before attempting Arti dormancy.
+3. **Implemented core:** Flutter and Android use cancellable native event
+   waiters, including bootstrap/pending states. Add shutdown, missed-revision
+   and waiter-generation regression tests.
+4. **Partial / next:** replace the remaining one-second fallback with a single
+   deadline selected from Tor, communication, peer, pairing, attachment and
+   radio executors. Do not create independent feature timers.
+5. **Partial / next:** make leases authoritative for pending messages,
+   attachments, pairing and radio; attention leases remain advisory and must
+   never be the only owner of durable work.
+6. **Partial:** evidence suppresses cosmetic peer probes and explicit peer
+   deadlines exist. Integrate TX/RX/ACK/chunk evidence and preserve a
+   single-flight probe budget.
+7. **Partial:** relay healthy heartbeats are removed. Add operation-scoped
+   relay leases and revalidation without blocking local readiness.
+8. **Partial:** idle radio waits on its command channel. Finish cancellable
+   listener wake-up and exact active-media deadlines; keep the default idle
+   path at zero worker iterations.
+9. **Planned / measurement-gated:** evaluate Arti soft dormancy only after
+   reliability soak tests pass. It is optional and not a release blocker.
+10. **Optional experiments:** deterministic dial ownership, viewport contact
+    probing and rendezvous windows, each behind its own trace-based gate.
+11. **Final cleanup:** delete every replaced polling constant, reconnect-all
+    path and obsolete scheduler only after the corresponding executor exposes
+    a tested deadline and cancellation path.
 
 ## Target acceptance criteria
 
