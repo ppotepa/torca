@@ -52,7 +52,10 @@ impl PeerProbeSupervisor {
             self.in_flight = None;
         }
         for candidate in candidates {
-            if candidate.ready && candidate.eligible {
+            if candidate.ready
+                && candidate.eligible
+                && !matches!(candidate.freshness, Freshness::Live | Freshness::Recent)
+            {
                 self.schedules.entry(candidate.peer_id).or_insert(PeerSchedule { next_at: now });
             } else {
                 self.schedules.remove(&candidate.peer_id);
@@ -149,6 +152,7 @@ mod tests {
         assert!(supervisor.next_due(&candidates, now).is_none());
 
         candidate.freshness = Freshness::Stale;
+        supervisor.reconcile(&[candidate], now);
         assert!(supervisor.next_due(&[candidate], now).is_some());
     }
 }

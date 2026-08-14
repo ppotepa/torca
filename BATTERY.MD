@@ -25,7 +25,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events, onion-publisher callbacks and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
-| Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
+| Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media now uses a 20-ms I/O bound with audio/ACK/burst/keepalive deadlines, while deterministic deadline tests remain |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds/DB reads, command-induced DB writes, actual peer probes and relay probe executions; radio/FFI/worker-write counters and the CI idle gate remain |
@@ -488,9 +488,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    terminal state is observed. Finish pairing and radio executor ownership;
    attention leases remain advisory and must never be the only owner of
    durable work.
-6. **Partial:** evidence suppresses cosmetic peer probes and explicit peer
-   deadlines exist. Integrate TX/RX/ACK/chunk evidence and preserve a
-   single-flight probe budget.
+6. **Partial:** evidence suppresses cosmetic peer probes and removes their
+   deadlines while Live/Recent; explicit stale/failed deadlines preserve a
+   single-flight probe budget. Integrate more TX/RX/chunk evidence and add a
+   trace proving no wakeup occurs while all focused peers remain fresh.
 7. **Partial:** relay healthy heartbeats are removed. Add operation-scoped
    relay leases and revalidation without blocking local readiness.
 8. **Partial:** idle radio waits on its command channel and peer/radio
