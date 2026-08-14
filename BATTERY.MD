@@ -23,7 +23,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
 | Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
-| Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; delivery/control outboxes now expose next persisted deadlines, while the remaining communication fallback still needs removal |
+| Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; delivery/control outboxes and lease expiry now expose deadlines, while the remaining communication fallback still needs removal |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
 | Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |

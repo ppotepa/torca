@@ -1036,6 +1036,10 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         if let Some(communication_delay) = communication.next_maintenance_delay(now) {
             next_delay = next_delay.min(communication_delay);
         }
+        if let Some(expiry) = policy.next_lease_expiry() {
+            next_delay =
+                next_delay.min(expiry.saturating_duration_since(std::time::Instant::now()));
+        }
         if !active_transport
             && let Some(deadline) = peer_probe_deadline
             && let Some(delay) = deadline.duration_since(now)

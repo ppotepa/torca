@@ -366,6 +366,12 @@ impl RuntimeGovernor {
         self.deadlines.keys().next().copied()
     }
 
+    /// Returns the earliest lease expiry so the host scheduler can retire
+    /// demand without relying on a periodic maintenance tick.
+    pub fn next_lease_expiry(&self) -> Option<Instant> {
+        self.leases.values().map(|lease| lease.expires_at).min()
+    }
+
     /// Takes due permits, applying the per-class budget and active-lease rule.
     pub fn take_due(&mut self, now: Instant) -> Vec<WorkPermit> {
         self.expire(now);
@@ -556,6 +562,7 @@ mod tests {
             owner,
             expires_at: now + Duration::from_secs(10),
         });
+        assert!(governor.next_lease_expiry().is_some());
         governor.schedule(WorkPermit { scope, class: WorkClass::PeerProbe, due_at: now, cost: 1 });
         assert_eq!(governor.take_due(now).len(), 1);
         governor.release_lease(owner);
