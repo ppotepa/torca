@@ -27,7 +27,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Demand/evidence-driven relay health | Implemented core | production runtime uses a demand-driven supervisor: no initial/healthy probe exists without a relay lease; pairing/network events wake one lane and retry backoff is bounded |
 | Fully evidence-driven peer health | Implemented core | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs, peer TX/RX/ACK counters and ready-to-disconnected transitions feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Implemented core | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
-| Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
+| Arti soft dormancy | Deferred experiment | `torca-tor` exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; automatic runtime integration is deliberately gated on Android onion/pairing/delivery/radio soak evidence |
 | Runtime Energy Ledger | Implemented core | diagnostics count scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, inbound text, attachment metadata/blob writes, projection events, peer and relay probes; physical TX/RX byte totals remain intentionally outside the app ledger |
 
 The current implementation is therefore a transitional state, but its idle
@@ -40,8 +40,9 @@ The revision waiters now block on the native condition variable with
 Android service can be started again on the same runtime without inheriting a
 permanent cancelled waiter. A finite timeout remains available to diagnostic
 callers, but it is not used by the idle platform workers.
-The remaining work is platform soak testing for radio/lease recovery. Arti
-dormancy remains deliberately measurement-gated and is not required for the
+The reliability baseline is implemented. Remaining work is validation: run
+platform soak tests for radio/lease recovery before changing policy defaults.
+Arti dormancy remains a deferred experiment and is not required for the
 no-idle-polling guarantee.
 
 The central model is:
@@ -511,9 +512,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 
 ## Implementation sequence and current progress
 
-1. **Partial:** keep `torca-runtime-policy`, fake clock, reducer, lease book,
-   evidence ledger and event hub small and dependency-light. Finish budgets
-   and production scheduler ownership before adding new policy concepts.
+1. **Implemented core:** keep `torca-runtime-policy`, fake clock, reducer,
+   lease book, evidence ledger and event hub small and dependency-light. Budgets
+   and production scheduler ownership are now centralized; do not add another
+   policy framework.
 2. **Implemented core:** scheduler, native event/FFI-wake, radio listener wake,
    snapshot/DB-read, command-induced DB-write, text/control worker-write,
    attachment-metadata-write, blob-write, inbound-text-write, peer-probe and
@@ -526,11 +528,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    platform ABI uses the unbounded condvar path for idle workers and exposes
    explicit cancellation for shutdown. Keep shutdown, missed-revision,
    one-shot-cancellation and waiter-generation regression tests current.
-4. **Partial:** delivery/control outboxes, Tor lifecycle and lease expiry now
+4. **Implemented core:** delivery/control outboxes, Tor lifecycle and lease expiry now
    expose deadlines; the runtime blocks when no deadline exists and wakes on
-   peer/radio listener and onion-publisher events. Finish deterministic tests
-   for Tor worker completion and delete any remaining fallback only after the
-   corresponding event source is covered. Do not create independent timers.
+   peer/radio listener and onion-publisher events. Deterministic tests cover
+   the deadline owners; do not create independent timers.
 5. **Implemented core:** attachment, pending-message and active pairing leases
    now survive route changes; pairing leases expire with the five-minute
    invitation window and release on reject/cancel. Radio enable and
@@ -557,7 +558,7 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    `SessionOpen` is not stranded after one attempt. Active media selects the
    next audio, ACK, burst or keepalive deadline with deterministic tests; keep
    the default idle path at zero worker iterations.
-9. **Planned / measurement-gated:** evaluate Arti soft dormancy only after
+9. **Deferred / measurement-gated:** evaluate Arti soft dormancy only after
    reliability soak tests pass. It is optional and not a release blocker.
 10. **Optional experiments:** deterministic dial ownership, viewport contact
     probing and rendezvous windows, each behind its own trace-based gate.
