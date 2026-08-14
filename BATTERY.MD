@@ -23,19 +23,19 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
 | Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
-| Central deadline scheduler | Partial | fixed 100-ms tick and healthy-Tor 1-s fallback were removed; delivery/control outboxes, Tor lifecycle and lease expiry expose deadlines, while radio/Tor-worker event sources remain |
+| Central deadline scheduler | Partial | fixed 100-ms tick and healthy-Tor 1-s fallback were removed; delivery/control outboxes, Tor lifecycle, peer/radio listener events and lease expiry expose wake sources, while Tor-worker completion events remain |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
-| Blocking/deadline radio worker | Partial | idle command waiting and peer listener acceptance are blocking; radio-media listener wake wiring and active media still need follow-up work |
+| Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media still uses a 10-ms read cadence and needs exact deadlines |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds/DB reads, actual peer probes and relay probe executions; radio/FFI/DB-write counters and idle regression gate remain |
 
 The current implementation is therefore a transitional state. Event waiting,
 pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
-idle radio blocking, a bounded kernel-blocked peer listener with runtime wake
-propagation and demand-woken relay health have landed. Full deadline ownership,
-feature leases, attention propagation, evidence-driven peer health and Arti
-dormancy remain outstanding.
+idle radio blocking, bounded kernel-blocked peer/radio listeners with runtime
+wake propagation and demand-woken relay health have landed. Full deadline
+ownership, feature leases, attention propagation, evidence-driven peer health
+and Arti dormancy remain outstanding.
 
 The central model is:
 
@@ -400,8 +400,7 @@ target removes unconditional idle iteration:
 - Pending connection: block until command, accept event, or reconnect deadline.
 - Active session: block until audio/playback/keepalive deadline.
 - `PeerListener` uses one cancellable blocking accept worker, a bounded queue
-  and runtime wake callback; the dedicated radio-media listener still needs
-  the same event path.
+  and runtime wake callback; radio-media now uses the same wake path.
 - Shutdown cancels both listener and media waiter.
 
 Keepalive policy:
@@ -493,11 +492,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    single-flight probe budget.
 7. **Partial:** relay healthy heartbeats are removed. Add operation-scoped
    relay leases and revalidation without blocking local readiness.
-8. **Partial:** idle radio waits on its command channel and peer
-   `PeerListener` accepts on a dedicated blocking worker with a bounded queue,
-   cancellable shutdown and runtime wake propagation. Finish wiring the
-   dedicated radio-media listener, exact active-media deadlines and keep the
-   default idle path at zero worker iterations.
+8. **Partial:** idle radio waits on its command channel and peer/radio
+   `PeerListener` accepts on dedicated blocking workers with bounded queues,
+   cancellable shutdown and wake propagation. Finish exact active-media
+   deadlines and keep the default idle path at zero worker iterations.
 9. **Planned / measurement-gated:** evaluate Arti soft dormancy only after
    reliability soak tests pass. It is optional and not a release blocker.
 10. **Optional experiments:** deterministic dial ownership, viewport contact

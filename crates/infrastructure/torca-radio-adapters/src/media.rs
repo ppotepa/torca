@@ -143,6 +143,12 @@ impl RadioMediaAdapter {
     ) -> Result<Self, RadioApplicationError> {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
+        let wake_sender = command_tx.clone();
+        listener
+            .set_waker(std::sync::Arc::new(move || {
+                let _ = wake_sender.try_send(MediaCommand::Wake);
+            }))
+            .map_err(|_| RadioApplicationError::MediaTransport)?;
         thread::Builder::new()
             .name("torca-radio-media".into())
             .spawn(move || {
@@ -240,6 +246,7 @@ enum MediaCommand {
         session_id: RadioSessionId,
         request_id: RadioOperationId,
     },
+    Wake,
     Shutdown,
 }
 
@@ -394,16 +401,28 @@ impl MediaWorker {
             // an unarmed radio waits for commands or an incoming listener
             // check instead of spinning/sleeping every 10 ms.
             let wait = self.next_wait_duration();
-            match self.commands.recv_timeout(wait) {
-                Ok(MediaCommand::Shutdown) => break,
-                Ok(command) => {
-                    if self.handle_command(command).is_err() {
-                        eprintln!("torca-radio: media command failed; reconnecting session");
-                        self.interrupt_live();
-                    }
+            let listener_only_wait = self.live.is_none()
+                && self.pending.as_ref().is_none_or(|pending| !pending.initiate_connection);
+            let command = if listener_only_wait {
+                match self.commands.recv() {
+                    Ok(command) => Some(command),
+                    Err(_) => break,
                 }
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
+            } else {
+                match self.commands.recv_timeout(wait) {
+                    Ok(command) => Some(command),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            };
+            if let Some(MediaCommand::Shutdown) = command {
+                break;
+            }
+            if let Some(command) = command {
+                if self.handle_command(command).is_err() {
+                    eprintln!("torca-radio: media command failed; reconnecting session");
+                    self.interrupt_live();
+                }
             }
         }
         self.shutdown_live(SessionCloseReason::Disabled);
@@ -419,10 +438,8 @@ impl MediaWorker {
             }
             return WORKER_TICK;
         }
-        // Incoming radio sessions are accepted on the next bounded listener
-        // check.  This is deliberately much less frequent than the active
-        // audio cadence and is replaced by a listener wake source in the
-        // follow-up platform integration.
+        // An unarmed listener or an accepted-session wait is woken by the
+        // listener callback; `run` uses a blocking recv in this state.
         Duration::from_secs(1)
     }
 
@@ -438,6 +455,7 @@ impl MediaWorker {
 
     fn handle_command(&mut self, command: MediaCommand) -> Result<(), ()> {
         match command {
+            MediaCommand::Wake => {}
             MediaCommand::Open { contact_id, session_id, media_token, initiate_connection } => {
                 self.shutdown_live(SessionCloseReason::Replaced);
                 let Some(route) = self.directory.route(contact_id) else {
