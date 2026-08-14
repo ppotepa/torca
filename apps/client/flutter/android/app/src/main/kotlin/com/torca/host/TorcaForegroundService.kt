@@ -34,6 +34,7 @@ class TorcaForegroundService : Service() {
     // notification cursor. The native waiter is revision-driven; the cursor is
     // still passed separately so the ABI retains the exact consumer state.
     private var runtimeRevision = 0L
+    private var runtimeRetryDelayMs = RUNTIME_RETRY_INITIAL_MS
     private lateinit var connectivityManager: ConnectivityManager
     private var warmupWakeLock: PowerManager.WakeLock? = null
     private var networkChangePending = false
@@ -57,7 +58,7 @@ class TorcaForegroundService : Service() {
     private val notificationPoller = object : Runnable {
         override fun run() {
             if (!NativeRuntimeBridge.nativeRuntimeAvailable()) {
-                notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
+                scheduleRuntimeRetry(this)
                 return
             }
             val waitResult = NativeRuntimeBridge.nativeWaitForRevision(
@@ -66,11 +67,13 @@ class TorcaForegroundService : Service() {
                 EVENT_WAIT_TIMEOUT_MS,
             )
             if (waitResult < 0) {
-                // A transient native restart should not strand the service;
-                // retry at a bounded low-frequency fallback interval.
-                notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
+                // Runtime restore failures must not turn into a 250-ms process
+                // polling loop. Back off only on this exceptional path; the
+                // normal path below blocks indefinitely in the native waiter.
+                scheduleRuntimeRetry(this)
                 return
             }
+            resetRuntimeRetryBackoff()
             runtimeRevision = NativeRuntimeBridge.nativeRuntimeRevision().coerceAtLeast(runtimeRevision)
             pollMessageNotifications()
             // A timeout simply re-enters the blocking wait. No periodic
@@ -181,6 +184,16 @@ class TorcaForegroundService : Service() {
         super.onDestroy()
     }
 
+    private fun scheduleRuntimeRetry(runnable: Runnable) {
+        val delay = runtimeRetryDelayMs
+        runtimeRetryDelayMs = (runtimeRetryDelayMs * 2).coerceAtMost(RUNTIME_RETRY_MAX_MS)
+        notificationHandler.postDelayed(runnable, delay)
+    }
+
+    private fun resetRuntimeRetryBackoff() {
+        runtimeRetryDelayMs = RUNTIME_RETRY_INITIAL_MS
+    }
+
     private fun notifyNetworkChanged() {
         if (networkChangePending) return
         networkChangePending = true
@@ -189,8 +202,10 @@ class TorcaForegroundService : Service() {
 
     /**
      * Android reports frequent capability updates for an unchanged default
-     * route. They are useful facts but must not make the native runtime close
-     * every Tor and peer stream as if Wi-Fi/LTE had changed.
+     * route. Validation, metering or transient INTERNET changes are useful
+     * environment facts but do not prove that an established Tor stream is on
+     * a different route. Only Network replacement or transport replacement is
+     * allowed to trigger the destructive `network_changed` recovery path.
      */
     private fun observeAvailableNetwork(network: Network) {
         val changed = synchronized(networkLock) {
@@ -225,9 +240,9 @@ class TorcaForegroundService : Service() {
                     true
                 }
                 else -> {
-                    val changed = defaultNetworkFingerprint != fingerprint
+                    val previous = defaultNetworkFingerprint
                     defaultNetworkFingerprint = fingerprint
-                    changed
+                    previous != null && previous.routeChanged(fingerprint)
                 }
             }
         }
@@ -367,7 +382,8 @@ class TorcaForegroundService : Service() {
         // Zero selects the native condvar wait. It returns only on a runtime
         // revision change or explicit service shutdown cancellation.
         const val EVENT_WAIT_TIMEOUT_MS = 0
-        const val RUNTIME_WAIT_MS = 250L
+        const val RUNTIME_RETRY_INITIAL_MS = 250L
+        const val RUNTIME_RETRY_MAX_MS = 15_000L
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
         const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
         const val TAG = "TorcaRuntime"
@@ -387,6 +403,9 @@ class TorcaForegroundService : Service() {
         val wifi: Boolean,
         val cellular: Boolean,
     ) {
+        fun routeChanged(other: NetworkFingerprint): Boolean =
+            wifi != other.wifi || cellular != other.cellular
+
         companion object {
             fun from(capabilities: android.net.NetworkCapabilities) = NetworkFingerprint(
                 validated = capabilities.hasCapability(
