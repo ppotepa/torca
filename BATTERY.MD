@@ -480,9 +480,9 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    and waiter-generation regression tests.
 4. **Partial:** delivery/control outboxes, Tor lifecycle and lease expiry now
    expose deadlines; the runtime blocks when no deadline exists and wakes on
-   peer-listener events. Finish completion events from Tor workers and the
-   dedicated radio-media listener before deleting every fallback path. Do not
-   create independent feature timers.
+   peer/radio listener and onion-publisher events. Finish deterministic tests
+   for Tor worker completion and delete any remaining fallback only after the
+   corresponding event source is covered. Do not create independent timers.
 5. **Partial / next:** attachment and pending-message leases now survive
    route changes, renew during runtime maintenance and release when durable
    terminal state is observed. Finish pairing and radio executor ownership;
