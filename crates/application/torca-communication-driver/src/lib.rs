@@ -8,9 +8,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
-
-mod attachment_scheduler;
-use attachment_scheduler::AttachmentJobScheduler;
 use std::time::Duration;
 
 use torca_attachments::AttachmentId;
@@ -77,6 +74,7 @@ const CONTROL_BATCH: usize = 16;
 // One durable chunk per worker turn keeps progress monotonic and preserves
 // fair access to the shared peer transport.
 const ATTACHMENT_BATCH: usize = 1;
+const ACTIVE_ATTACHMENT_WORKER_CHECK: Duration = Duration::from_millis(250);
 const MAX_DEFERRED_ATTACHMENTS: usize = 64;
 
 /// Provider-neutral inbound envelope owned by the application boundary.
@@ -181,10 +179,6 @@ impl ClassifiedError for CommunicationError {
                 ("communication.inbound_invalid", ErrorCategory::InvalidInput, RetryAdvice::Never)
             }
             Self::Attachment => {
-                // Attachment delivery is durable and has its own persisted
-                // retry schedule.  Treat a failed transfer attempt as a
-                // recoverable availability issue at the application boundary;
-                // a permanent validation error is rejected before queueing.
                 (
                     "communication.attachment_unavailable",
                     ErrorCategory::Unavailable,
@@ -291,13 +285,11 @@ pub trait TextDeliveryRuntime: Send {
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None
     }
-
-    /// Cumulative durable write operations performed by this worker. The
-    /// runtime samples the value and records only the delta in diagnostics.
     fn database_write_count(&self) -> u64 {
         0
     }
 }
+
 pub trait ControlDeliveryRuntime: Send {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
@@ -316,17 +308,18 @@ pub trait ControlDeliveryRuntime: Send {
         Err(CommunicationError::Control)
     }
 }
+
 pub trait InboundMessagingRuntime: Send {
     fn process(
         &mut self,
         envelope: InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
-
     fn database_write_count(&self) -> u64 {
         0
     }
 }
+
 pub trait AttachmentRuntime: Send {
     fn prepare_outgoing(
         &mut self,
@@ -337,12 +330,14 @@ pub trait AttachmentRuntime: Send {
     fn cancel(&mut self, attachment_id: OpaqueId, now: Timestamp)
     -> Result<(), CommunicationError>;
     fn snapshot(&self, messages: &[Message]) -> Result<Vec<AttachmentView>, CommunicationError>;
-    /// Production adapters can provide a storage-owned projection without loading message history.
-    /// Legacy/test adapters may return `None` and retain the original fallback contract.
     fn snapshot_projection(&self) -> Result<Option<Vec<AttachmentView>>, CommunicationError> {
         Ok(None)
     }
-    /// Cumulative attachment metadata writes known by the adapter.
+    /// Returns the next durable attachment deadline. `None` means no outgoing
+    /// transfer or cancellation currently owns application work.
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
     fn database_write_count(&self) -> u64 {
         0
     }
@@ -362,6 +357,7 @@ pub trait AttachmentRuntime: Send {
     ) -> Result<(), CommunicationError>;
     fn shutdown(&mut self);
 }
+
 pub trait AttachmentExportRuntime: Send {
     fn export_attachment(
         &mut self,
@@ -374,6 +370,7 @@ pub trait AttachmentExportRuntime: Send {
         destination: PathBuf,
     ) -> Result<(), CommunicationError>;
 }
+
 pub trait ReadStateRuntime: Send {
     fn mark_conversation_read(
         &mut self,
@@ -381,6 +378,7 @@ pub trait ReadStateRuntime: Send {
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
 }
+
 pub trait RelationshipAdminRuntime: Send {
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, CommunicationError>;
     fn contact_verifications(
@@ -415,23 +413,16 @@ pub trait RelationshipAdminRuntime: Send {
     fn remove_contact(&mut self, contact_id: ContactId) -> Result<(), CommunicationError>;
 }
 
-/// Optional Radio Mode ingress/maintenance boundary. The communication
-/// supervisor only owns authenticated envelope routing; product state stays
-/// in the dedicated application coordinator.
 pub trait RadioInboundRuntime: Send {
     fn process_control(
         &mut self,
         envelope: InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
-
     fn maintenance(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
-
-    /// Returns a deadline only while radio control or state-sync work exists.
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None
     }
-
     fn shutdown(&mut self) {}
 }
 
@@ -449,8 +440,8 @@ pub struct TorcaCommunicationDriver {
     read_state: Box<dyn ReadStateRuntime>,
     relationships: Box<dyn RelationshipAdminRuntime>,
     radio: Option<Box<dyn RadioInboundRuntime>>,
-    attachment_scheduler: AttachmentJobScheduler,
 }
+
 impl TorcaCommunicationDriver {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -478,7 +469,6 @@ impl TorcaCommunicationDriver {
             read_state,
             relationships,
             radio: None,
-            attachment_scheduler: AttachmentJobScheduler::new(),
         }
     }
 
@@ -487,7 +477,6 @@ impl TorcaCommunicationDriver {
         self
     }
 
-    /// Connects infrastructure listener events to the single runtime owner.
     pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
         self.peer.set_waker(waker);
     }
@@ -498,22 +487,21 @@ impl TorcaCommunicationDriver {
         self.attachments.lock().map_err(|_| CommunicationError::Attachment)
     }
 
+    fn attachment_delay(&self, now: Timestamp) -> Option<Duration> {
+        if self.attachment_job_active.load(Ordering::Acquire) {
+            return Some(ACTIVE_ATTACHMENT_WORKER_CHECK);
+        }
+        self.attachments
+            .try_lock()
+            .ok()
+            .and_then(|attachments| attachments.next_maintenance_delay(now))
+    }
+
     pub fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         self.peer.peer_health(contact_id)
     }
 
-    /// Defers an attachment frame without letting it block text/control ingress.
-    ///
-    /// An attachment metadata frame is allowed to arrive before its companion
-    /// text message.  In that case the attachment runtime deliberately returns
-    /// a dependency error because it cannot safely bind the file to a
-    /// conversation yet.  Treating that as a communication-tick failure used
-    /// to starve the following text frames indefinitely.
     fn defer_attachment(&mut self, envelope: InboundEnvelope) {
-        // A peer can retransmit while a metadata envelope is already waiting
-        // for its companion message. Keep exactly one copy; otherwise a
-        // short ordering race can fill the bounded queue with the same frame
-        // and delay unrelated attachments.
         if self.deferred_attachments.iter().any(|queued| {
             queued.contact_id == envelope.contact_id && queued.envelope_id == envelope.envelope_id
         }) {
@@ -529,9 +517,6 @@ impl TorcaCommunicationDriver {
         self.deferred_attachments.push_back(envelope);
     }
 
-    /// Processes one inbound attachment independently from the main inbound
-    /// stream.  A failed attachment is a durable transfer concern, not a
-    /// reason to stop message, receipt, probe or pairing processing.
     fn process_attachment_inbound(
         &mut self,
         envelope: InboundEnvelope,
@@ -539,9 +524,6 @@ impl TorcaCommunicationDriver {
     ) -> Result<(), CommunicationError> {
         let contact_id = envelope.contact_id;
         let envelope_id = envelope.envelope_id;
-        // Keep the lock-result and its potential guard in a small scope.  A
-        // `TryLockError` can itself retain a guard, so mutating the deferred
-        // queue inside the match would overlap the immutable mutex borrow.
         let should_defer = {
             match self.attachments.try_lock() {
                 Ok(mut attachments) => match attachments.process_inbound(envelope.clone(), now) {
@@ -553,9 +535,6 @@ impl TorcaCommunicationDriver {
                         AttachmentFailureStage::Dependency,
                     )) => true,
                     Err(error) => {
-                        // Do not ACK malformed/temporary failures.  The peer-side
-                        // durable sender will retry after its own ACK deadline.
-                        // Crucially, leave the rest of the inbound batch running.
                         eprintln!(
                             "torca-attachment: inbound failed contact={} envelope={} code={error}",
                             contact_id, envelope_id
@@ -570,8 +549,6 @@ impl TorcaCommunicationDriver {
             }
         };
         if should_defer {
-            // The text frame may still be waiting in the peer inbox and will
-            // be consumed in this same maintenance turn.
             self.defer_attachment(envelope);
         }
         Ok(())
@@ -601,9 +578,6 @@ impl TorcaCommunicationDriver {
             }
         }
 
-        // Run deferred attachment frames only after text/control frames from
-        // this batch.  This resolves the normal "attachment metadata arrived
-        // first" race without delaying messages behind a file transfer.
         let deferred = self.deferred_attachments.len().min(INBOUND_BATCH);
         for _ in 0..deferred {
             let Some(envelope) = self.deferred_attachments.pop_front() else {
@@ -636,35 +610,31 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         {
             eprintln!("torca-radio: background maintenance failed code={error}");
         }
-        // Attachment delivery is a durable, independently retryable job.  A
-        // single peer/ACK failure must not abort the communication tick and
-        // starve text/control delivery.  The adapter persists Failed and its
-        // next-attempt time before returning the error.
-        if self.attachment_scheduler.due(now) {
-            if !self.attachment_job_active.load(Ordering::Acquire) {
-                let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
-                if !self.attachment_job_active.swap(true, Ordering::AcqRel) {
-                    let attachments = Arc::clone(&self.attachments);
-                    let active = Arc::clone(&self.attachment_job_active);
-                    let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
-                    let messages = snapshot.messages.clone();
-                    thread::spawn(move || {
-                        let result = attachments
-                            .lock()
-                            .map_err(|_| CommunicationError::Attachment)
-                            .and_then(|mut runtime| {
-                                runtime.maintenance_outgoing(&messages, now, ATTACHMENT_BATCH)?;
-                                refresh_attachment_cache(&projection_cache, &**runtime);
-                                Ok(())
-                            });
-                        if let Err(error) = result {
-                            eprintln!("torca-attachment: maintenance failed code={error}");
-                        }
-                        active.store(false, Ordering::Release);
-                    });
-                }
+
+        let attachment_due = !self.attachment_job_active.load(Ordering::Acquire)
+            && self.attachment_delay(now).is_some_and(Duration::is_zero);
+        if attachment_due {
+            let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+            if !self.attachment_job_active.swap(true, Ordering::AcqRel) {
+                let attachments = Arc::clone(&self.attachments);
+                let active = Arc::clone(&self.attachment_job_active);
+                let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
+                let messages = snapshot.messages.clone();
+                thread::spawn(move || {
+                    let result = attachments
+                        .lock()
+                        .map_err(|_| CommunicationError::Attachment)
+                        .and_then(|mut runtime| {
+                            runtime.maintenance_outgoing(&messages, now, ATTACHMENT_BATCH)?;
+                            refresh_attachment_cache(&projection_cache, &**runtime);
+                            Ok(())
+                        });
+                    if let Err(error) = result {
+                        eprintln!("torca-attachment: maintenance failed code={error}");
+                    }
+                    active.store(false, Ordering::Release);
+                });
             }
-            self.attachment_scheduler.record_attempt(now);
         }
         Ok(())
     }
@@ -674,7 +644,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             self.peer.next_maintenance_delay(now),
             self.text.next_maintenance_delay(now),
             self.control.next_maintenance_delay(now),
-            self.attachment_scheduler.next_delay(now),
+            self.attachment_delay(now),
             self.radio.as_ref().and_then(|radio| radio.next_maintenance_delay(now)),
         ]
         .into_iter()
@@ -693,15 +663,19 @@ impl PeerSessionPort for TorcaCommunicationDriver {
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
         self.peer.connection_state(contact_id)
     }
+
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         self.peer.peer_health(contact_id)
     }
+
     fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
         self.peer.peer_activity()
     }
+
     fn peer_probe_eligible(&self, contact_id: ContactId) -> bool {
         self.peer.peer_probe_eligible(contact_id)
     }
+
     fn begin_peer_probe(
         &mut self,
         contact_id: ContactId,
@@ -710,6 +684,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
     ) -> Result<(), RuntimeDriverError> {
         self.peer.begin_probe(contact_id, probe_id, reported_rtt_ms).map_err(map_runtime)
     }
+
     fn take_peer_probe_completion(
         &mut self,
         now: Timestamp,
@@ -759,17 +734,21 @@ impl RelationshipAdminPort for TorcaCommunicationDriver {
     fn contact_names(&self) -> Result<BTreeMap<ContactId, String>, RuntimeDriverError> {
         self.relationships.contact_names().map_err(map_runtime)
     }
+
     fn contact_verifications(
         &self,
     ) -> Result<BTreeMap<ContactId, ContactVerificationSnapshot>, RuntimeDriverError> {
         self.relationships.contact_verifications().map_err(map_runtime)
     }
+
     fn verify_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.relationships.verify_contact(id, now).map_err(map_runtime)
     }
+
     fn reset_contact_verification(&mut self, id: ContactId) -> Result<(), RuntimeDriverError> {
         self.relationships.reset_contact_verification(id).map_err(map_runtime)
     }
+
     fn rename_contact(
         &mut self,
         id: ContactId,
@@ -778,17 +757,21 @@ impl RelationshipAdminPort for TorcaCommunicationDriver {
     ) -> Result<(), RuntimeDriverError> {
         self.relationships.rename_contact(id, name, now).map_err(map_runtime)
     }
+
     fn block_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.relationships.block_contact(id, now).map_err(map_runtime)?;
         self.peer.disconnect_contact(id);
         Ok(())
     }
+
     fn unblock_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.relationships.unblock_contact(id, now).map_err(map_runtime)
     }
+
     fn clear_conversation_history(&mut self, id: ConversationId) -> Result<(), RuntimeDriverError> {
         self.relationships.clear_history(id).map_err(map_runtime)
     }
+
     fn remove_contact(&mut self, id: ContactId) -> Result<(), RuntimeDriverError> {
         self.relationships.remove_contact(id).map_err(map_runtime)?;
         self.peer.disconnect_contact(id);
@@ -813,34 +796,24 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
         let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
-        let result = {
-            let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
-            let result = attachments.prepare_outgoing(request, now).map_err(map_runtime);
-            if result.is_ok() {
-                refresh_attachment_cache(&projection_cache, &**attachments);
-            }
-            result
-        };
+        let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
+        let result = attachments.prepare_outgoing(request, now).map_err(map_runtime);
         if result.is_ok() {
-            self.attachment_scheduler.wake();
+            refresh_attachment_cache(&projection_cache, &**attachments);
         }
         result
     }
+
     fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
         let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
-        let result = {
-            let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
-            let result = attachments.retry(id, now).map_err(map_runtime);
-            if result.is_ok() {
-                refresh_attachment_cache(&projection_cache, &**attachments);
-            }
-            result
-        };
+        let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
+        let result = attachments.retry(id, now).map_err(map_runtime);
         if result.is_ok() {
-            self.attachment_scheduler.wake();
+            refresh_attachment_cache(&projection_cache, &**attachments);
         }
         result
     }
+
     fn cancel_attachment(
         &mut self,
         id: OpaqueId,
@@ -852,6 +825,7 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         refresh_attachment_cache(&projection_cache, &**attachments);
         Ok(())
     }
+
     fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError> {
         let Ok(attachments) = self.attachments.try_lock() else {
             return Ok(self
@@ -882,6 +856,7 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
     ) -> Result<(), RuntimeDriverError> {
         self.attachment_export.export_attachment(id, destination).map_err(map_runtime)
     }
+
     fn export_attachment_preview(
         &mut self,
         id: AttachmentId,
