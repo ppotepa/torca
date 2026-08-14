@@ -255,6 +255,10 @@ impl ClientApplicationRuntime {
         self.radio.as_ref()?.projection(now).ok()
     }
 
+    pub fn radio_wake_count(&self) -> u64 {
+        self.radio.as_ref().map_or(0, SharedRadioCoordinator::media_wake_count)
+    }
+
     pub fn attach_read_models(&mut self, read_models: ApplicationReadModels) {
         self.read_models = Some(read_models);
     }

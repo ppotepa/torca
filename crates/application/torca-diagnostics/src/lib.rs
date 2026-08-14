@@ -135,6 +135,7 @@ pub struct RuntimeCounters {
     pub ffi_wakes: u64,
     pub db_reads: u64,
     pub db_writes: u64,
+    pub radio_wakeups: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,6 +147,7 @@ pub enum RuntimeCounter {
     FfiWake,
     DbRead,
     DbWrite,
+    RadioWake,
 }
 
 impl DiagnosticBuffer {
@@ -187,6 +189,7 @@ impl DiagnosticBuffer {
             RuntimeCounter::FfiWake => &mut self.counters.ffi_wakes,
             RuntimeCounter::DbRead => &mut self.counters.db_reads,
             RuntimeCounter::DbWrite => &mut self.counters.db_writes,
+            RuntimeCounter::RadioWake => &mut self.counters.radio_wakeups,
         };
         *value = value.saturating_add(1);
     }
@@ -219,7 +222,7 @@ impl DiagnosticBuffer {
         let counters = self.counters;
         let _ = write!(
             output,
-            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{}}}}}",
+            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"radioWakeups\":{}}}}}",
             counters.scheduler_wakeups,
             counters.snapshot_builds,
             counters.peer_probes,
@@ -227,6 +230,7 @@ impl DiagnosticBuffer {
             counters.ffi_wakes,
             counters.db_reads,
             counters.db_writes,
+            counters.radio_wakeups,
         );
         output
     }

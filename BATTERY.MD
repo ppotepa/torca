@@ -28,7 +28,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
-| Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, native event/FFI wakeups, snapshot builds/DB reads, command-induced DB writes, actual peer probes and relay probe executions; a CI idle gate is present, while radio/worker-write counters remain |
+| Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, native event/FFI wakeups, radio listener wakeups, snapshot builds/DB reads, command-induced DB writes, actual peer probes and relay probe executions; worker-write counters remain |
 
 The current implementation is therefore a transitional state, but its idle
 path is already event/deadline driven. Event waiting, pairing scheduling,
@@ -469,9 +469,10 @@ Android:
 ## Observability and Energy Ledger (implemented core; counters still expanding)
 
 Counters are incremented only on existing execution paths. Scheduler wakeups,
-native event/FFI wakeups, snapshot builds, DB reads, command-induced DB writes,
-peer probes and relay probes are wired today. The remaining fields are reserved
-for their executor owners and must not be populated with estimates:
+native event/FFI wakeups, radio listener wakeups, snapshot builds, DB reads,
+command-induced DB writes, peer probes and relay probes are wired today. The
+remaining fields are reserved for their executor owners and must not be
+populated with estimates:
 
 ```text
 runtime_wakeups_by_reason
@@ -500,10 +501,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 1. **Partial:** keep `torca-runtime-policy`, fake clock, reducer, lease book,
    evidence ledger and event hub small and dependency-light. Finish budgets
    and production scheduler ownership before adding new policy concepts.
-2. **Partial:** scheduler, native event/FFI-wake, snapshot/DB-read,
-   command-induced DB-write, peer-probe and relay-probe counters are wired,
-   with a dedicated CI idle scheduler gate. Add radio/worker-write counters
-   before attempting Arti dormancy.
+2. **Partial:** scheduler, native event/FFI-wake, radio listener wake,
+   snapshot/DB-read, command-induced DB-write, peer-probe and relay-probe
+   counters are wired, with a dedicated CI idle scheduler gate. Add
+   worker-write counters before attempting Arti dormancy.
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. The native actor also blocks
    until a command or the earliest durable pending-operation deadline. Keep

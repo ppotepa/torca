@@ -793,6 +793,12 @@ impl TorcaRuntime {
                     // not an estimate of physical battery consumption.
                     counters.insert("ffiWakes".into(), Value::from(stats.wakeups));
                 }
+                if let Some(counters) = value.get_mut("counters").and_then(Value::as_object_mut) {
+                    counters.insert(
+                        "radioWakeups".into(),
+                        Value::from(self.application_runtime.radio_wake_count()),
+                    );
+                }
                 self.query_json = value.to_string();
                 ABI_OK
             }

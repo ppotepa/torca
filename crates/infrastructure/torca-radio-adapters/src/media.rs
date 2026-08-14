@@ -1,6 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -132,6 +134,7 @@ impl RadioMediaSystem {
 pub struct RadioMediaAdapter {
     commands: SyncSender<MediaCommand>,
     events: Receiver<RadioSessionEvent>,
+    wakeups: Arc<AtomicU64>,
 }
 
 impl RadioMediaAdapter {
@@ -144,8 +147,11 @@ impl RadioMediaAdapter {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
         let wake_sender = command_tx.clone();
+        let wakeups = Arc::new(AtomicU64::new(0));
+        let wake_counter = Arc::clone(&wakeups);
         listener
             .set_waker(std::sync::Arc::new(move || {
+                wake_counter.fetch_add(1, Ordering::Relaxed);
                 let _ = wake_sender.try_send(MediaCommand::Wake);
             }))
             .map_err(|_| RadioApplicationError::MediaTransport)?;
@@ -155,7 +161,7 @@ impl RadioMediaAdapter {
                 MediaWorker::new(tor, listener, directory, audio, command_rx, event_tx).run();
             })
             .map_err(|_| RadioApplicationError::MediaTransport)?;
-        Ok(Self { commands: command_tx, events: event_rx })
+        Ok(Self { commands: command_tx, events: event_rx, wakeups })
     }
 
     fn submit(&self, command: MediaCommand) -> Result<(), RadioApplicationError> {
@@ -170,6 +176,10 @@ impl Drop for RadioMediaAdapter {
 }
 
 impl RadioMediaPort for RadioMediaAdapter {
+    fn wake_count(&self) -> u64 {
+        self.wakeups.load(Ordering::Relaxed)
+    }
+
     fn open(
         &mut self,
         contact_id: ContactId,

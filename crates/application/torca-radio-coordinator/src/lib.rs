@@ -134,6 +134,12 @@ pub trait RadioMediaPort: Send {
     /// Returns one completed media-worker transition without blocking the
     /// application actor.
     fn take_event(&mut self) -> Option<RadioSessionEvent>;
+
+    /// Number of inbound listener wakeups observed by the media executor.
+    /// Implementations that do not expose instrumentation return zero.
+    fn wake_count(&self) -> u64 {
+        0
+    }
 }
 
 /// Audio device capability and capture/playback boundary.
@@ -765,6 +771,10 @@ impl RadioCoordinator {
         }
     }
 
+    fn media_wake_count(&self) -> u64 {
+        self.media.wake_count()
+    }
+
     fn record(
         &mut self,
         contact_id: ContactId,
@@ -944,6 +954,10 @@ impl SharedRadioCoordinator {
             .lock()
             .map_err(|_| RadioApplicationError::Persistence)
             .map(|coordinator| coordinator.projection(now))
+    }
+
+    pub fn media_wake_count(&self) -> u64 {
+        self.inner.lock().map(|coordinator| coordinator.media_wake_count()).unwrap_or(0)
     }
 
     fn with_mut<T>(
