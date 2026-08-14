@@ -25,7 +25,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Feature-owned leases | Partial | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; radio enable/transmit commands now create separate radio leases and peer probes honor them; terminal cleanup and full relay/radio executor ownership remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
-| Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
+| Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs and ready-to-disconnected transitions now feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues now expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, native event/FFI wakeups, radio listener wakeups, snapshot builds/DB reads, command-induced DB writes, actual peer probes and relay probe executions; worker-write counters remain |
@@ -531,9 +531,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    radio executor consumption and stale-lease cleanup; attention leases
    remain advisory and must never be the only owner of durable work.
 6. **Partial:** evidence suppresses cosmetic peer probes and removes their
-   deadlines while Live/Recent; explicit stale/failed deadlines preserve a
-   single-flight probe budget. Integrate more TX/RX/chunk evidence and add a
-   trace proving no wakeup occurs while all focused peers remain fresh.
+   deadlines while Live/Recent; handshake transitions, successful probe ACKs
+   and ready-to-disconnected transitions now update the policy ledger.
+   Integrate more TX/RX/chunk evidence and add a trace proving no wakeup
+   occurs while all focused peers remain fresh.
 7. **Partial:** relay healthy heartbeats are removed. Add operation-scoped
    relay leases and revalidation without blocking local readiness.
 8. **Partial:** idle radio waits on its command channel and peer/radio

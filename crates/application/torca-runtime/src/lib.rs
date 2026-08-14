@@ -1109,6 +1109,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         let mut current_successes = BTreeMap::new();
         for id in contacts.iter().copied() {
             let state = communication.connection_state(id);
+            let previous_state = last_peer_states.get(&id).copied();
             if last_peer_states.get(&id) != Some(&state) {
                 transport_activity.mark_peer(id, now);
                 record(
@@ -1118,6 +1119,31 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     Component::Peer,
                     map_peer_health(state),
                     "PEER_STATE_CHANGED",
+                );
+            }
+            if state == PeerConnectionStatus::Ready
+                && previous_state != Some(PeerConnectionStatus::Ready)
+            {
+                policy.apply(
+                    PolicyEvent::Evidence {
+                        scope: ResourceScope::Peer(id.to_opaque()),
+                        kind: torca_runtime_policy::EvidenceKind::Handshake,
+                    },
+                    std::time::Instant::now(),
+                );
+            } else if matches!(
+                state,
+                PeerConnectionStatus::Disconnected
+                    | PeerConnectionStatus::Reconnecting
+                    | PeerConnectionStatus::Failed
+            ) && previous_state == Some(PeerConnectionStatus::Ready)
+            {
+                policy.apply(
+                    PolicyEvent::Evidence {
+                        scope: ResourceScope::Peer(id.to_opaque()),
+                        kind: torca_runtime_policy::EvidenceKind::Failure,
+                    },
+                    std::time::Instant::now(),
                 );
             }
             let health = communication.peer_health(id);
