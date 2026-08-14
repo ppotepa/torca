@@ -25,7 +25,7 @@ const EVENT_CAPACITY: usize = 64;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(8);
-const WORKER_TICK: Duration = Duration::from_millis(10);
+const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
 const AUDIO_RETRANSMIT_AFTER: Duration = Duration::from_millis(250);
 const AUDIO_FRAME_INTERVAL: Duration = Duration::from_millis(20);
@@ -305,7 +305,7 @@ impl LiveSession {
         cipher: Box<dyn RadioMediaCipher>,
     ) -> Result<Self, RadioApplicationError> {
         stream
-            .set_read_timeout(Some(WORKER_TICK))
+            .set_read_timeout(Some(ACTIVE_READ_TIMEOUT))
             .map_err(|_| RadioApplicationError::MediaTransport)?;
         stream
             .set_write_timeout(Some(Duration::from_secs(2)))
@@ -429,14 +429,29 @@ impl MediaWorker {
     }
 
     fn next_wait_duration(&self) -> Duration {
-        if self.live.is_some() {
-            return WORKER_TICK;
+        if let Some(live) = self.live.as_ref() {
+            let now = Instant::now();
+            let mut deadline = now + AUDIO_FRAME_INTERVAL;
+            if live.authenticated {
+                deadline = deadline.min(live.last_received_at + CONNECTION_IDLE_LIMIT);
+                if let Some(oldest) = live.oldest_unacked_at {
+                    deadline = deadline.min(oldest + AUDIO_RETRANSMIT_AFTER);
+                }
+                if let Some(started) = live.local_burst_started_at {
+                    deadline =
+                        deadline.min(started + Duration::from_millis(MAX_RADIO_BURST_MS.into()));
+                }
+                let keep_alive_at = (live.last_media_activity_at + KEEP_ALIVE_INTERVAL)
+                    .max(live.last_keep_alive_at + KEEP_ALIVE_INTERVAL);
+                deadline = deadline.min(keep_alive_at);
+            }
+            return deadline.saturating_duration_since(now);
         }
         if let Some(pending) = &self.pending {
             if pending.initiate_connection {
                 return pending.next_connect_at.saturating_duration_since(Instant::now());
             }
-            return WORKER_TICK;
+            return pending.next_connect_at.saturating_duration_since(Instant::now());
         }
         // An unarmed listener or an accepted-session wait is woken by the
         // listener callback; `run` uses a blocking recv in this state.

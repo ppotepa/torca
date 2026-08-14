@@ -26,7 +26,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Central deadline scheduler | Partial | fixed 100-ms tick and healthy-Tor 1-s fallback were removed; delivery/control outboxes, Tor lifecycle, peer/radio listener events and lease expiry expose wake sources, while Tor-worker completion events remain |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
-| Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media still uses a 10-ms read cadence and needs exact deadlines |
+| Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media now uses a 20-ms I/O bound with audio/ACK/burst/keepalive deadlines, while deterministic deadline tests remain |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds/DB reads, actual peer probes and relay probe executions; radio/FFI/DB-write counters and idle regression gate remain |
 
@@ -494,8 +494,9 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    relay leases and revalidation without blocking local readiness.
 8. **Partial:** idle radio waits on its command channel and peer/radio
    `PeerListener` accepts on dedicated blocking workers with bounded queues,
-   cancellable shutdown and wake propagation. Finish exact active-media
-   deadlines and keep the default idle path at zero worker iterations.
+   cancellable shutdown and wake propagation. Active media now selects the
+   next audio, ACK, burst or keepalive deadline; add deterministic deadline
+   tests and keep the default idle path at zero worker iterations.
 9. **Planned / measurement-gated:** evaluate Arti soft dormancy only after
    reliability soak tests pass. It is optional and not a release blocker.
 10. **Optional experiments:** deterministic dial ownership, viewport contact
