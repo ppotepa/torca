@@ -105,7 +105,9 @@ resume failures already seen in production testing.
 - `AttentionContext` is advisory only. It must never control delivery correctness, durable queues, pairing completion, attachments, radio correctness, or inbound traffic.
 - Shared policy lives in `crates/application/torca-runtime-policy`.
 - The policy crate owns decisions, leases, evidence, budgets, deadlines, event waiting, and counters. It does not own sockets, SQLite, Flutter, JNI, Android APIs, or Arti execution.
-- The target Tor policy uses adaptive Arti soft dormancy instead of destroying the client or clearing its cache/state. This is not implemented yet.
+- The target Tor policy uses adaptive Arti soft dormancy instead of destroying
+  the client or clearing its cache/state. The low-level API exists; automatic
+  runtime policy integration is intentionally not enabled yet.
 - Relay, peer connections, pairing, attachments, and radio remain separate executors controlled by policy permits.
 - Android uses `NetworkCallback`, network capabilities, and Power Saver events. `ConnectivityDiagnosticsManager` is not a baseline dependency because ordinary messaging applications do not receive its callbacks.
 - There is no legacy runtime mode and no parallel old scheduler. Each old polling/tick path is removed when its replacement lands.
