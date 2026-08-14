@@ -44,8 +44,20 @@ where
         self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.maintenance(contacts, now)
     }
 
+    pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.inner.lock().ok().and_then(|link| link.next_maintenance_delay(now))
+    }
+
     pub fn network_changed(&self, now: Timestamp) -> Result<(), PeerLinkError> {
         self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.network_changed(now);
+        Ok(())
+    }
+
+    pub fn disconnect_contact(&self, contact_id: ContactId) -> Result<(), PeerLinkError> {
+        self.inner
+            .lock()
+            .map_err(|_| PeerLinkError::Protocol)?
+            .disconnect_contact(contact_id);
         Ok(())
     }
 
