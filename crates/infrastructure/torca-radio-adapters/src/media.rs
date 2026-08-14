@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
-use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -389,9 +389,41 @@ impl MediaWorker {
                 eprintln!("torca-radio: media stream interrupted contact={contact}; reconnecting");
                 self.interrupt_live();
             }
-            thread::sleep(WORKER_TICK);
+            // The command channel is the idle wake source.  Active media and
+            // pending connection deadlines retain the short audio cadence;
+            // an unarmed radio waits for commands or an incoming listener
+            // check instead of spinning/sleeping every 10 ms.
+            let wait = self.next_wait_duration();
+            match self.commands.recv_timeout(wait) {
+                Ok(MediaCommand::Shutdown) => break,
+                Ok(command) => {
+                    if self.handle_command(command).is_err() {
+                        eprintln!("torca-radio: media command failed; reconnecting session");
+                        self.interrupt_live();
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
         }
         self.shutdown_live(SessionCloseReason::Disabled);
+    }
+
+    fn next_wait_duration(&self) -> Duration {
+        if self.live.is_some() {
+            return WORKER_TICK;
+        }
+        if let Some(pending) = &self.pending {
+            if pending.initiate_connection {
+                return pending.next_connect_at.saturating_duration_since(Instant::now());
+            }
+            return WORKER_TICK;
+        }
+        // Incoming radio sessions are accepted on the next bounded listener
+        // check.  This is deliberately much less frequent than the active
+        // audio cadence and is replaced by a listener wake source in the
+        // follow-up platform integration.
+        Duration::from_secs(1)
     }
 
     fn drain_commands(&mut self) -> Result<bool, ()> {

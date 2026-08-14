@@ -23,17 +23,18 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Planned | `AttentionContext` exists only in the policy kernel and tests |
 | Feature-owned leases | Planned | relay, delivery, attachment and radio executors do not yet acquire/release governor leases |
-| Central deadline scheduler | Planned | `torca-runtime` still wakes through `RUNTIME_TICK = 100 ms` |
-| Demand/evidence-driven relay health | Planned | relay supervisor still uses a 15-second healthy interval |
+| Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; full deadline ownership is still pending |
+| Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals |
-| Blocking/deadline radio worker | Planned | media worker still contains a 10-ms tick/sleep path |
+| Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |
 | Arti soft dormancy | Planned | no production `set_dormant` activity-mode integration exists |
 | Runtime Energy Ledger | Planned | acceptance counters and idle regression gate are not fully wired |
 
 The current implementation is therefore a transitional state. Event waiting,
-pairing scheduling and demand-created peer reconnects have landed, while the
-central runtime, relay health, peer health and radio still contain periodic
-wake paths.
+pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
+idle radio blocking and demand-woken relay health have landed. Full deadline
+ownership, feature leases, attention propagation, evidence-driven peer health
+and Arti dormancy remain outstanding.
 
 The central model is:
 
@@ -311,8 +312,10 @@ Without push or a relay mailbox, background delivery is durable but best-effort.
 
 ## Deadline scheduler and wake windows (planned)
 
-The fixed `recv_timeout(100 ms)` loop still exists in `torca-runtime`. It will
-be replaced with:
+The original fixed `recv_timeout(100 ms)` loop has been replaced by an
+adaptive interim scheduler: idle runtime maintenance waits up to one second,
+while connection establishment/recovery retains a 100-ms cadence. It will be
+replaced by full deadline ownership:
 
 ```text
 deadline exists -> recv_timeout(deadline - now)
@@ -405,12 +408,12 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 1. **Partial:** add `torca-runtime-policy`, fake clock, policy reducer, lease book, evidence ledger, event hub and tests. Finish production budgets, scheduler ownership and stats.
 2. **Planned:** add counters to existing execution paths without introducing timers.
 3. **Implemented core:** Flutter and Android use cancellable native event waiters. Continue shutdown/race regression coverage.
-4. **Next priority:** replace the central Rust 100-ms tick with deadline scheduling.
+4. **Partial:** replace the central Rust 100-ms tick with adaptive idle/active waits. Next, let every executor publish its next deadline and remove the remaining fallback cadence.
 5. **Planned:** add `AttentionContext`, viewport and policy state to the generated contract and navigation owner.
 6. **Partial:** demand-created peer reconnects exist. Finish lease-owned peer lifetime and deterministic stream resolution.
-7. **Planned:** move relay health from the 15-second interval to demand/evidence policy.
+7. **Partial:** relay healthy heartbeats are removed; finish explicit lease ownership and operation-scoped wake/revalidation.
 8. **Planned and measurement-gated:** add Arti soft dormancy and optional background rendezvous windows.
-9. **Planned:** replace the radio 10-ms polling/sleep path with blocking/deadline execution.
+9. **Partial:** idle radio now blocks on its command channel; finish listener wake integration and exact active-media deadlines.
 10. **Final cleanup:** delete every replaced polling constant, reconnect-all path and obsolete scheduler.
 
 ## Target acceptance criteria

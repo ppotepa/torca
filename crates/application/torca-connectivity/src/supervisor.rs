@@ -12,7 +12,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use torca_foundation::ErrorCode;
 use torca_probing::ProbeStatus;
 
-const HEALTHY_INTERVAL: Duration = Duration::from_secs(15);
 const RETRY_BACKOFF: [Duration; 4] = [
     Duration::from_secs(5),
     Duration::from_secs(15),
@@ -125,17 +124,25 @@ fn run(
     receiver: Receiver<Command>,
 ) {
     let mut failures = 0_u32;
-    let mut next_at = Instant::now();
+    let mut next_at = Some(Instant::now());
     loop {
         let now = Instant::now();
-        if now < next_at {
-            match receiver.recv_timeout(next_at.duration_since(now)) {
+        if let Some(deadline) = next_at.filter(|deadline| now < *deadline) {
+            match receiver.recv_timeout(deadline.duration_since(now)) {
                 Ok(Command::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Ok(Command::Wake) => {
-                    next_at = Instant::now();
+                    next_at = Some(Instant::now());
                     continue;
                 }
                 Err(RecvTimeoutError::Timeout) => {}
+            }
+        } else if next_at.is_none() {
+            match receiver.recv() {
+                Ok(Command::Shutdown) | Err(_) => break,
+                Ok(Command::Wake) => {
+                    next_at = Some(Instant::now());
+                    continue;
+                }
             }
         }
         // Keep the last usable status while a probe is in flight. Projecting
@@ -173,13 +180,16 @@ fn run(
                         failures,
                     },
                 );
-                next_at = Instant::now() + HEALTHY_INTERVAL;
+                // A successful operation is health evidence. Do not create
+                // a periodic heartbeat while there is no relay demand; the
+                // next foreground operation explicitly wakes this lane.
+                next_at = None;
             }
             Err(code) if code == ErrorCode::new("relay.connection_busy") => {
                 // A foreground exchange owns the transport. Preserve the
                 // last usable state and retry quickly without counting this
                 // expected contention as a relay failure.
-                next_at = Instant::now() + Duration::from_secs(1);
+                next_at = Some(Instant::now() + Duration::from_secs(1));
             }
             Err(code) => {
                 failures = failures.saturating_add(1);
@@ -200,7 +210,7 @@ fn run(
                         failures,
                     },
                 );
-                next_at = Instant::now() + retry_delay(failures);
+                next_at = Some(Instant::now() + retry_delay(failures));
             }
         }
     }

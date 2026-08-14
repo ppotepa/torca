@@ -29,7 +29,8 @@ use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
 use torca_runtime_policy::Freshness;
 
-const RUNTIME_TICK: Duration = Duration::from_millis(100);
+const IDLE_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
+const ACTIVE_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
 const COMMAND_WAIT: Duration = Duration::from_secs(10);
 const QUERY_WAIT: Duration = Duration::from_secs(5);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(15);
@@ -699,8 +700,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut probes = ProbeSupervisor::default();
     let mut peer_probes = PeerProbeSupervisor::default();
     let mut transport_activity = TransportActivityLedger::default();
+    let mut next_maintenance_at = std::time::Instant::now();
+    let mut active_transport = false;
     loop {
-        match receiver.recv_timeout(RUNTIME_TICK) {
+        let wait = next_maintenance_at.saturating_duration_since(std::time::Instant::now());
+        match receiver.recv_timeout(wait) {
             Ok(RuntimeCommand::Shutdown(response)) => {
                 let _ = response.send(());
                 break;
@@ -857,9 +861,27 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 connectivity.set_peer_ready(id.to_opaque(), state == PeerConnectionStatus::Ready);
                 current_successes.insert(id, health.last_success_at);
             }
+            active_transport = current.values().any(|state| {
+                matches!(
+                    state,
+                    PeerConnectionStatus::Connecting
+                        | PeerConnectionStatus::Handshaking
+                        | PeerConnectionStatus::Reconnecting
+                )
+            });
             last_peer_states = current;
             last_peer_successes = current_successes;
         }
+
+        let mut next_delay = if active_transport {
+            ACTIVE_MAINTENANCE_INTERVAL
+        } else {
+            IDLE_MAINTENANCE_INTERVAL
+        };
+        if let Some(pairing_delay) = pairing.next_maintenance_delay(now) {
+            next_delay = next_delay.min(pairing_delay);
+        }
+        next_maintenance_at = std::time::Instant::now() + next_delay;
     }
 }
 
