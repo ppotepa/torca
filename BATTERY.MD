@@ -2,22 +2,38 @@
 
 ## Status
 
-Accepted architecture plan for reducing application-controlled CPU wakeups, network probes, FFI polling, reconnect storms, and unnecessary Tor activity.
+Architecture target and migration plan for reducing application-controlled CPU
+wakeups, network probes, FFI polling, reconnect storms, and unnecessary Tor
+activity. This document distinguishes the checked-in implementation from the
+target design; target-state sections are not claims that the behavior already
+exists.
 
-Implementation status: the dependency-light `torca-runtime-policy` kernel is now
-present in `crates/application/torca-runtime-policy` and is used by peer probe
-scheduling. Live/recent TX, RX, ACK and handshake evidence suppresses cosmetic
-peer probes; stale or unknown evidence remains eligible. The event hub and
-policy tests are in place. Flutter and the Android foreground service now wait
-on the native revision hub instead of issuing idle snapshot/notification polls.
-Pairing now uses a deadline-driven worker, and peer reconnects are demand
-driven: an address-book entry no longer creates an outgoing reconnect loop;
-send/probe paths create the reconnect entry when work actually requires it.
-Foreground pairing commands explicitly wake the relay probe lane, so an idle
-runtime does not need to poll just to discover that relay demand has appeared.
-Lease ownership for every feature executor (relay, delivery, attachments and
-radio) and Arti dormancy remain follow-up work; the policy API is ready for
-those integrations.
+### Audited implementation status
+
+Last reconciled with the source tree on 2026-08-14.
+
+| Capability | Status | Current implementation |
+| --- | --- | --- |
+| Policy kernel and fake-clock tests | Implemented | `crates/application/torca-runtime-policy` |
+| Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native` |
+| Flutter revision waiter | Implemented | event isolate waits through `torca_runtime_wait_for_revision` |
+| Android notification waiter | Implemented | foreground service waits for native runtime changes |
+| Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
+| Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
+| Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
+| Attention/viewport contract from Flutter | Planned | `AttentionContext` exists only in the policy kernel and tests |
+| Feature-owned leases | Planned | relay, delivery, attachment and radio executors do not yet acquire/release governor leases |
+| Central deadline scheduler | Planned | `torca-runtime` still wakes through `RUNTIME_TICK = 100 ms` |
+| Demand/evidence-driven relay health | Planned | relay supervisor still uses a 15-second healthy interval |
+| Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals |
+| Blocking/deadline radio worker | Planned | media worker still contains a 10-ms tick/sleep path |
+| Arti soft dormancy | Planned | no production `set_dormant` activity-mode integration exists |
+| Runtime Energy Ledger | Planned | acceptance counters and idle regression gate are not fully wired |
+
+The current implementation is therefore a transitional state. Event waiting,
+pairing scheduling and demand-created peer reconnects have landed, while the
+central runtime, relay health, peer health and radio still contain periodic
+wake paths.
 
 The central model is:
 
@@ -30,7 +46,7 @@ Attention -> Demand Lease -> Health Evidence -> Deadline Scheduler
 - `AttentionContext` is advisory only. It must never control delivery correctness, durable queues, pairing completion, attachments, radio correctness, or inbound traffic.
 - Shared policy lives in `crates/application/torca-runtime-policy`.
 - The policy crate owns decisions, leases, evidence, budgets, deadlines, event waiting, and counters. It does not own sockets, SQLite, Flutter, JNI, Android APIs, or Arti execution.
-- Tor uses adaptive Arti soft dormancy instead of destroying the client or clearing its cache/state.
+- The target Tor policy uses adaptive Arti soft dormancy instead of destroying the client or clearing its cache/state. This is not implemented yet.
 - Relay, peer connections, pairing, attachments, and radio remain separate executors controlled by policy permits.
 - Android uses `NetworkCallback`, network capabilities, and Power Saver events. `ConnectivityDiagnosticsManager` is not a baseline dependency because ordinary messaging applications do not receive its callbacks.
 - There is no legacy runtime mode and no parallel old scheduler. Each old polling/tick path is removed when its replacement lands.
@@ -39,7 +55,12 @@ Attention -> Demand Lease -> Health Evidence -> Deadline Scheduler
 
 ## Shared crate: `torca-runtime-policy`
 
-The crate is a dependency-light synchronous policy kernel containing:
+The checked-in crate is a dependency-light synchronous policy kernel. It
+already contains the core attention, demand, lease, evidence, policy and event
+hub types. Budget enforcement, scheduler ownership, executor integration and
+production counters remain incomplete.
+
+The target crate responsibilities are:
 
 - `attention` — foreground/background state, visible surface, focused resource, and contact viewport.
 - `demand` — requirements derived from UI intent, durable queues, and active operations.
@@ -136,9 +157,9 @@ event_hub.cancel(waiter)
 
 The crate uses `OpaqueId` and generic resource scopes. Feature crates map their typed IDs at the boundary, preventing policy dependencies on every domain crate.
 
-## Attention and smart contact refresh
+## Attention and smart contact refresh (target)
 
-Flutter sends one ephemeral context through the generated contract:
+Flutter will send one ephemeral context through the generated contract:
 
 ```text
 surface
@@ -194,9 +215,11 @@ UNKNOWN  no evidence exists for the current network generation
 
 Presence and transport health remain separate concepts. A technical probe never updates human `last seen`. A network change makes previous evidence stale instead of declaring every peer offline.
 
-## Connection leases and deterministic dialing
+## Connection leases and deterministic dialing (target)
 
-The runtime no longer reconnects every stored contact. Only resources with an active lease may create or retain outgoing work.
+The checked-in peer link no longer reconnects every stored contact merely
+because it exists. The remaining target is stricter: only resources with an
+active lease may create or retain outgoing work.
 
 Default leases:
 
@@ -215,16 +238,16 @@ After the final lease expires:
 - relay stream closes after its own grace period;
 - no contact exists in a default always-connected set.
 
-Deterministic dial ownership is part of the baseline:
+Deterministic dial ownership is part of the target baseline:
 
 - identity ordering selects the preferred initiator for speculative connect, rendezvous, and recovery;
 - concrete outbound work may dial immediately regardless of preferred ownership;
 - simultaneous incoming/outgoing connections deterministically retain the same single stream on both sides;
 - a non-preferred side with real demand takes over recovery after 20 seconds.
 
-## Relay and network changes
+## Relay and network changes (target)
 
-Relay receives a lease only for active pairing, pending relay work, or explicit diagnostics.
+Relay will receive a lease only for active pairing, pending relay work, or explicit diagnostics.
 
 - Successful relay traffic replaces health probes.
 - Real traffic moves the next possible probe deadline.
@@ -240,15 +263,22 @@ Network changes increment `network_generation` and perform staged recovery:
 5. Do not reconnect unrelated contacts.
 6. Allow cosmetic work only from the remaining budget.
 
-## Adaptive Tor and rendezvous windows
+## Adaptive Tor and rendezvous windows (planned, measurement-gated)
 
-`torca-tor` exposes:
+The proposed `torca-tor` API is:
 
 ```rust
 set_activity_mode(TorActivityMode::Active | SoftDormant)
 ```
 
-The implementation uses Arti `TorClient::set_dormant()` while retaining directory cache, persistent state, and onion identity.
+The intended implementation uses Arti `TorClient::set_dormant()` while
+retaining directory cache, persistent state, and onion identity. This API is
+not currently exposed by `torca-tor` and must not be treated as shipped.
+
+Dormancy must land behind an explicit runtime policy (`AlwaysAvailable`,
+`Balanced`, `BatterySaver`) and soak tests. `AlwaysAvailable` remains the
+reliability-first default until Android onion reachability, pairing, pending
+delivery, attachments and radio are proven under dormant/resume cycles.
 
 Tor stays active while:
 
@@ -279,9 +309,10 @@ Initial rendezvous policy:
 
 Without push or a relay mailbox, background delivery is durable but best-effort. It may wait until a shared window, application foregrounding, or another real demand event.
 
-## Deadline scheduler and wake windows
+## Deadline scheduler and wake windows (planned)
 
-The fixed `recv_timeout(100 ms)` loop is replaced with:
+The fixed `recv_timeout(100 ms)` loop still exists in `torca-runtime`. It will
+be replaced with:
 
 ```text
 deadline exists -> recv_timeout(deadline - now)
@@ -294,9 +325,11 @@ Every participating subsystem exposes its next deadline. Low-priority work is co
 - background slack: up to 15 seconds;
 - user actions, protocol ACKs, pairing expiry, and audio deadlines: no slack.
 
-## Radio and adaptive keepalive
+## Radio and adaptive keepalive (planned migration)
 
-Radio retains a dedicated media worker because real-time audio has 20-ms deadlines. The current 5-ms unconditional loop is removed.
+Radio retains a dedicated media worker because real-time audio has 20-ms
+deadlines. The current implementation still has a 10-ms tick/sleep path. The
+target removes unconditional idle iteration:
 
 - No armed session: block indefinitely.
 - Pending connection: block until command, accept event, or reconnect deadline.
@@ -312,7 +345,7 @@ Keepalive policy:
 - A half-open failure lowers the interval for the current network generation.
 - No active session means no keepalive work.
 
-## Event-driven Flutter and Android
+## Event-driven Flutter and Android (implemented core, hardening ongoing)
 
 `RuntimeEventHub` owns monotonic:
 
@@ -341,7 +374,7 @@ Android:
 - `NetworkCallback` reports availability, validation, meteredness, blocked state, and generation.
 - `ACTION_POWER_SAVE_MODE_CHANGED` updates policy without polling.
 
-## Observability and Energy Ledger
+## Observability and Energy Ledger (target)
 
 Counters are incremented only on existing execution paths:
 
@@ -367,20 +400,25 @@ wake_lock_ms
 
 Energy Ledger assigns stable abstract costs for regression testing. It is not presented as mWh. Android UID TX/RX totals are sampled only on lifecycle changes, Diagnostics entry, and scenario completion.
 
-## Implementation sequence
+## Implementation sequence and current progress
 
-1. Add `torca-runtime-policy`, fake clock, policy reducer, lease book, evidence ledger, budgets, scheduler, event hub, and tests.
-2. Add counters to existing execution paths without introducing timers.
-3. Replace Flutter and Android polling with cancellable event waiters.
-4. Replace the central Rust tick with deadline scheduling.
-5. Add AttentionContext, viewport, freshness, and policy state to the generated contract.
-6. Replace all-contact maintenance with leased-peer maintenance and deterministic stream resolution.
-7. Move relay health to demand/evidence policy.
-8. Add Arti soft dormancy and background rendezvous windows.
-9. Replace the radio polling worker with blocking/deadline execution.
-10. Delete every replaced polling constant, reconnect-all path, and obsolete scheduler.
+1. **Partial:** add `torca-runtime-policy`, fake clock, policy reducer, lease book, evidence ledger, event hub and tests. Finish production budgets, scheduler ownership and stats.
+2. **Planned:** add counters to existing execution paths without introducing timers.
+3. **Implemented core:** Flutter and Android use cancellable native event waiters. Continue shutdown/race regression coverage.
+4. **Next priority:** replace the central Rust 100-ms tick with deadline scheduling.
+5. **Planned:** add `AttentionContext`, viewport and policy state to the generated contract and navigation owner.
+6. **Partial:** demand-created peer reconnects exist. Finish lease-owned peer lifetime and deterministic stream resolution.
+7. **Planned:** move relay health from the 15-second interval to demand/evidence policy.
+8. **Planned and measurement-gated:** add Arti soft dormancy and optional background rendezvous windows.
+9. **Planned:** replace the radio 10-ms polling/sleep path with blocking/deadline execution.
+10. **Final cleanup:** delete every replaced polling constant, reconnect-all path and obsolete scheduler.
 
-## Acceptance criteria
+## Target acceptance criteria
+
+These are release gates for the completed migration, not claims about the
+current build. “Zero wakeups” means zero application-controlled Torca wakeups;
+Arti, the operating system and the kernel may still perform their own required
+maintenance.
 
 - Background with no work between rendezvous windows: zero Torca-controlled wakeups, probes, snapshots, DB reads, and FFI calls for 10 minutes.
 - Active conversation with real traffic: zero peer health probes.
