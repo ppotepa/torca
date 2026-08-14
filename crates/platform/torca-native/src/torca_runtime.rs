@@ -289,7 +289,7 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     thread::Builder::new()
         .name("torca-runtime".into())
-        .spawn(move || match TorcaRuntime::new() {
+        .spawn(move || match TorcaRuntime::new(Arc::clone(&actor_event_hub)) {
             Ok(runtime) => {
                 let runtime_id = secure_id_hex().unwrap_or_else(|_| "runtime-unavailable".into());
                 let _ = ready_tx.send(Ok(()));
@@ -1050,9 +1050,10 @@ fn bridge_command(
         "message.retry" => {
             Ok(BridgeCommand::RetryMessage { message_id_hex: text("messageIdHex")?, at_ms: now()? })
         }
-        "message.cancel" => {
-            Ok(BridgeCommand::CancelMessage { message_id_hex: text("messageIdHex")?, at_ms: now()? })
-        }
+        "message.cancel" => Ok(BridgeCommand::CancelMessage {
+            message_id_hex: text("messageIdHex")?,
+            at_ms: now()?,
+        }),
         "message.edit" => Ok(BridgeCommand::EditMessage {
             message_id_hex: text("messageIdHex")?,
             body: text("body")?,

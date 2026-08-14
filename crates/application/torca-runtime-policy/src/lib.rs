@@ -454,11 +454,20 @@ pub struct RuntimeEventHub {
     changed: Condvar,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeEventHubStats {
+    pub waits: u64,
+    pub wakeups: u64,
+    pub timeouts: u64,
+    pub cancellations: u64,
+}
+
 #[derive(Default)]
 struct HubState {
     revision: u64,
     cursor: u64,
     cancelled: HashSet<u64>,
+    stats: RuntimeEventHubStats,
 }
 
 impl Default for RuntimeEventHub {
@@ -487,18 +496,26 @@ impl RuntimeEventHub {
         after_cursor: u64,
         timeout: Duration,
     ) -> Option<(u64, u64)> {
-        let state = self.state.lock().ok()?;
+        let mut state = self.state.lock().ok()?;
+        state.stats.waits = state.stats.waits.saturating_add(1);
         let ready = |state: &HubState| {
             state.revision > after_revision
                 || state.cursor > after_cursor
                 || state.cancelled.contains(&waiter)
         };
-        let (state, _) =
+        let (mut state, _) =
             self.changed.wait_timeout_while(state, timeout, |state| !ready(state)).ok()?;
         if state.cancelled.contains(&waiter) {
+            state.stats.cancellations = state.stats.cancellations.saturating_add(1);
             return None;
         }
-        if ready(&state) { Some((state.revision, state.cursor)) } else { None }
+        if ready(&state) {
+            state.stats.wakeups = state.stats.wakeups.saturating_add(1);
+            Some((state.revision, state.cursor))
+        } else {
+            state.stats.timeouts = state.stats.timeouts.saturating_add(1);
+            None
+        }
     }
 
     /// Cancels a waiter token. Existing waits are woken by publishing.
@@ -512,6 +529,10 @@ impl RuntimeEventHub {
     /// Returns current revision and cursor without waiting.
     pub fn current(&self) -> Option<(u64, u64)> {
         self.state.lock().ok().map(|state| (state.revision, state.cursor))
+    }
+
+    pub fn stats(&self) -> Option<RuntimeEventHubStats> {
+        self.state.lock().ok().map(|state| state.stats)
     }
 }
 
@@ -593,5 +614,17 @@ mod tests {
         hub.cancel(9);
         assert_eq!(hub.wait(9, 0, 0, Duration::ZERO), None);
         assert_eq!(hub.current(), Some((0, 0)));
+    }
+
+    #[test]
+    fn event_hub_stats_count_real_wait_outcomes() {
+        let hub = RuntimeEventHub::default();
+        assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), None);
+        hub.publish(1);
+        assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), Some((1, 1)));
+        let stats = hub.stats().expect("stats");
+        assert_eq!(stats.waits, 2);
+        assert_eq!(stats.timeouts, 1);
+        assert_eq!(stats.wakeups, 1);
     }
 }

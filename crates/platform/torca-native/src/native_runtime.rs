@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::{
+    Arc,
+    mpsc::{self, Receiver, TryRecvError},
+};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{
@@ -7,7 +10,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
-use serde_json::json;
+use serde_json::{Value, json};
 use torca_client_application::{
     ApplicationError, ApplicationReadModels, ClientApplicationRuntime, ContactSecurityState,
 };
@@ -23,6 +26,7 @@ use torca_messaging::MessageDirection;
 use torca_messaging::MessageId;
 use torca_radio_coordinator::SharedRadioCoordinator;
 use torca_runtime::{RuntimeHandle, RuntimeOwner, TorState};
+use torca_runtime_policy::RuntimeEventHub;
 use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
 
 use crate::composition::{NativeCompositionError, spawn_production_engine};
@@ -76,6 +80,7 @@ fn open_startup_logger() -> Option<Logger> {
 
 pub struct TorcaRuntime {
     application_runtime: ClientApplicationRuntime,
+    event_hub: Arc<RuntimeEventHub>,
     actor: Option<ClientEngineActor>,
     host: Option<RuntimeOwner>,
     host_start: Option<Receiver<HostStartEvent>>,
@@ -127,7 +132,7 @@ impl TorcaRuntime {
             .expect("production composition always installs application read-model ports")
     }
 
-    pub(crate) fn new() -> Result<Self, String> {
+    pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         let logger = open_startup_logger();
         let parts = match spawn_production_engine() {
             Ok(parts) => parts,
@@ -164,6 +169,7 @@ impl TorcaRuntime {
             .unwrap_or_default();
         let mut runtime = Self {
             application_runtime,
+            event_hub,
             actor: Some(parts.actor),
             host: None,
             host_start: None,
@@ -778,7 +784,16 @@ impl TorcaRuntime {
     pub(crate) fn diagnostics_json(&mut self) -> i32 {
         match self.application_runtime.diagnostics_json() {
             Ok(diagnostics) => {
-                self.query_json = diagnostics;
+                let mut value = serde_json::from_str::<Value>(&diagnostics)
+                    .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+                if let Some(counters) = value.get_mut("counters").and_then(Value::as_object_mut)
+                    && let Some(stats) = self.event_hub.stats()
+                {
+                    // This is a real count of successful native event waits,
+                    // not an estimate of physical battery consumption.
+                    counters.insert("ffiWakes".into(), Value::from(stats.wakeups));
+                }
+                self.query_json = value.to_string();
                 ABI_OK
             }
             Err(error) => {
