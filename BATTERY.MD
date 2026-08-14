@@ -16,8 +16,8 @@ Last reconciled with the source tree on 2026-08-14.
 | --- | --- | --- |
 | Policy kernel and fake-clock tests | Implemented | `crates/application/torca-runtime-policy` |
 | Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native`; native actor now blocks until a command or the earliest durable pending-operation deadline |
-| Flutter revision waiter | Implemented | event isolate performs an indefinite native wait through `torca_runtime_wait_for_revision`; disposal calls the explicit cancellation ABI, so bootstrap and pending states do not use a timeout poll loop |
-| Android notification waiter | Implemented | foreground service waits for native runtime changes |
+| Flutter revision waiter | Implemented core | event isolate waits for native revisions through `torca_runtime_wait_for_revision`; disposal calls the explicit cancellation ABI. The ABI still has a 30-second safety timeout, but a timeout performs no snapshot/notification query and immediately re-enters the wait |
+| Android notification waiter | Implemented core | foreground service waits for native runtime changes on a dedicated `HandlerThread`; the 30-second ABI safety timeout is only a liveness fallback, not a notification poll interval |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
@@ -35,6 +35,10 @@ path is already event/deadline driven. Event waiting, pairing scheduling,
 demand-created peer reconnects, adaptive runtime waiting, idle radio blocking,
 bounded kernel-blocked peer/radio listeners, onion publisher completion
 wakeups with runtime propagation and demand-woken relay health have landed.
+The revision waiters still use a bounded 30-second safety timeout so a broken
+native handle cannot strand a platform worker forever; this timeout does not
+trigger a snapshot or notification query and is therefore not an idle polling
+loop.
 The remaining work is integration hardening: feature-owned leases, complete
 attention propagation, richer evidence recording, executor-owned relay/radio
 leases and the remaining ledger counters. Arti dormancy remains deliberately
@@ -71,7 +75,8 @@ The plan is intentionally narrowed into three confidence tiers:
 This avoids over-engineering the current system. In particular, a stored
 contact is not a reason to keep a stream open, but the application must remain
 available to inbound traffic in the default `AlwaysAvailable` policy. The
-first release target is therefore **no application-controlled idle work**,
+first release target is therefore **no periodic application-controlled idle
+work** (waiter safety wakeups are allowed, but must not query or mutate state),
 not a dormant Tor process at all costs.
 
 ### Revised decision rules
@@ -507,8 +512,11 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    worker-write counters before attempting Arti dormancy.
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. The native actor also blocks
-   until a command or the earliest durable pending-operation deadline. Keep
-   shutdown, missed-revision and waiter-generation regression tests current.
+   until a command or the earliest durable pending-operation deadline. The
+   platform ABI retains a 30-second safety timeout that only re-enters the
+   wait. Keep shutdown, missed-revision and waiter-generation regression tests
+   current; a true unbounded condvar ABI is optional hardening, not a battery
+   prerequisite.
 4. **Partial:** delivery/control outboxes, Tor lifecycle and lease expiry now
    expose deadlines; the runtime blocks when no deadline exists and wakes on
    peer/radio listener and onion-publisher events. Finish deterministic tests
