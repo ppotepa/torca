@@ -10,8 +10,9 @@ use crate::{application_envelope, application_peer_state, peer_envelope};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_communication_driver::{
     CommunicationError, ControlDeliveryRuntime, InboundEnvelope, InboundMessagingRuntime,
-    PeerConnectionStatus, PeerLinkRuntime, REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND,
-    ReadStateRuntime, TEXT_MESSAGE_KIND, TextDeliveryRuntime, plan_read_receipts,
+    PeerActivityEvidence, PeerConnectionStatus, PeerLinkRuntime, REACTION_MESSAGE_KIND,
+    RECEIPT_MESSAGE_KIND, ReadStateRuntime, TEXT_MESSAGE_KIND, TextDeliveryRuntime,
+    plan_read_receipts,
 };
 use torca_contacts::{
     Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
@@ -86,6 +87,24 @@ where
 
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
         application_peer_state(self.link.connection_state(contact_id))
+    }
+
+    fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
+        self.link
+            .activity()
+            .into_iter()
+            .map(|(contact_id, activity)| PeerActivityEvidence {
+                contact_id,
+                sequence: activity.sequence,
+                tx_frames: activity.tx_frames,
+                rx_frames: activity.rx_frames,
+                tx_acks: activity.tx_acks,
+                rx_acks: activity.rx_acks,
+                handshakes: activity.handshakes,
+                failures: activity.failures,
+                last_activity_at: activity.last_activity_at,
+            })
+            .collect()
     }
 
     fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError> {

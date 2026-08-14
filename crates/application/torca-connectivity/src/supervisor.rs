@@ -4,6 +4,7 @@
 //! previous "spawn a thread per probe" pattern from overlapping abandoned Tor
 //! dials after a timeout or network change.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
@@ -56,6 +57,7 @@ enum Command {
 pub struct RelayHealthHandle {
     state: Arc<RwLock<RelayHealthSnapshot>>,
     commands: SyncSender<Command>,
+    demand: Arc<AtomicBool>,
 }
 
 impl RelayHealthHandle {
@@ -82,7 +84,19 @@ impl RelayHealthHandle {
     /// relay demand. This is intentionally distinct from network_changed in
     /// callers, even though both coalesce into one immediate probe.
     pub fn wake(&self) {
-        let _ = self.commands.try_send(Command::Wake);
+        if self.demand.load(Ordering::Acquire) {
+            let _ = self.commands.try_send(Command::Wake);
+        }
+    }
+
+    /// Enables or disables relay work for the current runtime lease set.
+    /// Disabling does not destroy the last usable snapshot; it only prevents
+    /// another probe/retry until a new lease is acquired.
+    pub fn set_demand(&self, demanded: bool) {
+        self.demand.store(demanded, Ordering::Release);
+        if demanded {
+            let _ = self.commands.try_send(Command::Wake);
+        }
     }
 }
 
@@ -95,6 +109,20 @@ pub struct RelayHealthWorker {
 
 impl RelayHealthWorker {
     pub fn spawn(port: Arc<dyn RelayHealthPort>) -> Result<Self, std::io::Error> {
+        Self::spawn_internal(port, true)
+    }
+
+    /// Creates a supervisor that remains asleep until a relay lease is
+    /// acquired. Production runtime composition uses this variant so a relay
+    /// with no pairing or pending relay work performs zero probes.
+    pub fn spawn_demand_driven(port: Arc<dyn RelayHealthPort>) -> Result<Self, std::io::Error> {
+        Self::spawn_internal(port, false)
+    }
+
+    fn spawn_internal(
+        port: Arc<dyn RelayHealthPort>,
+        initial_demand: bool,
+    ) -> Result<Self, std::io::Error> {
         let state = Arc::new(RwLock::new(RelayHealthSnapshot {
             status: ProbeStatus::Checking,
             diagnostic_code: ErrorCode::new("relay.probe_starting"),
@@ -103,10 +131,12 @@ impl RelayHealthWorker {
             probe_count: 0,
         }));
         let (commands, receiver) = mpsc::sync_channel(1);
-        let handle = RelayHealthHandle { state: Arc::clone(&state), commands };
+        let demand = Arc::new(AtomicBool::new(initial_demand));
+        let handle =
+            RelayHealthHandle { state: Arc::clone(&state), commands, demand: Arc::clone(&demand) };
         let worker = thread::Builder::new()
             .name("torca-relay-health".into())
-            .spawn(move || run(port, state, receiver))?;
+            .spawn(move || run(port, state, receiver, demand, initial_demand))?;
         Ok(Self { handle, worker: Some(worker) })
     }
 
@@ -126,10 +156,12 @@ fn run(
     port: Arc<dyn RelayHealthPort>,
     state: Arc<RwLock<RelayHealthSnapshot>>,
     receiver: Receiver<Command>,
+    demand: Arc<AtomicBool>,
+    initial_demand: bool,
 ) {
     let mut failures = 0_u32;
     let mut probe_count = 0_u64;
-    let mut next_at = Some(Instant::now());
+    let mut next_at = initial_demand.then_some(Instant::now());
     loop {
         let now = Instant::now();
         if let Some(deadline) = next_at.filter(|deadline| now < *deadline) {
@@ -149,6 +181,10 @@ fn run(
                     continue;
                 }
             }
+        }
+        if !demand.load(Ordering::Acquire) {
+            next_at = None;
+            continue;
         }
         // Keep the last usable status while a probe is in flight. Projecting
         // `Checking` on every 15-second refresh made the UI show a false
@@ -287,6 +323,22 @@ mod tests {
         fn check_relay_health(&self) -> Result<(), ErrorCode> {
             self.results.lock().expect("script lock").pop_front().unwrap_or(Ok(()))
         }
+    }
+
+    #[test]
+    fn demand_driven_worker_sleeps_without_lease() {
+        let port = Arc::new(Scripted { results: Mutex::new(VecDeque::from([Ok(())])) });
+        let worker = RelayHealthWorker::spawn_demand_driven(port).expect("spawn worker");
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(worker.handle().snapshot().probe_count, 0);
+
+        worker.handle().set_demand(true);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while worker.handle().snapshot().probe_count == 0 && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert_eq!(worker.handle().snapshot().status, ProbeStatus::Healthy);
+        worker.shutdown();
     }
 
     #[test]

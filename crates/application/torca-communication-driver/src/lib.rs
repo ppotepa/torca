@@ -27,6 +27,7 @@ use torca_foundation::{
 };
 use torca_messaging::Message;
 use torca_receipts::{ReceiptId, ReceiptKind};
+pub use torca_runtime::PeerActivityEvidence;
 pub use torca_runtime::PeerConnectionStatus;
 use torca_runtime::{
     AttachmentExportPort, AttachmentSendRequest, AttachmentTransferPort, AttachmentView,
@@ -221,6 +222,9 @@ pub trait PeerLinkRuntime: Send {
     fn shutdown(&mut self);
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
+    }
+    fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
+        Vec::new()
     }
     fn peer_probe_eligible(&self, _contact_id: ContactId) -> bool {
         true
@@ -651,6 +655,9 @@ impl PeerSessionPort for TorcaCommunicationDriver {
     }
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         self.peer.peer_health(contact_id)
+    }
+    fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
+        self.peer.peer_activity()
     }
     fn peer_probe_eligible(&self, contact_id: ContactId) -> bool {
         self.peer.peer_probe_eligible(contact_id)

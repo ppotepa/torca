@@ -98,6 +98,23 @@ pub struct TransportActivitySnapshot {
     pub sequence: u64,
 }
 
+/// Monotonic, payload-free transport counters exposed by communication
+/// executors. The runtime samples deltas and records them as health evidence;
+/// counters never contain message contents or identifiers.
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PeerActivityEvidence {
+    pub contact_id: ContactId,
+    pub sequence: u64,
+    pub tx_frames: u64,
+    pub rx_frames: u64,
+    pub tx_acks: u64,
+    pub rx_acks: u64,
+    pub handshakes: u64,
+    pub failures: u64,
+    pub last_activity_at: Option<Timestamp>,
+}
+
 #[derive(Default)]
 struct TransportActivityLedger {
     peers: BTreeMap<ContactId, TransportActivitySnapshot>,
@@ -259,6 +276,10 @@ pub trait PeerSessionPort: Send + 'static {
     fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
         PeerHealthSnapshot::from_connection_state(self.connection_state(contact_id))
     }
+    /// Returns monotonic transport activity counters for policy evidence.
+    fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
+        Vec::new()
+    }
     /// Whether this device is the deterministic initiator of the keepalive
     /// for this relationship. The adapter supplies the transport capability;
     /// application owns cadence and retry policy.
@@ -375,6 +396,9 @@ pub trait CommunicationDriver:
     + AttachmentTransferPort
     + AttachmentExportPort
 {
+    fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
+        PeerSessionPort::peer_activity(self)
+    }
     /// Cumulative durable writes reported by worker-owned stores. The runtime
     /// samples this counter and records only the delta in its ledger.
     fn database_write_count(&self) -> u64 {
@@ -734,7 +758,7 @@ impl RuntimeOwner {
     ) -> (RuntimeHandle, Self) {
         let relay_info = relay_probe.clone();
         let relay_worker = relay_probe.and_then(|probe| {
-            RelayHealthWorker::spawn(Arc::new(RuntimeRelayHealthPort(probe)))
+            RelayHealthWorker::spawn_demand_driven(Arc::new(RuntimeRelayHealthPort(probe)))
                 .map_err(|error| {
                     eprintln!("torca-runtime: relay supervisor unavailable: {error}");
                     error
@@ -839,6 +863,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut last_relay_state = None::<(ProbeStatus, ErrorCode)>;
     let mut last_peer_states = BTreeMap::<ContactId, PeerConnectionStatus>::new();
     let mut last_peer_successes = BTreeMap::<ContactId, Option<Timestamp>>::new();
+    let mut last_peer_activity = BTreeMap::<ContactId, PeerActivityEvidence>::new();
     let mut tor_failed = false;
     let mut pairing_failed = false;
     let mut communication_failed = false;
@@ -979,6 +1004,10 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     .collect();
             }
             refresh_contacts = false;
+        }
+        if let Some(relay) = &relay_health {
+            let demanded = policy.has_active_lease(ResourceScope::Relay, std::time::Instant::now());
+            relay.set_demand(demanded);
         }
         let relay_snapshot = relay_health
             .as_ref()
@@ -1132,6 +1161,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         );
         let mut current = BTreeMap::new();
         let mut current_successes = BTreeMap::new();
+        let activity = CommunicationDriver::peer_activity(communication)
+            .into_iter()
+            .map(|evidence| (evidence.contact_id, evidence))
+            .collect::<BTreeMap<_, _>>();
+        let mut current_activity = BTreeMap::new();
         for id in contacts.iter().copied() {
             let state = communication.connection_state(id);
             let previous_state = last_peer_states.get(&id).copied();
@@ -1184,6 +1218,68 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     std::time::Instant::now(),
                 );
             }
+            if let Some(evidence) = activity.get(&id).copied() {
+                let previous = last_peer_activity.get(&id).copied();
+                let tx_changed = evidence.tx_frames > previous.map_or(0, |value| value.tx_frames);
+                let rx_changed = evidence.rx_frames > previous.map_or(0, |value| value.rx_frames);
+                let ack_changed = evidence.tx_acks > previous.map_or(0, |value| value.tx_acks)
+                    || evidence.rx_acks > previous.map_or(0, |value| value.rx_acks);
+                let handshake_changed =
+                    evidence.handshakes > previous.map_or(0, |value| value.handshakes);
+                let failure_changed =
+                    evidence.failures > previous.map_or(0, |value| value.failures);
+                if tx_changed || rx_changed || ack_changed || handshake_changed {
+                    transport_activity.mark_peer(id, now);
+                }
+                let scope = ResourceScope::Peer(id.to_opaque());
+                let policy_now = std::time::Instant::now();
+                if tx_changed {
+                    policy.apply(
+                        PolicyEvent::Evidence {
+                            scope,
+                            kind: torca_runtime_policy::EvidenceKind::Tx,
+                        },
+                        policy_now,
+                    );
+                }
+                if rx_changed {
+                    policy.apply(
+                        PolicyEvent::Evidence {
+                            scope,
+                            kind: torca_runtime_policy::EvidenceKind::Rx,
+                        },
+                        policy_now,
+                    );
+                }
+                if ack_changed {
+                    policy.apply(
+                        PolicyEvent::Evidence {
+                            scope,
+                            kind: torca_runtime_policy::EvidenceKind::Ack,
+                        },
+                        policy_now,
+                    );
+                }
+                if handshake_changed {
+                    policy.apply(
+                        PolicyEvent::Evidence {
+                            scope,
+                            kind: torca_runtime_policy::EvidenceKind::Handshake,
+                        },
+                        policy_now,
+                    );
+                }
+                if failure_changed {
+                    policy.apply(
+                        PolicyEvent::Evidence {
+                            scope,
+                            kind: torca_runtime_policy::EvidenceKind::Failure,
+                        },
+                        policy_now,
+                    );
+                }
+                current_activity.insert(id, evidence);
+            }
             current.insert(id, state);
             connectivity.set_peer_ready(id.to_opaque(), state == PeerConnectionStatus::Ready);
             current_successes.insert(id, health.last_success_at);
@@ -1198,6 +1294,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         });
         last_peer_states = current;
         last_peer_successes = current_successes;
+        last_peer_activity = current_activity;
 
         let lease_delay = policy
             .next_lease_expiry()

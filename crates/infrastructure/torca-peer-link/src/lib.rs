@@ -77,6 +77,22 @@ pub struct PeerLinkReport {
     pub inbound_queued: usize,
 }
 
+/// Cumulative, payload-free transport activity for one relationship.  The
+/// runtime samples the monotonic counters and turns deltas into health
+/// evidence; no message contents or identifiers are retained here.
+#[must_use]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PeerActivitySnapshot {
+    pub sequence: u64,
+    pub tx_frames: u64,
+    pub rx_frames: u64,
+    pub tx_acks: u64,
+    pub rx_acks: u64,
+    pub handshakes: u64,
+    pub failures: u64,
+    pub last_activity_at: Option<Timestamp>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PeerLinkError {
     Listener,
@@ -122,6 +138,7 @@ pub struct PeerLink<S, K> {
     reconnect: BTreeMap<ContactId, ReconnectEntry>,
     pending_acks: BTreeMap<(ContactId, OpaqueId), Result<LinkAck, PeerLinkError>>,
     inbound: VecDeque<InboundPeerEnvelope>,
+    activity: BTreeMap<ContactId, PeerActivitySnapshot>,
     connectivity: Option<ConnectivityObserver>,
 }
 
@@ -150,6 +167,7 @@ where
             reconnect: BTreeMap::new(),
             pending_acks: BTreeMap::new(),
             inbound: VecDeque::new(),
+            activity: BTreeMap::new(),
             connectivity: None,
         }
     }
@@ -174,6 +192,11 @@ where
             return map_state(session.state());
         }
         PeerConnectionState::Disconnected
+    }
+
+    /// Returns monotonic transport counters without exposing payload data.
+    pub fn activity(&self) -> BTreeMap<ContactId, PeerActivitySnapshot> {
+        self.activity.clone()
     }
 
     pub fn is_ready(&self, contact_id: ContactId) -> bool {
@@ -642,7 +665,7 @@ where
     }
 
     fn observe(
-        &self,
+        &mut self,
         contact_id: ContactId,
         direction: Option<TransportDirection>,
         operation: TransportOperation,
@@ -650,6 +673,37 @@ where
         correlation_id: Option<OpaqueId>,
         at: Timestamp,
     ) {
+        let activity = self.activity.entry(contact_id).or_default();
+        let completed = phase == OperationPhase::Completed;
+        if completed {
+            match (direction, operation) {
+                (Some(TransportDirection::Tx), TransportOperation::Envelope) => {
+                    activity.tx_frames = activity.tx_frames.saturating_add(1);
+                }
+                (Some(TransportDirection::Rx), TransportOperation::Envelope) => {
+                    activity.rx_frames = activity.rx_frames.saturating_add(1);
+                }
+                (Some(TransportDirection::Tx), TransportOperation::Ack) => {
+                    activity.tx_acks = activity.tx_acks.saturating_add(1);
+                }
+                (Some(TransportDirection::Rx), TransportOperation::Ack) => {
+                    activity.rx_acks = activity.rx_acks.saturating_add(1);
+                }
+                (Some(TransportDirection::Rx), TransportOperation::Handshake) => {
+                    activity.handshakes = activity.handshakes.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+        if matches!(phase, OperationPhase::Failed | OperationPhase::TimedOut) {
+            activity.failures = activity.failures.saturating_add(1);
+        }
+        if direction.is_some()
+            && (completed || matches!(phase, OperationPhase::Failed | OperationPhase::TimedOut))
+        {
+            activity.last_activity_at = Some(at);
+        }
+        activity.sequence = activity.sequence.saturating_add(1);
         if let Some(observer) = &self.connectivity {
             observer.record(
                 TransportLayer::Peer(Some(contact_id.to_opaque())),
@@ -675,7 +729,7 @@ where
     }
 
     fn observe_send_ack(
-        &self,
+        &mut self,
         contact_id: ContactId,
         envelope_id: OpaqueId,
         result: &Result<(), PeerLinkError>,
@@ -705,6 +759,14 @@ where
                 .is_some_and(|session| session.state() == PeerSessionState::Ready);
             match self.poll_contact(contact_id, now) {
                 Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
+                    self.observe(
+                        contact_id,
+                        Some(TransportDirection::Rx),
+                        TransportOperation::Envelope,
+                        OperationPhase::Completed,
+                        Some(envelope_id),
+                        now,
+                    );
                     self.queue_inbound(InboundPeerEnvelope {
                         contact_id,
                         envelope_id,
@@ -714,6 +776,14 @@ where
                     report.inbound_queued += 1;
                 }
                 Ok(Some(PeerMessage::Ack { envelope_id, status })) => {
+                    self.observe(
+                        contact_id,
+                        Some(TransportDirection::Rx),
+                        TransportOperation::Ack,
+                        OperationPhase::Completed,
+                        Some(envelope_id),
+                        now,
+                    );
                     self.store_pending_ack(contact_id, envelope_id, status);
                 }
                 Ok(_) => {
@@ -741,6 +811,14 @@ where
         for contact_id in incoming_ids {
             match self.poll_contact(contact_id, now) {
                 Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
+                    self.observe(
+                        contact_id,
+                        Some(TransportDirection::Rx),
+                        TransportOperation::Envelope,
+                        OperationPhase::Completed,
+                        Some(envelope_id),
+                        now,
+                    );
                     self.queue_inbound(InboundPeerEnvelope {
                         contact_id,
                         envelope_id,
@@ -750,6 +828,14 @@ where
                     report.inbound_queued += 1;
                 }
                 Ok(Some(PeerMessage::Ack { envelope_id, status })) => {
+                    self.observe(
+                        contact_id,
+                        Some(TransportDirection::Rx),
+                        TransportOperation::Ack,
+                        OperationPhase::Completed,
+                        Some(envelope_id),
+                        now,
+                    );
                     self.store_pending_ack(contact_id, envelope_id, status);
                 }
                 Ok(_) => {}

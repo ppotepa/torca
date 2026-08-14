@@ -20,15 +20,15 @@ Last reconciled with the source tree on 2026-08-14.
 | Android notification waiter | Implemented | foreground service waits indefinitely for native runtime changes on a dedicated `HandlerThread`; `onDestroy()` cancels the native waiter before quitting |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
-| Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
+| Health freshness suppressing some peer probes | Implemented core | `PeerProbeSupervisor` consumes freshness; peer TX/RX/ACK/handshake/failure counters now feed policy evidence, while attachment-specific chunk attribution remains |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation reports up to seven visible contacts, focused conversation routes report on entry and on mobile route return, while focused-contact generation race tests remain |
-| Feature-owned leases | Partial | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; radio enable/transmit commands now create separate radio leases and peer probes honor them; terminal cleanup and full relay/radio executor ownership remain |
+| Feature-owned leases | Partial | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; relay health is now gated by the active relay lease and radio enable/transmit commands create separate radio leases; full radio executor cleanup and route-generation tests remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, radio control/state-sync retry, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources |
-| Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
+| Demand/evidence-driven relay health | Implemented core | production runtime uses a demand-driven supervisor: no initial/healthy probe exists without a relay lease; pairing/network events wake one lane and retry backoff is bounded |
 | Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs and ready-to-disconnected transitions now feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues now expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
-| Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, native event/FFI wakeups, radio listener wakeups, snapshot builds/DB reads, command-induced DB writes, text/control worker job writes, inbound text inserts, attachment metadata and blob writes, actual peer probes and relay probe executions; receipt/reaction projection writes remain |
+| Runtime Energy Ledger | Partial | diagnostics count scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, inbound text, attachment metadata/blob writes, peer and relay probes; transport evidence is policy-visible, while receipt/reaction projection writes and physical TX/RX totals remain |
 
 The current implementation is therefore a transitional state, but its idle
 path is already event/deadline driven. Event waiting, pairing scheduling,
@@ -543,8 +543,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    and ready-to-disconnected transitions now update the policy ledger.
    Integrate more TX/RX/chunk evidence and add a trace proving no wakeup
    occurs while all focused peers remain fresh.
-7. **Partial:** relay healthy heartbeats are removed. Add operation-scoped
-   relay leases and revalidation without blocking local readiness.
+7. **Implemented core:** relay healthy heartbeats and startup probes without
+   demand are removed. The production supervisor sleeps until a relay lease,
+   pairing operation or demanded network change; revalidation remains
+   operation-scoped and never blocks local readiness.
 8. **Partial:** idle radio waits on its command channel and peer/radio
    `PeerListener` accepts on dedicated blocking workers with bounded queues,
    cancellable shutdown and wake propagation. Radio control/state-sync retry

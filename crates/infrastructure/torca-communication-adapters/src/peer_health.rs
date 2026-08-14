@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use crate::{application_envelope, application_peer_state};
 use torca_communication_driver::{
-    CommunicationError, InboundEnvelope, PROBE_MESSAGE_KIND, PeerHealthQuality, PeerHealthSnapshot,
-    PeerLinkRuntime, classify_peer_health,
+    CommunicationError, InboundEnvelope, PROBE_MESSAGE_KIND, PeerActivityEvidence,
+    PeerHealthQuality, PeerHealthSnapshot, PeerLinkRuntime, classify_peer_health,
 };
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
 use torca_foundation::{OpaqueId, Timestamp};
@@ -245,6 +245,24 @@ where
             },
             |entry| entry.snapshot,
         )
+    }
+
+    fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
+        self.link
+            .activity()
+            .into_iter()
+            .map(|(contact_id, activity)| PeerActivityEvidence {
+                contact_id,
+                sequence: activity.sequence,
+                tx_frames: activity.tx_frames,
+                rx_frames: activity.rx_frames,
+                tx_acks: activity.tx_acks,
+                rx_acks: activity.rx_acks,
+                handshakes: activity.handshakes,
+                failures: activity.failures,
+                last_activity_at: activity.last_activity_at,
+            })
+            .collect()
     }
 
     fn peer_probe_eligible(&self, contact_id: ContactId) -> bool {

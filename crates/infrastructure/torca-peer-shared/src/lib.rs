@@ -1,5 +1,6 @@
 //! Shared ownership handle for the single process-owned PeerLink.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -7,7 +8,8 @@ use std::time::{Duration, Instant};
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_peer_link::{
-    InboundPeerEnvelope, LinkAck, PeerConnectionState, PeerLink, PeerLinkError, PeerLinkReport,
+    InboundPeerEnvelope, LinkAck, PeerActivitySnapshot, PeerConnectionState, PeerLink,
+    PeerLinkError, PeerLinkReport,
 };
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 
@@ -51,6 +53,10 @@ where
         self.inner
             .lock()
             .map_or(PeerConnectionState::Failed, |link| link.connection_state(contact_id))
+    }
+
+    pub fn activity(&self) -> BTreeMap<ContactId, PeerActivitySnapshot> {
+        self.inner.lock().map_or_else(|_| BTreeMap::new(), |link| link.activity())
     }
 
     pub fn send_and_wait_ack(
