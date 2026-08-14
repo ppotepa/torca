@@ -1250,6 +1250,16 @@ impl ClientApplicationRuntime {
         }
         Ok(completed)
     }
+
+    /// Returns the next durable operation deadline without loading or running
+    /// the operation. The native actor uses this to block until useful work is
+    /// due instead of waking once per second while the queue is empty.
+    pub fn next_pending_operation_delay(&self) -> Option<std::time::Duration> {
+        let now_ms = current_timestamp().ok()?.to_unix_millis();
+        let next_ms = self.pending.lock().ok()?.next_due_at_ms().ok()??;
+        let delta_ms = next_ms.saturating_sub(now_ms);
+        Some(std::time::Duration::from_millis(u64::try_from(delta_ms).unwrap_or(0)))
+    }
 }
 
 fn step_state(bootstrap: &BootstrapState, id: BootstrapStepId) -> Option<BootstrapStepState> {

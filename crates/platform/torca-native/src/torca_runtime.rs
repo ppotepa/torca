@@ -17,7 +17,6 @@ const STORAGE_EPOCH: u16 = 2;
 const MAILBOX_CAPACITY: usize = 256;
 const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
-const PENDING_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const IDEMPOTENCY_MAX_ENTRIES: usize = 1024;
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(15 * 60);
 const BUILD_ID: &str = match option_env!("TORCA_BUILD_ID") {
@@ -84,7 +83,6 @@ struct ActorState {
     runtime_id: String,
     revision: u64,
     completed: IdempotencyLedger,
-    next_pending_reconcile_at: Instant,
 }
 
 struct CompletedCommand {
@@ -302,7 +300,6 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                         runtime_id,
                         revision: 1,
                         completed: IdempotencyLedger::default(),
-                        next_pending_reconcile_at: Instant::now(),
                     },
                     actor_event_hub,
                 );
@@ -327,16 +324,22 @@ fn actor_loop(
     event_hub: Arc<RuntimeEventHub>,
 ) {
     loop {
-        let message = match receiver.recv_timeout(Duration::from_secs(1)) {
-            Ok(message) => message,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if state.maintain() {
-                    state.revision = state.revision.saturating_add(1);
-                    event_hub.publish(state.revision);
+        let message = match state.next_maintenance_delay() {
+            Some(timeout) => match receiver.recv_timeout(timeout) {
+                Ok(message) => message,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if state.maintain() {
+                        state.revision = state.revision.saturating_add(1);
+                        event_hub.publish(state.revision);
+                    }
+                    continue;
                 }
-                continue;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            },
+            None => match receiver.recv() {
+                Ok(message) => message,
+                Err(_) => break,
+            },
         };
         match message {
             ActorMessage::Invoke { request, response } => {
@@ -405,11 +408,17 @@ fn dispatch_lifecycle(event: &str) -> i32 {
 }
 
 impl ActorState {
+    fn next_maintenance_delay(&self) -> Option<Duration> {
+        self.runtime.next_pending_operation_delay()
+    }
+
     fn maintain(&mut self) -> bool {
-        if Instant::now() < self.next_pending_reconcile_at {
+        let Some(delay) = self.runtime.next_pending_operation_delay() else {
+            return false;
+        };
+        if !delay.is_zero() {
             return false;
         }
-        self.next_pending_reconcile_at = Instant::now() + PENDING_RECONCILE_INTERVAL;
         // This is the sole reconciliation path for pending work. It also
         // refreshes the read model so background completions can wake event
         // consumers without a foreground query.

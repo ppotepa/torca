@@ -538,6 +538,10 @@ impl TorcaRuntime {
         self.snapshot_json != before_snapshot || self.notification_cursor != before_cursor
     }
 
+    pub(crate) fn next_pending_operation_delay(&self) -> Option<std::time::Duration> {
+        self.application_runtime.next_pending_operation_delay()
+    }
+
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
         // The local application runtime is the shell gate. Tor, onion and relay
         // are independently observable capabilities and operation prerequisites.

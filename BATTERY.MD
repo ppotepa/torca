@@ -15,7 +15,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Capability | Status | Current implementation |
 | --- | --- | --- |
 | Policy kernel and fake-clock tests | Implemented | `crates/application/torca-runtime-policy` |
-| Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native` |
+| Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native`; native actor now blocks until a command or the earliest durable pending-operation deadline |
 | Flutter revision waiter | Implemented | event isolate waits through `torca_runtime_wait_for_revision`; bootstrap and pending states no longer use a 250-ms poll loop |
 | Android notification waiter | Implemented | foreground service waits for native runtime changes |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
@@ -23,7 +23,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
 | Feature-owned leases | Partial | focused conversation/radio attention gates peer probes; queued/retried attachments, message delivery and pairing operations now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
-| Central deadline scheduler | Partial | fixed 100-ms tick and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events, onion-publisher callbacks and lease expiry expose wake sources |
+| Central deadline scheduler | Partial | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
@@ -504,8 +504,9 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    scheduler gate. Add radio/FFI/worker-write counters before attempting Arti
    dormancy.
 3. **Implemented core:** Flutter and Android use cancellable native event
-   waiters, including bootstrap/pending states. Add shutdown, missed-revision
-   and waiter-generation regression tests.
+   waiters, including bootstrap/pending states. The native actor also blocks
+   until a command or the earliest durable pending-operation deadline. Keep
+   shutdown, missed-revision and waiter-generation regression tests current.
 4. **Partial:** delivery/control outboxes, Tor lifecycle and lease expiry now
    expose deadlines; the runtime blocks when no deadline exists and wakes on
    peer/radio listener and onion-publisher events. Finish deterministic tests

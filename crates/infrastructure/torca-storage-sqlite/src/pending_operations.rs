@@ -12,6 +12,7 @@ const ENQUEUE_SQL: &str = include_str!("../sql/commands/pending_operation_enqueu
 const COMPLETE_SQL: &str = include_str!("../sql/commands/pending_operation_complete.sql");
 const RESCHEDULE_SQL: &str = include_str!("../sql/commands/pending_operation_reschedule.sql");
 const DUE_SQL: &str = include_str!("../sql/queries/pending_operations_due.sql");
+const NEXT_DUE_SQL: &str = include_str!("../sql/queries/pending_operations_next_due.sql");
 
 #[derive(Debug)]
 pub enum PendingOperationStorageError {
@@ -123,6 +124,13 @@ impl PendingOperationStore for SqlCipherPendingOperationStore {
             })
         })
         .collect()
+    }
+
+    fn next_due_at_ms(&self) -> Result<Option<i64>, PendingOperationStoreError> {
+        self.backend
+            .connection()
+            .query_row(NEXT_DUE_SQL, [], |row| row.get(0))
+            .map_err(|_| PendingOperationStoreError::Unavailable)
     }
 
     fn complete(&mut self, id: OpaqueId) -> Result<(), PendingOperationStoreError> {

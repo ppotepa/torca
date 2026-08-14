@@ -75,6 +75,13 @@ pub trait PendingOperationStore: Send {
         error: &str,
     ) -> Result<(), PendingOperationStoreError>;
 
+    /// Returns the earliest durable retry deadline. `None` means the store is
+    /// empty or the backend cannot expose a deadline; callers must then wait
+    /// for an explicit wake instead of inventing a polling interval.
+    fn next_due_at_ms(&self) -> Result<Option<i64>, PendingOperationStoreError> {
+        Ok(None)
+    }
+
     fn all(&self) -> Result<Vec<PendingOperation>, PendingOperationStoreError> {
         // Keep the projection bounded and representable by every persistence
         // backend. `usize::MAX` cannot be passed to SQLite's signed LIMIT on
@@ -108,6 +115,10 @@ impl PendingOperationStore for InMemoryPendingOperationStore {
             .collect())
     }
 
+    fn next_due_at_ms(&self) -> Result<Option<i64>, PendingOperationStoreError> {
+        Ok(self.operations.values().map(|operation| operation.next_attempt_at_ms).min())
+    }
+
     fn complete(&mut self, id: OpaqueId) -> Result<(), PendingOperationStoreError> {
         self.operations.remove(&id);
         Ok(())
@@ -126,5 +137,38 @@ impl PendingOperationStore for InMemoryPendingOperationStore {
         operation.next_attempt_at_ms = next_attempt_at_ms;
         operation.last_error = Some(error.into());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn operation(id: u128, due: i64) -> PendingOperation {
+        let resource_id = OpaqueId::from_u128(id);
+        let kind = PendingOperationKind::ApprovePairing;
+        PendingOperation {
+            id: pending_operation_id(resource_id, &kind),
+            resource_id,
+            kind,
+            attempts: 0,
+            next_attempt_at_ms: due,
+            created_at_ms: 0,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn next_due_is_empty_without_pending_work() {
+        let store = InMemoryPendingOperationStore::default();
+        assert_eq!(store.next_due_at_ms().expect("deadline"), None);
+    }
+
+    #[test]
+    fn next_due_selects_earliest_retry() {
+        let mut store = InMemoryPendingOperationStore::default();
+        store.enqueue(operation(1, 500)).expect("enqueue");
+        store.enqueue(operation(2, 100)).expect("enqueue");
+        assert_eq!(store.next_due_at_ms().expect("deadline"), Some(100));
     }
 }
