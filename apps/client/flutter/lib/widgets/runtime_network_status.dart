@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
@@ -37,6 +38,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.automaticallyImplyLeading = true,
     this.titleSpacing,
     this.backgroundColor,
+    this.blurBackground = false,
     super.key,
   });
 
@@ -45,6 +47,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool automaticallyImplyLeading;
   final double? titleSpacing;
   final Color? backgroundColor;
+  final bool blurBackground;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -53,27 +56,36 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final scope = RuntimeStatusScope.maybeOf(context);
     if (scope == null) {
-      return AppBar(
-        title: title,
-        titleSpacing: titleSpacing,
-        automaticallyImplyLeading: automaticallyImplyLeading,
-        actions: actions,
-        backgroundColor: backgroundColor,
-      );
+      return _buildAppBar(context, actions);
     }
     final gateway = scope.gateway;
     return ValueListenableBuilder<AppSnapshotDto>(
       valueListenable: gateway.snapshots,
-      builder: (context, snapshot, _) => AppBar(
-        title: title,
-        titleSpacing: titleSpacing,
-        automaticallyImplyLeading: automaticallyImplyLeading,
-        backgroundColor: backgroundColor,
-        actions: <Widget>[
-          RuntimeNetworkStatus(snapshot: snapshot),
-          ...actions,
-        ],
-      ),
+      builder: (context, snapshot, _) => _buildAppBar(context, <Widget>[
+        RuntimeNetworkStatus(snapshot: snapshot),
+        ...actions,
+      ]),
+    );
+  }
+
+  AppBar _buildAppBar(BuildContext context, List<Widget> resolvedActions) {
+    final fill =
+        backgroundColor ??
+        Theme.of(context).colorScheme.surface.withValues(alpha: 0.90);
+    return AppBar(
+      title: title,
+      titleSpacing: titleSpacing,
+      automaticallyImplyLeading: automaticallyImplyLeading,
+      actions: resolvedActions,
+      backgroundColor: blurBackground ? Colors.transparent : backgroundColor,
+      flexibleSpace: blurBackground
+          ? ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                child: ColoredBox(color: fill),
+              ),
+            )
+          : null,
     );
   }
 }

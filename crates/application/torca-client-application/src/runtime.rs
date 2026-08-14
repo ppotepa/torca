@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use base64::Engine as _;
+
 use torca_attachments::AttachmentId;
 use torca_bootstrap::{BootstrapSnapshot, BootstrapState, BootstrapStepId, BootstrapStepState};
 use torca_contacts::ContactId;
@@ -24,6 +26,48 @@ use crate::{
     PendingOperationStore, RuntimeDriverError, RuntimeHandle, TorState, pending_operation_id,
 };
 
+fn parse_avatar_envelope(json: &str) -> Result<torca_client_engine::AvatarGenomeRecord, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|_| "invalid avatar envelope".to_owned())?;
+    let encoded = value
+        .get("compressedGenome")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "avatar envelope payload missing".to_owned())?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| "avatar envelope payload is not valid base64".to_owned())?;
+    if bytes.is_empty() || bytes.len() > 32 * 1024 {
+        return Err("avatar envelope payload exceeds 32 KiB".into());
+    }
+    let hash_hex = value
+        .get("genomeHash")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "avatar genome hash missing".to_owned())?;
+    if hash_hex.len() != 64 {
+        return Err("avatar genome hash has invalid length".into());
+    }
+    let mut hash = [0_u8; 32];
+    for (index, chunk) in hash_hex.as_bytes().chunks_exact(2).enumerate() {
+        hash[index] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap_or("00"), 16)
+            .map_err(|_| "avatar genome hash is not hexadecimal".to_owned())?;
+    }
+    Ok(torca_client_engine::AvatarGenomeRecord {
+        genome_hash: hash,
+        schema_version: value.get("schema").and_then(serde_json::Value::as_u64).unwrap_or(1) as u8,
+        generator_version: value
+            .get("generatorVersion")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        catalog_version: value
+            .get("catalogVersion")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        compressed_genome: bytes,
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApplicationCommand {
     SetAttention {
@@ -38,6 +82,7 @@ pub enum ApplicationCommand {
     AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
+        avatar_envelope_json: Option<String>,
         at_ms: i64,
     },
     CreatePairing {
@@ -223,6 +268,33 @@ pub struct ClientApplicationRuntime {
 }
 
 impl ClientApplicationRuntime {
+    /// Returns the local content-addressed avatar envelope for an explicit
+    /// targeted query. The regular snapshot never contains the compressed
+    /// genome payload.
+    pub fn avatar_genome_json(&self, identity_id: Option<&str>) -> Result<String, EngineError> {
+        let record = if let Some(identity_id) = identity_id.filter(|value| !value.is_empty()) {
+            let opaque = identity_id
+                .parse::<OpaqueId>()
+                .map_err(|_| EngineError("avatar identity is invalid".into()))?;
+            self.application
+                .avatar_genome_for_identity(IdentityId::from_opaque(opaque))?
+                .ok_or_else(|| EngineError("contact avatar genome is unavailable".into()))?
+        } else {
+            self.application
+                .overview()?
+                .avatar_genome
+                .ok_or_else(|| EngineError("local avatar genome is not initialized".into()))?
+        };
+        use base64::Engine as _;
+        Ok(serde_json::json!({
+            "schema": record.schema_version,
+            "generatorVersion": record.generator_version,
+            "catalogVersion": record.catalog_version,
+            "genomeHash": record.genome_hash.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+            "compressedGenome": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(record.compressed_genome),
+        }).to_string())
+    }
+
     pub fn new(application: ClientApplicationHandle) -> Self {
         Self {
             application,
@@ -543,12 +615,19 @@ impl ClientApplicationRuntime {
             ApplicationCommand::SetNotifications { .. } => "notifications_updated",
             ApplicationCommand::SetReadReceipts { .. } => "read_receipts_updated",
             ApplicationCommand::AcknowledgeNewContacts => "contacts_acknowledged",
-            ApplicationCommand::UpdateProfile { display_name, at_ms } => {
+            ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
                 let display_name = ProfileName::new(display_name).map_err(string_error)?;
                 let value = self
                     .application
                     .dispatch(EngineCommand::UpdateProfile { display_name, at: timestamp(at_ms)? })
                     .map_err(string_error)?;
+                if let Some(json) = avatar_envelope_json {
+                    let record = parse_avatar_envelope(&json).map_err(string_error)?;
+                    let _ = self
+                        .application
+                        .dispatch(EngineCommand::SetAvatarGenome { record, at: timestamp(at_ms)? })
+                        .map_err(string_error)?;
+                }
                 result_kind(&value)
             }
             ApplicationCommand::CreatePairing { session_id } => {

@@ -112,12 +112,10 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
     final progress =
         projectedSteps.fold<int>(0, (sum, step) => sum + step.progress) /
         (steps.length * 100);
-    final active = projectedSteps.where(
-      (step) =>
-          step.typedState == BootstrapStepState.running ||
-          step.typedState == BootstrapStepState.verifying,
-    );
-    final elapsed = active.isEmpty ? _elapsed : _elapsedFor(active.first);
+    // The headline clock measures the complete warm-up and must not reset
+    // when Tor or onion publication starts another attempt. Individual step
+    // clocks below intentionally use each step's startedAtMs.
+    final elapsed = _elapsed;
     final restartRequired = projectedSteps.any(
       (step) =>
           step.code == 'TOR_RESTART_REQUIRED' ||
@@ -148,15 +146,17 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
-                                TorcaAvatar(
+                                TorcaDeviceAvatar(
                                   label: 'Identity',
+                                  identityId: widget.snapshot.identity?.id,
+                                  stableDevice: true,
+                                  presentation:
+                                      const AvatarActivityPresentation(
+                                        AvatarAnimationState.happy,
+                                      ),
                                   size: 60,
                                   backgroundColor: color.primaryContainer,
                                   foregroundColor: color.onPrimaryContainer,
-                                  child: Icon(
-                                    context.torcaIcons.identity,
-                                    size: 32,
-                                  ),
                                 ),
                                 const SizedBox(height: 16),
                                 Text(

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.view.WindowManager
@@ -20,6 +21,7 @@ class MainActivity : FlutterActivity() {
     private var notificationChannel: MethodChannel? = null
     private var mediaChannel: MethodChannel? = null
     private var audioChannel: MethodChannel? = null
+    private var deviceChannel: MethodChannel? = null
     private var microphonePermissionResult: MethodChannel.Result? = null
     private var pendingConversationId: String? = null
 
@@ -121,12 +123,29 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+        deviceChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "torca/device",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "stableDeviceId" -> result.success(
+                        Settings.Secure.getString(
+                            applicationContext.contentResolver,
+                            Settings.Secure.ANDROID_ID,
+                        ),
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+        }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         notificationChannel?.setMethodCallHandler(null)
         mediaChannel?.setMethodCallHandler(null)
         audioChannel?.setMethodCallHandler(null)
+        deviceChannel?.setMethodCallHandler(null)
         microphonePermissionResult?.error(
             "activity_destroyed",
             "The microphone permission request was interrupted.",
@@ -136,6 +155,7 @@ class MainActivity : FlutterActivity() {
         notificationChannel = null
         mediaChannel = null
         audioChannel = null
+        deviceChannel = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

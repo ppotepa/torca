@@ -13,6 +13,11 @@ SELECT
     remote_key_generation,
     remote_display_name,
     remote_onion_address,
-    remote_capability_id
+    remote_capability_id,
+    remote_avatar_schema,
+    remote_avatar_generator_version,
+    remote_avatar_catalog_version,
+    remote_avatar_hash,
+    remote_avatar_payload
 FROM pairing_sessions
 ORDER BY session_id;

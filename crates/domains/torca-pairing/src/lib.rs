@@ -116,6 +116,18 @@ pub struct PeerProposal {
     pub public_identity: PublicIdentity,
     pub display_name: String,
     pub route: ContactRoute,
+    /// Opaque, content-addressed avatar genome carried by the signed offer.
+    pub avatar: Option<AvatarGenomeReference>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AvatarGenomeReference {
+    pub schema_version: u8,
+    pub generator_version: String,
+    pub catalog_version: String,
+    pub genome_hash: [u8; 32],
+    pub compressed_genome: Vec<u8>,
 }
 
 /// Pairing session aggregate.

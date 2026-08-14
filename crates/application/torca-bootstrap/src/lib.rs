@@ -217,14 +217,6 @@ impl BootstrapState {
             .steps
             .get(&BootstrapStepId::OnionService)
             .is_some_and(|s| s.state == BootstrapStepState::Ready);
-        let relay_finished = self.steps.get(&BootstrapStepId::Relay).is_some_and(|s| {
-            matches!(
-                s.state,
-                BootstrapStepState::Ready
-                    | BootstrapStepState::Degraded
-                    | BootstrapStepState::Failed
-            )
-        });
         let profile_ready = self
             .steps
             .get(&BootstrapStepId::UserProfile)
@@ -237,7 +229,12 @@ impl BootstrapState {
                 BootstrapPhase::Failed
             } else if profile_ready {
                 BootstrapPhase::Ready
-            } else if identity_ready && transport_ready && relay_finished {
+            // Relay is a recoverable, demand-driven capability. Requiring its
+            // first probe here creates a circular dependency: the relay worker
+            // sleeps until pairing demand exists, while pairing UI is hidden
+            // until this phase completes. Local identity + reachable onion are
+            // sufficient to expose profile setup and the application shell.
+            } else if identity_ready && transport_ready {
                 BootstrapPhase::ReadyForProfile
             } else if relay_degraded {
                 BootstrapPhase::Degraded
@@ -317,5 +314,26 @@ mod tests {
                 .map(|step| step.state),
             Some(BootstrapStepState::Degraded)
         );
+    }
+
+    #[test]
+    fn checking_relay_does_not_deadlock_profile_setup() {
+        let mut state = BootstrapState::new();
+        for step in [
+            BootstrapStepId::Preferences,
+            BootstrapStepId::NativeBridge,
+            BootstrapStepId::Contract,
+            BootstrapStepId::SecureStorage,
+            BootstrapStepId::Database,
+            BootstrapStepId::DeviceIdentity,
+            BootstrapStepId::Tor,
+            BootstrapStepId::OnionService,
+        ] {
+            state.complete(step);
+        }
+        state.begin(BootstrapStepId::Relay);
+        state.verify(BootstrapStepId::Relay);
+
+        assert_eq!(state.snapshot().phase, BootstrapPhase::ReadyForProfile);
     }
 }

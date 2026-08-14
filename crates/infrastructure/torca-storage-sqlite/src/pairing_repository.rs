@@ -7,8 +7,8 @@ use torca_contacts::ContactRoute;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_identity::{IdentityId, IdentityKey, KeyAlgorithm, KeyId, PublicIdentity};
 use torca_pairing::{
-    PairingCode, PairingError, PairingRepository, PairingRole, PairingSession, PairingSessionId,
-    PairingState, PeerProposal,
+    AvatarGenomeReference, PairingCode, PairingError, PairingRepository, PairingRole,
+    PairingSession, PairingSessionId, PairingState, PeerProposal,
 };
 
 use crate::{DatabaseKey, SqlCipherBackend, StorageKernel};
@@ -65,6 +65,11 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_display_name,
                     values.remote_onion_address,
                     values.remote_capability_id,
+                    values.remote_avatar_schema,
+                    values.remote_avatar_generator_version,
+                    values.remote_avatar_catalog_version,
+                    values.remote_avatar_hash,
+                    values.remote_avatar_payload,
                 ],
             )
             .map_err(|error| {
@@ -106,6 +111,11 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_display_name,
                     values.remote_onion_address,
                     values.remote_capability_id,
+                    values.remote_avatar_schema,
+                    values.remote_avatar_generator_version,
+                    values.remote_avatar_catalog_version,
+                    values.remote_avatar_hash,
+                    values.remote_avatar_payload,
                 ],
             )
             .map_err(|_| PairingError::Storage)?;
@@ -147,6 +157,11 @@ struct Encoded {
     remote_display_name: Option<String>,
     remote_onion_address: Option<String>,
     remote_capability_id: Option<Vec<u8>>,
+    remote_avatar_schema: Option<i64>,
+    remote_avatar_generator_version: Option<String>,
+    remote_avatar_catalog_version: Option<String>,
+    remote_avatar_hash: Option<Vec<u8>>,
+    remote_avatar_payload: Option<Vec<u8>>,
 }
 
 fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
@@ -160,10 +175,32 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_display_name,
         remote_onion_address,
         remote_capability_id,
+        remote_avatar_schema,
+        remote_avatar_generator_version,
+        remote_avatar_catalog_version,
+        remote_avatar_hash,
+        remote_avatar_payload,
     ) = if let Some(proposal) = proposal {
         let key_algorithm = match proposal.public_identity.key().algorithm() {
             KeyAlgorithm::Ed25519 => 0,
         };
+        let avatar = proposal
+            .avatar
+            .as_ref()
+            .map(|avatar| {
+                if avatar.compressed_genome.len() > 32 * 1024 {
+                    return Err(PairingError::Storage);
+                }
+                Ok((
+                    Some(i64::from(avatar.schema_version)),
+                    Some(avatar.generator_version.clone()),
+                    Some(avatar.catalog_version.clone()),
+                    Some(avatar.genome_hash.to_vec()),
+                    Some(avatar.compressed_genome.clone()),
+                ))
+            })
+            .transpose()?
+            .unwrap_or((None, None, None, None, None));
         (
             Some(proposal.public_identity.identity_id().to_opaque().into_bytes().to_vec()),
             Some(proposal.public_identity.key().key_id().to_opaque().into_bytes().to_vec()),
@@ -173,9 +210,14 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
             Some(proposal.display_name.clone()),
             Some(proposal.route.onion_address().to_owned()),
             Some(proposal.route.capability_id().into_bytes().to_vec()),
+            avatar.0,
+            avatar.1,
+            avatar.2,
+            avatar.3,
+            avatar.4,
         )
     } else {
-        (None, None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None, None, None, None, None)
     };
     Ok(Encoded {
         id: session.id().to_opaque().into_bytes().to_vec(),
@@ -193,6 +235,11 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_display_name,
         remote_onion_address,
         remote_capability_id,
+        remote_avatar_schema,
+        remote_avatar_generator_version,
+        remote_avatar_catalog_version,
+        remote_avatar_hash,
+        remote_avatar_payload,
     })
 }
 
@@ -215,6 +262,11 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
         row.get::<_, Option<String>>(12)?,
         row.get::<_, Option<String>>(13)?,
         row.get::<_, Option<Vec<u8>>>(14)?,
+        row.get::<_, Option<i64>>(15)?,
+        row.get::<_, Option<String>>(16)?,
+        row.get::<_, Option<String>>(17)?,
+        row.get::<_, Option<Vec<u8>>>(18)?,
+        row.get::<_, Option<Vec<u8>>>(19)?,
     ) {
         (
             Some(identity_id),
@@ -225,6 +277,11 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
             display_name,
             Some(onion),
             Some(capability),
+            avatar_schema,
+            avatar_generator_version,
+            avatar_catalog_version,
+            avatar_hash,
+            avatar_payload,
         ) => {
             let algorithm = match algorithm {
                 0 => KeyAlgorithm::Ed25519,
@@ -242,13 +299,47 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
             );
             let route = ContactRoute::new(onion, OpaqueId::from_bytes(blob16(capability)?))
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let avatar = match (
+                avatar_schema,
+                avatar_generator_version,
+                avatar_catalog_version,
+                avatar_hash,
+                avatar_payload,
+            ) {
+                (None, None, None, None, None) => None,
+                (
+                    Some(schema),
+                    Some(generator_version),
+                    Some(catalog_version),
+                    Some(hash),
+                    Some(payload),
+                ) => {
+                    if !(0..=u8::MAX as i64).contains(&schema)
+                        || hash.len() != 32
+                        || payload.len() > 32 * 1024
+                    {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
+                    let mut genome_hash = [0_u8; 32];
+                    genome_hash.copy_from_slice(&hash);
+                    Some(AvatarGenomeReference {
+                        schema_version: schema as u8,
+                        generator_version,
+                        catalog_version,
+                        genome_hash,
+                        compressed_genome: payload,
+                    })
+                }
+                _ => return Err(rusqlite::Error::InvalidQuery),
+            };
             Some(PeerProposal {
                 public_identity: identity,
                 display_name: display_name.unwrap_or_else(|| "New device".to_owned()),
                 route,
+                avatar,
             })
         }
-        (None, None, None, None, None, None, None, None) => None,
+        (None, None, None, None, None, None, None, None, None, None, None, None, None) => None,
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     PairingSession::restore(
@@ -349,6 +440,7 @@ mod tests {
             display_name: "Remote Alice".to_owned(),
             route: ContactRoute::new("a".repeat(56) + ".onion", OpaqueId::from_u128(13))
                 .expect("route"),
+            avatar: None,
         };
         let session = PairingSession::joiner(
             PairingSessionId::from_u128(14),
@@ -362,6 +454,49 @@ mod tests {
         }
         let repository = SqlCipherPairingRepository::open(&path, &key).expect("reopen");
         assert_eq!(repository.get(session.id()).expect("load"), Some(session));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pairing_avatar_round_trips_as_opaque_payload() {
+        let path =
+            std::env::temp_dir().join(format!("torca-pairing-avatar-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let key = DatabaseKey::new([9_u8; 32]);
+        let proposal = PeerProposal {
+            public_identity: PublicIdentity::new(
+                IdentityId::from_u128(21),
+                IdentityKey::new(KeyId::from_u128(22), KeyAlgorithm::Ed25519, vec![4; 32])
+                    .expect("public key"),
+                1,
+            ),
+            display_name: "Avatar Alice".to_owned(),
+            route: ContactRoute::new("b".repeat(56) + ".onion", OpaqueId::from_u128(23))
+                .expect("route"),
+            avatar: Some(AvatarGenomeReference {
+                schema_version: 1,
+                generator_version: "gen-v1".to_owned(),
+                catalog_version: "catalog-v1".to_owned(),
+                genome_hash: [5_u8; 32],
+                compressed_genome: vec![6, 7, 8],
+            }),
+        };
+        let session = PairingSession::joiner(
+            PairingSessionId::from_u128(24),
+            PairingCode::new("AVT123").expect("code"),
+            Timestamp::from_unix_millis(20_000).expect("timestamp"),
+            proposal,
+        );
+        {
+            let mut repository = SqlCipherPairingRepository::open(&path, &key).expect("open");
+            repository.insert(session.clone()).expect("insert");
+        }
+        let repository = SqlCipherPairingRepository::open(&path, &key).expect("reopen");
+        let loaded = repository.get(session.id()).expect("load").expect("session");
+        let avatar =
+            loaded.remote_proposal().and_then(|proposal| proposal.avatar.as_ref()).expect("avatar");
+        assert_eq!(avatar.generator_version, "gen-v1");
+        assert_eq!(avatar.compressed_genome, [6, 7, 8]);
         let _ = std::fs::remove_file(path);
     }
 }

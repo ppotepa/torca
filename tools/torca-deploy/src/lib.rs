@@ -13,6 +13,7 @@ pub mod domain;
 pub mod executor;
 pub mod install;
 pub mod launch;
+pub mod manifests;
 pub mod paths;
 pub mod persistence;
 pub mod planner;

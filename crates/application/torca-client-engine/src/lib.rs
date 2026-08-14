@@ -45,6 +45,11 @@ pub enum EngineCommand {
         display_name: ProfileName,
         at: Timestamp,
     },
+    /// Stores the immutable, content-addressed avatar genome for this device.
+    SetAvatarGenome {
+        record: AvatarGenomeRecord,
+        at: Timestamp,
+    },
     StartPairing {
         session_id: PairingSessionId,
         code: PairingCode,
@@ -175,6 +180,18 @@ pub struct ClientSnapshot {
     pub conversations: Vec<DirectConversation>,
     pub messages: Vec<Message>,
     pub reactions: Vec<MessageReaction>,
+    /// Content-addressed local avatar genome; never contains rendered pixels.
+    pub avatar_genome: Option<AvatarGenomeRecord>,
+}
+
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AvatarGenomeRecord {
+    pub genome_hash: [u8; 32],
+    pub schema_version: u8,
+    pub generator_version: String,
+    pub catalog_version: String,
+    pub compressed_genome: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -199,12 +216,28 @@ impl ClassifiedError for EngineError {
 pub trait RelationshipRepository:
     ContactRepository + ConversationRepository + PeerCredentialRepository
 {
+    fn upsert_avatar_genome(
+        &mut self,
+        record: AvatarGenomeRecord,
+        at: Timestamp,
+    ) -> Result<(), EngineError>;
+    fn avatar_genome(&self, hash: [u8; 32]) -> Result<Option<AvatarGenomeRecord>, EngineError>;
+    fn avatar_genome_for_identity(
+        &self,
+        _identity_id: IdentityId,
+    ) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        Ok(None)
+    }
+    fn local_avatar_genome(&self) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        Ok(None)
+    }
     fn insert_pairing_result(
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
         display_name: &str,
         credential: PeerCredential,
+        avatar: Option<AvatarGenomeRecord>,
         at: Timestamp,
     ) -> Result<(), EngineError>;
     /// Clears one complete local relationship from this repository.
@@ -216,6 +249,9 @@ pub struct InMemoryRelationshipRepository {
     contacts: InMemoryContactRepository,
     conversations: InMemoryConversationRepository,
     credentials: InMemoryPeerCredentialRepository,
+    avatar_genomes: Vec<AvatarGenomeRecord>,
+    local_avatar_hash: Option<[u8; 32]>,
+    identity_avatars: Vec<(IdentityId, [u8; 32])>,
 }
 
 impl ContactRepository for InMemoryRelationshipRepository {
@@ -264,12 +300,51 @@ impl PeerCredentialRepository for InMemoryRelationshipRepository {
     }
 }
 impl RelationshipRepository for InMemoryRelationshipRepository {
+    fn upsert_avatar_genome(
+        &mut self,
+        record: AvatarGenomeRecord,
+        _at: Timestamp,
+    ) -> Result<(), EngineError> {
+        self.local_avatar_hash = Some(record.genome_hash);
+        if let Some(existing) = self
+            .avatar_genomes
+            .iter_mut()
+            .find(|existing| existing.genome_hash == record.genome_hash)
+        {
+            *existing = record;
+        } else {
+            self.avatar_genomes.push(record);
+        }
+        Ok(())
+    }
+
+    fn avatar_genome(&self, hash: [u8; 32]) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        Ok(self.avatar_genomes.iter().find(|record| record.genome_hash == hash).cloned())
+    }
+
+    fn avatar_genome_for_identity(
+        &self,
+        identity_id: IdentityId,
+    ) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        let Some((_, hash)) =
+            self.identity_avatars.iter().find(|(candidate, _)| *candidate == identity_id)
+        else {
+            return Ok(None);
+        };
+        self.avatar_genome(*hash)
+    }
+
+    fn local_avatar_genome(&self) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        self.local_avatar_hash.map_or(Ok(None), |hash| self.avatar_genome(hash))
+    }
+
     fn insert_pairing_result(
         &mut self,
         contact: Contact,
         conversation: DirectConversation,
         _display_name: &str,
         credential: PeerCredential,
+        avatar: Option<AvatarGenomeRecord>,
         _at: Timestamp,
     ) -> Result<(), EngineError> {
         if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
@@ -287,12 +362,25 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
         let mut contacts = self.contacts.clone();
         let mut conversations = self.conversations.clone();
         let mut credentials = self.credentials.clone();
+        let remote_identity_id = contact.remote_identity().identity_id();
         contacts.insert(contact).map_err(map_error)?;
         conversations.insert(conversation).map_err(map_error)?;
         credentials.insert_credential(credential).map_err(map_error)?;
         self.contacts = contacts;
         self.conversations = conversations;
         self.credentials = credentials;
+        if let Some(avatar) = avatar {
+            let hash = avatar.genome_hash;
+            if let Some(existing) =
+                self.avatar_genomes.iter_mut().find(|existing| existing.genome_hash == hash)
+            {
+                *existing = avatar;
+            } else {
+                self.avatar_genomes.push(avatar);
+            }
+            self.identity_avatars.retain(|(identity, _)| *identity != remote_identity_id);
+            self.identity_avatars.push((remote_identity_id, hash));
+        }
         Ok(())
     }
 
@@ -394,6 +482,10 @@ where
                     .map_err(map_error)?;
                 Ok(EngineResult::ProfileUpdated)
             }
+            EngineCommand::SetAvatarGenome { record, at } => {
+                self.relationships.upsert_avatar_genome(record, at)?;
+                Ok(EngineResult::ProfileUpdated)
+            }
             EngineCommand::StartPairing { session_id, code, expires_at } => {
                 self.pairings
                     .insert(PairingSession::creator(session_id, code, expires_at))
@@ -490,6 +582,13 @@ where
                 }
                 let mut session = self.load_pairing(session_id)?;
                 let proposal = session.complete(at).map_err(map_error)?;
+                let avatar = proposal.avatar.as_ref().map(|avatar| AvatarGenomeRecord {
+                    genome_hash: avatar.genome_hash,
+                    schema_version: avatar.schema_version,
+                    generator_version: avatar.generator_version.clone(),
+                    catalog_version: avatar.catalog_version.clone(),
+                    compressed_genome: avatar.compressed_genome.clone(),
+                });
                 let contact =
                     Contact::new(contact_id, proposal.public_identity, proposal.route, at);
                 let conversation = DirectConversation::new(conversation_id, contact_id, at);
@@ -498,6 +597,7 @@ where
                     conversation,
                     &display_name,
                     credential,
+                    avatar,
                     at,
                 )?;
                 let _ = self.pairings.update(session);
@@ -666,6 +766,7 @@ where
             conversations,
             messages: Vec::new(),
             reactions,
+            avatar_genome: self.relationships.local_avatar_genome().map_err(map_error)?,
         })
     }
 
@@ -690,6 +791,10 @@ pub trait EngineRuntime: Send + 'static {
     fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         self.snapshot()
     }
+    fn avatar_genome_for_identity(
+        &self,
+        identity_id: IdentityId,
+    ) -> Result<Option<AvatarGenomeRecord>, EngineError>;
 }
 
 impl<I, K, P, L, M, R> EngineRuntime for ClientEngine<I, K, P, L, M, R>
@@ -710,6 +815,12 @@ where
     fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         ClientEngine::overview_snapshot(self)
     }
+    fn avatar_genome_for_identity(
+        &self,
+        identity_id: IdentityId,
+    ) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        self.relationships.avatar_genome_for_identity(identity_id)
+    }
 }
 
 fn map_error(error: impl fmt::Display) -> EngineError {
@@ -720,6 +831,7 @@ enum ActorRequest {
     Dispatch(EngineCommand, Sender<Result<EngineResult, EngineError>>),
     Snapshot(Sender<Result<ClientSnapshot, EngineError>>),
     OverviewSnapshot(Sender<Result<ClientSnapshot, EngineError>>),
+    AvatarGenomeForIdentity(IdentityId, Sender<Result<Option<AvatarGenomeRecord>, EngineError>>),
     Shutdown,
 }
 
@@ -749,6 +861,19 @@ impl EngineHandle {
         receiver
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| EngineError("engine overview timed out".into()))?
+    }
+    pub fn avatar_genome_for_identity(
+        &self,
+        identity_id: IdentityId,
+    ) -> Result<Option<AvatarGenomeRecord>, EngineError> {
+        let (sender, receiver) = mpsc::channel();
+        send_with_timeout(
+            &self.sender,
+            ActorRequest::AvatarGenomeForIdentity(identity_id, sender),
+        )?;
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| EngineError("avatar genome query timed out".into()))?
     }
 
     /// Cumulative successful receipt/reaction projection commands. This is a
@@ -796,6 +921,9 @@ impl ClientEngineActor {
                     }
                     ActorRequest::OverviewSnapshot(response) => {
                         let _ = response.send(engine.overview_snapshot());
+                    }
+                    ActorRequest::AvatarGenomeForIdentity(identity_id, response) => {
+                        let _ = response.send(engine.avatar_genome_for_identity(identity_id));
                     }
                     ActorRequest::Shutdown => break,
                 }

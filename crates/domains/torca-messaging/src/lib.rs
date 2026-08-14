@@ -124,12 +124,24 @@ impl MessageReaction {
         }
         Ok(Self { message_id, conversation_id, actor_id, emoji, active, updated_at })
     }
-    pub const fn message_id(&self) -> MessageId { self.message_id }
-    pub const fn conversation_id(&self) -> ConversationId { self.conversation_id }
-    pub const fn actor_id(&self) -> OpaqueId { self.actor_id }
-    pub fn emoji(&self) -> &str { &self.emoji }
-    pub const fn active(&self) -> bool { self.active }
-    pub const fn updated_at(&self) -> Timestamp { self.updated_at }
+    pub const fn message_id(&self) -> MessageId {
+        self.message_id
+    }
+    pub const fn conversation_id(&self) -> ConversationId {
+        self.conversation_id
+    }
+    pub const fn actor_id(&self) -> OpaqueId {
+        self.actor_id
+    }
+    pub fn emoji(&self) -> &str {
+        &self.emoji
+    }
+    pub const fn active(&self) -> bool {
+        self.active
+    }
+    pub const fn updated_at(&self) -> Timestamp {
+        self.updated_at
+    }
 }
 /// One local delivery attempt.
 #[must_use]

@@ -128,6 +128,103 @@ void main() {
     expect(find.byType(Switch), findsNothing);
   });
 
+  testWidgets(
+    'conversation header surface stays readable over scrolled content',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          home: const Scaffold(
+            body: ConversationHeaderSurface(
+              child: SizedBox(height: 48, child: Text('Alice')),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      final decoration = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byType(ConversationHeaderSurface),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      expect(
+        (decoration.decoration as BoxDecoration).color?.a,
+        greaterThan(0.85),
+      );
+    },
+  );
+
+  testWidgets('desktop conversation header uses one aligned text lane', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ConversationHeader(
+            contact: _contact,
+            onConnectionDetails: () {},
+          ),
+        ),
+      ),
+    );
+
+    final header = find.byType(ConversationHeader);
+    expect(
+      find.descendant(of: header, matching: find.byType(Expanded)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: header, matching: find.byType(Spacer)),
+      findsNothing,
+    );
+  });
+
+  testWidgets('walkie-talkie status bar turns red for TX and RX', (
+    tester,
+  ) async {
+    for (final state in <String>['transmitting', 'receiving']) {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: RadioConversationStatus(
+              contact: _contact,
+              radio: const RadioContactDto(
+                contactId: _contactId,
+                localEnabled: true,
+                remoteState: 'enabled',
+                state: 'ready',
+                changedAtMs: 1,
+              ),
+              session: RadioSessionDto(
+                contactId: _contactId,
+                sessionId: 'radio-session',
+                state: state,
+                floor: state == 'transmitting' ? 'local' : 'remote',
+                burstElapsedMs: 100,
+                maxBurstMs: 10000,
+              ),
+              timeline: const <RadioTimelineEventDto>[],
+            ),
+          ),
+        ),
+      );
+      final context = tester.element(find.byType(RadioConversationStatus));
+      final status = tester.widget<Container>(
+        find
+            .descendant(
+              of: find.byType(RadioConversationStatus),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      expect(status.color, Theme.of(context).colorScheme.errorContainer);
+    }
+  });
+
   testWidgets('PTT sends begin while held and end on pointer release', (
     tester,
   ) async {
@@ -159,8 +256,18 @@ void main() {
       tester.getCenter(find.byType(RadioPushToTalk)),
     );
     await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      tester.getSize(find.byKey(const ValueKey<String>('radio-ptt-button'))),
+      const Size.square(48),
+    );
     expect(gateway.commands, hasLength(1));
     expect(gateway.commands.single, isA<BeginRadioTransmissionCommandDto>());
+    final halo = find.byKey(const ValueKey<String>('radio-ptt-halo'));
+    expect(halo, findsOneWidget);
+    final haloTransform = tester.widget<Transform>(
+      find.ancestor(of: halo, matching: find.byType(Transform)).first,
+    );
+    expect(haloTransform.transform.entry(0, 0), greaterThanOrEqualTo(3.5));
 
     // Moving past tap slop must not cancel a held transmission. The old tap
     // recognizer released here after losing the gesture arena.

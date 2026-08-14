@@ -295,6 +295,24 @@ impl TorcaRuntime {
             }
         }
         let is_profile = matches!(&command, torca_contract::BridgeCommand::UpdateProfile { .. });
+        let pairing_operation = match &command {
+            torca_contract::BridgeCommand::CreatePairing { session_id_hex } => {
+                Some(("pairing.create", session_id_hex.clone()))
+            }
+            torca_contract::BridgeCommand::JoinPairing { session_id_hex, .. } => {
+                Some(("pairing.join", session_id_hex.clone()))
+            }
+            torca_contract::BridgeCommand::ApprovePairing { session_id_hex } => {
+                Some(("pairing.approve", session_id_hex.clone()))
+            }
+            torca_contract::BridgeCommand::RejectPairing { session_id_hex } => {
+                Some(("pairing.reject", session_id_hex.clone()))
+            }
+            torca_contract::BridgeCommand::CancelPairing { session_id_hex } => {
+                Some(("pairing.cancel", session_id_hex.clone()))
+            }
+            _ => None,
+        };
         let radio_operation = match &command {
             torca_contract::BridgeCommand::SetRadioEnabled { .. } => Some("radio.set_enabled"),
             torca_contract::BridgeCommand::BeginRadioTransmission { .. } => {
@@ -310,6 +328,9 @@ impl TorcaRuntime {
             self.log_profile(request_id, "PROFILE_COMMAND_QUEUED");
             self.log_profile(request_id, "PROFILE_COMMAND_STARTED");
             self.log_profile(request_id, "PROFILE_STORAGE_STARTED");
+        }
+        if let Some((operation, session_id)) = &pairing_operation {
+            self.log_pairing(request_id, operation, session_id, "PAIRING_REQUEST_STARTED", None);
         }
         let result = bridge_result_from_application(match decode_application_command(command) {
             Ok(command) => self.application_runtime.execute(command),
@@ -343,6 +364,15 @@ impl TorcaRuntime {
                     "Bridge command rejected by native engine",
                 );
             }
+            if let Some((operation, session_id)) = &pairing_operation {
+                self.log_pairing(
+                    request_id,
+                    operation,
+                    session_id,
+                    "PAIRING_REQUEST_FAILED",
+                    result.error_code.as_deref(),
+                );
+            }
             self.last_result_json = bridge_result_json(&result);
             return ABI_ERROR;
         }
@@ -354,6 +384,15 @@ impl TorcaRuntime {
         if is_profile {
             self.log_profile(request_id, "PROFILE_SNAPSHOT_PUBLISHED");
             self.log_profile(request_id, "PROFILE_REQUEST_SUCCEEDED");
+        }
+        if let Some((operation, session_id)) = &pairing_operation {
+            self.log_pairing(
+                request_id,
+                operation,
+                session_id,
+                "PAIRING_REQUEST_SUCCEEDED",
+                Some(result.kind.as_str()),
+            );
         }
         ABI_OK
     }
@@ -385,12 +424,13 @@ impl TorcaRuntime {
         // Keep transport indicators live after the application shell opens, but
         // never gate the shell on relay control-plane health. Pairing/P2P keeps
         // its narrower relay/onion prerequisites at operation level.
-        if snapshot.identity_name.is_some() {
-            if !self.application_runtime.has_runtime() {
-                snapshot.tor_state = torca_contract::tor_state_name(self.host_state_hint).into();
-            }
-            self.apply_host_state_hint(&mut snapshot);
+        if !self.application_runtime.has_runtime() {
+            snapshot.tor_state = torca_contract::tor_state_name(self.host_state_hint).into();
         }
+        // A freshly reset client already owns a device identity but has no
+        // display name yet. Host state must still be projected so the shell
+        // can leave warm-up and show profile setup.
+        self.apply_host_state_hint(&mut snapshot);
         self.log_network_transitions(&snapshot);
         let snapshot_json = bridge_snapshot_json(&snapshot);
         self.snapshot_json = serde_json::from_str::<serde_json::Value>(&snapshot_json)
@@ -551,27 +591,28 @@ impl TorcaRuntime {
     fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
         // The local application runtime is the shell gate. Tor, onion and relay
         // are independently observable capabilities and operation prerequisites.
-        snapshot.bootstrap_phase = if snapshot.identity_name.is_none() {
-            "ready_for_profile"
-        } else if self.application_runtime.has_runtime() {
-            "ready"
-        } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
-            "degraded"
-        } else {
-            "running"
+        // Once RuntimeOwner is attached, the application bootstrap state is
+        // authoritative: it waits for the required local onion capability and
+        // a terminal relay check before exposing profile setup. Before that,
+        // project only the host startup failure/running state.
+        if !self.application_runtime.has_runtime() {
+            snapshot.bootstrap_phase = projected_host_bootstrap_phase(self.host_state_hint).into();
         }
-        .into();
         let network_state = if self.host_progress >= 100 {
             "ready"
         } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
             "failed"
         } else if self.host_retry_at.is_some() {
-            "retrying"
+            // Retry is an active bootstrap step. Keep the wire state inside
+            // the canonical BootstrapStepState vocabulary; retry_at_ms and
+            // the diagnostic code carry the richer retry information.
+            "running"
         } else if self.host_start.is_some() {
             "running"
         } else {
             "pending"
         };
+        debug_assert!(canonical_bootstrap_wire_state(network_state));
         if let Some(step) =
             snapshot.bootstrap_steps.iter_mut().find(|step| step.id == "tor_network")
         {
@@ -608,21 +649,25 @@ impl TorcaRuntime {
         } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
             "failed"
         } else if self.host_onion_retry_at.is_some() {
-            "retrying"
+            "running"
         } else if onion_stalled {
-            "stalled"
+            // A stalled publication is still being observed by the startup
+            // worker. `verifying` keeps elapsed time visible while the
+            // diagnostic code explains why progress has paused.
+            "verifying"
         } else if self.host_onion_attempt > 0 {
             "running"
         } else {
             "pending"
         };
+        debug_assert!(canonical_bootstrap_wire_state(onion_state));
         if let Some(step) =
             snapshot.bootstrap_steps.iter_mut().find(|step| step.id == "onion_service")
         {
             step.state = onion_state.into();
             step.code = if onion_state == "blocked" {
                 Some("TOR_NETWORK_REQUIRED".into())
-            } else if onion_state == "stalled" {
+            } else if onion_stalled {
                 Some("ONION_PUBLICATION_STALLED".into())
             } else {
                 self.host_onion_status_code.clone()
@@ -804,6 +849,22 @@ impl TorcaRuntime {
             }
             Err(error) => {
                 self.last_result_json = error_result(&error.to_string());
+                ABI_ERROR
+            }
+        }
+    }
+
+    pub(crate) fn avatar_genome_json(&mut self, identity_id: Option<&str>) -> i32 {
+        match self.application_runtime.avatar_genome_json(identity_id) {
+            Ok(value) => {
+                self.query_json = value;
+                ABI_OK
+            }
+            Err(_) => {
+                self.query_json = serde_json::json!({
+                    "errorCode": "avatar_unavailable"
+                })
+                .to_string();
                 ABI_ERROR
             }
         }
@@ -1330,6 +1391,34 @@ impl TorcaRuntime {
             );
         }
     }
+
+    fn log_pairing(
+        &self,
+        request_id: &str,
+        operation: &str,
+        session_id: &str,
+        code: &str,
+        outcome: Option<&str>,
+    ) {
+        if let Some(logger) = &self.logger {
+            let context = json!({
+                "requestId": request_id,
+                "operation": operation,
+                "sessionId": session_id,
+                "outcome": outcome,
+            })
+            .to_string();
+            let level = if code == "PAIRING_REQUEST_FAILED" { Level::Error } else { Level::Info };
+            let _ = logger.event_with_context(
+                "pairing",
+                level,
+                "command",
+                code,
+                "pairing operation stage",
+                Some(&context),
+            );
+        }
+    }
 }
 
 fn network_transition_event(
@@ -1353,6 +1442,17 @@ fn network_transition_event(
     let detail = diagnostic.as_deref().unwrap_or("no diagnostic code");
     let message = format!("{component} state changed to {state} ({detail})");
     (level, code, message)
+}
+
+fn canonical_bootstrap_wire_state(state: &str) -> bool {
+    matches!(
+        state,
+        "pending" | "running" | "verifying" | "ready" | "degraded" | "failed" | "blocked"
+    )
+}
+
+const fn projected_host_bootstrap_phase(host_state: TorState) -> &'static str {
+    if matches!(host_state, TorState::Degraded | TorState::Failed) { "degraded" } else { "running" }
 }
 
 fn notification_event_json(event: &torca_contract::NotificationEvent) -> serde_json::Value {
@@ -1409,7 +1509,26 @@ impl Drop for TorcaRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::notification_event_json;
+    use super::{
+        TorState, canonical_bootstrap_wire_state, notification_event_json,
+        projected_host_bootstrap_phase,
+    };
+
+    #[test]
+    fn host_projection_cannot_unlock_profile_before_runtime_bootstrap_finishes() {
+        assert_eq!(projected_host_bootstrap_phase(TorState::Starting), "running");
+        assert_eq!(projected_host_bootstrap_phase(TorState::Ready), "running");
+        assert_eq!(projected_host_bootstrap_phase(TorState::Failed), "degraded");
+    }
+
+    #[test]
+    fn host_bootstrap_projection_uses_only_contract_states() {
+        for state in ["pending", "running", "verifying", "ready", "degraded", "failed", "blocked"] {
+            assert!(canonical_bootstrap_wire_state(state));
+        }
+        assert!(!canonical_bootstrap_wire_state("retrying"));
+        assert!(!canonical_bootstrap_wire_state("stalled"));
+    }
 
     #[test]
     fn notification_wire_uses_created_at_ms() {

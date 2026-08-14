@@ -881,6 +881,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut last_worker_database_writes = 0_u64;
     let mut last_blob_writes = 0_u64;
     let mut last_projection_events = 0_u64;
+    let mut bootstrap_relay_probe_started = false;
+    let mut bootstrap_relay_probe_finished = false;
     loop {
         match wait_for_runtime_command(&receiver, next_maintenance_at) {
             RuntimeWait::Command(RuntimeCommand::Shutdown(response)) => {
@@ -1037,6 +1039,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 std::time::Instant::now(),
             );
         }
+        if relay_probe_completed
+            && bootstrap_relay_probe_started
+            && matches!(
+                relay_snapshot.status,
+                ProbeStatus::Healthy
+                    | ProbeStatus::Degraded
+                    | ProbeStatus::Failed
+                    | ProbeStatus::Unreachable
+            )
+        {
+            policy.release_lease(bootstrap_relay_lease_owner());
+            bootstrap_relay_probe_started = false;
+            bootstrap_relay_probe_finished = true;
+        }
         if last_relay_state.as_ref() != Some(&relay_state) {
             record(
                 diagnostics,
@@ -1070,6 +1086,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         );
         let tor_state = tor.state();
         let onion_state = tor.onion_service_state();
+        // Demand-driven relay health must still receive one bounded initial
+        // sample after Tor becomes usable. Without this lease the bootstrap
+        // projection can remain `Checking` forever because no pairing UI is
+        // visible yet to create normal relay demand.
+        if tor_state == TorState::Ready
+            && !bootstrap_relay_probe_started
+            && !bootstrap_relay_probe_finished
+        {
+            acquire_bootstrap_relay_lease(policy);
+            if let Some(relay) = &relay_health {
+                relay.set_demand(true);
+            }
+            bootstrap_relay_probe_started = true;
+        }
         record_runtime_probes(
             &mut probes,
             tor_state,
@@ -1403,6 +1433,23 @@ const DELIVERY_OWNER_NAMESPACE: u128 = 0xD311_0000_0000_0000_0000_0000_0000_0001
 const PAIRING_OWNER_NAMESPACE: u128 = 0xA117_0000_0000_0000_0000_0000_0000_0001;
 const RADIO_OWNER_NAMESPACE: u128 = 0xA1D1_0000_0000_0000_0000_0000_0000_0001;
 const RADIO_TRANSMISSION_OWNER_NAMESPACE: u128 = 0xA1D2_0000_0000_0000_0000_0000_0000_0001;
+const BOOTSTRAP_RELAY_OWNER: u128 = 0xB007_57A4_0000_0000_0000_0000_0000_0001;
+
+fn bootstrap_relay_lease_owner() -> OpaqueId {
+    OpaqueId::from_u128(BOOTSTRAP_RELAY_OWNER)
+}
+
+fn acquire_bootstrap_relay_lease(policy: &mut RuntimeGovernor) {
+    policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Relay,
+        class: WorkClass::RelayProbe,
+        reason: DemandReason::BootstrapValidation,
+        owner: bootstrap_relay_lease_owner(),
+        // Two bounded attempts (8 s each) plus jittered retry fit well inside
+        // this lease. Expiry remains a final safety net if a driver wedges.
+        expires_at: std::time::Instant::now() + Duration::from_secs(45),
+    });
+}
 
 fn delivery_lease_owner(message_id: OpaqueId) -> OpaqueId {
     OpaqueId::from_u128(message_id.to_u128() ^ DELIVERY_OWNER_NAMESPACE)

@@ -9,6 +9,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+hex = "0.4"
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-client-application = { path = "../../application/torca-client-application" }
 torca-runtime-policy = { path = "../../application/torca-runtime-policy" }

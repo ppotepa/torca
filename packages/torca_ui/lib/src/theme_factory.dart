@@ -128,6 +128,21 @@ abstract final class TorcaThemeFactory {
           borderRadius: BorderRadius.circular(radiusMedium),
         ),
       ),
+      // Material's IconButton defaults to a circular shape even when every
+      // other terminal control uses hard pixel corners. Keep the geometry
+      // coherent across conversation actions (attach, send and radio) while
+      // preserving the familiar circle in modern themes.
+      iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(
+          fixedSize: const WidgetStatePropertyAll<Size>(Size.square(48)),
+          padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.zero),
+          shape: WidgetStatePropertyAll<OutlinedBorder>(
+            terminal
+                ? const RoundedRectangleBorder(borderRadius: BorderRadius.zero)
+                : const CircleBorder(),
+          ),
+        ),
+      ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(shape: shape).copyWith(
           animationDuration: Duration.zero,

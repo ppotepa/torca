@@ -209,7 +209,14 @@ class _ContactsSection extends StatelessWidget {
                     selected: wide && contact.id == active.id,
                     onTap: () => onOpenConversation(contact),
                     onLongPress: () => _showActions(context, contact),
-                    leading: TorcaAvatar(label: contact.displayName),
+                    leading: TorcaDeviceAvatar(
+                      label: contact.displayName,
+                      identityId: contact.remoteIdentityId,
+                      presentation: AvatarActivityPresentation.resolve(
+                        blocked: contact.typedStatus == ContactStatus.blocked,
+                        online: contact.presenceState == 'online',
+                      ),
+                    ),
                     title: Text(contact.displayName),
                     subtitle: Text(_contactPresence(context, contact)),
                     trailing: Row(
@@ -455,9 +462,14 @@ class _ConversationPlaceholder extends StatelessWidget {
 }
 
 class _ProfileSetup extends StatefulWidget {
-  const _ProfileSetup({required this.gateway, this.fingerprint});
+  const _ProfileSetup({
+    required this.gateway,
+    required this.identityId,
+    this.fingerprint,
+  });
 
   final EngineGateway gateway;
+  final String? identityId;
   final String? fingerprint;
 
   @override
@@ -476,51 +488,80 @@ class _ProfileSetupState extends State<_ProfileSetup> {
   }
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Text(
-              context.strings.chooseNickname,
-              style: Theme.of(context).textTheme.headlineSmall,
-              textAlign: TextAlign.center,
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final avatarSize = math
+          .min(constraints.maxWidth - 48, constraints.maxHeight * 0.44)
+          .clamp(160.0, 360.0);
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Align(
+                  child: TorcaDeviceAvatar(
+                    key: const ValueKey<String>('profile-device-avatar'),
+                    label: 'Your device',
+                    identityId: widget.identityId,
+                    stableDevice: true,
+                    size: avatarSize,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'THIS IS YOUR UGLY FACE',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  context.strings.chooseNickname,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  context.strings.nicknameIntro,
+                  textAlign: TextAlign.center,
+                ),
+                if (widget.fingerprint != null) ...<Widget>[
+                  const SizedBox(height: 16),
+                  SelectableText(
+                    context.strings.deviceFingerprint(widget.fingerprint!),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                const SizedBox(height: 20),
+                TextField(
+                  controller: controller,
+                  enabled: !_submitting,
+                  decoration: InputDecoration(
+                    labelText: context.strings.nickname,
+                    errorText: _error,
+                  ),
+                  onSubmitted: _submitting ? null : (_) => _saveProfile(),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _submitting ? null : _saveProfile,
+                  child: Text(
+                    _submitting
+                        ? context.strings.saving
+                        : context.strings.continueLabel,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(context.strings.nicknameIntro, textAlign: TextAlign.center),
-            if (widget.fingerprint != null) ...<Widget>[
-              const SizedBox(height: 16),
-              SelectableText(
-                context.strings.deviceFingerprint(widget.fingerprint!),
-                textAlign: TextAlign.center,
-              ),
-            ],
-            const SizedBox(height: 20),
-            TextField(
-              controller: controller,
-              enabled: !_submitting,
-              decoration: InputDecoration(
-                labelText: context.strings.nickname,
-                errorText: _error,
-              ),
-              onSubmitted: _submitting ? null : (_) => _saveProfile(),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _submitting ? null : _saveProfile,
-              child: Text(
-                _submitting
-                    ? context.strings.saving
-                    : context.strings.continueLabel,
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-    ),
+      );
+    },
   );
 
   Future<void> _saveProfile() async {
@@ -536,8 +577,16 @@ class _ProfileSetupState extends State<_ProfileSetup> {
     BridgeResultDto? result;
     Object? failure;
     try {
+      final identityId = widget.identityId ?? 'local-device';
+      final avatar = await AvatarRepository.instance.envelopeForDevice(
+        identityId,
+      );
       result = await widget.gateway.execute(
-        UpdateProfileCommandDto(displayName: displayName),
+        UpdateProfileCommandDto(
+          displayName: displayName,
+          avatarEnvelope:
+              jsonDecode(jsonEncode(avatar.toJson())) as Map<String, Object?>,
+        ),
       );
     } on Object catch (error) {
       failure = error;

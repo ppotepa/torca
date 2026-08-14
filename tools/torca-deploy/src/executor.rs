@@ -74,11 +74,23 @@ impl DeployExecutor {
         if !matches!(run.plan.action, crate::domain::DeployAction::CollectLogs)
             && !matches!(run.plan.launch, crate::domain::LaunchPolicy::Skip)
         {
-            run.advance(
-                DeployStage::NetworkReady,
-                "native launch completed; health verification delegated to client runtime",
-            );
-            self.checkpoint(&run)?;
+            match run.plan.validation {
+                crate::domain::ValidationLevel::Skip => {}
+                crate::domain::ValidationLevel::Quick => {
+                    run.advance(
+                        DeployStage::RuntimeReady,
+                        "all selected clients reached fresh LOCAL_READY evidence",
+                    );
+                    self.checkpoint(&run)?;
+                }
+                crate::domain::ValidationLevel::Full => {
+                    run.advance(
+                        DeployStage::NetworkReady,
+                        "all selected clients reached fresh TOR_BOOTSTRAP_READY evidence",
+                    );
+                    self.checkpoint(&run)?;
+                }
+            }
         }
         run.advance(DeployStage::Completed, "deployment completed; Rust checkpoint recorded");
         self.store.save(&run).map_err(DeployError::State)?;
@@ -265,6 +277,11 @@ impl DeployExecutor {
                     .map_err(DeployError::Launch)?;
             }
         }
+        if !matches!(run.plan.action, crate::domain::DeployAction::CollectLogs) {
+            let endpoint = endpoint.as_deref().ok_or(DeployError::MissingEndpoint)?;
+            crate::manifests::synchronize(&paths, &devices, run.plan.configuration, endpoint)
+                .map_err(DeployError::Manifest)?;
+        }
         Ok(())
     }
 }
@@ -295,6 +312,10 @@ pub enum DeployError {
     Launch(crate::launch::LaunchError),
     #[error("diagnostics collection produced no files")]
     DiagnosticsEmpty,
+    #[error("deployment manifest synchronization failed: {0}")]
+    Manifest(crate::manifests::ManifestError),
+    #[error("deployment manifest synchronization requires a relay endpoint")]
+    MissingEndpoint,
     #[error("deployment endpoint changed while resuming; expected {expected}, found {actual}")]
     EndpointMismatch { expected: String, actual: String },
 }
@@ -323,6 +344,28 @@ mod tests {
         let exe = root.join("apps/client/flutter/build/windows/x64/runner/Debug/torca_app.exe");
         std::fs::create_dir_all(exe.parent().expect("exe parent")).expect("create exe dir");
         std::fs::write(exe, "test").expect("exe");
+        let endpoint = format!("{}.onion:443", "a".repeat(56));
+        std::fs::create_dir_all(root.join(".torca/stack")).expect("stack directory");
+        std::fs::create_dir_all(root.join(".torca/manifests")).expect("manifest directory");
+        std::fs::create_dir_all(root.join("release")).expect("release directory");
+        std::fs::write(root.join(".torca/stack/relay_endpoint.txt"), &endpoint).expect("endpoint");
+        std::fs::write(
+            root.join(".torca/manifests/clients-debug.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "endpoint": endpoint,
+                "targets": ["windows"],
+                "buildId": "BUILD",
+                "sourceCommit": "COMMIT",
+                "builtAt": "NOW"
+            }))
+            .expect("manifest json"),
+        )
+        .expect("manifest");
+        std::fs::write(
+            root.join("release/version.json"),
+            r#"{"version":"1.0.0","build":1,"contractSchema":1,"wireVersion":1,"storageEpoch":1,"schemaVersion":1}"#,
+        )
+        .expect("release metadata");
         let paths = crate::persistence::DeployPaths {
             repo_root: PathBuf::from(&root),
             state_root: root.join(".torca/deploy"),

@@ -4,6 +4,7 @@ import 'dart:ffi' as ffi;
 import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 
 import '../generated/torca_contract.dart';
 import '../platform/native_library.dart';
@@ -78,7 +79,8 @@ class FfiEngineGateway
         AttachmentCapabilitiesProvider,
         ConversationHistoryProvider,
         BuildInfoProvider,
-        RuntimeShutdownGateway {
+        RuntimeShutdownGateway,
+        AvatarGenomeProvider {
   FfiEngineGateway._(this._worker, this._snapshots, this._eventsController) {
     _worker.events.listen((event) {
       try {
@@ -114,6 +116,8 @@ class FfiEngineGateway
       ValueNotifier<AppSnapshotDto>(const AppSnapshotDto()),
       StreamController<RuntimeEventDto>.broadcast(),
     );
+    AvatarRepository.instance.remoteEnvelopeLoader = (identityId) =>
+        gateway.loadAvatarGenome(identityId: identityId);
     return gateway;
   }
 
@@ -268,6 +272,36 @@ class FfiEngineGateway
   }
 
   @override
+  Future<AvatarGenomeEnvelope?> loadAvatarGenome({String? identityId}) async {
+    if (_disposed) return null;
+    final response = await _worker.invoke(
+      identityId == null || identityId.isEmpty
+          ? RuntimeRequestDto.avatars
+          : RuntimeRequestDto.avatarForIdentity(identityId),
+    );
+    try {
+      final value = jsonDecode(response);
+      if (value is! Map<String, dynamic> || value['status'] != 'succeeded') {
+        return null;
+      }
+      final raw = value['snapshot'];
+      if (raw == null) return null;
+      if (raw is! Map<String, dynamic>) {
+        throw const ContractDecodeException(
+          'Avatar genome response is not an object',
+        );
+      }
+      return AvatarGenomeEnvelope.fromJson(raw);
+    } on ContractDecodeException {
+      rethrow;
+    } on FormatException catch (error) {
+      throw ContractDecodeException('Invalid avatar genome response: $error');
+    } on TypeError catch (error) {
+      throw ContractDecodeException('Invalid avatar genome field type: $error');
+    }
+  }
+
+  @override
   Future<void> shutdown() async {
     if (_disposed) return;
     await _worker.shutdown();
@@ -277,6 +311,7 @@ class FfiEngineGateway
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    AvatarRepository.instance.remoteEnvelopeLoader = null;
     await _worker.dispose();
     await _eventsController.close();
     _snapshots.dispose();

@@ -53,6 +53,7 @@ pub enum BridgeCommand {
     AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
+        avatar_envelope_json: Option<String>,
         at_ms: i64,
     },
     CreatePairing {
@@ -284,6 +285,7 @@ pub struct BridgeRadioSession {
     pub floor: String,
     pub burst_elapsed_ms: u32,
     pub max_burst_ms: u32,
+    pub input_level_milli: u16,
 }
 
 #[must_use]
@@ -344,6 +346,9 @@ pub struct BridgePairing {
     pub remote_identity_id: Option<String>,
     pub remote_display_name: Option<String>,
     pub remote_fingerprint: Option<String>,
+    pub remote_avatar_hash: Option<String>,
+    pub remote_avatar_generator_version: Option<String>,
+    pub remote_avatar_catalog_version: Option<String>,
 }
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -398,6 +403,7 @@ pub struct BridgeRelayInfo {
 #[serde(rename_all = "camelCase")]
 pub struct BridgeContact {
     pub id: String,
+    pub remote_identity_id: String,
     pub display_name: String,
     pub onion_address: String,
     pub status: String,
@@ -496,10 +502,7 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         } => ApplicationCommand::SetAttention {
             context: AttentionContext {
                 surface: decode_attention_surface(&surface)?,
-                focused_resource: focused_resource_id
-                    .as_deref()
-                    .map(parse_id)
-                    .transpose()?,
+                focused_resource: focused_resource_id.as_deref().map(parse_id).transpose()?,
                 visible_contact_ids: visible_contact_ids
                     .iter()
                     .map(|value| parse_id(value))
@@ -514,8 +517,8 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
             ApplicationCommand::SetReadReceipts { enabled }
         }
         BridgeCommand::AcknowledgeNewContacts => ApplicationCommand::AcknowledgeNewContacts,
-        BridgeCommand::UpdateProfile { display_name, at_ms } => {
-            ApplicationCommand::UpdateProfile { display_name, at_ms }
+        BridgeCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
+            ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms }
         }
         BridgeCommand::CreatePairing { session_id_hex } => {
             ApplicationCommand::CreatePairing { session_id: parse_id(&session_id_hex)? }
@@ -599,11 +602,7 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
             ApplicationCommand::CancelMessage { message_id: parse_id(&message_id_hex)?, at_ms }
         }
         BridgeCommand::EditMessage { message_id_hex, body, at_ms } => {
-            ApplicationCommand::EditMessage {
-                message_id: parse_id(&message_id_hex)?,
-                body,
-                at_ms,
-            }
+            ApplicationCommand::EditMessage { message_id: parse_id(&message_id_hex)?, body, at_ms }
         }
         BridgeCommand::SetMessageReaction {
             message_id_hex,
@@ -863,9 +862,7 @@ fn decode_attention_surface(value: &str) -> Result<AttentionSurface, String> {
         value if value.starts_with("pairing:") => {
             Ok(AttentionSurface::Pairing(resource("pairing")?))
         }
-        value if value.starts_with("radio:") => {
-            Ok(AttentionSurface::Radio(resource("radio")?))
-        }
+        value if value.starts_with("radio:") => Ok(AttentionSurface::Radio(resource("radio")?)),
         _ => Err(format!("invalid attention surface: {value}")),
     }
 }
@@ -928,18 +925,12 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     let identity_name = snapshot.identity.as_ref().and_then(|identity| {
         identity.profile().map(|profile| profile.display_name().as_str().to_owned())
     });
-    let identity_id = snapshot
-        .identity
-        .as_ref()
-        .map(|identity| identity.public().identity_id().to_string());
+    let identity_id =
+        snapshot.identity.as_ref().map(|identity| identity.public().identity_id().to_string());
     // Root snapshots deliberately omit message history. Conversation page and
     // search queries are the only history transport exposed to presentation.
     let messages = Vec::new();
-    let reactions = snapshot
-        .reactions
-        .into_iter()
-        .map(bridge_reaction_from_domain)
-        .collect();
+    let reactions = snapshot.reactions.into_iter().map(bridge_reaction_from_domain).collect();
     let tor_state = tor_state_name(network.tor).to_owned();
     let relay_probe = network.probes.iter().find(|probe| probe.target == ProbeTarget::Relay);
     let relay_state = relay_probe
@@ -1118,6 +1109,18 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                         .remote_proposal()
                         .map(|proposal| proposal.display_name.clone()),
                     remote_fingerprint: remote_identity.map(|value| value.1),
+                    remote_avatar_hash: pairing
+                        .remote_proposal()
+                        .and_then(|proposal| proposal.avatar.as_ref())
+                        .map(|avatar| hex::encode(avatar.genome_hash)),
+                    remote_avatar_generator_version: pairing
+                        .remote_proposal()
+                        .and_then(|proposal| proposal.avatar.as_ref())
+                        .map(|avatar| avatar.generator_version.clone()),
+                    remote_avatar_catalog_version: pairing
+                        .remote_proposal()
+                        .and_then(|proposal| proposal.avatar.as_ref())
+                        .map(|avatar| avatar.catalog_version.clone()),
                 }
             })
             .collect(),
@@ -1168,6 +1171,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     network.contact_verifications.get(&contact.id()).copied().unwrap_or_default();
                 BridgeContact {
                     id: contact.id().to_string(),
+                    remote_identity_id: contact.remote_identity().identity_id().to_string(),
                     display_name,
                     onion_address: contact.route().onion_address().to_owned(),
                     status: contact_status_name(contact.status()).into(),
@@ -1305,6 +1309,7 @@ fn bridge_radio(value: Option<torca_client_application::RadioProjection>) -> Bri
             floor: radio_floor_name(session.floor).into(),
             burst_elapsed_ms: session.burst_elapsed_ms,
             max_burst_ms: session.max_burst_ms,
+            input_level_milli: session.input_level_milli,
         }),
         timeline: value
             .timeline

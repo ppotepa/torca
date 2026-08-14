@@ -51,6 +51,7 @@ impl Default for AttentionContext {
 /// Durable or user-visible work that may justify a lease.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DemandReason {
+    BootstrapValidation,
     VisibleConversation,
     VisibleContact,
     PendingMessage,

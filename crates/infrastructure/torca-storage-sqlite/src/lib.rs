@@ -58,3 +58,4 @@ pub use security_projection::{
 pub use settings::{SettingsError, SqlCipherSettingsStore};
 pub use sqlcipher::{DatabaseKey, SqlCipherBackend};
 pub use storage::StorageKernel;
+pub use torca_client_engine::AvatarGenomeRecord;

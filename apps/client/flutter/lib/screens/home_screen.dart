@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
@@ -247,6 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
         body: profileMissing
             ? _ProfileSetup(
                 gateway: widget.gateway,
+                identityId: snapshot.identity?.id,
                 fingerprint: snapshot.identity?.fingerprint,
               )
             : _sectionBody(snapshot),
