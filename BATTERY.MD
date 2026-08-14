@@ -26,7 +26,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Central deadline scheduler | Partial | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | fresh Live/Recent evidence removes peer deadlines entirely; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
-| Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
+| Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues now expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, native event/FFI wakeups, radio listener wakeups, snapshot builds/DB reads, command-induced DB writes, actual peer probes and relay probe executions; worker-write counters remain |
 
@@ -538,9 +538,12 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    relay leases and revalidation without blocking local readiness.
 8. **Partial:** idle radio waits on its command channel and peer/radio
    `PeerListener` accepts on dedicated blocking workers with bounded queues,
-   cancellable shutdown and wake propagation. Active media selects the next
-   audio, ACK, burst or keepalive deadline with deterministic tests; keep the
-   default idle path at zero worker iterations.
+   cancellable shutdown and wake propagation. Radio control/state-sync retry
+   deadlines now flow through `RadioInboundRuntime` into
+   `TorcaCommunicationDriver::next_maintenance_delay`, so a failed
+   `SessionOpen` is not stranded after one attempt. Active media selects the
+   next audio, ACK, burst or keepalive deadline with deterministic tests; keep
+   the default idle path at zero worker iterations.
 9. **Planned / measurement-gated:** evaluate Arti soft dormancy only after
    reliability soak tests pass. It is optional and not a release blocker.
 10. **Optional experiments:** deterministic dial ownership, viewport contact

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use torca_contacts::ContactId;
 use torca_foundation::{OpaqueId, Timestamp};
@@ -90,6 +91,11 @@ pub trait RadioControlPort: Send {
     /// blocking a user command on peer reconnection.
     fn maintain(&mut self, _now: Timestamp) -> Result<(), RadioApplicationError> {
         Ok(())
+    }
+
+    /// Returns the next retry deadline for queued control frames.
+    fn next_maintenance_delay(&self) -> Option<Duration> {
+        None
     }
 }
 
@@ -714,6 +720,19 @@ impl RadioCoordinator {
         first_error.map_or(Ok(()), Err)
     }
 
+    /// Exposes only real radio work to the central runtime scheduler. Disabled
+    /// channels with an empty control queue do not create an idle wakeup.
+    pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        let control = self.control.next_maintenance_delay();
+        let state_sync =
+            self.channels.values().any(|channel| channel.preference().enabled).then(|| {
+                let now_ms = now.to_unix_millis();
+                let due_ms = self.next_state_sync_at_ms.saturating_sub(now_ms).max(0);
+                Duration::from_millis(u64::try_from(due_ms).unwrap_or(u64::MAX))
+            });
+        [control, state_sync].into_iter().flatten().min()
+    }
+
     pub fn peer_disconnected(
         &mut self,
         contact_id: ContactId,
@@ -949,6 +968,10 @@ impl SharedRadioCoordinator {
         self.with_mut(|coordinator| coordinator.maintain(now))
     }
 
+    pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.inner.lock().ok()?.next_maintenance_delay(now)
+    }
+
     pub fn projection(&self, now: Timestamp) -> Result<RadioProjection, RadioApplicationError> {
         self.inner
             .lock()
@@ -1180,6 +1203,19 @@ mod tests {
             )
             .expect("remote state");
         assert_eq!(opened.lock().expect("opened").as_slice(), &[contact]);
+    }
+
+    #[test]
+    fn disabled_radio_has_no_scheduler_deadline() {
+        let (mut coordinator, _, _, _) = coordinator();
+        let contact = ContactId::from_u128(9);
+        coordinator.ensure_contact(contact, at(1));
+        assert_eq!(coordinator.next_maintenance_delay(at(1)), None);
+
+        coordinator.set_enabled(contact, true, at(2)).expect("enable");
+        assert_eq!(coordinator.next_maintenance_delay(at(2)), Some(Duration::ZERO));
+        coordinator.maintain(at(2)).expect("maintenance");
+        assert_eq!(coordinator.next_maintenance_delay(at(2)), Some(Duration::from_secs(30)));
     }
 
     #[test]

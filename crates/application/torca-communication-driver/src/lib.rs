@@ -370,6 +370,11 @@ pub trait RadioInboundRuntime: Send {
 
     fn maintenance(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
 
+    /// Returns a deadline only while radio control or state-sync work exists.
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
+
     fn shutdown(&mut self) {}
 }
 
@@ -606,6 +611,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             self.text.next_maintenance_delay(now),
             self.control.next_maintenance_delay(now),
             self.attachment_scheduler.next_delay(now),
+            self.radio.as_ref().and_then(|radio| radio.next_maintenance_delay(now)),
         ]
         .into_iter()
         .flatten()

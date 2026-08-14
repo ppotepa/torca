@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use rand_core::{OsRng, RngCore};
 use torca_communication_driver::{
@@ -102,6 +103,10 @@ where
         }
         Ok(())
     }
+
+    fn next_maintenance_delay(&self) -> Option<Duration> {
+        (!self.queued.is_empty()).then_some(Duration::from_secs(1))
+    }
 }
 
 /// Decrypts Radio control envelopes and forwards typed frames to the shared
@@ -165,6 +170,10 @@ where
 
     fn maintenance(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         self.coordinator.maintain(now).map_err(|_| CommunicationError::Control)
+    }
+
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.coordinator.next_maintenance_delay(now)
     }
 
     fn shutdown(&mut self) {
