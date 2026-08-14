@@ -166,6 +166,10 @@ where
         self.transfer.database_write_count() + self.control.database_write_count()
     }
 
+    fn blob_write_count(&self) -> u64 {
+        self.transfer.blob_write_count()
+    }
+
     fn process_inbound(
         &mut self,
         envelope: InboundEnvelope,

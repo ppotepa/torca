@@ -381,6 +381,10 @@ pub trait CommunicationDriver:
         0
     }
 
+    fn blob_write_count(&self) -> u64 {
+        0
+    }
+
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,
@@ -850,6 +854,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut active_attachment_leases = BTreeSet::<OpaqueId>::new();
     let mut active_delivery_leases = BTreeSet::<OpaqueId>::new();
     let mut last_worker_database_writes = 0_u64;
+    let mut last_blob_writes = 0_u64;
     loop {
         match wait_for_runtime_command(&receiver, next_maintenance_at) {
             RuntimeWait::Command(RuntimeCommand::Shutdown(response)) => {
@@ -1077,6 +1082,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
         }
         last_worker_database_writes = worker_database_writes;
+        let blob_writes = communication.blob_write_count();
+        if blob_writes > last_blob_writes {
+            for _ in last_blob_writes..blob_writes {
+                diagnostics.count(RuntimeCounter::BlobWrite);
+            }
+        }
+        last_blob_writes = blob_writes;
         if !active_attachment_leases.is_empty()
             && let Ok(views) = communication.attachment_snapshot()
         {

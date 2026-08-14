@@ -46,15 +46,19 @@ pub trait BlobStore {
     fn read(&self, id: AttachmentId) -> Result<Vec<u8>, BlobStoreError>;
     fn remove(&mut self, id: AttachmentId) -> Result<bool, BlobStoreError>;
     fn exists(&self, id: AttachmentId) -> Result<bool, BlobStoreError>;
+    fn write_count(&self) -> u64 {
+        0
+    }
 }
 pub struct FileBlobStore {
     root: PathBuf,
+    write_count: u64,
 }
 impl FileBlobStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, BlobStoreError> {
         let root = root.into();
         fs::create_dir_all(&root)?;
-        Ok(Self { root })
+        Ok(Self { root, write_count: 0 })
     }
     fn path(&self, id: AttachmentId) -> PathBuf {
         self.root.join(format!("{}.blob", id))
@@ -80,6 +84,8 @@ impl BlobStore for FileBlobStore {
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
+        } else {
+            self.write_count = self.write_count.saturating_add(1);
         }
         result
     }
@@ -108,6 +114,7 @@ impl BlobStore for FileBlobStore {
         match fs::remove_file(self.path(id)) {
             Ok(()) => {
                 sync_directory(&self.root)?;
+                self.write_count = self.write_count.saturating_add(1);
                 Ok(true)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -116,6 +123,10 @@ impl BlobStore for FileBlobStore {
     }
     fn exists(&self, id: AttachmentId) -> Result<bool, BlobStoreError> {
         Ok(self.path(id).try_exists()?)
+    }
+
+    fn write_count(&self) -> u64 {
+        self.write_count
     }
 }
 fn sync_directory(path: &Path) -> Result<(), std::io::Error> {
@@ -127,6 +138,7 @@ fn sync_directory(path: &Path) -> Result<(), std::io::Error> {
 #[derive(Clone, Debug, Default)]
 pub struct MemoryBlobStore {
     values: BTreeMap<OpaqueId, Vec<u8>>,
+    write_count: u64,
 }
 impl BlobStore for MemoryBlobStore {
     fn put_atomic(&mut self, id: AttachmentId, bytes: &[u8]) -> Result<(), BlobStoreError> {
@@ -134,16 +146,25 @@ impl BlobStore for MemoryBlobStore {
             return Err(BlobStoreError::TooLarge { actual: bytes.len() });
         }
         self.values.insert(id.to_opaque(), bytes.to_vec());
+        self.write_count = self.write_count.saturating_add(1);
         Ok(())
     }
     fn read(&self, id: AttachmentId) -> Result<Vec<u8>, BlobStoreError> {
         self.values.get(&id.to_opaque()).cloned().ok_or(BlobStoreError::NotFound)
     }
     fn remove(&mut self, id: AttachmentId) -> Result<bool, BlobStoreError> {
-        Ok(self.values.remove(&id.to_opaque()).is_some())
+        let removed = self.values.remove(&id.to_opaque()).is_some();
+        if removed {
+            self.write_count = self.write_count.saturating_add(1);
+        }
+        Ok(removed)
     }
     fn exists(&self, id: AttachmentId) -> Result<bool, BlobStoreError> {
         Ok(self.values.contains_key(&id.to_opaque()))
+    }
+
+    fn write_count(&self) -> u64 {
+        self.write_count
     }
 }
 pub struct EncryptedAttachmentStore<C, B> {
@@ -188,6 +209,11 @@ impl<C: CryptoProvider, B: BlobStore> EncryptedAttachmentStore<C, B> {
             .open(key, nonce, associated_data, &torca_crypto::Ciphertext(ciphertext.to_vec()))
             .map_err(Into::into)
     }
+
+    pub fn blob_write_count(&self) -> u64 {
+        self.blobs.write_count()
+    }
+
     pub fn into_parts(self) -> (C, B) {
         (self.crypto, self.blobs)
     }

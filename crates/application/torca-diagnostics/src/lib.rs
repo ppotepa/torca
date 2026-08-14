@@ -135,6 +135,7 @@ pub struct RuntimeCounters {
     pub ffi_wakes: u64,
     pub db_reads: u64,
     pub db_writes: u64,
+    pub blob_writes: u64,
     pub radio_wakeups: u64,
 }
 
@@ -147,6 +148,7 @@ pub enum RuntimeCounter {
     FfiWake,
     DbRead,
     DbWrite,
+    BlobWrite,
     RadioWake,
 }
 
@@ -189,6 +191,7 @@ impl DiagnosticBuffer {
             RuntimeCounter::FfiWake => &mut self.counters.ffi_wakes,
             RuntimeCounter::DbRead => &mut self.counters.db_reads,
             RuntimeCounter::DbWrite => &mut self.counters.db_writes,
+            RuntimeCounter::BlobWrite => &mut self.counters.blob_writes,
             RuntimeCounter::RadioWake => &mut self.counters.radio_wakeups,
         };
         *value = value.saturating_add(1);
@@ -222,7 +225,7 @@ impl DiagnosticBuffer {
         let counters = self.counters;
         let _ = write!(
             output,
-            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"radioWakeups\":{}}}}}",
+            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"radioWakeups\":{}}}}}",
             counters.scheduler_wakeups,
             counters.snapshot_builds,
             counters.peer_probes,
@@ -230,6 +233,7 @@ impl DiagnosticBuffer {
             counters.ffi_wakes,
             counters.db_reads,
             counters.db_writes,
+            counters.blob_writes,
             counters.radio_wakeups,
         );
         output
@@ -280,7 +284,10 @@ mod tests {
         let mut diagnostics = DiagnosticBuffer::new(4);
         diagnostics.count(RuntimeCounter::DbWrite);
         diagnostics.count(RuntimeCounter::DbWrite);
+        diagnostics.count(RuntimeCounter::BlobWrite);
         assert_eq!(diagnostics.counters().db_writes, 2);
+        assert_eq!(diagnostics.counters().blob_writes, 1);
         assert!(diagnostics.export_json().contains("\"dbWrites\":2"));
+        assert!(diagnostics.export_json().contains("\"blobWrites\":1"));
     }
 }

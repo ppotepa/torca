@@ -161,6 +161,10 @@ where
         self.metadata.database_write_count()
     }
 
+    pub fn blob_write_count(&self) -> u64 {
+        self.cache.write_count()
+    }
+
     /// Copies a selected source into the app-private encrypted cache and makes transfer state
     /// durable before network work begins.
     pub fn prepare_outgoing(

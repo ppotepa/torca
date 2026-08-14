@@ -305,6 +305,9 @@ pub trait AttachmentRuntime: Send {
     fn database_write_count(&self) -> u64 {
         0
     }
+    fn blob_write_count(&self) -> u64 {
+        0
+    }
     fn process_inbound(
         &mut self,
         envelope: InboundEnvelope,
@@ -682,6 +685,10 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
             .map(|attachments| attachments.database_write_count())
             .unwrap_or(0);
         self.text.database_write_count() + self.control.database_write_count() + attachment_writes
+    }
+
+    fn blob_write_count(&self) -> u64 {
+        self.attachments.lock().map(|attachments| attachments.blob_write_count()).unwrap_or(0)
     }
 
     fn queue_reaction(
