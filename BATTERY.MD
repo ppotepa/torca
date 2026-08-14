@@ -23,7 +23,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
 | Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
-| Central deadline scheduler | Partial | fixed 100-ms tick and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events and lease expiry expose wake sources, while the onion-publisher completion channel still has a bounded 1-s fallback |
+| Central deadline scheduler | Partial | fixed 100-ms tick and idle fallback were removed when no executor owns work; delivery/control outboxes, Tor lifecycle, peer/radio listener events, onion-publisher callbacks and lease expiry expose wake sources |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
 | Blocking/deadline radio worker | Partial | idle command waiting and radio-media listener acceptance are blocking; active media now uses a 20-ms I/O bound with audio/ACK/burst/keepalive deadlines, while deterministic deadline tests remain |
@@ -32,9 +32,9 @@ Last reconciled with the source tree on 2026-08-14.
 
 The current implementation is therefore a transitional state. Event waiting,
 pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
-idle radio blocking, bounded kernel-blocked peer/radio listeners with runtime
-wake propagation and demand-woken relay health have landed. Onion publisher
-completion wakeups and full deadline ownership, feature leases, attention
+idle radio blocking, bounded kernel-blocked peer/radio listeners, onion
+publisher completion wakeups with runtime propagation and demand-woken relay
+health have landed. Full deadline ownership, feature leases, attention
 propagation, evidence-driven peer health and Arti dormancy remain outstanding.
 
 The central model is:

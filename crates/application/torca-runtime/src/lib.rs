@@ -390,6 +390,8 @@ pub trait TorDriver: Send + 'static {
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None
     }
+    /// Installs a non-blocking wake path for Tor/bootstrap/publisher events.
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn state(&self) -> TorState;
     fn onion_address(&self) -> Option<String>;
     fn onion_service_state(&self) -> OnionServiceState {
@@ -694,12 +696,14 @@ impl RuntimeOwner {
         let relay_health = relay_worker.as_ref().map(RelayHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
         let wake_sender = sender.clone();
-        communication.set_waker(Arc::new(move || {
+        let runtime_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             // The accept worker must never block on the runtime mailbox. A
             // full queue only coalesces this wake; the next command or
             // deadline will drain the listener as well.
             let _ = wake_sender.try_send(RuntimeCommand::Wake);
-        }));
+        });
+        communication.set_waker(Arc::clone(&runtime_waker));
+        tor.set_waker(runtime_waker);
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
             let mut diagnostics = DiagnosticBuffer::new(256);

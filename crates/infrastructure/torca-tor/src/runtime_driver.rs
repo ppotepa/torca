@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
@@ -43,6 +44,15 @@ const MAX_ONION_PUBLICATION_ATTEMPTS: u32 = 2;
 // Tor service itself applies its own bounded retry policy; this is the bound
 // for one attempt in that background lane.
 const RESTART_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
+
+type TorWake = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
+
+fn notify_tor_wake(wake: &TorWake) {
+    let callback = wake.lock().ok().and_then(|slot| slot.clone());
+    if let Some(callback) = callback {
+        callback();
+    }
+}
 
 enum OnionWorkerCommand {
     Shutdown,
@@ -150,6 +160,7 @@ impl TorBootstrapWorker {
     fn spawn(
         state_root: PathBuf,
         previous_client: Option<Arc<TorService>>,
+        wake: TorWake,
     ) -> Result<Self, std::io::Error> {
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::Builder::new().name("torca-tor-recovery".into()).spawn(move || {
@@ -159,6 +170,7 @@ impl TorBootstrapWorker {
             drop(previous_client);
             let result = TorService::bootstrap(state_root, RESTART_BOOTSTRAP_TIMEOUT);
             let _ = sender.send(result);
+            notify_tor_wake(&wake);
         })?;
         Ok(Self { receiver, worker: Some(worker) })
     }
@@ -185,7 +197,15 @@ impl OnionPublisher {
         target: SocketAddr,
         endpoint: SharedTorEndpoint,
         observer: Option<TorBootstrapObserver>,
+        wake: TorWake,
     ) -> Result<Self, std::io::Error> {
+        let observer = observer.map(|observer| {
+            let wake = Arc::clone(&wake);
+            Arc::new(move |event: TorBootstrapEvent| {
+                observer(event);
+                notify_tor_wake(&wake);
+            }) as TorBootstrapObserver
+        });
         let (commands, receiver) = mpsc::sync_channel(1);
         let (event_sender, events) = mpsc::sync_channel(1);
         let worker =
@@ -248,6 +268,7 @@ impl OnionPublisher {
                             reason,
                             attempts: failures,
                         });
+                        notify_tor_wake(&wake);
                         return;
                     }
 
@@ -391,6 +412,7 @@ pub struct OwnedTorDriver {
     state: TorState,
     last_diagnostic: Option<String>,
     observer: Option<TorBootstrapObserver>,
+    wake: TorWake,
 }
 
 impl OwnedTorDriver {
@@ -437,6 +459,7 @@ impl OwnedTorDriver {
             state: TorState::Starting,
             last_diagnostic: None,
             observer: observer.clone(),
+            wake: Arc::new(Mutex::new(None)),
         };
         if let Err(error) = driver.start(peer_target, now, observer) {
             let diagnostic = driver
@@ -517,8 +540,14 @@ impl OwnedTorDriver {
         }
         self.endpoint.set(None);
         self.onion_publisher = Some(
-            OnionPublisher::spawn(client, self.peer_target, self.endpoint.clone(), observer)
-                .map_err(|_| RuntimeDriverError::Tor)?,
+            OnionPublisher::spawn(
+                client,
+                self.peer_target,
+                self.endpoint.clone(),
+                observer,
+                Arc::clone(&self.wake),
+            )
+            .map_err(|_| RuntimeDriverError::Tor)?,
         );
         Ok(())
     }
@@ -532,8 +561,12 @@ impl OwnedTorDriver {
         self.next_restart_at = None;
         let previous_client = self.client.as_ref().and_then(TorServiceHandle::clear);
         self.bootstrap_worker = Some(
-            TorBootstrapWorker::spawn(self.state_root.clone(), previous_client)
-                .map_err(|_| RuntimeDriverError::Tor)?,
+            TorBootstrapWorker::spawn(
+                self.state_root.clone(),
+                previous_client,
+                Arc::clone(&self.wake),
+            )
+            .map_err(|_| RuntimeDriverError::Tor)?,
         );
         Ok(())
     }
@@ -635,18 +668,17 @@ impl TorDriver for OwnedTorDriver {
     }
 
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
-        // During bootstrap, publication and recovery we still need to reap
-        // worker results and advance bounded retry deadlines. The publisher's
-        // completion channel still uses the one-second fallback until it gets
-        // a direct runtime wake callback; peer/radio listeners are event-driven.
-        if self.bootstrap_worker.is_some()
-            || self.next_restart_at.is_some()
-            // The publisher currently reports exhaustion through its
-            // maintenance-owned channel. Keep this bounded fallback until
-            // that worker receives a direct wake callback.
-            || self.onion_publisher.is_some()
-        {
+        // During bootstrap and recovery we still need to reap worker results
+        // and advance bounded retry deadlines. Onion publisher progress and
+        // exhaustion wake the runtime through its observer/event callback;
+        // peer/radio listeners use the same event-driven boundary.
+        if self.bootstrap_worker.is_some() || self.next_restart_at.is_some() {
             return Some(Duration::from_secs(1));
+        }
+        if self.onion_publisher.is_some() {
+            // Publication progress and terminal failure are delivered through
+            // the publisher observer/event callback; no health poll is needed.
+            return None;
         }
         match self.onion_service_state() {
             OnionServiceState::Reachable => None,
@@ -655,6 +687,12 @@ impl TorDriver for OwnedTorDriver {
             | OnionServiceState::Degraded
             | OnionServiceState::Failed
             | OnionServiceState::Stopped => Some(Duration::from_secs(1)),
+        }
+    }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut slot) = self.wake.lock() {
+            *slot = Some(waker);
         }
     }
 
