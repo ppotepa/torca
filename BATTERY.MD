@@ -40,9 +40,9 @@ The revision waiters now block on the native condition variable with
 Android service can be started again on the same runtime without inheriting a
 permanent cancelled waiter. A finite timeout remains available to diagnostic
 callers, but it is not used by the idle platform workers.
-The remaining work is integration hardening: feature-owned leases, complete
-attention propagation, richer evidence recording, executor-owned relay/radio
-leases and the remaining ledger counters. Arti dormancy remains deliberately
+The remaining work is integration hardening: executor-owned relay/radio
+leases, complete attention-generation tests, richer TX/RX/chunk evidence and
+the remaining projection counters. Arti dormancy remains deliberately
 measurement-gated and is not required for the no-idle-polling guarantee.
 
 The central model is:
@@ -144,7 +144,9 @@ resume failures already seen in production testing.
   (`validated`, `internet`, `metered`, Wi-Fi/cellular); changes to that
   fingerprint wake recovery even when the `Network` object is unchanged.
   Power Saver propagation and `ConnectivityDiagnosticsManager` remain deferred
-  because they are not required for the no-idle-polling baseline.
+  because they are not required for the no-idle-polling baseline. Do not claim
+  either signal in diagnostics until a platform callback and a policy mapping
+  are implemented and tested.
 - There is no legacy runtime mode and no parallel old scheduler. Each old polling/tick path is removed when its replacement lands.
 - Relay continues to store only invitations. It does not become a message mailbox.
 - Background delivery without push is best-effort and may wait for a rendezvous window or for the recipient to open Torca.
@@ -474,7 +476,9 @@ Android:
 - The 250-ms and 1500-ms pollers disappear.
 - The manifest explicitly includes `ACCESS_NETWORK_STATE`.
 - `NetworkCallback` reports availability, validation, meteredness, blocked state, and generation.
-- `ACTION_POWER_SAVE_MODE_CHANGED` updates policy without polling.
+- Power Saver and `ConnectivityDiagnosticsManager` are intentionally not wired
+  yet; their future integration must be event-driven and must not add a polling
+  loop to the foreground service.
 
 ## Observability and Energy Ledger (implemented core; counters still expanding)
 
@@ -482,9 +486,9 @@ Counters are incremented only on existing execution paths. Scheduler wakeups,
 native event/FFI wakeups, radio listener wakeups, snapshot builds, DB reads,
 command-induced DB writes, text/control worker job writes, attachment metadata
 writes, inbound text inserts, attachment metadata writes, attachment blob
-writes, peer probes and relay probes are wired today. Receipt/reaction
-projection writes remain reserved for their executor owners and must not be
-populated with estimates:
+writes, peer probes and relay probes are wired today. TX/RX frame counts,
+active-peer duration, wake-lock duration and receipt/reaction projection writes
+are not emitted yet and must not be populated with estimates:
 
 ```text
 runtime_wakeups_by_reason
@@ -499,11 +503,8 @@ radio_wakeups
 snapshot_builds
 db_reads
 db_writes
+blob_writes
 ffi_wakes
-tx_frames
-rx_frames
-active_peer_ms
-wake_lock_ms
 ```
 
 Energy Ledger assigns stable abstract costs for regression testing. It is not presented as mWh. Android UID TX/RX totals are sampled only on lifecycle changes, Diagnostics entry, and scenario completion.
