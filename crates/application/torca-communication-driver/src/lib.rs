@@ -36,12 +36,41 @@ use torca_runtime::{
 };
 pub use torca_runtime::{PeerHealthQuality, PeerHealthSnapshot};
 
-pub const TEXT_MESSAGE_KIND: u16 = 1;
-pub const RECEIPT_MESSAGE_KIND: u16 = 2;
-pub const REACTION_MESSAGE_KIND: u16 = 3;
-pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
-pub const PROBE_MESSAGE_KIND: u16 = 4;
-pub const RADIO_CONTROL_MESSAGE_KIND: u16 = 5;
+/// Stable application-envelope discriminator carried inside authenticated peer data frames.
+/// Keep this registry as the single source of truth for routing and AAD construction.
+#[repr(u16)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApplicationMessageKind {
+    Text = 1,
+    Receipt = 2,
+    Attachment = 3,
+    Probe = 4,
+    RadioControl = 5,
+    Reaction = 6,
+}
+
+impl TryFrom<u16> for ApplicationMessageKind {
+    type Error = ();
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Text),
+            2 => Ok(Self::Receipt),
+            3 => Ok(Self::Attachment),
+            4 => Ok(Self::Probe),
+            5 => Ok(Self::RadioControl),
+            6 => Ok(Self::Reaction),
+            _ => Err(()),
+        }
+    }
+}
+
+pub const TEXT_MESSAGE_KIND: u16 = ApplicationMessageKind::Text as u16;
+pub const RECEIPT_MESSAGE_KIND: u16 = ApplicationMessageKind::Receipt as u16;
+pub const ATTACHMENT_MESSAGE_KIND: u16 = ApplicationMessageKind::Attachment as u16;
+pub const PROBE_MESSAGE_KIND: u16 = ApplicationMessageKind::Probe as u16;
+pub const RADIO_CONTROL_MESSAGE_KIND: u16 = ApplicationMessageKind::RadioControl as u16;
+pub const REACTION_MESSAGE_KIND: u16 = ApplicationMessageKind::Reaction as u16;
 const INBOUND_BATCH: usize = 64;
 const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
@@ -547,18 +576,24 @@ impl TorcaCommunicationDriver {
     fn drain_inbound(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         for _ in 0..INBOUND_BATCH {
             let Some(envelope) = self.peer.take_inbound()? else { break };
-            match envelope.message_kind {
-                TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND => self.inbound.process(envelope, now)?,
-                ATTACHMENT_MESSAGE_KIND => self.process_attachment_inbound(envelope, now)?,
-                PROBE_MESSAGE_KIND => self.peer.accept_probe(&envelope, now)?,
-                RADIO_CONTROL_MESSAGE_KIND => {
+            match ApplicationMessageKind::try_from(envelope.message_kind) {
+                Ok(
+                    ApplicationMessageKind::Text
+                    | ApplicationMessageKind::Receipt
+                    | ApplicationMessageKind::Reaction,
+                ) => self.inbound.process(envelope, now)?,
+                Ok(ApplicationMessageKind::Attachment) => {
+                    self.process_attachment_inbound(envelope, now)?
+                }
+                Ok(ApplicationMessageKind::Probe) => self.peer.accept_probe(&envelope, now)?,
+                Ok(ApplicationMessageKind::RadioControl) => {
                     if let Some(radio) = self.radio.as_mut() {
                         radio.process_control(envelope, now)?;
                     } else {
                         self.peer.reject(&envelope)?;
                     }
                 }
-                _ => self.peer.reject(&envelope)?,
+                Err(()) => self.peer.reject(&envelope)?,
             }
         }
 
@@ -866,7 +901,10 @@ fn map_runtime(error: CommunicationError) -> RuntimeDriverError {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommunicationError, map_runtime, plan_read_receipts};
+    use super::{
+        ApplicationMessageKind, CommunicationError, REACTION_MESSAGE_KIND, map_runtime,
+        plan_read_receipts,
+    };
     use torca_control_delivery::ReadCandidate;
     use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
 
@@ -897,5 +935,25 @@ mod tests {
         let descriptor = error.descriptor();
         assert_eq!(descriptor.code().as_str(), "communication.attachment_unavailable");
         assert_eq!(descriptor.retry_advice(), torca_foundation::RetryAdvice::Backoff);
+    }
+
+    #[test]
+    fn application_message_kind_registry_is_unique_and_typed() {
+        let kinds = [
+            ApplicationMessageKind::Text,
+            ApplicationMessageKind::Receipt,
+            ApplicationMessageKind::Attachment,
+            ApplicationMessageKind::Probe,
+            ApplicationMessageKind::RadioControl,
+            ApplicationMessageKind::Reaction,
+        ];
+        let values = kinds.map(|kind| kind as u16);
+        let unique = values.into_iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(unique.len(), kinds.len());
+        assert_eq!(REACTION_MESSAGE_KIND, 6);
+        assert_eq!(
+            ApplicationMessageKind::try_from(REACTION_MESSAGE_KIND),
+            Ok(ApplicationMessageKind::Reaction)
+        );
     }
 }
