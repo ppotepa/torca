@@ -27,7 +27,6 @@ use torca_foundation::{
 use torca_messaging::{MessageBody, MessageId, MessageStatus};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
-use torca_runtime_policy::Freshness;
 use torca_runtime_policy::{
     AttentionContext, DemandReason, PolicyEvent, ResourceScope, RuntimeGovernor, WorkClass,
     WorkDemand,
@@ -1104,15 +1103,10 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 onion_event_code(onion_state),
             );
         }
-        let maintenance_result = communication.maintenance(&contacts, now).and_then(|()| {
-            let (deadline, probe_started) =
-                maintain_peer_probes(communication, &contacts, &mut peer_probes, policy, now)?;
-            peer_probe_deadline = deadline;
-            if probe_started {
-                diagnostics.count(RuntimeCounter::PeerProbe);
-            }
-            Ok(())
-        });
+        // Process actual transport activity before choosing the next cosmetic
+        // probe. Otherwise a frame received in this maintenance turn could
+        // leave a stale probe deadline armed for another wakeup.
+        let mut maintenance_result = communication.maintenance(&contacts, now);
         let worker_database_writes = communication.database_write_count();
         if worker_database_writes > last_worker_database_writes {
             for _ in last_worker_database_writes..worker_database_writes {
@@ -1165,16 +1159,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
             }
         }
-        observe_maintenance(
-            maintenance_result,
-            &mut communication_failed,
-            diagnostics,
-            sequence,
-            now,
-            Component::Peer,
-            "COMMUNICATION_MAINTENANCE_FAILED",
-            "COMMUNICATION_MAINTENANCE_RECOVERED",
-        );
         let mut current = BTreeMap::new();
         let mut current_successes = BTreeMap::new();
         let activity = CommunicationDriver::peer_activity(communication)
@@ -1312,6 +1296,28 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         last_peer_successes = current_successes;
         last_peer_activity = current_activity;
 
+        if maintenance_result.is_ok() {
+            maintenance_result =
+                maintain_peer_probes(communication, &contacts, &mut peer_probes, policy, now).map(
+                    |(deadline, probe_started)| {
+                        peer_probe_deadline = deadline;
+                        if probe_started {
+                            diagnostics.count(RuntimeCounter::PeerProbe);
+                        }
+                    },
+                );
+        }
+        observe_maintenance(
+            maintenance_result,
+            &mut communication_failed,
+            diagnostics,
+            sequence,
+            now,
+            Component::Peer,
+            "COMMUNICATION_MAINTENANCE_FAILED",
+            "COMMUNICATION_MAINTENANCE_RECOVERED",
+        );
+
         let lease_delay = policy
             .next_lease_expiry()
             .map(|expiry| expiry.saturating_duration_since(std::time::Instant::now()));
@@ -1359,7 +1365,10 @@ fn maintain_peer_probes<C: PeerSessionPort>(
                 ready: health.state == PeerConnectionStatus::Ready,
                 eligible: communication.peer_probe_eligible(contact_id)
                     && has_peer_or_radio_lease(policy, contact_id),
-                freshness: peer_freshness(health.last_success_at, now),
+                freshness: policy.freshness(
+                    ResourceScope::Peer(contact_id.to_opaque()),
+                    std::time::Instant::now(),
+                ),
                 reported_rtt_ms: health.rtt_ms,
             }
         })
@@ -1387,18 +1396,6 @@ fn has_peer_or_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) 
     let now = std::time::Instant::now();
     policy.has_active_lease(ResourceScope::Peer(contact_id.to_opaque()), now)
         || policy.has_active_lease(ResourceScope::Radio(contact_id.to_opaque()), now)
-}
-
-fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshness {
-    let Some(last_success_at) = last_success_at else { return Freshness::Unknown };
-    let Some(age) = now.duration_since(last_success_at) else { return Freshness::Stale };
-    if age <= Duration::from_secs(15) {
-        Freshness::Live
-    } else if age <= Duration::from_secs(120) {
-        Freshness::Recent
-    } else {
-        Freshness::Stale
-    }
 }
 
 const ATTACHMENT_OWNER_NAMESPACE: u128 = 0xA77A_C4A4_0000_0000_0000_0000_0000_0001;
