@@ -612,7 +612,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         }
 
         let attachment_due = !self.attachment_job_active.load(Ordering::Acquire)
-            && self.attachment_delay(now).is_some_and(Duration::is_zero);
+            && deadline_is_due(self.attachment_delay(now));
         if attachment_due {
             let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
             if !self.attachment_job_active.swap(true, Ordering::AcqRel) {
@@ -866,6 +866,10 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
     }
 }
 
+fn deadline_is_due(delay: Option<Duration>) -> bool {
+    delay.is_some_and(|delay| delay.is_zero())
+}
+
 fn refresh_attachment_cache(cache: &Mutex<Vec<AttachmentView>>, runtime: &dyn AttachmentRuntime) {
     let Ok(Some(snapshot)) = runtime.snapshot_projection() else {
         return;
@@ -882,9 +886,10 @@ fn map_runtime(error: CommunicationError) -> RuntimeDriverError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplicationMessageKind, CommunicationError, REACTION_MESSAGE_KIND, map_runtime,
-        plan_read_receipts,
+        ApplicationMessageKind, CommunicationError, REACTION_MESSAGE_KIND, deadline_is_due,
+        map_runtime, plan_read_receipts,
     };
+    use std::time::Duration;
     use torca_control_delivery::ReadCandidate;
     use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
 
@@ -935,5 +940,12 @@ mod tests {
             ApplicationMessageKind::try_from(REACTION_MESSAGE_KIND),
             Ok(ApplicationMessageKind::Reaction)
         );
+    }
+
+    #[test]
+    fn no_attachment_deadline_means_idle() {
+        assert!(!deadline_is_due(None));
+        assert!(!deadline_is_due(Some(Duration::from_secs(1))));
+        assert!(deadline_is_due(Some(Duration::ZERO)));
     }
 }
