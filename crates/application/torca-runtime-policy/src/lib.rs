@@ -564,6 +564,15 @@ mod tests {
     }
 
     #[test]
+    fn idle_governor_has_no_scheduled_work_or_active_leases() {
+        let now = Instant::now();
+        let mut governor = RuntimeGovernor::new(now);
+        assert_eq!(governor.next_deadline(), None);
+        assert_eq!(governor.snapshot(now).active_leases, 0);
+        assert!(governor.take_due(now).is_empty());
+    }
+
+    #[test]
     fn event_hub_sleeps_until_publish() {
         let hub = RuntimeEventHub::default();
         assert_eq!(hub.current(), Some((0, 0)));

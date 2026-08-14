@@ -28,7 +28,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
 | Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
-| Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds, actual peer probes and relay probe executions; radio/FFI/DB/write counters and idle regression gate remain |
+| Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds/DB reads, actual peer probes and relay probe executions; radio/FFI/DB-write counters and idle regression gate remain |
 
 The current implementation is therefore a transitional state. Event waiting,
 pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
@@ -467,8 +467,8 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 1. **Partial:** keep `torca-runtime-policy`, fake clock, reducer, lease book,
    evidence ledger and event hub small and dependency-light. Finish budgets
    and production scheduler ownership before adding new policy concepts.
-2. **Partial / next:** scheduler, snapshot, peer-probe and relay-probe
-   counters are wired. Add radio, FFI, DB/write and idle-simulation counters;
+2. **Partial / next:** scheduler, snapshot/DB-read, peer-probe and relay-probe
+   counters are wired. Add radio, FFI, DB-write and idle-simulation counters;
    make the idle regression gate a CI check before attempting Arti dormancy.
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. Add shutdown, missed-revision
