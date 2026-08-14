@@ -26,15 +26,15 @@ Last reconciled with the source tree on 2026-08-14.
 | Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; delivery/control outboxes and lease expiry now expose deadlines, while the remaining communication fallback still needs removal |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
-| Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |
+| Blocking/deadline radio worker | Partial | idle command waiting and listener acceptance are blocking; active media still uses a 10-ms read cadence |
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds/DB reads, actual peer probes and relay probe executions; radio/FFI/DB-write counters and idle regression gate remain |
 
 The current implementation is therefore a transitional state. Event waiting,
 pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
-idle radio blocking and demand-woken relay health have landed. Full deadline
-ownership, feature leases, attention propagation, evidence-driven peer health
-and Arti dormancy remain outstanding.
+idle radio blocking, a bounded kernel-blocked peer listener and demand-woken
+relay health have landed. Full deadline ownership, feature leases, attention
+propagation, evidence-driven peer health and Arti dormancy remain outstanding.
 
 The central model is:
 
@@ -398,7 +398,8 @@ target removes unconditional idle iteration:
 - No armed session: block indefinitely.
 - Pending connection: block until command, accept event, or reconnect deadline.
 - Active session: block until audio/playback/keepalive deadline.
-- The listener exposes cancellable blocking accept and wakes the media worker through a channel.
+- `PeerListener` uses one cancellable blocking accept worker and a bounded
+  queue; listener-ready event propagation into the scheduler is still pending.
 - Shutdown cancels both listener and media waiter.
 
 Keepalive policy:
@@ -490,9 +491,11 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    single-flight probe budget.
 7. **Partial:** relay healthy heartbeats are removed. Add operation-scoped
    relay leases and revalidation without blocking local readiness.
-8. **Partial:** idle radio waits on its command channel. Finish cancellable
-   listener wake-up and exact active-media deadlines; keep the default idle
-   path at zero worker iterations.
+8. **Partial:** idle radio waits on its command channel and `PeerListener` now
+   accepts on a dedicated blocking worker with a bounded queue and cancellable
+   shutdown. Finish wiring listener-ready events into the deadline scheduler,
+   exact active-media deadlines and keep the default idle path at zero worker
+   iterations.
 9. **Planned / measurement-gated:** evaluate Arti soft dormancy only after
    reliability soak tests pass. It is optional and not a release blocker.
 10. **Optional experiments:** deterministic dial ownership, viewport contact
