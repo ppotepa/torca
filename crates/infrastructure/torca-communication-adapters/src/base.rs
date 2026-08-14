@@ -450,6 +450,7 @@ pub struct InboundTextReceiptAdapter<R, S, K, C, P, I, T> {
     control: SharedControlWorker<T>,
     engine: EngineHandle,
     local_identity_id: OpaqueId,
+    database_writes: u64,
 }
 impl<R, S, K, C, P, I, T> InboundTextReceiptAdapter<R, S, K, C, P, I, T> {
     pub const fn new(
@@ -461,7 +462,16 @@ impl<R, S, K, C, P, I, T> InboundTextReceiptAdapter<R, S, K, C, P, I, T> {
         engine: EngineHandle,
         local_identity_id: OpaqueId,
     ) -> Self {
-        Self { relationships, link, crypto, inbound, control, engine, local_identity_id }
+        Self {
+            relationships,
+            link,
+            crypto,
+            inbound,
+            control,
+            engine,
+            local_identity_id,
+            database_writes: 0,
+        }
     }
 }
 impl<R, S, K, C, P, I, T> InboundMessagingRuntime for InboundTextReceiptAdapter<R, S, K, C, P, I, T>
@@ -506,6 +516,9 @@ where
                     .inbound
                     .persist_inbound(envelope.envelope_id, message)
                     .map_err(|_| CommunicationError::Inbound)?;
+                if inserted {
+                    self.database_writes = self.database_writes.saturating_add(1);
+                }
                 let receipt = ReceiptPayload {
                     receipt_id: ReceiptId::deterministic_for(
                         MessageId::from_opaque(envelope.envelope_id),
@@ -570,6 +583,10 @@ where
             }
             _ => self.reject(&envelope),
         }
+    }
+
+    fn database_write_count(&self) -> u64 {
+        self.database_writes
     }
 }
 impl<R, S, K, C, P, I, T> InboundTextReceiptAdapter<R, S, K, C, P, I, T>

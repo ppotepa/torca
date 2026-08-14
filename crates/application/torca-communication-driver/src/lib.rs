@@ -285,6 +285,10 @@ pub trait InboundMessagingRuntime: Send {
         envelope: InboundEnvelope,
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
+
+    fn database_write_count(&self) -> u64 {
+        0
+    }
 }
 pub trait AttachmentRuntime: Send {
     fn prepare_outgoing(
@@ -684,7 +688,10 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
             .lock()
             .map(|attachments| attachments.database_write_count())
             .unwrap_or(0);
-        self.text.database_write_count() + self.control.database_write_count() + attachment_writes
+        self.text.database_write_count()
+            + self.control.database_write_count()
+            + self.inbound.database_write_count()
+            + attachment_writes
     }
 
     fn blob_write_count(&self) -> u64 {
