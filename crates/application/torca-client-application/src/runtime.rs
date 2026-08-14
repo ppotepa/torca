@@ -925,10 +925,22 @@ impl ClientApplicationRuntime {
             }
             ApplicationCommand::SetRadioEnabled { contact_id, enabled, at_ms } => {
                 let contact = ContactId::from_opaque(contact_id);
+                let previous_active = self.radio_projection().and_then(|projection| {
+                    projection.active_contact_id.filter(|previous| *previous != contact)
+                });
                 self.radio()?
                     .set_enabled(contact, enabled, timestamp(at_ms)?)
                     .map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
+                    if enabled {
+                        if let Some(previous) = previous_active {
+                            // RadioCoordinator atomically disables the old
+                            // channel when a new one is enabled. Mirror that
+                            // ownership transition in the policy lease book
+                            // so the old peer cannot keep probe demand alive.
+                            runtime.set_radio_demand(previous, false);
+                        }
+                    }
                     runtime.set_radio_demand(contact, enabled);
                 }
                 if enabled { "radio_enabled" } else { "radio_disabled" }
