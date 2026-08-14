@@ -77,8 +77,16 @@ where
         self.link.maintenance(contacts, now).map(|_| ()).map_err(|_| CommunicationError::Peer)
     }
 
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.link.next_maintenance_delay(now)
+    }
+
     fn network_changed(&mut self, now: Timestamp) {
         let _ = self.link.network_changed(now);
+    }
+
+    fn disconnect_contact(&mut self, contact_id: ContactId) {
+        let _ = self.link.disconnect_contact(contact_id);
     }
 
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
