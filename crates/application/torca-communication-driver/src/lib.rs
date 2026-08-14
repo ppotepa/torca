@@ -254,12 +254,21 @@ pub trait TextDeliveryRuntime: Send {
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None
     }
+
+    /// Cumulative durable write operations performed by this worker. The
+    /// runtime samples the value and records only the delta in diagnostics.
+    fn database_write_count(&self) -> u64 {
+        0
+    }
 }
 pub trait ControlDeliveryRuntime: Send {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None
+    }
+    fn database_write_count(&self) -> u64 {
+        0
     }
     fn queue_reaction(
         &mut self,
@@ -662,6 +671,10 @@ impl PeerSessionPort for TorcaCommunicationDriver {
 }
 
 impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
+    fn database_write_count(&self) -> u64 {
+        self.text.database_write_count() + self.control.database_write_count()
+    }
+
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,

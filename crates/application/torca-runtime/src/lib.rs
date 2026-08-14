@@ -375,6 +375,12 @@ pub trait CommunicationDriver:
     + AttachmentTransferPort
     + AttachmentExportPort
 {
+    /// Cumulative durable writes reported by worker-owned stores. The runtime
+    /// samples this counter and records only the delta in its ledger.
+    fn database_write_count(&self) -> u64 {
+        0
+    }
+
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,
@@ -675,7 +681,6 @@ fn command_writes_database(command: &RuntimeCommand) -> bool {
             | RuntimeCommand::ClearConversationHistory(..)
             | RuntimeCommand::MarkConversationRead(..)
             | RuntimeCommand::QueueAttachment(..)
-            | RuntimeCommand::QueueReaction(..)
             | RuntimeCommand::RetryAttachment(..)
             | RuntimeCommand::CancelAttachment(..)
     )
@@ -844,6 +849,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut last_relay_probe_count = 0_u64;
     let mut active_attachment_leases = BTreeSet::<OpaqueId>::new();
     let mut active_delivery_leases = BTreeSet::<OpaqueId>::new();
+    let mut last_worker_database_writes = 0_u64;
     loop {
         match wait_for_runtime_command(&receiver, next_maintenance_at) {
             RuntimeWait::Command(RuntimeCommand::Shutdown(response)) => {
@@ -1064,6 +1070,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             Ok(())
         });
+        let worker_database_writes = communication.database_write_count();
+        if worker_database_writes > last_worker_database_writes {
+            for _ in last_worker_database_writes..worker_database_writes {
+                diagnostics.count(RuntimeCounter::DbWrite);
+            }
+        }
+        last_worker_database_writes = worker_database_writes;
         if !active_attachment_leases.is_empty()
             && let Ok(views) = communication.attachment_snapshot()
         {

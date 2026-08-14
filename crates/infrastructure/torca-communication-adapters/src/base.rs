@@ -1,6 +1,9 @@
 //! Concrete adapters that compose SQLCipher durable work with one authenticated shared PeerLink.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
 
 use crate::{application_envelope, application_peer_state, peer_envelope};
@@ -105,10 +108,11 @@ where
 
 pub struct TextWorkerAdapter<S, T> {
     worker: DeliveryWorker<S, T>,
+    database_writes: u64,
 }
 impl<S, T> TextWorkerAdapter<S, T> {
     pub const fn new(worker: DeliveryWorker<S, T>) -> Self {
-        Self { worker }
+        Self { worker, database_writes: 0 }
     }
 }
 impl<S, T> TextDeliveryRuntime for TextWorkerAdapter<S, T>
@@ -118,15 +122,33 @@ where
 {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         let before = now.checked_sub(STALE_CLAIM_AGE).unwrap_or(Timestamp::UNIX_EPOCH);
-        self.worker.recover_stale_claims(before).map(|_| ()).map_err(|_| CommunicationError::Text)
+        let recovered =
+            self.worker.recover_stale_claims(before).map_err(|_| CommunicationError::Text)?;
+        self.database_writes = self.database_writes.saturating_add(recovered as u64);
+        Ok(())
     }
 
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
-        self.worker.run_once(now, limit).map(|_| ()).map_err(|_| CommunicationError::Text)
+        let report = self.worker.run_once(now, limit).map_err(|_| CommunicationError::Text)?;
+        // Claiming a job and recording its outcome are separate durable
+        // writes. The worker report exposes both sides without estimating
+        // SQL statements from a maintenance tick.
+        let writes = report.claimed.saturating_add(
+            report
+                .completed
+                .saturating_add(report.rescheduled)
+                .saturating_add(report.dead_lettered),
+        );
+        self.database_writes = self.database_writes.saturating_add(writes as u64);
+        Ok(())
     }
 
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
         self.worker.next_due().ok().flatten().map(|due| due.duration_since(now).unwrap_or_default())
+    }
+
+    fn database_write_count(&self) -> u64 {
+        self.database_writes
     }
 }
 
@@ -134,15 +156,16 @@ where
 /// maintenance operate on the same outbox owner.
 pub struct SharedControlWorker<T> {
     inner: Arc<Mutex<ControlDeliveryWorker<T>>>,
+    database_writes: Arc<AtomicU64>,
 }
 impl<T> Clone for SharedControlWorker<T> {
     fn clone(&self) -> Self {
-        Self { inner: Arc::clone(&self.inner) }
+        Self { inner: Arc::clone(&self.inner), database_writes: Arc::clone(&self.database_writes) }
     }
 }
 impl<T> SharedControlWorker<T> {
     pub fn new(worker: ControlDeliveryWorker<T>) -> Self {
-        Self { inner: Arc::new(Mutex::new(worker)) }
+        Self { inner: Arc::new(Mutex::new(worker)), database_writes: Arc::new(AtomicU64::new(0)) }
     }
 }
 impl<T: ControlTransport + Send + 'static> SharedControlWorker<T> {
@@ -162,7 +185,11 @@ impl<T: ControlTransport + Send + 'static> SharedControlWorker<T> {
             at,
         );
         match result {
-            Ok(()) | Err(ControlDeliveryError::Duplicate) => Ok(()),
+            Ok(()) => {
+                self.database_writes.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(ControlDeliveryError::Duplicate) => Ok(()),
             Err(_) => Err(CommunicationError::Control),
         }
     }
@@ -183,7 +210,11 @@ impl<T: ControlTransport + Send + 'static> SharedControlWorker<T> {
             at,
         );
         match result {
-            Ok(()) | Err(ControlDeliveryError::Duplicate) => Ok(()),
+            Ok(()) => {
+                self.database_writes.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(ControlDeliveryError::Duplicate) => Ok(()),
             Err(_) => Err(CommunicationError::Control),
         }
     }
@@ -191,21 +222,31 @@ impl<T: ControlTransport + Send + 'static> SharedControlWorker<T> {
 impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedControlWorker<T> {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         let before = now.checked_sub(STALE_CLAIM_AGE).unwrap_or(Timestamp::UNIX_EPOCH);
-        self.inner
+        let recovered = self
+            .inner
             .lock()
             .map_err(|_| CommunicationError::Control)?
             .recover_stale(before)
-            .map(|_| ())
-            .map_err(|_| CommunicationError::Control)
+            .map_err(|_| CommunicationError::Control)?;
+        self.database_writes.fetch_add(recovered as u64, Ordering::Relaxed);
+        Ok(())
     }
 
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
-        self.inner
+        let report = self
+            .inner
             .lock()
             .map_err(|_| CommunicationError::Control)?
             .run_once(now, limit)
-            .map(|_| ())
-            .map_err(|_| CommunicationError::Control)
+            .map_err(|_| CommunicationError::Control)?;
+        let writes = report.claimed.saturating_add(
+            report
+                .completed
+                .saturating_add(report.rescheduled)
+                .saturating_add(report.dead_lettered),
+        );
+        self.database_writes.fetch_add(writes as u64, Ordering::Relaxed);
+        Ok(())
     }
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
         self.inner
@@ -213,6 +254,10 @@ impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedCont
             .ok()
             .and_then(|worker| worker.next_due().ok().flatten())
             .map(|due| due.duration_since(now).unwrap_or_default())
+    }
+
+    fn database_write_count(&self) -> u64 {
+        self.database_writes.load(Ordering::Relaxed)
     }
     fn queue_reaction(
         &mut self,
