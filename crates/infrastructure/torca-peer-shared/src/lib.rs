@@ -13,6 +13,9 @@ use torca_peer_link::{
 };
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 
+const ACK_POLL_INITIAL: Duration = Duration::from_millis(10);
+const ACK_POLL_MAX: Duration = Duration::from_millis(80);
+
 pub struct SharedPeerLink<S, K> {
     inner: Arc<Mutex<PeerLink<S, K>>>,
 }
@@ -130,6 +133,7 @@ where
         }
         let deadline =
             Instant::now().checked_add(timeout.min(wait_limit)).ok_or(PeerLinkError::AckTimeout)?;
+        let mut poll_delay = ACK_POLL_INITIAL;
         loop {
             let ack = {
                 let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;
@@ -138,10 +142,13 @@ where
             if let Some(ack) = ack {
                 return Ok(ack);
             }
-            if Instant::now() >= deadline {
+            let now = Instant::now();
+            if now >= deadline {
                 return Err(PeerLinkError::AckTimeout);
             }
-            thread::sleep(Duration::from_millis(10));
+            let remaining = deadline.saturating_duration_since(now);
+            thread::sleep(poll_delay.min(remaining));
+            poll_delay = poll_delay.saturating_mul(2).min(ACK_POLL_MAX);
         }
     }
 
