@@ -30,12 +30,15 @@ Last reconciled with the source tree on 2026-08-14.
 | Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds/DB reads, command-induced DB writes, actual peer probes and relay probe executions; a CI idle gate is present, while radio/FFI/worker-write counters remain |
 
-The current implementation is therefore a transitional state. Event waiting,
-pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
-idle radio blocking, bounded kernel-blocked peer/radio listeners, onion
-publisher completion wakeups with runtime propagation and demand-woken relay
-health have landed. Full deadline ownership, feature leases, attention
-propagation, evidence-driven peer health and Arti dormancy remain outstanding.
+The current implementation is therefore a transitional state, but its idle
+path is already event/deadline driven. Event waiting, pairing scheduling,
+demand-created peer reconnects, adaptive runtime waiting, idle radio blocking,
+bounded kernel-blocked peer/radio listeners, onion publisher completion
+wakeups with runtime propagation and demand-woken relay health have landed.
+The remaining work is integration hardening: feature-owned leases, complete
+attention propagation, richer evidence recording, executor-owned relay/radio
+leases and the remaining ledger counters. Arti dormancy remains deliberately
+measurement-gated and is not required for the no-idle-polling guarantee.
 
 The central model is:
 
@@ -85,6 +88,27 @@ not a dormant Tor process at all costs.
   local UI, inbound handling or durable delivery.
 - Do not introduce a relay mailbox, push dependency or protocol change as part
   of the battery migration.
+
+### Optimization verdict
+
+This is the best low-risk architecture for the current Torca design. The
+largest avoidable costs were application polling, duplicate reconnect loops
+and health probes that ignored real traffic; those paths are now replaced by
+one policy crate, executor deadlines and event wakeups. A second general
+purpose scheduler or a single crate owning Tor, relay, peers, radio and UI
+would make ownership less clear and would increase failure coupling.
+
+The next optimization should therefore be incremental and measurable:
+
+1. finish executor-owned leases and evidence counters;
+2. add idle/active traces for Android and Windows;
+3. only then evaluate Arti soft dormancy and rendezvous windows;
+4. keep deterministic dial ownership and viewport probing as opt-in
+   experiments until traces prove they reduce work without hurting delivery.
+
+The release default remains `AlwaysAvailable`: local UI, inbound listener,
+durable delivery and pairing must not depend on cosmetic health refreshes or
+on an experimental dormant/resume cycle.
 
 ### What is deliberately deferred
 
@@ -300,7 +324,8 @@ After the final lease expires:
 - relay stream closes after its own grace period;
 - no contact exists in a default always-connected set.
 
-Deterministic dial ownership is part of the target baseline:
+Deterministic dial ownership is an optional experiment, not part of the
+reliability baseline:
 
 - identity ordering selects the preferred initiator for speculative connect, rendezvous, and recovery;
 - concrete outbound work may dial immediately regardless of preferred ownership;
@@ -372,29 +397,29 @@ Initial rendezvous policy:
 
 Without push or a relay mailbox, background delivery is durable but best-effort. It may wait until a shared window, application foregrounding, or another real demand event.
 
-## Deadline scheduler and wake windows (planned)
+## Deadline scheduler and wake windows (implemented core)
 
-The original fixed `recv_timeout(100 ms)` loop has been replaced by an
-adaptive interim scheduler: idle runtime maintenance waits up to one second,
-while connection establishment/recovery retains a 100-ms cadence. It will be
-replaced by full deadline ownership:
+The original fixed `recv_timeout(100 ms)` loop and idle fallback timer have
+been removed. The runtime now takes the earliest deadline exposed by Tor,
+pairing, communication/delivery and lease executors:
 
 ```text
 deadline exists -> recv_timeout(deadline - now)
 no deadline     -> recv()
 ```
 
-Every participating subsystem exposes its next deadline. Low-priority work is coalesced:
+Every participating subsystem exposes its next deadline. Listener, Tor and
+publisher events wake the runtime immediately; low-priority work is coalesced:
 
 - foreground slack: up to 3 seconds;
 - background slack: up to 15 seconds;
 - user actions, protocol ACKs, pairing expiry, and audio deadlines: no slack.
 
-## Radio and adaptive keepalive (planned migration)
+## Radio and adaptive keepalive (implemented core; hardening ongoing)
 
 Radio retains a dedicated media worker because real-time audio has 20-ms
-deadlines. The current implementation still has a 10-ms tick/sleep path. The
-target removes unconditional idle iteration:
+deadlines. The unconditional 10-ms tick/sleep path has been removed. The
+worker now blocks when idle and computes the next active deadline:
 
 - No armed session: block indefinitely.
 - Pending connection: block until command, accept event, or reconnect deadline.
@@ -440,9 +465,12 @@ Android:
 - `NetworkCallback` reports availability, validation, meteredness, blocked state, and generation.
 - `ACTION_POWER_SAVE_MODE_CHANGED` updates policy without polling.
 
-## Observability and Energy Ledger (target)
+## Observability and Energy Ledger (implemented core; counters still expanding)
 
-Counters are incremented only on existing execution paths:
+Counters are incremented only on existing execution paths. Scheduler wakeups,
+snapshot builds, DB reads, command-induced DB writes, peer probes and relay
+probes are wired today. The remaining fields are reserved for their executor
+owners and must not be populated with estimates:
 
 ```text
 runtime_wakeups_by_reason
