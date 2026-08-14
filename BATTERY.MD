@@ -477,10 +477,10 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    deadline selected from Tor, communication, peer, pairing, attachment and
    radio executors. Do not create independent feature timers.
 5. **Partial / next:** attachment and pending-message leases now survive
-   route changes and are renewed by their explicit commands/runtime work.
-   Finish ACK-driven release plus authoritative pairing, delivery and radio
-   executor ownership; attention leases remain advisory and must never be the
-   only owner of durable work.
+   route changes, renew during runtime maintenance and release when durable
+   terminal state is observed. Finish pairing and radio executor ownership;
+   attention leases remain advisory and must never be the only owner of
+   durable work.
 6. **Partial:** evidence suppresses cosmetic peer probes and explicit peer
    deadlines exist. Integrate TX/RX/ACK/chunk evidence and preserve a
    single-flight probe budget.

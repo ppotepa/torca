@@ -24,7 +24,7 @@ use torca_diagnostics::{
 use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
 };
-use torca_messaging::{MessageBody, MessageId};
+use torca_messaging::{MessageBody, MessageId, MessageStatus};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
 use torca_runtime_policy::Freshness;
@@ -733,6 +733,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut attention_owner = None;
     let mut last_relay_probe_count = 0_u64;
     let mut active_attachment_leases = BTreeSet::<OpaqueId>::new();
+    let mut active_delivery_leases = BTreeSet::<OpaqueId>::new();
     loop {
         let wait = next_maintenance_at.saturating_duration_since(std::time::Instant::now());
         match receiver.recv_timeout(wait) {
@@ -795,10 +796,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 );
             }
             Ok(RuntimeCommand::WakeDelivery(message_id)) => {
+                active_delivery_leases.insert(message_id);
                 acquire_delivery_lease(policy, message_id);
                 refresh_contacts = true;
             }
             Ok(RuntimeCommand::ReleaseDelivery(message_id)) => {
+                active_delivery_leases.remove(&message_id);
                 policy.release_lease(delivery_lease_owner(message_id));
             }
             Ok(command) => {
@@ -944,6 +947,25 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     policy.release_lease(attachment_lease_owner(view.id));
                 } else {
                     acquire_attachment_lease(policy, &mut active_attachment_leases, view.id);
+                }
+            }
+        }
+        if !active_delivery_leases.is_empty()
+            && let Ok(snapshot) = engine.snapshot()
+        {
+            for message in snapshot.messages {
+                let message_id = message.id().to_opaque();
+                if active_delivery_leases.contains(&message_id)
+                    && matches!(
+                        message.status(),
+                        MessageStatus::Delivered
+                            | MessageStatus::Read
+                            | MessageStatus::Failed
+                            | MessageStatus::Cancelled
+                    )
+                {
+                    active_delivery_leases.remove(&message_id);
+                    policy.release_lease(delivery_lease_owner(message_id));
                 }
             }
         }
