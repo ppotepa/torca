@@ -21,7 +21,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
-| Attention/viewport contract from Flutter | Partial | `runtime.attention.set` now crosses the generated contract and feeds the policy kernel for top-level Chats/Contacts/Invitations surfaces; focused contact viewport wiring remains |
+| Attention/viewport contract from Flutter | Partial | `runtime.attention.set` crosses the generated contract; top-level navigation now reports up to seven visible contacts, while focused contact updates and generation race tests remain |
 | Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments and message delivery now create runtime leases independent of UI attention; terminal cleanup and full relay/radio executor ownership remain |
 | Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; full deadline ownership is still pending |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |

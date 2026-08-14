@@ -62,7 +62,10 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<String> _loadingConversationFlags = <String>{};
   int _attentionGeneration = 0;
 
-  void _reportAttention(_HomeSection section) {
+  void _reportAttention(
+    _HomeSection section, {
+    List<String> visibleContactIds = const <String>[],
+  }) {
     final surface = switch (section) {
       _HomeSection.chats => 'chats',
       _HomeSection.contacts => 'contacts',
@@ -72,6 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
       widget.gateway.execute(
         SetAttentionCommandDto(
           surface: surface,
+          visibleContactIds: visibleContactIds,
           generation: ++_attentionGeneration,
         ),
       ),
@@ -180,7 +184,15 @@ class _HomeScreenState extends State<HomeScreen> {
         onDestinationSelected: (index) {
           final section = _HomeSection.values[index];
           setState(() => _section = section);
-          _reportAttention(section);
+          _reportAttention(
+            section,
+            visibleContactIds: section == _HomeSection.contacts
+                ? snapshot.contacts
+                      .take(7)
+                      .map((contact) => contact.id)
+                      .toList(growable: false)
+                : const <String>[],
+          );
           if (section == _HomeSection.contacts) {
             unawaited(
               widget.gateway.execute(const AcknowledgeNewContactsCommandDto()),
