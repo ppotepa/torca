@@ -642,6 +642,29 @@ fn next_runtime_delay(
     .min()
 }
 
+fn command_writes_database(command: &RuntimeCommand) -> bool {
+    matches!(
+        command,
+        RuntimeCommand::CreatePairing(..)
+            | RuntimeCommand::JoinPairing(..)
+            | RuntimeCommand::ApprovePairing(..)
+            | RuntimeCommand::RejectPairing(..)
+            | RuntimeCommand::CancelPairing(..)
+            | RuntimeCommand::VerifyContact(..)
+            | RuntimeCommand::ResetContactVerification(..)
+            | RuntimeCommand::RenameContact(..)
+            | RuntimeCommand::BlockContact(..)
+            | RuntimeCommand::UnblockContact(..)
+            | RuntimeCommand::RemoveContact(..)
+            | RuntimeCommand::ClearConversationHistory(..)
+            | RuntimeCommand::MarkConversationRead(..)
+            | RuntimeCommand::QueueAttachment(..)
+            | RuntimeCommand::QueueReaction(..)
+            | RuntimeCommand::RetryAttachment(..)
+            | RuntimeCommand::CancelAttachment(..)
+    )
+}
+
 impl RuntimeOwner {
     pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         engine: EngineHandle,
@@ -875,6 +898,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 policy.release_lease(delivery_lease_owner(message_id));
             }
             RuntimeWait::Command(command) => {
+                if command_writes_database(&command) {
+                    diagnostics.count(RuntimeCounter::DbWrite);
+                }
                 refresh_contacts = true;
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 handle_command(
