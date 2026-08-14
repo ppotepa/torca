@@ -27,7 +27,7 @@ Last reconciled with the source tree on 2026-08-14.
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
 | Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |
-| Arti soft dormancy | Planned | no production `set_dormant` activity-mode integration exists |
+| Arti soft dormancy | Partial | `torca-tor` now exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; runtime policy integration remains deliberately measurement-gated |
 | Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds, actual peer probes and relay probe executions; radio/FFI/DB/write counters and idle regression gate remain |
 
 The current implementation is therefore a transitional state. Event waiting,
@@ -324,15 +324,16 @@ Network changes increment `network_generation` and perform staged recovery:
 
 ## Adaptive Tor and rendezvous windows (planned, measurement-gated)
 
-The proposed `torca-tor` API is:
+The exposed `torca-tor` API is:
 
 ```rust
 set_activity_mode(TorActivityMode::Active | SoftDormant)
 ```
 
-The intended implementation uses Arti `TorClient::set_dormant()` while
-retaining directory cache, persistent state, and onion identity. This API is
-not currently exposed by `torca-tor` and must not be treated as shipped.
+It delegates to Arti `TorClient::set_dormant()` while retaining directory
+cache, persistent state, and onion identity. The runtime does not call it
+automatically yet; the policy integration remains gated on Android onion,
+pairing, delivery, attachment and radio soak tests.
 
 Dormancy must land behind an explicit runtime policy (`AlwaysAvailable`,
 `Balanced`, `BatterySaver`) and soak tests. `AlwaysAvailable` remains the

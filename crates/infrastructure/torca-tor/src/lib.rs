@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use arti_client::{BootstrapBehavior, TorClient, config::TorClientConfigBuilder};
+use arti_client::{BootstrapBehavior, DormantMode, TorClient, config::TorClientConfigBuilder};
 use futures_util::StreamExt;
 use safelog::DisplayRedacted;
 use tokio::runtime::{Builder, Runtime};
@@ -97,6 +97,15 @@ pub enum OnionServiceHealth {
     Failed,
 }
 
+/// Activity mode for an already bootstrapped Arti client. Soft dormancy keeps
+/// persistent directory state and onion identity while stopping new network
+/// activity until the next real demand.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TorActivityMode {
+    Active,
+    SoftDormant,
+}
+
 /// Stable, swappable handle to the active Tor service.
 ///
 /// Infrastructure adapters keep this handle for their whole lifetime. During
@@ -152,6 +161,10 @@ impl TorServiceHandle {
     ) -> Result<(), TorError> {
         self.current()?.register_onion_route(virtual_port, target)
     }
+
+    pub fn set_activity_mode(&self, mode: TorActivityMode) -> Result<(), TorError> {
+        self.current()?.set_activity_mode(mode)
+    }
 }
 
 pub type TorBootstrapObserver = Arc<dyn Fn(TorBootstrapEvent) + Send + Sync>;
@@ -196,6 +209,14 @@ fn ensure_rustls_provider() {
 }
 
 impl TorService {
+    pub fn set_activity_mode(&self, mode: TorActivityMode) -> Result<(), TorError> {
+        self.client.set_dormant(match mode {
+            TorActivityMode::Active => DormantMode::Normal,
+            TorActivityMode::SoftDormant => DormantMode::Soft,
+        });
+        Ok(())
+    }
+
     /// Creates and bootstraps a client using persistent state under `state_root`.
     pub fn bootstrap(
         state_root: impl Into<std::path::PathBuf>,
