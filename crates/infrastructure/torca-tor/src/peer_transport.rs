@@ -1,7 +1,9 @@
 use crate::TorServiceHandle;
-use std::collections::VecDeque;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use torca_foundation::{CorrelationId, OpaqueId};
 use torca_peer::{PeerTransport, PeerTransportError};
 use torca_peer_protocol::MAX_PEER_DATA_LEN;
@@ -15,15 +17,63 @@ const PEER_PROTOCOL_MAJOR: u16 = 1;
 const PEER_PROTOCOL_MINOR: u16 = 0;
 const PEER_WIRE_MESSAGE_KIND: u16 = 1;
 const PEER_WIRE_PAYLOAD_OVERHEAD: usize = 1024;
+const READER_QUEUE_CAPACITY: usize = 256;
+
+type PeerWake = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
+
+enum ReaderEvent {
+    Payload(Vec<u8>),
+    Failed(String),
+}
+
+struct PeerReader {
+    receiver: Receiver<ReaderEvent>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl PeerReader {
+    fn spawn(stream: &TcpStream, wake: PeerWake) -> Result<Self, PeerTransportError> {
+        let reader = stream
+            .try_clone()
+            .map_err(|error| io_error("clone peer read stream", &error))?;
+        let (sender, receiver) = mpsc::sync_channel(READER_QUEUE_CAPACITY);
+        let worker = thread::Builder::new()
+            .name("torca-peer-read".into())
+            .spawn(move || reader_loop(reader, sender, wake))
+            .map_err(|error| PeerTransportError(format!("start peer reader failed: {error}")))?;
+        Ok(Self { receiver, worker: Some(worker) })
+    }
+
+    fn try_receive(&self) -> Result<Option<Vec<u8>>, PeerTransportError> {
+        match self.receiver.try_recv() {
+            Ok(ReaderEvent::Payload(payload)) => Ok(Some(payload)),
+            Ok(ReaderEvent::Failed(error)) => Err(PeerTransportError(error)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => {
+                Err(PeerTransportError("peer read worker stopped".into()))
+            }
+        }
+    }
+
+    fn join(mut self) {
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
 
 /// Embedded-Tor peer transport with strict `torca-wire` stream framing.
+///
+/// The read side is owned by one blocking worker. Incoming bytes therefore
+/// wake the runtime immediately instead of requiring a periodic poll of every
+/// ready peer session. The write side remains synchronous and process-owned.
 pub struct TorPeerTransport {
     client: Option<TorServiceHandle>,
     onion_address: String,
     port: u16,
     stream: Option<TcpStream>,
-    decoder: FrameDecoder,
-    received: VecDeque<Vec<u8>>,
+    reader: Option<PeerReader>,
+    wake: PeerWake,
     next_wire_id: u128,
 }
 
@@ -36,8 +86,8 @@ impl TorPeerTransport {
             onion_address: onion_address.into(),
             port,
             stream: None,
-            decoder: FrameDecoder::new(peer_wire_codec()),
-            received: VecDeque::new(),
+            reader: None,
+            wake: Arc::new(Mutex::new(None)),
             next_wire_id: 1,
         }
     }
@@ -47,15 +97,29 @@ impl TorPeerTransport {
         stream
             .set_nodelay(true)
             .map_err(|error| io_error("configure incoming peer stream", &error))?;
+        let wake = Arc::new(Mutex::new(None));
+        let reader = PeerReader::spawn(&stream, Arc::clone(&wake))?;
         Ok(Self {
             client: None,
             onion_address: String::new(),
             port: 0,
             stream: Some(stream),
-            decoder: FrameDecoder::new(peer_wire_codec()),
-            received: VecDeque::new(),
+            reader: Some(reader),
+            wake,
             next_wire_id: 1,
         })
+    }
+
+    /// Installs or replaces the runtime callback used by the blocking reader.
+    /// A shared slot lets incoming transports start reading immediately and
+    /// receive the process waker later when PeerLink accepts them.
+    pub fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerTransportError> {
+        let mut slot = self
+            .wake
+            .lock()
+            .map_err(|_| PeerTransportError("peer wake slot poisoned".into()))?;
+        *slot = Some(waker);
+        Ok(())
     }
 
     fn encode_frame(&mut self, payload: &[u8]) -> Result<Vec<u8>, PeerTransportError> {
@@ -76,37 +140,17 @@ impl TorPeerTransport {
             .map_err(|error| PeerTransportError(format!("peer frame encode failed: {error}")))
     }
 
-    fn read_available(&mut self) -> Result<(), PeerTransportError> {
-        let Some(stream) = self.stream.as_mut() else {
-            return Err(PeerTransportError("peer transport is not connected".into()));
-        };
-        stream
-            .set_nonblocking(true)
-            .map_err(|error| io_error("enable nonblocking peer read", &error))?;
-        let mut buffer = [0_u8; 16 * 1024];
-        let read_result = stream.read(&mut buffer);
-        let restore_result = stream.set_nonblocking(false);
-        if let Err(error) = restore_result {
-            return Err(io_error("restore blocking peer stream", &error));
+    fn stop_io(&mut self) -> Result<(), PeerTransportError> {
+        let shutdown_result = self
+            .stream
+            .take()
+            .map(|stream| stream.shutdown(Shutdown::Both))
+            .transpose()
+            .map_err(|error| io_error("close peer stream", &error));
+        if let Some(reader) = self.reader.take() {
+            reader.join();
         }
-        let count = match read_result {
-            Ok(0) => return Err(PeerTransportError("peer connection closed".into())),
-            Ok(count) => count,
-            Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(()),
-            Err(error) => return Err(io_error("read peer stream", &error)),
-        };
-        let frames = self
-            .decoder
-            .push(&buffer[..count])
-            .map_err(|error| PeerTransportError(format!("peer frame decode failed: {error}")))?;
-        let expected_kind = peer_message_kind();
-        for frame in frames {
-            if frame.metadata().message_kind() != expected_kind {
-                return Err(PeerTransportError("unexpected peer wire message kind".into()));
-            }
-            self.received.push_back(frame.into_payload());
-        }
-        Ok(())
+        shutdown_result.map(|_| ())
     }
 }
 
@@ -115,11 +159,7 @@ impl PeerTransport for TorPeerTransport {
         if self.port == 0 {
             return Err(PeerTransportError("peer port is invalid".into()));
         }
-        if let Some(stream) = self.stream.take() {
-            let _ = stream.shutdown(Shutdown::Both);
-        }
-        self.decoder.reset();
-        self.received.clear();
+        let _ = self.stop_io();
         let client = self
             .client
             .as_ref()
@@ -127,7 +167,12 @@ impl PeerTransport for TorPeerTransport {
         let stream = client
             .connect_onion(&self.onion_address, self.port)
             .map_err(|error| PeerTransportError(format!("Tor peer connect failed: {error}")))?;
+        stream
+            .set_nodelay(true)
+            .map_err(|error| io_error("configure outgoing peer stream", &error))?;
+        let reader = PeerReader::spawn(&stream, Arc::clone(&self.wake))?;
         self.stream = Some(stream);
+        self.reader = Some(reader);
         Ok(())
     }
 
@@ -142,22 +187,84 @@ impl PeerTransport for TorPeerTransport {
     }
 
     fn try_receive(&mut self) -> Result<Option<Vec<u8>>, PeerTransportError> {
-        if let Some(payload) = self.received.pop_front() {
-            return Ok(Some(payload));
-        }
-        self.read_available()?;
-        Ok(self.received.pop_front())
+        self.reader
+            .as_ref()
+            .ok_or_else(|| PeerTransportError("peer transport is not connected".into()))?
+            .try_receive()
     }
 
     fn close(&mut self) -> Result<(), PeerTransportError> {
-        self.decoder.reset();
-        self.received.clear();
-        if let Some(stream) = self.stream.take() {
-            stream
-                .shutdown(Shutdown::Both)
-                .map_err(|error| io_error("close peer stream", &error))?;
+        self.stop_io()
+    }
+}
+
+impl Drop for TorPeerTransport {
+    fn drop(&mut self) {
+        let _ = self.stop_io();
+    }
+}
+
+fn reader_loop(mut stream: TcpStream, sender: SyncSender<ReaderEvent>, wake: PeerWake) {
+    let mut decoder = FrameDecoder::new(peer_wire_codec());
+    let expected_kind = peer_message_kind();
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let count = match stream.read(&mut buffer) {
+            Ok(0) => {
+                publish_reader_failure(&sender, &wake, "peer connection closed");
+                return;
+            }
+            Ok(count) => count,
+            Err(error) => {
+                publish_reader_failure(
+                    &sender,
+                    &wake,
+                    &format!("read peer stream failed ({:?})", error.kind()),
+                );
+                return;
+            }
+        };
+        let frames = match decoder.push(&buffer[..count]) {
+            Ok(frames) => frames,
+            Err(error) => {
+                publish_reader_failure(
+                    &sender,
+                    &wake,
+                    &format!("peer frame decode failed: {error}"),
+                );
+                return;
+            }
+        };
+        let mut published = false;
+        for frame in frames {
+            if frame.metadata().message_kind() != expected_kind {
+                publish_reader_failure(&sender, &wake, "unexpected peer wire message kind");
+                return;
+            }
+            match sender.try_send(ReaderEvent::Payload(frame.into_payload())) {
+                Ok(()) => published = true,
+                Err(TrySendError::Full(_)) => {
+                    publish_reader_failure(&sender, &wake, "peer read queue full");
+                    return;
+                }
+                Err(TrySendError::Disconnected(_)) => return,
+            }
         }
-        Ok(())
+        if published {
+            notify_waker(&wake);
+        }
+    }
+}
+
+fn publish_reader_failure(sender: &SyncSender<ReaderEvent>, wake: &PeerWake, error: &str) {
+    let _ = sender.try_send(ReaderEvent::Failed(error.to_owned()));
+    notify_waker(wake);
+}
+
+fn notify_waker(wake: &PeerWake) {
+    let callback = wake.lock().ok().and_then(|slot| slot.clone());
+    if let Some(callback) = callback {
+        callback();
     }
 }
 
@@ -179,4 +286,34 @@ fn peer_message_kind() -> MessageKind {
 }
 fn io_error(operation: &str, error: &std::io::Error) -> PeerTransportError {
     PeerTransportError(format!("{operation} failed ({:?})", error.kind()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn blocking_reader_wakes_on_existing_stream_data() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let address = listener.local_addr().expect("address");
+        let client = TcpStream::connect(address).expect("client");
+        let (server, _) = listener.accept().expect("server");
+        let mut sender = TorPeerTransport::from_incoming_stream(client).expect("sender");
+        let mut receiver = TorPeerTransport::from_incoming_stream(server).expect("receiver");
+        let (wake_tx, wake_rx) = mpsc::channel();
+        receiver
+            .set_waker(Arc::new(move || {
+                let _ = wake_tx.send(());
+            }))
+            .expect("waker");
+
+        sender.send(b"hello".to_vec()).expect("send");
+        wake_rx.recv_timeout(Duration::from_secs(1)).expect("reader wake");
+        assert_eq!(receiver.try_receive().expect("receive"), Some(b"hello".to_vec()));
+        sender.close().expect("sender close");
+        let _ = receiver.close();
+    }
 }
