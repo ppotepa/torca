@@ -27,9 +27,35 @@ The active implementation has:
 
 Groups, calls, multi-device sync, public discovery, cloud backup and a Linux production client are not part of the current supported baseline.
 
+## Runtime and connectivity hardening
+
+The 2026-08-14 runtime hardening pass closed several cross-layer correctness and power issues without changing the project layering or introducing another scheduler:
+
+- Flutter and Android native revision waiters use isolated cancellation identities and no longer confuse actor revision with the durable notification cursor;
+- authenticated peer application message kinds are unique, so reactions no longer collide with attachment frames;
+- blocking readers on established Tor peer streams wake the process runtime on actual incoming data instead of requiring a periodic peer-stream poll;
+- the same real transport event is coalesced into the native presentation snapshot path, allowing an idle Flutter/Android waiter to observe background peer changes without a safety polling timer;
+- reconnect backoff is exposed as an exact peer deadline instead of being represented by repeated speculative maintenance;
+- blocking or removing one contact disconnects only that relationship rather than shutting down the process-wide peer link;
+- Android distinguishes default-route/transport replacement from validation, metering and other capability churn on the same `Network`, avoiding unnecessary destruction of healthy Tor peer streams;
+- the exceptional Android native-runtime retry path uses bounded exponential backoff instead of fixed 250 ms retries;
+- outgoing attachment maintenance is driven by durable transfer/retry/cancellation state and returns to no application deadline after terminal work; and
+- active peer ACK polling uses bounded adaptive backoff rather than a fixed 10 ms loop.
+
+The default remains `AlwaysAvailable`. Arti onion publication/recovery retains its own bounded internal health/recovery observation while a service is published. More aggressive Tor dormancy or a larger Arti lifecycle rewrite remains measurement-gated and is not required for the no-application-idle-polling baseline.
+
 ## Validation state
 
 The repository contains automated source, Rust, Flutter/contract and Windows/Android build gates. The detailed engineering ledger records many locally completed checks, but a documentation claim is valid only for the exact command/build/device scenario that was actually executed.
+
+For the runtime-hardening branch, the same checked-out source was locally validated with:
+
+- `cargo fmt --all -- --check`;
+- `cargo check --workspace --all-targets --all-features --locked`;
+- workspace Clippy with `correctness`, `suspicious` and `perf` promoted to errors; and
+- `cargo test --workspace --all-targets --all-features --locked`.
+
+The GitHub Actions workflow could not execute this branch because GitHub rejected job startup for the linked account due a billing/payment lock. No workflow step ran, so that infrastructure failure is **not** evidence that the source failed CI and it must not be reported as a green GitHub Actions run either. Re-run the configured matrix when the account can start Actions jobs again.
 
 The remaining confidence work is primarily platform and end-to-end validation:
 
@@ -39,8 +65,6 @@ The remaining confidence work is primarily platform and end-to-end validation:
 - Radio Mode permission, backgrounding, route-change and recovery soak tests;
 - deployment resume/interruption behavior; and
 - longer-running battery/runtime traces before enabling more aggressive Tor dormancy policy.
-
-The GitHub Actions workflow is configured to run the automated matrix, but the existence of the workflow is not proof that the current commit is green. Check the actual Actions result before citing CI as evidence.
 
 ## Security limits that must remain visible
 
