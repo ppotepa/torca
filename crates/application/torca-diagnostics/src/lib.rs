@@ -266,3 +266,17 @@ impl FailPoints {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn energy_ledger_exports_database_write_counter() {
+        let mut diagnostics = DiagnosticBuffer::new(4);
+        diagnostics.count(RuntimeCounter::DbWrite);
+        diagnostics.count(RuntimeCounter::DbWrite);
+        assert_eq!(diagnostics.counters().db_writes, 2);
+        assert!(diagnostics.export_json().contains("\"dbWrites\":2"));
+    }
+}
