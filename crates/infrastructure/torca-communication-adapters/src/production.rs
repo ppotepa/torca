@@ -1,5 +1,6 @@
 use core::fmt;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
@@ -70,6 +71,9 @@ pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
     pub local_identity_id: OpaqueId,
     pub connectivity: ConnectivityObserver,
     pub read_receipt_policy: ReadReceiptPolicy,
+    /// Presentation/runtime bridge wake installed alongside the process-owned
+    /// RuntimeOwner waker. It is invoked only by real listener/stream events.
+    pub runtime_event_waker: Arc<dyn Fn() + Send + Sync>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -92,16 +96,18 @@ where
         .map_err(|_| CommunicationBuildError::Storage)?;
     let health_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
-    let link = SharedPeerLink::new(
-        PeerLink::new(
-            inputs.listener,
-            ActiveRelationshipStore::new(peer_relationships),
-            inputs.signer,
-            inputs.local_identity_id,
-            inputs.tor_client.clone(),
-        )
-        .with_connectivity(inputs.connectivity),
-    );
+    let mut peer_link = PeerLink::new(
+        inputs.listener,
+        ActiveRelationshipStore::new(peer_relationships),
+        inputs.signer,
+        inputs.local_identity_id,
+        inputs.tor_client.clone(),
+    )
+    .with_connectivity(inputs.connectivity);
+    peer_link
+        .set_waker(Arc::clone(&inputs.runtime_event_waker))
+        .map_err(|_| CommunicationBuildError::Peer)?;
+    let link = SharedPeerLink::new(peer_link);
     let shared_crypto = SharedPeerCrypto::new(ManagedPeerSecrets::new(
         RustCryptoProvider,
         inputs.peer_secret_store,
