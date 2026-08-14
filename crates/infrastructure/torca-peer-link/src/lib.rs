@@ -14,7 +14,7 @@ use torca_connectivity::{
     ConnectivityObserver, OperationPhase, TransportDirection, TransportLayer, TransportOperation,
 };
 use torca_contacts::{
-    Contact, ContactError, ContactId, ContactRepository, PeerCredentialRepository,
+    Contact, ContactError, ContactId, ContactRepository, ContactStatus, PeerCredentialRepository,
 };
 use torca_crypto::{CryptoProvider, Ed25519HandshakeVerifier, RustCryptoProvider};
 use torca_foundation::{OpaqueId, Timestamp};
@@ -201,6 +201,31 @@ where
 
     pub fn is_ready(&self, contact_id: ContactId) -> bool {
         self.connection_state(contact_id) == PeerConnectionState::Ready
+    }
+
+    /// Disconnects exactly one relationship. Administrative actions must not
+    /// tear down unrelated peer sessions owned by the same process link.
+    pub fn disconnect_contact(&mut self, contact_id: ContactId) {
+        if let Some(mut session) = self.incoming.remove(&contact_id) {
+            let _ = session.close();
+        }
+        if let Some(mut session) = self.outgoing.remove(&contact_id) {
+            let _ = session.close();
+        }
+        self.reconnect.remove(&contact_id);
+        self.pending_acks.retain(|key, _| key.0 != contact_id);
+        self.inbound.retain(|envelope| envelope.contact_id != contact_id);
+        self.activity.remove(&contact_id);
+    }
+
+    /// Returns the exact next reconnect deadline. A reconnect backoff is a
+    /// deadline, not a reason for the central runtime to wake every 100 ms.
+    pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.reconnect
+            .values()
+            .filter(|entry| !entry.in_progress)
+            .map(|entry| entry.next_attempt_at.duration_since(now).unwrap_or_default())
+            .min()
     }
 
     /// Ensures at most one connect/handshake is active for the contact. This method never blocks
@@ -618,6 +643,9 @@ where
             .get(contact_id)
             .map_err(map_contact)?
             .ok_or(PeerLinkError::ContactNotFound)?;
+        if contact.status() != ContactStatus::Active {
+            return Err(PeerLinkError::ContactNotFound);
+        }
         let verifier = verifier_for(&contact)?;
         let policy = HandshakePolicy {
             expected_identity: contact.remote_identity().identity_id().to_opaque(),
@@ -845,7 +873,10 @@ where
                         .relationships
                         .get(contact_id)
                         .map_err(map_contact)?
-                        .is_some_and(|contact| self.prefer_outgoing(&contact))
+                        .is_some_and(|contact| {
+                            contact.status() == ContactStatus::Active
+                                && self.prefer_outgoing(&contact)
+                        })
                     {
                         self.schedule_reconnect(contact_id, now)?;
                     }
@@ -971,6 +1002,15 @@ where
         contact_id: ContactId,
         now: Timestamp,
     ) -> Result<(), PeerLinkError> {
+        let active = self
+            .relationships
+            .get(contact_id)
+            .map_err(map_contact)?
+            .is_some_and(|contact| contact.status() == ContactStatus::Active);
+        if !active {
+            self.disconnect_contact(contact_id);
+            return Ok(());
+        }
         if self.is_ready(contact_id) {
             self.reconnect.remove(&contact_id);
             return Ok(());
@@ -1041,7 +1081,10 @@ where
             .list()
             .map_err(map_contact)?
             .into_iter()
-            .find(|contact| contact.remote_identity().identity_id().to_opaque() == identity_id)
+            .find(|contact| {
+                contact.status() == ContactStatus::Active
+                    && contact.remote_identity().identity_id().to_opaque() == identity_id
+            })
             .ok_or(PeerLinkError::Unauthorized)
     }
 
