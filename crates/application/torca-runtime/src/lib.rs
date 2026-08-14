@@ -824,13 +824,23 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         let relay_snapshot = relay_health
             .as_ref()
             .map_or_else(RelayHealthSnapshot::default, RelayHealthHandle::snapshot);
-        if relay_snapshot.probe_count > last_relay_probe_count {
+        let relay_probe_completed = relay_snapshot.probe_count > last_relay_probe_count;
+        if relay_probe_completed {
             for _ in last_relay_probe_count..relay_snapshot.probe_count {
                 diagnostics.count(RuntimeCounter::RelayProbe);
             }
             last_relay_probe_count = relay_snapshot.probe_count;
         }
         let relay_state = (relay_snapshot.status, relay_snapshot.diagnostic_code);
+        if relay_probe_completed && relay_snapshot.status == ProbeStatus::Healthy {
+            policy.apply(
+                PolicyEvent::Evidence {
+                    scope: ResourceScope::Relay,
+                    kind: torca_runtime_policy::EvidenceKind::Probe,
+                },
+                std::time::Instant::now(),
+            );
+        }
         if last_relay_state.as_ref() != Some(&relay_state) {
             record(
                 diagnostics,
@@ -948,6 +958,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 && last_peer_successes.get(&id) != Some(&health.last_success_at)
             {
                 transport_activity.mark_peer(id, now);
+                policy.apply(
+                    PolicyEvent::Evidence {
+                        scope: ResourceScope::Peer(id.to_opaque()),
+                        kind: torca_runtime_policy::EvidenceKind::Ack,
+                    },
+                    std::time::Instant::now(),
+                );
             }
             current.insert(id, state);
             connectivity.set_peer_ready(id.to_opaque(), state == PeerConnectionStatus::Ready);
