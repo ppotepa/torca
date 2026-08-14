@@ -696,7 +696,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       _reportConversationAttention(conversation.id);
       if (MediaQuery.sizeOf(context).width < _wideLayoutBreakpoint) {
-        Navigator.of(context).push<void>(
+        await Navigator.of(context).push<void>(
           MaterialPageRoute(
             builder: (_) => ConversationScreen(
               gateway: widget.gateway,
@@ -705,6 +705,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         );
+        if (mounted) _reportAttention(_HomeSection.chats);
         return;
       }
       setState(() {
