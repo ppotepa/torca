@@ -25,6 +25,8 @@ typedef _InvokeDart = int Function(_Handle, ffi.Pointer<ffi.Uint8>, int, int);
 typedef _WaitNative =
     ffi.Int32 Function(_Handle, ffi.Uint64, ffi.Uint64, ffi.Uint32);
 typedef _WaitDart = int Function(_Handle, int, int, int);
+typedef _CancelWaitNative = ffi.Int32 Function(_Handle);
+typedef _CancelWaitDart = int Function(_Handle);
 typedef _ResponsePtrNative = ffi.Pointer<ffi.Uint8> Function(_Handle);
 typedef _ResponsePtrDart = ffi.Pointer<ffi.Uint8> Function(_Handle);
 typedef _ResponseLenNative = ffi.UintPtr Function(_Handle);
@@ -607,11 +609,13 @@ void _workerMainImpl(List<Object?> arguments) {
         waiter.send(<String, Object?>{
           'revision': runtimeRevision,
           'cursor': notificationCursor,
-          'timeoutMs': 30_000,
+          // Wait indefinitely in native code. Disposal cancels the wait
+          // explicitly, so idle state never turns into periodic FFI calls.
+          'timeoutMs': 0,
           'reply': reply.sendPort,
         });
         reply.first
-            .timeout(const Duration(seconds: 31))
+            .timeout(const Duration(days: 365))
             .then<void>(
               (_) {
                 reply.close();
@@ -629,6 +633,7 @@ void _workerMainImpl(List<Object?> arguments) {
     }
     if (message['dispose'] == true) {
       snapshotTimer?.cancel();
+      bindings.cancelWaitForRevision(handle);
       waiterPort?.send(<String, Object?>{'stop': true});
       waiterReady.close();
       waiterIsolate?.kill(priority: Isolate.immediate);
@@ -686,6 +691,10 @@ class _WorkerBindings {
       _waitForRevision = library.lookupFunction<_WaitNative, _WaitDart>(
         'torca_runtime_wait_for_revision',
       ),
+      _cancelWaitForRevision = library
+          .lookupFunction<_CancelWaitNative, _CancelWaitDart>(
+            'torca_runtime_cancel_revision_wait',
+          ),
       _responsePtr = library
           .lookupFunction<_ResponsePtrNative, _ResponsePtrDart>(
             'torca_runtime_response_ptr',
@@ -712,6 +721,7 @@ class _WorkerBindings {
   final _ReleaseDart _release;
   final _InvokeDart _invoke;
   final _WaitDart _waitForRevision;
+  final _CancelWaitDart _cancelWaitForRevision;
   final _ResponsePtrDart _responsePtr;
   final _ResponseLenDart _responseLen;
   final _AllocDart _alloc;
@@ -730,6 +740,8 @@ class _WorkerBindings {
     int afterCursor,
     int timeoutMs,
   ) => _waitForRevision(handle, afterRevision, afterCursor, timeoutMs);
+
+  int cancelWaitForRevision(_Handle handle) => _cancelWaitForRevision(handle);
 
   Map<String, dynamic> metadata() {
     final pointer = _metadataPtr();

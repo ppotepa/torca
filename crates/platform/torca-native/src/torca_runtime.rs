@@ -747,6 +747,21 @@ pub unsafe extern "C" fn torca_runtime_wait_for_revision(
     }
 }
 
+/// Cancels an in-flight revision wait so a Flutter/Android worker can shut
+/// down immediately instead of waiting for an artificial polling timeout.
+#[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be a valid handle returned by `torca_runtime_acquire`.
+pub unsafe extern "C" fn torca_runtime_cancel_revision_wait(
+    handle: *const TorcaRuntimeHandle,
+) -> i32 {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return -1;
+    };
+    handle.inner.event_hub.cancel(0);
+    ABI_OK
+}
+
 #[unsafe(no_mangle)]
 /// # Safety
 /// `handle` must be a valid runtime handle and the returned pointer is valid

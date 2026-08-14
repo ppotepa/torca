@@ -16,7 +16,7 @@ Last reconciled with the source tree on 2026-08-14.
 | --- | --- | --- |
 | Policy kernel and fake-clock tests | Implemented | `crates/application/torca-runtime-policy` |
 | Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native`; native actor now blocks until a command or the earliest durable pending-operation deadline |
-| Flutter revision waiter | Implemented | event isolate waits through `torca_runtime_wait_for_revision`; bootstrap and pending states no longer use a 250-ms poll loop |
+| Flutter revision waiter | Implemented | event isolate performs an indefinite native wait through `torca_runtime_wait_for_revision`; disposal calls the explicit cancellation ABI, so bootstrap and pending states do not use a timeout poll loop |
 | Android notification waiter | Implemented | foreground service waits for native runtime changes |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
@@ -452,7 +452,8 @@ Flutter:
 - The command isolate remains responsive and never blocks in event waiting.
 - A separate event isolate waits in `waitForRuntimeChange`.
 - A change triggers exactly one snapshot fetch.
-- Dispose calls `cancelWaiter` before terminating the isolate.
+- Dispose calls `torca_runtime_cancel_revision_wait` before terminating the
+  isolate.
 - The 250-ms/1-second polling timers and idle JSON comparison disappear.
 
 Android:
