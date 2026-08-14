@@ -31,8 +31,8 @@ class TorcaForegroundService : Service() {
     private var notificationCursor = 0L
     private var notificationRuntimeId = ""
     // This is the native runtime revision, distinct from the durable
-    // notification cursor.  The service blocks on the revision and only
-    // fetches notifications after a real runtime change.
+    // notification cursor. The native waiter is revision-driven; the cursor is
+    // still passed separately so the ABI retains the exact consumer state.
     private var runtimeRevision = 0L
     private lateinit var connectivityManager: ConnectivityManager
     private var warmupWakeLock: PowerManager.WakeLock? = null
@@ -62,7 +62,7 @@ class TorcaForegroundService : Service() {
             }
             val waitResult = NativeRuntimeBridge.nativeWaitForRevision(
                 runtimeRevision,
-                runtimeRevision,
+                notificationCursor,
                 EVENT_WAIT_TIMEOUT_MS,
             )
             if (waitResult < 0) {
@@ -365,7 +365,7 @@ class TorcaForegroundService : Service() {
         const val NOTIFICATION_CURSOR = "cursor"
         const val NOTIFICATION_RUNTIME_ID = "runtime_id"
         // Zero selects the native condvar wait. It returns only on a runtime
-        // revision/cursor change or explicit service shutdown cancellation.
+        // revision change or explicit service shutdown cancellation.
         const val EVENT_WAIT_TIMEOUT_MS = 0
         const val RUNTIME_WAIT_MS = 250L
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
