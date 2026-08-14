@@ -3,7 +3,7 @@
 mod attachments;
 pub use attachments::{AttachmentSendRequest, AttachmentView};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
@@ -17,6 +17,7 @@ use torca_connectivity::{
 };
 use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationId;
+use torca_delivery::ReactionPayload;
 use torca_diagnostics::{
     Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState, RuntimeCounter,
 };
@@ -24,7 +25,6 @@ use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
 };
 use torca_messaging::{MessageBody, MessageId};
-use torca_delivery::ReactionPayload;
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
 use torca_runtime_policy::Freshness;
@@ -515,7 +515,9 @@ impl RuntimeHandle {
         reaction: ReactionPayload,
         at: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        request_command(&self.sender, |r| RuntimeCommand::QueueReaction(contact_id, reaction, at, r))
+        request_command(&self.sender, |r| {
+            RuntimeCommand::QueueReaction(contact_id, reaction, at, r)
+        })
     }
     pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
         request_command(&self.sender, |r| RuntimeCommand::RetryAttachment(id, r))
@@ -717,6 +719,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut contacts = Vec::<ContactId>::new();
     let mut refresh_contacts = true;
     let mut attention_owner = None;
+    let mut last_relay_probe_count = 0_u64;
+    let mut active_attachment_leases = BTreeSet::<OpaqueId>::new();
     loop {
         let wait = next_maintenance_at.saturating_duration_since(std::time::Instant::now());
         match receiver.recv_timeout(wait) {
@@ -759,10 +763,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     policy.acquire_lease(demand);
                     attention_owner = Some(owner);
                 }
-                policy.apply(
-                    PolicyEvent::Attention(context),
-                    now,
-                );
+                policy.apply(PolicyEvent::Attention(context), now);
             }
             Ok(RuntimeCommand::NetworkChanged) => {
                 refresh_contacts = true;
@@ -795,6 +796,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     relay_health.as_ref(),
                     &mut transport_activity,
                     &connectivity,
+                    policy,
+                    &mut active_attachment_leases,
                     diagnostics,
                     sequence,
                     now,
@@ -808,6 +811,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         if refresh_contacts {
             if let Ok(snapshot) = engine.snapshot() {
                 diagnostics.count(RuntimeCounter::SnapshotBuild);
+                diagnostics.count(RuntimeCounter::DbRead);
                 contacts = snapshot
                     .contacts
                     .iter()
@@ -820,6 +824,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         let relay_snapshot = relay_health
             .as_ref()
             .map_or_else(RelayHealthSnapshot::default, RelayHealthHandle::snapshot);
+        if relay_snapshot.probe_count > last_relay_probe_count {
+            for _ in last_relay_probe_count..relay_snapshot.probe_count {
+                diagnostics.count(RuntimeCounter::RelayProbe);
+            }
+            last_relay_probe_count = relay_snapshot.probe_count;
+        }
         let relay_state = (relay_snapshot.status, relay_snapshot.diagnostic_code);
         if last_relay_state.as_ref() != Some(&relay_state) {
             record(
@@ -888,15 +898,26 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             );
         }
         let maintenance_result = communication.maintenance(&contacts, now).and_then(|()| {
-                peer_probe_deadline = maintain_peer_probes(
-                    communication,
-                    &contacts,
-                    &mut peer_probes,
-                    policy,
-                    now,
-                )?;
+            let (deadline, probe_started) =
+                maintain_peer_probes(communication, &contacts, &mut peer_probes, policy, now)?;
+            peer_probe_deadline = deadline;
+            if probe_started {
+                diagnostics.count(RuntimeCounter::PeerProbe);
+            }
             Ok(())
         });
+        if !active_attachment_leases.is_empty()
+            && let Ok(views) = communication.attachment_snapshot()
+        {
+            for view in views {
+                if matches!(view.status.as_str(), "available" | "cancelled") {
+                    active_attachment_leases.remove(&view.id);
+                    policy.release_lease(attachment_lease_owner(view.id));
+                } else {
+                    acquire_attachment_lease(policy, &mut active_attachment_leases, view.id);
+                }
+            }
+        }
         observe_maintenance(
             maintenance_result,
             &mut communication_failed,
@@ -943,11 +964,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         last_peer_states = current;
         last_peer_successes = current_successes;
 
-        let mut next_delay = if active_transport {
-            ACTIVE_MAINTENANCE_INTERVAL
-        } else {
-            IDLE_MAINTENANCE_INTERVAL
-        };
+        let mut next_delay =
+            if active_transport { ACTIVE_MAINTENANCE_INTERVAL } else { IDLE_MAINTENANCE_INTERVAL };
         if let Some(pairing_delay) = pairing.next_maintenance_delay(now) {
             next_delay = next_delay.min(pairing_delay);
         }
@@ -970,7 +988,7 @@ fn maintain_peer_probes<C: PeerSessionPort>(
     supervisor: &mut PeerProbeSupervisor,
     policy: &mut RuntimeGovernor,
     now: Timestamp,
-) -> Result<Option<Timestamp>, RuntimeDriverError> {
+) -> Result<(Option<Timestamp>, bool), RuntimeDriverError> {
     if let Some(contact_id) = communication.take_peer_probe_completion(now)? {
         let health = communication.peer_health(contact_id);
         supervisor.complete(
@@ -988,7 +1006,10 @@ fn maintain_peer_probes<C: PeerSessionPort>(
                 peer_id: contact_id.to_opaque(),
                 ready: health.state == PeerConnectionStatus::Ready,
                 eligible: communication.peer_probe_eligible(contact_id)
-                    && policy.has_active_lease(ResourceScope::Peer(contact_id.to_opaque()), std::time::Instant::now()),
+                    && policy.has_active_lease(
+                        ResourceScope::Peer(contact_id.to_opaque()),
+                        std::time::Instant::now(),
+                    ),
                 freshness: peer_freshness(health.last_success_at, now),
                 reported_rtt_ms: health.rtt_ms,
             }
@@ -996,13 +1017,13 @@ fn maintain_peer_probes<C: PeerSessionPort>(
         .collect::<Vec<_>>();
     supervisor.reconcile(&candidates, now);
     let Some(request) = supervisor.next_due(&candidates, now) else {
-        return Ok(supervisor.next_deadline());
+        return Ok((supervisor.next_deadline(), false));
     };
     let Some(contact_id) =
         contacts.iter().copied().find(|contact_id| contact_id.to_opaque() == request.peer_id)
     else {
         supervisor.complete(request.peer_id, false, now);
-        return Ok(supervisor.next_deadline());
+        return Ok((supervisor.next_deadline(), false));
     };
     if let Err(error) =
         communication.begin_peer_probe(contact_id, request.probe_id, request.reported_rtt_ms)
@@ -1010,7 +1031,7 @@ fn maintain_peer_probes<C: PeerSessionPort>(
         supervisor.complete(request.peer_id, false, now);
         return Err(error);
     }
-    Ok(supervisor.next_deadline())
+    Ok((supervisor.next_deadline(), true))
 }
 
 fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshness {
@@ -1023,6 +1044,27 @@ fn peer_freshness(last_success_at: Option<Timestamp>, now: Timestamp) -> Freshne
     } else {
         Freshness::Stale
     }
+}
+
+const ATTACHMENT_OWNER_NAMESPACE: u128 = 0xA77A_C4A4_0000_0000_0000_0000_0000_0001;
+
+fn attachment_lease_owner(attachment_id: OpaqueId) -> OpaqueId {
+    OpaqueId::from_u128(attachment_id.to_u128() ^ ATTACHMENT_OWNER_NAMESPACE)
+}
+
+fn acquire_attachment_lease(
+    policy: &mut RuntimeGovernor,
+    active_attachment_leases: &mut BTreeSet<OpaqueId>,
+    attachment_id: OpaqueId,
+) {
+    active_attachment_leases.insert(attachment_id);
+    policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Attachment(attachment_id),
+        class: WorkClass::Attachment,
+        reason: DemandReason::AttachmentTransfer,
+        owner: attachment_lease_owner(attachment_id),
+        expires_at: std::time::Instant::now() + Duration::from_secs(10 * 60),
+    });
 }
 
 fn observe_maintenance(
@@ -1145,6 +1187,8 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     relay_health: Option<&RelayHealthHandle>,
     transport_activity: &mut TransportActivityLedger,
     connectivity: &ConnectivityObserver,
+    policy: &mut RuntimeGovernor,
+    active_attachment_leases: &mut BTreeSet<OpaqueId>,
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
     now: Timestamp,
@@ -1240,16 +1284,32 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
                 Ok(())
             });
+            if result.is_ok() {
+                acquire_attachment_lease(
+                    policy,
+                    active_attachment_leases,
+                    request_value.attachment_id,
+                );
+            }
             let _ = r.send(result);
         }
         RuntimeCommand::QueueReaction(contact_id, reaction, at, r) => {
             let _ = r.send(communication.queue_reaction(contact_id, reaction, at));
         }
         RuntimeCommand::RetryAttachment(id, r) => {
-            let _ = r.send(communication.retry_attachment(id, now));
+            let result = communication.retry_attachment(id, now);
+            if result.is_ok() {
+                acquire_attachment_lease(policy, active_attachment_leases, id);
+            }
+            let _ = r.send(result);
         }
         RuntimeCommand::CancelAttachment(id, r) => {
-            let _ = r.send(communication.cancel_attachment(id, now));
+            let result = communication.cancel_attachment(id, now);
+            if result.is_ok() {
+                active_attachment_leases.remove(&id);
+                policy.release_lease(attachment_lease_owner(id));
+            }
+            let _ = r.send(result);
         }
         RuntimeCommand::ExportAttachment(id, destination, r) => {
             let _ = r.send(communication.export_attachment(id, destination));
@@ -1258,7 +1318,16 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(communication.export_attachment_preview(id, destination));
         }
         RuntimeCommand::AttachmentSnapshot(r) => {
-            let _ = r.send(communication.attachment_snapshot());
+            let result = communication.attachment_snapshot();
+            if let Ok(views) = &result {
+                for view in views {
+                    if matches!(view.status.as_str(), "available" | "cancelled") {
+                        active_attachment_leases.remove(&view.id);
+                        policy.release_lease(attachment_lease_owner(view.id));
+                    }
+                }
+            }
+            let _ = r.send(result);
         }
         RuntimeCommand::NetworkSnapshot(r) => {
             let result = (|| {

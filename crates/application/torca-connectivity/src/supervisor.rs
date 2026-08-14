@@ -31,6 +31,7 @@ pub struct RelayHealthSnapshot {
     pub diagnostic_code: ErrorCode,
     pub latency_ms: Option<u64>,
     pub failures: u32,
+    pub probe_count: u64,
 }
 
 impl Default for RelayHealthSnapshot {
@@ -40,6 +41,7 @@ impl Default for RelayHealthSnapshot {
             diagnostic_code: ErrorCode::new("relay.probe_unconfigured"),
             latency_ms: None,
             failures: 0,
+            probe_count: 0,
         }
     }
 }
@@ -64,6 +66,7 @@ impl RelayHealthHandle {
                 diagnostic_code: ErrorCode::new("relay.supervisor_poisoned"),
                 latency_ms: None,
                 failures: 0,
+                probe_count: 0,
             },
             |value| value.clone(),
         )
@@ -97,6 +100,7 @@ impl RelayHealthWorker {
             diagnostic_code: ErrorCode::new("relay.probe_starting"),
             latency_ms: None,
             failures: 0,
+            probe_count: 0,
         }));
         let (commands, receiver) = mpsc::sync_channel(1);
         let handle = RelayHealthHandle { state: Arc::clone(&state), commands };
@@ -124,6 +128,7 @@ fn run(
     receiver: Receiver<Command>,
 ) {
     let mut failures = 0_u32;
+    let mut probe_count = 0_u64;
     let mut next_at = Some(Instant::now());
     loop {
         let now = Instant::now();
@@ -161,11 +166,13 @@ fn run(
                         diagnostic_code: ErrorCode::new("relay.probe_running"),
                         latency_ms: None,
                         failures,
+                        probe_count,
                     },
                 );
             }
         }
         let started = Instant::now();
+        probe_count = probe_count.saturating_add(1);
         match port.check_relay_health() {
             Ok(()) => {
                 failures = 0;
@@ -178,6 +185,7 @@ fn run(
                             u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                         ),
                         failures,
+                        probe_count,
                     },
                 );
                 // A successful operation is health evidence. Do not create
@@ -208,6 +216,7 @@ fn run(
                         diagnostic_code: code,
                         latency_ms: None,
                         failures,
+                        probe_count,
                     },
                 );
                 next_at = Some(Instant::now() + retry_delay(failures));
@@ -308,6 +317,7 @@ mod tests {
         }
         assert_eq!(worker.handle().snapshot().status, ProbeStatus::Healthy);
         assert_eq!(worker.handle().snapshot().failures, 0);
+        assert!(worker.handle().snapshot().probe_count >= 2);
         worker.shutdown();
     }
 

@@ -22,13 +22,13 @@ Last reconciled with the source tree on 2026-08-14.
 | Demand-created peer reconnect entries | Implemented | stored contacts alone do not create an outgoing reconnect loop |
 | Health freshness suppressing some peer probes | Partial | evidence is consumed by `PeerProbeSupervisor`, but the full governor is not the live owner |
 | Attention/viewport contract from Flutter | Partial | `runtime.attention.set` now crosses the generated contract and feeds the policy kernel for top-level Chats/Contacts/Invitations surfaces; focused contact viewport wiring remains |
-| Feature-owned leases | Partial | focused conversation/radio/pairing attention creates governor leases and gates peer probes; durable delivery, attachment and relay executor ownership remains |
+| Feature-owned leases | Partial | focused conversation/radio/pairing attention gates peer probes; queued/retried attachments now create renewable runtime leases and release on terminal state; durable message/delivery and relay executor ownership remains |
 | Central deadline scheduler | Partial | fixed 100-ms tick was replaced by adaptive idle/active waits; full deadline ownership is still pending |
 | Demand/evidence-driven relay health | Partial | healthy relay no longer heartbeats every 15 seconds; it sleeps until an explicit wake, while retry backoff remains scheduled |
 | Fully evidence-driven peer health | Partial | peer supervisor still schedules 30-second healthy and 10-second retry intervals, but now exposes its next deadline so runtime idle waits do not poll blindly |
 | Blocking/deadline radio worker | Partial | idle command waiting is blocking; active media still uses a 10-ms read cadence |
 | Arti soft dormancy | Planned | no production `set_dormant` activity-mode integration exists |
-| Runtime Energy Ledger | Partial | diagnostics now expose scheduler wakeups and snapshot builds; executor-wide counters and idle regression gate remain |
+| Runtime Energy Ledger | Partial | diagnostics now count scheduler wakeups, snapshot builds, actual peer probes and relay probe executions; radio/FFI/DB/write counters and idle regression gate remain |
 
 The current implementation is therefore a transitional state. Event waiting,
 pairing scheduling, demand-created peer reconnects, adaptive runtime waiting,
@@ -466,18 +466,19 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 1. **Partial:** keep `torca-runtime-policy`, fake clock, reducer, lease book,
    evidence ledger and event hub small and dependency-light. Finish budgets
    and production scheduler ownership before adding new policy concepts.
-2. **Partial / next:** complete the Energy Ledger with peer, relay, radio,
-   FFI, DB and idle-simulation counters. Make the idle regression gate a CI
-   check before attempting Arti dormancy.
+2. **Partial / next:** scheduler, snapshot, peer-probe and relay-probe
+   counters are wired. Add radio, FFI, DB/write and idle-simulation counters;
+   make the idle regression gate a CI check before attempting Arti dormancy.
 3. **Implemented core:** Flutter and Android use cancellable native event
    waiters, including bootstrap/pending states. Add shutdown, missed-revision
    and waiter-generation regression tests.
 4. **Partial / next:** replace the remaining one-second fallback with a single
    deadline selected from Tor, communication, peer, pairing, attachment and
    radio executors. Do not create independent feature timers.
-5. **Partial / next:** make leases authoritative for pending messages,
-   attachments, pairing and radio; attention leases remain advisory and must
-   never be the only owner of durable work.
+5. **Partial / next:** attachment leases now survive route changes and renew
+   while queued/transferring. Extend the same authoritative ownership to
+   pending messages, delivery, pairing and radio; attention leases remain
+   advisory and must never be the only owner of durable work.
 6. **Partial:** evidence suppresses cosmetic peer probes and explicit peer
    deadlines exist. Integrate TX/RX/ACK/chunk evidence and preserve a
    single-flight probe budget.
