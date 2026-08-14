@@ -1,41 +1,37 @@
 # Torca
 
-Torca is a privacy-focused 1:1 messenger built around local identities, Tor onion services, encrypted
-local storage and explicit contact pairing. Windows and Android use the same responsive Flutter client
-and the same Rust runtime; platform code is limited to operating-system integration.
+Torca is an experimental privacy-focused one-to-one messenger for Windows and Android. It uses one responsive Flutter client backed by one Rust application/runtime. Local identities, encrypted local state, pairing, delivery and security policy live in Rust; normal contact traffic is sent directly between Tor onion services rather than through a central message server.
 
-The previous [`ppotepa/tOrca`](https://github.com/ppotepa/tOrca) repository is a requirements/reference
-source, not a second active implementation.
+> **Project status:** Torca is security-sensitive alpha software. It is under active development, has not received an independent production security audit, and should not be treated as a finished high-risk communications product. Source-level validation, successful local builds and passing tests are useful engineering evidence, not a security certification or a substitute for real-device soak testing.
 
-## Current engineering state
+The previous [`ppotepa/tOrca`](https://github.com/ppotepa/tOrca) repository is a requirements/reference source, not a second active implementation.
 
-The active code line is the unified baseline and is being hardened incrementally. Source validation and
-platform artifact validation are separate gates; neither is a claim that every planned architecture
-improvement is complete. Start with [`0.2_PROGRESS.md`](0.2_PROGRESS.md) for the current scope and known
-gaps.
+## Current capabilities
 
-The baseline provides a reliable daily-use 1:1 messenger:
+The current source includes:
 
-- local installation identity and encrypted SQLCipher persistence;
-- short-lived pairing codes/QR with explicit approval;
-- direct authenticated peer delivery through Tor onion services;
+- local installation identity and SQLCipher-backed structured storage;
+- operating-system protected-secret adapters for identity, storage and peer secrets;
+- short-lived pairing codes/QR with explicit local approval;
+- authenticated peer sessions and application-layer authenticated encryption;
+- direct peer delivery through Tor onion services after pairing;
 - durable message retry, delivered/read receipts and reply-to;
-- paged/searchable conversation history and conversation summaries;
-- encrypted/resumable attachments;
-- per-contact peer health and redacted diagnostics;
-- local Safety Number verification with identity-change send blocking;
-- notification privacy and host-level screen-capture protection; and
+- paged and searchable conversation history;
+- encrypted, resumable attachments;
+- Safety Number-style contact verification with identity-change protection;
+- privacy-aware notifications, diagnostics and Android screen-capture protection by default;
+- an experimental mutual-consent, half-duplex Radio Mode over the paired peer channel; and
 - one shared responsive Flutter application for Windows and Android.
 
-Calls, groups, multi-device sync, public discovery, cloud backup and Linux production composition are
-outside this baseline.
+Calls, groups, multi-device synchronization, public discovery and cloud backup are outside the current product scope. Linux is not currently a supported production client composition.
 
-## Security scope
+## Security model at a glance
 
-Torca authenticates peers and encrypts peer payloads with a protected pairwise secret established during
-pairing. It does **not** currently implement MLS or a Double Ratchet-style per-message key schedule, so
-forward secrecy and post-compromise security are not claimed for message history. See
-[`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md).
+Torca uses established cryptographic primitives and keeps secret ownership out of Flutter. Pairing establishes a protected pairwise relationship secret; peer payloads use authenticated encryption with fresh nonces and associated context. Radio Mode derives session-specific directional media keys from the protected pairwise relationship secret.
+
+The current message-key design **does not provide Signal-style forward secrecy or post-compromise security**. Compromise of a long-lived relationship secret can therefore have consequences beyond one message or session. Tor also does not eliminate traffic-analysis, timing-correlation, endpoint-compromise or denial-of-service risk.
+
+Read [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) before making security claims or changing pairing, peer authentication, cryptography, storage, notifications, Radio Mode or platform boundaries.
 
 ## Architecture
 
@@ -46,63 +42,88 @@ EngineGateway / generated DTOs
         |
 torca-native C ABI
         |
-process-owned TorcaRuntime actor
+ClientApplicationRuntime + process-owned runtime
         |
-SQLCipher / crypto / peer link / embedded torca-tor
+SQLCipher / crypto / files / peer link / embedded Arti Tor
 ```
 
-Important rules:
+The main ownership rule is simple: Flutter renders presentation-safe state and submits typed user intent; Rust owns identifiers, durable state, networking, cryptography and product/security rules. The dependency direction is enforced by repository policy checks, not only by documentation.
 
-- Flutter renders state and submits typed user intent; Rust owns identifiers, timestamps, durable state,
-  networking and security rules.
-- Business SQL lives in parameterized `.sql` files owned by storage crates.
-- Pairing may use the untrusted ephemeral relay; normal contact traffic is direct over Tor.
-- Production never silently falls back to the memory gateway.
-- Long-running network work is being isolated from the runtime actor; it must not prevent access to local
-  encrypted history.
-- Normal UI snapshots do not load the complete message history; conversation history uses bounded
-  SQLCipher paging/search.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the maintained system model.
 
 ## Repository layout
 
 ```text
-apps/client/flutter/      single responsive application client
+apps/client/flutter/      shared responsive application client
 crates/foundation/        dependency-light primitives
-crates/domains/           domain vocabulary and invariants
-crates/application/       engine/runtime/application orchestration
+crates/domains/           product vocabulary and invariants
+crates/protocol/          bounded wire and pairing/peer/radio protocols
+crates/application/       use cases, ports, runtime coordination and policy
 crates/infrastructure/    SQLCipher, crypto, files, peer and Tor adapters
-crates/protocol/          wire/pairing/relay/peer protocols
-crates/platform/          contract, native ABI and platform adapters
-services/relay/           ephemeral pairing rendezvous broker
+crates/platform/          contract, native ABI and OS adapters
+services/relay/           ephemeral pairing rendezvous service
 tests/torca-integration/  cross-crate integration journeys
-scripts/modules/          private build/source-policy/platform implementation
-tools/build/overlays/     required platform templates
-docs/0.2/                 current source track and audit
+tools/torca-deploy/       canonical build/run/deploy/log workflow
+scripts/                  compatibility and validation helpers
+docs/                     maintained documentation and runbooks
 ```
 
 ## Developer workflow
 
-Use the unified Rust workflow:
+The canonical local entry point is the Rust deployment tool:
 
 ```powershell
 cargo run -p torca-deploy
 ```
 
-It detects every connected Windows/Android target and provides run, redeploy,
-selective rebuild, full redeploy, explicit Onion rotation, relay maintenance and
-diagnostic collection. The same operations are available through the CLI, for
-example `cargo run -p torca-deploy -- resume`. Rust is the deployment
-implementation; legacy PowerShell entrypoints are not part of this path.
+With no subcommand it opens the Ratatui wizard. The CLI exposes the same planner/executor for automation, for example:
 
-## Canonical documents
+```powershell
+cargo run -p torca-deploy -- status
+cargo run -p torca-deploy -- plan --target all --configuration debug
+cargo run -p torca-deploy -- build --target windows --configuration debug
+cargo run -p torca-deploy -- logs --target all
+cargo run -p torca-deploy -- resume
+```
 
-- [`0.2_PROGRESS.md`](0.2_PROGRESS.md): live status and validation handoff.
-- [`docs/0.2/IMPLEMENTATION_ORDER.md`](docs/0.2/IMPLEMENTATION_ORDER.md): ordered current work.
-- [`docs/0.2/FINAL_AUDIT.md`](docs/0.2/FINAL_AUDIT.md): current source audit and known gaps.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): system boundaries.
-- [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md):
-  security guarantees and non-guarantees.
-- [`PRIVACY.md`](PRIVACY.md): local data, network metadata, retention and user choices.
-- [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): distribution terms and
-  principal dependency notices.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): development rules.
+Use `--dry-run` where supported when you want to inspect a plan without changing devices or relay state. Destructive data resets and onion rotation should be deliberate actions, not incidental development steps.
+
+## Validation
+
+The repository CI definition checks the core Rust workspace, generated Rust/Dart contract, Flutter analysis/tests and Windows/Android client builds. Before presenting a change as validated, distinguish exactly what was run: source checks, host builds, device tests and end-to-end/soak evidence are different gates.
+
+Useful local source checks include:
+
+```powershell
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --all-features --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
+cargo test --workspace --all-targets --all-features --locked
+```
+
+Flutter validation is run from `apps/client/flutter` with `flutter analyze` and `flutter test`. Generated contract drift is checked through `torca-contract-gen` and repository source policy.
+
+A configured GitHub Actions workflow is not evidence that a particular commit passed CI unless the jobs actually ran and completed successfully.
+
+## Documentation
+
+Start with [`docs/STATUS.md`](docs/STATUS.md) for the current maturity/validation summary and [`docs/README.md`](docs/README.md) for the documentation map.
+
+The main maintained documents are:
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — stable ownership and dependency boundaries;
+- [`SECURITY.md`](SECURITY.md) — security guarantees, limits and reporting guidance;
+- [`docs/security/threat-model.md`](docs/security/threat-model.md) — assets, trust boundaries and threats;
+- [`PRIVACY.md`](PRIVACY.md) — local/network data behavior and user choices;
+- [`ROADMAP.md`](ROADMAP.md) — long-lived product and engineering direction;
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contributor workflow and documentation rules;
+- [`0.3.md`](0.3.md) — current architecture-track plan; and
+- [`0.3_PROGRESS.md`](0.3_PROGRESS.md) — detailed engineering ledger for the current track.
+
+Files such as `BATTERY.MD`, `CONNECTIVITY_HARDENING.md` and `FINALIZE.md` are focused engineering records and acceptance plans. They provide useful context, but they do not override the evergreen architecture/security documents or actual source/validation evidence.
+
+Planning labels such as “0.3” and the Cargo package version serve different purposes and can move at different times. Do not infer release maturity from either label alone.
+
+## License
+
+Torca is licensed under AGPL-3.0-or-later. See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
