@@ -209,10 +209,15 @@ class _RadioHeaderAction extends StatelessWidget {
           if (capturing)
             Padding(
               padding: const EdgeInsets.only(right: 4),
-              child: Icon(
-                Icons.fiber_manual_record,
-                size: 12,
-                color: colors.error,
+              child: Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: colors.error,
+                  borderRadius: context.torcaTokens.terminal
+                      ? BorderRadius.zero
+                      : BorderRadius.circular(5),
+                ),
               ),
             ),
           if (!compact)
@@ -223,8 +228,9 @@ class _RadioHeaderAction extends StatelessWidget {
                   ? 'RX'
                   : context.strings.radioMode,
             ),
-          Switch.adaptive(
+          TorcaSwitch(
             value: radio.localEnabled,
+            semanticLabel: context.strings.radioMode,
             onChanged: (enabled) => _setEnabled(context, enabled),
           ),
         ],

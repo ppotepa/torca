@@ -718,10 +718,9 @@ class _PairingSessionDetails extends StatelessWidget {
               const SizedBox(height: 8),
               SelectableText(
                 pairing.remoteFingerprint!,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontFamily: 'monospace',
-                  letterSpacing: 1.1,
-                ),
+                style: context
+                    .torcaCodeStyle(Theme.of(context).textTheme.bodyMedium)
+                    .copyWith(letterSpacing: 1.1),
               ),
               if (pairing.remoteIdentityId != null) ...<Widget>[
                 const SizedBox(height: 5),
@@ -889,11 +888,9 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
         const SizedBox(height: 12),
         SelectableText(
           displayCode,
-          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-            fontFamily: 'monospace',
-            fontWeight: FontWeight.w700,
-            letterSpacing: 4,
-          ),
+          style: context
+              .torcaCodeStyle(Theme.of(context).textTheme.headlineMedium)
+              .copyWith(fontWeight: FontWeight.w700, letterSpacing: 4),
         ),
         const SizedBox(height: 6),
         Text(

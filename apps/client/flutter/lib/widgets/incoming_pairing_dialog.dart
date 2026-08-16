@@ -175,9 +175,9 @@ class _IdentitySummary extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               pairing.remoteFingerprint!,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+              style: context.torcaCodeStyle(
+                Theme.of(context).textTheme.bodySmall,
+              ),
             ),
           ],
         ],

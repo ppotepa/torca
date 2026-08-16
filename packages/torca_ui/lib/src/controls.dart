@@ -2,6 +2,70 @@ import 'package:flutter/material.dart';
 
 import 'tokens.dart';
 
+class TorcaSwitch extends StatelessWidget {
+  const TorcaSwitch({
+    required this.value,
+    required this.onChanged,
+    this.semanticLabel,
+    super.key,
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!context.torcaTokens.terminal) {
+      return Switch.adaptive(value: value, onChanged: onChanged);
+    }
+    final colors = Theme.of(context).colorScheme;
+    final enabled = onChanged != null;
+    return Semantics(
+      label: semanticLabel,
+      toggled: value,
+      enabled: enabled,
+      button: true,
+      child: Tooltip(
+        message: semanticLabel ?? (value ? 'On' : 'Off'),
+        child: InkWell(
+          onTap: enabled ? () => onChanged!(!value) : null,
+          borderRadius: BorderRadius.zero,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            child: Center(
+              child: AnimatedContainer(
+                duration: context.torcaTokens.animationDuration,
+                width: 46,
+                height: 26,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: value ? colors.primary : colors.surface,
+                  border: Border.all(
+                    color: value ? colors.primary : colors.outline,
+                    width: 2,
+                  ),
+                ),
+                child: AnimatedAlign(
+                  duration: context.torcaTokens.animationDuration,
+                  alignment: value
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    color: value ? colors.onPrimary : colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class TorcaBadge extends StatelessWidget {
   const TorcaBadge({required this.label, super.key});
 
@@ -104,35 +168,7 @@ class TorcaSwitchTile extends StatelessWidget {
       leading: secondary,
       title: title,
       subtitle: subtitle,
-      trailing: Semantics(
-        toggled: value,
-        button: true,
-        child: InkWell(
-          onTap: enabled ? () => onChanged!(!value) : null,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: value
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.surface,
-              border: Border.all(
-                color: value
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.outline,
-                width: 2,
-              ),
-            ),
-            child: Text(
-              value ? '[ ON ]' : '[ OFF ]',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: value
-                    ? Theme.of(context).colorScheme.onPrimary
-                    : Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ),
-      ),
+      trailing: TorcaSwitch(value: value, onChanged: onChanged),
       onTap: enabled ? () => onChanged!(!value) : null,
     );
   }

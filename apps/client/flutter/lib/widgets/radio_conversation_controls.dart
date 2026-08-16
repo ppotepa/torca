@@ -495,7 +495,7 @@ class _PttButtonVisual extends StatelessWidget {
                 : const <BoxShadow>[],
           ),
           child: Icon(
-            active ? Icons.mic : Icons.mic_none,
+            active ? context.torcaIcons.pushToTalk : context.torcaIcons.radio,
             color: colors.onError.withValues(alpha: enabled ? 1 : 0.65),
             size: 24,
           ),
