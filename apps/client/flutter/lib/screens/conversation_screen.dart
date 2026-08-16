@@ -21,7 +21,6 @@ import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/radio_conversation_controls.dart';
-import '../widgets/runtime_network_status.dart';
 import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
 
@@ -40,62 +39,17 @@ class ConversationScreen extends StatelessWidget {
   final LocalPreferences? preferences;
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<AppSnapshotDto>(
-    valueListenable: gateway.snapshots,
-    builder: (context, snapshot, _) {
-      final contact = contactForSnapshot(snapshot, conversation);
-      final radioSession = snapshot.radio.session?.contactId == contact?.id
-          ? snapshot.radio.session
-          : null;
-      final radioContact = contact == null
-          ? null
-          : snapshot.radio.forContact(contact.id);
-      final radioState = radioSession?.typedState ?? radioContact?.typedState;
-      final radioActive =
-          radioState == RadioState.transmitting ||
-          radioState == RadioState.receiving;
-      final transfer = _avatarTransferState(snapshot, conversation.id);
-      return Scaffold(
-        appBar: RuntimeAppBar(
-          titleSpacing: 0,
-          blurBackground: true,
-          backgroundColor: radioActive
-              ? Color.alphaBlend(
-                  Theme.of(context).colorScheme.error.withValues(alpha: 0.12),
-                  Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
-                )
-              : Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
-          title: ConversationHeader(
-            contact: contact,
-            gateway: gateway,
-            radio: radioContact,
-            session: radioSession,
-            sending: transfer.$1,
-            receiving: transfer.$2,
-            compact: true,
-            onConnectionDetails: contact == null
-                ? () {}
-                : () => _openConnectionDetails(context, contact.id),
-          ),
-        ),
-        body: ConversationPane(
-          gateway: gateway,
-          conversation: conversation,
-          preferences: preferences,
-          showHeader: false,
-        ),
-      );
-    },
+  Widget build(BuildContext context) => Scaffold(
+    body: ConversationPane(
+      gateway: gateway,
+      conversation: conversation,
+      preferences: preferences,
+      showHeader: true,
+      showBackButton: true,
+      headerTopSafeArea: true,
+      compactHeader: true,
+    ),
   );
-
-  void _openConnectionDetails(BuildContext context, String contactId) {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) =>
-            ConnectionDetailsScreen(gateway: gateway, contactId: contactId),
-      ),
-    );
-  }
 }
 
 class ConversationPane extends StatefulWidget {
@@ -104,12 +58,18 @@ class ConversationPane extends StatefulWidget {
     required this.conversation,
     this.preferences,
     this.showHeader = true,
+    this.showBackButton = false,
+    this.headerTopSafeArea = false,
+    this.compactHeader = false,
     super.key,
   });
   final EngineGateway gateway;
   final ConversationDto conversation;
   final LocalPreferences? preferences;
   final bool showHeader;
+  final bool showBackButton;
+  final bool headerTopSafeArea;
+  final bool compactHeader;
 
   @override
   State<ConversationPane> createState() => _ConversationPaneState();
@@ -460,277 +420,295 @@ class _ConversationPaneState extends State<ConversationPane>
       final pickingAttachment = _operations.isActive('attachment:pick');
       final transfer = _avatarTransferState(snapshot, widget.conversation.id);
 
-      return Column(
-        children: <Widget>[
-          if (widget.showHeader) ...<Widget>[
-            ConversationHeaderSurface(
-              radioActive:
-                  radioState == RadioState.transmitting ||
-                  radioState == RadioState.receiving,
-              child: ConversationHeader(
+      return ConversationContainer(
+        header: widget.showHeader
+            ? ConversationHeaderSurface(
+                radioActive:
+                    radioState == RadioState.transmitting ||
+                    radioState == RadioState.receiving,
+                topSafeArea: widget.headerTopSafeArea,
+                child: ConversationHeader(
+                  contact: contact,
+                  gateway: widget.gateway,
+                  radio: radioContact,
+                  session: radioSession,
+                  sending: transfer.$1,
+                  receiving: transfer.$2,
+                  compact: widget.compactHeader,
+                  leading: widget.showBackButton
+                      ? BackButton(
+                          onPressed: () => Navigator.of(context).maybePop(),
+                        )
+                      : null,
+                  onConnectionDetails: contact == null
+                      ? () {}
+                      : () => _openConnectionDetails(contact.id),
+                ),
+              )
+            : null,
+        content: Column(
+          children: <Widget>[
+            if (contact != null &&
+                (radioContact?.localEnabled == true ||
+                    radioTimeline.isNotEmpty))
+              RadioConversationStatus(
                 contact: contact,
-                gateway: widget.gateway,
                 radio: radioContact,
                 session: radioSession,
-                sending: transfer.$1,
-                receiving: transfer.$2,
-                onConnectionDetails: contact == null
-                    ? () {}
-                    : () => _openConnectionDetails(contact.id),
+                timeline: radioTimeline,
+              ),
+            _ConversationSearchBar(
+              searching: _searching,
+              busy: _searchBusy,
+              controller: _searchController,
+              onStart: () => setState(() => _searching = true),
+              onChanged: _searchChanged,
+              onClose: _closeSearch,
+            ),
+            Expanded(
+              child: Stack(
+                children: <Widget>[
+                  if (_timeline.loading && messages.isEmpty)
+                    const Center(child: CircularProgressIndicator())
+                  else if (messages.isEmpty)
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          _searching
+                              ? (_searchController.text.trim().isEmpty
+                                    ? 'Type to search this conversation.'
+                                    : 'No matching messages.')
+                              : '${context.strings.noMessagesYet}. ${context.strings.noMessagesYetDescription}',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    )
+                  else
+                    ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        final message = messages[index];
+                        final previous = index == 0
+                            ? null
+                            : messages[index - 1];
+                        final showDate =
+                            previous == null || !sameDay(previous, message);
+                        final showUnread =
+                            !_searching &&
+                            message.id == _unreadBoundaryMessageId;
+                        final grouped =
+                            previous != null &&
+                            previous.direction == message.direction &&
+                            !showDate &&
+                            !showUnread &&
+                            (message.createdAtMs - previous.createdAtMs).abs() <
+                                5 * 60 * 1000;
+                        final quoted = message.replyToMessageId == null
+                            ? null
+                            : byId[message.replyToMessageId];
+                        final attachments = snapshot.attachments
+                            .where(
+                              (attachment) =>
+                                  attachment.messageId == message.id,
+                            )
+                            .toList(growable: false);
+                        final retryable =
+                            message.typedDirection ==
+                                MessageDirection.outbound &&
+                            message.typedStatus == MessageStatus.failed;
+                        final attachmentAnnouncement = message.body.startsWith(
+                          'Attachment: ',
+                        );
+                        final retryBusy = _operations.isActive(
+                          'message:${message.id}:retry',
+                        );
+
+                        return Column(
+                          children: <Widget>[
+                            if (showDate)
+                              _DateSeparator(milliseconds: message.createdAtMs),
+                            if (showUnread) const _UnreadSeparator(),
+                            MessageBubble(
+                              message: message,
+                              reactions: snapshot.reactions
+                                  .where(
+                                    (reaction) =>
+                                        reaction.messageId == message.id,
+                                  )
+                                  .toList(growable: false),
+                              // Never expose the compatibility announcement
+                              // (which contains a path/hash) as chat content.
+                              // A typed AttachmentDto is rendered below; until
+                              // it arrives, show a safe synchronizing state.
+                              showBody: !attachmentAnnouncement,
+                              senderLabel:
+                                  message.typedDirection ==
+                                      MessageDirection.outbound
+                                  ? 'You'
+                                  : contact?.displayName ?? 'Contact',
+                              compactTop: grouped,
+                              onLongPress: () => _showMessageActions(message),
+                              onSecondaryTapDown: (details) =>
+                                  _showMessageActions(
+                                    message,
+                                    globalPosition: details.globalPosition,
+                                  ),
+                              quotedBody: message.replyToMessageId == null
+                                  ? null
+                                  : quoted?.body ??
+                                        'Original message unavailable',
+                              quotedUnavailable:
+                                  message.replyToMessageId != null &&
+                                  quoted == null,
+                              footer: <Widget>[
+                                if (attachmentAnnouncement &&
+                                    attachments.isEmpty)
+                                  AttachmentPendingTile(
+                                    name: message.body.substring(
+                                      'Attachment: '.length,
+                                    ),
+                                    outbound:
+                                        message.typedDirection ==
+                                        MessageDirection.outbound,
+                                  ),
+                                if (retryable && !_searching)
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: TextButton.icon(
+                                      onPressed: retryBusy
+                                          ? null
+                                          : () => _retryMessage(message),
+                                      icon: retryBusy
+                                          ? const SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : Icon(context.torcaIcons.retry),
+                                      label: Text(
+                                        retryBusy
+                                            ? context.strings.retrying
+                                            : context.strings.retryNow,
+                                      ),
+                                    ),
+                                  ),
+                                ...attachments.map((attachment) {
+                                  final attachmentBusy = _operations
+                                      .anyWithPrefix(
+                                        'attachment:${attachment.id}:',
+                                      );
+                                  return AttachmentTile(
+                                    attachment: attachment,
+                                    operationBusy: attachmentBusy,
+                                    onRetry: () => _attachmentCommand(
+                                      attachment.id,
+                                      'retry',
+                                      RetryAttachmentCommandDto(
+                                        attachmentIdHex: attachment.id,
+                                      ),
+                                    ),
+                                    onCancel: () => _attachmentCommand(
+                                      attachment.id,
+                                      'cancel',
+                                      CancelAttachmentCommandDto(
+                                        attachmentIdHex: attachment.id,
+                                      ),
+                                    ),
+                                    onOpen: () => _openAttachment(attachment),
+                                    onSave: () => _saveAttachment(attachment),
+                                    // A v2 preview is a small, separately
+                                    // encrypted JPEG.  It is available before
+                                    // the complete attachment, for both images
+                                    // and videos.  Images open in-app; a video
+                                    // card uses the same cover image but opens
+                                    // the final media in the platform player.
+                                    onPreview:
+                                        attachment.mediaType.startsWith(
+                                          'image/',
+                                        )
+                                        ? () => _previewAttachment(attachment)
+                                        : attachment.mediaType.startsWith(
+                                            'video/',
+                                          )
+                                        ? () => _openAttachment(attachment)
+                                        : null,
+                                    loadPreview:
+                                        hasVisualAttachmentPreview(
+                                          attachment.mediaType,
+                                        )
+                                        ? () =>
+                                              _loadAttachmentPreview(attachment)
+                                        : null,
+                                  );
+                                }),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  if (_loadingOlder)
+                    const Positioned(
+                      top: 6,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    ),
+                  if (_showJumpToLatest && !_searching)
+                    Positioned(
+                      right: 16,
+                      bottom: 12,
+                      child: Badge(
+                        isLabelVisible: _jumpMessageCount > 0,
+                        label: Text('$_jumpMessageCount'),
+                        child: FloatingActionButton.small(
+                          heroTag: null,
+                          tooltip: context.strings.jumpToLatest,
+                          onPressed: _scrollToBottom,
+                          child: Icon(context.torcaIcons.jumpToLatest),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
-          if (contact != null &&
-              (radioContact?.localEnabled == true || radioTimeline.isNotEmpty))
-            RadioConversationStatus(
-              contact: contact,
-              radio: radioContact,
-              session: radioSession,
-              timeline: radioTimeline,
-            ),
-          _ConversationSearchBar(
-            searching: _searching,
-            busy: _searchBusy,
-            controller: _searchController,
-            onStart: () => setState(() => _searching = true),
-            onChanged: _searchChanged,
-            onClose: _closeSearch,
+        ),
+        footer: ConversationComposer(
+          gateway: widget.gateway,
+          messageField: _composerField(
+            sending || _searching,
+            reply != null,
+            _editingMessage != null,
           ),
-          Expanded(
-            child: Stack(
-              children: <Widget>[
-                if (_timeline.loading && messages.isEmpty)
-                  const Center(child: CircularProgressIndicator())
-                else if (messages.isEmpty)
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        _searching
-                            ? (_searchController.text.trim().isEmpty
-                                  ? 'Type to search this conversation.'
-                                  : 'No matching messages.')
-                            : '${context.strings.noMessagesYet}. ${context.strings.noMessagesYetDescription}',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  )
-                else
-                  ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      final previous = index == 0 ? null : messages[index - 1];
-                      final showDate =
-                          previous == null || !sameDay(previous, message);
-                      final showUnread =
-                          !_searching && message.id == _unreadBoundaryMessageId;
-                      final grouped =
-                          previous != null &&
-                          previous.direction == message.direction &&
-                          !showDate &&
-                          !showUnread &&
-                          (message.createdAtMs - previous.createdAtMs).abs() <
-                              5 * 60 * 1000;
-                      final quoted = message.replyToMessageId == null
-                          ? null
-                          : byId[message.replyToMessageId];
-                      final attachments = snapshot.attachments
-                          .where(
-                            (attachment) => attachment.messageId == message.id,
-                          )
-                          .toList(growable: false);
-                      final retryable =
-                          message.typedDirection == MessageDirection.outbound &&
-                          message.typedStatus == MessageStatus.failed;
-                      final attachmentAnnouncement = message.body.startsWith(
-                        'Attachment: ',
-                      );
-                      final retryBusy = _operations.isActive(
-                        'message:${message.id}:retry',
-                      );
-
-                      return Column(
-                        children: <Widget>[
-                          if (showDate)
-                            _DateSeparator(milliseconds: message.createdAtMs),
-                          if (showUnread) const _UnreadSeparator(),
-                          MessageBubble(
-                            message: message,
-                            reactions: snapshot.reactions
-                                .where(
-                                  (reaction) =>
-                                      reaction.messageId == message.id,
-                                )
-                                .toList(growable: false),
-                            // Never expose the compatibility announcement
-                            // (which contains a path/hash) as chat content.
-                            // A typed AttachmentDto is rendered below; until
-                            // it arrives, show a safe synchronizing state.
-                            showBody: !attachmentAnnouncement,
-                            senderLabel:
-                                message.typedDirection ==
-                                    MessageDirection.outbound
-                                ? 'You'
-                                : contact?.displayName ?? 'Contact',
-                            compactTop: grouped,
-                            onLongPress: () => _showMessageActions(message),
-                            onSecondaryTapDown: (details) =>
-                                _showMessageActions(
-                                  message,
-                                  globalPosition: details.globalPosition,
-                                ),
-                            quotedBody: message.replyToMessageId == null
-                                ? null
-                                : quoted?.body ??
-                                      'Original message unavailable',
-                            quotedUnavailable:
-                                message.replyToMessageId != null &&
-                                quoted == null,
-                            footer: <Widget>[
-                              if (attachmentAnnouncement && attachments.isEmpty)
-                                AttachmentPendingTile(
-                                  name: message.body.substring(
-                                    'Attachment: '.length,
-                                  ),
-                                  outbound:
-                                      message.typedDirection ==
-                                      MessageDirection.outbound,
-                                ),
-                              if (retryable && !_searching)
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: TextButton.icon(
-                                    onPressed: retryBusy
-                                        ? null
-                                        : () => _retryMessage(message),
-                                    icon: retryBusy
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : Icon(context.torcaIcons.retry),
-                                    label: Text(
-                                      retryBusy
-                                          ? context.strings.retrying
-                                          : context.strings.retryNow,
-                                    ),
-                                  ),
-                                ),
-                              ...attachments.map((attachment) {
-                                final attachmentBusy = _operations
-                                    .anyWithPrefix(
-                                      'attachment:${attachment.id}:',
-                                    );
-                                return AttachmentTile(
-                                  attachment: attachment,
-                                  operationBusy: attachmentBusy,
-                                  onRetry: () => _attachmentCommand(
-                                    attachment.id,
-                                    'retry',
-                                    RetryAttachmentCommandDto(
-                                      attachmentIdHex: attachment.id,
-                                    ),
-                                  ),
-                                  onCancel: () => _attachmentCommand(
-                                    attachment.id,
-                                    'cancel',
-                                    CancelAttachmentCommandDto(
-                                      attachmentIdHex: attachment.id,
-                                    ),
-                                  ),
-                                  onOpen: () => _openAttachment(attachment),
-                                  onSave: () => _saveAttachment(attachment),
-                                  // A v2 preview is a small, separately
-                                  // encrypted JPEG.  It is available before
-                                  // the complete attachment, for both images
-                                  // and videos.  Images open in-app; a video
-                                  // card uses the same cover image but opens
-                                  // the final media in the platform player.
-                                  onPreview:
-                                      attachment.mediaType.startsWith('image/')
-                                      ? () => _previewAttachment(attachment)
-                                      : attachment.mediaType.startsWith(
-                                          'video/',
-                                        )
-                                      ? () => _openAttachment(attachment)
-                                      : null,
-                                  loadPreview:
-                                      hasVisualAttachmentPreview(
-                                        attachment.mediaType,
-                                      )
-                                      ? () => _loadAttachmentPreview(attachment)
-                                      : null,
-                                );
-                              }),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                if (_loadingOlder)
-                  const Positioned(
-                    top: 6,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
-                  ),
-                if (_showJumpToLatest && !_searching)
-                  Positioned(
-                    right: 16,
-                    bottom: 12,
-                    child: Badge(
-                      isLabelVisible: _jumpMessageCount > 0,
-                      label: Text('$_jumpMessageCount'),
-                      child: FloatingActionButton.small(
-                        heroTag: null,
-                        tooltip: context.strings.jumpToLatest,
-                        onPressed: _scrollToBottom,
-                        child: Icon(context.torcaIcons.jumpToLatest),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          ConversationComposer(
-            gateway: widget.gateway,
-            messageField: _composerField(
-              sending || _searching,
-              reply != null,
-              _editingMessage != null,
-            ),
-            contact: contact,
-            radio: radioContact,
-            session: radioSession,
-            pendingAttachments: _pendingAttachments,
-            onRemoveAttachment: (pending) => setState(() {
-              _pendingAttachments.remove(pending);
-              unawaited(pending.prepared.dispose());
-            }),
-            onPickAttachments: _pickAttachments,
-            onSend: _sendMessage,
-            sending: sending,
-            sendingAttachment: sendingAttachment,
-            pickingAttachment: pickingAttachment,
-            searching: _searching,
-            reply: reply,
-            onCancelReply: () => setState(() => _replyingTo = null),
-          ),
-        ],
+          contact: contact,
+          radio: radioContact,
+          session: radioSession,
+          pendingAttachments: _pendingAttachments,
+          onRemoveAttachment: (pending) => setState(() {
+            _pendingAttachments.remove(pending);
+            unawaited(pending.prepared.dispose());
+          }),
+          onPickAttachments: _pickAttachments,
+          onSend: _sendMessage,
+          sending: sending,
+          sendingAttachment: sendingAttachment,
+          pickingAttachment: pickingAttachment,
+          searching: _searching,
+          reply: reply,
+          onCancelReply: () => setState(() => _replyingTo = null),
+        ),
       );
     },
   );

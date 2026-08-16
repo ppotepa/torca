@@ -12,12 +12,14 @@ class ConversationHeaderSurface extends StatelessWidget {
   const ConversationHeaderSurface({
     required this.child,
     this.radioActive = false,
+    this.topSafeArea = false,
     this.padding = const EdgeInsets.fromLTRB(16, 10, 8, 10),
     super.key,
   });
 
   final Widget child;
   final bool radioActive;
+  final bool topSafeArea;
   final EdgeInsetsGeometry padding;
 
   @override
@@ -39,9 +41,16 @@ class ConversationHeaderSurface extends StatelessWidget {
               ),
             ),
           ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 60),
-            child: Padding(padding: padding, child: child),
+          child: SafeArea(
+            top: topSafeArea,
+            bottom: false,
+            left: topSafeArea,
+            right: topSafeArea,
+            minimum: EdgeInsets.zero,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 60),
+              child: Padding(padding: padding, child: child),
+            ),
           ),
         ),
       ),
@@ -59,6 +68,7 @@ class ConversationHeader extends StatelessWidget {
     this.sending = false,
     this.receiving = false,
     this.compact = false,
+    this.leading,
     super.key,
   });
 
@@ -70,6 +80,7 @@ class ConversationHeader extends StatelessWidget {
   final RadioSessionDto? session;
   final bool sending;
   final bool receiving;
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -80,6 +91,7 @@ class ConversationHeader extends StatelessWidget {
     return Row(
       mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
       children: <Widget>[
+        if (leading != null) ...<Widget>[leading!, const SizedBox(width: 2)],
         TorcaDeviceAvatar(
           label: name,
           identityId: value?.remoteIdentityId,

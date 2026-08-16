@@ -1,5 +1,36 @@
 part of 'conversation_screen.dart';
 
+/// The single responsive frame used by mobile routes and desktop panes.
+/// Header and composer never participate in scrolling; only [content] owns
+/// the remaining viewport and its scroll controller.
+class ConversationContainer extends StatelessWidget {
+  const ConversationContainer({
+    required this.content,
+    required this.footer,
+    this.header,
+    super.key,
+  });
+
+  final Widget? header;
+  final Widget content;
+  final Widget footer;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: Theme.of(context).colorScheme.surface,
+    child: ClipRect(
+      child: Column(
+        children: <Widget>[
+          if (header != null) header!,
+          Expanded(child: content),
+          const Divider(height: 1),
+          footer,
+        ],
+      ),
+    ),
+  );
+}
+
 /// Shared composer surface for both the mobile route and desktop pane.
 /// Layout decisions stay here while ConversationPane owns persistence and
 /// command orchestration.
