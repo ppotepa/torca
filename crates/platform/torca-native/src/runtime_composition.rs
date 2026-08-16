@@ -1,5 +1,4 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
@@ -12,7 +11,6 @@ use torca_crypto::{
     ManagedIdentityKeys, ManagedPeerSecrets, OwnedHandshakeSigner, RustCryptoProvider,
     RustPairingCrypto,
 };
-use torca_foundation::ErrorCode;
 use torca_pairing_coordinator::{
     PairingApprovalPort, PairingCoordinator, PairingPeerSecretStore, PairingRuntime,
 };
@@ -20,83 +18,34 @@ use torca_pairing_driver::{PairingWorkerDriver, RuntimePairingDriver};
 use torca_platform::{PlatformServices, SecretNamespace};
 use torca_radio_coordinator::SharedRadioCoordinator;
 use torca_rendezvous_client::{RendezvousClient, SharedTorRelayTransport};
-use torca_runtime::{RelayProbe, RelayServiceInfo, RuntimeHandle, RuntimeOwner};
-use torca_tor::{OwnedTorDriver, SharedTorEndpoint};
-use torca_tor::{PeerListener, TorBootstrapObserver};
+use torca_runtime::{RuntimeHandle, RuntimeOwner};
+use torca_tor::{OwnedTorDriver, PeerListener, SharedTorEndpoint, TorBootstrapObserver};
 
 use crate::composition::{NativeCompositionError, load_or_create_database_key};
+pub(crate) use crate::relay_endpoint::compiled_relay_endpoint;
+use crate::relay_probe::build_relay_probe;
 
 // Keep interactive requests below the application command deadline. Long-lived
 // recovery is handled by the pairing supervisor instead of one blocking call.
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(8);
 // Onion circuits routinely need several seconds even after directory
-// bootstrap. A two-second health exchange produced a false degraded verdict
-// on Windows while Android was already connected to the same healthy relay.
-// Use the same bounded request budget as foreground pairing; the transport
-// still serializes the one reconnect lane.
+// bootstrap. Use the same bounded request budget as foreground pairing; the
+// durable relay transport still serializes the reconnect lane.
 const RELAY_HEALTH_TIMEOUT: Duration = NETWORK_TIMEOUT;
 const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-const COMPILED_RELAY_ENDPOINT: &str = match option_env!("TORCA_RELAY_ENDPOINT") {
-    Some(value) => value,
-    None => "",
-};
 
-struct TorRelayProbe {
-    transport: SharedTorRelayTransport,
-    info: Mutex<Option<RelayServiceInfo>>,
-}
-
-impl RelayProbe for TorRelayProbe {
-    fn probe(&self) -> Result<(), ErrorCode> {
-        // The probe and pairing share one durable transport.  In particular a
-        // fresh profile starts with no stream at all: observing `Disconnected`
-        // forever would prevent the first real relay connection from ever
-        // being attempted. `relay_info` serialises that initial reconnect and
-        // retries one broken stream before returning the authoritative result.
-        self.transport
-            .relay_info(RELAY_HEALTH_TIMEOUT)
-            .map(|info| {
-                if let Ok(mut current) = self.info.lock() {
-                    *current = Some(RelayServiceInfo {
-                        product_version: info.product_version,
-                        build_id: info.build_id,
-                        source_commit: info.source_commit,
-                        protocol_version: info.protocol_version,
-                    });
-                }
-            })
-            .map_err(|error| {
-                ErrorCode::new(match error.kind {
-                    torca_rendezvous_client::RelayTransportFailureKind::Busy => {
-                        "relay.connection_busy"
-                    }
-                    torca_rendezvous_client::RelayTransportFailureKind::Unavailable => {
-                        "relay.connection_unavailable"
-                    }
-                    torca_rendezvous_client::RelayTransportFailureKind::Timeout => {
-                        "relay.request_timeout"
-                    }
-                    torca_rendezvous_client::RelayTransportFailureKind::Disconnected => {
-                        "relay.connection_disconnected"
-                    }
-                    torca_rendezvous_client::RelayTransportFailureKind::InvalidResponse => {
-                        "relay.health_response_invalid"
-                    }
-                })
-            })
-    }
-
-    fn service_info(&self) -> Option<RelayServiceInfo> {
-        self.info.lock().ok().and_then(|value| value.clone())
-    }
-}
 pub(crate) fn spawn_production_runtime(
     engine: EngineHandle,
     bootstrap_observer: TorBootstrapObserver,
     read_receipt_policy: ReadReceiptPolicy,
 ) -> Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError> {
     let platform = crate::platform_selector::platform_services()?;
-    spawn_runtime_for(platform.as_ref(), engine, bootstrap_observer, read_receipt_policy)
+    spawn_runtime_for(
+        platform.as_ref(),
+        engine,
+        bootstrap_observer,
+        read_receipt_policy,
+    )
 }
 
 fn spawn_runtime_for(
@@ -128,10 +77,6 @@ fn spawn_runtime_for(
         Some(bootstrap_observer),
     )
     .map_err(|(error, diagnostic)| {
-        // Preserve the redacted, actionable Arti diagnostic.  Previously the
-        // native boundary discarded it and Windows only reported the opaque
-        // `start Tor runtime failed`, making a failed bootstrap impossible to
-        // distinguish from a disconnected worker.
         NativeCompositionError::new(format!(
             "start Tor runtime failed: {error}; diagnostic: {diagnostic}"
         ))
@@ -147,37 +92,36 @@ fn spawn_runtime_for(
         key_id,
     );
     let connectivity = ConnectivityObserver::default();
-    let ProductionCommunicationOutput { driver: communication, radio } =
-        build_production_communication(
-            engine.clone(),
-            &database_path,
-            &database_key,
-            &paths.cache.join("attachments"),
-            &paths.data.join("attachments").join("staging"),
-            ProductionCommunicationInputs {
-                signer,
-                peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-                attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-                export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-                relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-                listener,
-                tor_client: tor_client.clone(),
-                local_identity_id: identity_id,
-                connectivity: connectivity.clone(),
-                read_receipt_policy,
-            },
-        )
-        .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
+    let ProductionCommunicationOutput {
+        driver: communication,
+        radio,
+    } = build_production_communication(
+        engine.clone(),
+        &database_path,
+        &database_key,
+        &paths.cache.join("attachments"),
+        &paths.data.join("attachments").join("staging"),
+        ProductionCommunicationInputs {
+            signer,
+            peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            listener,
+            tor_client: tor_client.clone(),
+            local_identity_id: identity_id,
+            connectivity: connectivity.clone(),
+            read_receipt_policy,
+        },
+    )
+    .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
+
     let relay = platform
         .relay_endpoint()
         .map_err(NativeCompositionError::new)
         .map(|endpoint| (endpoint.host, endpoint.port))?;
-    // Relay health is deliberately asynchronous. A relay outage must put the
-    // relay step into degraded state without preventing Tor/onion/profile from
-    // becoming available.
     let relay_transport = SharedTorRelayTransport::new(tor_client.clone(), relay.0, relay.1);
-    let relay_probe: Arc<dyn RelayProbe> =
-        Arc::new(TorRelayProbe { transport: relay_transport.clone(), info: Mutex::new(None) });
+    let relay_probe = build_relay_probe(relay_transport.clone(), RELAY_HEALTH_TIMEOUT);
     let pairing = build_pairing_driver(
         engine.clone(),
         endpoint,
@@ -243,31 +187,6 @@ fn engine_identity(
         .map_err(|_| NativeCompositionError::new("load local identity failed"))?
         .identity
         .ok_or_else(|| NativeCompositionError::new("local identity is not initialized"))
-}
-
-pub(crate) fn compiled_relay_endpoint() -> Result<(String, u16), NativeCompositionError> {
-    parse_relay_endpoint(COMPILED_RELAY_ENDPOINT)
-}
-
-fn parse_relay_endpoint(value: &str) -> Result<(String, u16), NativeCompositionError> {
-    let (host, port) = value
-        .rsplit_once(':')
-        .ok_or_else(|| NativeCompositionError::new("relay endpoint must be host.onion:port"))?;
-    let label = host.strip_suffix(".onion").ok_or_else(|| {
-        NativeCompositionError::new("relay endpoint must use a v3 onion hostname")
-    })?;
-    if label.len() != 56 || !label.bytes().all(|byte| matches!(byte, b'a'..=b'z' | b'2'..=b'7')) {
-        return Err(NativeCompositionError::new(
-            "relay endpoint contains an invalid v3 onion hostname",
-        ));
-    }
-    let port = port
-        .parse::<u16>()
-        .map_err(|_| NativeCompositionError::new("relay endpoint contains an invalid port"))?;
-    if port == 0 {
-        return Err(NativeCompositionError::new("relay endpoint port must be non-zero"));
-    }
-    Ok((host.to_owned(), port))
 }
 
 fn current_timestamp() -> Result<torca_foundation::Timestamp, NativeCompositionError> {
