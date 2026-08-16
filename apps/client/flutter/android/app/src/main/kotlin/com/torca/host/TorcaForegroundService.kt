@@ -430,7 +430,10 @@ class TorcaForegroundService : Service() {
         // A bounded wait gives shutdown a deterministic upper bound and
         // avoids releasing the native runtime while JNI is still blocked.
         const val EVENT_WAIT_TIMEOUT_MS = 0
-        const val RUNTIME_WAIT_MS = 250L
+        // Runtime creation is an exceptional startup/restart path. Once the
+        // native runtime exists, the service blocks on its revision hub and
+        // does not use this fallback at all.
+        const val RUNTIME_WAIT_MS = 1000L
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
         const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
         const val TAG = "TorcaRuntime"
