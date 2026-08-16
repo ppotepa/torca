@@ -8,6 +8,35 @@ pub const MAX_PEER_DATA_LEN: usize = 4 * 1024 * 1024;
 /// Maximum handshake signature/proof length.
 pub const MAX_PROOF_LEN: usize = 512;
 
+/// Stable application payload discriminants carried inside `PeerMessage::Data`.
+///
+/// Values are append-only for the current peer wire generation. Existing kinds
+/// must not be renumbered without an explicit protocol-version migration.
+#[repr(u16)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PeerApplicationKind {
+    Text = 1,
+    Receipt = 2,
+    Attachment = 3,
+    Probe = 4,
+    RadioControl = 5,
+    Reaction = 6,
+}
+impl PeerApplicationKind {
+    pub const ALL: [Self; 6] = [
+        Self::Text,
+        Self::Receipt,
+        Self::Attachment,
+        Self::Probe,
+        Self::RadioControl,
+        Self::Reaction,
+    ];
+
+    pub const fn as_u16(self) -> u16 {
+        self as u16
+    }
+}
+
 /// Protocol-level acknowledgement distinct from user delivery receipts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AckStatus {
@@ -380,5 +409,23 @@ impl<'a> Cursor<'a> {
             return Err(PeerProtocolError::PayloadTooLarge { actual: length });
         }
         Ok(self.take(length)?.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PeerApplicationKind;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn application_kind_discriminants_are_unique_and_stable() {
+        let values = PeerApplicationKind::ALL.map(PeerApplicationKind::as_u16);
+        assert_eq!(values.iter().copied().collect::<BTreeSet<_>>().len(), values.len());
+        assert_eq!(PeerApplicationKind::Text.as_u16(), 1);
+        assert_eq!(PeerApplicationKind::Receipt.as_u16(), 2);
+        assert_eq!(PeerApplicationKind::Attachment.as_u16(), 3);
+        assert_eq!(PeerApplicationKind::Probe.as_u16(), 4);
+        assert_eq!(PeerApplicationKind::RadioControl.as_u16(), 5);
+        assert_eq!(PeerApplicationKind::Reaction.as_u16(), 6);
     }
 }
