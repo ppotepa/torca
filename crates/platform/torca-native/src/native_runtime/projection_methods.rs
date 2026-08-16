@@ -167,10 +167,13 @@ fn log_network_transitions(&mut self, snapshot: &torca_contract::BridgeSnapshot)
 }
 
 pub(crate) fn reconcile_pending_operations(&mut self) -> bool {
-    let before_snapshot = self.snapshot_json.clone();
+    let before_snapshot = std::mem::take(&mut self.snapshot_json);
     let before_cursor = self.notification_cursor;
     let _ = self.application_runtime.advance_pending_operations();
-    let _ = self.refresh_snapshot();
+    if self.refresh_snapshot() != ABI_OK {
+        self.snapshot_json = before_snapshot;
+        return self.notification_cursor != before_cursor;
+    }
     self.snapshot_json != before_snapshot || self.notification_cursor != before_cursor
 }
 

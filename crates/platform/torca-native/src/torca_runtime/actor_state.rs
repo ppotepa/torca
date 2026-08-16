@@ -12,9 +12,7 @@ impl ActorState {
         if !delay.is_zero() {
             return false;
         }
-        let before = self.runtime.snapshot_json.clone();
-        self.runtime.reconcile_pending_operations();
-        before != self.runtime.snapshot_json
+        self.runtime.reconcile_pending_operations()
     }
 
     fn invoke(&mut self, raw: &str) -> Vec<u8> {
