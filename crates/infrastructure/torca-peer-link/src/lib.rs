@@ -103,6 +103,10 @@ pub enum PeerLinkError {
     NotReady,
     AckTimeout,
     AckRejected,
+    /// Application data arrived while this lane was waiting for its own ACK.
+    /// The caller must yield so the application can durably process the
+    /// queued envelope before any acceptance ACK is emitted.
+    InboundPending,
     InboundQueueFull,
     Clock,
 }
@@ -118,6 +122,53 @@ struct ReconnectEntry {
     failures: u32,
     next_attempt_at: Timestamp,
     in_progress: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AckWaitAction {
+    Complete(Result<LinkAck, PeerLinkError>),
+    Store {
+        envelope_id: OpaqueId,
+        ack: Result<LinkAck, PeerLinkError>,
+    },
+    QueueInbound(InboundPeerEnvelope),
+    Ignore,
+}
+
+fn link_ack(status: AckStatus) -> Result<LinkAck, PeerLinkError> {
+    match status {
+        AckStatus::Accepted => Ok(LinkAck::Accepted),
+        AckStatus::Duplicate => Ok(LinkAck::Duplicate),
+        AckStatus::Rejected => Err(PeerLinkError::AckRejected),
+    }
+}
+
+fn classify_ack_wait_message(
+    contact_id: ContactId,
+    expected_envelope_id: OpaqueId,
+    message: PeerMessage,
+) -> AckWaitAction {
+    match message {
+        PeerMessage::Ack { envelope_id, status } => {
+            let ack = link_ack(status);
+            if envelope_id == expected_envelope_id {
+                AckWaitAction::Complete(ack)
+            } else {
+                AckWaitAction::Store { envelope_id, ack }
+            }
+        }
+        PeerMessage::Data {
+            envelope_id,
+            message_kind,
+            ciphertext,
+        } => AckWaitAction::QueueInbound(InboundPeerEnvelope {
+            contact_id,
+            envelope_id,
+            message_kind,
+            ciphertext,
+        }),
+        _ => AckWaitAction::Ignore,
+    }
 }
 
 type IncomingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
@@ -281,7 +332,11 @@ where
         for contact_id in contacts {
             self.reconnect.insert(
                 contact_id,
-                ReconnectEntry { failures: 0, next_attempt_at: now, in_progress: false },
+                ReconnectEntry {
+                    failures: 0,
+                    next_attempt_at: now,
+                    in_progress: false,
+                },
             );
         }
     }
@@ -318,7 +373,9 @@ where
     ) -> Result<LinkAck, PeerLinkError> {
         self.send_envelope(contact_id, envelope_id, message_kind, ciphertext)?;
         let wait_slice = timeout.min(wait_limit);
-        let deadline = Instant::now().checked_add(wait_slice).ok_or(PeerLinkError::AckTimeout)?;
+        let deadline = Instant::now()
+            .checked_add(wait_slice)
+            .ok_or(PeerLinkError::AckTimeout)?;
         loop {
             if let Some(ack) = self.poll_envelope_ack_waiting(
                 contact_id,
@@ -382,11 +439,9 @@ where
         Ok(())
     }
 
-    /// Polls one step for an envelope acknowledgement. Other inbound data is
-    /// queued and acknowledged at the transport boundary so simultaneous
-    /// sends cannot deadlock while both application workers are waiting for
-    /// each other's ACK. The bounded inbox is the receipt boundary; the
-    /// application layer remains responsible for durable/idempotent handling.
+    /// Polls one step for an envelope acknowledgement. If application data
+    /// arrives while the caller is waiting, it is queued without an ACK and
+    /// `InboundPending` is returned so the runtime can durably process it.
     pub fn poll_envelope_ack(
         &mut self,
         contact_id: ContactId,
@@ -410,22 +465,16 @@ where
         } else {
             self.poll_contact_wait(contact_id, now, wait)
         };
-        match message {
-            Ok(Some(PeerMessage::Ack { envelope_id: received, status })) => {
-                let ack = match status {
-                    AckStatus::Accepted => Ok(LinkAck::Accepted),
-                    AckStatus::Duplicate => Ok(LinkAck::Duplicate),
-                    AckStatus::Rejected => Err(PeerLinkError::AckRejected),
-                };
-                if received != envelope_id {
-                    if self.pending_acks.len() >= MAX_PENDING_ACKS {
-                        if let Some(oldest) = self.pending_acks.keys().next().copied() {
-                            self.pending_acks.remove(&oldest);
-                        }
-                    }
-                    self.pending_acks.insert((contact_id, received), ack);
-                    return Ok(None);
-                }
+        let action = match message {
+            Ok(Some(message)) => classify_ack_wait_message(contact_id, envelope_id, message),
+            Ok(None) => AckWaitAction::Ignore,
+            Err(error) => {
+                self.schedule_reconnect(contact_id, now)?;
+                return Err(error);
+            }
+        };
+        match action {
+            AckWaitAction::Complete(ack) => {
                 self.observe(
                     contact_id,
                     Some(TransportDirection::Rx),
@@ -436,29 +485,35 @@ where
                 );
                 ack.map(Some)
             }
-            Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
+            AckWaitAction::Store {
+                envelope_id: received,
+                ack,
+            } => {
+                if self.pending_acks.len() >= MAX_PENDING_ACKS {
+                    if let Some(oldest) = self.pending_acks.keys().next().copied() {
+                        self.pending_acks.remove(&oldest);
+                    }
+                }
+                self.pending_acks.insert((contact_id, received), ack);
+                Ok(None)
+            }
+            AckWaitAction::QueueInbound(envelope) => {
+                let received = envelope.envelope_id;
                 self.observe(
                     contact_id,
                     Some(TransportDirection::Rx),
                     TransportOperation::Envelope,
                     OperationPhase::Completed,
-                    Some(envelope_id),
+                    Some(received),
                     now,
                 );
-                self.queue_inbound(InboundPeerEnvelope {
-                    contact_id,
-                    envelope_id,
-                    message_kind,
-                    ciphertext,
-                })?;
-                self.send_ack(contact_id, envelope_id, AckStatus::Accepted)?;
-                Ok(None)
+                self.queue_inbound(envelope)?;
+                // The queue above is process memory, not a durable receipt
+                // boundary. Returning immediately lets the application persist
+                // the envelope and send Accepted/Duplicate only afterwards.
+                Err(PeerLinkError::InboundPending)
             }
-            Ok(_) => Ok(None),
-            Err(error) => {
-                self.schedule_reconnect(contact_id, now)?;
-                Err(error)
-            }
+            AckWaitAction::Ignore => Ok(None),
         }
     }
 
@@ -479,14 +534,29 @@ where
             Some(envelope_id),
             started_at,
         );
-        let result =
-            self.send_and_wait_ack(contact_id, envelope_id, message_kind, ciphertext, timeout);
+        let result = match self.send_and_wait_ack(
+            contact_id,
+            envelope_id,
+            message_kind,
+            ciphertext,
+            timeout,
+        ) {
+            // Real inbound traffic is stronger liveness evidence than a
+            // cosmetic probe ACK. Yield to durable ingress without degrading
+            // peer health merely because the probe was interrupted.
+            Err(PeerLinkError::InboundPending) => Ok(LinkAck::Accepted),
+            result => result,
+        };
         let finished_at = system_timestamp().unwrap_or(started_at);
         self.observe(
             contact_id,
             Some(TransportDirection::Rx),
             TransportOperation::Keepalive,
-            if result.is_ok() { OperationPhase::Completed } else { OperationPhase::TimedOut },
+            if result.is_ok() {
+                OperationPhase::Completed
+            } else {
+                OperationPhase::TimedOut
+            },
             Some(envelope_id),
             finished_at,
         );
@@ -549,7 +619,11 @@ where
             }
         }
         if self.pending.len() >= MAX_PENDING_INCOMING
-            && self.listener.try_accept_transport().map_err(map_tor)?.is_some()
+            && self
+                .listener
+                .try_accept_transport()
+                .map_err(map_tor)?
+                .is_some()
         {
             report.rejected += 1;
         }
@@ -773,7 +847,11 @@ where
                 contact_id,
                 Some(TransportDirection::Tx),
                 TransportOperation::Ack,
-                if result.is_ok() { OperationPhase::Completed } else { OperationPhase::Failed },
+                if result.is_ok() {
+                    OperationPhase::Completed
+                } else {
+                    OperationPhase::Failed
+                },
                 Some(envelope_id),
                 now,
             );
@@ -792,7 +870,11 @@ where
                 .get(&contact_id)
                 .is_some_and(|session| session.state() == PeerSessionState::Ready);
             match self.poll_contact(contact_id, now) {
-                Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
+                Ok(Some(PeerMessage::Data {
+                    envelope_id,
+                    message_kind,
+                    ciphertext,
+                })) => {
                     self.observe(
                         contact_id,
                         Some(TransportDirection::Rx),
@@ -809,7 +891,10 @@ where
                     })?;
                     report.inbound_queued += 1;
                 }
-                Ok(Some(PeerMessage::Ack { envelope_id, status })) => {
+                Ok(Some(PeerMessage::Ack {
+                    envelope_id,
+                    status,
+                })) => {
                     self.observe(
                         contact_id,
                         Some(TransportDirection::Rx),
@@ -844,7 +929,11 @@ where
         let incoming_ids: Vec<_> = self.incoming.keys().copied().collect();
         for contact_id in incoming_ids {
             match self.poll_contact(contact_id, now) {
-                Ok(Some(PeerMessage::Data { envelope_id, message_kind, ciphertext })) => {
+                Ok(Some(PeerMessage::Data {
+                    envelope_id,
+                    message_kind,
+                    ciphertext,
+                })) => {
                     self.observe(
                         contact_id,
                         Some(TransportDirection::Rx),
@@ -861,7 +950,10 @@ where
                     })?;
                     report.inbound_queued += 1;
                 }
-                Ok(Some(PeerMessage::Ack { envelope_id, status })) => {
+                Ok(Some(PeerMessage::Ack {
+                    envelope_id,
+                    status,
+                })) => {
                     self.observe(
                         contact_id,
                         Some(TransportDirection::Rx),
@@ -896,11 +988,7 @@ where
         envelope_id: OpaqueId,
         status: AckStatus,
     ) {
-        let ack = match status {
-            AckStatus::Accepted => Ok(LinkAck::Accepted),
-            AckStatus::Duplicate => Ok(LinkAck::Duplicate),
-            AckStatus::Rejected => Err(PeerLinkError::AckRejected),
-        };
+        let ack = link_ack(status);
         if self.pending_acks.len() >= MAX_PENDING_ACKS {
             if let Some(oldest) = self.pending_acks.keys().next().copied() {
                 self.pending_acks.remove(&oldest);
@@ -1024,8 +1112,10 @@ where
             self.reconnect.remove(&contact_id);
             return Ok(());
         }
-        let failures =
-            self.reconnect.get(&contact_id).map_or(1, |entry| entry.failures.saturating_add(1));
+        let failures = self
+            .reconnect
+            .get(&contact_id)
+            .map_or(1, |entry| entry.failures.saturating_add(1));
         let delay = self.reconnect_delay(failures)?;
         let next_attempt_at = now.checked_add(delay).ok_or(PeerLinkError::Clock)?;
         self.observe(
@@ -1036,20 +1126,30 @@ where
             None,
             now,
         );
-        self.reconnect
-            .insert(contact_id, ReconnectEntry { failures, next_attempt_at, in_progress: false });
+        self.reconnect.insert(
+            contact_id,
+            ReconnectEntry {
+                failures,
+                next_attempt_at,
+                in_progress: false,
+            },
+        );
         Ok(())
     }
 
     fn reconnect_delay(&mut self, failures: u32) -> Result<Duration, PeerLinkError> {
         let exponent = failures.saturating_sub(1).min(16);
-        let base = RECONNECT_BASE_MS.saturating_mul(1_u64 << exponent).min(RECONNECT_MAX_MS);
+        let base = RECONNECT_BASE_MS
+            .saturating_mul(1_u64 << exponent)
+            .min(RECONNECT_MAX_MS);
         let jitter_room = (base / 4).min(RECONNECT_MAX_MS.saturating_sub(base));
         let jitter = if jitter_room == 0 {
             0
         } else {
             let mut random = [0_u8; 8];
-            self.random.fill_random(&mut random).map_err(|_| PeerLinkError::Randomness)?;
+            self.random
+                .fill_random(&mut random)
+                .map_err(|_| PeerLinkError::Randomness)?;
             u64::from_le_bytes(random) % (jitter_room + 1)
         };
         Ok(Duration::from_millis(base + jitter))
@@ -1101,7 +1201,9 @@ where
     fn random_id(&mut self) -> Result<OpaqueId, PeerLinkError> {
         for _ in 0..8 {
             let mut bytes = [0_u8; 16];
-            self.random.fill_random(&mut bytes).map_err(|_| PeerLinkError::Randomness)?;
+            self.random
+                .fill_random(&mut bytes)
+                .map_err(|_| PeerLinkError::Randomness)?;
             let id = OpaqueId::from_bytes(bytes);
             if !id.is_nil() {
                 return Ok(id);
@@ -1112,7 +1214,9 @@ where
 
     fn random_32(&mut self) -> Result<[u8; 32], PeerLinkError> {
         let mut bytes = [0_u8; 32];
-        self.random.fill_random(&mut bytes).map_err(|_| PeerLinkError::Randomness)?;
+        self.random
+            .fill_random(&mut bytes)
+            .map_err(|_| PeerLinkError::Randomness)?;
         Ok(bytes)
     }
 }
@@ -1154,8 +1258,94 @@ fn map_tor(_: TransportError) -> PeerLinkError {
 }
 
 fn system_timestamp() -> Result<Timestamp, PeerLinkError> {
-    let duration =
-        SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| PeerLinkError::Clock)?;
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| PeerLinkError::Clock)?;
     let millis = i64::try_from(duration.as_millis()).map_err(|_| PeerLinkError::Clock)?;
     Timestamp::from_unix_millis(millis).map_err(|_| PeerLinkError::Clock)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AckWaitAction, LinkAck, classify_ack_wait_message};
+    use torca_contacts::ContactId;
+    use torca_foundation::OpaqueId;
+    use torca_peer_protocol::{AckStatus, PeerMessage};
+
+    #[test]
+    fn ram_only_inbound_never_completes_transport_receipt() {
+        let contact_id = ContactId::from_u128(1);
+        let expected = OpaqueId::from_u128(2);
+        let incoming = OpaqueId::from_u128(3);
+        let action = classify_ack_wait_message(
+            contact_id,
+            expected,
+            PeerMessage::Data {
+                envelope_id: incoming,
+                message_kind: 7,
+                ciphertext: vec![1, 2, 3],
+            },
+        );
+        let AckWaitAction::QueueInbound(envelope) = action else {
+            panic!("inbound application data must yield to durable ingress");
+        };
+        assert_eq!(envelope.contact_id, contact_id);
+        assert_eq!(envelope.envelope_id, incoming);
+        assert_eq!(envelope.message_kind, 7);
+        assert_eq!(envelope.ciphertext, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn simultaneous_bidirectional_data_yields_both_ack_waiters() {
+        for (contact, expected, incoming) in [
+            (ContactId::from_u128(10), OpaqueId::from_u128(11), OpaqueId::from_u128(12)),
+            (ContactId::from_u128(20), OpaqueId::from_u128(21), OpaqueId::from_u128(22)),
+        ] {
+            let action = classify_ack_wait_message(
+                contact,
+                expected,
+                PeerMessage::Data {
+                    envelope_id: incoming,
+                    message_kind: 1,
+                    ciphertext: vec![9],
+                },
+            );
+            assert!(matches!(action, AckWaitAction::QueueInbound(_)));
+        }
+    }
+
+    #[test]
+    fn matching_ack_completes_the_wait() {
+        let expected = OpaqueId::from_u128(31);
+        let action = classify_ack_wait_message(
+            ContactId::from_u128(30),
+            expected,
+            PeerMessage::Ack {
+                envelope_id: expected,
+                status: AckStatus::Accepted,
+            },
+        );
+        assert_eq!(action, AckWaitAction::Complete(Ok(LinkAck::Accepted)));
+    }
+
+    #[test]
+    fn unrelated_ack_is_preserved_for_its_own_sender() {
+        let expected = OpaqueId::from_u128(41);
+        let other = OpaqueId::from_u128(42);
+        let action = classify_ack_wait_message(
+            ContactId::from_u128(40),
+            expected,
+            PeerMessage::Ack {
+                envelope_id: other,
+                status: AckStatus::Duplicate,
+            },
+        );
+        assert_eq!(
+            action,
+            AckWaitAction::Store {
+                envelope_id: other,
+                ack: Ok(LinkAck::Duplicate),
+            }
+        );
+    }
 }
