@@ -9,6 +9,8 @@ import android.provider.Settings
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.media.AudioManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.view.WindowManager
 import java.io.ByteArrayOutputStream
 import com.torca.host.AndroidKeystoreBridge
@@ -24,6 +26,7 @@ class MainActivity : FlutterActivity() {
     private var audioChannel: MethodChannel? = null
     private var deviceChannel: MethodChannel? = null
     private var microphonePermissionResult: MethodChannel.Result? = null
+    private var radioAudioFocusRequest: AudioFocusRequest? = null
     private var pendingConversationId: String? = null
 
     companion object {
@@ -125,7 +128,36 @@ class MainActivity : FlutterActivity() {
                         val audioManager = getSystemService(AudioManager::class.java)
                         if (enabled) {
                             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                val attributes = AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                    .build()
+                                val request = AudioFocusRequest.Builder(
+                                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE,
+                                )
+                                    .setAudioAttributes(attributes)
+                                    .setAcceptsDelayedFocusGain(false)
+                                    .setOnAudioFocusChangeListener { }
+                                    .build()
+                                radioAudioFocusRequest = request
+                                audioManager.requestAudioFocus(request)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                audioManager.requestAudioFocus(
+                                    { },
+                                    AudioManager.STREAM_VOICE_CALL,
+                                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE,
+                                )
+                            }
                         } else if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                radioAudioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
+                                radioAudioFocusRequest = null
+                            } else {
+                                @Suppress("DEPRECATION")
+                                audioManager.abandonAudioFocus(null)
+                            }
                             audioManager.mode = AudioManager.MODE_NORMAL
                         }
                         result.success(null)
