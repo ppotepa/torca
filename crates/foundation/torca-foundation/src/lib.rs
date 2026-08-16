@@ -11,6 +11,7 @@ mod error;
 mod event;
 mod id;
 mod time;
+mod wake;
 
 pub use cancellation::{CancellationProbe, CancellationReason, Cancelled, NeverCancelled};
 pub use command::{CommandEnvelope, CommandMetadata};
@@ -18,3 +19,4 @@ pub use error::{ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, Retr
 pub use event::{DomainEventEnvelope, EventMetadata};
 pub use id::{CausationId, CommandId, CorrelationId, EventId, OpaqueId, ParseOpaqueIdError};
 pub use time::{Timestamp, TimestampError};
+pub use wake::{WakeCallback, WakeSlot};

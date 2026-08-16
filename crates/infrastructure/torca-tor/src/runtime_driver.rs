@@ -8,7 +8,7 @@ mod timing;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bootstrap_worker::TorBootstrapWorker;
@@ -21,16 +21,13 @@ use crate::{
     OnionServiceHealth, TorActivityMode, TorBootstrapEvent, TorBootstrapObserver,
     TorBootstrapStage, TorService, TorServiceHandle,
 };
-use torca_foundation::Timestamp;
+use torca_foundation::{Timestamp, WakeSlot};
 use torca_runtime::{OnionServiceState, RuntimeDriverError, TorDriver, TorState};
 
-type TorWake = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
+type TorWake = Arc<WakeSlot>;
 
 fn notify_tor_wake(wake: &TorWake) {
-    let callback = wake.lock().ok().and_then(|slot| slot.clone());
-    if let Some(callback) = callback {
-        callback();
-    }
+    let _ = wake.wake();
 }
 
 pub struct OwnedTorDriver {
@@ -95,7 +92,7 @@ impl OwnedTorDriver {
             state: TorState::Starting,
             last_diagnostic: None,
             observer: observer.clone(),
-            wake: Arc::new(Mutex::new(None)),
+            wake: Arc::new(WakeSlot::default()),
         };
         if let Err(error) = driver.start(peer_target, now, observer) {
             let diagnostic = driver
@@ -236,9 +233,6 @@ impl OwnedTorDriver {
         };
         self.bootstrap_worker = None;
         if !self.recovery_epoch.matches(epoch) {
-            // A shutdown/restart or a newer recovery superseded this result.
-            // Dropping a successful stale TorService here also releases its
-            // state-root resources without exposing it to the active runtime.
             drop(result);
             return Ok(());
         }
@@ -265,7 +259,6 @@ impl OwnedTorDriver {
         }
     }
 
-    /// Returns a shared handle to the in-process Tor client.
     pub fn client_handle(&self) -> Option<TorServiceHandle> {
         self.client.clone()
     }
@@ -318,16 +311,10 @@ impl TorDriver for OwnedTorDriver {
     }
 
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
-        // During bootstrap and recovery we still need to reap worker results
-        // and advance bounded retry deadlines. Onion publisher progress and
-        // exhaustion wake the runtime through its observer/event callback;
-        // peer/radio listeners use the same event-driven boundary.
         if self.bootstrap_worker.is_some() || self.next_restart_at.is_some() {
             return Some(Duration::from_secs(1));
         }
         if self.onion_publisher.is_some() {
-            // Publication progress and terminal failure are delivered through
-            // the publisher observer/event callback; no health poll is needed.
             return None;
         }
         match self.onion_service_state() {
@@ -341,9 +328,7 @@ impl TorDriver for OwnedTorDriver {
     }
 
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
-        if let Ok(mut slot) = self.wake.lock() {
-            *slot = Some(waker);
-        }
+        let _ = self.wake.set(waker);
     }
 
     fn set_dormant(&mut self, dormant: bool) -> Result<(), RuntimeDriverError> {
@@ -390,13 +375,8 @@ impl TorDriver for OwnedTorDriver {
     fn shutdown(&mut self) {
         self.next_restart_at = None;
         self.endpoint.set(None);
-        // Invalidate any detached recovery before dropping its receiver. The
-        // worker remains externally bounded and is intentionally not joined,
-        // but its result can no longer belong to this runtime generation.
         self.recovery_epoch.advance();
-        if let Ok(mut slot) = self.wake.lock() {
-            *slot = None;
-        }
+        let _ = self.wake.clear();
         self.bootstrap_worker.take();
         if let Some(worker) = self.onion_publisher.take() {
             worker.shutdown();
