@@ -28,7 +28,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(8);
 const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
-const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
+// Keep the authenticated media stream alive without waking the device every
+// few seconds. The 10-second interval remains comfortably below the
+// connection idle budget, while halving idle radio traffic during a session.
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const AUDIO_RETRANSMIT_AFTER: Duration = Duration::from_millis(250);
 const AUDIO_FRAME_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_RETRANSMITS_PER_TICK: usize = 8;
