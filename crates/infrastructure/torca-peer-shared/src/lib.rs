@@ -122,6 +122,10 @@ where
         }
         let deadline =
             Instant::now().checked_add(timeout.min(wait_limit)).ok_or(PeerLinkError::AckTimeout)?;
+        // ACKs normally arrive immediately, but a fixed 10 ms poll keeps the
+        // CPU awake for the entire network wait. Start with low latency and
+        // back off while the bounded wait is still pending.
+        let mut poll_delay = Duration::from_millis(5);
         loop {
             let ack = {
                 let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;
@@ -133,7 +137,8 @@ where
             if Instant::now() >= deadline {
                 return Err(PeerLinkError::AckTimeout);
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(poll_delay);
+            poll_delay = (poll_delay * 2).min(Duration::from_millis(50));
         }
     }
 
