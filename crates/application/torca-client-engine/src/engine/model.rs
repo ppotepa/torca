@@ -1,3 +1,5 @@
+//! Public command/result model and classified engine errors.
+
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineCommand {
@@ -10,7 +12,6 @@ pub enum EngineCommand {
         display_name: ProfileName,
         at: Timestamp,
     },
-    /// Stores the immutable, content-addressed avatar genome for this device.
     SetAvatarGenome {
         record: AvatarGenomeRecord,
         at: Timestamp,
@@ -82,7 +83,6 @@ pub enum EngineCommand {
         reply_to: Option<ReplyReference>,
         at: Timestamp,
     },
-    /// Cancels a locally queued message before delivery can claim it.
     CancelMessage {
         message_id: MessageId,
         at: Timestamp,
@@ -145,7 +145,6 @@ pub struct ClientSnapshot {
     pub conversations: Vec<DirectConversation>,
     pub messages: Vec<Message>,
     pub reactions: Vec<MessageReaction>,
-    /// Content-addressed local avatar genome; never contains rendered pixels.
     pub avatar_genome: Option<AvatarGenomeRecord>,
 }
 
@@ -159,21 +158,79 @@ pub struct AvatarGenomeRecord {
     pub compressed_genome: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EngineError(pub String);
+/// Stable, redacted application-engine failure taxonomy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineError {
+    NotFound,
+    Conflict,
+    InvalidState,
+    Repository,
+    Identity,
+    Pairing,
+    Messaging,
+    Unavailable,
+}
+
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(match self {
+            Self::NotFound => "engine resource not found",
+            Self::Conflict => "engine state conflict",
+            Self::InvalidState => "engine operation is invalid for the current state",
+            Self::Repository => "engine repository operation failed",
+            Self::Identity => "identity operation failed",
+            Self::Pairing => "pairing operation failed",
+            Self::Messaging => "messaging operation failed",
+            Self::Unavailable => "engine is temporarily unavailable",
+        })
     }
 }
 impl std::error::Error for EngineError {}
 
 impl ClassifiedError for EngineError {
     fn descriptor(&self) -> ErrorDescriptor {
-        ErrorDescriptor::new(
-            ErrorCode::new("application.engine_failed"),
-            ErrorCategory::Internal,
-            RetryAdvice::Never,
-        )
+        let (code, category, retry) = match self {
+            Self::NotFound => (
+                ErrorCode::new("application.engine.not_found"),
+                ErrorCategory::NotFound,
+                RetryAdvice::Never,
+            ),
+            Self::Conflict => (
+                ErrorCode::new("application.engine.conflict"),
+                ErrorCategory::Conflict,
+                RetryAdvice::Never,
+            ),
+            Self::InvalidState => (
+                ErrorCode::new("application.engine.invalid_state"),
+                ErrorCategory::Conflict,
+                RetryAdvice::Never,
+            ),
+            Self::Repository => (
+                ErrorCode::new("application.engine.repository_unavailable"),
+                ErrorCategory::Unavailable,
+                RetryAdvice::Backoff,
+            ),
+            Self::Identity => (
+                ErrorCode::new("application.engine.identity_failed"),
+                ErrorCategory::Internal,
+                RetryAdvice::Never,
+            ),
+            Self::Pairing => (
+                ErrorCode::new("application.engine.pairing_failed"),
+                ErrorCategory::Conflict,
+                RetryAdvice::Never,
+            ),
+            Self::Messaging => (
+                ErrorCode::new("application.engine.messaging_failed"),
+                ErrorCategory::Conflict,
+                RetryAdvice::Never,
+            ),
+            Self::Unavailable => (
+                ErrorCode::new("application.engine.unavailable"),
+                ErrorCategory::Unavailable,
+                RetryAdvice::Backoff,
+            ),
+        };
+        ErrorDescriptor::new(code, category, retry)
     }
 }

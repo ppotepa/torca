@@ -1,3 +1,5 @@
+//! Relationship storage boundary and in-memory implementation.
+
 pub trait RelationshipRepository:
     ContactRepository + ConversationRepository + PeerCredentialRepository
 {
@@ -25,7 +27,6 @@ pub trait RelationshipRepository:
         avatar: Option<AvatarGenomeRecord>,
         at: Timestamp,
     ) -> Result<(), EngineError>;
-    /// Clears one complete local relationship from this repository.
     fn remove_relationship(&mut self, contact_id: ContactId) -> Result<(), EngineError>;
 }
 
@@ -133,24 +134,28 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
         _at: Timestamp,
     ) -> Result<(), EngineError> {
         if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
-            return Err(EngineError("pairing relationship identifiers do not match".into()));
+            return Err(EngineError::InvalidState);
         }
-        if ContactRepository::get(self, contact.id()).map_err(map_error)?.is_some()
-            || ConversationRepository::get(self, conversation.id()).map_err(map_error)?.is_some()
-            || ConversationRepository::for_contact(self, contact.id()).map_err(map_error)?.is_some()
+        if ContactRepository::get(self, contact.id()).map_err(|_| EngineError::Repository)?.is_some()
+            || ConversationRepository::get(self, conversation.id())
+                .map_err(|_| EngineError::Repository)?
+                .is_some()
+            || ConversationRepository::for_contact(self, contact.id())
+                .map_err(|_| EngineError::Repository)?
+                .is_some()
             || PeerCredentialRepository::credential_for_contact(self, contact.id())
-                .map_err(map_error)?
+                .map_err(|_| EngineError::Repository)?
                 .is_some()
         {
-            return Err(EngineError("contact, conversation or credential already exists".into()));
+            return Err(EngineError::Conflict);
         }
         let mut contacts = self.contacts.clone();
         let mut conversations = self.conversations.clone();
         let mut credentials = self.credentials.clone();
         let remote_identity_id = contact.remote_identity().identity_id();
-        contacts.insert(contact).map_err(map_error)?;
-        conversations.insert(conversation).map_err(map_error)?;
-        credentials.insert_credential(credential).map_err(map_error)?;
+        contacts.insert(contact).map_err(|_| EngineError::Repository)?;
+        conversations.insert(conversation).map_err(|_| EngineError::Repository)?;
+        credentials.insert_credential(credential).map_err(|_| EngineError::Repository)?;
         self.contacts = contacts;
         self.conversations = conversations;
         self.credentials = credentials;
@@ -170,8 +175,11 @@ impl RelationshipRepository for InMemoryRelationshipRepository {
     }
 
     fn remove_relationship(&mut self, contact_id: ContactId) -> Result<(), EngineError> {
-        if ContactRepository::get(self, contact_id).map_err(map_error)?.is_none() {
-            return Err(EngineError("contact not found".into()));
+        if ContactRepository::get(self, contact_id)
+            .map_err(|_| EngineError::Repository)?
+            .is_none()
+        {
+            return Err(EngineError::NotFound);
         }
         let mut contacts = self.contacts.clone();
         let mut conversations = self.conversations.clone();

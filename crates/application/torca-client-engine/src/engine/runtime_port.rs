@@ -1,3 +1,5 @@
+//! Engine runtime port used by the single-writer actor.
+
 pub trait EngineRuntime: Send + 'static {
     fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError>;
     fn snapshot(&self) -> Result<ClientSnapshot, EngineError>;
@@ -40,6 +42,6 @@ where
     }
 }
 
-fn map_error(error: impl fmt::Display) -> EngineError {
-    EngineError(error.to_string())
+fn map_error(_error: impl fmt::Display) -> EngineError {
+    EngineError::Repository
 }

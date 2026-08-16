@@ -65,7 +65,7 @@ where
 
     pub fn snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         let mut snapshot = self.overview_snapshot()?;
-        snapshot.messages = self.messages.list().map_err(map_error)?;
+        snapshot.messages = self.messages.list().map_err(|_| EngineError::Repository)?;
         let mut conversation_ids = Vec::new();
         for message in &snapshot.messages {
             let id = message.conversation_id();
@@ -75,22 +75,26 @@ where
         }
         for conversation_id in conversation_ids {
             snapshot.reactions.extend(
-                self.messages.reactions_for_conversation(conversation_id).map_err(map_error)?,
+                self.messages
+                    .reactions_for_conversation(conversation_id)
+                    .map_err(|_| EngineError::Repository)?,
             );
         }
         Ok(snapshot)
     }
 
     pub fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
-        let conversations = ConversationRepository::list(&self.relationships).map_err(map_error)?;
+        let conversations = ConversationRepository::list(&self.relationships)
+            .map_err(|_| EngineError::Repository)?;
         Ok(ClientSnapshot {
-            identity: self.identity.load().map_err(map_error)?,
-            pairings: self.pairings.list().map_err(map_error)?,
-            contacts: ContactRepository::list(&self.relationships).map_err(map_error)?,
+            identity: self.identity.load().map_err(|_| EngineError::Identity)?,
+            pairings: self.pairings.list().map_err(|_| EngineError::Repository)?,
+            contacts: ContactRepository::list(&self.relationships)
+                .map_err(|_| EngineError::Repository)?,
             conversations,
             messages: Vec::new(),
             reactions: Vec::new(),
-            avatar_genome: self.relationships.local_avatar_genome().map_err(map_error)?,
+            avatar_genome: self.relationships.local_avatar_genome()?,
         })
     }
 
@@ -101,20 +105,20 @@ where
         self.messages
             .get(message_id)
             .map(|message| message.map(|value| value.status()))
-            .map_err(map_error)
+            .map_err(|_| EngineError::Repository)
     }
 
     fn load_pairing(&self, id: PairingSessionId) -> Result<PairingSession, EngineError> {
         self.pairings
             .get(id)
-            .map_err(map_error)?
-            .ok_or_else(|| EngineError("pairing session not found".into()))
+            .map_err(|_| EngineError::Repository)?
+            .ok_or(EngineError::NotFound)
     }
 
     fn load_message(&self, id: MessageId) -> Result<Message, EngineError> {
         self.messages
             .get(id)
-            .map_err(map_error)?
-            .ok_or_else(|| EngineError("message not found".into()))
+            .map_err(|_| EngineError::Repository)?
+            .ok_or(EngineError::NotFound)
     }
 }
