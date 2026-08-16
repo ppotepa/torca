@@ -10,6 +10,7 @@ mod command;
 mod error;
 mod event;
 mod id;
+mod secret;
 mod time;
 mod wake;
 
@@ -18,5 +19,6 @@ pub use command::{CommandEnvelope, CommandMetadata};
 pub use error::{ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, RetryAdvice};
 pub use event::{DomainEventEnvelope, EventMetadata};
 pub use id::{CausationId, CommandId, CorrelationId, EventId, OpaqueId, ParseOpaqueIdError};
+pub use secret::SecretBytes;
 pub use time::{Timestamp, TimestampError};
 pub use wake::{WakeCallback, WakeSlot};

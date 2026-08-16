@@ -72,24 +72,19 @@ impl Drop for PairingTransportSnapshot {
 
 #[must_use]
 #[derive(Eq, PartialEq)]
-pub struct PairingDerivedSecret([u8; 32]);
+pub struct PairingDerivedSecret(torca_foundation::SecretBytes<32>);
 impl PairingDerivedSecret {
     pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+        Self(torca_foundation::SecretBytes::new(bytes))
     }
 
     pub fn expose_for_protected_storage(&self) -> &[u8; 32] {
-        &self.0
+        self.0.expose()
     }
 }
 impl fmt::Debug for PairingDerivedSecret {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("PairingDerivedSecret([REDACTED])")
-    }
-}
-impl Drop for PairingDerivedSecret {
-    fn drop(&mut self) {
-        self.0.fill(0);
     }
 }
 

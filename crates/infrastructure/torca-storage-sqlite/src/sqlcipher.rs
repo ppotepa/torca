@@ -3,34 +3,28 @@ use std::path::Path;
 use std::str;
 
 use rusqlite::{Connection, OpenFlags};
+use torca_foundation::SecretBytes;
 
 use crate::{StorageBackend, StorageBackendError};
 
-/// Raw 256-bit database key with redacted diagnostics and best-effort zeroing.
+/// Raw 256-bit database key with redacted diagnostics and wipe-on-drop.
 #[must_use]
 #[derive(Eq, PartialEq)]
-pub struct DatabaseKey([u8; 32]);
+pub struct DatabaseKey(SecretBytes<32>);
 
 impl DatabaseKey {
-    /// Creates a database key from caller-protected bytes.
     pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+        Self(SecretBytes::new(bytes))
     }
 
     fn expose(&self) -> &[u8; 32] {
-        &self.0
+        self.0.expose()
     }
 }
 
 impl fmt::Debug for DatabaseKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("DatabaseKey([REDACTED])")
-    }
-}
-
-impl Drop for DatabaseKey {
-    fn drop(&mut self) {
-        self.0.fill(0);
     }
 }
 
@@ -65,7 +59,6 @@ impl Drop for SensitiveSql {
     }
 }
 
-/// Concrete `rusqlite` backend compiled with bundled SQLCipher and vendored OpenSSL.
 pub struct SqlCipherBackend {
     connection: Connection,
     in_transaction: bool,
@@ -73,7 +66,6 @@ pub struct SqlCipherBackend {
 }
 
 impl SqlCipherBackend {
-    /// Opens or creates an encrypted database and verifies that SQLCipher is active.
     pub fn open(path: impl AsRef<Path>, key: &DatabaseKey) -> Result<Self, StorageBackendError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
@@ -83,7 +75,6 @@ impl SqlCipherBackend {
         Self::from_connection(connection, key)
     }
 
-    /// Opens an encrypted in-memory database, primarily for integration tests.
     pub fn open_in_memory(key: &DatabaseKey) -> Result<Self, StorageBackendError> {
         let connection = Connection::open_in_memory().map_err(map_sqlite_error)?;
         configure_sqlcipher_logging(&connection)?;
@@ -99,7 +90,6 @@ impl SqlCipherBackend {
         Ok(Self { connection, in_transaction: false, cipher_version })
     }
 
-    /// Returns the active SQLCipher version string.
     pub fn cipher_version(&self) -> &str {
         &self.cipher_version
     }

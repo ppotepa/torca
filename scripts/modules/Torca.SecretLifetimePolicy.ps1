@@ -5,55 +5,60 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$requirements = @(
+$foundationSecret = Join-Path $RepoRoot 'crates/foundation/torca-foundation/src/secret.rs'
+$secretText = Get-Content -LiteralPath $foundationSecret -Raw
+if ($secretText -notmatch 'impl<const N: usize>\s+Drop\s+for\s+SecretBytes<N>' -or
+    -not $secretText.Contains('.fill(0)')) {
+    throw 'SecretBytes<N> must remain the canonical wipe-on-drop container.'
+}
+
+$wrapperRequirements = @(
     @{
         Path = 'crates/infrastructure/torca-storage-sqlite/src/sqlcipher.rs'
-        Types = @('DatabaseKey', 'SensitiveSql')
+        Fragment = 'DatabaseKey(SecretBytes<32>)'
     },
     @{
         Path = 'crates/infrastructure/torca-crypto/src/types.rs'
-        Types = @('SigningSecretKey', 'SealingKey')
+        Fragment = 'SigningSecretKey(SecretBytes<32>)'
+    },
+    @{
+        Path = 'crates/infrastructure/torca-crypto/src/types.rs'
+        Fragment = 'SealingKey(SecretBytes<32>)'
     },
     @{
         Path = 'crates/application/torca-pairing-coordinator/src/core/model_ports.rs'
-        Types = @('PairingTransportSnapshot', 'PairingDerivedSecret')
+        Fragment = 'PairingDerivedSecret(torca_foundation::SecretBytes<32>)'
     }
 )
-
-foreach ($requirement in $requirements) {
-    $path = Join-Path $RepoRoot $requirement.Path
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "Secret-owner source is missing: $($requirement.Path)"
-    }
-    $text = Get-Content -LiteralPath $path -Raw
-    foreach ($type in $requirement.Types) {
-        if ($text -notmatch "impl\s+Drop\s+for\s+$type") {
-            throw "Sensitive type must zero its memory on Drop: $type ($($requirement.Path))"
-        }
-    }
-    if (-not $text.Contains('.fill(0)')) {
-        throw "Secret-owner file must explicitly wipe sensitive byte storage: $($requirement.Path)"
+foreach ($requirement in $wrapperRequirements) {
+    $text = Get-Content -LiteralPath (Join-Path $RepoRoot $requirement.Path) -Raw
+    if (-not $text.Contains($requirement.Fragment)) {
+        throw "Sensitive wrapper drifted from SecretBytes: $($requirement.Path)"
     }
 }
 
-$peerSecrets = Join-Path $RepoRoot 'crates/infrastructure/torca-crypto/src/peer_secrets.rs'
-$peerText = Get-Content -LiteralPath $peerSecrets -Raw
-if (-not $peerText.Contains('stored.fill(0)')) {
+# Restart transport snapshots expose a public fixed-size field for immediate
+# protected-storage serialization, so they keep an explicit local Drop.
+$pairingModel = Join-Path $RepoRoot 'crates/application/torca-pairing-coordinator/src/core/model_ports.rs'
+$pairingText = Get-Content -LiteralPath $pairingModel -Raw
+if ($pairingText -notmatch 'impl\s+Drop\s+for\s+PairingTransportSnapshot' -or
+    -not $pairingText.Contains('self.private_key.fill(0)')) {
+    throw 'PairingTransportSnapshot must wipe its exported private key.'
+}
+
+$sqlcipher = Get-Content -LiteralPath (Join-Path $RepoRoot 'crates/infrastructure/torca-storage-sqlite/src/sqlcipher.rs') -Raw
+if ($sqlcipher -notmatch 'impl\s+Drop\s+for\s+SensitiveSql' -or -not $sqlcipher.Contains('self.0.fill(0)')) {
+    throw 'SQLCipher raw-key PRAGMA bytes must be wiped after setup.'
+}
+
+$peerSecrets = Get-Content -LiteralPath (Join-Path $RepoRoot 'crates/infrastructure/torca-crypto/src/peer_secrets.rs') -Raw
+if (-not $peerSecrets.Contains('stored.fill(0)')) {
     throw 'Protected peer-secret loads must wipe the temporary Vec after key construction.'
 }
 
-$pairingRuntime = Join-Path $RepoRoot 'crates/application/torca-pairing-coordinator/src/runtime/lifecycle_methods.rs'
-$pairingText = Get-Content -LiteralPath $pairingRuntime -Raw
-if (-not $pairingText.Contains('state.fill(0)')) {
+$pairingRuntime = Get-Content -LiteralPath (Join-Path $RepoRoot 'crates/application/torca-pairing-coordinator/src/runtime/lifecycle_methods.rs') -Raw
+if (-not $pairingRuntime.Contains('state.fill(0)')) {
     throw 'Pairing restart-state bytes must be wiped after decoding.'
-}
-
-$persistence = Join-Path $RepoRoot 'crates/application/torca-pairing-coordinator/src/runtime/completion_methods.rs'
-if (Test-Path -LiteralPath $persistence) {
-    $text = Get-Content -LiteralPath $persistence -Raw
-    if ($text.Contains('encoded') -and -not $text.Contains('fill(0)')) {
-        throw 'Encoded protected pairing state must be wiped after storage.'
-    }
 }
 
 Write-Host 'Torca secret lifetime policy passed.'
