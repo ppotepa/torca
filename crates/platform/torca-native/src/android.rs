@@ -85,7 +85,7 @@ pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativeIn
 /// them unless the Rust radio coordinator currently owns the floor.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativePushRadioPcm(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     data: JByteArray,
 ) {

@@ -564,6 +564,8 @@ function Build-TorcaNative {
     New-Item -ItemType Directory -Force -Path $jniRoot | Out-Null
     $oldPath = $env:PATH
     $msysPerlRoot = 'C:\msys64\usr\bin'
+    $oldOpenSslSrcPerl = $env:OPENSSL_SRC_PERL
+    $oldPerl = $env:PERL
     $ndkHome = [string]$env:ANDROID_NDK_HOME
     if ([string]::IsNullOrWhiteSpace($ndkHome)) {
         $sdkRoot = [string]$env:ANDROID_HOME
@@ -581,7 +583,19 @@ function Build-TorcaNative {
     if (-not (Test-Path (Join-Path $ndkBin 'clang.exe'))) {
         throw "Android NDK clang was not found: $ndkBin"
     }
-    $env:PATH = "$ndkBin;$msysPerlRoot;$oldPath"
+    $msysPerl = Join-Path $msysPerlRoot 'perl.exe'
+    if (-not (Test-Path $msysPerl)) {
+        throw "MSYS2 Perl is required for the Android OpenSSL build: $msysPerl"
+    }
+    # openssl-src 3.6.x requires a Unix-like Perl on Windows.  Use the MSYS2
+    # interpreter explicitly, but keep compiler tools resolvable by command
+    # name so MSYS make does not turn C:\ paths into C:... escape sequences.
+    # Do not set PERL to an absolute Windows path: OpenSSL embeds PERL in its
+    # generated Makefile and MSYS make would mangle it.  OPENSSL_SRC_PERL is
+    # consumed only for the initial Configure invocation.
+    $env:PATH = "$msysPerlRoot;$ndkBin;$oldPath"
+    $env:OPENSSL_SRC_PERL = $msysPerl
+    Remove-Item Env:PERL -ErrorAction SilentlyContinue
     # MSYS make interprets absolute Windows compiler paths as escape sequences.
     # Build each ABI directly so the compiler is resolved by name from PATH.
     try {
@@ -611,6 +625,10 @@ function Build-TorcaNative {
         }
     } finally {
         $env:PATH = $oldPath
+        if ($null -eq $oldOpenSslSrcPerl) { Remove-Item Env:OPENSSL_SRC_PERL -ErrorAction SilentlyContinue }
+        else { $env:OPENSSL_SRC_PERL = $oldOpenSslSrcPerl }
+        if ($null -eq $oldPerl) { Remove-Item Env:PERL -ErrorAction SilentlyContinue }
+        else { $env:PERL = $oldPerl }
     }
 }
 
