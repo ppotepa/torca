@@ -5,6 +5,7 @@
 //! this crate; this layer never stores plaintext messages or a second outbox.
 
 mod ack;
+mod reconnect;
 
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ack::{AckWaitAction, classify_ack_wait_message, link_ack};
+use reconnect::{ReconnectEntry, reconnect_delay};
 use torca_connectivity::{
     ConnectivityObserver, OperationPhase, TransportDirection, TransportLayer, TransportOperation,
 };
@@ -33,8 +35,6 @@ const MAX_CLOCK_SKEW_MS: i64 = 2 * 60 * 1000;
 const MAX_PENDING_INCOMING: usize = 64;
 const MAX_INBOUND_EVENTS: usize = 256;
 const MAX_PENDING_ACKS: usize = 256;
-const RECONNECT_BASE_MS: u64 = 1_000;
-const RECONNECT_MAX_MS: u64 = 60_000;
 // Never let one attachment chunk monopolize the shared peer lane. ACKs that
 // arrive after this cooperative slice are retained in `pending_acks` and the
 // durable job retries the same stable frame idempotently. A five-second slice
@@ -119,13 +119,6 @@ impl fmt::Display for PeerLinkError {
     }
 }
 impl std::error::Error for PeerLinkError {}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ReconnectEntry {
-    failures: u32,
-    next_attempt_at: Timestamp,
-    in_progress: bool,
-}
 
 type IncomingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
 type OutgoingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
@@ -1072,7 +1065,7 @@ where
             .reconnect
             .get(&contact_id)
             .map_or(1, |entry| entry.failures.saturating_add(1));
-        let delay = self.reconnect_delay(failures)?;
+        let delay = reconnect_delay(&mut self.random, failures)?;
         let next_attempt_at = now.checked_add(delay).ok_or(PeerLinkError::Clock)?;
         self.observe(
             contact_id,
@@ -1091,24 +1084,6 @@ where
             },
         );
         Ok(())
-    }
-
-    fn reconnect_delay(&mut self, failures: u32) -> Result<Duration, PeerLinkError> {
-        let exponent = failures.saturating_sub(1).min(16);
-        let base = RECONNECT_BASE_MS
-            .saturating_mul(1_u64 << exponent)
-            .min(RECONNECT_MAX_MS);
-        let jitter_room = (base / 4).min(RECONNECT_MAX_MS.saturating_sub(base));
-        let jitter = if jitter_room == 0 {
-            0
-        } else {
-            let mut random = [0_u8; 8];
-            self.random
-                .fill_random(&mut random)
-                .map_err(|_| PeerLinkError::Randomness)?;
-            u64::from_le_bytes(random) % (jitter_room + 1)
-        };
-        Ok(Duration::from_millis(base + jitter))
     }
 
     fn remove_non_ready(&mut self, contact_id: ContactId) {
