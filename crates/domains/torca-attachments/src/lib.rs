@@ -291,6 +291,63 @@ impl fmt::Display for AttachmentError {
 }
 impl std::error::Error for AttachmentError {}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn timestamp(milliseconds: i64) -> Timestamp {
+        Timestamp::from_unix_millis(milliseconds).expect("valid timestamp")
+    }
+
+    fn attachment() -> Attachment {
+        Attachment::prepare(
+            AttachmentId::from_u128(1),
+            MessageId::from_opaque(OpaqueId::from_u128(2)),
+            AttachmentName::new("clip.mp4").expect("valid name"),
+            MediaType::new("video/mp4").expect("valid media type"),
+            1024,
+            timestamp(1_000),
+        )
+        .expect("valid attachment")
+    }
+
+    #[test]
+    fn lifecycle_records_attempt_failure_and_allows_resume() {
+        let mut attachment = attachment();
+        attachment.begin_encryption(timestamp(1_001)).expect("encrypt");
+        attachment.mark_queued(timestamp(1_002)).expect("queue");
+        assert_eq!(attachment.begin_transfer(timestamp(1_003)), Ok(1));
+        attachment
+            .mark_failed(timestamp(1_004), ErrorCode::new("attachment.timeout"))
+            .expect("fail");
+        assert_eq!(attachment.status(), AttachmentStatus::Failed);
+        assert_eq!(attachment.attempts().len(), 1);
+        assert_eq!(attachment.attempts()[0].number, 1);
+        assert_eq!(attachment.attempts()[0].error_code, Some(ErrorCode::new("attachment.timeout")));
+
+        assert_eq!(attachment.begin_transfer(timestamp(1_005)), Ok(2));
+        attachment.mark_available(timestamp(1_006)).expect("complete");
+        assert_eq!(attachment.status(), AttachmentStatus::Available);
+        assert_eq!(attachment.attempts().len(), 2);
+    }
+
+    #[test]
+    fn cancellation_is_terminal_and_does_not_allow_resuming() {
+        let mut attachment = attachment();
+        attachment.cancel(timestamp(1_001)).expect("cancel");
+        assert_eq!(attachment.status(), AttachmentStatus::Cancelled);
+        assert_eq!(attachment.cancel(timestamp(1_002)), Err(AttachmentError::InvalidTransition));
+        assert_eq!(
+            attachment.begin_encryption(timestamp(1_003)),
+            Err(AttachmentError::InvalidTransition)
+        );
+        assert_eq!(
+            attachment.begin_transfer(timestamp(1_004)),
+            Err(AttachmentError::InvalidTransition)
+        );
+    }
+}
+
 pub trait AttachmentRepository {
     fn insert(&mut self, attachment: Attachment) -> Result<(), AttachmentError>;
     fn get(&self, id: AttachmentId) -> Result<Option<Attachment>, AttachmentError>;

@@ -13,6 +13,7 @@ class RuntimeEventDto {
     required this.createdAtMs,
     required this.title,
     required this.body,
+    this.resourceId = '',
   });
 
   factory RuntimeEventDto.fromJson(Map<String, dynamic> value) {
@@ -37,6 +38,7 @@ class RuntimeEventDto {
       createdAtMs: createdAt.toInt(),
       title: value['title'] as String? ?? 'Torca',
       body: value['body'] as String? ?? '',
+      resourceId: value['resourceId'] as String? ?? '',
     );
   }
 
@@ -48,6 +50,7 @@ class RuntimeEventDto {
   final int createdAtMs;
   final String title;
   final String body;
+  final String resourceId;
 }
 
 abstract interface class EngineGateway {

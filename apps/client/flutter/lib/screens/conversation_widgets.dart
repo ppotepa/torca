@@ -44,7 +44,9 @@ class ConversationComposer extends StatelessWidget {
     required this.pendingAttachments,
     required this.onRemoveAttachment,
     required this.onPickAttachments,
+    required this.onInsertEmoji,
     required this.onSend,
+    required this.onVoiceClipReady,
     required this.sending,
     required this.sendingAttachment,
     required this.pickingAttachment,
@@ -62,7 +64,9 @@ class ConversationComposer extends StatelessWidget {
   final List<_PendingAttachment> pendingAttachments;
   final ValueChanged<_PendingAttachment> onRemoveAttachment;
   final VoidCallback onPickAttachments;
+  final VoidCallback onInsertEmoji;
   final VoidCallback onSend;
+  final VoiceClipReady onVoiceClipReady;
   final bool sending;
   final bool sendingAttachment;
   final bool pickingAttachment;
@@ -95,6 +99,13 @@ class ConversationComposer extends StatelessWidget {
           Row(
             children: <Widget>[
               IconButton(
+                tooltip: context.strings.emoji,
+                onPressed: searching || sending || sendingAttachment
+                    ? null
+                    : onInsertEmoji,
+                icon: Icon(context.torcaIcons.emoji),
+              ),
+              IconButton(
                 tooltip: context.strings.attachFiles,
                 onPressed: pickingAttachment || sendingAttachment || searching
                     ? null
@@ -123,15 +134,21 @@ class ConversationComposer extends StatelessWidget {
                       )
                     : Icon(context.torcaIcons.send),
               ),
-              if (contact != null && radio?.localEnabled == true) ...<Widget>[
+              if (contact != null) ...<Widget>[
                 const SizedBox(width: 4),
-                RadioPushToTalk(
-                  gateway: gateway,
-                  contact: contact!,
-                  radio: radio!,
-                  session: session,
-                  disabled: searching,
-                ),
+                if (radio?.localEnabled == true)
+                  RadioPushToTalk(
+                    gateway: gateway,
+                    contact: contact!,
+                    radio: radio!,
+                    session: session,
+                    disabled: searching,
+                  )
+                else
+                  VoiceClipRecorder(
+                    onClipReady: onVoiceClipReady,
+                    disabled: searching || sending || sendingAttachment,
+                  ),
               ],
             ],
           ),

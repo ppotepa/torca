@@ -12,11 +12,13 @@ class TransferCenterButton extends StatelessWidget {
   const TransferCenterButton({
     required this.gateway,
     required this.attachments,
+    required this.pendingOperations,
     super.key,
   });
 
   final EngineGateway gateway;
   final List<AttachmentDto> attachments;
+  final List<PendingOperationDto> pendingOperations;
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +36,10 @@ class TransferCenterButton extends StatelessWidget {
     final failed = attachments
         .where((item) => item.typedStatus == AttachmentStatus.failed)
         .length;
-    final count = active + failed;
+    final pending = pendingOperations
+        .where((item) => item.typedState != PendingOperationState.unknown)
+        .length;
+    final count = active + failed + pending;
     return IconButton(
       tooltip: context.strings.transfers,
       onPressed: () => _show(context),
@@ -48,37 +53,110 @@ class TransferCenterButton extends StatelessWidget {
 
   Future<void> _show(BuildContext context) => showDialog<void>(
     context: context,
-    builder: (_) =>
-        _TransferCenterDialog(gateway: gateway, attachments: attachments),
+    builder: (_) => _TransferCenterDialog(
+      gateway: gateway,
+      attachments: attachments,
+      pendingOperations: pendingOperations,
+    ),
   );
 }
 
-class _TransferCenterDialog extends StatelessWidget {
+enum _TransferStatusFilter { all, active, completed }
+
+enum _TransferKindFilter { all, media, documents, recordings, files }
+
+class _TransferCenterDialog extends StatefulWidget {
   const _TransferCenterDialog({
     required this.gateway,
     required this.attachments,
+    required this.pendingOperations,
   });
 
   final EngineGateway gateway;
   final List<AttachmentDto> attachments;
+  final List<PendingOperationDto> pendingOperations;
+
+  @override
+  State<_TransferCenterDialog> createState() => _TransferCenterDialogState();
+}
+
+class _TransferCenterDialogState extends State<_TransferCenterDialog> {
+  _TransferStatusFilter _statusFilter = _TransferStatusFilter.all;
+  _TransferKindFilter _kindFilter = _TransferKindFilter.all;
 
   @override
   Widget build(BuildContext context) {
-    final visible = attachments
-        .where((item) => item.typedStatus != AttachmentStatus.available)
+    final visible = widget.attachments
+        .where(
+          (item) =>
+              item.typedStatus != AttachmentStatus.available &&
+              _matchesKind(item, _kindFilter),
+        )
         .toList(growable: false);
+    final completed = widget.attachments
+        .where(
+          (item) =>
+              item.typedStatus == AttachmentStatus.available &&
+              _matchesKind(item, _kindFilter),
+        )
+        .toList(growable: false);
+    final pending = widget.pendingOperations
+        .where((item) => item.typedState != PendingOperationState.unknown)
+        .toList(growable: false);
+    final showPending =
+        _kindFilter == _TransferKindFilter.all &&
+        _statusFilter != _TransferStatusFilter.completed;
+    final showFiles = _statusFilter != _TransferStatusFilter.completed;
+    final showCompleted = _statusFilter != _TransferStatusFilter.active;
     return AlertDialog(
       title: Text(context.strings.transfers),
       content: SizedBox(
         width: 460,
-        child: visible.isEmpty
+        child:
+            (!showFiles || visible.isEmpty) &&
+                (!showPending || pending.isEmpty) &&
+                (!showCompleted || completed.isEmpty)
             ? Text(context.strings.noActiveTransfers)
-            : ListView.separated(
-                shrinkWrap: true,
-                itemCount: visible.length,
-                separatorBuilder: (_, _) => const Divider(height: 16),
-                itemBuilder: (context, index) =>
-                    _TransferRow(gateway: gateway, attachment: visible[index]),
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _statusFilters(context),
+                  const SizedBox(height: 8),
+                  _kindFilters(context),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: <Widget>[
+                        if (showPending)
+                          for (final operation in pending)
+                            _PendingOperationRow(operation: operation),
+                        if (showPending &&
+                            showFiles &&
+                            pending.isNotEmpty &&
+                            visible.isNotEmpty)
+                          const Divider(height: 20),
+                        if (showFiles)
+                          for (final attachment in visible)
+                            _TransferRow(
+                              gateway: widget.gateway,
+                              attachment: attachment,
+                            ),
+                        if (showCompleted && completed.isNotEmpty) ...[
+                          if ((showPending && pending.isNotEmpty) ||
+                              (showFiles && visible.isNotEmpty))
+                            const Divider(height: 20),
+                          for (final attachment in completed)
+                            _TransferRow(
+                              gateway: widget.gateway,
+                              attachment: attachment,
+                              completed: true,
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ),
       ),
       actions: <Widget>[
@@ -89,18 +167,145 @@ class _TransferCenterDialog extends StatelessWidget {
       ],
     );
   }
+
+  Widget _statusFilters(BuildContext context) => Wrap(
+    spacing: 8,
+    runSpacing: 6,
+    children: <Widget>[
+      FilterChip(
+        label: Text(context.strings.allOperations),
+        selected: _statusFilter == _TransferStatusFilter.all,
+        onSelected: (_) =>
+            setState(() => _statusFilter = _TransferStatusFilter.all),
+      ),
+      FilterChip(
+        label: Text(context.strings.activeTransfers),
+        selected: _statusFilter == _TransferStatusFilter.active,
+        onSelected: (_) =>
+            setState(() => _statusFilter = _TransferStatusFilter.active),
+      ),
+      FilterChip(
+        label: Text(context.strings.completedTransfers),
+        selected: _statusFilter == _TransferStatusFilter.completed,
+        onSelected: (_) =>
+            setState(() => _statusFilter = _TransferStatusFilter.completed),
+      ),
+    ],
+  );
+
+  Widget _kindFilters(BuildContext context) => Wrap(
+    spacing: 8,
+    runSpacing: 6,
+    children: <Widget>[
+      FilterChip(
+        label: Text(context.strings.allOperations),
+        selected: _kindFilter == _TransferKindFilter.all,
+        onSelected: (_) =>
+            setState(() => _kindFilter = _TransferKindFilter.all),
+      ),
+      FilterChip(
+        label: Text(context.strings.mediaTransfers),
+        selected: _kindFilter == _TransferKindFilter.media,
+        onSelected: (_) =>
+            setState(() => _kindFilter = _TransferKindFilter.media),
+      ),
+      FilterChip(
+        label: Text(context.strings.documentTransfers),
+        selected: _kindFilter == _TransferKindFilter.documents,
+        onSelected: (_) =>
+            setState(() => _kindFilter = _TransferKindFilter.documents),
+      ),
+      FilterChip(
+        label: Text(context.strings.recordingTransfers),
+        selected: _kindFilter == _TransferKindFilter.recordings,
+        onSelected: (_) =>
+            setState(() => _kindFilter = _TransferKindFilter.recordings),
+      ),
+      FilterChip(
+        label: Text(context.strings.fileTransfers),
+        selected: _kindFilter == _TransferKindFilter.files,
+        onSelected: (_) =>
+            setState(() => _kindFilter = _TransferKindFilter.files),
+      ),
+    ],
+  );
+}
+
+bool _matchesKind(AttachmentDto item, _TransferKindFilter filter) {
+  if (filter == _TransferKindFilter.all) return true;
+  final mediaType = item.mediaType.toLowerCase();
+  final isMedia =
+      mediaType.startsWith('image/') || mediaType.startsWith('video/');
+  final isRecording = mediaType.startsWith('audio/');
+  final isDocument =
+      mediaType == 'application/pdf' ||
+      mediaType.startsWith('text/') ||
+      mediaType.contains('document') ||
+      mediaType.contains('word') ||
+      mediaType.contains('sheet') ||
+      mediaType.contains('excel') ||
+      mediaType.contains('presentation') ||
+      mediaType.contains('powerpoint');
+  return switch (filter) {
+    _TransferKindFilter.all => true,
+    _TransferKindFilter.media => isMedia,
+    _TransferKindFilter.documents => isDocument,
+    _TransferKindFilter.recordings => isRecording,
+    _TransferKindFilter.files => !isMedia && !isRecording && !isDocument,
+  };
+}
+
+class _PendingOperationRow extends StatelessWidget {
+  const _PendingOperationRow({required this.operation});
+
+  final PendingOperationDto operation;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: const SizedBox(
+      width: 22,
+      height: 22,
+      child: CircularProgressIndicator(strokeWidth: 2),
+    ),
+    title: Text(_label(operation.kind)),
+    subtitle: Text(
+      operation.lastError?.trim().isNotEmpty == true
+          ? operation.lastError!
+          : operation.typedState == PendingOperationState.retrying
+          ? context.strings.retrying
+          : context.strings.messageQueued,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    ),
+    trailing: Text('#${operation.attempts}'),
+  );
+
+  String _label(String kind) {
+    final normalized = kind.replaceAll('_', ' ');
+    return normalized.isEmpty
+        ? 'Pending operation'
+        : normalized[0].toUpperCase() + normalized.substring(1);
+  }
 }
 
 class _TransferRow extends StatelessWidget {
-  const _TransferRow({required this.gateway, required this.attachment});
+  const _TransferRow({
+    required this.gateway,
+    required this.attachment,
+    this.completed = false,
+  });
 
   final EngineGateway gateway;
   final AttachmentDto attachment;
+  final bool completed;
 
   @override
   Widget build(BuildContext context) {
     final total = attachment.size <= 0 ? 1 : attachment.size;
-    final progress = (attachment.offset / total).clamp(0.0, 1.0);
+    final progress = completed
+        ? 1.0
+        : (attachment.offset / total).clamp(0.0, 1.0);
     final failed = attachment.typedStatus == AttachmentStatus.failed;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -125,7 +330,16 @@ class _TransferRow extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: <Widget>[
-            if (failed)
+            if (completed)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(context.torcaIcons.success, size: 16),
+                  const SizedBox(width: 4),
+                  Text(context.strings.completedTransfers),
+                ],
+              )
+            else if (failed)
               TextButton.icon(
                 onPressed: () => gateway.execute(
                   RetryAttachmentCommandDto(attachmentIdHex: attachment.id),

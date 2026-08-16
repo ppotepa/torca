@@ -59,12 +59,66 @@ Additional implementation notes (2026-08-13):
 
 ### Current implementation progress (before manual validation)
 
-Approximate code-complete status: **100% of the implementation scope**. The remaining
-release-gate evidence is intentionally validation-heavy: Android/Windows pairing, relay outage
-recovery, attachment resume/cancel, theme screenshots, and cold/warm deploy
-scenarios. The checklist below stays unchecked until those flows are exercised
-manually as requested; no automated test, build, or deploy was run in this
-implementation pass.
+Approximate code-complete status: **100% of the implementation scope**. Automated
+validation and the deployer's launch path have now been exercised locally. The
+remaining release-gate evidence is intentionally scenario-heavy: Android/Windows
+pairing, relay outage recovery, attachment resume/cancel, theme screenshots, and
+cold/warm deploy scenarios. The checklist below stays unchecked until those flows
+are exercised on two clients as requested.
+
+Latest local evidence (2026-08-16):
+
+- Rust: `cargo fmt --check`, workspace clippy with `-D warnings`, and 238 tests pass
+  (including ADB transport-state parser coverage in `torca-deploy`).
+- Flutter: format, analyze, 71 widget tests, Android debug/release APK and Windows
+  debug/release builds pass.
+- Contract and architecture/source policies pass.
+- Rust deployer `run --target all --client-build reuse --relay-build reuse
+  --client-data preserve --validation quick --launch restart` reached
+  `stage=completed` for the connected Android and Windows targets.
+- After an Android wireless-ADB foreground race was reproduced, the deployer now
+  idempotently brings `MainActivity` to the foreground before visible-surface
+  validation. Android-only run `1a00a8483c5-12700` and the subsequent all-target
+  run `1a00a84aab0-19088` both reached `stage=completed` without resetting data.
+- `scripts/zip.ps1` produced `logs.zip` for one Windows host and one Android
+  device; collection manifest reports `status=complete`, zero errors and zero
+  warnings, with per-run runtime/deploy/relay sources.
+- A fresh post-deploy collection `collect-000003.zip` also reports both clients,
+  21 runtime runs, 10 deploy runs, `status=complete`, and empty error/warning
+  arrays; it is ready to attach to the manual pairing/soak evidence.
+- A Windows build must not run while `torca_app.exe` is still running; stopping the
+  prior client before the build makes CMake install deterministic. The Rust deployer
+  already performs this stop for restart/rebuild flows.
+
+- Flutter UI invalidation was narrowed: `MaterialApp` now listens only to the
+  shell/appearance revision instead of every local preference. Battery, audio,
+  privacy and transfer settings no longer rebuild the complete navigator tree.
+- Appearance writes are serialized and coalesced with last-write-wins semantics;
+  family, variant, density, reduce-motion and mode are persisted from one
+  consistent snapshot. `ThemeData` is cached by the complete appearance key.
+- Long conversation rendering now indexes attachments and reactions by
+  `messageId` once per snapshot instead of scanning both full collections for
+  every message. Home conversation flags are loaded in one batch and committed
+  with one `setState`, avoiding rebuild storms on large contact lists.
+- UI regression coverage now includes the shell-invalidation and theme-cache
+  tests in `test/local_preferences_test.dart` and `test/theme_test.dart`;
+  the full Flutter suite currently passes 71 tests.
+- `lib/main.dart` now records Flutter errors, unhandled isolate errors and
+  frames slower than 100 ms with separate build/raster timings, making future
+  screen freezes diagnosable from the incident bundle.
+- `conversation_screen.dart` is now below the 1200-line maintainability gate;
+  forwarding actions live with the other conversation actions in
+  `conversation_actions.dart`. The full source/contract policy passes again.
+- Radio capture startup and teardown now use guarded cleanup: platform audio
+  failures, lifecycle disposal and a failed begin command cannot leave the
+  microphone route or communication mode enabled.
+- Locale changes now invalidate the app shell before waiting on persistence,
+  so a slow preferences store cannot make the language picker appear frozen.
+- Appearance persistence recovers after a failed storage write; a transient
+  preference-store error no longer poisons the queue for all subsequent theme
+  or locale changes.
+- Preference persistence failures now emit a redacted `torca-preferences`
+  diagnostic entry with a stack trace, without logging the selected values.
 
 The remaining manual focus is lifecycle compatibility with attachments created
 by older builds: those blobs continue to use the legacy single-blob format and
@@ -350,11 +404,12 @@ oraz relay.
 
 ## 8. Ostateczna walidacja — release gate
 
-- [ ] `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`,
-  właściwy subset i pełne testy Rust.
-- [ ] `dart format --set-exit-if-changed lib test`, `dart analyze`,
-  `flutter test`, Android APK debug/release i Windows debug/release.
-- [ ] `tools/torca-contract-gen --check` i Architecture Policy.
+- [x] `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`,
+  właściwy subset i pełne testy Rust — 238 testów przechodzi.
+- [x] `dart format --set-exit-if-changed lib test`, `dart analyze`,
+  `flutter test` — 71 testów przechodzi; Android APK debug/release i Windows
+  debug/release zbudowane lokalnie.
+- [x] `tools/torca-contract-gen --check` i Architecture Policy.
 - [ ] Scenariusz dwóch urządzeń:
   - cold start i relay chwilowo unavailable;
   - create/join via code i QR; approve/reject/cancel/expiry/re-pair;
@@ -366,3 +421,44 @@ oraz relay.
 
 Plan jest zamknięty dopiero, gdy każdy dowód ukończenia jest zachowany w CI albo
 w powtarzalnym runbooku release.
+
+## Runbook ostatnich dwóch bramek
+
+Poniższe kroki wykonuje się na czystym profilu, z jednym podłączonym Windowsem i
+jednym Androidem. Nie zaliczamy bramki na podstawie samego `NETWORK_READY` — musi
+powstać dowód funkcjonalny z obu klientów.
+
+1. Uruchomić szybki deploy bez resetowania relay i zachować identyfikator runu:
+
+   ```powershell
+   cargo run -p torca-deploy -- run --target all --configuration debug `
+     --client-build reuse --relay-build reuse --onion ensure `
+     --client-data reset-profile --validation quick --launch restart
+   ```
+
+2. W aplikacji wykonać pairing w obu wariantach (kod ręczny i QR), a następnie
+   osobno approve, reject, cancel, expiry oraz ponowne sparowanie po usunięciu
+   kontaktu. Dla każdego kroku sprawdzić obecność kontaktu i rozmowy na obu
+   urządzeniach, nie tylko zmianę statusu w UI.
+
+3. W tej samej rozmowie wysłać tekst, obraz, MP4 i dokument. Dla każdego
+   załącznika sprawdzić: preview, identyfikator transferu, postęp po obu stronach,
+   retry po rozłączeniu, cancel oraz wznowienie po restarcie aplikacji. Odczyt i
+   read receipt trzeba potwierdzić na urządzeniu odbiorcy.
+
+4. W trakcie scenariusza wykonać:
+
+   ```powershell
+   .\scripts\zip.ps1
+   ```
+
+   i zachować `logs.zip` razem z numerem deploy runu. Manifest ZIP-a musi zawierać
+   świeże logi relay, Windows, Androida i deployera; nie może zawierać ostrzeżeń o
+   braku ADB ani wpisów ze starszego `run_id`.
+
+5. Soak test: przez minimum 30 minut przełączać Android foreground/background,
+   zrestartować kontener relay raz, wysłać wiadomość i transfer w trakcie
+   reconnectu, a po zakończeniu porównać liczbę wysłanych, dostarczonych,
+   anulowanych i wznowionych jobów w logach obu klientów. Kryterium zaliczenia to
+   brak utraty wiadomości/załączników, brak zduplikowanego transferu i powrót do
+   `NETWORK_READY` bez ponownego czyszczenia profilu.

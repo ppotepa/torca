@@ -54,6 +54,9 @@ class _TorcaAppState extends State<TorcaApp> {
     widget.navigation.conversationRequest.addListener(_conversationRequested);
     widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
     widget.navigation.newPairingRequest.addListener(_newPairingRequested);
+    widget.navigation.pairingSessionRequest.addListener(
+      _pairingSessionRequested,
+    );
     widget.gateway.snapshots.addListener(_pairingSnapshotChanged);
     PairingModalRegistry.instance.addListener(_pairingSnapshotChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -75,9 +78,15 @@ class _TorcaAppState extends State<TorcaApp> {
       oldWidget.navigation.newPairingRequest.removeListener(
         _newPairingRequested,
       );
+      oldWidget.navigation.pairingSessionRequest.removeListener(
+        _pairingSessionRequested,
+      );
       widget.navigation.conversationRequest.addListener(_conversationRequested);
       widget.navigation.pairingCodeRequest.addListener(_pairingRequested);
       widget.navigation.newPairingRequest.addListener(_newPairingRequested);
+      widget.navigation.pairingSessionRequest.addListener(
+        _pairingSessionRequested,
+      );
       _handledPairingRequest = widget.navigation.newPairingRequest.value;
     }
     if (oldWidget.gateway != widget.gateway) {
@@ -97,6 +106,9 @@ class _TorcaAppState extends State<TorcaApp> {
     );
     widget.navigation.pairingCodeRequest.removeListener(_pairingRequested);
     widget.navigation.newPairingRequest.removeListener(_newPairingRequested);
+    widget.navigation.pairingSessionRequest.removeListener(
+      _pairingSessionRequested,
+    );
     widget.gateway.snapshots.removeListener(_pairingSnapshotChanged);
     PairingModalRegistry.instance.removeListener(_pairingSnapshotChanged);
     super.dispose();
@@ -165,6 +177,31 @@ class _TorcaAppState extends State<TorcaApp> {
     }
     _handledPairingRequest = request;
     _openPairing();
+  }
+
+  void _pairingSessionRequested() {
+    final id = widget.navigation.pairingSessionRequest.value;
+    if (id == null) return;
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _pairingSessionRequested(),
+      );
+      return;
+    }
+    widget.navigation.clearPairingSessionRequest();
+    PairingDto? pairing;
+    for (final candidate in widget.gateway.snapshots.value.pairings) {
+      if (candidate.id == id) {
+        pairing = candidate;
+        break;
+      }
+    }
+    if (pairing != null) {
+      unawaited(
+        showPairingSessionModal(navigator.context, widget.gateway, pairing),
+      );
+    }
   }
 
   bool _needsPairingDecision(PairingDto pairing) =>
@@ -295,7 +332,7 @@ class _TorcaAppState extends State<TorcaApp> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: widget.preferences,
+    listenable: widget.preferences.shellChanges,
     builder: (context, _) => MaterialApp(
       navigatorKey: _navigatorKey,
       title: 'Torca',

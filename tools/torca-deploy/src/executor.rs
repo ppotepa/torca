@@ -255,7 +255,12 @@ impl DeployExecutor {
                     .iter()
                     .map(|device| {
                         launch
-                            .launch(device, run.plan.configuration, run.plan.privacy)
+                            .launch(
+                                device,
+                                run.plan.configuration,
+                                run.plan.privacy,
+                                matches!(run.plan.launch, crate::domain::LaunchPolicy::Restart),
+                            )
                             .map(|receipt| (device, receipt))
                             .map_err(DeployError::Launch)
                     })

@@ -255,6 +255,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
         ? widget.gateway as PairingUriParser
         : null;
     final code = parser == null ? raw : await parser.parsePairingUri(raw);
+    if (!mounted) return;
     if (code == null) {
       setState(() => _error = context.strings.enterSixCharacterCode);
       return;

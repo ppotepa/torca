@@ -8,6 +8,7 @@ import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/conversation_header.dart';
 import 'package:torca_app/widgets/radio_conversation_controls.dart';
 import 'package:torca_app/widgets/radio_indicator.dart';
+import 'package:torca_app/widgets/runtime_network_status.dart';
 
 class _RadioGateway implements EngineGateway {
   _RadioGateway(AppSnapshotDto snapshot) : _snapshots = ValueNotifier(snapshot);
@@ -180,6 +181,45 @@ void main() {
       find.descendant(of: header, matching: find.byType(Spacer)),
       findsNothing,
     );
+  });
+
+  testWidgets('conversation header exposes independent RX and TX layers', (
+    tester,
+  ) async {
+    const snapshot = AppSnapshotDto(
+      transport: TransportStatusDto(
+        tor: TransportIndicatorDto(state: 'ready'),
+        relay: TransportIndicatorDto(state: 'healthy'),
+        peer: TransportIndicatorDto(state: 'ready'),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ConversationHeader(
+            contact: _contact,
+            snapshot: snapshot,
+            compact: true,
+            onConnectionDetails: () {},
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(RuntimeNetworkStatus), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('tor-status-light')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('peer-status-light')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('relay-status-light')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('walkie-talkie status bar turns red for TX and RX', (

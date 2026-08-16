@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -49,21 +49,14 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     final path = await FilePicker.saveFile(
       dialogTitle: 'Export Torca diagnostics',
       fileName: 'torca-diagnostics.json',
+      bytes: Uint8List.fromList(utf8.encode(value)),
+      mimeType: 'application/json',
     );
     if (path == null || !mounted) return;
-    try {
-      await File(path).writeAsString(value, flush: true);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.strings.diagnosticsExported)),
-        );
-      }
-    } on FileSystemException {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(context.strings.exportFailed)));
-      }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.strings.diagnosticsExported)),
+      );
     }
   }
 

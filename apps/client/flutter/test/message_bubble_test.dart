@@ -5,6 +5,67 @@ import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/message_bubble.dart';
 
 void main() {
+  testWidgets('Android message bubbles align to opposite gutters', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: Column(
+            children: <Widget>[
+              MessageBubble(
+                message: const MessageDto(
+                  id: 'inbound',
+                  conversationId: 'conversation',
+                  body: 'Incoming message',
+                  direction: 'inbound',
+                  status: 'delivered',
+                  createdAtMs: 1000,
+                ),
+                onLongPress: () {},
+              ),
+              MessageBubble(
+                message: const MessageDto(
+                  id: 'outbound',
+                  conversationId: 'conversation',
+                  body: 'Outgoing message',
+                  direction: 'outbound',
+                  status: 'sent',
+                  createdAtMs: 2000,
+                  sentAtMs: 2000,
+                ),
+                onLongPress: () {},
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final inbound = tester.getRect(
+      find.byKey(const ValueKey<String>('message-bubble-inbound')),
+    );
+    final outbound = tester.getRect(
+      find.byKey(const ValueKey<String>('message-bubble-outbound')),
+    );
+    final outboundFooter = tester.getRect(
+      find.byKey(const ValueKey<String>('message-footer-outbound')),
+    );
+
+    expect(inbound.left, closeTo(12, 0.1));
+    expect(outbound.right, closeTo(348, 0.1));
+    expect(inbound.width, lessThanOrEqualTo(282.3));
+    expect(outbound.width, lessThanOrEqualTo(282.3));
+    expect(outboundFooter.right, closeTo(outbound.right - 10, 0.1));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('message bubble presents reply time and delivery state', (
     tester,
   ) async {

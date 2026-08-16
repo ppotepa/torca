@@ -10,13 +10,15 @@ import 'package:torca_app/screens/pairing_screen.dart';
 import 'package:torca_app/settings/local_preferences.dart';
 import 'package:torca_app/widgets/pairing_modal_registry.dart';
 import 'package:torca_avatar/torca_avatar.dart';
+import 'package:torca_ui/torca_ui.dart';
 import 'fake_engine_gateway.dart';
 
-TorcaApp _app(EngineGateway gateway) => TorcaApp(
-  gateway: gateway,
-  navigation: AppNavigationController(),
-  preferences: LocalPreferences(),
-);
+TorcaApp _app(EngineGateway gateway, {LocalPreferences? preferences}) =>
+    TorcaApp(
+      gateway: gateway,
+      navigation: AppNavigationController(),
+      preferences: preferences ?? LocalPreferences(),
+    );
 
 void main() {
   testWidgets('generator modal starts work without a second generate action', (
@@ -218,8 +220,41 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Appearance'), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -1400));
+    await tester.pumpAndSettle();
     expect(find.text('Notifications'), findsOneWidget);
     expect(find.text('Enable notifications'), findsOneWidget);
+  });
+
+  testWidgets('Android settings remain responsive while changing theme', (
+    WidgetTester tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    tester.view.physicalSize = const Size(460, 900);
+    tester.view.devicePixelRatio = 1;
+    final preferences = LocalPreferences();
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      preferences.dispose();
+    });
+
+    await tester.pumpWidget(
+      _app(FakeEngineGateway(), preferences: preferences),
+    );
+    await tester.tap(find.byTooltip('Application menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Terminal'));
+    await tester.pumpAndSettle();
+
+    expect(preferences.appearance.family, TorcaThemeFamily.terminal);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets(

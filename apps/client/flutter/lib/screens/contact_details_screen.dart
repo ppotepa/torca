@@ -16,14 +16,11 @@ class ContactDetailsScreen extends StatefulWidget {
   const ContactDetailsScreen({
     required this.gateway,
     required this.contact,
-    this.onStartConversation,
     super.key,
   });
 
   final EngineGateway gateway;
   final ContactDto contact;
-  final VoidCallback? onStartConversation;
-
   @override
   State<ContactDetailsScreen> createState() => _ContactDetailsScreenState();
 }
@@ -53,11 +50,24 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
     valueListenable: widget.gateway.snapshots,
     builder: (context, snapshot, _) {
       final contact = _currentContact(snapshot) ?? widget.contact;
+      final conversationIds = snapshot.conversations
+          .where((item) => item.contactId == contact.id)
+          .map((item) => item.id)
+          .toSet();
+      final messageIds = snapshot.messages
+          .where((item) => conversationIds.contains(item.conversationId))
+          .map((item) => item.id)
+          .toSet();
+      final sharedAttachmentNames = snapshot.attachments
+          .where((item) => messageIds.contains(item.messageId))
+          .map((item) => item.name)
+          .where((item) => item.trim().isNotEmpty)
+          .toList(growable: false);
       return Scaffold(
         appBar: RuntimeAppBar(title: Text(contact.displayName)),
         body: ContactDetailsContent(
           contact: contact,
-          onStartConversation: widget.onStartConversation,
+          sharedAttachmentNames: sharedAttachmentNames,
           onOpenConnectionDetails: () => Navigator.of(context).push<void>(
             MaterialPageRoute(
               builder: (_) => ConnectionDetailsScreen(
@@ -118,7 +128,7 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
 class ContactDetailsContent extends StatelessWidget {
   const ContactDetailsContent({
     required this.contact,
-    this.onStartConversation,
+    this.sharedAttachmentNames = const <String>[],
     this.onOpenConnectionDetails,
     this.onVerify,
     this.onRename,
@@ -129,7 +139,7 @@ class ContactDetailsContent extends StatelessWidget {
   });
 
   final ContactDto contact;
-  final VoidCallback? onStartConversation;
+  final List<String> sharedAttachmentNames;
   final VoidCallback? onOpenConnectionDetails;
   final VoidCallback? onVerify;
   final VoidCallback? onRename;
@@ -165,13 +175,28 @@ class ContactDetailsContent extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        if (onStartConversation != null) ...<Widget>[
-          FilledButton.icon(
-            onPressed: contact.typedStatus == ContactStatus.blocked
-                ? null
-                : onStartConversation,
-            icon: Icon(context.torcaIcons.chats),
-            label: Text(context.strings.startConversation),
+        if (sharedAttachmentNames.isNotEmpty) ...<Widget>[
+          _DetailsCard(
+            title: context.strings.sharedMedia,
+            children: <Widget>[
+              Text(
+                context.strings.sharedMediaCount(sharedAttachmentNames.length),
+              ),
+              const SizedBox(height: 8),
+              for (final name in sharedAttachmentNames.take(8))
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  leading: Icon(context.torcaIcons.attachment),
+                  title: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              if (sharedAttachmentNames.length > 8)
+                Text('+ ${sharedAttachmentNames.length - 8}'),
+            ],
           ),
           const SizedBox(height: 12),
         ],

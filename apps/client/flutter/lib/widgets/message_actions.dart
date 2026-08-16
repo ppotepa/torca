@@ -3,13 +3,23 @@ import 'package:torca_ui/torca_ui.dart';
 
 import '../localization/torca_strings.dart';
 
-enum MessageAction { reply, react, copy, forward, edit, cancel, details }
+enum MessageAction {
+  reply,
+  react,
+  copy,
+  forward,
+  bookmark,
+  edit,
+  cancel,
+  details,
+}
 
 abstract final class MessageActionMenu {
   static Future<MessageAction?> showTouch(
     BuildContext context, {
     bool canCancel = false,
     bool canEdit = false,
+    bool bookmarked = false,
   }) => showModalBottomSheet<MessageAction>(
     context: context,
     builder: (context) => SafeArea(
@@ -38,6 +48,14 @@ abstract final class MessageActionMenu {
             MessageAction.forward,
             context.torcaIcons.forward,
             context.strings.forwardMessage,
+          ),
+          _tile(
+            context,
+            MessageAction.bookmark,
+            context.torcaIcons.archive,
+            bookmarked
+                ? context.strings.removeBookmark
+                : context.strings.bookmarkMessage,
           ),
           if (canCancel)
             _tile(
@@ -69,6 +87,7 @@ abstract final class MessageActionMenu {
     Offset globalPosition, {
     bool canCancel = false,
     bool canEdit = false,
+    bool bookmarked = false,
   }) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     return showMenu<MessageAction>(
@@ -112,6 +131,19 @@ abstract final class MessageActionMenu {
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.copy),
             title: Text(context.strings.copy),
+          ),
+        ),
+        PopupMenuItem(
+          value: MessageAction.bookmark,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(context.torcaIcons.archive),
+            title: Text(
+              bookmarked
+                  ? context.strings.removeBookmark
+                  : context.strings.bookmarkMessage,
+            ),
           ),
         ),
         if (canCancel)

@@ -33,6 +33,8 @@ class LocalPreferences extends ChangeNotifier {
       'conversation.pinned.$conversationId';
   static String _conversationMutedKey(String conversationId) =>
       'conversation.muted.$conversationId';
+  static String _messageBookmarksKey(String conversationId) =>
+      'conversation.bookmarks.$conversationId';
 
   AppThemeMode _themeMode = AppThemeMode.system;
   TorcaAppearance _appearance = const TorcaAppearance();
@@ -51,6 +53,12 @@ class LocalPreferences extends ChangeNotifier {
       TorcaMeteredTransferPolicy.pauseLarge;
   TorcaVisualActivityPolicy _visualActivity =
       TorcaVisualActivityPolicy.followSystem;
+  // The app shell must not rebuild for unrelated preference changes (audio,
+  // battery, privacy, etc.). This revision only changes for values consumed
+  // by MaterialApp itself.
+  final ValueNotifier<int> _shellRevision = ValueNotifier<int>(0);
+  int _appearanceRevision = 0;
+  Future<void> _appearanceWrite = Future<void>.value();
   Future<void> Function(bool enabled)? _runtimeNotificationSetter;
   Future<void> Function(bool enabled)? _runtimeReadReceiptSetter;
   Future<void> Function(String? inputId, String? outputId)? _runtimeAudioSetter;
@@ -76,6 +84,11 @@ class LocalPreferences extends ChangeNotifier {
   bool get allowDelayedBackgroundDelivery => _allowDelayedBackgroundDelivery;
   TorcaMeteredTransferPolicy get meteredTransfers => _meteredTransfers;
   TorcaVisualActivityPolicy get visualActivity => _visualActivity;
+  Listenable get shellChanges => _shellRevision;
+
+  void _notifyShellChanged() {
+    _shellRevision.value++;
+  }
 
   void attachRuntimeNotificationSetting(
     Future<void> Function(bool enabled) setter,
@@ -168,13 +181,16 @@ class LocalPreferences extends ChangeNotifier {
       await _store.getString(_visualActivityKey),
     );
     notifyListeners();
+    _notifyShellChanged();
   }
 
   Future<void> setThemeMode(AppThemeMode value) async {
     if (_themeMode == value) return;
     _themeMode = value;
     notifyListeners();
-    await _store.setString(_themeModeKey, value.storageValue);
+    _notifyShellChanged();
+    _queueAppearanceWrite();
+    await _appearanceWrite;
   }
 
   Future<void> setThemeFamily(TorcaThemeFamily value) async {
@@ -182,37 +198,71 @@ class LocalPreferences extends ChangeNotifier {
     if (_appearance == next) return;
     _appearance = next;
     notifyListeners();
-    await _store.setString(_themeFamilyKey, value.name);
-    await _store.setString(_themeVariantKey, next.variant.name);
+    _notifyShellChanged();
+    _queueAppearanceWrite();
+    await _appearanceWrite;
   }
 
   Future<void> setThemeVariant(TorcaThemeVariant value) async {
     if (_appearance.variant == value) return;
     _appearance = _appearance.copyWith(family: value.family, variant: value);
     notifyListeners();
-    await _store.setString(_themeFamilyKey, value.family.name);
-    await _store.setString(_themeVariantKey, value.name);
+    _notifyShellChanged();
+    _queueAppearanceWrite();
+    await _appearanceWrite;
   }
 
   Future<void> setThemeDensity(TorcaDensity value) async {
     if (_appearance.density == value) return;
     _appearance = _appearance.copyWith(density: value);
     notifyListeners();
-    await _store.setString(_themeDensityKey, value.name);
+    _notifyShellChanged();
+    _queueAppearanceWrite();
+    await _appearanceWrite;
   }
 
   Future<void> setReduceMotion(bool value) async {
     if (_appearance.reduceMotion == value) return;
     _appearance = _appearance.copyWith(reduceMotion: value);
     notifyListeners();
-    await _store.setBool(_reduceMotionKey, value);
+    _notifyShellChanged();
+    _queueAppearanceWrite();
+    await _appearanceWrite;
   }
 
   Future<void> setLocaleMode(AppLocaleMode value) async {
     if (_localeMode == value) return;
     _localeMode = value;
     notifyListeners();
+    _notifyShellChanged();
     await _store.setString(_localeModeKey, value.storageValue);
+  }
+
+  void _queueAppearanceWrite() {
+    final revision = ++_appearanceRevision;
+    _appearanceWrite = _appearanceWrite
+        .catchError((Object error, StackTrace stackTrace) {
+          debugPrint('torca-preferences: persistence_error $error');
+          debugPrintStack(stackTrace: stackTrace);
+        })
+        .then((_) async {
+          // Coalesce rapid picker changes. Only the latest complete appearance
+          // is persisted, preventing family/variant pairs from being torn or
+          // stale.
+          if (revision != _appearanceRevision) return;
+          final appearance = _appearance;
+          await _store.setString(_themeModeKey, _themeMode.storageValue);
+          await _store.setString(_themeFamilyKey, appearance.family.name);
+          await _store.setString(_themeVariantKey, appearance.variant.name);
+          await _store.setString(_themeDensityKey, appearance.density.name);
+          await _store.setBool(_reduceMotionKey, appearance.reduceMotion);
+        });
+  }
+
+  @override
+  void dispose() {
+    _shellRevision.dispose();
+    super.dispose();
   }
 
   Future<void> setNotificationsEnabled(bool value) async {
@@ -324,6 +374,27 @@ class LocalPreferences extends ChangeNotifier {
 
   Future<void> setConversationMuted(String conversationId, bool value) =>
       _store.setBool(_conversationMutedKey(conversationId), value);
+
+  Future<Set<String>> bookmarkedMessagesFor(String conversationId) async {
+    final value = await _store.getString(_messageBookmarksKey(conversationId));
+    if (value == null || value.trim().isEmpty) return <String>{};
+    return value
+        .split(',')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet();
+  }
+
+  Future<void> setBookmarkedMessages(
+    String conversationId,
+    Set<String> messageIds,
+  ) async {
+    final sorted = messageIds.toList()..sort();
+    await _store.setString(
+      _messageBookmarksKey(conversationId),
+      sorted.join(','),
+    );
+  }
 }
 
 String? _nonEmpty(String? value) =>

@@ -35,6 +35,7 @@ impl<'a> LaunchController<'a> {
         device: &Device,
         configuration: Configuration,
         privacy: PrivacyPolicy,
+        restart: bool,
     ) -> Result<LaunchReceipt, LaunchError> {
         let started_at = SystemTime::now();
         match device.target {
@@ -61,6 +62,25 @@ impl<'a> LaunchController<'a> {
                 Ok(LaunchReceipt { started_at })
             }
             crate::domain::Target::Android => {
+                if restart {
+                    let stopped = self.runner.run(&CommandSpec {
+                        program: "adb".into(),
+                        arguments: vec![
+                            "-s".into(),
+                            device.id.clone(),
+                            "shell".into(),
+                            "am".into(),
+                            "force-stop".into(),
+                            ANDROID_PACKAGE.into(),
+                        ],
+                        working_directory: self.paths.repo_root.clone(),
+                        timeout: Duration::from_secs(15),
+                        environment: std::collections::BTreeMap::new(),
+                    })?;
+                    if !stopped.success {
+                        return Err(LaunchError::Command(stopped.text));
+                    }
+                }
                 let output = self.runner.run(&CommandSpec {
                     program: "adb".into(),
                     arguments: vec![
@@ -196,6 +216,14 @@ impl<'a> LaunchController<'a> {
     /// Recents, or no Torca window.
     pub fn wait_visible_surface(&self, device: &Device) -> Result<(), LaunchError> {
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        // Android may acknowledge `am start` while another task still owns
+        // the foreground (Maps, a permission dialog, or a stale launcher
+        // task).  Re-issuing the idempotent start once makes the launch
+        // contract deterministic without force-stopping the app or touching
+        // its data.  This is especially common with wireless ADB transports.
+        if matches!(device.target, crate::domain::Target::Android) {
+            self.bring_android_to_front(&device.id)?;
+        }
         while std::time::Instant::now() < deadline {
             let visible = match device.target {
                 crate::domain::Target::Windows => {
@@ -210,6 +238,27 @@ impl<'a> LaunchController<'a> {
             std::thread::sleep(Duration::from_millis(500));
         }
         Err(LaunchError::VisibleSurfaceTimeout(device.id.clone()))
+    }
+
+    fn bring_android_to_front(&self, device: &str) -> Result<(), LaunchError> {
+        let output = self.command(
+            "adb",
+            &[
+                "-s",
+                device,
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-n",
+                ANDROID_ACTIVITY,
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+            ],
+        )?;
+        if output.success { Ok(()) } else { Err(LaunchError::Command(output.text)) }
     }
 
     fn process_is_running(&self, device: &Device) -> Result<bool, LaunchError> {
@@ -480,5 +529,17 @@ mod tests {
         assert!(!ready_code(Some("TOR_STARTING"), true));
         assert!(!ready_code(Some("LOCAL_READY"), true));
         assert!(ready_code(Some("TOR_BOOTSTRAP_READY"), true));
+    }
+
+    #[test]
+    fn android_readiness_rejects_stale_or_malformed_log_entries() {
+        let launched_at = SystemTime::UNIX_EPOCH + Duration::from_millis(2_000);
+        let stale = r#"{"ts_ms":1999,"code":"LOCAL_READY"}"#;
+        let malformed = "not-json\n{\"code\":\"LOCAL_READY\"}";
+        let fresh = r#"{"ts_ms":2000,"code":"LOCAL_READY"}"#;
+
+        assert!(!file_is_fresh_from_log(stale, launched_at));
+        assert!(!file_is_fresh_from_log(malformed, launched_at));
+        assert!(file_is_fresh_from_log(fresh, launched_at));
     }
 }

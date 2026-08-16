@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.app.Service
 import android.content.Intent
 import android.content.BroadcastReceiver
@@ -324,6 +325,7 @@ class TorcaForegroundService : Service() {
                 .edit().putLong(NOTIFICATION_CURSOR, notificationCursor).apply()
             val eventId = event.optString("eventId")
             val conversationId = event.optString("conversationId")
+            val resourceId = event.optString("resourceId")
             val kind = event.optString("kind")
             if (eventId.isNotEmpty() &&
                 (conversationId.isNotEmpty() || kind == "pairing_request")
@@ -332,6 +334,7 @@ class TorcaForegroundService : Service() {
                     RuntimeNotificationEvent(
                         eventId = eventId,
                         conversationId = conversationId,
+                        resourceId = resourceId,
                         contactDisplayName = event.optString("contactDisplayName", "Torca contact"),
                         kind = kind,
                     ),
@@ -356,9 +359,25 @@ class TorcaForegroundService : Service() {
                 if (event.conversationId.isNotEmpty()) {
                     putExtra(MainActivity.EXTRA_CONVERSATION_ID, event.conversationId)
                 }
+                if (event.kind == "pairing_request" && event.resourceId.isNotEmpty()) {
+                    putExtra(MainActivity.EXTRA_PAIRING_ID, event.resourceId)
+                }
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val markReadIntent = PendingIntent.getActivity(
+            this,
+            event.eventId.hashCode() xor 0x51,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(MainActivity.EXTRA_CONVERSATION_ID, event.conversationId)
+                putExtra(MainActivity.EXTRA_NOTIFICATION_ACTION, "mark_read")
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val approveIntent = actionIntent(event, "approve")
+        val rejectIntent = actionIntent(event, "reject")
+        val replyIntent = actionIntent(event, "reply")
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, MESSAGE_CHANNEL_ID)
         } else {
@@ -385,10 +404,46 @@ class TorcaForegroundService : Service() {
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
+            .apply {
+                if (event.kind == "message_received" && event.conversationId.isNotEmpty()) {
+                    val remoteInput = RemoteInput.Builder(MainActivity.REPLY_RESULT_KEY)
+                        .setLabel("Reply")
+                        .build()
+                    addAction(
+                        Notification.Action.Builder(0, "Reply", replyIntent)
+                            .addRemoteInput(remoteInput)
+                            .build(),
+                    )
+                    addAction(
+                        Notification.Action.Builder(
+                            0,
+                            "Mark read",
+                            markReadIntent,
+                        ).build(),
+                    )
+                }
+                if (event.kind == "pairing_request" && event.resourceId.isNotEmpty()) {
+                    addAction(Notification.Action.Builder(0, "Accept", approveIntent).build())
+                    addAction(Notification.Action.Builder(0, "Reject", rejectIntent).build())
+                }
+            }
             .build()
         getSystemService(NotificationManager::class.java)
             .notify(event.eventId.hashCode(), notification)
     }
+
+    private fun actionIntent(event: RuntimeNotificationEvent, action: String): PendingIntent =
+        PendingIntent.getActivity(
+            this,
+            (event.eventId.hashCode() xor action.hashCode()),
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(MainActivity.EXTRA_NOTIFICATION_ACTION, action)
+                putExtra(MainActivity.EXTRA_PAIRING_ID, event.resourceId)
+                putExtra(MainActivity.EXTRA_CONVERSATION_ID, event.conversationId)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     private fun createServiceChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -442,6 +497,7 @@ class TorcaForegroundService : Service() {
     private data class RuntimeNotificationEvent(
         val eventId: String,
         val conversationId: String,
+        val resourceId: String,
         val contactDisplayName: String,
         val kind: String,
     )

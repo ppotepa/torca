@@ -41,6 +41,12 @@ pub struct MessageBody(String);
 impl MessageBody {
     /// Maximum encoded body size.
     pub const MAX_BYTES: usize = 16 * 1024;
+    /// Product limit for one user-visible text message.
+    ///
+    /// The byte limit above remains a protocol safety boundary. This smaller
+    /// character limit keeps messages readable on both mobile and desktop and
+    /// prevents accidental paste/flood payloads before they reach delivery.
+    pub const MAX_CHARACTERS: usize = 1_000;
 
     /// Validates a message body.
     pub fn new(value: impl Into<String>) -> Result<Self, MessageError> {
@@ -48,7 +54,7 @@ impl MessageBody {
         if value.is_empty() {
             return Err(MessageError::EmptyBody);
         }
-        if value.len() > Self::MAX_BYTES {
+        if value.len() > Self::MAX_BYTES || value.chars().count() > Self::MAX_CHARACTERS {
             return Err(MessageError::BodyTooLarge { actual: value.len() });
         }
         if value.contains('\0') {
@@ -524,5 +530,21 @@ impl MessageRepository for InMemoryMessageRepository {
             .filter(|reaction| reaction.active())
             .cloned()
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MessageBody;
+
+    #[test]
+    fn message_body_accepts_one_thousand_characters() {
+        assert!(MessageBody::new("a".repeat(MessageBody::MAX_CHARACTERS)).is_ok());
+    }
+
+    #[test]
+    fn message_body_rejects_more_than_one_thousand_characters_even_when_under_byte_cap() {
+        let value = "🙂".repeat(MessageBody::MAX_CHARACTERS + 1);
+        assert!(MessageBody::new(value).is_err());
     }
 }

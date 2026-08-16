@@ -8,6 +8,9 @@ class AppNavigationController {
     null,
   );
   final ValueNotifier<int> newPairingRequest = ValueNotifier<int>(0);
+  final ValueNotifier<String?> pairingSessionRequest = ValueNotifier<String?>(
+    null,
+  );
 
   void openConversation(String conversationId) {
     conversationRequest.value = conversationId;
@@ -21,6 +24,10 @@ class AppNavigationController {
     newPairingRequest.value = newPairingRequest.value + 1;
   }
 
+  void openPairingSession(String sessionId) {
+    if (sessionId.isNotEmpty) pairingSessionRequest.value = sessionId;
+  }
+
   void clearConversationRequest() {
     conversationRequest.value = null;
   }
@@ -29,9 +36,14 @@ class AppNavigationController {
     pairingCodeRequest.value = null;
   }
 
+  void clearPairingSessionRequest() {
+    pairingSessionRequest.value = null;
+  }
+
   void dispose() {
     conversationRequest.dispose();
     pairingCodeRequest.dispose();
     newPairingRequest.dispose();
+    pairingSessionRequest.dispose();
   }
 }

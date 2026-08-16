@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:torca_avatar/torca_avatar.dart';
@@ -20,7 +21,35 @@ import 'settings/local_preferences.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  _installUiDiagnostics();
   runApp(const _TorcaBootstrap());
+}
+
+void _installUiDiagnostics() {
+  final binding = WidgetsBinding.instance;
+  binding.addTimingsCallback((frames) {
+    for (final frame in frames) {
+      final buildMs = frame.buildDuration.inMicroseconds / 1000;
+      final rasterMs = frame.rasterDuration.inMicroseconds / 1000;
+      final totalMs = buildMs + rasterMs;
+      if (totalMs < 100) continue;
+      debugPrint(
+        'torca-ui: slow_frame total_ms=${totalMs.toStringAsFixed(1)} '
+        'build_ms=${buildMs.toStringAsFixed(1)} '
+        'raster_ms=${rasterMs.toStringAsFixed(1)}',
+      );
+    }
+  });
+
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('torca-ui: flutter_error ${details.exceptionAsString()}');
+  };
+  ui.PlatformDispatcher.instance.onError = (error, stackTrace) {
+    debugPrint('torca-ui: unhandled_error $error');
+    debugPrintStack(stackTrace: stackTrace);
+    return false;
+  };
 }
 
 class _TorcaBootstrap extends StatefulWidget {
@@ -144,7 +173,10 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
       }
       if (isTorcaAndroid) {
         _runtimeLifecycleObserver = RuntimeLifecycleObserver(gateway)..attach();
-        _androidNotificationRouter = AndroidNotificationRouter(navigation);
+        _androidNotificationRouter = AndroidNotificationRouter(
+          navigation,
+          gateway,
+        );
         try {
           await _androidNotificationRouter!.initialize();
         } on Object {

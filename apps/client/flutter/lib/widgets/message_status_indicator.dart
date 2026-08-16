@@ -43,13 +43,21 @@ class MessageStatusIndicator extends StatelessWidget {
     label: 'Sending',
     isError: false,
   ),
-  MessageStatus.sent => (icon: context.torcaIcons.sent, label: 'Sent', isError: false),
+  MessageStatus.sent => (
+    icon: context.torcaIcons.sent,
+    label: 'Sent',
+    isError: false,
+  ),
   MessageStatus.delivered => (
     icon: context.torcaIcons.delivered,
     label: 'Delivered',
     isError: false,
   ),
-  MessageStatus.read => (icon: context.torcaIcons.read, label: 'Read', isError: false),
+  MessageStatus.read => (
+    icon: context.torcaIcons.read,
+    label: 'Read',
+    isError: false,
+  ),
   MessageStatus.failed => (
     icon: context.torcaIcons.error,
     label: 'Delivery failed',

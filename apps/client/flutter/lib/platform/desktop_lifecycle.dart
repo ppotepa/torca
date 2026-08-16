@@ -99,14 +99,55 @@ class DesktopLifecycle with WindowListener, TrayListener {
     final notification = LocalNotification(
       title: event.title,
       body: event.body,
+      actions: switch (event.kind) {
+        'message_received' => <LocalNotificationAction>[
+          LocalNotificationAction(text: 'Mark read'),
+        ],
+        'pairing_request' => <LocalNotificationAction>[
+          LocalNotificationAction(text: 'Accept'),
+          LocalNotificationAction(text: 'Reject'),
+        ],
+        _ => null,
+      },
     );
     notification.onClick = () {
       if (event.conversationId.isNotEmpty) {
         navigation.openConversation(event.conversationId);
+      } else if (event.kind == 'pairing_request' &&
+          event.resourceId.isNotEmpty) {
+        navigation.openPairingSession(event.resourceId);
       }
       unawaited(_showWindow());
     };
+    notification.onClickAction = (index) {
+      unawaited(_handleNotificationAction(event, index));
+    };
     await notification.show();
+  }
+
+  Future<void> _handleNotificationAction(
+    RuntimeEventDto event,
+    int index,
+  ) async {
+    if (event.kind == 'message_received' &&
+        index == 0 &&
+        event.conversationId.isNotEmpty) {
+      await gateway.execute(
+        MarkConversationReadCommandDto(conversationIdHex: event.conversationId),
+      );
+    } else if (event.kind == 'pairing_request' && event.resourceId.isNotEmpty) {
+      if (index == 0) {
+        await gateway.execute(
+          ApprovePairingCommandDto(sessionIdHex: event.resourceId),
+        );
+      } else if (index == 1) {
+        await gateway.execute(
+          RejectPairingCommandDto(sessionIdHex: event.resourceId),
+        );
+      }
+      navigation.openPairingSession(event.resourceId);
+    }
+    await _showWindow();
   }
 
   Future<void> _showWindow() async {

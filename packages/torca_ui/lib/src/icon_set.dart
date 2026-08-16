@@ -80,6 +80,8 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
       pixel ? PixelArtIcons.paint_bucket : HeroIcons.swatch;
   IconData get language =>
       pixel ? PixelArtIcons.message_text : HeroIcons.language;
+  IconData get emoji =>
+      pixel ? PixelArtIcons.message_text : HeroIcons.face_smile;
   IconData get open =>
       pixel ? PixelArtIcons.open : HeroIcons.arrow_top_right_on_square;
   IconData get save => pixel ? PixelArtIcons.save : HeroIcons.arrow_down_tray;

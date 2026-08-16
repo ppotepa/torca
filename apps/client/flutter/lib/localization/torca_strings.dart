@@ -72,9 +72,14 @@ class TorcaStrings {
       : 'Queued — waiting for a direct peer connection';
   String get deliveryFailed =>
       _pl ? 'Dostarczenie nieudane' : 'Delivery failed';
+  String get bookmarkMessage => _pl ? 'Zapisz wiadomość' : 'Bookmark message';
+  String get removeBookmark => _pl ? 'Usuń zakładkę' : 'Remove bookmark';
   String get reply => _pl ? 'Odpowiedź' : 'Reply';
   String get sendMessage => _pl ? 'Wyślij wiadomość' : 'Send message';
   String get attachFiles => _pl ? 'Dołącz pliki' : 'Attach files';
+  String get emoji => _pl ? 'Emoji' : 'Emoji';
+  String get recentEmoji => _pl ? 'Ostatnio używane' : 'Recently used';
+  String get draft => _pl ? 'Szkic' : 'Draft';
   String get newMessages => _pl ? 'Nowe wiadomości' : 'New messages';
   String get jumpToLatest =>
       _pl ? 'Przejdź do najnowszej wiadomości' : 'Jump to latest message';
@@ -198,6 +203,10 @@ class TorcaStrings {
   String get contactUnavailable => _pl
       ? 'Ten kontakt nie jest juz dostepny.'
       : 'This contact is no longer available.';
+  String get finalizingContact => _pl
+      ? 'Finalizowanie bezpiecznego kontaktu…'
+      : 'Finalizing secure contact…';
+  String get newContact => _pl ? 'Nowy kontakt' : 'New contact';
   String get status => _pl ? 'Stan' : 'Status';
   String get transport => 'Transport';
   String get roundTrip => _pl ? 'Opoznienie' : 'Round trip';
@@ -212,6 +221,9 @@ class TorcaStrings {
   String get messageDetails => _pl ? 'Szczegoly wiadomosci' : 'Message details';
   String get close => _pl ? 'Zamknij' : 'Close';
   String get messageCopied => _pl ? 'Wiadomosc skopiowana' : 'Message copied';
+  String messageTooLong(int maximum) => _pl
+      ? 'Wiadomość może mieć maksymalnie $maximum znaków.'
+      : 'Messages can contain at most $maximum characters.';
   String get cancelMessage => _pl ? 'Anuluj wiadomosc' : 'Cancel message';
   String get messageCancelled =>
       _pl ? 'Wiadomosc anulowana' : 'Message cancelled';
@@ -223,6 +235,18 @@ class TorcaStrings {
       _pl ? 'Wybierz rozmowę' : 'Choose conversation';
   String get attachmentSaved => _pl ? 'Zalacznik zapisany' : 'Attachment saved';
   String get transfers => _pl ? 'Transfery' : 'Transfers';
+  String get allOperations => _pl ? 'Wszystko' : 'All';
+  String get pendingOperations => _pl ? 'Oczekujące' : 'Pending';
+  String get fileTransfers => _pl ? 'Pliki' : 'Files';
+  String get activeTransfers => _pl ? 'Aktywne' : 'Active';
+  String get mediaTransfers => _pl ? 'Media' : 'Media';
+  String get documentTransfers => _pl ? 'Dokumenty' : 'Documents';
+  String get recordingTransfers => _pl ? 'Nagrania' : 'Recordings';
+  String get completedTransfers => _pl ? 'Zakończone' : 'Completed';
+  String get sharedMedia =>
+      _pl ? 'Wspólne pliki i multimedia' : 'Shared media and files';
+  String sharedMediaCount(int count) =>
+      _pl ? 'Elementów: $count' : '$count item${count == 1 ? '' : 's'}';
   String get noActiveTransfers =>
       _pl ? 'Brak aktywnych transferow.' : 'No active transfers.';
   String get diagnosticsExported =>
@@ -259,6 +283,15 @@ class TorcaStrings {
   String get microphonePermissionRequired => _pl
       ? 'Dostep do mikrofonu jest wymagany do nadawania.'
       : 'Microphone access is required to transmit.';
+  String get holdToRecordVoiceClip => _pl
+      ? 'Przytrzymaj, aby nagrac klip glosowy'
+      : 'Hold to record a voice clip';
+  String voiceClipRecording(int secondsLeft) => _pl
+      ? 'Nagrywanie klipu, pozostalo $secondsLeft s'
+      : 'Recording voice clip, $secondsLeft s remaining';
+  String get voiceClipRecordingFailed => _pl
+      ? 'Nie udalo sie nagrac klipu glosowego.'
+      : 'Could not record the voice clip.';
   String get couldNotUpdateRadio =>
       _pl ? 'Nie udalo sie zmienic trybu radio' : 'Could not update Radio mode';
   String get couldNotStartRadio => _pl
@@ -348,6 +381,11 @@ class TorcaStrings {
   String get attachmentSyncing =>
       _pl ? 'Synchronizacja zalacznika…' : 'Attachment is syncing…';
   String get closeSearch => _pl ? 'Zamknij wyszukiwanie' : 'Close search';
+  String get typeToSearchConversation => _pl
+      ? 'Wpisz tekst, aby przeszukać rozmowę.'
+      : 'Type to search this conversation.';
+  String get noMatchingMessages =>
+      _pl ? 'Brak pasujących wiadomości.' : 'No matching messages.';
   String get preparingUpload =>
       _pl ? 'Przygotowanie wysylania' : 'Preparing upload';
   String get preparingDownload =>

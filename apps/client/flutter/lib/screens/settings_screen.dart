@@ -8,6 +8,7 @@ import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
 import '../settings/battery_preferences.dart';
 import '../settings/local_preferences.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_theme_mode.dart';
 import '../widgets/runtime_network_status.dart';
 
@@ -30,203 +31,199 @@ class SettingsScreen extends StatelessWidget {
         listenable: preferences,
         builder: (context, _) {
           final strings = context.strings;
-          return SingleChildScrollView(
+          // Settings contains several relatively expensive controls and a
+          // themed preview. A sliver-backed list only lays out the visible
+          // portion on mobile instead of rebuilding and laying out the entire
+          // page synchronously whenever one preference changes.
+          return ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            child: Column(
-              children: <Widget>[
-                Text(
-                  strings.appearance,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Card(
-                  child: Column(
-                    children: <Widget>[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-                        child: SegmentedButton<TorcaThemeFamily>(
-                          segments: <ButtonSegment<TorcaThemeFamily>>[
-                            ButtonSegment(
-                              value: TorcaThemeFamily.modern,
-                              icon: Icon(context.torcaIcons.chats),
-                              label: Text(strings.modern),
-                            ),
-                            ButtonSegment(
-                              value: TorcaThemeFamily.terminal,
-                              icon: Icon(context.torcaIcons.diagnostics),
-                              label: Text(strings.terminal),
-                            ),
-                          ],
-                          selected: <TorcaThemeFamily>{
-                            preferences.appearance.family,
-                          },
-                          onSelectionChanged: (value) =>
-                              preferences.setThemeFamily(value.single),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: DropdownButtonFormField<TorcaThemeVariant>(
-                          key: ValueKey(preferences.appearance.family),
-                          initialValue: preferences.appearance.variant,
-                          decoration: const InputDecoration(
-                            labelText: 'Variant',
+            children: <Widget>[
+              Text(
+                strings.appearance,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: Column(
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                      child: SegmentedButton<TorcaThemeFamily>(
+                        segments: <ButtonSegment<TorcaThemeFamily>>[
+                          ButtonSegment(
+                            value: TorcaThemeFamily.modern,
+                            icon: Icon(context.torcaIcons.chats),
+                            label: Text(strings.modern),
                           ),
-                          icon: Icon(context.torcaIcons.expand),
-                          items: TorcaThemeVariant.values
-                              .where(
-                                (variant) =>
-                                    variant.family ==
-                                    preferences.appearance.family,
-                              )
-                              .map(
-                                (variant) => DropdownMenuItem(
-                                  value: variant,
-                                  child: Text(variant.label),
-                                ),
-                              )
-                              .toList(growable: false),
-                          onChanged: (value) {
-                            if (value != null) {
-                              preferences.setThemeVariant(value);
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _AppearancePreview(appearance: preferences.appearance),
-                      const Divider(height: 24),
-                      ...AppThemeMode.values.map(
-                        (mode) => TorcaRadioTile<AppThemeMode>(
-                          title: Text(_themeLabel(strings, mode)),
-                          value: mode,
-                          groupValue: preferences.themeMode,
-                          onChanged: (value) {
-                            if (value != null) {
-                              preferences.setThemeMode(value);
-                            }
-                          },
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      TorcaRadioTile<TorcaDensity>(
-                        title: Text(strings.compactDensity),
-                        value: TorcaDensity.compact,
-                        groupValue: preferences.appearance.density,
-                        onChanged: (value) {
-                          if (value != null) {
-                            preferences.setThemeDensity(value);
-                          }
-                        },
-                      ),
-                      TorcaRadioTile<TorcaDensity>(
-                        title: Text(strings.comfortableDensity),
-                        value: TorcaDensity.comfortable,
-                        groupValue: preferences.appearance.density,
-                        onChanged: (value) {
-                          if (value != null) {
-                            preferences.setThemeDensity(value);
-                          }
-                        },
-                      ),
-                      TorcaSwitchTile(
-                        secondary: Icon(context.torcaIcons.warning),
-                        title: Text(strings.reduceMotion),
-                        value: preferences.appearance.reduceMotion,
-                        onChanged: preferences.setReduceMotion,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Battery & availability',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                _BatterySettingsCard(preferences: preferences),
-                const SizedBox(height: 24),
-                Text(
-                  strings.language,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Card(
-                  child: Column(
-                    children: AppLocaleMode.values
-                        .map(
-                          (mode) => TorcaRadioTile<AppLocaleMode>(
-                            title: Text(_localeLabel(strings, mode)),
-                            value: mode,
-                            groupValue: preferences.localeMode,
-                            onChanged: (value) {
-                              if (value != null)
-                                preferences.setLocaleMode(value);
-                            },
+                          ButtonSegment(
+                            value: TorcaThemeFamily.terminal,
+                            icon: Icon(context.torcaIcons.diagnostics),
+                            label: Text(strings.terminal),
                           ),
-                        )
-                        .toList(growable: false),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  strings.privacy,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Card(
-                  child: TorcaSwitchTile(
-                    secondary: Icon(context.torcaIcons.read),
-                    title: Text(strings.sendReadReceipts),
-                    subtitle: Text(strings.sendReadReceiptsDescription),
-                    value: preferences.readReceiptsEnabled,
-                    onChanged: preferences.setReadReceiptsEnabled,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  strings.notifications,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Card(
-                  child: TorcaSwitchTile(
-                    secondary: Icon(context.torcaIcons.notifications),
-                    title: Text(strings.enableNotifications),
-                    subtitle: Text(strings.notificationPrivacy),
-                    value: preferences.notificationsEnabled,
-                    onChanged: preferences.setNotificationsEnabled,
-                  ),
-                ),
-                if (isTorcaWindows) ...<Widget>[
-                  const SizedBox(height: 24),
-                  Text(
-                    strings.audio,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  _AudioSettingsCard(
-                    gateway: gateway,
-                    preferences: preferences,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    strings.desktop,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Card(
-                    child: TorcaSwitchTile(
-                      secondary: Icon(context.torcaIcons.save),
-                      title: Text(strings.closeToTray),
-                      subtitle: Text(strings.closeToTrayDescription),
-                      value: preferences.closeToTrayEnabled,
-                      onChanged: preferences.setCloseToTrayEnabled,
+                        ],
+                        selected: <TorcaThemeFamily>{
+                          preferences.appearance.family,
+                        },
+                        onSelectionChanged: (value) =>
+                            preferences.setThemeFamily(value.single),
+                      ),
                     ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: DropdownButtonFormField<TorcaThemeVariant>(
+                        key: ValueKey(preferences.appearance.family),
+                        initialValue: preferences.appearance.variant,
+                        decoration: const InputDecoration(labelText: 'Variant'),
+                        icon: Icon(context.torcaIcons.expand),
+                        items: TorcaThemeVariant.values
+                            .where(
+                              (variant) =>
+                                  variant.family ==
+                                  preferences.appearance.family,
+                            )
+                            .map(
+                              (variant) => DropdownMenuItem(
+                                value: variant,
+                                child: Text(variant.label),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value != null) {
+                            preferences.setThemeVariant(value);
+                          }
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _AppearancePreview(appearance: preferences.appearance),
+                    const Divider(height: 24),
+                    ...AppThemeMode.values.map(
+                      (mode) => TorcaRadioTile<AppThemeMode>(
+                        title: Text(_themeLabel(strings, mode)),
+                        value: mode,
+                        groupValue: preferences.themeMode,
+                        onChanged: (value) {
+                          if (value != null) {
+                            preferences.setThemeMode(value);
+                          }
+                        },
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    TorcaRadioTile<TorcaDensity>(
+                      title: Text(strings.compactDensity),
+                      value: TorcaDensity.compact,
+                      groupValue: preferences.appearance.density,
+                      onChanged: (value) {
+                        if (value != null) {
+                          preferences.setThemeDensity(value);
+                        }
+                      },
+                    ),
+                    TorcaRadioTile<TorcaDensity>(
+                      title: Text(strings.comfortableDensity),
+                      value: TorcaDensity.comfortable,
+                      groupValue: preferences.appearance.density,
+                      onChanged: (value) {
+                        if (value != null) {
+                          preferences.setThemeDensity(value);
+                        }
+                      },
+                    ),
+                    TorcaSwitchTile(
+                      secondary: Icon(context.torcaIcons.warning),
+                      title: Text(strings.reduceMotion),
+                      value: preferences.appearance.reduceMotion,
+                      onChanged: preferences.setReduceMotion,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Battery & availability',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              _BatterySettingsCard(preferences: preferences),
+              const SizedBox(height: 24),
+              Text(
+                strings.language,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: Column(
+                  children: AppLocaleMode.values
+                      .map(
+                        (mode) => TorcaRadioTile<AppLocaleMode>(
+                          title: Text(_localeLabel(strings, mode)),
+                          value: mode,
+                          groupValue: preferences.localeMode,
+                          onChanged: (value) {
+                            if (value != null) preferences.setLocaleMode(value);
+                          },
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                strings.privacy,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: TorcaSwitchTile(
+                  secondary: Icon(context.torcaIcons.read),
+                  title: Text(strings.sendReadReceipts),
+                  subtitle: Text(strings.sendReadReceiptsDescription),
+                  value: preferences.readReceiptsEnabled,
+                  onChanged: preferences.setReadReceiptsEnabled,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                strings.notifications,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: TorcaSwitchTile(
+                  secondary: Icon(context.torcaIcons.notifications),
+                  title: Text(strings.enableNotifications),
+                  subtitle: Text(strings.notificationPrivacy),
+                  value: preferences.notificationsEnabled,
+                  onChanged: preferences.setNotificationsEnabled,
+                ),
+              ),
+              if (isTorcaWindows) ...<Widget>[
+                const SizedBox(height: 24),
+                Text(
+                  strings.audio,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                _AudioSettingsCard(gateway: gateway, preferences: preferences),
+                const SizedBox(height: 24),
+                Text(
+                  strings.desktop,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: TorcaSwitchTile(
+                    secondary: Icon(context.torcaIcons.save),
+                    title: Text(strings.closeToTray),
+                    subtitle: Text(strings.closeToTrayDescription),
+                    value: preferences.closeToTrayEnabled,
+                    onChanged: preferences.setCloseToTrayEnabled,
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           );
         },
       ),
@@ -456,7 +453,12 @@ class _AppearancePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
-    final preview = TorcaThemeFactory.build(appearance, brightness);
+    // Reuse the process theme cache. Building a complete ThemeData here used
+    // to duplicate MaterialApp's work and produced >500 ms UI stalls on the
+    // Android settings route.
+    final preview = brightness == Brightness.dark
+        ? AppTheme.dark(appearance)
+        : AppTheme.light(appearance);
     return Theme(
       data: preview,
       child: Builder(

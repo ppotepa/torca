@@ -49,6 +49,7 @@ class _ConversationList extends StatelessWidget {
     required this.radio,
     required this.pinnedConversationIds,
     required this.mutedConversationIds,
+    required this.draftConversationIds,
     required this.selectedConversationId,
     required this.onSelected,
     required this.onContactInfo,
@@ -60,6 +61,7 @@ class _ConversationList extends StatelessWidget {
   final RadioDto radio;
   final Set<String> pinnedConversationIds;
   final Set<String> mutedConversationIds;
+  final Set<String> draftConversationIds;
   final String? selectedConversationId;
   final ValueChanged<ConversationDto> onSelected;
   final ValueChanged<ContactDto> onContactInfo;
@@ -101,6 +103,7 @@ class _ConversationList extends StatelessWidget {
           radioSession: radio.session,
           pinned: pinnedConversationIds.contains(conversation.id),
           muted: mutedConversationIds.contains(conversation.id),
+          draft: draftConversationIds.contains(conversation.id),
         );
       },
     );
@@ -151,23 +154,41 @@ class _ConversationList extends StatelessWidget {
 class _ContactsSection extends StatelessWidget {
   const _ContactsSection({
     required this.contacts,
+    required this.pairings,
+    required this.conversations,
+    required this.messages,
+    required this.attachments,
     required this.radio,
     required this.selectedContactId,
     required this.onOpenDetails,
     required this.onOpenConversation,
+    required this.onOpenPairing,
     required this.onAction,
   });
 
   final List<ContactDto> contacts;
+  final List<PairingDto> pairings;
+  final List<ConversationDto> conversations;
+  final List<MessageDto> messages;
+  final List<AttachmentDto> attachments;
   final RadioDto radio;
   final String? selectedContactId;
   final ValueChanged<ContactDto> onOpenDetails;
   final ValueChanged<ContactDto> onOpenConversation;
+  final Future<void> Function(PairingDto pairing) onOpenPairing;
   final Future<void> Function(ContactDto, ContactAction) onAction;
 
   @override
   Widget build(BuildContext context) {
-    if (contacts.isEmpty) {
+    final pendingPairings = pairings
+        .where(
+          (pairing) =>
+              pairing.typedState == PairingState.peerJoined ||
+              pairing.typedState == PairingState.awaitingApproval ||
+              pairing.typedState == PairingState.approved,
+        )
+        .toList(growable: false);
+    if (contacts.isEmpty && pendingPairings.isEmpty) {
       return _SectionEmptyState(
         icon: context.torcaIcons.contacts,
         title: context.strings.noContactsYet,
@@ -184,7 +205,7 @@ class _ContactsSection extends StatelessWidget {
             break;
           }
         }
-        final active = selected ?? contacts.first;
+        final active = selected ?? contacts.firstOrNull;
         final list = ListView(
           padding: const EdgeInsets.all(16),
           children: <Widget>[
@@ -193,8 +214,20 @@ class _ContactsSection extends StatelessWidget {
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
-            Text(context.strings.contactsCount(contacts.length)),
+            Text(
+              context.strings.contactsCount(
+                contacts.length + pendingPairings.length,
+              ),
+            ),
             const SizedBox(height: 12),
+            if (pendingPairings.isNotEmpty) ...<Widget>[
+              for (final pairing in pendingPairings)
+                _PendingContactCard(
+                  pairing: pairing,
+                  onTap: () => onOpenPairing(pairing),
+                ),
+              const SizedBox(height: 8),
+            ],
             for (final contact in contacts)
               GestureDetector(
                 behavior: HitTestBehavior.translucent,
@@ -206,7 +239,7 @@ class _ContactsSection extends StatelessWidget {
                 child: Card(
                   clipBehavior: Clip.antiAlias,
                   child: ListTile(
-                    selected: wide && contact.id == active.id,
+                    selected: wide && contact.id == active?.id,
                     onTap: () => onOpenConversation(contact),
                     onLongPress: () => _showActions(context, contact),
                     leading: TorcaDeviceAvatar(
@@ -244,7 +277,7 @@ class _ContactsSection extends StatelessWidget {
               ),
           ],
         );
-        if (!wide) return list;
+        if (!wide || active == null) return list;
         return Row(
           children: <Widget>[
             SizedBox(width: 390, child: list),
@@ -252,7 +285,7 @@ class _ContactsSection extends StatelessWidget {
             Expanded(
               child: _ContactContextPanel(
                 contact: active,
-                onOpenConversation: () => onOpenConversation(active),
+                sharedAttachmentNames: _sharedAttachmentNames(active),
                 onOpenConnectionDetails: () => onOpenDetails(active),
                 onRename: () => onAction(active, ContactAction.rename),
                 onToggleBlock: () =>
@@ -264,6 +297,22 @@ class _ContactsSection extends StatelessWidget {
         );
       },
     );
+  }
+
+  List<String> _sharedAttachmentNames(ContactDto contact) {
+    final conversationIds = conversations
+        .where((item) => item.contactId == contact.id)
+        .map((item) => item.id)
+        .toSet();
+    final messageIds = messages
+        .where((item) => conversationIds.contains(item.conversationId))
+        .map((item) => item.id)
+        .toSet();
+    return attachments
+        .where((item) => messageIds.contains(item.messageId))
+        .map((item) => item.name)
+        .where((item) => item.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<void> _showActions(
@@ -282,6 +331,33 @@ class _ContactsSection extends StatelessWidget {
             blocked: contact.typedStatus == ContactStatus.blocked,
           );
     if (action != null && context.mounted) await onAction(contact, action);
+  }
+}
+
+class _PendingContactCard extends StatelessWidget {
+  const _PendingContactCard({required this.pairing, required this.onTap});
+
+  final PairingDto pairing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = pairing.remoteDisplayName?.trim();
+    return Card(
+      child: ListTile(
+        onTap: onTap,
+        leading: const SizedBox(
+          width: 40,
+          height: 40,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        title: Text(
+          name == null || name.isEmpty ? context.strings.newContact : name,
+        ),
+        subtitle: Text(context.strings.finalizingContact),
+        trailing: Icon(context.torcaIcons.reconnect),
+      ),
+    );
   }
 }
 
@@ -372,7 +448,7 @@ class _InvitationsSection extends StatelessWidget {
 class _ContactContextPanel extends StatelessWidget {
   const _ContactContextPanel({
     required this.contact,
-    required this.onOpenConversation,
+    this.sharedAttachmentNames = const <String>[],
     this.onOpenConnectionDetails,
     this.onRename,
     this.onToggleBlock,
@@ -380,7 +456,7 @@ class _ContactContextPanel extends StatelessWidget {
   });
 
   final ContactDto contact;
-  final VoidCallback onOpenConversation;
+  final List<String> sharedAttachmentNames;
   final VoidCallback? onOpenConnectionDetails;
   final VoidCallback? onRename;
   final VoidCallback? onToggleBlock;
@@ -392,7 +468,7 @@ class _ContactContextPanel extends StatelessWidget {
     child: SingleChildScrollView(
       child: ContactDetailsContent(
         contact: contact,
-        onStartConversation: onOpenConversation,
+        sharedAttachmentNames: sharedAttachmentNames,
         onOpenConnectionDetails: onOpenConnectionDetails,
         onRename: onRename,
         onToggleBlock: onToggleBlock,

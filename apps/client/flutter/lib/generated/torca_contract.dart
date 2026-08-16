@@ -1631,7 +1631,8 @@ class RuntimeRequestDto {
       return _command('battery.preferences.set', <String, Object?>{
         'mode': command.mode,
         'backgroundSync': command.backgroundSync,
-        'allowDelayedBackgroundDelivery': command.allowDelayedBackgroundDelivery,
+        'allowDelayedBackgroundDelivery':
+            command.allowDelayedBackgroundDelivery,
         'meteredTransfers': command.meteredTransfers,
         'visualActivity': command.visualActivity,
       });

@@ -39,4 +39,22 @@ void main() {
     expect(terminal.extension<TorcaTokens>()!.terminal, isTrue);
     expect(terminal.extension<TorcaIconSet>(), isNotNull);
   });
+
+  test('identical appearance reuses cached ThemeData', () {
+    const appearance = TorcaAppearance(
+      family: TorcaThemeFamily.terminal,
+      variant: TorcaThemeVariant.terminalCatppuccin,
+      density: TorcaDensity.comfortable,
+      reduceMotion: true,
+    );
+
+    expect(
+      identical(AppTheme.light(appearance), AppTheme.light(appearance)),
+      isTrue,
+    );
+    expect(
+      identical(AppTheme.dark(appearance), AppTheme.dark(appearance)),
+      isTrue,
+    );
+  });
 }

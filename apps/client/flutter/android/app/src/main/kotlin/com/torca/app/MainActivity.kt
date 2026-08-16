@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.app.RemoteInput
 import android.provider.Settings
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
@@ -28,9 +29,16 @@ class MainActivity : FlutterActivity() {
     private var microphonePermissionResult: MethodChannel.Result? = null
     private var radioAudioFocusRequest: AudioFocusRequest? = null
     private var pendingConversationId: String? = null
+    private var pendingNotificationAction: String? = null
+    private var pendingPairingId: String? = null
+    private var pendingReplyText: String? = null
 
     companion object {
         const val EXTRA_CONVERSATION_ID = "torca.conversation_id"
+        const val EXTRA_NOTIFICATION_ACTION = "torca.notification_action"
+        const val EXTRA_PAIRING_ID = "torca.pairing_id"
+        const val EXTRA_REPLY_TEXT = "torca.reply_text"
+        const val REPLY_RESULT_KEY = "torca.reply"
         const val EXTRA_ALLOW_SCREEN_CAPTURE = "torca.allow_screen_capture"
         private const val PRIVACY_PREFERENCES = "torca.privacy"
         private const val ALLOW_SCREEN_CAPTURE = "allow_screen_capture"
@@ -44,6 +52,11 @@ class MainActivity : FlutterActivity() {
         super.onCreate(savedInstanceState)
         applyScreenCapturePolicy(intent)
         pendingConversationId = intent?.getStringExtra(EXTRA_CONVERSATION_ID)
+        pendingNotificationAction = intent?.getStringExtra(EXTRA_NOTIFICATION_ACTION)
+        pendingPairingId = intent?.getStringExtra(EXTRA_PAIRING_ID)
+        pendingReplyText = RemoteInput.getResultsFromIntent(intent)
+            ?.getCharSequence(REPLY_RESULT_KEY)
+            ?.toString()
         val service = Intent(applicationContext, TorcaForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             applicationContext.startForegroundService(service)
@@ -69,6 +82,24 @@ class MainActivity : FlutterActivity() {
                         val value = pendingConversationId
                         pendingConversationId = null
                         result.success(value)
+                    }
+                    "takeInitialNotificationAction" -> {
+                        val action = pendingNotificationAction
+                        pendingNotificationAction = null
+                        val conversationId = pendingConversationId
+                        val pairingId = pendingPairingId
+                        pendingPairingId = null
+                        val replyText = pendingReplyText
+                        pendingReplyText = null
+                        result.success(
+                            if (action.isNullOrEmpty() && conversationId.isNullOrEmpty() && pairingId.isNullOrEmpty()) null
+                            else mapOf(
+                                "action" to (action ?: "open"),
+                                "conversationId" to (conversationId ?: ""),
+                                "pairingId" to (pairingId ?: ""),
+                                "replyText" to (replyText ?: ""),
+                            ),
+                        )
                     }
                     else -> result.notImplemented()
                 }
@@ -213,9 +244,24 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         applyScreenCapturePolicy(intent)
-        val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID) ?: return
+        val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID)
+        val pairingId = intent.getStringExtra(EXTRA_PAIRING_ID)
+        if (conversationId.isNullOrEmpty() && pairingId.isNullOrEmpty()) return
         pendingConversationId = conversationId
-        notificationChannel?.invokeMethod("openConversation", conversationId)
+        pendingNotificationAction = intent.getStringExtra(EXTRA_NOTIFICATION_ACTION)
+        pendingPairingId = pairingId
+        pendingReplyText = RemoteInput.getResultsFromIntent(intent)
+            ?.getCharSequence(REPLY_RESULT_KEY)
+            ?.toString()
+        notificationChannel?.invokeMethod(
+            "notificationAction",
+            mapOf(
+                "action" to (pendingNotificationAction ?: "open"),
+                "conversationId" to conversationId,
+                "pairingId" to pairingId,
+                "replyText" to pendingReplyText,
+            ),
+        )
     }
 
     private fun applyScreenCapturePolicy(source: Intent?) {

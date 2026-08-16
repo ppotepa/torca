@@ -744,6 +744,21 @@ mod tests {
     }
 
     #[test]
+    fn thirty_minute_idle_does_not_create_background_work() {
+        let start = Instant::now();
+        let mut governor = RuntimeGovernor::new(start);
+        for step in 0..=360 {
+            let now = start + Duration::from_secs(step * 5);
+            assert!(governor.take_due(now).is_empty());
+            let snapshot = governor.snapshot(now);
+            assert_eq!(snapshot.active_leases, 0);
+            assert_eq!(snapshot.active_demands, 0);
+            assert_eq!(snapshot.scheduled_deadlines, 0);
+            assert_eq!(snapshot.stats.scheduler_wakeups, 0);
+        }
+    }
+
+    #[test]
     fn event_hub_sleeps_until_publish() {
         let hub = RuntimeEventHub::default();
         assert_eq!(hub.current(), Some((0, 0)));

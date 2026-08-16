@@ -7,6 +7,7 @@ import 'package:torca_ui/torca_ui.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
+import 'runtime_network_status.dart';
 
 class ConversationHeaderSurface extends StatelessWidget {
   const ConversationHeaderSurface({
@@ -63,6 +64,7 @@ class ConversationHeader extends StatelessWidget {
     required this.contact,
     required this.onConnectionDetails,
     this.gateway,
+    this.snapshot,
     this.radio,
     this.session,
     this.sending = false,
@@ -76,6 +78,8 @@ class ConversationHeader extends StatelessWidget {
   final VoidCallback onConnectionDetails;
   final bool compact;
   final EngineGateway? gateway;
+
+  final AppSnapshotDto? snapshot;
   final RadioContactDto? radio;
   final RadioSessionDto? session;
   final bool sending;
@@ -88,53 +92,74 @@ class ConversationHeader extends StatelessWidget {
     final blocked = value?.typedStatus == ContactStatus.blocked;
     final name = value?.displayName ?? 'Contact';
     final radioState = session?.typedState ?? radio?.typedState;
-    return Row(
-      mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
-      children: <Widget>[
-        if (leading != null) ...<Widget>[leading!, const SizedBox(width: 2)],
-        TorcaDeviceAvatar(
-          label: name,
-          identityId: value?.remoteIdentityId,
-          size: compact ? 32 : 40,
-          presentation: AvatarActivityPresentation.resolve(
-            blocked: blocked,
-            talking: radioState == RadioState.receiving,
-            listening: radioState == RadioState.transmitting,
-            sending: sending,
-            receiving: receiving,
-            waking: radioState == RadioState.connecting,
-            online: value?.presenceState == 'online',
-            error: radioState == RadioState.reconnecting,
-          ),
-        ),
-        const SizedBox(width: 10),
-        if (compact)
-          Flexible(child: _contactText(context, value, name, blocked))
-        else
-          Expanded(child: _contactText(context, value, name, blocked)),
-        if (!compact) ...<Widget>[
-          if (value != null && gateway != null && radio != null)
-            _RadioHeaderAction(
-              gateway: gateway!,
-              contact: value,
-              radio: radio!,
-              session: session,
-              compact: compact,
-            ),
-          IconButton(
-            tooltip: context.strings.connectionDetails,
-            onPressed: onConnectionDetails,
-            icon: Icon(context.torcaIcons.info),
-          ),
-        ],
-        if (compact && value != null && gateway != null && radio != null)
-          _RadioHeaderAction(
+    final avatar = TorcaDeviceAvatar(
+      label: name,
+      identityId: value?.remoteIdentityId,
+      size: compact ? 32 : 40,
+      presentation: AvatarActivityPresentation.resolve(
+        blocked: blocked,
+        talking: radioState == RadioState.receiving,
+        listening: radioState == RadioState.transmitting,
+        sending: sending,
+        receiving: receiving,
+        waking: radioState == RadioState.connecting,
+        online: value?.presenceState == 'online',
+        error: radioState == RadioState.reconnecting,
+      ),
+    );
+    final radioAction = value != null && gateway != null && radio != null
+        ? _RadioHeaderAction(
             gateway: gateway!,
             contact: value,
             radio: radio!,
             session: session,
             compact: compact,
+          )
+        : null;
+    final networkStatus = snapshot == null
+        ? null
+        : RuntimeNetworkStatus(snapshot: snapshot!, compact: compact);
+
+    if (compact) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              if (leading != null) ...<Widget>[
+                leading!,
+                const SizedBox(width: 2),
+              ],
+              avatar,
+              const SizedBox(width: 10),
+              Expanded(child: _contactText(context, value, name, blocked)),
+              if (radioAction != null) radioAction,
+            ],
           ),
+          if (networkStatus != null) ...<Widget>[
+            const SizedBox(height: 2),
+            Align(alignment: Alignment.centerRight, child: networkStatus),
+          ],
+        ],
+      );
+    }
+
+    return Row(
+      children: <Widget>[
+        if (leading != null) ...<Widget>[leading!, const SizedBox(width: 2)],
+        avatar,
+        const SizedBox(width: 10),
+        Expanded(child: _contactText(context, value, name, blocked)),
+        if (networkStatus != null) ...<Widget>[
+          const SizedBox(width: 8),
+          networkStatus,
+        ],
+        if (radioAction != null) radioAction,
+        IconButton(
+          tooltip: context.strings.connectionDetails,
+          onPressed: onConnectionDetails,
+          icon: Icon(context.torcaIcons.info),
+        ),
       ],
     );
   }
@@ -216,7 +241,7 @@ class _RadioHeaderAction extends StatelessWidget {
                   color: colors.error,
                   borderRadius: context.torcaTokens.terminal
                       ? BorderRadius.zero
-                      : BorderRadius.circular(5),
+                      : BorderRadius.circular(context.torcaTokens.radiusSmall),
                 ),
               ),
             ),

@@ -31,8 +31,13 @@ class TorcaSwitch extends StatelessWidget {
         child: InkWell(
           onTap: enabled ? () => onChanged!(!value) : null,
           borderRadius: BorderRadius.zero,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          // A trailing ListTile child is measured with loose horizontal
+          // constraints. A min-only ConstrainedBox allowed the nested Center
+          // to consume the complete tile width in the terminal theme, which
+          // made Settings and every screen using TorcaSwitchTile fail layout.
+          child: SizedBox(
+            width: 48,
+            height: 48,
             child: Center(
               child: AnimatedContainer(
                 duration: context.torcaTokens.animationDuration,

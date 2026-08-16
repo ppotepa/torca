@@ -319,6 +319,8 @@ pub struct NotificationEvent {
     pub cursor: u64,
     pub event_id: String,
     pub kind: String,
+    /// Opaque runtime resource targeted by an optional OS notification action.
+    pub resource_id: String,
     pub conversation_id: String,
     pub contact_display_name: String,
     pub created_at_ms: i64,

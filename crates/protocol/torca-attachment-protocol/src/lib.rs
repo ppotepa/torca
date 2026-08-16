@@ -364,4 +364,19 @@ mod tests {
         });
         assert_eq!(AttachmentCodec::encode(&frame), Err(AttachmentProtocolError::ChunkTooLarge));
     }
+
+    #[test]
+    fn resume_complete_and_cancel_frames_round_trip() {
+        let attachment_id = AttachmentId::from_u128(9);
+        let frames = [
+            AttachmentFrame::Resume(AttachmentResumeFrame { attachment_id, offset: 128 }),
+            AttachmentFrame::Complete(AttachmentCompleteFrame { attachment_id, digest: [4; 32] }),
+            AttachmentFrame::Cancel(AttachmentCancelFrame { attachment_id }),
+        ];
+
+        for frame in frames {
+            let encoded = AttachmentCodec::encode(&frame).expect("encode succeeds");
+            assert_eq!(AttachmentCodec::decode(&encoded).expect("decode succeeds"), frame);
+        }
+    }
 }

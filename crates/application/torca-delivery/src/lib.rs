@@ -4,7 +4,9 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use torca_foundation::{CommandId, OpaqueId, Timestamp};
-use torca_messaging::{Message, MessageDirection, MessageId, MessageStatus, RetryPolicy};
+use torca_messaging::{
+    Message, MessageBody, MessageDirection, MessageId, MessageStatus, RetryPolicy,
+};
 
 const PAYLOAD_MAGIC: &[u8; 4] = b"TCAP";
 const PAYLOAD_VERSION: u16 = 1;
@@ -626,7 +628,10 @@ fn validate_text(text: &TextPayload) -> Result<(), ApplicationPayloadError> {
     if text.body.is_empty() {
         return Err(ApplicationPayloadError::EmptyBody);
     }
-    if text.body.len() > MAX_TEXT_PAYLOAD_BODY || text.body.contains('\0') {
+    if text.body.len() > MAX_TEXT_PAYLOAD_BODY
+        || text.body.chars().count() > MessageBody::MAX_CHARACTERS
+        || text.body.contains('\0')
+    {
         return Err(ApplicationPayloadError::BodyTooLarge);
     }
     Ok(())

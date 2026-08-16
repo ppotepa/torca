@@ -54,15 +54,10 @@ impl<'a> DeviceController<'a> {
             if !output.success {
                 return Err(DeviceError::Command(output.text));
             }
-            for line in output.text.lines().skip(1) {
-                let id = line.split_whitespace().next().unwrap_or_default();
-                if !id.is_empty() && line.contains("device") {
-                    let abi = self.android_abi(id)?;
-                    result.push(Device {
-                        target: Target::Android,
-                        id: id.into(),
-                        android_abi: Some(abi),
-                    });
+            for id in parse_adb_devices(&output.text) {
+                {
+                    let abi = self.android_abi(&id)?;
+                    result.push(Device { target: Target::Android, id, android_abi: Some(abi) });
                 }
             }
         }
@@ -133,6 +128,24 @@ impl<'a> DeviceController<'a> {
         }
     }
 }
+
+/// Returns only ADB transports that are ready for commands.  `adb devices`
+/// also lists transports in `offline` and `unauthorized` states; treating
+/// those as deployable makes installation fail later with a misleading error.
+fn parse_adb_devices(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .skip_while(|line| line.trim() != "List of devices attached")
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let id = fields.next()?;
+            let state = fields.next()?;
+            (state == "device").then(|| id.to_owned())
+        })
+        .collect()
+}
+
 #[derive(Debug, Error)]
 pub enum DeviceError {
     #[error("device command failed: {0}")]
@@ -143,4 +156,28 @@ pub enum DeviceError {
     RequestedTargetUnavailable(Target),
     #[error("Android device {device} uses unsupported ABI `{abi}`")]
     UnsupportedAndroidAbi { device: String, abi: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_adb_devices;
+
+    #[test]
+    fn parser_accepts_ready_transports_only() {
+        let output = "List of devices attached\n".to_owned()
+            + "offline-device\toffline\n"
+            + "authorized-device\tunauthorized\n"
+            + "ready-device\tdevice product:pixel\n";
+
+        assert_eq!(parse_adb_devices(&output), vec!["ready-device"]);
+    }
+
+    #[test]
+    fn parser_handles_adb_noise_and_missing_header() {
+        assert!(parse_adb_devices("adb server version mismatch\n").is_empty());
+        assert_eq!(
+            parse_adb_devices("prefix\nList of devices attached\nserial\tdevice\n"),
+            vec!["serial"]
+        );
+    }
 }

@@ -20,6 +20,7 @@ class ConversationSummaryTile extends StatelessWidget {
     this.radioSession,
     this.pinned = false,
     this.muted = false,
+    this.draft = false,
     super.key,
   });
 
@@ -34,6 +35,7 @@ class ConversationSummaryTile extends StatelessWidget {
   final RadioSessionDto? radioSession;
   final bool pinned;
   final bool muted;
+  final bool draft;
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +44,9 @@ class ConversationSummaryTile extends StatelessWidget {
     final prefix = conversation.lastMessageDirection == 'outbound'
         ? 'You: '
         : '';
-    final subtitle = blocked
+    final subtitle = draft
+        ? context.strings.draft
+        : blocked
         ? context.strings.blocked
         : message == null || message.isEmpty
         ? context.strings.noMessagesYet
@@ -80,6 +84,7 @@ class ConversationSummaryTile extends StatelessWidget {
               ),
             if (pinned) Icon(context.torcaIcons.archive, size: 16),
             if (muted) Icon(context.torcaIcons.notifications, size: 16),
+            if (draft) Icon(context.torcaIcons.edit, size: 16),
           ],
         ),
         subtitle: Row(

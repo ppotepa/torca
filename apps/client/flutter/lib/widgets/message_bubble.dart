@@ -54,114 +54,123 @@ class MessageBubble extends StatelessWidget {
       bottomRight: Radius.circular(outbound ? tailRadius : normalRadius),
     );
 
-    return Align(
-      alignment: alignment,
-      child: LayoutBuilder(
-        builder: (context, constraints) => ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: constraints.maxWidth < 560
-                ? constraints.maxWidth * 0.84
-                : 520,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const horizontalGutter = 12.0;
+        final usableWidth = constraints.maxWidth - horizontalGutter * 2;
+        final maxBubbleWidth = usableWidth < 620 ? usableWidth * 0.84 : 520.0;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            horizontalGutter,
+            compactTop ? 1 : 4,
+            horizontalGutter,
+            4,
           ),
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              outbound ? 48 : 12,
-              compactTop ? 1 : 4,
-              outbound ? 12 : 48,
-              4,
-            ),
-            child: Semantics(
-              label: outbound
-                  ? context.strings.outgoingMessage
-                  : context.strings.incomingMessage,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onSecondaryTapDown: onSecondaryTapDown,
-                child: InkWell(
-                  borderRadius: radius,
-                  onLongPress: onLongPress,
-                  child: Ink(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 10, 7),
-                    decoration: BoxDecoration(
-                      color: background,
-                      borderRadius: radius,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Text(
-                                senderLabel ??
-                                    (outbound
-                                        ? context.strings.senderYou
-                                        : context.strings.senderContact),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.labelMedium
-                                    ?.copyWith(fontWeight: FontWeight.w700),
+          child: Align(
+            alignment: alignment,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+              child: Semantics(
+                label: outbound
+                    ? context.strings.outgoingMessage
+                    : context.strings.incomingMessage,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onSecondaryTapDown: onSecondaryTapDown,
+                  child: InkWell(
+                    borderRadius: radius,
+                    onLongPress: onLongPress,
+                    child: Ink(
+                      key: ValueKey<String>('message-bubble-${message.id}'),
+                      padding: const EdgeInsets.fromLTRB(12, 10, 10, 7),
+                      decoration: BoxDecoration(
+                        color: background,
+                        borderRadius: radius,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Row(
+                            children: <Widget>[
+                              Expanded(
+                                child: Text(
+                                  senderLabel ??
+                                      (outbound
+                                          ? context.strings.senderYou
+                                          : context.strings.senderContact),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.labelMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        if (quotedBody != null) ...<Widget>[
-                          ReplyQuote(
-                            body: quotedBody!,
-                            unavailable: quotedUnavailable,
-                          ),
-                          const SizedBox(height: 7),
-                        ],
-                        if (showBody) SelectableText(message.body),
-                        if (reactions.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 5),
-                            child: Wrap(
-                              spacing: 4,
-                              children: <Widget>[
-                                for (final reaction in reactions)
-                                  Chip(
-                                    label: Text(reaction.emoji),
-                                    visualDensity: VisualDensity.compact,
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                              ],
-                            ),
-                          ),
-                        if (footer.isNotEmpty) ...<Widget>[
-                          const SizedBox(height: 6),
-                          ...footer,
-                        ],
-                        const SizedBox(height: 5),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: <Widget>[
-                            if (outbound && message.sentAtMs != null)
-                              _LifecycleTimeline(message: message)
-                            else ...<Widget>[
-                              MessageTimestamp(
-                                milliseconds: message.createdAtMs,
-                              ),
-                              if (outbound) ...<Widget>[
-                                const SizedBox(width: 5),
-                                MessageStatusIndicator(status: message.typedStatus),
-                              ],
                             ],
+                          ),
+                          const SizedBox(height: 6),
+                          if (quotedBody != null) ...<Widget>[
+                            ReplyQuote(
+                              body: quotedBody!,
+                              unavailable: quotedUnavailable,
+                            ),
+                            const SizedBox(height: 7),
                           ],
-                        ),
-                      ],
+                          if (showBody) SelectableText(message.body),
+                          if (reactions.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 5),
+                              child: Wrap(
+                                spacing: 4,
+                                children: <Widget>[
+                                  for (final reaction in reactions)
+                                    Chip(
+                                      label: Text(reaction.emoji),
+                                      visualDensity: VisualDensity.compact,
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          if (footer.isNotEmpty) ...<Widget>[
+                            const SizedBox(height: 6),
+                            ...footer,
+                          ],
+                          const SizedBox(height: 5),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Row(
+                              key: ValueKey<String>(
+                                'message-footer-${message.id}',
+                              ),
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                if (outbound && message.sentAtMs != null)
+                                  _LifecycleTimeline(message: message)
+                                else ...<Widget>[
+                                  MessageTimestamp(
+                                    milliseconds: message.createdAtMs,
+                                  ),
+                                  if (outbound) ...<Widget>[
+                                    const SizedBox(width: 5),
+                                    MessageStatusIndicator(
+                                      status: message.typedStatus,
+                                    ),
+                                  ],
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

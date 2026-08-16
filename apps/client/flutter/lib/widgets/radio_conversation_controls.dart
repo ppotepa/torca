@@ -331,24 +331,52 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       _transmissionActive = true;
       _commandBusy = true;
     });
-    await MicrophonePermission.setCommunicationMode(true);
-    await MicrophonePermission.startNativeCapture();
+    try {
+      await MicrophonePermission.setCommunicationMode(true);
+      await MicrophonePermission.startNativeCapture();
+    } on Object {
+      await _stopCaptureSafely();
+      if (!mounted) return;
+      setState(() {
+        _activePointerId = null;
+        _pointerHeld = false;
+        _transmissionActive = false;
+        _commandBusy = false;
+      });
+      _syncPulse();
+      _showError(context.strings.couldNotStartRadio);
+      return;
+    }
     unawaited(HapticFeedback.mediumImpact());
     _burstTimer = Timer(
       const Duration(seconds: 10),
       () => unawaited(_release()),
     );
-    final result = await widget.gateway.execute(
-      BeginRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
-    );
+    BridgeResultDto? result;
+    try {
+      result = await widget.gateway.execute(
+        BeginRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
+      );
+    } on Object {
+      await _stopCaptureSafely();
+      if (!mounted) return;
+      setState(() {
+        _activePointerId = null;
+        _pointerHeld = false;
+        _transmissionActive = false;
+        _commandBusy = false;
+      });
+      _syncPulse();
+      _showError(context.strings.couldNotStartRadio);
+      return;
+    }
     if (!mounted) {
       if (result.ok) {
         await widget.gateway.execute(
           EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
         );
       }
-      await MicrophonePermission.setCommunicationMode(false);
-      await MicrophonePermission.stopNativeCapture();
+      await _stopCaptureSafely();
       return;
     }
     setState(() => _commandBusy = false);
@@ -358,8 +386,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       await widget.gateway.execute(
         EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
       );
-      await MicrophonePermission.setCommunicationMode(false);
-      await MicrophonePermission.stopNativeCapture();
+      await _stopCaptureSafely();
       return;
     }
     if (!result.ok) {
@@ -369,8 +396,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _pointerHeld = false;
         _transmissionActive = false;
       });
-      await MicrophonePermission.setCommunicationMode(false);
-      await MicrophonePermission.stopNativeCapture();
+      await _stopCaptureSafely();
       _syncPulse();
       _showError(
         BridgeErrorPresenter.localized(
@@ -401,8 +427,20 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
     await widget.gateway.execute(
       EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
     );
-    await MicrophonePermission.setCommunicationMode(false);
-    await MicrophonePermission.stopNativeCapture();
+    await _stopCaptureSafely();
+  }
+
+  Future<void> _stopCaptureSafely() async {
+    try {
+      await MicrophonePermission.setCommunicationMode(false);
+    } catch (_) {
+      // Cleanup must continue even when the platform audio route vanished.
+    }
+    try {
+      await MicrophonePermission.stopNativeCapture();
+    } catch (_) {
+      // The native recorder may already have stopped during lifecycle change.
+    }
   }
 
   void _showError(String message) {
@@ -431,7 +469,9 @@ class _PttButtonVisual extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final terminal = context.torcaTokens.terminal;
-    final radius = terminal ? BorderRadius.zero : BorderRadius.circular(999);
+    final radius = terminal
+        ? BorderRadius.zero
+        : BorderRadius.all(Radius.circular(context.torcaTokens.radiusLarge));
     return SizedBox.square(
       key: const ValueKey<String>('radio-ptt-button'),
       dimension: 48,

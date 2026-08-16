@@ -21,11 +21,18 @@ import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/radio_conversation_controls.dart';
+import '../widgets/voice_clip_recorder.dart';
 import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
 
 part 'conversation_widgets.dart';
 part 'conversation_formatters.dart';
+part 'conversation_actions.dart';
+
+/// Must stay aligned with `torca_messaging::MessageBody::MAX_CHARACTERS`.
+/// The native layer remains authoritative; this value gives immediate UI
+/// feedback and avoids queuing a message that cannot be accepted.
+const int maxMessageCharacters = 1000;
 
 class ConversationScreen extends StatelessWidget {
   const ConversationScreen({
@@ -84,6 +91,8 @@ class _ConversationPaneState extends State<ConversationPane>
   final Map<String, String> _drafts = <String, String>{};
   final AttachmentProcessor _attachmentProcessor = const AttachmentProcessor();
   final List<_PendingAttachment> _pendingAttachments = <_PendingAttachment>[];
+  final List<String> _recentEmojis = <String>[];
+  final Set<String> _bookmarkedMessageIds = <String>{};
 
   late ConversationTimelineController _timeline;
   Timer? _searchDebounce;
@@ -113,6 +122,7 @@ class _ConversationPaneState extends State<ConversationPane>
     _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
     unawaited(_initializeTimeline());
     unawaited(_restoreDraft());
+    unawaited(_restoreBookmarks());
   }
 
   ConversationTimelineController _newTimeline() =>
@@ -161,6 +171,7 @@ class _ConversationPaneState extends State<ConversationPane>
       _unreadBoundaryMessageId = null;
       unawaited(_initializeTimeline());
       unawaited(_restoreDraft());
+      unawaited(_restoreBookmarks());
     }
   }
 
@@ -209,6 +220,20 @@ class _ConversationPaneState extends State<ConversationPane>
       text: value,
       selection: TextSelection.collapsed(offset: value.length),
     );
+  }
+
+  Future<void> _restoreBookmarks() async {
+    final preferences = widget.preferences;
+    if (preferences == null) return;
+    final values = await preferences.bookmarkedMessagesFor(
+      widget.conversation.id,
+    );
+    if (!mounted) return;
+    setState(() {
+      _bookmarkedMessageIds
+        ..clear()
+        ..addAll(values);
+    });
   }
 
   void _draftChanged() {
@@ -401,6 +426,22 @@ class _ConversationPaneState extends State<ConversationPane>
       final byId = <String, MessageDto>{
         for (final message in _timeline.messages) message.id: message,
       };
+      // Build lookup tables once per snapshot. Filtering the complete
+      // attachment/reaction lists for every message made long conversations
+      // quadratic and could block the UI during a runtime update or theme
+      // rebuild.
+      final attachmentsByMessage = <String, List<AttachmentDto>>{};
+      for (final attachment in snapshot.attachments) {
+        (attachmentsByMessage[attachment.messageId] ??= <AttachmentDto>[]).add(
+          attachment,
+        );
+      }
+      final reactionsByMessage = <String, List<ReactionDto>>{};
+      for (final reaction in snapshot.reactions) {
+        (reactionsByMessage[reaction.messageId] ??= <ReactionDto>[]).add(
+          reaction,
+        );
+      }
       final reply = _replyingTo;
       final contact = contactForSnapshot(snapshot, widget.conversation);
       final radioContact = contact == null
@@ -430,6 +471,7 @@ class _ConversationPaneState extends State<ConversationPane>
                 child: ConversationHeader(
                   contact: contact,
                   gateway: widget.gateway,
+                  snapshot: snapshot,
                   radio: radioContact,
                   session: radioSession,
                   sending: transfer.$1,
@@ -477,8 +519,8 @@ class _ConversationPaneState extends State<ConversationPane>
                         child: Text(
                           _searching
                               ? (_searchController.text.trim().isEmpty
-                                    ? 'Type to search this conversation.'
-                                    : 'No matching messages.')
+                                    ? context.strings.typeToSearchConversation
+                                    : context.strings.noMatchingMessages)
                               : '${context.strings.noMessagesYet}. ${context.strings.noMessagesYetDescription}',
                           textAlign: TextAlign.center,
                         ),
@@ -509,12 +551,9 @@ class _ConversationPaneState extends State<ConversationPane>
                         final quoted = message.replyToMessageId == null
                             ? null
                             : byId[message.replyToMessageId];
-                        final attachments = snapshot.attachments
-                            .where(
-                              (attachment) =>
-                                  attachment.messageId == message.id,
-                            )
-                            .toList(growable: false);
+                        final attachments =
+                            attachmentsByMessage[message.id] ??
+                            const <AttachmentDto>[];
                         final retryable =
                             message.typedDirection ==
                                 MessageDirection.outbound &&
@@ -533,12 +572,9 @@ class _ConversationPaneState extends State<ConversationPane>
                             if (showUnread) const _UnreadSeparator(),
                             MessageBubble(
                               message: message,
-                              reactions: snapshot.reactions
-                                  .where(
-                                    (reaction) =>
-                                        reaction.messageId == message.id,
-                                  )
-                                  .toList(growable: false),
+                              reactions:
+                                  reactionsByMessage[message.id] ??
+                                  const <ReactionDto>[],
                               // Never expose the compatibility announcement
                               // (which contains a path/hash) as chat content.
                               // A typed AttachmentDto is rendered below; until
@@ -564,6 +600,13 @@ class _ConversationPaneState extends State<ConversationPane>
                                   message.replyToMessageId != null &&
                                   quoted == null,
                               footer: <Widget>[
+                                if (_bookmarkedMessageIds.contains(message.id))
+                                  Icon(
+                                    context.torcaIcons.archive,
+                                    size: 16,
+                                    semanticLabel:
+                                        context.strings.bookmarkMessage,
+                                  ),
                                 if (attachmentAnnouncement &&
                                     attachments.isEmpty)
                                   AttachmentPendingTile(
@@ -701,7 +744,9 @@ class _ConversationPaneState extends State<ConversationPane>
             unawaited(pending.prepared.dispose());
           }),
           onPickAttachments: _pickAttachments,
+          onInsertEmoji: _insertEmoji,
           onSend: _sendMessage,
+          onVoiceClipReady: _queueVoiceClip,
           sending: sending,
           sendingAttachment: sendingAttachment,
           pickingAttachment: pickingAttachment,
@@ -759,6 +804,24 @@ class _ConversationPaneState extends State<ConversationPane>
       enabled: !disabled,
       minLines: 1,
       maxLines: 5,
+      maxLength: maxMessageCharacters,
+      buildCounter:
+          (context, {required currentLength, required isFocused, maxLength}) {
+            final count = _controller.text.characters.length;
+            if (!isFocused &&
+                count < (maxLength ?? maxMessageCharacters) * .75) {
+              return null;
+            }
+            final color = count >= (maxLength ?? maxMessageCharacters)
+                ? Theme.of(context).colorScheme.error
+                : null;
+            return Text(
+              '$count/${maxLength ?? maxMessageCharacters}',
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: color),
+            );
+          },
       textInputAction: TextInputAction.newline,
       decoration: InputDecoration(
         labelText: editing
@@ -787,6 +850,62 @@ class _ConversationPaneState extends State<ConversationPane>
     _controller.value = TextEditingValue(
       text: text,
       selection: TextSelection.collapsed(offset: start + 1),
+    );
+  }
+
+  Future<void> _insertEmoji() async {
+    const palette = <String>[
+      '\u{1F600}',
+      '\u{1F602}',
+      '\u{1F44D}',
+      '\u{1F44F}',
+      '\u{2764}\u{FE0F}',
+      '\u{1F389}',
+      '\u{1F914}',
+      '\u{1F622}',
+      '\u{1F525}',
+      '\u{1F4AF}',
+      '\u{1F64F}',
+      '\u{1F60D}',
+    ];
+    final emoji = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              if (_recentEmojis.isNotEmpty) ...<Widget>[
+                Text(context.strings.recentEmoji),
+                const SizedBox(height: 8),
+                _emojiWrap(context, _recentEmojis),
+                const SizedBox(height: 12),
+              ],
+              _emojiWrap(context, palette),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || emoji == null) return;
+    setState(() {
+      _recentEmojis.remove(emoji);
+      _recentEmojis.insert(0, emoji);
+      if (_recentEmojis.length > 8) _recentEmojis.removeLast();
+    });
+    final selection = _controller.selection;
+    final start = selection.isValid ? selection.start : _controller.text.length;
+    final end = selection.isValid ? selection.end : start;
+    final value = _controller.text.replaceRange(start, end, emoji);
+    final limited = value.characters.take(maxMessageCharacters).toString();
+    _controller.value = TextEditingValue(
+      text: limited,
+      selection: TextSelection.collapsed(
+        offset: (start + emoji.length).clamp(0, limited.length).toInt(),
+      ),
     );
   }
 
@@ -833,6 +952,7 @@ class _ConversationPaneState extends State<ConversationPane>
                 message.typedDirection == MessageDirection.outbound &&
                 (message.typedStatus == MessageStatus.queued ||
                     message.typedStatus == MessageStatus.failed),
+            bookmarked: _bookmarkedMessageIds.contains(message.id),
           )
         : await MessageActionMenu.showDesktop(
             context,
@@ -845,6 +965,7 @@ class _ConversationPaneState extends State<ConversationPane>
                 message.typedDirection == MessageDirection.outbound &&
                 (message.typedStatus == MessageStatus.queued ||
                     message.typedStatus == MessageStatus.failed),
+            bookmarked: _bookmarkedMessageIds.contains(message.id),
           );
     if (!mounted || action == null) return;
     await _applyMessageAction(message, action);
@@ -880,6 +1001,21 @@ class _ConversationPaneState extends State<ConversationPane>
         }
       case MessageAction.forward:
         await _forwardMessage(message);
+      case MessageAction.bookmark:
+        setState(() {
+          if (!_bookmarkedMessageIds.add(message.id)) {
+            _bookmarkedMessageIds.remove(message.id);
+          }
+        });
+        final preferences = widget.preferences;
+        if (preferences != null) {
+          unawaited(
+            preferences.setBookmarkedMessages(
+              widget.conversation.id,
+              _bookmarkedMessageIds,
+            ),
+          );
+        }
       case MessageAction.cancel:
         final confirmed = await showDialog<bool>(
           context: context,
@@ -1003,376 +1139,6 @@ class _ConversationPaneState extends State<ConversationPane>
       ],
     ),
   );
-
-  Future<void> _forwardMessage(MessageDto message) async {
-    final snapshot = widget.gateway.snapshots.value;
-    final options = snapshot.conversations
-        .where((conversation) => conversation.id != widget.conversation.id)
-        .toList(growable: false);
-    if (!mounted || options.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.strings.chooseConversation)),
-        );
-      }
-      return;
-    }
-    final target = await showDialog<ConversationDto>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: Text(context.strings.chooseConversation),
-        children: options
-            .map(
-              (conversation) => SimpleDialogOption(
-                onPressed: () => Navigator.of(context).pop(conversation),
-                child: Text(
-                  contactForSnapshot(snapshot, conversation)?.displayName ??
-                      context.strings.contactLabel,
-                ),
-              ),
-            )
-            .toList(growable: false),
-      ),
-    );
-    if (!mounted || target == null) return;
-    final result = await widget.gateway.execute(
-      QueueMessageCommandDto(conversationIdHex: target.id, body: message.body),
-    );
-    if (!mounted) return;
-    if (!result.ok) {
-      _showError(
-        BridgeErrorPresenter.localized(
-          context,
-          result,
-          fallback: 'Could not forward message',
-        ),
-      );
-    }
-  }
-
-  Widget _detail(String label, String value) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Text('$label: $value'),
-  );
-
-  String _date(int ms) => ms <= 0
-      ? context.strings.unavailable
-      : DateTime.fromMillisecondsSinceEpoch(ms).toLocal().toString();
-
-  Future<void> _sendMessage() async {
-    final body = _controller.text.trim();
-    if ((body.isEmpty && _pendingAttachments.isEmpty) || _searching) return;
-    if (body.isNotEmpty) {
-      final editing = _editingMessage;
-      final replyTo = _replyingTo?.id;
-      var sent = false;
-      await _operations.run('message:send', () async {
-        final result = await widget.gateway.execute(
-          editing == null
-              ? QueueMessageCommandDto(
-                  conversationIdHex: widget.conversation.id,
-                  body: body,
-                  replyToMessageId: replyTo,
-                )
-              : EditMessageCommandDto(messageIdHex: editing.id, body: body),
-        );
-        if (!mounted) return;
-        if (result.ok) {
-          sent = true;
-          _controller.clear();
-          _drafts.remove(widget.conversation.id);
-          final preferences = widget.preferences;
-          if (preferences != null) {
-            unawaited(preferences.clearDraft(widget.conversation.id));
-          }
-          setState(() {
-            _replyingTo = null;
-            _editingMessage = null;
-          });
-          await _timeline.refreshLatest();
-          WidgetsBinding.instance.addPostFrameCallback(
-            (_) => _scrollToBottom(),
-          );
-        } else {
-          _showError(
-            BridgeErrorPresenter.localized(
-              context,
-              result,
-              fallback: 'Could not queue message',
-            ),
-          );
-        }
-      });
-      if (!sent) return;
-    }
-    if (_pendingAttachments.isNotEmpty) await _queuePendingAttachments();
-  }
-
-  Future<void> _pickAttachments() async {
-    await _operations.run('attachment:pick', () async {
-      final picked = await FilePicker.pickFiles(
-        allowMultiple: true,
-        withData: false,
-      );
-      if (picked == null || picked.files.isEmpty || !mounted) return;
-      final capabilities = capabilitiesFor(widget.gateway);
-      final maxBytes = capabilities.maxAttachmentBytes;
-      final maximumFiles = capabilities.maxQueuedAttachments;
-      final maximumVideoBytes = capabilities.maxVideoAttachmentBytes;
-      final remainingSlots = maximumFiles - _pendingAttachments.length;
-      if (remainingSlots <= 0) {
-        _showError('You can queue at most $maximumFiles attachments.');
-        return;
-      }
-      if (picked.files.length > remainingSlots) {
-        _showError('Only $remainingSlots attachment slots remain.');
-      }
-      final preparedAttachments = <_PendingAttachment>[];
-      for (final file in picked.files.take(remainingSlots)) {
-        final path = file.path;
-        if (path == null || path.isEmpty) {
-          _showError('${file.name}: local file path is unavailable');
-          continue;
-        }
-        if (file.size <= 0) {
-          _showError('${file.name}: the selected file is empty');
-          continue;
-        }
-        if (file.size > capabilities.maxAttachmentSourceBytes) {
-          _showError(
-            '${file.name}: maximum source size is '
-            '${formatBytes(capabilities.maxAttachmentSourceBytes)}',
-          );
-          continue;
-        }
-        PreparedAttachment prepared;
-        try {
-          prepared = await _attachmentProcessor.prepare(
-            sourcePath: path,
-            originalName: file.name,
-            extension: file.extension,
-            maximumBytes: maxBytes,
-            maximumVideoBytes: maximumVideoBytes,
-            videoPreviewExtractor: VideoThumbnailService.extract,
-          );
-        } on AttachmentSizeException catch (error) {
-          _showError(
-            '${file.name}: maximum size is '
-            '${formatBytes(error.maximumBytes)}',
-          );
-          continue;
-        } on AttachmentSelectionException catch (error) {
-          _showError('${file.name}: ${error.message}');
-          continue;
-        } catch (_) {
-          _showError('${file.name}: the file could not be processed');
-          continue;
-        }
-        final limit = prepared.kind == AttachmentMediaKind.video
-            ? maximumVideoBytes
-            : maxBytes;
-        if (prepared.size > limit) {
-          _showError(
-            '${file.name}: maximum ${prepared.kind == AttachmentMediaKind.video ? 'video' : 'attachment'} size is ${formatBytes(limit)}',
-          );
-          await prepared.dispose();
-          continue;
-        }
-        preparedAttachments.add(_PendingAttachment(file.name, prepared));
-      }
-      if (preparedAttachments.isEmpty || !mounted) return;
-      setState(() => _pendingAttachments.addAll(preparedAttachments));
-    });
-  }
-
-  Future<void> _queuePendingAttachments() async {
-    if (_pendingAttachments.isEmpty) return;
-    final pending = List<_PendingAttachment>.of(_pendingAttachments);
-    var queued = 0;
-    await _operations.run('attachment:send', () async {
-      for (final item in pending) {
-        final prepared = item.prepared;
-        final response = await widget.gateway.execute(
-          QueueAttachmentCommandDto(
-            conversationIdHex: widget.conversation.id,
-            sourcePath: prepared.path,
-            previewSourcePath: prepared.previewPath,
-            name: prepared.name,
-            mediaType: prepared.mediaType,
-            size: prepared.size,
-          ),
-        );
-        if (!mounted) return;
-        if (!response.ok) {
-          // Keep the app-owned staging file and tray entry when queueing
-          // fails.  Relay/runtime outages are transient; deleting the source
-          // here made retry impossible and forced the user to pick the file
-          // again.
-          _showError(
-            '${item.originalName}: ${BridgeErrorPresenter.localized(context, response, fallback: context.strings.couldNotQueueAttachment)}',
-          );
-          continue;
-        }
-        await prepared.dispose();
-        if (!mounted) return;
-        setState(() => _pendingAttachments.remove(item));
-        queued++;
-      }
-      if (queued > 0) await _timeline.refreshLatest();
-      if (mounted && queued > 1) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.strings.attachmentsQueued(queued))),
-        );
-      }
-    });
-  }
-
-  Future<void> _saveAttachment(AttachmentDto attachment) async {
-    await _operations.run('attachment:${attachment.id}:save', () async {
-      final path = await FilePicker.saveFile(
-        dialogTitle: context.strings.saveAttachment,
-        fileName: attachment.name,
-      );
-      if (path == null || !mounted) return;
-      final result = await widget.gateway.execute(
-        ExportAttachmentCommandDto(
-          attachmentIdHex: attachment.id,
-          destinationPath: path,
-        ),
-      );
-      if (!mounted) return;
-      if (result.ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.strings.attachmentSaved)),
-        );
-      } else {
-        _showError(
-          BridgeErrorPresenter.localized(
-            context,
-            result,
-            fallback: 'Could not save attachment',
-          ),
-        );
-      }
-    });
-  }
-
-  Future<String?> _loadAttachmentPreview(AttachmentDto attachment) async {
-    final path =
-        '${Directory.systemTemp.path}${torcaPathSeparator}torca-preview-${attachment.id}.jpg';
-    final file = File(path);
-    if (await file.exists() && await file.length() > 0) return path;
-    final preview = await widget.gateway.execute(
-      ExportAttachmentPreviewCommandDto(
-        attachmentIdHex: attachment.id,
-        destinationPath: path,
-      ),
-    );
-    if (preview.ok && await file.exists()) return path;
-    // Attachments created by an older peer/build have no v2 preview.  A fully
-    // available image remains previewable via the original payload.
-    if (attachment.typedStatus != AttachmentStatus.available) return null;
-    final result = await widget.gateway.execute(
-      ExportAttachmentCommandDto(
-        attachmentIdHex: attachment.id,
-        destinationPath: path,
-      ),
-    );
-    return result.ok && await file.exists() ? path : null;
-  }
-
-  Future<void> _previewAttachment(AttachmentDto attachment) async {
-    final path = await _loadAttachmentPreview(attachment);
-    if (!mounted || path == null) {
-      if (mounted) _showError('Could not load image preview');
-      return;
-    }
-    await showDialog<void>(
-      context: context,
-      builder: (context) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 960, maxHeight: 760),
-          child: Stack(
-            children: <Widget>[
-              Positioned.fill(
-                child: InteractiveViewer(
-                  minScale: 0.5,
-                  maxScale: 5,
-                  child: Center(child: Image.file(File(path))),
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: IconButton.filledTonal(
-                  tooltip: context.strings.close,
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: Icon(context.torcaIcons.close),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openAttachment(AttachmentDto attachment) async {
-    await _operations.run('attachment:${attachment.id}:open', () async {
-      // The display name intentionally stays faithful to the user's selected
-      // filename even when an image was recompressed.  The temporary file used
-      // for the platform opener must instead use the authoritative MIME type
-      // so an optimised PNG (now JPEG bytes) is opened correctly.
-      final ext =
-          contentExtension(attachment.mediaType) ??
-          safeExtension(attachment.name);
-      final path =
-          '${Directory.systemTemp.path}${torcaPathSeparator}torca-${attachment.id}$ext';
-      final result = await widget.gateway.execute(
-        ExportAttachmentCommandDto(
-          attachmentIdHex: attachment.id,
-          destinationPath: path,
-        ),
-      );
-      if (!mounted) return;
-      if (!result.ok) {
-        _showError(
-          BridgeErrorPresenter.localized(
-            context,
-            result,
-            fallback: 'Could not open attachment',
-          ),
-        );
-        return;
-      }
-      final opened = await OpenFilex.open(path);
-      if (mounted && opened.type != ResultType.done) _showError(opened.message);
-    });
-  }
-
-  Future<void> _attachmentCommand(
-    String attachmentId,
-    String action,
-    BridgeCommandDto command,
-  ) async {
-    await _operations.run('attachment:$attachmentId:$action', () async {
-      final result = await widget.gateway.execute(command);
-      if (mounted && !result.ok) {
-        _showError(
-          BridgeErrorPresenter.localized(
-            context,
-            result,
-            fallback: context.strings.attachmentOperationFailed,
-          ),
-        );
-      }
-    });
-  }
-
-  void _showError(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  }
 }
 
 (bool, bool) _avatarTransferState(

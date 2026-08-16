@@ -93,9 +93,14 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
 /// Process-wide Tor, relay and P2P monitor. Payloads never enter this widget;
 /// only monotonic TX/RX counters and health projections cross the ABI.
 class RuntimeNetworkStatus extends StatefulWidget {
-  const RuntimeNetworkStatus({required this.snapshot, super.key});
+  const RuntimeNetworkStatus({
+    required this.snapshot,
+    this.compact = false,
+    super.key,
+  });
 
   final AppSnapshotDto snapshot;
+  final bool compact;
 
   @override
   State<RuntimeNetworkStatus> createState() => _RuntimeNetworkStatusState();
@@ -138,7 +143,7 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
 
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= 700;
+    final wide = !widget.compact && MediaQuery.sizeOf(context).width >= 700;
     final stale = _ticksSinceObservation >= _staleAfterTicks;
     return Semantics(
       label:

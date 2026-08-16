@@ -62,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<String> _openingContactIds = <String>{};
   final Set<String> _pinnedConversationIds = <String>{};
   final Set<String> _mutedConversationIds = <String>{};
+  final Set<String> _draftConversationIds = <String>{};
   final Set<String> _loadingConversationFlags = <String>{};
   int _attentionGeneration = 0;
 
@@ -241,6 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
           TransferCenterButton(
             gateway: widget.gateway,
             attachments: snapshot.attachments,
+            pendingOperations: snapshot.pendingOperations,
           ),
           AppOverflowMenu(
             hasIdentity: snapshot.identity != null,
@@ -273,10 +275,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _HomeSection.chats => _chats(snapshot),
     _HomeSection.contacts => _ContactsSection(
       contacts: snapshot.contacts,
+      pairings: snapshot.pairings,
+      conversations: snapshot.conversations,
+      messages: snapshot.messages,
+      attachments: snapshot.attachments,
       radio: snapshot.radio,
       selectedContactId: _selectedContactId,
       onOpenDetails: _openContactDetails,
       onOpenConversation: _openConversationForContact,
+      onOpenPairing: (pairing) =>
+          showPairingSessionModal(context, widget.gateway, pairing),
       onAction: _handleContactAction,
     ),
     _HomeSection.invitations => _InvitationsSection(
@@ -297,6 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
           radio: snapshot.radio,
           pinnedConversationIds: _pinnedConversationIds,
           mutedConversationIds: _mutedConversationIds,
+          draftConversationIds: _draftConversationIds,
           selectedConversationId: _selectedConversationId,
           onContactInfo: _openContactDetails,
           onAction: _handleConversationAction,
@@ -337,6 +346,7 @@ class _HomeScreenState extends State<HomeScreen> {
               radio: snapshot.radio,
               pinnedConversationIds: _pinnedConversationIds,
               mutedConversationIds: _mutedConversationIds,
+              draftConversationIds: _draftConversationIds,
               selectedConversationId: selected?.id,
               onContactInfo: _openContactDetails,
               onAction: _handleConversationAction,
@@ -375,7 +385,6 @@ class _HomeScreenState extends State<HomeScreen> {
               width: contactWidth,
               child: _ContactContextPanel(
                 contact: contact,
-                onOpenConversation: () => _openConversationForContact(contact),
                 onOpenConnectionDetails: () => _openContactDetails(contact),
                 onRename: () =>
                     _handleContactAction(contact, ContactAction.rename),
@@ -408,23 +417,40 @@ class _HomeScreenState extends State<HomeScreen> {
         });
 
   void _loadConversationFlags(List<ConversationDto> conversations) {
+    final pending = <ConversationDto>[];
     for (final conversation in conversations) {
       if (!_loadingConversationFlags.add(conversation.id)) continue;
-      Future.wait<bool>(<Future<bool>>[
-        widget.preferences.conversationPinned(conversation.id),
-        widget.preferences.conversationMuted(conversation.id),
-      ]).then((values) {
+      pending.add(conversation);
+    }
+    if (pending.isEmpty) return;
+
+    // Read all flags together and commit one state update. Previously each
+    // conversation completed independently and triggered its own rebuild,
+    // which could freeze Home while a large snapshot was being displayed.
+    unawaited(
+      Future.wait<List<Object?>>(
+        pending.map(
+          (conversation) => Future.wait<Object?>(<Future<Object?>>[
+            widget.preferences.conversationPinned(conversation.id),
+            widget.preferences.conversationMuted(conversation.id),
+            widget.preferences.draftFor(conversation.id),
+          ]),
+        ),
+      ).then((values) {
         if (!mounted) return;
         setState(() {
-          if (values[0]) {
-            _pinnedConversationIds.add(conversation.id);
-          }
-          if (values[1]) {
-            _mutedConversationIds.add(conversation.id);
+          for (var index = 0; index < pending.length; index++) {
+            final id = pending[index].id;
+            final flags = values[index];
+            if (flags[0] == true) _pinnedConversationIds.add(id);
+            if (flags[1] == true) _mutedConversationIds.add(id);
+            if (flags[2] is String && (flags[2] as String).trim().isNotEmpty) {
+              _draftConversationIds.add(id);
+            }
           }
         });
-      });
-    }
+      }),
+    );
   }
 
   ContactDto? _contactFor(List<ContactDto> contacts, String id) {
@@ -631,15 +657,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => ContactDetailsScreen(
-          gateway: widget.gateway,
-          contact: contact,
-          onStartConversation: () async {
-            Navigator.of(context).pop();
-            await Future<void>.delayed(Duration.zero);
-            if (mounted) _openConversationForContact(contact);
-          },
-        ),
+        builder: (_) =>
+            ContactDetailsScreen(gateway: widget.gateway, contact: contact),
       ),
     );
   }

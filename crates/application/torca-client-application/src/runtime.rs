@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -266,6 +266,37 @@ impl ClassifiedError for ApplicationError {
     }
 }
 
+/// Small in-memory guard against accidental message floods.
+///
+/// It is intentionally not a delivery queue: accepted messages remain
+/// durable and retryable. The limiter only protects the local command boundary
+/// from double taps, runaway automation and notification floods.
+#[derive(Default)]
+struct MessageRateLimiter {
+    per_conversation: BTreeMap<OpaqueId, VecDeque<i64>>,
+    global: VecDeque<i64>,
+}
+
+impl MessageRateLimiter {
+    const WINDOW_MS: i64 = 1_000;
+    const PER_CONVERSATION_LIMIT: usize = 8;
+    const GLOBAL_LIMIT: usize = 40;
+
+    fn allow(&mut self, conversation_id: OpaqueId, at_ms: i64) -> bool {
+        let cutoff = at_ms.saturating_sub(Self::WINDOW_MS);
+        self.global.retain(|value| *value > cutoff);
+        let entries = self.per_conversation.entry(conversation_id).or_default();
+        entries.retain(|value| *value > cutoff);
+        if entries.len() >= Self::PER_CONVERSATION_LIMIT || self.global.len() >= Self::GLOBAL_LIMIT
+        {
+            return false;
+        }
+        entries.push_back(at_ms);
+        self.global.push_back(at_ms);
+        true
+    }
+}
+
 pub struct ClientApplicationRuntime {
     application: ClientApplicationHandle,
     runtime: Option<RuntimeHandle>,
@@ -273,6 +304,7 @@ pub struct ClientApplicationRuntime {
     bootstrap: Mutex<BootstrapState>,
     read_models: Option<ApplicationReadModels>,
     pending: Mutex<Box<dyn PendingOperationStore>>,
+    message_rate_limiter: Mutex<MessageRateLimiter>,
 }
 
 impl ClientApplicationRuntime {
@@ -313,6 +345,7 @@ impl ClientApplicationRuntime {
             bootstrap: Mutex::new(BootstrapState::new()),
             read_models: None,
             pending: Mutex::new(Box::new(InMemoryPendingOperationStore::default())),
+            message_rate_limiter: Mutex::new(MessageRateLimiter::default()),
         }
     }
 
@@ -863,6 +896,14 @@ impl ClientApplicationRuntime {
                 reply_to_message_id,
                 at_ms,
             } => {
+                let allowed = self
+                    .message_rate_limiter
+                    .lock()
+                    .map_err(|_| "message rate limiter unavailable".to_owned())?
+                    .allow(conversation_id, at_ms);
+                if !allowed {
+                    return Err("message rate limit exceeded; retry in a moment".to_owned());
+                }
                 let value = self
                     .application
                     .dispatch(EngineCommand::QueueMessage {
@@ -1486,4 +1527,32 @@ fn retryable_runtime_error(error: &RuntimeDriverError) -> bool {
 
 fn string_error(error: impl core::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod message_rate_limiter_tests {
+    use super::MessageRateLimiter;
+    use torca_foundation::OpaqueId;
+
+    #[test]
+    fn limits_bursts_per_conversation() {
+        let mut limiter = MessageRateLimiter::default();
+        let contact = OpaqueId::from_u128(1);
+        for index in 0..MessageRateLimiter::PER_CONVERSATION_LIMIT {
+            assert!(limiter.allow(contact, i64::try_from(index).expect("test index fits in i64"),));
+        }
+        assert!(!limiter.allow(contact, 100));
+        assert!(limiter.allow(contact, 1_001));
+    }
+
+    #[test]
+    fn separate_conversations_have_independent_budgets() {
+        let mut limiter = MessageRateLimiter::default();
+        let first = OpaqueId::from_u128(1);
+        let second = OpaqueId::from_u128(2);
+        for index in 0..MessageRateLimiter::PER_CONVERSATION_LIMIT {
+            assert!(limiter.allow(first, i64::try_from(index).expect("test index fits in i64"),));
+        }
+        assert!(limiter.allow(second, 100));
+    }
 }

@@ -90,6 +90,70 @@ mod pairing_code_tests {
     }
 }
 
+#[cfg(test)]
+mod pairing_session_tests {
+    use super::*;
+    use torca_contacts::ContactRoute;
+    use torca_identity::{IdentityId, IdentityKey, KeyAlgorithm, KeyId, PublicIdentity};
+
+    fn timestamp(milliseconds: i64) -> Timestamp {
+        Timestamp::from_unix_millis(milliseconds).expect("valid timestamp")
+    }
+
+    fn proposal() -> PeerProposal {
+        PeerProposal {
+            public_identity: PublicIdentity::new(
+                IdentityId::from_u128(10),
+                IdentityKey::new(KeyId::from_u128(11), KeyAlgorithm::Ed25519, vec![1])
+                    .expect("valid public key"),
+                1,
+            ),
+            display_name: "Alice".to_owned(),
+            route: ContactRoute::new(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+                OpaqueId::from_u128(12),
+            )
+            .expect("valid route"),
+            avatar: None,
+        }
+    }
+
+    #[test]
+    fn session_reaches_completed_only_after_both_approvals() {
+        let mut session = PairingSession::creator(
+            PairingSessionId::from_u128(1),
+            PairingCode::new("ABC123").expect("valid code"),
+            timestamp(10_000),
+        );
+        session.peer_joined(proposal(), timestamp(1_000)).expect("join");
+        assert_eq!(session.state(), PairingState::AwaitingApproval);
+        assert_eq!(session.complete(timestamp(1_001)), Err(PairingError::NotReady));
+
+        session.approve_local(timestamp(1_002)).expect("local approval");
+        assert_eq!(session.state(), PairingState::Approved);
+        assert!(!session.can_complete(timestamp(1_003)));
+        session.approve_remote(timestamp(1_004)).expect("remote approval");
+        let completed = session.complete(timestamp(1_005)).expect("completion");
+        assert_eq!(completed.display_name, "Alice");
+        assert_eq!(session.state(), PairingState::Completed);
+    }
+
+    #[test]
+    fn expired_session_rejects_late_join() {
+        let mut session = PairingSession::creator(
+            PairingSessionId::from_u128(2),
+            PairingCode::new("ABC123").expect("valid code"),
+            timestamp(2_000),
+        );
+        assert!(session.expire(timestamp(2_000)));
+        assert_eq!(session.state(), PairingState::Expired);
+        assert_eq!(
+            session.peer_joined(proposal(), timestamp(2_001)),
+            Err(PairingError::InvalidTransition)
+        );
+    }
+}
+
 /// Local role in a pairing session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PairingRole {

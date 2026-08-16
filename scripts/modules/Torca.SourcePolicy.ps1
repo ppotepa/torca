@@ -179,9 +179,17 @@ $platformConditionalFragments = @(
     '#[cfg(windows)]', '#[cfg(not(windows))]',
     '#[cfg(target_os = "android")]', '#[cfg(not(target_os = "android"))]'
 )
+# A small number of infrastructure crates are deliberately platform-backed
+# adapters. `torca-radio-adapters` owns the cpal/Android capture bridge and
+# exposes a platform-neutral RadioAudioAdapter to the application layer; its
+# target gates are therefore part of the adapter boundary, not application
+# policy. Keep this exception narrow and path-based so new platform conditionals
+# still fail the architecture check by default.
+$platformBackedAdapterRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot 'crates/infrastructure/torca-radio-adapters'))
 $rustFilesOutsidePlatform = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Recurse -Filter '*.rs' -File |
     Where-Object { $_.FullName -notmatch '[\\/]target[\\/]' -and -not $_.FullName.StartsWith($rustPlatformBoundary, [StringComparison]::OrdinalIgnoreCase) }
 foreach ($file in $rustFilesOutsidePlatform) {
+    if ($file.FullName.StartsWith($platformBackedAdapterRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
     $text = Get-Content -LiteralPath $file.FullName -Raw
     foreach ($fragment in $platformConditionalFragments) {
         if ($text.Contains($fragment)) {
