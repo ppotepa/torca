@@ -911,4 +911,22 @@ mod tests {
         assert!(end_samples.iter().any(|sample| sample.abs() > 0.1));
         assert!(pipeline.playback_finished_after_end_cue());
     }
+
+    #[cfg(any(target_os = "windows", target_os = "android"))]
+    #[test]
+    fn playback_is_silent_while_local_capture_owns_the_floor() {
+        let pipeline = AudioPipeline::default();
+        let mut resampler = platform::PlaybackResampler::new(48_000);
+        pipeline.prepare_playback();
+
+        // Drain the deterministic start cue first; it is intentionally still
+        // audible before capture begins.
+        for _ in 0..6_000 {
+            let _ = resampler.next(&pipeline);
+        }
+        pipeline.push_inbound([0x7f; RADIO_SAMPLES_PER_FRAME]);
+        pipeline.set_capture_enabled(true);
+
+        assert!((0..200).all(|_| resampler.next(&pipeline) == 0.0));
+    }
 }
