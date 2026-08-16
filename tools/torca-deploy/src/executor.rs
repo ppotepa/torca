@@ -171,7 +171,7 @@ impl DeployExecutor {
             Vec::new()
         } else {
             DeviceController::new(&paths, self.runner.as_ref())
-                .discover(&run.plan.targets)
+                .discover_with_retry(&run.plan.targets)
                 .map_err(DeployError::Devices)?
         };
         if matches!(run.plan.action, crate::domain::DeployAction::CollectLogs) {

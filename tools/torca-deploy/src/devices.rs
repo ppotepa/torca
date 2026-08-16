@@ -1,6 +1,7 @@
 use crate::domain::Target;
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
+use std::io::{self, IsTerminal, Write};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -71,6 +72,38 @@ impl<'a> DeviceController<'a> {
             }
         }
         Ok(result)
+    }
+
+    /// Discover requested devices, offering an interactive retry when an
+    /// Android target is temporarily unavailable (for example while the
+    /// phone is locked or the USB authorization prompt is pending).
+    pub fn discover_with_retry(&self, targets: &[Target]) -> Result<Vec<Device>, DeviceError> {
+        const MAX_RETRIES: usize = 5;
+        let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+        for attempt in 0..=MAX_RETRIES {
+            match self.discover(targets) {
+                Ok(devices) => return Ok(devices),
+                Err(DeviceError::RequestedTargetUnavailable(Target::Android))
+                    if interactive && attempt < MAX_RETRIES =>
+                {
+                    eprintln!(
+                        "torca-deploy: no ADB Android devices found. Unlock the phone, accept USB debugging, then press Enter to retry (attempt {}/{}) or type q to abort.",
+                        attempt + 1,
+                        MAX_RETRIES
+                    );
+                    print!("torca-deploy: ");
+                    let _ = io::stdout().flush();
+                    let mut input = String::new();
+                    if io::stdin().read_line(&mut input).is_err()
+                        || input.trim().eq_ignore_ascii_case("q")
+                    {
+                        return Err(DeviceError::RequestedTargetUnavailable(Target::Android));
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(DeviceError::RequestedTargetUnavailable(Target::Android))
     }
 
     fn android_abi(&self, device: &str) -> Result<AndroidAbi, DeviceError> {
