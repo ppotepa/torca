@@ -645,10 +645,11 @@ void _workerMainImpl(List<Object?> arguments) {
         waiter.send(<String, Object?>{
           'revision': runtimeRevision,
           'cursor': notificationCursor,
-          // Keep a bounded wait so disposal never releases the native handle
-          // while a foreign thread is blocked inside the FFI call. Runtime
-          // revisions still wake this path immediately when available.
-          'timeoutMs': 1000,
+          // Zero is the native condvar wait: wake only for a revision/cursor
+          // change or explicit cancellation. Disposal cancels the waiter
+          // before releasing the runtime handle, so idle Flutter has no
+          // compatibility polling wakeups.
+          'timeoutMs': 0,
           'reply': reply.sendPort,
         });
         reply.first

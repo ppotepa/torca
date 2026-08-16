@@ -429,7 +429,7 @@ class TorcaForegroundService : Service() {
         // revision/cursor change or explicit service shutdown cancellation.
         // A bounded wait gives shutdown a deterministic upper bound and
         // avoids releasing the native runtime while JNI is still blocked.
-        const val EVENT_WAIT_TIMEOUT_MS = 1000
+        const val EVENT_WAIT_TIMEOUT_MS = 0
         const val RUNTIME_WAIT_MS = 250L
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
         const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
