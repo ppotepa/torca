@@ -45,8 +45,9 @@ impl SensitiveSql {
         let mut bytes = Vec::with_capacity(82);
         bytes.extend_from_slice(b"PRAGMA key = \"x'");
         for byte in key {
-            bytes.push(HEX[usize::from(byte >> 4)]);
-            bytes.push(HEX[usize::from(byte & 0x0f)]);
+            let value = *byte;
+            bytes.push(HEX[usize::from(value >> 4)]);
+            bytes.push(HEX[usize::from(value & 0x0f)]);
         }
         bytes.extend_from_slice(b"'\";");
         Self(bytes)
