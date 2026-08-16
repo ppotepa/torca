@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
-use std::thread::{self, JoinHandle};
+use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
 use torca_battery::{
@@ -35,6 +35,24 @@ use torca_foundation::{
 use torca_messaging::{MessageBody, MessageId, MessageStatus};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
+
+// Included runtime files use `thread::spawn` and `thread::yield_now`. Keep that
+// compact vocabulary while guaranteeing the process-owned runtime thread has a
+// stable diagnostic name.
+mod thread {
+    pub use std::thread::yield_now;
+
+    pub fn spawn<F, T>(f: F) -> std::thread::JoinHandle<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        std::thread::Builder::new()
+            .name("torca-runtime-owner".into())
+            .spawn(f)
+            .expect("spawn Torca runtime owner")
+    }
+}
 
 const COMMAND_WAIT: Duration = Duration::from_secs(10);
 const QUERY_WAIT: Duration = Duration::from_secs(5);

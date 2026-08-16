@@ -34,22 +34,25 @@ fn begin_runtime_start(&mut self) {
         let _ = progress_sender.send(HostStartEvent::Progress(progress));
     });
     let read_receipt_policy = self.read_receipt_policy.clone();
-    thread::spawn(move || {
-        let result = match catch_unwind(AssertUnwindSafe(|| {
-            spawn_production_runtime(engine, observer, read_receipt_policy)
-        })) {
-            Ok(result) => result,
-            Err(payload) => Err(NativeCompositionError::new(format!(
-                "production network runtime worker panicked: {}",
-                panic_message(payload)
-            ))),
-        };
-        if let Err(send_error) = sender.send(HostStartEvent::Finished(result))
-            && let HostStartEvent::Finished(Ok((_handle, owner, _radio))) = send_error.0
-        {
-            let _ = owner.shutdown();
-        }
-    });
+    thread::Builder::new()
+        .name("torca-network-start".into())
+        .spawn(move || {
+            let result = match catch_unwind(AssertUnwindSafe(|| {
+                spawn_production_runtime(engine, observer, read_receipt_policy)
+            })) {
+                Ok(result) => result,
+                Err(payload) => Err(NativeCompositionError::new(format!(
+                    "production network runtime worker panicked: {}",
+                    panic_message(payload)
+                ))),
+            };
+            if let Err(send_error) = sender.send(HostStartEvent::Finished(result))
+                && let HostStartEvent::Finished(Ok((_handle, owner, _radio))) = send_error.0
+            {
+                let _ = owner.shutdown();
+            }
+        })
+        .expect("spawn Torca network startup worker");
 }
 
 fn create_bootstrap_identity(&mut self) -> Result<(), ()> {

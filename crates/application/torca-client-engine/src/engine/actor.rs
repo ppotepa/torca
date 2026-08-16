@@ -41,7 +41,6 @@ impl EngineHandle {
         )?;
         receiver.recv_timeout(Duration::from_secs(5)).map_err(|_| EngineError::Unavailable)?
     }
-
     pub fn message_status(
         &self,
         message_id: MessageId,
@@ -50,7 +49,6 @@ impl EngineHandle {
         send_with_timeout(&self.sender, ActorRequest::MessageStatus(message_id, sender))?;
         receiver.recv_timeout(Duration::from_secs(5)).map_err(|_| EngineError::Unavailable)?
     }
-
     pub fn projection_event_count(&self) -> u64 {
         self.projection_events.load(Ordering::Acquire)
     }
@@ -69,41 +67,44 @@ impl ClientEngineActor {
             sender: sender.clone(),
             projection_events: Arc::clone(&projection_events),
         };
-        let join = thread::spawn(move || {
-            loop {
-                let request = match receiver.recv() {
-                    Ok(request) => request,
-                    Err(_) => break,
-                };
-                match request {
-                    ActorRequest::Dispatch(command, response) => {
-                        let counts_projection = matches!(
-                            &*command,
-                            EngineCommand::ApplyReceipt(_)
-                                | EngineCommand::SetMessageReaction { .. }
-                        );
-                        let result = engine.dispatch(*command);
-                        if counts_projection && result.is_ok() {
-                            projection_events.fetch_add(1, Ordering::Release);
+        let join = thread::Builder::new()
+            .name("torca-client-engine".into())
+            .spawn(move || {
+                loop {
+                    let request = match receiver.recv() {
+                        Ok(request) => request,
+                        Err(_) => break,
+                    };
+                    match request {
+                        ActorRequest::Dispatch(command, response) => {
+                            let counts_projection = matches!(
+                                &*command,
+                                EngineCommand::ApplyReceipt(_)
+                                    | EngineCommand::SetMessageReaction { .. }
+                            );
+                            let result = engine.dispatch(*command);
+                            if counts_projection && result.is_ok() {
+                                projection_events.fetch_add(1, Ordering::Release);
+                            }
+                            let _ = response.send(result);
                         }
-                        let _ = response.send(result);
+                        ActorRequest::Snapshot(response) => {
+                            let _ = response.send(engine.snapshot());
+                        }
+                        ActorRequest::OverviewSnapshot(response) => {
+                            let _ = response.send(engine.overview_snapshot());
+                        }
+                        ActorRequest::AvatarGenomeForIdentity(identity_id, response) => {
+                            let _ = response.send(engine.avatar_genome_for_identity(identity_id));
+                        }
+                        ActorRequest::MessageStatus(message_id, response) => {
+                            let _ = response.send(engine.message_status(message_id));
+                        }
+                        ActorRequest::Shutdown => break,
                     }
-                    ActorRequest::Snapshot(response) => {
-                        let _ = response.send(engine.snapshot());
-                    }
-                    ActorRequest::OverviewSnapshot(response) => {
-                        let _ = response.send(engine.overview_snapshot());
-                    }
-                    ActorRequest::AvatarGenomeForIdentity(identity_id, response) => {
-                        let _ = response.send(engine.avatar_genome_for_identity(identity_id));
-                    }
-                    ActorRequest::MessageStatus(message_id, response) => {
-                        let _ = response.send(engine.message_status(message_id));
-                    }
-                    ActorRequest::Shutdown => break,
                 }
-            }
-        });
+            })
+            .expect("spawn torca client engine actor");
         (handle, Self { sender, join: Some(join) })
     }
 
