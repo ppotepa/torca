@@ -25,7 +25,7 @@ use torca_identity::{
 };
 use torca_messaging::{
     InMemoryMessageRepository, Message, MessageBody, MessageId, MessageReaction, MessageRepository,
-    ReplyReference,
+    MessageStatus, ReplyReference,
 };
 use torca_pairing::{
     InMemoryPairingRepository, PairingCode, PairingRepository, PairingSession, PairingSessionId,
@@ -753,21 +753,27 @@ where
 
     pub fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         let conversations = ConversationRepository::list(&self.relationships).map_err(map_error)?;
-        let mut reactions = Vec::new();
-        for conversation in &conversations {
-            reactions.extend(
-                self.messages.reactions_for_conversation(conversation.id()).map_err(map_error)?,
-            );
-        }
         Ok(ClientSnapshot {
             identity: self.identity.load().map_err(map_error)?,
             pairings: self.pairings.list().map_err(map_error)?,
             contacts: ContactRepository::list(&self.relationships).map_err(map_error)?,
             conversations,
             messages: Vec::new(),
-            reactions,
+            // Reactions belong to conversation history and are intentionally
+            // omitted from the root overview projection.
+            reactions: Vec::new(),
             avatar_genome: self.relationships.local_avatar_genome().map_err(map_error)?,
         })
+    }
+
+    pub fn message_status(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Option<MessageStatus>, EngineError> {
+        self.messages
+            .get(message_id)
+            .map(|message| message.map(|value| value.status()))
+            .map_err(map_error)
     }
 
     fn load_pairing(&self, id: PairingSessionId) -> Result<PairingSession, EngineError> {
@@ -795,6 +801,7 @@ pub trait EngineRuntime: Send + 'static {
         &self,
         identity_id: IdentityId,
     ) -> Result<Option<AvatarGenomeRecord>, EngineError>;
+    fn message_status(&self, message_id: MessageId) -> Result<Option<MessageStatus>, EngineError>;
 }
 
 impl<I, K, P, L, M, R> EngineRuntime for ClientEngine<I, K, P, L, M, R>
@@ -821,6 +828,9 @@ where
     ) -> Result<Option<AvatarGenomeRecord>, EngineError> {
         self.relationships.avatar_genome_for_identity(identity_id)
     }
+    fn message_status(&self, message_id: MessageId) -> Result<Option<MessageStatus>, EngineError> {
+        ClientEngine::message_status(self, message_id)
+    }
 }
 
 fn map_error(error: impl fmt::Display) -> EngineError {
@@ -828,10 +838,11 @@ fn map_error(error: impl fmt::Display) -> EngineError {
 }
 
 enum ActorRequest {
-    Dispatch(EngineCommand, Sender<Result<EngineResult, EngineError>>),
+    Dispatch(Box<EngineCommand>, Sender<Result<EngineResult, EngineError>>),
     Snapshot(Sender<Result<ClientSnapshot, EngineError>>),
     OverviewSnapshot(Sender<Result<ClientSnapshot, EngineError>>),
     AvatarGenomeForIdentity(IdentityId, Sender<Result<Option<AvatarGenomeRecord>, EngineError>>),
+    MessageStatus(MessageId, Sender<Result<Option<MessageStatus>, EngineError>>),
     Shutdown,
 }
 
@@ -843,7 +854,7 @@ pub struct EngineHandle {
 impl EngineHandle {
     pub fn dispatch(&self, command: EngineCommand) -> Result<EngineResult, EngineError> {
         let (sender, receiver) = mpsc::channel();
-        send_with_timeout(&self.sender, ActorRequest::Dispatch(command, sender))?;
+        send_with_timeout(&self.sender, ActorRequest::Dispatch(Box::new(command), sender))?;
         receiver
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| EngineError("engine response timed out".into()))?
@@ -876,6 +887,17 @@ impl EngineHandle {
             .map_err(|_| EngineError("avatar genome query timed out".into()))?
     }
 
+    pub fn message_status(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Option<MessageStatus>, EngineError> {
+        let (sender, receiver) = mpsc::channel();
+        send_with_timeout(&self.sender, ActorRequest::MessageStatus(message_id, sender))?;
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| EngineError("engine message status timed out".into()))?
+    }
+
     /// Cumulative successful receipt/reaction projection commands. This is a
     /// logical operation count, not an estimate of SQL statements or energy.
     pub fn projection_event_count(&self) -> u64 {
@@ -898,19 +920,22 @@ impl ClientEngineActor {
         };
         let join = thread::spawn(move || {
             loop {
-                let request = match receiver.recv_timeout(Duration::from_secs(1)) {
+                // The engine has no periodic maintenance responsibility. It
+                // owns durable command/snapshot serialization only, so a
+                // blocking receive removes one application wakeup per second
+                // while idle. Deadline work belongs to torca-runtime.
+                let request = match receiver.recv() {
                     Ok(request) => request,
-                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(_) => break,
                 };
                 match request {
                     ActorRequest::Dispatch(command, response) => {
                         let counts_projection = matches!(
-                            &command,
+                            &*command,
                             EngineCommand::ApplyReceipt(_)
                                 | EngineCommand::SetMessageReaction { .. }
                         );
-                        let result = engine.dispatch(command);
+                        let result = engine.dispatch(*command);
                         if counts_projection && result.is_ok() {
                             projection_events.fetch_add(1, Ordering::Release);
                         }
@@ -924,6 +949,9 @@ impl ClientEngineActor {
                     }
                     ActorRequest::AvatarGenomeForIdentity(identity_id, response) => {
                         let _ = response.send(engine.avatar_genome_for_identity(identity_id));
+                    }
+                    ActorRequest::MessageStatus(message_id, response) => {
+                        let _ = response.send(engine.message_status(message_id));
                     }
                     ActorRequest::Shutdown => break,
                 }

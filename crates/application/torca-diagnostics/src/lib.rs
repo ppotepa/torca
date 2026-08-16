@@ -4,7 +4,16 @@ use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 
+use torca_battery::{
+    BatteryLedger, BatteryMetric, BatteryProfile, BatterySnapshot, PlatformEnergySample,
+    RuntimePolicySnapshot, WakeReason,
+};
 use torca_foundation::{OpaqueId, Timestamp};
+
+/// Backwards-compatible name for the unified battery ledger snapshot.
+pub type RuntimeCounters = BatterySnapshot;
+/// Backwards-compatible name for the unified battery metric enum.
+pub type RuntimeCounter = BatteryMetric;
 
 /// Application component represented in health reports.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -121,37 +130,9 @@ pub struct DiagnosticBuffer {
     capacity: usize,
     events: VecDeque<DiagnosticEvent>,
     health: BTreeMap<Component, ComponentHealth>,
-    counters: RuntimeCounters,
-}
-
-/// Application-controlled work counters used by the battery regression gate.
-/// These are deliberately abstract counts, not claims about physical mWh.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct RuntimeCounters {
-    pub scheduler_wakeups: u64,
-    pub snapshot_builds: u64,
-    pub peer_probes: u64,
-    pub relay_probes: u64,
-    pub ffi_wakes: u64,
-    pub db_reads: u64,
-    pub db_writes: u64,
-    pub blob_writes: u64,
-    pub projection_events: u64,
-    pub radio_wakeups: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RuntimeCounter {
-    SchedulerWakeup,
-    SnapshotBuild,
-    PeerProbe,
-    RelayProbe,
-    FfiWake,
-    DbRead,
-    DbWrite,
-    BlobWrite,
-    ProjectionEvent,
-    RadioWake,
+    battery: BatteryLedger,
+    profile: BatteryProfile,
+    policy: Option<RuntimePolicySnapshot>,
 }
 
 impl DiagnosticBuffer {
@@ -161,7 +142,9 @@ impl DiagnosticBuffer {
             capacity: capacity.max(1),
             events: VecDeque::new(),
             health: BTreeMap::new(),
-            counters: RuntimeCounters::default(),
+            battery: BatteryLedger::new(),
+            profile: BatteryProfile::AlwaysAvailable,
+            policy: None,
         }
     }
     /// Records an event and updates health.
@@ -185,22 +168,43 @@ impl DiagnosticBuffer {
         HealthSnapshot { components: self.health.values().cloned().collect() }
     }
     pub fn count(&mut self, counter: RuntimeCounter) {
-        let value = match counter {
-            RuntimeCounter::SchedulerWakeup => &mut self.counters.scheduler_wakeups,
-            RuntimeCounter::SnapshotBuild => &mut self.counters.snapshot_builds,
-            RuntimeCounter::PeerProbe => &mut self.counters.peer_probes,
-            RuntimeCounter::RelayProbe => &mut self.counters.relay_probes,
-            RuntimeCounter::FfiWake => &mut self.counters.ffi_wakes,
-            RuntimeCounter::DbRead => &mut self.counters.db_reads,
-            RuntimeCounter::DbWrite => &mut self.counters.db_writes,
-            RuntimeCounter::BlobWrite => &mut self.counters.blob_writes,
-            RuntimeCounter::ProjectionEvent => &mut self.counters.projection_events,
-            RuntimeCounter::RadioWake => &mut self.counters.radio_wakeups,
-        };
-        *value = value.saturating_add(1);
+        self.record_battery(counter, 1, WakeReason::Scheduler);
+    }
+    /// Adds a monotonic counter delta in one ledger operation. Runtime loops
+    /// must use this for persisted deltas instead of iterating once per event.
+    pub fn count_by(&mut self, counter: RuntimeCounter, amount: u64) {
+        if amount > 0 {
+            self.record_battery(counter, amount, WakeReason::Scheduler);
+        }
+    }
+    /// Records a feature-owned metric with its explicit wake reason.
+    pub fn record_battery(&mut self, metric: BatteryMetric, amount: u64, reason: WakeReason) {
+        self.battery.record(metric, amount, reason);
     }
     pub fn counters(&self) -> RuntimeCounters {
-        self.counters
+        self.battery.snapshot()
+    }
+    /// Returns the shared battery ledger for feature executors.
+    pub fn battery(&self) -> BatteryLedger {
+        self.battery.clone()
+    }
+    /// Changes the local policy profile; delivery correctness remains owned by
+    /// feature executors and is never disabled by this setting.
+    pub fn set_battery_profile(&mut self, profile: BatteryProfile) {
+        self.profile = profile;
+    }
+    pub fn battery_profile(&self) -> BatteryProfile {
+        self.profile
+    }
+    /// Stores the latest redaction-safe scheduler projection. Resource IDs are
+    /// intentionally absent; this is the source for the Why Awake view.
+    pub fn set_policy_snapshot(&mut self, snapshot: RuntimePolicySnapshot) {
+        self.policy = Some(snapshot);
+    }
+    /// Updates the platform sample after a lifecycle transition or explicit
+    /// diagnostics request; no polling is performed here.
+    pub fn set_platform_energy_sample(&mut self, sample: PlatformEnergySample) {
+        self.battery.set_platform_sample(sample);
     }
     /// Exports deterministic JSON without private message or key fields.
     pub fn export_json(&self) -> String {
@@ -225,10 +229,47 @@ impl DiagnosticBuffer {
             }
             output.push('}');
         }
-        let counters = self.counters;
+        let counters = self.battery.snapshot();
+        let platform = self.battery.platform_sample();
+        let why_awake = self
+            .policy
+            .as_ref()
+            .map_or_else(|| "null".to_owned(), |policy| {
+                let reasons = policy
+                    .active_lease_reasons
+                    .iter()
+                    .map(|(reason, count)| format!("\"{reason:?}\":{count}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let work = policy
+                    .scheduled_work_classes
+                    .iter()
+                    .map(|(class, count)| format!("\"{class:?}\":{count}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{{\"activeLeases\":{},\"activeDemands\":{},\"scheduledDeadlines\":{},\"nextDeadlineInMs\":{},\"networkGeneration\":{},\"focusActive\":{},\"focusRemainingMs\":{},\"leaseReasons\":{{{reasons}}},\"scheduledWork\":{{{work}}}}}",
+                    policy.active_leases,
+                    policy.active_demands,
+                    policy.scheduled_deadlines,
+                    policy.next_deadline_in_ms.map_or_else(|| "null".into(), |value| value.to_string()),
+                    policy.network_generation,
+                    policy.focus_active,
+                    policy.focus_remaining_ms.map_or_else(|| "null".into(), |value| value.to_string()),
+                )
+            });
         let _ = write!(
             output,
-            "],\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{}}}}}",
+            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{}}}}}",
+            self.profile,
+            optional_json_u8(platform.battery_percent),
+            optional_json_bool(platform.charging),
+            optional_json_bool(platform.power_saver),
+            optional_json_bool(platform.metered_network),
+            optional_json_u64(platform.process_cpu_ms),
+            optional_json_u64(platform.uid_tx_bytes),
+            optional_json_u64(platform.uid_rx_bytes),
+            why_awake,
             counters.scheduler_wakeups,
             counters.snapshot_builds,
             counters.peer_probes,
@@ -239,6 +280,16 @@ impl DiagnosticBuffer {
             counters.blob_writes,
             counters.projection_events,
             counters.radio_wakeups,
+            counters.tor_dials,
+            counters.relay_dials,
+            counters.peer_dials,
+            counters.handshakes,
+            counters.tx_frames,
+            counters.rx_frames,
+            counters.attachment_chunks_tx,
+            counters.attachment_chunks_rx,
+            counters.suppressed_work,
+            counters.total_work(),
         );
         output
     }
@@ -254,6 +305,15 @@ fn push_json_string(value: &str, output: &mut String) {
             value => output.push(value),
         }
     }
+}
+fn optional_json_bool(value: Option<bool>) -> String {
+    value.map_or_else(|| "null".to_owned(), |value| value.to_string())
+}
+fn optional_json_u8(value: Option<u8>) -> String {
+    value.map_or_else(|| "null".to_owned(), |value| value.to_string())
+}
+fn optional_json_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "null".to_owned(), |value| value.to_string())
 }
 
 /// Deterministic fail-point registry for integration tests.
@@ -286,6 +346,12 @@ mod tests {
     #[test]
     fn energy_ledger_exports_database_write_counter() {
         let mut diagnostics = DiagnosticBuffer::new(4);
+        diagnostics.set_battery_profile(BatteryProfile::BatterySaver);
+        diagnostics.set_platform_energy_sample(PlatformEnergySample {
+            battery_percent: Some(73),
+            charging: Some(false),
+            ..PlatformEnergySample::default()
+        });
         diagnostics.count(RuntimeCounter::DbWrite);
         diagnostics.count(RuntimeCounter::DbWrite);
         diagnostics.count(RuntimeCounter::BlobWrite);
@@ -296,5 +362,27 @@ mod tests {
         assert!(diagnostics.export_json().contains("\"dbWrites\":2"));
         assert!(diagnostics.export_json().contains("\"blobWrites\":1"));
         assert!(diagnostics.export_json().contains("\"projectionEvents\":1"));
+        assert!(diagnostics.export_json().contains("\"batteryProfile\":\"BatterySaver\""));
+        assert!(diagnostics.export_json().contains("\"batteryPercent\":73"));
+    }
+
+    #[test]
+    fn why_awake_projection_is_redacted_and_exported() {
+        let now = std::time::Instant::now();
+        let mut governor = torca_battery::RuntimeGovernor::new(now);
+        governor.acquire_lease(torca_battery::WorkDemand {
+            scope: torca_battery::ResourceScope::Relay,
+            class: torca_battery::WorkClass::RelayProbe,
+            reason: torca_battery::DemandReason::ActivePairing,
+            owner: torca_battery::OpaqueId::from_u128(42),
+            expires_at: now + std::time::Duration::from_secs(30),
+        });
+        let mut diagnostics = DiagnosticBuffer::new(4);
+        diagnostics.set_policy_snapshot(governor.snapshot(now));
+        let json = diagnostics.export_json();
+        assert!(json.contains("\"whyAwake\""));
+        assert!(json.contains("\"activeLeases\":1"));
+        assert!(json.contains("ActivePairing"));
+        assert!(!json.contains("42"));
     }
 }

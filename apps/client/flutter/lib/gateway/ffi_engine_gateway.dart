@@ -596,6 +596,7 @@ void _workerMainImpl(List<Object?> arguments) {
             handle,
             RuntimeRequestDto.runtimePoll(
               notificationCursor,
+              afterRevision: runtimeRevision,
             ).encode('worker-poll-${DateTime.now().microsecondsSinceEpoch}'),
             5000,
           );
@@ -644,9 +645,10 @@ void _workerMainImpl(List<Object?> arguments) {
         waiter.send(<String, Object?>{
           'revision': runtimeRevision,
           'cursor': notificationCursor,
-          // Wait indefinitely in native code. Disposal cancels the wait
-          // explicitly, so idle state never turns into periodic FFI calls.
-          'timeoutMs': 0,
+          // Keep a bounded wait so disposal never releases the native handle
+          // while a foreign thread is blocked inside the FFI call. Runtime
+          // revisions still wake this path immediately when available.
+          'timeoutMs': 1000,
           'reply': reply.sendPort,
         });
         reply.first

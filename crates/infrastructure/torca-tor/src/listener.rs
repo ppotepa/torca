@@ -8,11 +8,14 @@ use std::time::Duration;
 use crate::{TorPeerTransport, TransportError};
 use torca_peer::PeerTransportError;
 
+type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+type WakeSlot = Arc<Mutex<Option<WakeCallback>>>;
+
 /// Loopback-only TCP listener targeted by the owned Tor onion service.
 pub struct PeerListener {
     local_addr: SocketAddr,
     incoming: Arc<Mutex<VecDeque<(TcpStream, SocketAddr)>>>,
-    wake: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+    wake: WakeSlot,
     stop: Arc<AtomicBool>,
     accept_thread: Option<JoinHandle<()>>,
 }
@@ -85,7 +88,7 @@ impl Drop for PeerListener {
 fn accept_loop(
     listener: TcpListener,
     incoming: Arc<Mutex<VecDeque<(TcpStream, SocketAddr)>>>,
-    wake: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+    wake: WakeSlot,
     stop: Arc<AtomicBool>,
 ) {
     while !stop.load(Ordering::Acquire) {

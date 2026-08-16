@@ -1322,6 +1322,21 @@ class SetReadReceiptsEnabledCommandDto extends BridgeCommandDto {
   final bool enabled;
 }
 
+class SetBatteryPreferencesCommandDto extends BridgeCommandDto {
+  const SetBatteryPreferencesCommandDto({
+    required this.mode,
+    required this.backgroundSync,
+    required this.allowDelayedBackgroundDelivery,
+    required this.meteredTransfers,
+    required this.visualActivity,
+  });
+  final String mode;
+  final String backgroundSync;
+  final bool allowDelayedBackgroundDelivery;
+  final String meteredTransfers;
+  final String visualActivity;
+}
+
 class AcknowledgeNewContactsCommandDto extends BridgeCommandDto {
   const AcknowledgeNewContactsCommandDto();
 }
@@ -1397,10 +1412,16 @@ class RuntimeRequestDto {
         payload: <String, Object?>{'afterCursor': afterCursor},
       );
 
-  factory RuntimeRequestDto.runtimePoll(int afterCursor) => RuntimeRequestDto._(
+  factory RuntimeRequestDto.runtimePoll(
+    int afterCursor, {
+    int afterRevision = 0,
+  }) => RuntimeRequestDto._(
     kind: 'query',
     name: 'runtime.poll',
-    payload: <String, Object?>{'afterCursor': afterCursor},
+    payload: <String, Object?>{
+      'afterCursor': afterCursor,
+      'afterRevision': afterRevision,
+    },
   );
 
   static const RuntimeRequestDto diagnostics = RuntimeRequestDto._(
@@ -1604,6 +1625,15 @@ class RuntimeRequestDto {
     if (command is SetReadReceiptsEnabledCommandDto) {
       return _command('privacy.read_receipts.set', <String, Object?>{
         'enabled': command.enabled,
+      });
+    }
+    if (command is SetBatteryPreferencesCommandDto) {
+      return _command('battery.preferences.set', <String, Object?>{
+        'mode': command.mode,
+        'backgroundSync': command.backgroundSync,
+        'allowDelayedBackgroundDelivery': command.allowDelayedBackgroundDelivery,
+        'meteredTransfers': command.meteredTransfers,
+        'visualActivity': command.visualActivity,
       });
     }
     if (command is AcknowledgeNewContactsCommandDto) {

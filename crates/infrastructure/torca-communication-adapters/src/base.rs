@@ -30,7 +30,7 @@ use torca_delivery::{
 };
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
-use torca_peer_link::{LinkAck, PeerLinkError};
+use torca_peer_link::LinkAck;
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
 use torca_receipts::{Receipt, ReceiptId, ReceiptKind};
@@ -741,9 +741,4 @@ fn map_ack(ack: LinkAck) -> DeliveryAck {
         LinkAck::Accepted => DeliveryAck::Accepted,
         LinkAck::Duplicate => DeliveryAck::Duplicate,
     }
-}
-
-#[allow(dead_code)]
-fn _map_peer(_: PeerLinkError) -> CommunicationError {
-    CommunicationError::Peer
 }

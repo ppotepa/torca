@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -95,11 +95,6 @@ pub enum PathError {
     RepositoryNotFound,
     #[error("could not create runtime directory {path}: {source}")]
     Create { path: PathBuf, source: std::io::Error },
-}
-
-#[allow(dead_code)]
-fn _is_within(path: &Path, root: &Path) -> bool {
-    path.canonicalize().ok().zip(root.canonicalize().ok()).is_some_and(|(p, r)| p.starts_with(r))
 }
 
 #[cfg(test)]

@@ -2,6 +2,15 @@ use core::fmt;
 use std::path::Path;
 
 use rusqlite::OptionalExtension;
+use torca_battery::{
+    BackgroundSyncCadence, BatteryPreferences, MeteredTransferPolicy, RequestedBatteryMode,
+    VisualActivityPolicy,
+};
+
+const BATTERY_PREFERENCES_SQL: &str =
+    include_str!("../sql/queries/runtime_battery_preferences.sql");
+const BATTERY_PREFERENCES_UPDATE_SQL: &str =
+    include_str!("../sql/commands/runtime_battery_preferences_update.sql");
 
 use crate::{DatabaseKey, SqlCipherBackend, SqlCipherStoreOpenError};
 
@@ -78,6 +87,43 @@ impl SqlCipherSettingsStore {
         self.set_bool_setting(READ_RECEIPTS_ENABLED, enabled, updated_at_ms)
     }
 
+    pub fn battery_preferences(&self) -> Result<BatteryPreferences, SettingsError> {
+        self.backend
+            .connection()
+            .query_row(BATTERY_PREFERENCES_SQL, [], |row| {
+                Ok(BatteryPreferences {
+                    mode: parse_mode(&row.get::<_, String>(0)?),
+                    background_sync: parse_sync(&row.get::<_, String>(1)?),
+                    allow_delayed_background_delivery: row.get::<_, i64>(2)? != 0,
+                    metered_transfers: parse_metered(&row.get::<_, String>(3)?),
+                    visual_activity: parse_visual(&row.get::<_, String>(4)?),
+                })
+            })
+            .map_err(|_| SettingsError::Query)
+    }
+
+    pub fn set_battery_preferences(
+        &self,
+        preferences: BatteryPreferences,
+        updated_at_ms: i64,
+    ) -> Result<(), SettingsError> {
+        self.backend
+            .connection()
+            .execute(
+                BATTERY_PREFERENCES_UPDATE_SQL,
+                rusqlite::params![
+                    mode_value(preferences.mode),
+                    sync_value(preferences.background_sync),
+                    i64::from(preferences.allow_delayed_background_delivery),
+                    metered_value(preferences.metered_transfers),
+                    visual_value(preferences.visual_activity),
+                    updated_at_ms,
+                ],
+            )
+            .map_err(|_| SettingsError::Write)?;
+        Ok(())
+    }
+
     /// Returns the local acknowledgement boundary for the Contacts navigation badge.
     pub fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, SettingsError> {
         self.backend
@@ -122,6 +168,80 @@ impl SqlCipherSettingsStore {
     }
 }
 
+fn parse_mode(value: &str) -> RequestedBatteryMode {
+    match value {
+        "always_available" => RequestedBatteryMode::AlwaysAvailable,
+        "balanced" => RequestedBatteryMode::Balanced,
+        "battery_saver" => RequestedBatteryMode::BatterySaver,
+        _ => RequestedBatteryMode::Automatic,
+    }
+}
+
+fn mode_value(value: RequestedBatteryMode) -> &'static str {
+    match value {
+        RequestedBatteryMode::Automatic => "automatic",
+        RequestedBatteryMode::AlwaysAvailable => "always_available",
+        RequestedBatteryMode::Balanced => "balanced",
+        RequestedBatteryMode::BatterySaver => "battery_saver",
+    }
+}
+
+fn parse_sync(value: &str) -> BackgroundSyncCadence {
+    match value {
+        "fifteen_minutes" => BackgroundSyncCadence::FifteenMinutes,
+        "thirty_minutes" => BackgroundSyncCadence::ThirtyMinutes,
+        "hourly" => BackgroundSyncCadence::Hourly,
+        "two_hours" => BackgroundSyncCadence::TwoHours,
+        "on_open" => BackgroundSyncCadence::OnOpen,
+        _ => BackgroundSyncCadence::Instant,
+    }
+}
+
+fn sync_value(value: BackgroundSyncCadence) -> &'static str {
+    match value {
+        BackgroundSyncCadence::Instant => "instant",
+        BackgroundSyncCadence::FifteenMinutes => "fifteen_minutes",
+        BackgroundSyncCadence::ThirtyMinutes => "thirty_minutes",
+        BackgroundSyncCadence::Hourly => "hourly",
+        BackgroundSyncCadence::TwoHours => "two_hours",
+        BackgroundSyncCadence::OnOpen => "on_open",
+    }
+}
+
+fn parse_metered(value: &str) -> MeteredTransferPolicy {
+    match value {
+        "allow_all" => MeteredTransferPolicy::AllowAll,
+        "pause_all" => MeteredTransferPolicy::PauseAll,
+        _ => MeteredTransferPolicy::PauseLarge,
+    }
+}
+
+fn metered_value(value: MeteredTransferPolicy) -> &'static str {
+    match value {
+        MeteredTransferPolicy::AllowAll => "allow_all",
+        MeteredTransferPolicy::PauseLarge => "pause_large",
+        MeteredTransferPolicy::PauseAll => "pause_all",
+    }
+}
+
+fn parse_visual(value: &str) -> VisualActivityPolicy {
+    match value {
+        "full" => VisualActivityPolicy::Full,
+        "focused_only" => VisualActivityPolicy::FocusedOnly,
+        "static" => VisualActivityPolicy::Static,
+        _ => VisualActivityPolicy::FollowSystem,
+    }
+}
+
+fn visual_value(value: VisualActivityPolicy) -> &'static str {
+    match value {
+        VisualActivityPolicy::Full => "full",
+        VisualActivityPolicy::FocusedOnly => "focused_only",
+        VisualActivityPolicy::Static => "static",
+        VisualActivityPolicy::FollowSystem => "follow_system",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SqlCipherSettingsStore;
@@ -152,5 +272,24 @@ mod tests {
         assert_eq!(store.new_contacts_acknowledged_at_ms().expect("read setting"), None);
         store.acknowledge_new_contacts(42).expect("write setting");
         assert_eq!(store.new_contacts_acknowledged_at_ms().expect("read setting"), Some(42));
+    }
+
+    #[test]
+    fn battery_preferences_are_durable_for_the_connection() {
+        use torca_battery::{
+            BackgroundSyncCadence, BatteryPreferences, MeteredTransferPolicy, RequestedBatteryMode,
+            VisualActivityPolicy,
+        };
+        let key = DatabaseKey::new([0x21; 32]);
+        let store = SqlCipherSettingsStore::open_in_memory(&key).expect("settings store");
+        let preferences = BatteryPreferences {
+            mode: RequestedBatteryMode::BatterySaver,
+            background_sync: BackgroundSyncCadence::Hourly,
+            allow_delayed_background_delivery: true,
+            metered_transfers: MeteredTransferPolicy::PauseAll,
+            visual_activity: VisualActivityPolicy::FocusedOnly,
+        };
+        store.set_battery_preferences(preferences, 42).expect("write battery settings");
+        assert_eq!(store.battery_preferences().expect("read battery settings"), preferences);
     }
 }

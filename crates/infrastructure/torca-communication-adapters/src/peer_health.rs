@@ -215,6 +215,10 @@ where
         }
     }
 
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<std::time::Duration> {
+        self.link.next_maintenance_delay(now)
+    }
+
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
         let _ = self.link.set_waker(waker);
     }

@@ -28,6 +28,9 @@ final class AvatarRepository {
 
   static final AvatarRepository instance = AvatarRepository._();
   static const int _maxMemoryEntries = 96;
+  static const int _maxEnvelopeEntries = 256;
+  static const int _maxMemoryBytes = 8 * 1024 * 1024;
+  static const int _maxSpriteMemoryBytes = 12 * 1024 * 1024;
   static const int _maxDiskBytes = 32 * 1024 * 1024;
   final Map<String, Uint8List> _memory = <String, Uint8List>{};
   final Map<String, AvatarGenomeEnvelope> _envelopes =
@@ -38,6 +41,8 @@ final class AvatarRepository {
       <String, Future<Uint8List?>>{};
   final Map<String, AvatarSpriteSheet> _spriteMemory =
       <String, AvatarSpriteSheet>{};
+  int _memoryBytes = 0;
+  int _spriteMemoryBytes = 0;
   final Map<String, Future<AvatarSpriteSheet?>> _spriteInFlight =
       <String, Future<AvatarSpriteSheet?>>{};
   Directory? _cacheRoot;
@@ -51,22 +56,25 @@ final class AvatarRepository {
   /// and persisted beside rendered cache entries; subsequent renders are
   /// content-addressed by [AvatarGenomeEnvelope.genomeHash].
   Future<AvatarGenomeEnvelope> envelopeForIdentity(String identityId) async {
-    final cached = _envelopes[identityId];
-    if (cached != null) return cached;
+    final cached = _envelopes.remove(identityId);
+    if (cached != null) {
+      _envelopes[identityId] = cached;
+      return cached;
+    }
     final file = await _envelopeFile(identityId);
     if (file != null && await file.exists()) {
       try {
         final decoded = AvatarGenomeEnvelope.fromJson(
           Map<String, Object?>.from(jsonDecode(await file.readAsString())),
         );
-        _envelopes[identityId] = decoded;
+        _rememberEnvelope(identityId, decoded);
         return decoded;
       } on Object {
         await _deleteQuietly(file);
       }
     }
     final envelope = await Isolate.run(() => _generateEnvelope(identityId));
-    _envelopes[identityId] = envelope;
+    _rememberEnvelope(identityId, envelope);
     if (file != null) {
       await file.parent.create(recursive: true);
       await _writeTextAtomically(file, jsonEncode(envelope.toJson()));
@@ -84,16 +92,28 @@ final class AvatarRepository {
   }
 
   Future<AvatarGenomeEnvelope> envelopeForPeer(String identityId) async {
-    final cached = _envelopes['peer-$identityId'];
-    if (cached != null) return cached;
+    final key = 'peer-$identityId';
+    final cached = _envelopes.remove(key);
+    if (cached != null) {
+      _envelopes[key] = cached;
+      return cached;
+    }
     final remote = await _loadRemoteEnvelope(identityId);
     if (remote != null) {
-      _envelopes['peer-$identityId'] = remote;
+      _rememberEnvelope(key, remote);
       return remote;
     }
     // Legacy contacts without an exchanged genome keep deterministic fallback
     // behavior until their next pairing/identity refresh.
     return envelopeForIdentity(identityId);
+  }
+
+  void _rememberEnvelope(String key, AvatarGenomeEnvelope envelope) {
+    _envelopes.remove(key);
+    _envelopes[key] = envelope;
+    while (_envelopes.length > _maxEnvelopeEntries) {
+      _envelopes.remove(_envelopes.keys.first);
+    }
   }
 
   Future<AvatarGenomeEnvelope?> _loadRemoteEnvelope(String identityId) {
@@ -123,8 +143,12 @@ final class AvatarRepository {
         : 48;
     final key =
         '${envelope?.genomeHash ?? 'legacy-$identityId'}/$safeSize/${animation.name}/p32/v1';
-    final cached = _spriteMemory[key];
-    if (cached != null) return Future<AvatarSpriteSheet?>.value(cached);
+    final cached = _spriteMemory.remove(key);
+    if (cached != null) {
+      // Keep the sprite cache true LRU rather than insertion-order FIFO.
+      _spriteMemory[key] = cached;
+      return Future<AvatarSpriteSheet?>.value(cached);
+    }
     final inFlight = _spriteInFlight[key];
     if (inFlight != null) return inFlight;
     final future = _loadOrRenderSprite(
@@ -175,8 +199,12 @@ final class AvatarRepository {
       frameDuration: animation.frameDuration,
     );
     _spriteMemory[key] = sheet;
-    while (_spriteMemory.length > _maxMemoryEntries) {
-      _spriteMemory.remove(_spriteMemory.keys.first);
+    _spriteMemoryBytes += bytes.length;
+    while (_spriteMemory.length > _maxMemoryEntries ||
+        _spriteMemoryBytes > _maxSpriteMemoryBytes) {
+      final oldest = _spriteMemory.keys.first;
+      final removed = _spriteMemory.remove(oldest);
+      _spriteMemoryBytes -= removed?.bytes.length ?? 0;
     }
     if (file != null && !await file.exists()) {
       await _writeAtomically(file, bytes);
@@ -229,14 +257,25 @@ final class AvatarRepository {
       );
       if (bytes == null) return null;
       _remember(key, bytes);
-      if (file != null) await _writeAtomically(file, bytes);
+      if (file != null) {
+        await _writeAtomically(file, bytes);
+        unawaited(trimDiskCache());
+      }
       return bytes;
     } on Object {
       // A platform isolate can be unavailable in widget tests or during an
       // early engine startup. Keep the feature usable; production Flutter
       // targets take the isolate path above.
       try {
-        return _renderPng(identityId, size, envelope?.toJson());
+        final bytes = _renderPng(identityId, size, envelope?.toJson());
+        if (bytes != null) {
+          _remember(key, bytes);
+          if (file != null) {
+            unawaited(_writeAtomically(file, bytes));
+            unawaited(trimDiskCache());
+          }
+        }
+        return bytes;
       } on Object {
         return null;
       }
@@ -270,10 +309,15 @@ final class AvatarRepository {
   }
 
   void _remember(String key, Uint8List bytes) {
-    _memory.remove(key);
+    final previous = _memory.remove(key);
+    _memoryBytes -= previous?.length ?? 0;
     _memory[key] = bytes;
-    while (_memory.length > _maxMemoryEntries) {
-      _memory.remove(_memory.keys.first);
+    _memoryBytes += bytes.length;
+    while (_memory.length > _maxMemoryEntries ||
+        _memoryBytes > _maxMemoryBytes) {
+      final oldest = _memory.keys.first;
+      final removed = _memory.remove(oldest);
+      _memoryBytes -= removed?.length ?? 0;
     }
   }
 

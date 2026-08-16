@@ -109,9 +109,7 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
   @override
   void initState() {
     super.initState();
-    _freshnessTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _ticksSinceObservation += 1);
-    });
+    _scheduleFreshnessExpiry();
   }
 
   @override
@@ -119,7 +117,17 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.snapshot, widget.snapshot)) {
       _ticksSinceObservation = 0;
+      _scheduleFreshnessExpiry();
     }
+  }
+
+  /// Freshness only changes once, at the stale boundary. A periodic timer
+  /// would wake the UI every second even while the snapshot is unchanged.
+  void _scheduleFreshnessExpiry() {
+    _freshnessTimer?.cancel();
+    _freshnessTimer = Timer(const Duration(seconds: _staleAfterTicks), () {
+      if (mounted) setState(() => _ticksSinceObservation = _staleAfterTicks);
+    });
   }
 
   @override

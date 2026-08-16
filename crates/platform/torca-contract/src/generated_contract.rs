@@ -28,6 +28,7 @@ pub const COMMANDS: &[&str] = &[
     "runtime.attention.set",
     "notifications.set",
     "privacy.read_receipts.set",
+    "battery.preferences.set",
     "contacts.acknowledge_new",
     "conversation.read",
     "attachment.queue",

@@ -60,7 +60,7 @@ where
         }
     }
     fn context(&mut self) -> Result<LocalPairingContext, RuntimeDriverError> {
-        let snapshot = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+        let snapshot = self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         let identity = snapshot.identity.ok_or(RuntimeDriverError::Pairing)?;
         // The local onion endpoint is a readiness dependency, not a protocol
         // rejection. Keep it retryable so a cold Android Tor bootstrap does
@@ -108,7 +108,7 @@ where
         Err(RuntimeDriverError::Pairing)
     }
     fn active_sessions(&self) -> Result<Vec<PairingSessionId>, RuntimeDriverError> {
-        self.engine.snapshot().map_err(|_| RuntimeDriverError::Pairing).map(|snapshot| {
+        self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Pairing).map(|snapshot| {
             snapshot
                 .pairings
                 .into_iter()

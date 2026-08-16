@@ -10,12 +10,12 @@ exists.
 
 ### Audited implementation status
 
-Last reconciled with the source tree on 2026-08-14.
+Last reconciled with the source tree on 2026-08-16.
 
 | Capability | Status | Current implementation |
 | --- | --- | --- |
-| Policy kernel and fake-clock tests | Implemented | `crates/application/torca-runtime-policy` |
-| Native revision event hub | Implemented | `torca-runtime-policy::RuntimeEventHub`, exported through `torca-native`; native actor now blocks until a command or the earliest durable pending-operation deadline |
+| Policy kernel and fake-clock tests | Implemented | `crates/application/torca-battery` re-exports the policy kernel while `torca-runtime-policy` remains the internal implementation boundary |
+| Native revision event hub | Implemented | `torca-battery::RuntimeEventHub`, exported through `torca-native`; native actor now blocks until a command or the earliest durable pending-operation deadline |
 | Flutter revision waiter | Implemented | event isolate waits indefinitely for native revisions through `torca_runtime_wait_for_revision` with `timeoutMs=0`; disposal calls the explicit cancellation ABI |
 | Android notification waiter | Implemented | foreground service waits indefinitely for native runtime changes on a dedicated `HandlerThread`; `onDestroy()` cancels the native waiter before quitting |
 | Pairing deadline worker | Implemented | pairing worker calculates its own deadlines |
@@ -23,12 +23,19 @@ Last reconciled with the source tree on 2026-08-14.
 | Health freshness suppressing some peer probes | Implemented core | `PeerProbeSupervisor` consumes freshness; peer TX/RX/ACK/handshake/failure counters now feed policy evidence. Attachment chunks are authenticated envelope frames and therefore already refresh the peer evidence; a separate chunk metric is optional diagnostics only |
 | Attention/viewport contract from Flutter | Implemented core | `runtime.attention.set` crosses the generated contract; top-level navigation reports up to seven visible contacts, focused conversation routes report on entry and on mobile route return, and both policy and runtime lease ownership reject stale generations |
 | Feature-owned leases | Implemented core | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; relay health is gated by the active relay lease; radio enable/transmit commands create separate leases and release the previous contact’s lease when the coordinator switches channels |
-| Central deadline scheduler | Implemented core | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, radio control/state-sync retry, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources; policy evidence is applied before the next peer-probe decision |
+| Central deadline scheduler | Implemented core | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, radio control/state-sync retry, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources. A 250-ms compatibility fallback remains only while a peer transport is Connecting/Handshaking/Reconnecting |
 | Demand/evidence-driven relay health | Implemented core | production runtime uses a demand-driven supervisor: no initial/healthy probe exists without a relay lease; pairing/network events wake one lane and retry backoff is bounded |
 | Fully evidence-driven peer health | Implemented core | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs, peer TX/RX/ACK counters and ready-to-disconnected transitions feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
+| Event-driven peer ACK waits | Implemented core | interactive envelope ACKs use a bounded blocking socket read (`receive_timeout`) instead of a 10-ms worker polling loop; ordinary maintenance remains non-blocking |
+| Fair attachment scheduling | Implemented core | outgoing attachment maintenance advances a round-robin cursor, so one message/contact cannot consume every bounded chunk slot |
 | Blocking/deadline radio worker | Implemented core | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout with audio/ACK/burst/keepalive deadlines covered by deterministic tests |
-| Arti soft dormancy | Deferred experiment | `torca-tor` exposes `TorActivityMode::{Active, SoftDormant}` over the stable service handle; automatic runtime integration is deliberately gated on Android onion/pairing/delivery/radio soak evidence |
-| Runtime Energy Ledger | Implemented core | diagnostics count scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, inbound text, attachment metadata/blob writes, projection events, peer and relay probes; physical TX/RX byte totals remain intentionally outside the app ledger |
+| Arti soft dormancy | Integrated, soak-gated | Effective background policy now calls `TorActivityMode::SoftDormant`; foreground, durable demand and network lifecycle return it to `Active`. Pairing, message delivery, attachments and radio commands explicitly wake Tor before transport work. Release rollout still requires Android onion/pairing/delivery/radio soak evidence |
+| Runtime Energy Ledger | Implemented core | `torca-battery::BatteryLedger` is the shared bounded ledger; diagnostics exports scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, peer/relay probes, TX/RX/handshake/chunk deltas, suppressed work and radio demand; physical byte totals remain platform samples |
+| Revision-gated runtime poll | Implemented core | Flutter sends its last revision/cursor and native reuses the cached projection when both are current, while the first poll and stale cursors still force a refresh |
+| User battery preferences | Implemented and enforced | `battery.preferences.set`, SQLite migration `0012_battery_preferences.sql`, Flutter settings, metered transfer admission and visual avatar policy are wired into executors |
+| Android energy callbacks | Implemented core | `TorcaForegroundService` forwards Power Saver, charging, metered-network and validated-network transitions as lifecycle events; no polling loop is added |
+| Windows energy provider | Implemented core | `torca-platform-windows::WindowsEnergyProvider` samples `GetSystemPowerStatus` on demand; host notification wiring remains platform-shell specific |
+| Why Awake diagnostics | Implemented core | Runtime policy exports redaction-safe lease reasons, scheduled work classes, active counts, network generation and next deadline through `diagnostics.get` |
 
 The current implementation is therefore a transitional state, but its idle
 path is already event/deadline driven. Event waiting, pairing scheduling,
@@ -134,7 +141,10 @@ resume failures already seen in production testing.
 ## Architectural decisions
 
 - `AttentionContext` is advisory only. It must never control delivery correctness, durable queues, pairing completion, attachments, radio correctness, or inbound traffic.
-- Shared policy lives in `crates/application/torca-runtime-policy`.
+- Shared policy and workload accounting are exposed through
+  `crates/application/torca-battery`; the smaller
+  `crates/application/torca-runtime-policy` crate remains an internal policy
+  kernel during the migration and is re-exported by the battery facade.
 - The policy crate owns decisions, leases, evidence, budgets, deadlines, event waiting, and counters. It does not own sockets, SQLite, Flutter, JNI, Android APIs, or Arti execution.
 - The target Tor policy uses adaptive Arti soft dormancy instead of destroying
   the client or clearing its cache/state. The low-level API exists; automatic
@@ -143,20 +153,23 @@ resume failures already seen in production testing.
 - Android uses `NetworkCallback` and a fingerprint of route capabilities
   (`validated`, `internet`, `metered`, Wi-Fi/cellular); changes to that
   fingerprint wake recovery even when the `Network` object is unchanged.
-  Power Saver propagation and `ConnectivityDiagnosticsManager` remain deferred
-  because they are not required for the no-idle-polling baseline. Do not claim
-  either signal in diagnostics until a platform callback and a policy mapping
-  are implemented and tested.
+  Power Saver propagation is implemented through the Android power-save
+  broadcast; `ConnectivityDiagnosticsManager` remains deferred because the
+  existing capability callback supplies the required metered/validated signal
+  without another polling loop. Windows energy sampling is exposed as an
+  event-triggered provider and must be invoked by the host notification shell.
 - There is no legacy runtime mode and no parallel old scheduler. Each old polling/tick path is removed when its replacement lands.
 - Relay continues to store only invitations. It does not become a message mailbox.
 - Background delivery without push is best-effort and may wait for a rendezvous window or for the recipient to open Torca.
 
-## Shared crate: `torca-runtime-policy`
+## Shared crate: `torca-battery`
 
-The checked-in crate is a dependency-light synchronous policy kernel. It
-already contains the core attention, demand, lease, evidence, policy and event
-hub types. Budget enforcement, scheduler ownership, executor integration and
-production counters remain incomplete.
+The checked-in crate is a dependency-light synchronous battery facade. It
+exposes the attention, demand, lease, evidence, policy and event hub types
+from the internal policy kernel, and owns the bounded `BatteryLedger`, battery
+profiles, platform sample types and RAII workload spans. Executor integration
+records through the same ledger used by diagnostics. Physical energy sampling
+remains platform-owned and event-triggered.
 
 The target crate responsibilities are:
 
@@ -512,10 +525,11 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
 
 ## Implementation sequence and current progress
 
-1. **Implemented core:** keep `torca-runtime-policy`, fake clock, reducer,
-   lease book, evidence ledger and event hub small and dependency-light. Budgets
-   and production scheduler ownership are now centralized; do not add another
-   policy framework.
+1. **Implemented core:** keep `torca-battery` as the public facade for the
+   fake-clock reducer, lease book, evidence ledger, bounded workload ledger,
+   profiles and event hub. `torca-runtime-policy` remains the small internal
+   kernel during migration. Budgets and production scheduler ownership are
+   centralized; do not add another policy framework.
 2. **Implemented core:** scheduler, native event/FFI-wake, radio listener wake,
    snapshot/DB-read, command-induced DB-write, text/control worker-write,
    attachment-metadata-write, blob-write, inbound-text-write, peer-probe and
@@ -588,6 +602,17 @@ maintenance.
 - CI fails when an idle simulation produces a non-zero application-controlled Energy Ledger score.
 
 ## External references
+
+## Current implementation additions
+
+- Open conversations create one `FocusedConversation` lease with an expiry;
+  changing the active route releases the previous peer atomically.
+- Metered transfer policy is enforced before the next attachment chunk and
+  preserves queued work for later resume.
+- Avatar visual activity policy can stop the shared frame clock in static and
+  focused-only modes.
+- Diagnostics include suppressed work and focus expiry, without exporting
+  contact identifiers.
 
 - Arti dormant mode: <https://docs.rs/arti-client/latest/arti_client/enum.DormantMode.html>
 - Android network callbacks: <https://developer.android.com/develop/connectivity/network-ops/reading-network-state>

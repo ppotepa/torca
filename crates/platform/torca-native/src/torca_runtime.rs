@@ -56,7 +56,7 @@ enum ActorMessage {
         request: String,
         response: SyncSender<Vec<u8>>,
     },
-    #[allow(dead_code)]
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     Lifecycle {
         event: String,
         response: SyncSender<i32>,
@@ -388,7 +388,7 @@ fn request_emits_runtime_revision(raw: &str) -> bool {
     request.get("kind").and_then(Value::as_str) != Some("query")
 }
 
-#[allow(dead_code)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 fn dispatch_lifecycle(event: &str) -> i32 {
     let registry = REGISTRY.get_or_init(|| Mutex::new(None));
     let Some(inner) = registry.lock().ok().and_then(|guard| guard.as_ref().cloned()) else {
@@ -500,6 +500,10 @@ impl ActorState {
             }
             ("query", "runtime.poll") => {
                 let cursor = payload.get("afterCursor").and_then(Value::as_u64).unwrap_or(0);
+                // Background host state (Tor, onion, relay, peers and
+                // transfers) can change without an actor command. Refresh
+                // on every explicit poll so a missed event can never leave
+                // Flutter or Android observing a stale projection.
                 let snapshot_code = self.runtime.refresh_snapshot();
                 if snapshot_code != ABI_OK {
                     snapshot_code
@@ -733,6 +737,24 @@ pub unsafe extern "C" fn torca_runtime_wait_for_revision(
     after_cursor: u64,
     timeout_ms: u32,
 ) -> i32 {
+    unsafe {
+        torca_runtime_wait_for_revision_with_waiter(
+            handle,
+            after_revision,
+            after_cursor,
+            timeout_ms,
+            1,
+        )
+    }
+}
+
+unsafe fn torca_runtime_wait_for_revision_with_waiter(
+    handle: *const TorcaRuntimeHandle,
+    after_revision: u64,
+    after_cursor: u64,
+    timeout_ms: u32,
+    waiter: u64,
+) -> i32 {
     let Some(handle) = (unsafe { handle.as_ref() }) else {
         return -1;
     };
@@ -740,10 +762,10 @@ pub unsafe extern "C" fn torca_runtime_wait_for_revision(
         return -2;
     }
     let result = if timeout_ms == 0 {
-        handle.inner.event_hub.wait_indefinitely(0, after_revision, after_cursor)
+        handle.inner.event_hub.wait_indefinitely(waiter, after_revision, after_cursor)
     } else {
         handle.inner.event_hub.wait(
-            0,
+            waiter,
             after_revision,
             after_cursor,
             Duration::from_millis(u64::from(timeout_ms)),
@@ -763,10 +785,17 @@ pub unsafe extern "C" fn torca_runtime_wait_for_revision(
 pub unsafe extern "C" fn torca_runtime_cancel_revision_wait(
     handle: *const TorcaRuntimeHandle,
 ) -> i32 {
+    unsafe { torca_runtime_cancel_revision_wait_for(handle, 1) }
+}
+
+unsafe fn torca_runtime_cancel_revision_wait_for(
+    handle: *const TorcaRuntimeHandle,
+    waiter: u64,
+) -> i32 {
     let Some(handle) = (unsafe { handle.as_ref() }) else {
         return -1;
     };
-    handle.inner.event_hub.cancel(0);
+    handle.inner.event_hub.cancel(waiter);
     ABI_OK
 }
 
@@ -910,11 +939,12 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeWaitForRevi
         return -1;
     }
     let result = unsafe {
-        torca_runtime_wait_for_revision(
+        torca_runtime_wait_for_revision_with_waiter(
             handle,
             after_revision.max(0) as u64,
             after_cursor.max(0) as u64,
             timeout_ms.max(0) as u32,
+            2,
         )
     };
     unsafe { torca_runtime_release(handle) };
@@ -931,7 +961,7 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeCancelRevis
     if handle.is_null() {
         return -1;
     }
-    let result = unsafe { torca_runtime_cancel_revision_wait(handle) };
+    let result = unsafe { torca_runtime_cancel_revision_wait_for(handle, 2) };
     unsafe { torca_runtime_release(handle) };
     result
 }
@@ -983,6 +1013,16 @@ fn bridge_command(
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
+        }),
+        "battery.preferences.set" => Ok(BridgeCommand::SetBatteryPreferences {
+            mode: text("mode")?,
+            background_sync: text("backgroundSync")?,
+            allow_delayed_background_delivery: payload
+                .get("allowDelayedBackgroundDelivery")
+                .and_then(Value::as_bool)
+                .ok_or(("CONTRACT_PAYLOAD_INVALID", "contract.payload.invalid"))?,
+            metered_transfers: text("meteredTransfers")?,
+            visual_activity: text("visualActivity")?,
         }),
         "contacts.acknowledge_new" => Ok(BridgeCommand::AcknowledgeNewContacts),
         "profile.set" => Ok(BridgeCommand::UpdateProfile {

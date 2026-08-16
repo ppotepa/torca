@@ -29,7 +29,7 @@ fn peer() -> PeerProposal {
     let public_identity = PublicIdentity::new(IdentityId::from_u128(41), key, 0);
     let route = ContactRoute::new("peerexample.onion", OpaqueId::from_u128(42))
         .expect("peer route is valid");
-    PeerProposal { public_identity, display_name: "Remote device".to_owned(), route }
+    PeerProposal { public_identity, display_name: "Remote device".to_owned(), route, avatar: None }
 }
 
 fn credential(contact_id: ContactId) -> PeerCredential {

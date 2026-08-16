@@ -131,7 +131,7 @@ pub struct PairingCancellation;
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PairingPayload {
-    Offer(PairingOffer),
+    Offer(Box<PairingOffer>),
     Approval(PairingApproval),
     Completion(PairingCompletion),
     Rejection(PairingRejection),
@@ -203,7 +203,7 @@ impl PairingEnvelope {
         let kind = c.u8()?;
         let pairing_id = OpaqueId::from_bytes(c.array_16()?);
         let payload = match kind {
-            1 => PairingPayload::Offer(decode_offer(&mut c)?),
+            1 => PairingPayload::Offer(Box::new(decode_offer(&mut c)?)),
             2 => PairingPayload::Approval(decode_approval(&mut c)?),
             3 => PairingPayload::Completion(PairingCompletion { transcript_digest: c.array_32()? }),
             4 => PairingPayload::Rejection(PairingRejection),
@@ -388,7 +388,7 @@ mod tests {
     fn offer(pairing: u128) -> PairingEnvelope {
         PairingEnvelope {
             pairing_id: OpaqueId::from_u128(pairing),
-            payload: PairingPayload::Offer(PairingOffer {
+            payload: PairingPayload::Offer(Box::new(PairingOffer {
                 identity_id: OpaqueId::from_u128(2),
                 key_id: OpaqueId::from_u128(3),
                 key_algorithm: 1,
@@ -399,7 +399,7 @@ mod tests {
                 capability_id: OpaqueId::from_u128(4),
                 transcript_nonce: [9; 32],
                 avatar: None,
-            }),
+            })),
         }
     }
     #[test]

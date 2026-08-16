@@ -190,6 +190,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                   snapshot: snapshot,
                   diagnosticsReadable: _hasReadableEvents(_json),
                 ),
+                const SizedBox(height: 12),
+                _WhyAwakeCard(data: _whyAwake()),
                 const SizedBox(height: 20),
                 Wrap(
                   spacing: 8,
@@ -240,6 +242,69 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       return value;
     }
   }
+
+  Map<String, dynamic>? _whyAwake() {
+    final raw = _json;
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final value = decoded['whyAwake'];
+      return value is Map<String, dynamic> ? value : null;
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
+class _WhyAwakeCard extends StatelessWidget {
+  const _WhyAwakeCard({required this.data});
+
+  final Map<String, dynamic>? data;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = data;
+    if (value == null) return const SizedBox.shrink();
+    final reasons = value['leaseReasons'] is Map
+        ? (value['leaseReasons'] as Map).entries
+              .map((entry) => '${entry.key}: ${entry.value}')
+              .join(', ')
+        : 'none';
+    final scheduled = value['scheduledWork'] is Map
+        ? (value['scheduledWork'] as Map).entries
+              .map((entry) => '${entry.key}: ${entry.value}')
+              .join(', ')
+        : 'none';
+    final deadline = value['nextDeadlineInMs'];
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Why awake', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+              'Redacted scheduler explanation; contact identifiers are never shown here.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            _row('Active leases', '${value['activeLeases'] ?? 0}'),
+            _row('Active demands', '${value['activeDemands'] ?? 0}'),
+            _row('Lease reasons', reasons),
+            _row('Scheduled work', scheduled),
+            _row('Next deadline', deadline == null ? 'none' : '${deadline} ms'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.only(top: 4),
+    child: Text('$label: $value'),
+  );
 }
 
 class _Check {

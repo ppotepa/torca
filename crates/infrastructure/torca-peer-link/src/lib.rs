@@ -7,7 +7,6 @@
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use torca_connectivity::{
@@ -33,7 +32,6 @@ const MAX_INBOUND_EVENTS: usize = 256;
 const MAX_PENDING_ACKS: usize = 256;
 const RECONNECT_BASE_MS: u64 = 1_000;
 const RECONNECT_MAX_MS: u64 = 60_000;
-const POLL_SLEEP: Duration = Duration::from_millis(10);
 // Never let one attachment chunk monopolize the shared peer lane. ACKs that
 // arrive after this cooperative slice are retained in `pending_acks` and the
 // durable job retries the same stable frame idempotently. A five-second slice
@@ -240,6 +238,25 @@ where
         Ok(report)
     }
 
+    /// Returns the next transport deadline without manufacturing a periodic
+    /// tick for an idle address book. Active handshakes/sessions are polled at
+    /// a bounded cadence; reconnects sleep until their durable backoff.
+    pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        let reconnect_delay = self
+            .reconnect
+            .values()
+            .filter(|entry| !entry.in_progress)
+            .filter_map(|entry| entry.next_attempt_at.duration_since(now))
+            .min();
+        let active =
+            !self.pending.is_empty() || !self.incoming.is_empty() || !self.outgoing.is_empty();
+        match (active, reconnect_delay) {
+            (true, Some(delay)) => Some(delay.min(Duration::from_millis(250))),
+            (true, None) => Some(Duration::from_millis(250)),
+            (false, delay) => delay,
+        }
+    }
+
     /// Existing Tor streams belong to the previous route. Close them and make
     /// every known relationship immediately eligible for one serialized dial.
     pub fn network_changed(&mut self, now: Timestamp) {
@@ -303,7 +320,11 @@ where
         let wait_slice = timeout.min(wait_limit);
         let deadline = Instant::now().checked_add(wait_slice).ok_or(PeerLinkError::AckTimeout)?;
         loop {
-            if let Some(ack) = self.poll_envelope_ack(contact_id, envelope_id)? {
+            if let Some(ack) = self.poll_envelope_ack_waiting(
+                contact_id,
+                envelope_id,
+                deadline.saturating_duration_since(Instant::now()),
+            )? {
                 return Ok(ack);
             }
             if Instant::now() >= deadline {
@@ -314,7 +335,6 @@ where
                 }
                 return Err(PeerLinkError::AckTimeout);
             }
-            thread::sleep(POLL_SLEEP);
         }
     }
 
@@ -372,11 +392,25 @@ where
         contact_id: ContactId,
         envelope_id: OpaqueId,
     ) -> Result<Option<LinkAck>, PeerLinkError> {
+        self.poll_envelope_ack_waiting(contact_id, envelope_id, Duration::ZERO)
+    }
+
+    fn poll_envelope_ack_waiting(
+        &mut self,
+        contact_id: ContactId,
+        envelope_id: OpaqueId,
+        wait: Duration,
+    ) -> Result<Option<LinkAck>, PeerLinkError> {
         if let Some(ack) = self.pending_acks.remove(&(contact_id, envelope_id)) {
             return ack.map(Some);
         }
         let now = system_timestamp()?;
-        match self.poll_contact(contact_id, now) {
+        let message = if wait.is_zero() {
+            self.poll_contact(contact_id, now)
+        } else {
+            self.poll_contact_wait(contact_id, now, wait)
+        };
+        match message {
             Ok(Some(PeerMessage::Ack { envelope_id: received, status })) => {
                 let ack = match status {
                     AckStatus::Accepted => Ok(LinkAck::Accepted),
@@ -885,6 +919,21 @@ where
         }
         if let Some(session) = self.incoming.get_mut(&contact_id) {
             return session.poll(now).map_err(map_session);
+        }
+        Ok(None)
+    }
+
+    fn poll_contact_wait(
+        &mut self,
+        contact_id: ContactId,
+        now: Timestamp,
+        timeout: Duration,
+    ) -> Result<Option<PeerMessage>, PeerLinkError> {
+        if let Some(session) = self.outgoing.get_mut(&contact_id) {
+            return session.wait_poll(now, timeout).map_err(map_session);
+        }
+        if let Some(session) = self.incoming.get_mut(&contact_id) {
+            return session.wait_poll(now, timeout).map_err(map_session);
         }
         Ok(None)
     }

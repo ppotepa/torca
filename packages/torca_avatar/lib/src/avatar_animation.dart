@@ -26,6 +26,8 @@ enum AvatarAnimationState {
   confused,
 }
 
+enum AvatarVisualActivityPolicy { full, focusedOnly, staticOnly, followSystem }
+
 /// Orthogonal, ephemeral inputs used to select an avatar presentation.
 ///
 /// Presence is deliberately not folded into connectivity. In particular,
@@ -177,27 +179,56 @@ final class AvatarFrameClock extends ChangeNotifier
   static final AvatarFrameClock instance = AvatarFrameClock._();
   Timer? _timer;
   int _clients = 0;
+  int _focusedClients = 0;
   bool _foreground = true;
+  AvatarVisualActivityPolicy _policy = AvatarVisualActivityPolicy.followSystem;
 
   int get elapsedMilliseconds => DateTime.now().millisecondsSinceEpoch;
+
+  AvatarVisualActivityPolicy get policy => _policy;
+
+  void setPolicy(AvatarVisualActivityPolicy policy) {
+    if (_policy == policy) return;
+    _policy = policy;
+    if (policy == AvatarVisualActivityPolicy.staticOnly ||
+        (policy == AvatarVisualActivityPolicy.focusedOnly &&
+            _focusedClients == 0)) {
+      _timer?.cancel();
+      _timer = null;
+    } else {
+      _start();
+    }
+    notifyListeners();
+  }
+
+  bool allowsAnimation({required bool focused}) => switch (_policy) {
+    AvatarVisualActivityPolicy.staticOnly => false,
+    AvatarVisualActivityPolicy.focusedOnly => focused,
+    AvatarVisualActivityPolicy.full ||
+    AvatarVisualActivityPolicy.followSystem => true,
+  };
 
   @visibleForTesting
   int get clients => _clients;
 
-  void attach() {
+  void attach({bool focused = false}) {
     _clients += 1;
+    if (focused) _focusedClients += 1;
     if (_clients == 1) {
       WidgetsBinding.instance.addObserver(this);
       _start();
     }
   }
 
-  void detach() {
+  void detach({bool focused = false}) {
+    if (focused) _focusedClients = (_focusedClients - 1).clamp(0, 1 << 30);
     _clients = (_clients - 1).clamp(0, 1 << 30);
-    if (_clients == 0) {
+    if (_clients == 0 ||
+        (_policy == AvatarVisualActivityPolicy.focusedOnly &&
+            _focusedClients == 0)) {
       _timer?.cancel();
       _timer = null;
-      WidgetsBinding.instance.removeObserver(this);
+      if (_clients == 0) WidgetsBinding.instance.removeObserver(this);
     }
   }
 
@@ -213,7 +244,13 @@ final class AvatarFrameClock extends ChangeNotifier
   }
 
   void _start() {
-    if (!_foreground || _clients == 0 || _timer != null) return;
+    if (!_foreground ||
+        _clients == 0 ||
+        _timer != null ||
+        _policy == AvatarVisualActivityPolicy.staticOnly ||
+        (_policy == AvatarVisualActivityPolicy.focusedOnly &&
+            _focusedClients == 0))
+      return;
     _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       notifyListeners();
     });

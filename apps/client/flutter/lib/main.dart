@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import 'app.dart';
@@ -14,6 +15,7 @@ import 'platform/deep_link_router.dart';
 import 'platform/desktop_lifecycle.dart';
 import 'platform/platform_capabilities.dart';
 import 'platform/runtime_lifecycle.dart';
+import 'settings/battery_preferences.dart';
 import 'settings/local_preferences.dart';
 
 void main() {
@@ -53,6 +55,7 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
       final preferences = LocalPreferences();
       _preferences = preferences;
       await preferences.load();
+      _applyAvatarPolicy(preferences.visualActivity);
       if (!mounted) {
         await _disposeRuntimeComposition();
         return;
@@ -101,6 +104,27 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
             throw StateError(
               result.error ?? 'audio device configuration failed',
             );
+          }
+        });
+        preferences.attachRuntimeBatterySetting((
+          mode,
+          backgroundSync,
+          allowDelayedBackgroundDelivery,
+          meteredTransfers,
+          visualActivity,
+        ) async {
+          _applyAvatarPolicy(visualActivity);
+          final result = await gateway.execute(
+            SetBatteryPreferencesCommandDto(
+              mode: mode.wireValue,
+              backgroundSync: backgroundSync.wireValue,
+              allowDelayedBackgroundDelivery: allowDelayedBackgroundDelivery,
+              meteredTransfers: meteredTransfers.wireValue,
+              visualActivity: visualActivity.wireValue,
+            ),
+          );
+          if (!result.ok) {
+            throw StateError(result.error ?? 'battery preferences failed');
           }
         });
         await gateway.execute(
@@ -160,6 +184,18 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
     } finally {
       _initializing = false;
     }
+  }
+
+  void _applyAvatarPolicy(TorcaVisualActivityPolicy policy) {
+    AvatarFrameClock.instance.setPolicy(switch (policy) {
+      TorcaVisualActivityPolicy.full => AvatarVisualActivityPolicy.full,
+      TorcaVisualActivityPolicy.focusedOnly =>
+        AvatarVisualActivityPolicy.focusedOnly,
+      TorcaVisualActivityPolicy.staticOnly =>
+        AvatarVisualActivityPolicy.staticOnly,
+      TorcaVisualActivityPolicy.followSystem =>
+        AvatarVisualActivityPolicy.followSystem,
+    });
   }
 
   Future<void> _retryStartup() async {

@@ -1,5 +1,5 @@
 [package]
-name = "torca-platform"
+name = "torca-battery"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,9 +9,8 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-torca-crypto = { path = "../../infrastructure/torca-crypto" }
-torca-identity = { path = "../../domains/torca-identity" }
-torca-battery = { path = "../../application/torca-battery" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-runtime-policy = { path = "../torca-runtime-policy" }
 
 [lints]
 workspace = true

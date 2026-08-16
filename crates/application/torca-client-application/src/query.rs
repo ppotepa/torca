@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+
+use torca_battery::BatteryPreferences;
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_foundation::Timestamp;
@@ -82,6 +85,12 @@ pub trait RuntimeSettingsPort {
         enabled: bool,
         updated_at_ms: i64,
     ) -> Result<(), ApplicationQueryError>;
+    fn battery_preferences(&self) -> Result<BatteryPreferences, ApplicationQueryError>;
+    fn set_battery_preferences(
+        &self,
+        preferences: BatteryPreferences,
+        updated_at_ms: i64,
+    ) -> Result<(), ApplicationQueryError>;
     fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError>;
     fn acknowledge_new_contacts(&self, updated_at_ms: i64) -> Result<(), ApplicationQueryError>;
 }
@@ -91,4 +100,3 @@ pub struct ApplicationReadModels {
     pub security: Box<dyn SecurityProjectionPort>,
     pub settings: Box<dyn RuntimeSettingsPort>,
 }
-use std::collections::BTreeMap;

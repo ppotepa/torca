@@ -9,8 +9,10 @@ use torca_attachments::{
     Attachment, AttachmentId, AttachmentName, AttachmentRepository, AttachmentStatus,
     MAX_ATTACHMENT_BYTES, MediaType,
 };
+use torca_battery::{BatteryProfile, MeteredTransferPolicy};
 use torca_communication_driver::{
-    AttachmentFailureStage, AttachmentRuntime, CommunicationError, InboundEnvelope,
+    AttachmentFailureStage, AttachmentMaintenanceResult, AttachmentRuntime, CommunicationError,
+    InboundEnvelope,
 };
 use torca_contacts::{ContactRepository, PeerCredentialRepository};
 use torca_conversations::ConversationRepository;
@@ -67,6 +69,15 @@ where
     C: CryptoProvider + Send + 'static,
     P: ProtectedSecretStore + Send + 'static,
 {
+    fn set_battery_policy(
+        &mut self,
+        profile: BatteryProfile,
+        metered_transfers: MeteredTransferPolicy,
+        metered_network: bool,
+    ) {
+        self.transfer.set_battery_policy(profile, metered_transfers, metered_network);
+    }
+
     fn prepare_outgoing(
         &mut self,
         request: &AttachmentSendRequest,
@@ -170,6 +181,14 @@ where
         self.transfer.blob_write_count()
     }
 
+    fn chunk_tx_count(&self) -> u64 {
+        self.transfer.chunk_tx_count()
+    }
+
+    fn policy_suppressed_count(&self) -> u64 {
+        self.transfer.policy_suppressed_count()
+    }
+
     fn process_inbound(
         &mut self,
         envelope: InboundEnvelope,
@@ -183,13 +202,16 @@ where
 
     fn maintenance_outgoing(
         &mut self,
-        messages: &[Message],
         now: Timestamp,
         limit: usize,
-    ) -> Result<(), CommunicationError> {
+    ) -> Result<AttachmentMaintenanceResult, CommunicationError> {
         self.transfer
-            .maintenance_outgoing(messages, now, limit)
-            .map(|_| ())
+            .maintenance_outgoing(now, limit)
+            .map(|report| AttachmentMaintenanceResult {
+                more_work: report.more_work,
+                policy_blocked: report.policy_suppressed > 0 && !report.more_work,
+                retry_after_ms: None,
+            })
             .map_err(map_attachment_error)
     }
 

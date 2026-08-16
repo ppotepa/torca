@@ -1,5 +1,3 @@
-// ignore_for_file: deprecated_member_use
-
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
@@ -8,6 +6,7 @@ import '../generated/torca_contract.dart';
 import '../localization/app_locale_mode.dart';
 import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
+import '../settings/battery_preferences.dart';
 import '../settings/local_preferences.dart';
 import '../theme/app_theme_mode.dart';
 import '../widgets/runtime_network_status.dart';
@@ -141,6 +140,13 @@ class SettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
                 Text(
+                  'Battery & availability',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                _BatterySettingsCard(preferences: preferences),
+                const SizedBox(height: 24),
+                Text(
                   strings.language,
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
@@ -239,6 +245,122 @@ class SettingsScreen extends StatelessWidget {
         AppLocaleMode.english => strings.languageEnglish,
         AppLocaleMode.polish => strings.languagePolish,
       };
+}
+
+class _BatterySettingsCard extends StatelessWidget {
+  const _BatterySettingsCard({required this.preferences});
+
+  final LocalPreferences preferences;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Column(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+          child: Text(
+            'Choose when Torca may defer background work. Incoming work is never silently discarded.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        _select<TorcaBatteryMode>(
+          context,
+          label: 'Availability mode',
+          value: preferences.batteryMode,
+          values: TorcaBatteryMode.values,
+          labelFor: _batteryModeLabel,
+          onChanged: preferences.setBatteryMode,
+        ),
+        _select<TorcaBackgroundSyncCadence>(
+          context,
+          label: 'Background sync',
+          value: preferences.backgroundSync,
+          values: TorcaBackgroundSyncCadence.values,
+          labelFor: _cadenceLabel,
+          onChanged: preferences.setBackgroundSync,
+        ),
+        TorcaSwitchTile(
+          secondary: Icon(context.torcaIcons.save),
+          title: const Text('Allow delayed background delivery'),
+          subtitle: const Text(
+            'Required before Automatic or Saver can suspend Tor while the app is idle.',
+          ),
+          value: preferences.allowDelayedBackgroundDelivery,
+          onChanged: preferences.setAllowDelayedBackgroundDelivery,
+        ),
+        _select<TorcaMeteredTransferPolicy>(
+          context,
+          label: 'Metered network transfers',
+          value: preferences.meteredTransfers,
+          values: TorcaMeteredTransferPolicy.values,
+          labelFor: _meteredLabel,
+          onChanged: preferences.setMeteredTransfers,
+        ),
+        _select<TorcaVisualActivityPolicy>(
+          context,
+          label: 'Avatar and visual activity',
+          value: preferences.visualActivity,
+          values: TorcaVisualActivityPolicy.values,
+          labelFor: _visualLabel,
+          onChanged: preferences.setVisualActivity,
+        ),
+        const SizedBox(height: 8),
+      ],
+    ),
+  );
+
+  Widget _select<T>(
+    BuildContext context, {
+    required String label,
+    required T value,
+    required List<T> values,
+    required String Function(T) labelFor,
+    required Future<void> Function(T) onChanged,
+  }) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+    child: DropdownButtonFormField<T>(
+      initialValue: value,
+      decoration: InputDecoration(labelText: label),
+      items: values
+          .map(
+            (item) =>
+                DropdownMenuItem<T>(value: item, child: Text(labelFor(item))),
+          )
+          .toList(growable: false),
+      onChanged: (next) {
+        if (next != null) onChanged(next);
+      },
+    ),
+  );
+
+  String _batteryModeLabel(TorcaBatteryMode value) => switch (value) {
+    TorcaBatteryMode.automatic => 'Automatic',
+    TorcaBatteryMode.alwaysAvailable => 'Always available',
+    TorcaBatteryMode.balanced => 'Balanced',
+    TorcaBatteryMode.batterySaver => 'Battery saver',
+  };
+
+  String _cadenceLabel(TorcaBackgroundSyncCadence value) => switch (value) {
+    TorcaBackgroundSyncCadence.instant => 'Instant',
+    TorcaBackgroundSyncCadence.fifteenMinutes => 'Every 15 minutes',
+    TorcaBackgroundSyncCadence.thirtyMinutes => 'Every 30 minutes',
+    TorcaBackgroundSyncCadence.hourly => 'Every hour',
+    TorcaBackgroundSyncCadence.twoHours => 'Every 2 hours',
+    TorcaBackgroundSyncCadence.onOpen => 'Only when opened',
+  };
+
+  String _meteredLabel(TorcaMeteredTransferPolicy value) => switch (value) {
+    TorcaMeteredTransferPolicy.allowAll => 'Allow all',
+    TorcaMeteredTransferPolicy.pauseLarge => 'Pause large files',
+    TorcaMeteredTransferPolicy.pauseAll => 'Pause all transfers',
+  };
+
+  String _visualLabel(TorcaVisualActivityPolicy value) => switch (value) {
+    TorcaVisualActivityPolicy.full => 'Full animation',
+    TorcaVisualActivityPolicy.focusedOnly => 'Animate focused views',
+    TorcaVisualActivityPolicy.staticOnly => 'Static when idle',
+    TorcaVisualActivityPolicy.followSystem => 'Follow system setting',
+  };
 }
 
 const _systemDefaultDeviceId = '__system_default__';

@@ -1,6 +1,7 @@
 //! Platform lifecycle policy shared by Windows and Android hosts.
 
 use std::path::PathBuf;
+use torca_battery::PlatformEnergySample;
 
 pub use torca_crypto::{ProtectedSecretStore, ProtectedSecretStoreError};
 use torca_identity::KeyId;
@@ -49,6 +50,12 @@ pub trait PlatformServices: Send + Sync {
     fn relay_endpoint(&self) -> Result<RelayEndpoint, String>;
     fn device_descriptor(&self) -> DeviceDescriptor;
     fn lifecycle_capabilities(&self) -> LifecycleCapabilities;
+    /// Returns an event-triggered energy sample. Platform hosts may override
+    /// this at lifecycle/diagnostics boundaries; the default is intentionally
+    /// empty rather than a polling fallback.
+    fn energy_sample(&self) -> PlatformEnergySample {
+        PlatformEnergySample::default()
+    }
 }
 
 /// Filesystem-backed secret store useful for tests and development adapters.

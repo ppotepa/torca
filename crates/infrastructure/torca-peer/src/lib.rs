@@ -5,6 +5,7 @@
 
 use core::fmt;
 use std::collections::{BTreeSet, VecDeque};
+use std::time::Duration;
 
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_peer_protocol::{
@@ -39,6 +40,12 @@ pub trait PeerTransport {
     fn connect(&mut self) -> Result<(), PeerTransportError>;
     fn send(&mut self, payload: Vec<u8>) -> Result<(), PeerTransportError>;
     fn try_receive(&mut self) -> Result<Option<Vec<u8>>, PeerTransportError>;
+    fn receive_timeout(
+        &mut self,
+        _timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, PeerTransportError> {
+        self.try_receive()
+    }
     fn close(&mut self) -> Result<(), PeerTransportError>;
 }
 
@@ -210,6 +217,17 @@ impl<T: PeerTransport, V: HandshakeVerifier> PeerSession<T, V> {
             Some(payload) => self.receive(&payload, now),
             None => Ok(None),
         }
+    }
+
+    pub fn wait_poll(
+        &mut self,
+        now: Timestamp,
+        timeout: Duration,
+    ) -> Result<Option<PeerMessage>, PeerSessionError> {
+        let Some(payload) = self.transport.receive_timeout(timeout)? else {
+            return Ok(None);
+        };
+        self.receive(&payload, now)
     }
 
     /// Sends one encrypted application envelope.

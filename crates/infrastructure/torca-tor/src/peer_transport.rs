@@ -2,6 +2,7 @@ use crate::TorServiceHandle;
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::time::Duration;
 use torca_foundation::{CorrelationId, OpaqueId};
 use torca_peer::{PeerTransport, PeerTransportError};
 use torca_peer_protocol::MAX_PEER_DATA_LEN;
@@ -146,6 +147,46 @@ impl PeerTransport for TorPeerTransport {
             return Ok(Some(payload));
         }
         self.read_available()?;
+        Ok(self.received.pop_front())
+    }
+
+    fn receive_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, PeerTransportError> {
+        if let Some(payload) = self.received.pop_front() {
+            return Ok(Some(payload));
+        }
+        let Some(stream) = self.stream.as_mut() else {
+            return Err(PeerTransportError("peer transport is not connected".into()));
+        };
+        stream
+            .set_read_timeout(Some(timeout))
+            .map_err(|error| io_error("configure peer read timeout", &error))?;
+        let mut buffer = [0_u8; 16 * 1024];
+        let read_result = stream.read(&mut buffer);
+        stream
+            .set_read_timeout(None)
+            .map_err(|error| io_error("restore peer read timeout", &error))?;
+        let count = match read_result {
+            Ok(0) => return Err(PeerTransportError("peer connection closed".into())),
+            Ok(count) => count,
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                return Ok(None);
+            }
+            Err(error) => return Err(io_error("read peer stream", &error)),
+        };
+        let frames = self
+            .decoder
+            .push(&buffer[..count])
+            .map_err(|error| PeerTransportError(format!("peer frame decode failed: {error}")))?;
+        let expected_kind = peer_message_kind();
+        for frame in frames {
+            if frame.metadata().message_kind() != expected_kind {
+                return Err(PeerTransportError("unexpected peer wire message kind".into()));
+            }
+            self.received.push_back(frame.into_payload());
+        }
         Ok(self.received.pop_front())
     }
 

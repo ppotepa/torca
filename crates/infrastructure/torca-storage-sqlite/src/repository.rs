@@ -111,9 +111,11 @@ impl SqlCipherStore {
                 params![genome_hash.as_slice()],
                 |row| {
                     let payload: Vec<u8> = row.get(3)?;
+                    let schema_version = u8::try_from(row.get::<_, i64>(0)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
                     Ok(AvatarGenomeRecord {
                         genome_hash,
-                        schema_version: row.get::<_, i64>(0)? as u8,
+                        schema_version,
                         generator_version: row.get(1)?,
                         catalog_version: row.get(2)?,
                         compressed_genome: payload,
@@ -131,9 +133,11 @@ impl SqlCipherStore {
                 let hash: Vec<u8> = row.get(0)?;
                 let genome_hash: [u8; 32] =
                     hash.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let schema_version = u8::try_from(row.get::<_, i64>(1)?)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
                 Ok(AvatarGenomeRecord {
                     genome_hash,
-                    schema_version: row.get::<_, i64>(1)? as u8,
+                    schema_version,
                     generator_version: row.get(2)?,
                     catalog_version: row.get(3)?,
                     compressed_genome: row.get(4)?,
@@ -465,9 +469,11 @@ impl RelationshipRepository for SqlCipherStore {
                     let hash: Vec<u8> = row.get(0)?;
                     let genome_hash: [u8; 32] =
                         hash.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    let schema_version = u8::try_from(row.get::<_, i64>(1)?)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
                     Ok(AvatarGenomeRecord {
                         genome_hash,
-                        schema_version: row.get::<_, i64>(1)? as u8,
+                        schema_version,
                         generator_version: row.get(2)?,
                         catalog_version: row.get(3)?,
                         compressed_genome: row.get(4)?,

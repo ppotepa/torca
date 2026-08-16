@@ -6,10 +6,18 @@ pub use attachments::{AttachmentSendRequest, AttachmentView};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
+use torca_battery::{
+    AttentionContext, DemandReason, PolicyEvent, ResourceScope, RuntimeGovernor, WorkClass,
+    WorkDemand,
+};
+use torca_battery::{
+    BatteryMetric, BatteryPolicy, BatteryProfile, MeteredTransferPolicy, WakeReason,
+};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_connectivity::{
     ConnectivityObserver, ConnectivitySnapshot, PeerProbeCandidate, PeerProbeSupervisor,
@@ -27,12 +35,7 @@ use torca_foundation::{
 use torca_messaging::{MessageBody, MessageId, MessageStatus};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
-use torca_runtime_policy::{
-    AttentionContext, DemandReason, PolicyEvent, ResourceScope, RuntimeGovernor, WorkClass,
-    WorkDemand,
-};
 
-const ACTIVE_MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
 const COMMAND_WAIT: Duration = Duration::from_secs(10);
 const QUERY_WAIT: Duration = Duration::from_secs(5);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(15);
@@ -355,6 +358,13 @@ pub trait ConversationReadPort: Send + 'static {
 }
 
 pub trait AttachmentTransferPort: Send + 'static {
+    fn set_battery_policy(
+        &mut self,
+        _profile: BatteryProfile,
+        _metered_transfers: MeteredTransferPolicy,
+        _metered_network: bool,
+    ) {
+    }
     fn prepare_attachment(
         &mut self,
         request: &AttachmentSendRequest,
@@ -408,6 +418,14 @@ pub trait CommunicationDriver:
         0
     }
 
+    fn attachment_chunk_tx_count(&self) -> u64 {
+        0
+    }
+
+    fn attachment_policy_suppressed_count(&self) -> u64 {
+        0
+    }
+
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,
@@ -425,6 +443,11 @@ pub trait TorDriver: Send + 'static {
     }
     /// Installs a non-blocking wake path for Tor/bootstrap/publisher events.
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
+    /// Requests platform-neutral Tor background activity policy. The default
+    /// keeps test drivers compatible; production Arti drivers implement it.
+    fn set_dormant(&mut self, _dormant: bool) -> Result<(), RuntimeDriverError> {
+        Ok(())
+    }
     fn state(&self) -> TorState;
     fn onion_address(&self) -> Option<String>;
     fn onion_service_state(&self) -> OnionServiceState {
@@ -488,6 +511,10 @@ enum RuntimeCommand {
     NetworkChanged,
     SetRadioDemand(ContactId, bool),
     SetRadioTransmission(ContactId, bool),
+    SetBatteryProfile(BatteryProfile),
+    SetMeteredNetwork(bool),
+    SetMeteredTransferPolicy(MeteredTransferPolicy),
+    SetTorDormancy(bool),
     Wake,
     WakeDelivery(OpaqueId),
     ReleaseDelivery(OpaqueId),
@@ -497,8 +524,15 @@ enum RuntimeCommand {
 #[derive(Clone)]
 pub struct RuntimeHandle {
     sender: SyncSender<RuntimeCommand>,
+    critical_lease: Arc<AtomicBool>,
 }
 impl RuntimeHandle {
+    /// True while durable delivery, attachment transfer or radio work must
+    /// keep the network awake. This is a lock-free observation used by the
+    /// platform battery coordinator; the actor remains the sole writer.
+    pub fn has_critical_network_lease(&self) -> bool {
+        self.critical_lease.load(Ordering::Acquire)
+    }
     pub fn set_attention(&self, context: AttentionContext) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::SetAttention(context));
     }
@@ -637,6 +671,24 @@ impl RuntimeHandle {
             RuntimeCommand::SetRadioTransmission(contact_id, active),
         );
     }
+
+    /// Selects the runtime battery profile. This changes discretionary work
+    /// policy and diagnostics; durable delivery remains unaffected.
+    pub fn set_battery_profile(&self, profile: BatteryProfile) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetBatteryProfile(profile));
+    }
+
+    pub fn set_metered_network(&self, metered: bool) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetMeteredNetwork(metered));
+    }
+
+    pub fn set_metered_transfer_policy(&self, policy: MeteredTransferPolicy) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetMeteredTransferPolicy(policy));
+    }
+
+    pub fn set_tor_dormancy(&self, dormant: bool) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetTorDormancy(dormant));
+    }
 }
 
 pub struct RuntimeOwner {
@@ -671,24 +723,13 @@ fn wait_for_runtime_command(
 }
 
 fn next_runtime_delay(
-    active_transport: bool,
     tor: Option<Duration>,
     pairing: Option<Duration>,
     communication: Option<Duration>,
     lease: Option<Duration>,
     peer_probe: Option<Duration>,
 ) -> Option<Duration> {
-    [
-        active_transport.then_some(ACTIVE_MAINTENANCE_INTERVAL),
-        tor,
-        pairing,
-        communication,
-        lease,
-        peer_probe,
-    ]
-    .into_iter()
-    .flatten()
-    .min()
+    [tor, pairing, communication, lease, peer_probe].into_iter().flatten().min()
 }
 
 fn command_writes_database(command: &RuntimeCommand) -> bool {
@@ -708,6 +749,22 @@ fn command_writes_database(command: &RuntimeCommand) -> bool {
             | RuntimeCommand::ClearConversationHistory(..)
             | RuntimeCommand::MarkConversationRead(..)
             | RuntimeCommand::QueueAttachment(..)
+            | RuntimeCommand::RetryAttachment(..)
+            | RuntimeCommand::CancelAttachment(..)
+    )
+}
+
+fn command_requires_network(command: &RuntimeCommand) -> bool {
+    matches!(
+        command,
+        RuntimeCommand::CreatePairing(..)
+            | RuntimeCommand::JoinPairing(..)
+            | RuntimeCommand::ApprovePairing(..)
+            | RuntimeCommand::RejectPairing(..)
+            | RuntimeCommand::CancelPairing(..)
+            | RuntimeCommand::MarkConversationRead(..)
+            | RuntimeCommand::QueueAttachment(..)
+            | RuntimeCommand::QueueReaction(..)
             | RuntimeCommand::RetryAttachment(..)
             | RuntimeCommand::CancelAttachment(..)
     )
@@ -766,6 +823,8 @@ impl RuntimeOwner {
         });
         let relay_health = relay_worker.as_ref().map(RelayHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
+        let critical_lease = Arc::new(AtomicBool::new(false));
+        let critical_lease_for_actor = Arc::clone(&critical_lease);
         let wake_sender = sender.clone();
         let runtime_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             // The accept worker must never block on the runtime mailbox. A
@@ -775,7 +834,7 @@ impl RuntimeOwner {
         });
         communication.set_waker(Arc::clone(&runtime_waker));
         tor.set_waker(runtime_waker);
-        let handle = RuntimeHandle { sender: sender.clone() };
+        let handle = RuntimeHandle { sender: sender.clone(), critical_lease };
         let join = thread::spawn(move || {
             let mut diagnostics = DiagnosticBuffer::new(256);
             let mut policy = RuntimeGovernor::new(std::time::Instant::now());
@@ -819,6 +878,7 @@ impl RuntimeOwner {
                 relay_health,
                 relay_info,
                 connectivity,
+                critical_lease_for_actor,
             );
             communication.shutdown();
             pairing.shutdown();
@@ -856,6 +916,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     relay_health: Option<RelayHealthHandle>,
     relay_info: Option<Arc<dyn RelayProbe>>,
     connectivity: ConnectivityObserver,
+    critical_lease: Arc<AtomicBool>,
 ) {
     let mut last_tor_state = None;
     let mut last_onion_state = None;
@@ -871,6 +932,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut transport_activity = TransportActivityLedger::default();
     let mut next_maintenance_at = Some(std::time::Instant::now());
     let mut peer_probe_deadline = None;
+    let mut battery_policy = BatteryPolicy::new(BatteryProfile::AlwaysAvailable);
+    let mut metered_transfers = MeteredTransferPolicy::PauseLarge;
+    let mut metered_network = false;
     let mut contacts = Vec::<ContactId>::new();
     let mut refresh_contacts = true;
     let mut attention_owner = None;
@@ -880,6 +944,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut active_delivery_leases = BTreeSet::<OpaqueId>::new();
     let mut last_worker_database_writes = 0_u64;
     let mut last_blob_writes = 0_u64;
+    let mut last_attachment_chunks = 0_u64;
+    let mut last_attachment_suppressed = 0_u64;
     let mut last_projection_events = 0_u64;
     let mut bootstrap_relay_probe_started = false;
     let mut bootstrap_relay_probe_finished = false;
@@ -901,34 +967,52 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 if let Some(owner) = attention_owner.take() {
                     policy.release_lease(owner);
                 }
-                let owner = OpaqueId::from_u128(context.generation.max(1) as u128);
+                let owner = OpaqueId::from_u128(u128::from(context.generation.max(1)));
+                let expires_at = now + Duration::from_secs(5 * 60);
                 let demand = match context.surface {
-                    torca_runtime_policy::AttentionSurface::Conversation(peer)
-                    | torca_runtime_policy::AttentionSurface::Radio(peer) => Some(WorkDemand {
+                    torca_battery::AttentionSurface::Conversation(peer)
+                    | torca_battery::AttentionSurface::Radio(peer) => Some(WorkDemand {
                         scope: ResourceScope::Peer(peer),
-                        class: WorkClass::PeerProbe,
+                        class: if matches!(
+                            context.surface,
+                            torca_battery::AttentionSurface::Conversation(_)
+                        ) {
+                            WorkClass::PeerDial
+                        } else {
+                            WorkClass::PeerProbe
+                        },
                         reason: if matches!(
                             context.surface,
-                            torca_runtime_policy::AttentionSurface::Radio(_)
+                            torca_battery::AttentionSurface::Radio(_)
                         ) {
                             DemandReason::RadioSession
                         } else {
-                            DemandReason::VisibleConversation
+                            // The single active conversation is the runtime's
+                            // implicit focus lease. Only this peer receives
+                            // proactive responsiveness while the route is open.
+                            DemandReason::FocusedConversation
                         },
                         owner,
-                        expires_at: now + Duration::from_secs(5 * 60),
+                        expires_at,
                     }),
-                    torca_runtime_policy::AttentionSurface::Pairing(_relay) => Some(WorkDemand {
+                    torca_battery::AttentionSurface::Pairing(_relay) => Some(WorkDemand {
                         scope: ResourceScope::Relay,
                         class: WorkClass::RelayProbe,
                         reason: DemandReason::ActivePairing,
                         owner,
-                        expires_at: now + Duration::from_secs(5 * 60),
+                        expires_at,
                     }),
                     _ => None,
                 };
                 if let Some(demand) = demand {
-                    policy.acquire_lease(demand);
+                    if let torca_battery::AttentionSurface::Conversation(peer) = context.surface {
+                        // Conversation attention is the one explicit focus
+                        // lease. This replaces, rather than stacks with,
+                        // previous focus and keeps one peer responsive.
+                        policy.acquire_focus(peer, owner, expires_at, now);
+                    } else {
+                        policy.acquire_lease(demand);
+                    }
                     attention_owner = Some(owner);
                 }
                 policy.apply(PolicyEvent::Attention(context), now);
@@ -952,19 +1036,48 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             RuntimeWait::Command(RuntimeCommand::SetRadioDemand(contact_id, enabled)) => {
                 if enabled {
+                    let _ = tor.set_dormant(false);
                     acquire_radio_lease(policy, contact_id);
+                    diagnostics.record_battery(BatteryMetric::RadioWake, 1, WakeReason::Radio);
                 } else {
                     policy.release_lease(radio_lease_owner(contact_id));
                 }
             }
             RuntimeWait::Command(RuntimeCommand::SetRadioTransmission(contact_id, active)) => {
                 if active {
+                    let _ = tor.set_dormant(false);
                     acquire_radio_transmission_lease(policy, contact_id);
+                    diagnostics.record_battery(BatteryMetric::RadioWake, 1, WakeReason::Radio);
                 } else {
                     policy.release_lease(radio_transmission_lease_owner(contact_id));
                 }
             }
+            RuntimeWait::Command(RuntimeCommand::SetBatteryProfile(profile)) => {
+                battery_policy.set_profile(profile);
+                communication.set_battery_policy(profile, metered_transfers, metered_network);
+                diagnostics.set_battery_profile(profile);
+            }
+            RuntimeWait::Command(RuntimeCommand::SetMeteredNetwork(metered)) => {
+                metered_network = metered;
+                communication.set_battery_policy(
+                    battery_policy.profile(),
+                    metered_transfers,
+                    metered_network,
+                );
+            }
+            RuntimeWait::Command(RuntimeCommand::SetMeteredTransferPolicy(policy)) => {
+                metered_transfers = policy;
+                communication.set_battery_policy(
+                    battery_policy.profile(),
+                    metered_transfers,
+                    metered_network,
+                );
+            }
+            RuntimeWait::Command(RuntimeCommand::SetTorDormancy(dormant)) => {
+                let _ = tor.set_dormant(dormant);
+            }
             RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id)) => {
+                let _ = tor.set_dormant(false);
                 active_delivery_leases.insert(message_id);
                 acquire_delivery_lease(policy, message_id);
                 refresh_contacts = true;
@@ -974,6 +1087,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 policy.release_lease(delivery_lease_owner(message_id));
             }
             RuntimeWait::Command(command) => {
+                if command_requires_network(&command) {
+                    // A durable/user-visible operation is a demand edge. It
+                    // must wake soft-dormant Tor before its transport worker
+                    // attempts a dial; otherwise background delivery can sit
+                    // behind dormancy until the next lifecycle event.
+                    let _ = tor.set_dormant(false);
+                }
                 if command_writes_database(&command) {
                     diagnostics.count(RuntimeCounter::DbWrite);
                 }
@@ -1003,7 +1123,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         diagnostics.count(RuntimeCounter::SchedulerWakeup);
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
         if refresh_contacts {
-            if let Ok(snapshot) = engine.snapshot() {
+            if let Ok(snapshot) = engine.overview_snapshot() {
                 diagnostics.count(RuntimeCounter::SnapshotBuild);
                 diagnostics.count(RuntimeCounter::DbRead);
                 contacts = snapshot
@@ -1019,14 +1139,21 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let demanded = policy.has_active_lease(ResourceScope::Relay, std::time::Instant::now());
             relay.set_demand(demanded);
         }
+        critical_lease.store(
+            !active_attachment_leases.is_empty()
+                || !active_delivery_leases.is_empty()
+                || policy.has_active_lease(ResourceScope::Relay, std::time::Instant::now()),
+            Ordering::Release,
+        );
         let relay_snapshot = relay_health
             .as_ref()
             .map_or_else(RelayHealthSnapshot::default, RelayHealthHandle::snapshot);
         let relay_probe_completed = relay_snapshot.probe_count > last_relay_probe_count;
         if relay_probe_completed {
-            for _ in last_relay_probe_count..relay_snapshot.probe_count {
-                diagnostics.count(RuntimeCounter::RelayProbe);
-            }
+            diagnostics.count_by(
+                RuntimeCounter::RelayProbe,
+                relay_snapshot.probe_count.saturating_sub(last_relay_probe_count),
+            );
             last_relay_probe_count = relay_snapshot.probe_count;
         }
         let relay_state = (relay_snapshot.status, relay_snapshot.diagnostic_code);
@@ -1034,7 +1161,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             policy.apply(
                 PolicyEvent::Evidence {
                     scope: ResourceScope::Relay,
-                    kind: torca_runtime_policy::EvidenceKind::Probe,
+                    kind: torca_battery::EvidenceKind::Probe,
                 },
                 std::time::Instant::now(),
             );
@@ -1139,23 +1266,44 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         let mut maintenance_result = communication.maintenance(&contacts, now);
         let worker_database_writes = communication.database_write_count();
         if worker_database_writes > last_worker_database_writes {
-            for _ in last_worker_database_writes..worker_database_writes {
-                diagnostics.count(RuntimeCounter::DbWrite);
-            }
+            diagnostics.count_by(
+                RuntimeCounter::DbWrite,
+                worker_database_writes.saturating_sub(last_worker_database_writes),
+            );
         }
         last_worker_database_writes = worker_database_writes;
         let blob_writes = communication.blob_write_count();
         if blob_writes > last_blob_writes {
-            for _ in last_blob_writes..blob_writes {
-                diagnostics.count(RuntimeCounter::BlobWrite);
-            }
+            diagnostics
+                .count_by(RuntimeCounter::BlobWrite, blob_writes.saturating_sub(last_blob_writes));
         }
         last_blob_writes = blob_writes;
+        let attachment_chunks = communication.attachment_chunk_tx_count();
+        if attachment_chunks > last_attachment_chunks {
+            diagnostics.record_battery(
+                BatteryMetric::AttachmentChunkTx,
+                attachment_chunks - last_attachment_chunks,
+                WakeReason::AttachmentTransfer,
+            );
+        }
+        last_attachment_chunks = attachment_chunks;
+
+        let suppressed = communication.attachment_policy_suppressed_count();
+        if suppressed > last_attachment_suppressed {
+            diagnostics.record_battery(
+                BatteryMetric::SuppressedWork,
+                suppressed - last_attachment_suppressed,
+                WakeReason::PolicySuppressed,
+            );
+        }
+        last_attachment_suppressed = suppressed;
         let projection_events = engine.projection_event_count();
-        if projection_events > last_projection_events {
-            for _ in last_projection_events..projection_events {
-                diagnostics.count(RuntimeCounter::ProjectionEvent);
-            }
+        let projection_changed = projection_events > last_projection_events;
+        if projection_changed {
+            diagnostics.count_by(
+                RuntimeCounter::ProjectionEvent,
+                projection_events.saturating_sub(last_projection_events),
+            );
         }
         last_projection_events = projection_events;
         if !active_attachment_leases.is_empty()
@@ -1170,14 +1318,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
             }
         }
-        if !active_delivery_leases.is_empty()
-            && let Ok(snapshot) = engine.snapshot()
-        {
-            for message in snapshot.messages {
-                let message_id = message.id().to_opaque();
-                if active_delivery_leases.contains(&message_id)
+        if projection_changed && !active_delivery_leases.is_empty() {
+            for message_id in active_delivery_leases.iter().copied().collect::<Vec<_>>() {
+                let message_key = torca_messaging::MessageId::from_opaque(message_id);
+                if let Ok(Some(status)) = engine.message_status(message_key)
                     && matches!(
-                        message.status(),
+                        status,
                         MessageStatus::Delivered
                             | MessageStatus::Read
                             | MessageStatus::Failed
@@ -1216,7 +1362,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 policy.apply(
                     PolicyEvent::Evidence {
                         scope: ResourceScope::Peer(id.to_opaque()),
-                        kind: torca_runtime_policy::EvidenceKind::Handshake,
+                        kind: torca_battery::EvidenceKind::Handshake,
                     },
                     std::time::Instant::now(),
                 );
@@ -1230,7 +1376,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 policy.apply(
                     PolicyEvent::Evidence {
                         scope: ResourceScope::Peer(id.to_opaque()),
-                        kind: torca_runtime_policy::EvidenceKind::Failure,
+                        kind: torca_battery::EvidenceKind::Failure,
                     },
                     std::time::Instant::now(),
                 );
@@ -1243,7 +1389,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 policy.apply(
                     PolicyEvent::Evidence {
                         scope: ResourceScope::Peer(id.to_opaque()),
-                        kind: torca_runtime_policy::EvidenceKind::Ack,
+                        kind: torca_battery::EvidenceKind::Ack,
                     },
                     std::time::Instant::now(),
                 );
@@ -1258,6 +1404,34 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     evidence.handshakes > previous.map_or(0, |value| value.handshakes);
                 let failure_changed =
                     evidence.failures > previous.map_or(0, |value| value.failures);
+                let tx_delta =
+                    evidence.tx_frames.saturating_sub(previous.map_or(0, |value| value.tx_frames));
+                let rx_delta =
+                    evidence.rx_frames.saturating_sub(previous.map_or(0, |value| value.rx_frames));
+                let handshake_delta = evidence
+                    .handshakes
+                    .saturating_sub(previous.map_or(0, |value| value.handshakes));
+                if tx_delta > 0 {
+                    diagnostics.record_battery(
+                        BatteryMetric::TxFrame,
+                        tx_delta,
+                        WakeReason::DurableDelivery,
+                    );
+                }
+                if rx_delta > 0 {
+                    diagnostics.record_battery(
+                        BatteryMetric::RxFrame,
+                        rx_delta,
+                        WakeReason::DurableDelivery,
+                    );
+                }
+                if handshake_delta > 0 {
+                    diagnostics.record_battery(
+                        BatteryMetric::Handshake,
+                        handshake_delta,
+                        WakeReason::Scheduler,
+                    );
+                }
                 if tx_changed || rx_changed || ack_changed || handshake_changed {
                     transport_activity.mark_peer(id, now);
                 }
@@ -1265,28 +1439,19 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 let policy_now = std::time::Instant::now();
                 if tx_changed {
                     policy.apply(
-                        PolicyEvent::Evidence {
-                            scope,
-                            kind: torca_runtime_policy::EvidenceKind::Tx,
-                        },
+                        PolicyEvent::Evidence { scope, kind: torca_battery::EvidenceKind::Tx },
                         policy_now,
                     );
                 }
                 if rx_changed {
                     policy.apply(
-                        PolicyEvent::Evidence {
-                            scope,
-                            kind: torca_runtime_policy::EvidenceKind::Rx,
-                        },
+                        PolicyEvent::Evidence { scope, kind: torca_battery::EvidenceKind::Rx },
                         policy_now,
                     );
                 }
                 if ack_changed {
                     policy.apply(
-                        PolicyEvent::Evidence {
-                            scope,
-                            kind: torca_runtime_policy::EvidenceKind::Ack,
-                        },
+                        PolicyEvent::Evidence { scope, kind: torca_battery::EvidenceKind::Ack },
                         policy_now,
                     );
                 }
@@ -1294,17 +1459,14 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     policy.apply(
                         PolicyEvent::Evidence {
                             scope,
-                            kind: torca_runtime_policy::EvidenceKind::Handshake,
+                            kind: torca_battery::EvidenceKind::Handshake,
                         },
                         policy_now,
                     );
                 }
                 if failure_changed {
                     policy.apply(
-                        PolicyEvent::Evidence {
-                            scope,
-                            kind: torca_runtime_policy::EvidenceKind::Failure,
-                        },
+                        PolicyEvent::Evidence { scope, kind: torca_battery::EvidenceKind::Failure },
                         policy_now,
                     );
                 }
@@ -1327,15 +1489,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         last_peer_activity = current_activity;
 
         if maintenance_result.is_ok() {
-            maintenance_result =
-                maintain_peer_probes(communication, &contacts, &mut peer_probes, policy, now).map(
-                    |(deadline, probe_started)| {
-                        peer_probe_deadline = deadline;
-                        if probe_started {
-                            diagnostics.count(RuntimeCounter::PeerProbe);
-                        }
-                    },
-                );
+            maintenance_result = maintain_peer_probes(
+                communication,
+                &contacts,
+                &mut peer_probes,
+                policy,
+                battery_policy,
+                now,
+            )
+            .map(|(deadline, probe_started)| {
+                peer_probe_deadline = deadline;
+                if probe_started {
+                    diagnostics.count(RuntimeCounter::PeerProbe);
+                }
+            });
         }
         observe_maintenance(
             maintenance_result,
@@ -1356,13 +1523,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             .flatten()
             .and_then(|deadline| deadline.duration_since(now));
         let next_delay = next_runtime_delay(
-            active_transport,
             tor.next_maintenance_delay(now),
             pairing.next_maintenance_delay(now),
             communication.next_maintenance_delay(now),
             lease_delay,
             peer_delay,
         );
+        diagnostics.set_policy_snapshot(policy.snapshot(std::time::Instant::now()));
         next_maintenance_at = next_delay.map(|delay| std::time::Instant::now() + delay);
     }
 }
@@ -1375,8 +1542,14 @@ fn maintain_peer_probes<C: PeerSessionPort>(
     contacts: &[ContactId],
     supervisor: &mut PeerProbeSupervisor,
     policy: &mut RuntimeGovernor,
+    battery_policy: BatteryPolicy,
     now: Timestamp,
 ) -> Result<(Option<Timestamp>, bool), RuntimeDriverError> {
+    if matches!(battery_policy.profile(), BatteryProfile::BatterySaver) {
+        // Cosmetic reachability probes are suppressed in Battery Saver. Real
+        // traffic and durable delivery remain owned by their executors.
+        return Ok((supervisor.next_deadline(), false));
+    }
     if let Some(contact_id) = communication.take_peer_probe_completion(now)? {
         let health = communication.peer_health(contact_id);
         supervisor.complete(
@@ -1792,6 +1965,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(communication.export_attachment_preview(id, destination));
         }
         RuntimeCommand::AttachmentSnapshot(r) => {
+            diagnostics.count(RuntimeCounter::FfiWake);
             let result = communication.attachment_snapshot();
             if let Ok(views) = &result {
                 for view in views {
@@ -1804,8 +1978,10 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(result);
         }
         RuntimeCommand::NetworkSnapshot(r) => {
+            diagnostics.count(RuntimeCounter::FfiWake);
             let result = (|| {
-                let snapshot = engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+                let snapshot =
+                    engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
                 let peers = snapshot
                     .contacts
                     .iter()
@@ -1834,6 +2010,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(result);
         }
         RuntimeCommand::Diagnostics(r) => {
+            diagnostics.count(RuntimeCounter::FfiWake);
             let _ = r.send(diagnostics.export_json());
         }
         RuntimeCommand::Wake => {}
@@ -1843,6 +2020,11 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::SetRadioDemand(_, _) | RuntimeCommand::SetRadioTransmission(_, _) => {
             unreachable!()
         }
+        RuntimeCommand::SetBatteryProfile(_) => unreachable!(),
+        RuntimeCommand::SetMeteredNetwork(_) | RuntimeCommand::SetMeteredTransferPolicy(_) => {
+            unreachable!()
+        }
+        RuntimeCommand::SetTorDormancy(_) => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),
     }
 }
@@ -2009,14 +2191,14 @@ mod tests {
 
     #[test]
     fn idle_scheduler_has_no_application_deadline() {
-        assert_eq!(next_runtime_delay(false, None, None, None, None, None), None);
+        assert_eq!(next_runtime_delay(None, None, None, None, None), None);
     }
 
     #[test]
-    fn active_scheduler_keeps_media_cadence() {
+    fn active_scheduler_uses_executor_deadline() {
         assert_eq!(
-            next_runtime_delay(true, None, None, None, None, None),
-            Some(ACTIVE_MAINTENANCE_INTERVAL)
+            next_runtime_delay(None, None, Some(Duration::from_millis(250)), None, None),
+            Some(Duration::from_millis(250))
         );
     }
 
@@ -2024,7 +2206,6 @@ mod tests {
     fn scheduler_selects_earliest_executor_deadline() {
         assert_eq!(
             next_runtime_delay(
-                false,
                 Some(Duration::from_secs(5)),
                 Some(Duration::from_secs(3)),
                 Some(Duration::from_secs(7)),

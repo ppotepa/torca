@@ -161,23 +161,6 @@ pub(crate) fn database_path() -> Result<PathBuf, ProtectedSecretStoreError> {
 pub(crate) fn log_root_path() -> Result<PathBuf, ProtectedSecretStoreError> {
     string_method("logRootPath").map(PathBuf::from)
 }
-#[allow(dead_code)]
-pub(crate) fn report_runtime_error(message: &str) {
-    eprintln!("Torca Android runtime error: {message}");
-    let _ = with_env(|env| {
-        let value = env.new_string(message)?;
-        let object = JObject::from(value);
-        let class = bridge_class(env)?;
-        env.call_static_method(
-            class,
-            "reportNativeFailure",
-            "(Ljava/lang/String;)V",
-            &[JValue::Object(&object)],
-        )?;
-        Ok(())
-    });
-}
-
 fn string_method(method: &str) -> Result<String, ProtectedSecretStoreError> {
     with_env(|env| {
         let class = bridge_class(env)?;

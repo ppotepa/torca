@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 
 use torca_attachments::AttachmentId;
+use torca_battery::{BatteryProfile, MeteredTransferPolicy};
 use torca_bootstrap::{BootstrapSnapshot, BootstrapState, BootstrapStepId, BootstrapStepState};
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
@@ -78,6 +79,13 @@ pub enum ApplicationCommand {
     },
     SetReadReceipts {
         enabled: bool,
+    },
+    SetBatteryPreferences {
+        mode: String,
+        background_sync: String,
+        allow_delayed_background_delivery: bool,
+        metered_transfers: String,
+        visual_activity: String,
     },
     AcknowledgeNewContacts,
     UpdateProfile {
@@ -268,6 +276,9 @@ pub struct ClientApplicationRuntime {
 }
 
 impl ClientApplicationRuntime {
+    pub fn has_critical_network_lease(&self) -> bool {
+        self.runtime.as_ref().is_some_and(RuntimeHandle::has_critical_network_lease)
+    }
     /// Returns the local content-addressed avatar envelope for an explicit
     /// targeted query. The regular snapshot never contains the compressed
     /// genome payload.
@@ -285,7 +296,6 @@ impl ClientApplicationRuntime {
                 .avatar_genome
                 .ok_or_else(|| EngineError("local avatar genome is not initialized".into()))?
         };
-        use base64::Engine as _;
         Ok(serde_json::json!({
             "schema": record.schema_version,
             "generatorVersion": record.generator_version,
@@ -312,6 +322,30 @@ impl ClientApplicationRuntime {
 
     pub fn attach_radio(&mut self, radio: SharedRadioCoordinator) {
         self.radio = Some(radio);
+    }
+
+    pub fn set_battery_profile(&self, profile: BatteryProfile) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_battery_profile(profile);
+        }
+    }
+
+    pub fn set_metered_network(&self, metered: bool) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_metered_network(metered);
+        }
+    }
+
+    pub fn set_metered_transfer_policy(&self, policy: MeteredTransferPolicy) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_metered_transfer_policy(policy);
+        }
+    }
+
+    pub fn set_tor_dormancy(&self, dormant: bool) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_tor_dormancy(dormant);
+        }
     }
 
     pub fn radio_lifecycle(&self, lifecycle: HostRadioLifecycle) -> Result<(), ApplicationError> {
@@ -387,7 +421,9 @@ impl ClientApplicationRuntime {
             .as_ref()
             .and_then(|runtime| runtime.attachment_snapshot().ok())
             .unwrap_or_default();
-        let application = self.application.snapshot()?;
+        // The root projection is an overview, never a history query. Message
+        // bodies and reactions are loaded only by conversation/search pages.
+        let application = self.application.overview()?;
         if let (Some(radio), Ok(now)) = (self.radio.as_ref(), current_timestamp()) {
             for contact in &application.contacts {
                 radio.ensure_contact(contact.id(), now);
@@ -614,6 +650,7 @@ impl ClientApplicationRuntime {
             }
             ApplicationCommand::SetNotifications { .. } => "notifications_updated",
             ApplicationCommand::SetReadReceipts { .. } => "read_receipts_updated",
+            ApplicationCommand::SetBatteryPreferences { .. } => "battery_preferences_updated",
             ApplicationCommand::AcknowledgeNewContacts => "contacts_acknowledged",
             ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
                 let display_name = ProfileName::new(display_name).map_err(string_error)?;

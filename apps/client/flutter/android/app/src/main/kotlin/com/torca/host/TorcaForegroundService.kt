@@ -7,6 +7,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
@@ -36,10 +39,28 @@ class TorcaForegroundService : Service() {
     private var runtimeRevision = 0L
     private lateinit var connectivityManager: ConnectivityManager
     private var warmupWakeLock: PowerManager.WakeLock? = null
+    private val energyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val event = when (intent.action) {
+                PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                    val saver = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+                    if (saver) "power_saver_on" else "power_saver_off"
+                }
+                Intent.ACTION_POWER_CONNECTED -> "charging_on"
+                Intent.ACTION_POWER_DISCONNECTED -> "charging_off"
+                else -> return
+            }
+            if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                NativeRuntimeBridge.nativeLifecycleEvent(event)
+            }
+        }
+    }
     private var networkChangePending = false
     private val networkLock = Any()
     private var defaultNetwork: Network? = null
     private var defaultNetworkFingerprint: NetworkFingerprint? = null
+    private var lastMetered: Boolean? = null
+    private var lastValidated: Boolean? = null
     private val networkChangeRunnable = Runnable {
         networkChangePending = false
         if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
@@ -62,7 +83,7 @@ class TorcaForegroundService : Service() {
             }
             val waitResult = NativeRuntimeBridge.nativeWaitForRevision(
                 runtimeRevision,
-                runtimeRevision,
+                notificationCursor,
                 EVENT_WAIT_TIMEOUT_MS,
             )
             if (waitResult < 0) {
@@ -89,6 +110,23 @@ class TorcaForegroundService : Service() {
             .getString(NOTIFICATION_RUNTIME_ID, "") ?: ""
         AndroidKeystoreBridge.initialize(applicationContext)
         connectivityManager = getSystemService(ConnectivityManager::class.java)
+        runCatching {
+            val filter = IntentFilter().apply {
+                addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+            }
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(energyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(energyReceiver, filter)
+            }
+            val powerManager = getSystemService(PowerManager::class.java)
+            if (powerManager?.isPowerSaveMode == true) {
+                NativeRuntimeBridge.nativeLifecycleEvent("power_saver_on")
+            }
+        }.onFailure { Log.w(TAG, "Could not register energy callbacks", it) }
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 connectivityManager.registerDefaultNetworkCallback(networkCallback)
@@ -174,6 +212,7 @@ class TorcaForegroundService : Service() {
         warmupWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
         warmupWakeLock = null
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+        runCatching { unregisterReceiver(energyReceiver) }
         notificationHandler.removeCallbacks(notificationPoller)
         notificationHandler.removeCallbacks(networkChangeRunnable)
         NativeRuntimeBridge.nativeCancelRevisionWait()
@@ -217,6 +256,28 @@ class TorcaForegroundService : Service() {
         capabilities: android.net.NetworkCapabilities,
     ) {
         val fingerprint = NetworkFingerprint.from(capabilities)
+        val metered = !capabilities.hasCapability(
+            android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED,
+        )
+        val validated = capabilities.hasCapability(
+            android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED,
+        )
+        if (metered != lastMetered) {
+            lastMetered = metered
+            if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                NativeRuntimeBridge.nativeLifecycleEvent(
+                    if (metered) "metered_network_on" else "metered_network_off",
+                )
+            }
+        }
+        if (validated != lastValidated) {
+            lastValidated = validated
+            if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                NativeRuntimeBridge.nativeLifecycleEvent(
+                    if (validated) "network_validated" else "network_unvalidated",
+                )
+            }
+        }
         val routeReplaced = synchronized(networkLock) {
             when {
                 defaultNetwork == null || defaultNetwork != network -> {
@@ -366,7 +427,9 @@ class TorcaForegroundService : Service() {
         const val NOTIFICATION_RUNTIME_ID = "runtime_id"
         // Zero selects the native condvar wait. It returns only on a runtime
         // revision/cursor change or explicit service shutdown cancellation.
-        const val EVENT_WAIT_TIMEOUT_MS = 0
+        // A bounded wait gives shutdown a deterministic upper bound and
+        // avoids releasing the native runtime while JNI is still blocked.
+        const val EVENT_WAIT_TIMEOUT_MS = 1000
         const val RUNTIME_WAIT_MS = 250L
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
         const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L

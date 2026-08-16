@@ -19,6 +19,7 @@ class TorcaDeviceAvatar extends StatefulWidget {
       AvatarAnimationState.smirk,
     ),
     this.stableDevice = false,
+    this.focused = false,
     super.key,
   });
 
@@ -30,6 +31,7 @@ class TorcaDeviceAvatar extends StatefulWidget {
   final Color? foregroundColor;
   final AvatarActivityPresentation presentation;
   final bool stableDevice;
+  final bool focused;
 
   @override
   State<TorcaDeviceAvatar> createState() => _TorcaDeviceAvatarState();
@@ -121,7 +123,12 @@ class _TorcaDeviceAvatarState extends State<TorcaDeviceAvatar> {
             _AnimatedSprite(
               sheet: sheet,
               size: widget.size,
-              animate: widget.presentation.animates,
+              focused: widget.focused,
+              animate:
+                  widget.presentation.animates &&
+                  AvatarFrameClock.instance.allowsAnimation(
+                    focused: widget.focused,
+                  ),
               reduceMotion: MediaQuery.disableAnimationsOf(context),
             ),
           );
@@ -162,12 +169,14 @@ class _AnimatedSprite extends StatefulWidget {
   const _AnimatedSprite({
     required this.sheet,
     required this.size,
+    required this.focused,
     required this.animate,
     required this.reduceMotion,
   });
 
   final AvatarSpriteSheet sheet;
   final double size;
+  final bool focused;
   final bool animate;
   final bool reduceMotion;
 
@@ -187,6 +196,10 @@ class _AnimatedSpriteState extends State<_AnimatedSprite> {
   @override
   void didUpdateWidget(covariant _AnimatedSprite oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.focused != widget.focused && _attached) {
+      AvatarFrameClock.instance.detach(focused: oldWidget.focused);
+      AvatarFrameClock.instance.attach(focused: widget.focused);
+    }
     _synchronizeClock();
   }
 
@@ -196,17 +209,18 @@ class _AnimatedSpriteState extends State<_AnimatedSprite> {
         !widget.reduceMotion &&
         TickerMode.valuesOf(context).enabled;
     if (shouldAttach == _attached) return;
+    if (_attached) {
+      AvatarFrameClock.instance.detach(focused: widget.focused);
+    }
     _attached = shouldAttach;
     if (_attached) {
-      AvatarFrameClock.instance.attach();
-    } else {
-      AvatarFrameClock.instance.detach();
+      AvatarFrameClock.instance.attach(focused: widget.focused);
     }
   }
 
   @override
   void dispose() {
-    if (_attached) AvatarFrameClock.instance.detach();
+    if (_attached) AvatarFrameClock.instance.detach(focused: widget.focused);
     super.dispose();
   }
 

@@ -5631,6 +5631,7 @@ dependencies = [
  "torca-attachment-protocol",
  "torca-attachment-sqlite",
  "torca-attachments",
+ "torca-battery",
  "torca-contacts",
  "torca-conversations",
  "torca-crypto",
@@ -5651,6 +5652,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "torca-battery"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "torca-foundation",
+ "torca-runtime-policy",
+]
+
+[[package]]
 name = "torca-bootstrap"
 version = "0.2.0-alpha.0"
 dependencies = [
@@ -5664,6 +5673,7 @@ dependencies = [
  "base64",
  "serde_json",
  "torca-attachments",
+ "torca-battery",
  "torca-bootstrap",
  "torca-client-engine",
  "torca-connectivity",
@@ -5704,6 +5714,7 @@ dependencies = [
  "torca-attachment-sqlite",
  "torca-attachment-transfer",
  "torca-attachments",
+ "torca-battery",
  "torca-client-engine",
  "torca-communication-driver",
  "torca-connectivity",
@@ -5734,6 +5745,7 @@ name = "torca-communication-driver"
 version = "0.2.0-alpha.0"
 dependencies = [
  "torca-attachments",
+ "torca-battery",
  "torca-client-engine",
  "torca-contacts",
  "torca-control-delivery",
@@ -5845,6 +5857,7 @@ dependencies = [
 name = "torca-diagnostics"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "torca-battery",
  "torca-foundation",
 ]
 
@@ -5911,6 +5924,7 @@ dependencies = [
  "ndk-context",
  "serde_json",
  "torca-attachments",
+ "torca-battery",
  "torca-client-application",
  "torca-client-engine",
  "torca-communication-adapters",
@@ -6033,6 +6047,7 @@ dependencies = [
 name = "torca-platform"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "torca-battery",
  "torca-crypto",
  "torca-identity",
 ]
@@ -6050,6 +6065,7 @@ dependencies = [
 name = "torca-platform-windows"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "torca-battery",
  "torca-crypto",
  "torca-identity",
  "torca-platform",
@@ -6152,6 +6168,7 @@ name = "torca-runtime"
 version = "0.2.0-alpha.0"
 dependencies = [
  "torca-attachments",
+ "torca-battery",
  "torca-client-engine",
  "torca-connectivity",
  "torca-contacts",
@@ -6163,7 +6180,6 @@ dependencies = [
  "torca-pairing",
  "torca-presence",
  "torca-probing",
- "torca-runtime-policy",
 ]
 
 [[package]]
@@ -6178,6 +6194,7 @@ name = "torca-storage-sqlite"
 version = "0.2.0-alpha.0"
 dependencies = [
  "rusqlite",
+ "torca-battery",
  "torca-client-application",
  "torca-client-engine",
  "torca-contacts",

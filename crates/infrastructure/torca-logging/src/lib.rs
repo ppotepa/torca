@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -45,6 +45,7 @@ pub struct Logger {
     build_id: String,
     started_ms: u128,
     finished: AtomicBool,
+    writes_since_flush: AtomicUsize,
     files: Mutex<Vec<(String, File)>>,
 }
 
@@ -95,6 +96,7 @@ impl Logger {
             build_id,
             started_ms,
             finished: AtomicBool::new(false),
+            writes_since_flush: AtomicUsize::new(0),
             files: Mutex::new(Vec::new()),
         };
         {
@@ -179,7 +181,14 @@ impl Logger {
             file
         };
         file.write_all(line.as_bytes())?;
-        file.flush()
+        // Flushing every JSON event turns diagnostics into a synchronous
+        // fsync-like workload on Android. Keep the stream visible in normal
+        // operation, but batch flushes and always flush on `finish`.
+        let writes = self.writes_since_flush.fetch_add(1, Ordering::Relaxed) + 1;
+        if writes.is_multiple_of(32) {
+            file.flush()?;
+        }
+        Ok(())
     }
 
     /// Writes a small redaction-safe JSON snapshot next to the domain logs.
@@ -206,6 +215,11 @@ impl Logger {
         let status = sanitize_component(status);
         let reason = redact(reason);
         let duration = now_ms().saturating_sub(self.started_ms);
+        if let Ok(mut files) = self.files.lock() {
+            for (_, file) in &mut *files {
+                let _ = file.flush();
+            }
+        }
         self.write_json_file("run.end.json", &format!(
             "{{\"schema\":1,\"status\":\"{}\",\"ended_at_ms\":{},\"duration_ms\":{},\"run_id\":\"{}\",\"incident_id\":\"{}\",\"reason\":\"{}\"}}\n",
             status,

@@ -10,3 +10,4 @@ mod runtime_composition;
 mod torca_runtime;
 
 pub use torca_runtime::*;
+mod battery_policy;

@@ -30,6 +30,7 @@ torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinato
 torca-pairing-driver = { path = "../../infrastructure/torca-pairing-driver" }
 torca-platform = { path = "../torca-platform" }
 torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
+torca-battery = { path = "../../application/torca-battery" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
 torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }

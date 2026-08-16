@@ -9,8 +9,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::{
-    OnionServiceHealth, TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage, TorService,
-    TorServiceHandle,
+    OnionServiceHealth, TorActivityMode, TorBootstrapEvent, TorBootstrapObserver,
+    TorBootstrapStage, TorService, TorServiceHandle,
 };
 use torca_foundation::Timestamp;
 use torca_runtime::{OnionServiceState, RuntimeDriverError, TorDriver, TorState};
@@ -40,6 +40,8 @@ const ONION_DEGRADED_GRACE: Duration = Duration::from_secs(300);
 // alive for ten minutes before declaring it genuinely stalled.
 const ONION_PUBLISHING_GRACE: Duration = Duration::from_secs(600);
 const MAX_ONION_PUBLICATION_ATTEMPTS: u32 = 2;
+const ONION_HEALTH_INTERVAL_REACHABLE: Duration = Duration::from_secs(15);
+const ONION_HEALTH_INTERVAL_TRANSITIONING: Duration = Duration::from_secs(3);
 // A recovery attempt must never occupy the application runtime owner.  The
 // Tor service itself applies its own bounded retry policy; this is the bound
 // for one attempt in that background lane.
@@ -331,7 +333,11 @@ fn wait_for_onion_recovery(
     let mut tracker = OnionRecoveryTracker::default();
     let mut last_health = None;
     loop {
-        match receiver.recv_timeout(Duration::from_secs(1)) {
+        let interval = match last_health {
+            Some(OnionServiceHealth::Reachable) => ONION_HEALTH_INTERVAL_REACHABLE,
+            _ => ONION_HEALTH_INTERVAL_TRANSITIONING,
+        };
+        match receiver.recv_timeout(interval) {
             Ok(OnionWorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
                 return OnionWaitOutcome::Shutdown;
             }
@@ -694,6 +700,17 @@ impl TorDriver for OwnedTorDriver {
         if let Ok(mut slot) = self.wake.lock() {
             *slot = Some(waker);
         }
+    }
+
+    fn set_dormant(&mut self, dormant: bool) -> Result<(), RuntimeDriverError> {
+        let Some(client) = self.client.as_ref() else { return Ok(()) };
+        client
+            .set_activity_mode(if dormant {
+                TorActivityMode::SoftDormant
+            } else {
+                TorActivityMode::Active
+            })
+            .map_err(|_| RuntimeDriverError::Tor)
     }
 
     fn state(&self) -> TorState {

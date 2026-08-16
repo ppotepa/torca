@@ -848,7 +848,10 @@ where
             avatar: local.avatar,
         };
         offer.validate().map_err(|_| PairingRuntimeError::InvalidOffer)?;
-        Ok(PairingEnvelope { pairing_id: context.0, payload: PairingPayload::Offer(offer) })
+        Ok(PairingEnvelope {
+            pairing_id: context.0,
+            payload: PairingPayload::Offer(Box::new(offer)),
+        })
     }
 }
 

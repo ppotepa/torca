@@ -250,6 +250,7 @@ fn context(engine: &torca_client_engine::EngineHandle, name: &str) -> LocalPairi
         display_name: name.into(),
         onion_address: format!("{}.onion", "a".repeat(56)),
         capability_id: OpaqueId::from_u128(if name == "Alice" { 101 } else { 202 }),
+        avatar: None,
     }
 }
 

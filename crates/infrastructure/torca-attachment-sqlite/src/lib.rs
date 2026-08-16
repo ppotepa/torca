@@ -22,6 +22,7 @@ const INSERT_SQL: &str = include_str!("../sql/attachment_insert.sql");
 const UPDATE_SQL: &str = include_str!("../sql/attachment_update.sql");
 const SELECT_SQL: &str = include_str!("../sql/attachment_select.sql");
 const FOR_MESSAGE_SQL: &str = include_str!("../sql/attachment_for_message.sql");
+const LIST_SQL: &str = include_str!("../sql/attachment_list.sql");
 const UPDATE_PROGRESS_SQL: &str = include_str!("../sql/attachment_progress_update.sql");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -119,6 +120,35 @@ impl SqlCipherAttachmentStore {
         } else {
             Err(AttachmentError::NotFound)
         }
+    }
+
+    /// Returns durable attachment rows without loading the message history.
+    /// The transfer scheduler filters by message direction after this bounded
+    /// projection, keeping attachment work independent from the root snapshot.
+    pub fn list(&self) -> Result<Vec<Attachment>, AttachmentError> {
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(LIST_SQL)
+            .map_err(|_| AttachmentError::RepositoryFailure)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(AttachmentRow {
+                    attachment_id: row.get(0)?,
+                    message_id: row.get(1)?,
+                    name: row.get(2)?,
+                    media_type: row.get(3)?,
+                    size: row.get(4)?,
+                    status: row.get(5)?,
+                    created_at_ms: row.get(6)?,
+                    updated_at_ms: row.get(7)?,
+                    attempt_count: row.get(8)?,
+                    last_error_code: row.get(10)?,
+                })
+            })
+            .map_err(|_| AttachmentError::RepositoryFailure)?;
+        rows.map(|row| row.map_err(|_| AttachmentError::RepositoryFailure)?.into_attachment())
+            .collect()
     }
 }
 

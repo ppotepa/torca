@@ -11,6 +11,10 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use torca_battery::{
+    BatteryPreferences, BatteryProfile, EffectiveBatteryPolicy, RequestedBatteryMode,
+    SystemEnergyState,
+};
 use torca_client_application::{
     ApplicationError, ApplicationReadModels, ClientApplicationRuntime, ContactSecurityState,
 };
@@ -29,6 +33,7 @@ use torca_runtime::{RuntimeHandle, RuntimeOwner, TorState};
 use torca_runtime_policy::RuntimeEventHub;
 use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
 
+use crate::battery_policy::BatteryPolicyState;
 use crate::composition::{NativeCompositionError, spawn_production_engine};
 use crate::json::{
     bridge_message_page_json, bridge_result_json, bridge_snapshot_json, empty_snapshot_json,
@@ -122,6 +127,7 @@ pub struct TorcaRuntime {
     notification_events: Vec<torca_contract::NotificationEvent>,
     notifications_enabled: bool,
     read_receipts_enabled: bool,
+    battery_policy: BatteryPolicyState,
     read_receipt_policy: ReadReceiptPolicy,
 }
 
@@ -161,6 +167,10 @@ impl TorcaRuntime {
             .read_models()
             .and_then(|models| models.settings.read_receipts_enabled().ok())
             .unwrap_or(true);
+        let battery_preferences = application_runtime
+            .read_models()
+            .and_then(|models| models.settings.battery_preferences().ok())
+            .unwrap_or_default();
         let read_receipt_policy = ReadReceiptPolicy::new(read_receipts_enabled);
         let contact_notification_seen = application_runtime
             .snapshot_context()
@@ -209,6 +219,10 @@ impl TorcaRuntime {
             notification_events: Vec::new(),
             notifications_enabled,
             read_receipts_enabled,
+            battery_policy: BatteryPolicyState::new(
+                battery_preferences,
+                SystemEnergyState::default(),
+            ),
             read_receipt_policy,
         };
         runtime.log(
@@ -286,6 +300,30 @@ impl TorcaRuntime {
             }
             self.read_receipts_enabled = *enabled;
             self.read_receipt_policy.set_enabled(*enabled);
+        }
+        if let torca_contract::BridgeCommand::SetBatteryPreferences {
+            mode,
+            background_sync,
+            allow_delayed_background_delivery,
+            metered_transfers,
+            visual_activity,
+        } = &command
+        {
+            let preferences = BatteryPreferences::from_wire(
+                mode,
+                background_sync,
+                *allow_delayed_background_delivery,
+                metered_transfers,
+                visual_activity,
+            );
+            let now = unix_time_ms().unwrap_or(0);
+            if self.read_models().settings.set_battery_preferences(preferences, now).is_err() {
+                self.last_result_json = error_result("battery preference storage unavailable");
+                return ABI_ERROR;
+            }
+            self.battery_policy.preferences = preferences;
+            self.application_runtime.set_battery_profile(profile_for_preferences(preferences));
+            self.application_runtime.set_metered_transfer_policy(preferences.metered_transfers);
         }
         if matches!(&command, torca_contract::BridgeCommand::AcknowledgeNewContacts) {
             let now = unix_time_ms().unwrap_or(0);
@@ -437,6 +475,15 @@ impl TorcaRuntime {
             .map(|mut value| {
                 value["notificationsEnabled"] = serde_json::Value::Bool(self.notifications_enabled);
                 value["readReceiptsEnabled"] = serde_json::Value::Bool(self.read_receipts_enabled);
+                let (mode, background_sync, allow_delayed, metered, visual) =
+                    self.battery_policy.preferences.wire();
+                value["batteryPreferences"] = json!({
+                    "mode": mode,
+                    "backgroundSync": background_sync,
+                    "allowDelayedBackgroundDelivery": allow_delayed,
+                    "meteredTransfers": metered,
+                    "visualActivity": visual,
+                });
                 value.to_string()
             })
             .unwrap_or(snapshot_json);
@@ -844,6 +891,24 @@ impl TorcaRuntime {
                         Value::from(self.application_runtime.radio_wake_count()),
                     );
                 }
+                let (mode, background_sync, allow_delayed, metered_transfers, visual_activity) =
+                    self.battery_policy.preferences.wire();
+                let effective = self.effective_battery_policy(false);
+                value["batteryPreferences"] = json!({
+                    "mode": mode,
+                    "backgroundSync": background_sync,
+                    "allowDelayedBackgroundDelivery": allow_delayed,
+                    "meteredTransfers": metered_transfers,
+                    "visualActivity": visual_activity,
+                });
+                value["effectiveBatteryPolicy"] = json!({
+                    "profile": format!("{:?}", effective.profile),
+                    "reason": format!("{:?}", effective.reason),
+                    "torDormancyAllowed": effective.tor_dormancy_allowed,
+                    "backgroundSync": effective.background_sync.wire(),
+                    "meteredTransfers": effective.metered_transfers.wire(),
+                    "visualActivity": effective.visual_activity.wire(),
+                });
                 self.query_json = value.to_string();
                 ABI_OK
             }
@@ -1022,6 +1087,16 @@ impl TorcaRuntime {
                 | "backgrounded"
                 | "network_changed"
                 | "low_memory"
+                | "power_saver_on"
+                | "power_saver_off"
+                | "charging_on"
+                | "charging_off"
+                | "metered_network_on"
+                | "metered_network_off"
+                | "network_validated"
+                | "network_unvalidated"
+                | "data_stall_on"
+                | "data_stall_off"
                 | "terminating"
         ) {
             self.last_result_json = error_result("unknown lifecycle event");
@@ -1039,6 +1114,8 @@ impl TorcaRuntime {
         if let Some(lifecycle) = radio_lifecycle {
             let _ = self.application_runtime.radio_lifecycle(lifecycle);
         }
+        self.battery_policy.apply_system_event(event);
+        self.apply_battery_policy(false);
         if event == "network_changed" {
             if let Some(host) = &self.host {
                 host.network_changed();
@@ -1282,6 +1359,8 @@ impl TorcaRuntime {
                     }
                     self.application_runtime.attach_runtime(handle);
                     self.application_runtime.attach_radio(radio);
+                    self.apply_battery_policy(false);
+                    self.apply_battery_policy(false);
                     self.host = Some(owner);
                     self.host_retry_at = None;
                     self.host_failures = 0;
@@ -1353,6 +1432,20 @@ impl TorcaRuntime {
         {
             self.begin_runtime_start();
         }
+    }
+
+    fn effective_battery_policy(&self, diagnostics_override: bool) -> EffectiveBatteryPolicy {
+        self.battery_policy
+            .effective(self.application_runtime.has_critical_network_lease(), diagnostics_override)
+    }
+
+    fn apply_battery_policy(&self, diagnostics_override: bool) {
+        let effective = self.effective_battery_policy(diagnostics_override);
+        self.application_runtime.set_battery_profile(effective.profile);
+        self.application_runtime.set_tor_dormancy(effective.tor_dormancy_allowed);
+        self.application_runtime
+            .set_metered_network(self.battery_policy.system.metered_network == Some(true));
+        self.application_runtime.set_metered_transfer_policy(effective.metered_transfers);
     }
 
     fn has_identity(&self) -> Result<bool, ()> {
@@ -1493,6 +1586,18 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
 fn unix_time_ms() -> Result<i64, ()> {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| ())?;
     i64::try_from(elapsed.as_millis()).map_err(|_| ())
+}
+
+fn profile_for_preferences(preferences: BatteryPreferences) -> BatteryProfile {
+    match preferences.mode {
+        // Automatic remains reliability-first until platform power events and
+        // dormant/resume soak tests are available on both supported clients.
+        RequestedBatteryMode::Automatic | RequestedBatteryMode::AlwaysAvailable => {
+            BatteryProfile::AlwaysAvailable
+        }
+        RequestedBatteryMode::Balanced => BatteryProfile::Balanced,
+        RequestedBatteryMode::BatterySaver => BatteryProfile::BatterySaver,
+    }
 }
 
 fn instant_to_unix_ms(deadline: Instant) -> Option<i64> {

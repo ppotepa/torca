@@ -10,6 +10,7 @@ mod dpapi;
 pub use dpapi::DpapiFileSecretStore;
 
 use std::path::PathBuf;
+use torca_battery::{PlatformEnergyProvider, PlatformEnergySample};
 use torca_platform::{
     AppPaths, DeviceDescriptor, LifecycleCapabilities, PlatformServices, ProtectedSecretStore,
     RelayEndpoint, SecretNamespace,
@@ -24,6 +25,49 @@ pub struct WindowsPlatformServices {
     pub relay: RelayEndpoint,
 }
 
+/// Event-triggered Windows energy sample. The caller chooses when to sample
+/// (power notification, diagnostics, or incident collection); this provider
+/// never starts a polling thread.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WindowsEnergyProvider;
+
+impl PlatformEnergyProvider for WindowsEnergyProvider {
+    fn sample(&self) -> PlatformEnergySample {
+        sample_energy()
+    }
+}
+
+#[cfg(windows)]
+fn sample_energy() -> PlatformEnergySample {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut status = SYSTEM_POWER_STATUS::default();
+    // SAFETY: Windows fills this caller-owned POD structure synchronously.
+    let ok = unsafe { GetSystemPowerStatus(&mut status) } != 0;
+    if !ok {
+        return PlatformEnergySample::default();
+    }
+    let battery_percent = (status.BatteryLifePercent != 255).then_some(status.BatteryLifePercent);
+    let charging = match status.ACLineStatus {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    };
+    PlatformEnergySample {
+        battery_percent,
+        charging,
+        power_saver: None,
+        metered_network: None,
+        process_cpu_ms: None,
+        uid_tx_bytes: None,
+        uid_rx_bytes: None,
+    }
+}
+
+#[cfg(not(windows))]
+fn sample_energy() -> PlatformEnergySample {
+    PlatformEnergySample::default()
+}
+
 impl WindowsPlatformServices {
     pub fn new(data: PathBuf, cache: PathBuf, logs: PathBuf, relay: RelayEndpoint) -> Self {
         Self {
@@ -32,6 +76,10 @@ impl WindowsPlatformServices {
             installation_id: "windows-install".into(),
             relay,
         }
+    }
+
+    pub fn energy_provider(&self) -> WindowsEnergyProvider {
+        WindowsEnergyProvider
     }
 }
 
@@ -64,6 +112,9 @@ impl PlatformServices for WindowsPlatformServices {
     }
     fn lifecycle_capabilities(&self) -> LifecycleCapabilities {
         LifecycleCapabilities { background_runtime: true, notifications: true }
+    }
+    fn energy_sample(&self) -> PlatformEnergySample {
+        self.energy_provider().sample()
     }
 }
 

@@ -12,7 +12,7 @@ class DeepLinkRouter {
   final EngineGateway gateway;
   final AppLinks _links = AppLinks();
   StreamSubscription<String>? _subscription;
-  Timer? _windowsPoller;
+  StreamSubscription<FileSystemEvent>? _windowsWatcher;
   bool _disposed = false;
 
   Future<void> initialize() async {
@@ -23,11 +23,7 @@ class DeepLinkRouter {
         .map((uri) => uri.toString())
         .listen(_accept);
     if (Platform.isWindows) {
-      _pollWindowsPending();
-      _windowsPoller = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => _pollWindowsPending(),
-      );
+      _watchWindowsPending();
     }
   }
 
@@ -60,11 +56,29 @@ class DeepLinkRouter {
     }
   }
 
+  void _watchWindowsPending() {
+    final local = Platform.environment['LOCALAPPDATA'];
+    if (local == null || local.isEmpty) return;
+    final directory = Directory('$local${Platform.pathSeparator}Torca');
+    try {
+      directory.createSync(recursive: true);
+      _windowsWatcher = directory
+          .watch(events: FileSystemEvent.create | FileSystemEvent.modify)
+          .listen((event) {
+            if (event.path.endsWith('pending_link.txt')) _pollWindowsPending();
+          });
+      _pollWindowsPending();
+    } on FileSystemException {
+      // Native app activation remains authoritative. Do not fall back to a
+      // periodic poll when the watcher cannot be installed.
+    }
+  }
+
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    _windowsPoller?.cancel();
-    _windowsPoller = null;
+    await _windowsWatcher?.cancel();
+    _windowsWatcher = null;
     await _subscription?.cancel();
     _subscription = null;
   }

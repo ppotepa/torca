@@ -155,6 +155,20 @@ impl RuntimeSettingsPort for SqliteSettings {
             .set_read_receipts_enabled(enabled, at)
             .map_err(|_| ApplicationQueryError::Unavailable)
     }
+    fn battery_preferences(
+        &self,
+    ) -> Result<torca_battery::BatteryPreferences, ApplicationQueryError> {
+        self.0.battery_preferences().map_err(|_| ApplicationQueryError::Unavailable)
+    }
+    fn set_battery_preferences(
+        &self,
+        preferences: torca_battery::BatteryPreferences,
+        at: i64,
+    ) -> Result<(), ApplicationQueryError> {
+        self.0
+            .set_battery_preferences(preferences, at)
+            .map_err(|_| ApplicationQueryError::Unavailable)
+    }
     fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError> {
         self.0.new_contacts_acknowledged_at_ms().map_err(|_| ApplicationQueryError::Unavailable)
     }

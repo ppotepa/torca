@@ -21,6 +21,7 @@ use torca_attachment_sqlite::SqlCipherAttachmentStore;
 use torca_attachments::{
     Attachment, AttachmentError, AttachmentId, AttachmentRepository, AttachmentStatus,
 };
+use torca_battery::{BatteryPolicy, BatteryProfile, MeteredTransferPolicy, TransferDecision};
 use torca_contacts::{
     Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
 };
@@ -28,7 +29,7 @@ use torca_conversations::{ConversationId, ConversationRepository};
 use torca_crypto::{Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, ProtectedSecretStore};
 use torca_file_storage::{BlobStore, FileBlobStore};
 use torca_foundation::{ErrorCode, OpaqueId, Timestamp};
-use torca_messaging::{Message, MessageDirection, MessageId, MessageRepository};
+use torca_messaging::{MessageDirection, MessageId, MessageRepository};
 use torca_peer_link::{InboundPeerEnvelope, PeerLinkError};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
@@ -75,6 +76,11 @@ pub struct AttachmentTransferReport {
     pub chunks_sent: usize,
     pub completed: usize,
     pub failed: usize,
+    pub policy_suppressed: usize,
+    /// A durable row still needs another bounded pass. This is deliberately
+    /// separate from `attempted`: a pass can be blocked by an ACK wait or can
+    /// complete one chunk while the attachment remains active.
+    pub more_work: bool,
 }
 
 #[must_use]
@@ -98,6 +104,11 @@ pub struct AttachmentTransfer<R, M, S, K, C, P> {
     pending_outgoing: BTreeMap<AttachmentId, PendingOutgoingFrame>,
     metadata_acked: BTreeSet<AttachmentId>,
     cancel_confirmed: BTreeSet<AttachmentId>,
+    battery_policy: BatteryPolicy,
+    metered_network: bool,
+    chunk_tx_count: u64,
+    policy_suppressed_count: u64,
+    outgoing_cursor: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -152,7 +163,30 @@ where
             pending_outgoing: BTreeMap::new(),
             metadata_acked: BTreeSet::new(),
             cancel_confirmed: BTreeSet::new(),
+            battery_policy: BatteryPolicy::new(BatteryProfile::AlwaysAvailable),
+            metered_network: false,
+            chunk_tx_count: 0,
+            policy_suppressed_count: 0,
+            outgoing_cursor: 0,
         })
+    }
+
+    pub fn chunk_tx_count(&self) -> u64 {
+        self.chunk_tx_count
+    }
+
+    pub fn policy_suppressed_count(&self) -> u64 {
+        self.policy_suppressed_count
+    }
+
+    pub fn set_battery_policy(
+        &mut self,
+        profile: BatteryProfile,
+        metered_transfers: MeteredTransferPolicy,
+        metered_network: bool,
+    ) {
+        self.battery_policy = BatteryPolicy::new(profile).with_metered_transfers(metered_transfers);
+        self.metered_network = metered_network;
     }
 
     /// Returns metadata-store writes; blob and message repository writes are
@@ -279,51 +313,70 @@ where
     /// Sends at most one chunk for each eligible attachment, keeping each runtime tick bounded.
     pub fn maintenance_outgoing(
         &mut self,
-        messages: &[Message],
         now: Timestamp,
         max_attachments: usize,
     ) -> Result<AttachmentTransferReport, AttachmentTransferError> {
         let mut report = AttachmentTransferReport::default();
-        for message in
-            messages.iter().filter(|message| message.direction() == MessageDirection::Outbound)
-        {
+        let attachments = self.metadata.list().map_err(map_attachment)?;
+        let outbound_attachments = attachments
+            .into_iter()
+            .filter(|attachment| {
+                self.messages
+                    .get(attachment.message_id())
+                    .ok()
+                    .flatten()
+                    .is_some_and(|message| message.direction() == MessageDirection::Outbound)
+            })
+            .collect::<Vec<_>>();
+        if outbound_attachments.is_empty() {
+            return Ok(report);
+        }
+        let start = self.outgoing_cursor % outbound_attachments.len();
+        for offset in 0..outbound_attachments.len() {
+            let attachment =
+                outbound_attachments[(start + offset) % outbound_attachments.len()].clone();
             if report.attempted >= max_attachments {
                 break;
             }
-            let attachments = self.metadata.for_message(message.id()).map_err(map_attachment)?;
-            for attachment in attachments {
-                if report.attempted >= max_attachments {
-                    break;
+            if !matches!(
+                attachment.status(),
+                AttachmentStatus::Queued
+                    | AttachmentStatus::Failed
+                    | AttachmentStatus::Transferring
+                    | AttachmentStatus::Cancelled
+            ) {
+                continue;
+            }
+            if attachment.status() == AttachmentStatus::Failed && !retry_due(&attachment, now) {
+                continue;
+            }
+            if self.battery_policy.attachment_decision(attachment.size(), self.metered_network)
+                != TransferDecision::Allow
+            {
+                report.policy_suppressed += 1;
+                self.policy_suppressed_count = self.policy_suppressed_count.saturating_add(1);
+                continue;
+            }
+            report.attempted += 1;
+            let attachment_id = attachment.id();
+            match self.advance_outgoing(attachment, now) {
+                Ok(AdvanceOutcome::Waiting) => {
+                    report.more_work = true;
                 }
-                if !matches!(
-                    attachment.status(),
-                    AttachmentStatus::Queued
-                        | AttachmentStatus::Failed
-                        | AttachmentStatus::Transferring
-                        | AttachmentStatus::Cancelled
-                ) {
-                    continue;
+                Ok(AdvanceOutcome::Chunk) => {
+                    report.chunks_sent += 1;
+                    self.chunk_tx_count = self.chunk_tx_count.saturating_add(1);
+                    report.more_work = true;
                 }
-                if attachment.status() == AttachmentStatus::Failed && !retry_due(&attachment, now) {
-                    continue;
-                }
-                report.attempted += 1;
-                let attachment_id = attachment.id();
-                match self.advance_outgoing(attachment, now) {
-                    Ok(AdvanceOutcome::Waiting) => {}
-                    Ok(AdvanceOutcome::Chunk) => report.chunks_sent += 1,
-                    Ok(AdvanceOutcome::Completed) => report.completed += 1,
-                    Err(error) => {
-                        // A failed peer/frame attempt used to be reported only
-                        // in memory. That left the durable row in
-                        // `Transferring`, so maintenance retried it on every
-                        // tick with no backoff and no visible attempt count.
-                        self.record_outgoing_failure(attachment_id, now, &error)?;
-                        report.failed += 1;
-                    }
+                Ok(AdvanceOutcome::Completed) => report.completed += 1,
+                Err(error) => {
+                    self.record_outgoing_failure(attachment_id, now, &error)?;
+                    report.failed += 1;
+                    report.more_work = true;
                 }
             }
         }
+        self.outgoing_cursor = (start + 1) % outbound_attachments.len();
         Ok(report)
     }
 

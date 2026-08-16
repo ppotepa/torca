@@ -4,6 +4,7 @@ import 'package:torca_ui/torca_ui.dart';
 
 import '../localization/app_locale_mode.dart';
 import '../theme/app_theme_mode.dart';
+import 'battery_preferences.dart';
 
 class LocalPreferences extends ChangeNotifier {
   LocalPreferences({SharedPreferencesAsync? store})
@@ -20,6 +21,11 @@ class LocalPreferences extends ChangeNotifier {
   static const _closeToTrayKey = 'desktop.close_to_tray';
   static const _audioInputDeviceKey = 'desktop.audio_input_device';
   static const _audioOutputDeviceKey = 'desktop.audio_output_device';
+  static const _batteryModeKey = 'battery.mode';
+  static const _backgroundSyncKey = 'battery.background_sync';
+  static const _delayedDeliveryKey = 'battery.allow_delayed_delivery';
+  static const _meteredTransfersKey = 'battery.metered_transfers';
+  static const _visualActivityKey = 'battery.visual_activity';
 
   static String _draftKey(String conversationId) =>
       'conversation.draft.$conversationId';
@@ -37,9 +43,25 @@ class LocalPreferences extends ChangeNotifier {
   bool _closeToTrayEnabled = true;
   String? _audioInputDeviceId;
   String? _audioOutputDeviceId;
+  TorcaBatteryMode _batteryMode = TorcaBatteryMode.automatic;
+  TorcaBackgroundSyncCadence _backgroundSync =
+      TorcaBackgroundSyncCadence.instant;
+  bool _allowDelayedBackgroundDelivery = false;
+  TorcaMeteredTransferPolicy _meteredTransfers =
+      TorcaMeteredTransferPolicy.pauseLarge;
+  TorcaVisualActivityPolicy _visualActivity =
+      TorcaVisualActivityPolicy.followSystem;
   Future<void> Function(bool enabled)? _runtimeNotificationSetter;
   Future<void> Function(bool enabled)? _runtimeReadReceiptSetter;
   Future<void> Function(String? inputId, String? outputId)? _runtimeAudioSetter;
+  Future<void> Function(
+    TorcaBatteryMode mode,
+    TorcaBackgroundSyncCadence backgroundSync,
+    bool allowDelayedBackgroundDelivery,
+    TorcaMeteredTransferPolicy meteredTransfers,
+    TorcaVisualActivityPolicy visualActivity,
+  )?
+  _runtimeBatterySetter;
 
   AppThemeMode get themeMode => _themeMode;
   TorcaAppearance get appearance => _appearance;
@@ -49,6 +71,11 @@ class LocalPreferences extends ChangeNotifier {
   bool get closeToTrayEnabled => _closeToTrayEnabled;
   String? get audioInputDeviceId => _audioInputDeviceId;
   String? get audioOutputDeviceId => _audioOutputDeviceId;
+  TorcaBatteryMode get batteryMode => _batteryMode;
+  TorcaBackgroundSyncCadence get backgroundSync => _backgroundSync;
+  bool get allowDelayedBackgroundDelivery => _allowDelayedBackgroundDelivery;
+  TorcaMeteredTransferPolicy get meteredTransfers => _meteredTransfers;
+  TorcaVisualActivityPolicy get visualActivity => _visualActivity;
 
   void attachRuntimeNotificationSetting(
     Future<void> Function(bool enabled) setter,
@@ -66,6 +93,19 @@ class LocalPreferences extends ChangeNotifier {
     Future<void> Function(String? inputId, String? outputId) setter,
   ) {
     _runtimeAudioSetter = setter;
+  }
+
+  void attachRuntimeBatterySetting(
+    Future<void> Function(
+      TorcaBatteryMode mode,
+      TorcaBackgroundSyncCadence backgroundSync,
+      bool allowDelayedBackgroundDelivery,
+      TorcaMeteredTransferPolicy meteredTransfers,
+      TorcaVisualActivityPolicy visualActivity,
+    )
+    setter,
+  ) {
+    _runtimeBatterySetter = setter;
   }
 
   /// Mirrors the process-runtime setting for presentation and host notification rendering.
@@ -112,6 +152,20 @@ class LocalPreferences extends ChangeNotifier {
     );
     _audioOutputDeviceId = _nonEmpty(
       await _store.getString(_audioOutputDeviceKey),
+    );
+    _batteryMode = TorcaBatteryMode.parse(
+      await _store.getString(_batteryModeKey),
+    );
+    _backgroundSync = TorcaBackgroundSyncCadence.parse(
+      await _store.getString(_backgroundSyncKey),
+    );
+    _allowDelayedBackgroundDelivery =
+        await _store.getBool(_delayedDeliveryKey) ?? false;
+    _meteredTransfers = TorcaMeteredTransferPolicy.parse(
+      await _store.getString(_meteredTransfersKey),
+    );
+    _visualActivity = TorcaVisualActivityPolicy.parse(
+      await _store.getString(_visualActivityKey),
     );
     notifyListeners();
   }
@@ -196,6 +250,56 @@ class LocalPreferences extends ChangeNotifier {
     notifyListeners();
     await _store.setString(_audioOutputDeviceKey, value ?? '');
     await _runtimeAudioSetter?.call(_audioInputDeviceId, _audioOutputDeviceId);
+  }
+
+  Future<void> setBatteryMode(TorcaBatteryMode value) async {
+    if (_batteryMode == value) return;
+    _batteryMode = value;
+    notifyListeners();
+    await _store.setString(_batteryModeKey, value.wireValue);
+    await _pushBatteryPreferences();
+  }
+
+  Future<void> setBackgroundSync(TorcaBackgroundSyncCadence value) async {
+    if (_backgroundSync == value) return;
+    _backgroundSync = value;
+    notifyListeners();
+    await _store.setString(_backgroundSyncKey, value.wireValue);
+    await _pushBatteryPreferences();
+  }
+
+  Future<void> setAllowDelayedBackgroundDelivery(bool value) async {
+    if (_allowDelayedBackgroundDelivery == value) return;
+    _allowDelayedBackgroundDelivery = value;
+    notifyListeners();
+    await _store.setBool(_delayedDeliveryKey, value);
+    await _pushBatteryPreferences();
+  }
+
+  Future<void> setMeteredTransfers(TorcaMeteredTransferPolicy value) async {
+    if (_meteredTransfers == value) return;
+    _meteredTransfers = value;
+    notifyListeners();
+    await _store.setString(_meteredTransfersKey, value.wireValue);
+    await _pushBatteryPreferences();
+  }
+
+  Future<void> setVisualActivity(TorcaVisualActivityPolicy value) async {
+    if (_visualActivity == value) return;
+    _visualActivity = value;
+    notifyListeners();
+    await _store.setString(_visualActivityKey, value.wireValue);
+    await _pushBatteryPreferences();
+  }
+
+  Future<void> _pushBatteryPreferences() async {
+    await _runtimeBatterySetter?.call(
+      _batteryMode,
+      _backgroundSync,
+      _allowDelayedBackgroundDelivery,
+      _meteredTransfers,
+      _visualActivity,
+    );
   }
 
   /// Drafts are local-only UI state and are never sent through the runtime

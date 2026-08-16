@@ -50,6 +50,13 @@ pub enum BridgeCommand {
     SetReadReceipts {
         enabled: bool,
     },
+    SetBatteryPreferences {
+        mode: String,
+        background_sync: String,
+        allow_delayed_background_delivery: bool,
+        metered_transfers: String,
+        visual_activity: String,
+    },
     AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
@@ -516,6 +523,19 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         BridgeCommand::SetReadReceipts { enabled } => {
             ApplicationCommand::SetReadReceipts { enabled }
         }
+        BridgeCommand::SetBatteryPreferences {
+            mode,
+            background_sync,
+            allow_delayed_background_delivery,
+            metered_transfers,
+            visual_activity,
+        } => ApplicationCommand::SetBatteryPreferences {
+            mode,
+            background_sync,
+            allow_delayed_background_delivery,
+            metered_transfers,
+            visual_activity,
+        },
         BridgeCommand::AcknowledgeNewContacts => ApplicationCommand::AcknowledgeNewContacts,
         BridgeCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
             ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms }

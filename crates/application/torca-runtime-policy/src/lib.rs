@@ -62,6 +62,8 @@ pub enum DemandReason {
     RecentConversation,
     ExplicitDiagnostic,
     BackgroundRendezvous,
+    /// Explicit, time-boxed user boost for one conversation.
+    FocusedConversation,
 }
 
 /// A resource controlled by policy. Feature crates map their own IDs here.
@@ -162,6 +164,21 @@ pub struct ConnectionLease {
     pub expires_at: Instant,
 }
 
+/// A user-visible, time-boxed priority lease. There is at most one active
+/// focus lease in a governor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocusLease {
+    pub contact: OpaqueId,
+    pub owner: OpaqueId,
+    pub expires_at: Instant,
+}
+
+impl FocusLease {
+    pub fn active_at(self, now: Instant) -> bool {
+        self.expires_at > now
+    }
+}
+
 impl ConnectionLease {
     /// Whether the lease is still valid at `now`.
     pub fn active_at(&self, now: Instant) -> bool {
@@ -251,6 +268,7 @@ pub struct RuntimeGovernor {
     attention: AttentionContext,
     network_generation: u64,
     leases: HashMap<OpaqueId, ConnectionLease>,
+    focus: Option<FocusLease>,
     demands: HashMap<OpaqueId, WorkDemand>,
     evidence: HashMap<ResourceScope, HealthEvidence>,
     deadlines: BTreeMap<Instant, Vec<WorkPermit>>,
@@ -265,6 +283,7 @@ impl RuntimeGovernor {
             attention: AttentionContext::default(),
             network_generation: 0,
             leases: HashMap::new(),
+            focus: None,
             demands: HashMap::new(),
             evidence: HashMap::new(),
             deadlines: BTreeMap::new(),
@@ -327,6 +346,44 @@ impl RuntimeGovernor {
     pub fn release_lease(&mut self, owner: OpaqueId) {
         self.leases.remove(&owner);
         self.demands.remove(&owner);
+        if self.focus.is_some_and(|focus| focus.owner == owner) {
+            self.focus = None;
+        }
+    }
+
+    /// Installs the single explicit focus lease. Replacing a focus atomically
+    /// removes the previous contact's demand before installing the new one.
+    pub fn acquire_focus(
+        &mut self,
+        contact: OpaqueId,
+        owner: OpaqueId,
+        expires_at: Instant,
+        now: Instant,
+    ) -> FocusLease {
+        if let Some(previous) = self.focus.take() {
+            self.leases.remove(&previous.owner);
+            self.demands.remove(&previous.owner);
+        }
+        let focus = FocusLease { contact, owner, expires_at };
+        self.focus = Some(focus);
+        self.acquire_lease(WorkDemand {
+            scope: ResourceScope::Peer(contact),
+            class: WorkClass::PeerDial,
+            reason: DemandReason::FocusedConversation,
+            owner,
+            expires_at,
+        });
+        self.expire(now);
+        focus
+    }
+
+    pub fn focus(&mut self, now: Instant) -> Option<FocusLease> {
+        self.expire(now);
+        self.focus
+    }
+
+    pub fn is_focused(&mut self, contact: OpaqueId, now: Instant) -> bool {
+        self.focus(now).is_some_and(|focus| focus.contact == contact)
     }
 
     /// Returns whether a scope has an unexpired lease.
@@ -409,13 +466,36 @@ impl RuntimeGovernor {
     /// Returns a snapshot suitable for diagnostics and tests.
     pub fn snapshot(&mut self, now: Instant) -> RuntimePolicySnapshot {
         self.expire(now);
+        let mut lease_reasons = BTreeMap::new();
+        for lease in self.leases.values() {
+            *lease_reasons.entry(lease.reason).or_insert(0_usize) += 1;
+        }
+        let mut scheduled_classes = BTreeMap::new();
+        for permits in self.deadlines.values() {
+            for permit in permits {
+                *scheduled_classes.entry(permit.class).or_insert(0_usize) += 1;
+            }
+        }
         RuntimePolicySnapshot {
             attention: self.attention.clone(),
             network_generation: self.network_generation,
             active_leases: self.leases.len(),
             active_demands: self.demands.len(),
             scheduled_deadlines: self.deadlines.len(),
+            active_lease_reasons: lease_reasons,
+            scheduled_work_classes: scheduled_classes,
+            next_deadline_in_ms: self.next_deadline().map(|deadline| {
+                deadline.saturating_duration_since(now).as_millis().min(u128::from(u64::MAX)) as u64
+            }),
             stats: self.stats,
+            focus_active: self.focus.is_some(),
+            focus_remaining_ms: self.focus.map(|focus| {
+                focus
+                    .expires_at
+                    .saturating_duration_since(now)
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64
+            }),
         }
     }
 
@@ -427,6 +507,9 @@ impl RuntimeGovernor {
             }
             active
         });
+        if self.focus.is_some_and(|focus| !focus.active_at(now)) {
+            self.focus = None;
+        }
     }
 }
 
@@ -438,7 +521,14 @@ pub struct RuntimePolicySnapshot {
     pub active_leases: usize,
     pub active_demands: usize,
     pub scheduled_deadlines: usize,
+    /// Aggregated reasons are intentionally exported without resource IDs.
+    /// This makes diagnostics useful while avoiding contact or relationship data.
+    pub active_lease_reasons: BTreeMap<DemandReason, usize>,
+    pub scheduled_work_classes: BTreeMap<WorkClass, usize>,
+    pub next_deadline_in_ms: Option<u64>,
     pub stats: RuntimeStats,
+    pub focus_active: bool,
+    pub focus_remaining_ms: Option<u64>,
 }
 
 fn default_budgets(now: Instant) -> HashMap<WorkClass, TokenBucket> {
@@ -620,6 +710,31 @@ mod tests {
     }
 
     #[test]
+    fn focus_is_single_and_replaces_previous_contact() {
+        let now = Instant::now();
+        let mut governor = RuntimeGovernor::new(now);
+        let first = governor.acquire_focus(id(10), id(11), now + Duration::from_secs(60), now);
+        assert!(governor.is_focused(id(10), now));
+        let second = governor.acquire_focus(id(12), id(13), now + Duration::from_secs(60), now);
+        assert_ne!(first.owner, second.owner);
+        assert!(!governor.is_focused(id(10), now));
+        assert!(governor.is_focused(id(12), now));
+        let snapshot = governor.snapshot(now);
+        assert!(snapshot.focus_active);
+        assert_eq!(snapshot.active_lease_reasons.get(&DemandReason::FocusedConversation), Some(&1));
+    }
+
+    #[test]
+    fn expired_focus_is_removed_without_periodic_cleanup() {
+        let now = Instant::now();
+        let mut governor = RuntimeGovernor::new(now);
+        governor.acquire_focus(id(20), id(21), now + Duration::from_millis(1), now);
+        let later = now + Duration::from_millis(2);
+        assert_eq!(governor.focus(later), None);
+        assert!(!governor.snapshot(later).focus_active);
+    }
+
+    #[test]
     fn idle_governor_has_no_scheduled_work_or_active_leases() {
         let now = Instant::now();
         let mut governor = RuntimeGovernor::new(now);
@@ -645,6 +760,16 @@ mod tests {
         // Cancellation is one-shot; the same waiter token can be reused.
         hub.publish(1);
         assert_eq!(hub.wait(9, 0, 0, Duration::ZERO), Some((1, 1)));
+    }
+
+    #[test]
+    fn event_hub_cancellation_is_scoped_to_one_consumer() {
+        let hub = RuntimeEventHub::default();
+        hub.cancel(11);
+        assert_eq!(hub.wait(11, 0, 0, Duration::ZERO), None);
+        assert_eq!(hub.wait(12, 0, 0, Duration::ZERO), None);
+        hub.publish(4);
+        assert_eq!(hub.wait(12, 0, 0, Duration::ZERO), Some((1, 4)));
     }
 
     #[test]

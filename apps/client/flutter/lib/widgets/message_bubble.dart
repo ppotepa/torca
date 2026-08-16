@@ -148,7 +148,7 @@ class MessageBubble extends StatelessWidget {
                               ),
                               if (outbound) ...<Widget>[
                                 const SizedBox(width: 5),
-                                MessageStatusIndicator(status: message.status),
+                                MessageStatusIndicator(status: message.typedStatus),
                               ],
                             ],
                           ],

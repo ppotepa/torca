@@ -1380,8 +1380,11 @@ mod tests {
                 now,
                 true,
                 now + Duration::from_secs(10),
-                Some(now - Duration::from_millis(247)),
-                Some(now - Duration::from_millis(u64::from(MAX_RADIO_BURST_MS) - 7)),
+                Some(now.checked_sub(Duration::from_millis(247)).unwrap_or(now)),
+                Some(
+                    now.checked_sub(Duration::from_millis(u64::from(MAX_RADIO_BURST_MS) - 7))
+                        .unwrap_or(now),
+                ),
                 now,
                 now,
             ),

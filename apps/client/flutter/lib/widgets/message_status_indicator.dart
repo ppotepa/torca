@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../generated/torca_contract.dart';
+
 class MessageStatusIndicator extends StatelessWidget {
   const MessageStatusIndicator({required this.status, super.key});
 
-  final String status;
+  final MessageStatus status;
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +20,7 @@ class MessageStatusIndicator extends StatelessWidget {
           size: 14,
           color: presentation.isError
               ? Theme.of(context).colorScheme.error
-              : status == 'read'
+              : status == MessageStatus.read
               ? Theme.of(context).colorScheme.primary
               : Theme.of(context).colorScheme.onSurfaceVariant,
         ),
@@ -29,34 +31,38 @@ class MessageStatusIndicator extends StatelessWidget {
 
 ({IconData icon, String label, bool isError}) _presentation(
   BuildContext context,
-  String status,
+  MessageStatus status,
 ) => switch (status) {
-  'queued' => (
+  MessageStatus.queued => (
     icon: context.torcaIcons.queued,
     label: 'Queued',
     isError: false,
   ),
-  'sending' => (
+  MessageStatus.sending => (
     icon: context.torcaIcons.sending,
     label: 'Sending',
     isError: false,
   ),
-  'sent' => (icon: context.torcaIcons.sent, label: 'Sent', isError: false),
-  'delivered' => (
+  MessageStatus.sent => (icon: context.torcaIcons.sent, label: 'Sent', isError: false),
+  MessageStatus.delivered => (
     icon: context.torcaIcons.delivered,
     label: 'Delivered',
     isError: false,
   ),
-  'read' => (icon: context.torcaIcons.read, label: 'Read', isError: false),
-  'failed' => (
+  MessageStatus.read => (icon: context.torcaIcons.read, label: 'Read', isError: false),
+  MessageStatus.failed => (
     icon: context.torcaIcons.error,
     label: 'Delivery failed',
     isError: true,
   ),
-  'cancelled' => (
+  MessageStatus.cancelled => (
     icon: context.torcaIcons.cancelled,
     label: 'Cancelled',
     isError: true,
   ),
-  _ => (icon: context.torcaIcons.info, label: status, isError: false),
+  MessageStatus.unknown => (
+    icon: context.torcaIcons.info,
+    label: 'Unknown',
+    isError: false,
+  ),
 };

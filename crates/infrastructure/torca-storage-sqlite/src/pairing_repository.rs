@@ -314,7 +314,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
                     Some(hash),
                     Some(payload),
                 ) => {
-                    if !(0..=u8::MAX as i64).contains(&schema)
+                    if !(0..=i64::from(u8::MAX)).contains(&schema)
                         || hash.len() != 32
                         || payload.len() > 32 * 1024
                     {
@@ -322,8 +322,10 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
                     }
                     let mut genome_hash = [0_u8; 32];
                     genome_hash.copy_from_slice(&hash);
+                    let schema_version =
+                        u8::try_from(schema).map_err(|_| rusqlite::Error::InvalidQuery)?;
                     Some(AvatarGenomeReference {
-                        schema_version: schema as u8,
+                        schema_version,
                         generator_version,
                         catalog_version,
                         genome_hash,

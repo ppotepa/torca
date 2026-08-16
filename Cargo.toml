@@ -24,6 +24,7 @@ members = [
     "crates/application/torca-probing",
     "crates/application/torca-connectivity",
     "crates/application/torca-runtime-policy",
+    "crates/application/torca-battery",
     "crates/application/torca-bootstrap",
     "crates/application/torca-runtime",
     "crates/application/torca-communication-driver",
