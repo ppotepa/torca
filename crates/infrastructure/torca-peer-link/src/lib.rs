@@ -1189,7 +1189,7 @@ fn map_state(state: PeerSessionState) -> PeerConnectionState {
         PeerSessionState::Handshaking => PeerConnectionState::Handshaking,
         PeerSessionState::Ready => PeerConnectionState::Ready,
         PeerSessionState::Reconnecting => PeerConnectionState::Reconnecting,
-        PeerSessionState::Failed => PeerConnectionState::Failed,
+        PeerSessionState::Closed | PeerSessionState::Failed => PeerConnectionState::Failed,
     }
 }
 
