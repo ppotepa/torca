@@ -1,5 +1,6 @@
 use core::fmt;
 use std::path::Path;
+use std::str;
 
 use rusqlite::{Connection, OpenFlags};
 
@@ -28,6 +29,36 @@ impl fmt::Debug for DatabaseKey {
 }
 
 impl Drop for DatabaseKey {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
+}
+
+/// Short-lived byte buffer for SQLCipher raw-key setup. Keeping the PRAGMA in
+/// bytes avoids creating multiple ordinary `String` copies of the database
+/// key. The buffer is wiped when it leaves scope, including error paths.
+struct SensitiveSql(Vec<u8>);
+
+impl SensitiveSql {
+    fn database_key(key: &[u8; 32]) -> Self {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut bytes = Vec::with_capacity(82);
+        bytes.extend_from_slice(b"PRAGMA key = \"x'");
+        for byte in key {
+            bytes.push(HEX[usize::from(byte >> 4)]);
+            bytes.push(HEX[usize::from(byte & 0x0f)]);
+        }
+        bytes.extend_from_slice(b"'\";");
+        Self(bytes)
+    }
+
+    fn as_str(&self) -> Result<&str, StorageBackendError> {
+        str::from_utf8(&self.0)
+            .map_err(|_| StorageBackendError("database key encoding failed".into()))
+    }
+}
+
+impl Drop for SensitiveSql {
     fn drop(&mut self) {
         self.0.fill(0);
     }
@@ -78,10 +109,6 @@ impl SqlCipherBackend {
 }
 
 fn configure_sqlcipher_logging(connection: &Connection) -> Result<(), StorageBackendError> {
-    // SQLCipher defaults to WARN and emits one message for every failed best-effort mlock call.
-    // Windows and Android commonly impose a small lock quota, so that default can flood logs
-    // even though encryption remains operational. Preserve memory security and all ERROR-level
-    // diagnostics while suppressing the non-fatal per-allocation warnings.
     connection.execute_batch("PRAGMA cipher_log_level = ERROR;").map_err(map_sqlite_error)
 }
 
@@ -141,16 +168,8 @@ impl StorageBackend for SqlCipherBackend {
 }
 
 fn apply_database_key(connection: &Connection, key: &[u8; 32]) -> Result<(), StorageBackendError> {
-    let mut hex = String::with_capacity(64);
-    for byte in key {
-        use fmt::Write as _;
-        write!(&mut hex, "{byte:02x}")
-            .map_err(|_| StorageBackendError("database key encoding failed".into()))?;
-    }
-
-    // SQLCipher raw-key syntax requires the x'...' value inside a quoted PRAGMA value.
-    // The generated content is fixed-length lowercase hexadecimal and contains no user text.
-    connection.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).map_err(map_sqlite_error)
+    let pragma = SensitiveSql::database_key(key);
+    connection.execute_batch(pragma.as_str()?).map_err(map_sqlite_error)
 }
 
 fn verify_sqlcipher(connection: &Connection) -> Result<String, StorageBackendError> {
@@ -179,7 +198,18 @@ pub(crate) fn map_sqlite_error(error: rusqlite::Error) -> StorageBackendError {
 
 #[cfg(test)]
 mod tests {
+    use super::SensitiveSql;
     use crate::{DatabaseKey, SqlCipherBackend, StorageKernel, migrations};
+
+    #[test]
+    fn database_key_pragma_has_exact_raw_key_shape() {
+        let key = [0x42_u8; 32];
+        let pragma = SensitiveSql::database_key(&key);
+        assert_eq!(
+            pragma.as_str().expect("ASCII pragma"),
+            "PRAGMA key = \"x'4242424242424242424242424242424242424242424242424242424242424242'\";"
+        );
+    }
 
     #[test]
     fn bundled_sqlcipher_bootstraps_the_embedded_schema() {
