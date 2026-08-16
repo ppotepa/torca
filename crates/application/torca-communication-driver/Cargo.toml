@@ -16,6 +16,7 @@ torca-conversations = { path = "../../domains/torca-conversations" }
 torca-delivery = { path = "../torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-messaging = { path = "../../domains/torca-messaging" }
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
 torca-runtime = { path = "../torca-runtime" }
 torca-receipts = { path = "../../domains/torca-receipts" }
 torca-presence = { path = "../../domains/torca-presence" }
