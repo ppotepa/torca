@@ -254,6 +254,21 @@ class MainActivity : FlutterActivity() {
 
     override fun onPause() {
         isVisible = false
+        // Never leave an open microphone or communication audio focus behind
+        // when Android backgrounds the activity (screen lock, app switch,
+        // permission/system dialog). Rust will reconcile the burst on resume.
+        AndroidKeystoreBridge.stopRadioCapture()
+        val audioManager = getSystemService(AudioManager::class.java)
+        if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                radioAudioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
+                radioAudioFocusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.abandonAudioFocus(null)
+            }
+            audioManager.mode = AudioManager.MODE_NORMAL
+        }
         super.onPause()
     }
 
