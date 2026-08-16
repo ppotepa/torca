@@ -26,6 +26,7 @@ impl<B: StorageBackend> StorageKernel<B> {
 #[cfg(test)]
 mod tests {
     use crate::{MemoryStorageBackend, StorageKernel, migrations};
+
     #[test]
     fn bootstrap_applies_pragmas_and_ordered_migrations() {
         let mut kernel = StorageKernel::new(MemoryStorageBackend::default());
@@ -34,5 +35,9 @@ mod tests {
             migrations().last().expect("migration registry is non-empty").version
         );
         assert_eq!(kernel.backend().applied_batches().len(), migrations().len() + 1);
+        let connection_policy = kernel.backend().applied_batches()[0];
+        assert!(connection_policy.contains("PRAGMA journal_mode = WAL;"));
+        assert!(connection_policy.contains("PRAGMA synchronous = FULL;"));
+        assert!(connection_policy.contains("PRAGMA busy_timeout = 5000;"));
     }
 }

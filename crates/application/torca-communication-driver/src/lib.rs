@@ -40,12 +40,14 @@ use torca_runtime::{
 };
 pub use torca_runtime::{PeerHealthQuality, PeerHealthSnapshot};
 
+// Stable peer-application discriminants. Existing values are wire compatibility
+// commitments for the current peer protocol generation; append new kinds only.
 pub const TEXT_MESSAGE_KIND: u16 = 1;
 pub const RECEIPT_MESSAGE_KIND: u16 = 2;
-pub const REACTION_MESSAGE_KIND: u16 = 3;
 pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
 pub const PROBE_MESSAGE_KIND: u16 = 4;
 pub const RADIO_CONTROL_MESSAGE_KIND: u16 = 5;
+pub const REACTION_MESSAGE_KIND: u16 = 6;
 const INBOUND_BATCH: usize = 64;
 const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
@@ -315,8 +317,11 @@ pub trait AttachmentRuntime: Send {
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
     fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
-    fn cancel(&mut self, attachment_id: OpaqueId, now: Timestamp)
-    -> Result<(), CommunicationError>;
+    fn cancel(
+        &mut self,
+        attachment_id: OpaqueId,
+        now: Timestamp,
+    ) -> Result<(), CommunicationError>;
     fn snapshot(&self, messages: &[Message]) -> Result<Vec<AttachmentView>, CommunicationError>;
     /// Production adapters can provide a storage-owned projection without loading message history.
     /// Legacy/test adapters may return `None` and retain the original fallback contract.
@@ -585,7 +590,9 @@ impl TorcaCommunicationDriver {
         for _ in 0..INBOUND_BATCH {
             let Some(envelope) = self.peer.take_inbound()? else { break };
             match envelope.message_kind {
-                TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND => self.inbound.process(envelope, now)?,
+                TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND | REACTION_MESSAGE_KIND => {
+                    self.inbound.process(envelope, now)?;
+                }
                 ATTACHMENT_MESSAGE_KIND => self.process_attachment_inbound(envelope, now)?,
                 PROBE_MESSAGE_KIND => self.peer.accept_probe(&envelope, now)?,
                 RADIO_CONTROL_MESSAGE_KIND => {
@@ -955,9 +962,28 @@ fn map_runtime(error: CommunicationError) -> RuntimeDriverError {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommunicationError, map_runtime, plan_read_receipts};
+    use super::{
+        ATTACHMENT_MESSAGE_KIND, CommunicationError, PROBE_MESSAGE_KIND,
+        RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND,
+        TEXT_MESSAGE_KIND, map_runtime, plan_read_receipts,
+    };
+    use std::collections::BTreeSet;
     use torca_control_delivery::ReadCandidate;
     use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
+
+    #[test]
+    fn peer_application_message_kinds_are_unique_and_stable() {
+        let kinds = [
+            TEXT_MESSAGE_KIND,
+            RECEIPT_MESSAGE_KIND,
+            ATTACHMENT_MESSAGE_KIND,
+            PROBE_MESSAGE_KIND,
+            RADIO_CONTROL_MESSAGE_KIND,
+            REACTION_MESSAGE_KIND,
+        ];
+        assert_eq!(kinds.iter().copied().collect::<BTreeSet<_>>().len(), kinds.len());
+        assert_eq!(kinds, [1, 2, 3, 4, 5, 6]);
+    }
 
     #[test]
     fn read_receipt_planner_creates_one_idempotent_job_per_candidate() {
