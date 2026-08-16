@@ -30,7 +30,6 @@ use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
 };
 use torca_messaging::Message;
-use torca_peer_protocol::PeerApplicationKind;
 use torca_receipts::{ReceiptId, ReceiptKind};
 pub use torca_runtime::PeerActivityEvidence;
 pub use torca_runtime::PeerConnectionStatus;
@@ -41,14 +40,14 @@ use torca_runtime::{
 };
 pub use torca_runtime::{PeerHealthQuality, PeerHealthSnapshot};
 
-// Compatibility aliases for existing adapters. The protocol crate is the one
-// authoritative owner of wire discriminants.
-pub const TEXT_MESSAGE_KIND: u16 = PeerApplicationKind::Text.as_u16();
-pub const RECEIPT_MESSAGE_KIND: u16 = PeerApplicationKind::Receipt.as_u16();
-pub const ATTACHMENT_MESSAGE_KIND: u16 = PeerApplicationKind::Attachment.as_u16();
-pub const PROBE_MESSAGE_KIND: u16 = PeerApplicationKind::Probe.as_u16();
-pub const RADIO_CONTROL_MESSAGE_KIND: u16 = PeerApplicationKind::RadioControl.as_u16();
-pub const REACTION_MESSAGE_KIND: u16 = PeerApplicationKind::Reaction.as_u16();
+// Stable peer-application discriminants. Existing values are wire compatibility
+// commitments for the current peer protocol generation; append new kinds only.
+pub const TEXT_MESSAGE_KIND: u16 = 1;
+pub const RECEIPT_MESSAGE_KIND: u16 = 2;
+pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
+pub const PROBE_MESSAGE_KIND: u16 = 4;
+pub const RADIO_CONTROL_MESSAGE_KIND: u16 = 5;
+pub const REACTION_MESSAGE_KIND: u16 = 6;
 const INBOUND_BATCH: usize = 64;
 const TEXT_BATCH: usize = 16;
 const CONTROL_BATCH: usize = 16;
@@ -971,10 +970,9 @@ mod tests {
     use std::collections::BTreeSet;
     use torca_control_delivery::ReadCandidate;
     use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
-    use torca_peer_protocol::PeerApplicationKind;
 
     #[test]
-    fn peer_application_message_kinds_are_unique_and_protocol_owned() {
+    fn peer_application_message_kinds_are_unique_and_stable() {
         let kinds = [
             TEXT_MESSAGE_KIND,
             RECEIPT_MESSAGE_KIND,
@@ -984,8 +982,7 @@ mod tests {
             REACTION_MESSAGE_KIND,
         ];
         assert_eq!(kinds.iter().copied().collect::<BTreeSet<_>>().len(), kinds.len());
-        assert_eq!(ATTACHMENT_MESSAGE_KIND, PeerApplicationKind::Attachment.as_u16());
-        assert_eq!(REACTION_MESSAGE_KIND, PeerApplicationKind::Reaction.as_u16());
+        assert_eq!(kinds, [1, 2, 3, 4, 5, 6]);
     }
 
     #[test]
