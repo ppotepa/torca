@@ -175,6 +175,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
   bool _transmissionActive = false;
   bool _commandBusy = false;
   bool _releaseRequested = false;
+  bool _animationsEnabled = true;
   late final AnimationController _pulse;
 
   @override
@@ -190,6 +191,15 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
   @override
   void didUpdateWidget(RadioPushToTalk oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _syncPulse();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsEnabled =
+        context.torcaTokens.animationDuration != Duration.zero &&
+        !MediaQuery.disableAnimationsOf(context);
     _syncPulse();
   }
 
@@ -265,6 +275,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
   }
 
   void _setPulseActive(bool active) {
+    active = active && _animationsEnabled;
     if (active && !_pulse.isAnimating) {
       _pulse.repeat();
     } else if (!active && _pulse.isAnimating) {
