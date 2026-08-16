@@ -1,5 +1,7 @@
 //! In-process Tor lifecycle with bounded restart backoff.
 
+mod recovery_epoch;
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -7,6 +9,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+use recovery_epoch::RecoveryEpoch;
 
 use crate::{
     OnionServiceHealth, TorActivityMode, TorBootstrapEvent, TorBootstrapObserver,
@@ -154,12 +158,14 @@ struct OnionPublisher {
 /// not be: doing Arti bootstrap from `TorDriver::maintenance` used to freeze
 /// pairing, delivery and diagnostics for up to the bootstrap timeout.
 struct TorBootstrapWorker {
-    receiver: Receiver<Result<TorService, crate::TorError>>,
+    epoch: RecoveryEpoch,
+    receiver: Receiver<(RecoveryEpoch, Result<TorService, crate::TorError>)>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl TorBootstrapWorker {
     fn spawn(
+        epoch: RecoveryEpoch,
         state_root: PathBuf,
         previous_client: Option<Arc<TorService>>,
         wake: TorWake,
@@ -171,13 +177,15 @@ impl TorBootstrapWorker {
             // maintenance and the ABI actor never block on runtime shutdown.
             drop(previous_client);
             let result = TorService::bootstrap(state_root, RESTART_BOOTSTRAP_TIMEOUT);
-            let _ = sender.send(result);
+            let _ = sender.send((epoch, result));
             notify_tor_wake(&wake);
         })?;
-        Ok(Self { receiver, worker: Some(worker) })
+        Ok(Self { epoch, receiver, worker: Some(worker) })
     }
 
-    fn try_take_result(&mut self) -> Option<Result<TorService, crate::TorError>> {
+    fn try_take_result(
+        &mut self,
+    ) -> Option<(RecoveryEpoch, Result<TorService, crate::TorError>)> {
         match self.receiver.try_recv() {
             Ok(result) => {
                 if let Some(worker) = self.worker.take() {
@@ -186,9 +194,10 @@ impl TorBootstrapWorker {
                 Some(result)
             }
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                Some(Err(crate::TorError("Tor recovery worker disconnected".into())))
-            }
+            Err(TryRecvError::Disconnected) => Some((
+                self.epoch,
+                Err(crate::TorError("Tor recovery worker disconnected".into())),
+            )),
         }
     }
 }
@@ -231,9 +240,7 @@ impl OnionPublisher {
                             }
                         }
                         Err(error) => {
-                            eprintln!(
-                                "torca-tor: onion publication launch failed: {error}"
-                            );
+                            eprintln!("torca-tor: onion publication launch failed: {error}");
                             (OnionRepublishReason::LaunchFailed, false)
                         }
                     };
@@ -412,6 +419,7 @@ pub struct OwnedTorDriver {
     endpoint: SharedTorEndpoint,
     onion_publisher: Option<OnionPublisher>,
     bootstrap_worker: Option<TorBootstrapWorker>,
+    recovery_epoch: RecoveryEpoch,
     startup_timeout: Duration,
     failures: u32,
     next_restart_at: Option<Timestamp>,
@@ -459,6 +467,7 @@ impl OwnedTorDriver {
             endpoint,
             onion_publisher: None,
             bootstrap_worker: None,
+            recovery_epoch: RecoveryEpoch::default(),
             startup_timeout,
             failures: 0,
             next_restart_at: None,
@@ -566,8 +575,10 @@ impl OwnedTorDriver {
         self.state = TorState::Starting;
         self.next_restart_at = None;
         let previous_client = self.client.as_ref().and_then(TorServiceHandle::clear);
+        let epoch = self.recovery_epoch.advance();
         self.bootstrap_worker = Some(
             TorBootstrapWorker::spawn(
+                epoch,
                 self.state_root.clone(),
                 previous_client,
                 Arc::clone(&self.wake),
@@ -597,10 +608,17 @@ impl OwnedTorDriver {
         let Some(worker) = self.bootstrap_worker.as_mut() else {
             return Ok(());
         };
-        let Some(result) = worker.try_take_result() else {
+        let Some((epoch, result)) = worker.try_take_result() else {
             return Ok(());
         };
         self.bootstrap_worker = None;
+        if !self.recovery_epoch.matches(epoch) {
+            // A shutdown/restart or a newer recovery superseded this result.
+            // Dropping a successful stale TorService here also releases its
+            // state-root resources without exposing it to the active runtime.
+            drop(result);
+            return Ok(());
+        }
         match result {
             Ok(client) => {
                 let client = Arc::new(client);
@@ -744,9 +762,13 @@ impl TorDriver for OwnedTorDriver {
     fn shutdown(&mut self) {
         self.next_restart_at = None;
         self.endpoint.set(None);
-        // Do not join an in-flight Arti bootstrap here. It is externally
-        // bounded but may still be waiting on platform I/O; blocking shutdown
-        // would reintroduce the UI freeze this worker removes.
+        // Invalidate any detached recovery before dropping its receiver. The
+        // worker remains externally bounded and is intentionally not joined,
+        // but its result can no longer belong to this runtime generation.
+        self.recovery_epoch.advance();
+        if let Ok(mut slot) = self.wake.lock() {
+            *slot = None;
+        }
         self.bootstrap_worker.take();
         if let Some(worker) = self.onion_publisher.take() {
             worker.shutdown();
