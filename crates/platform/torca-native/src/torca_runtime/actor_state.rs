@@ -1,3 +1,5 @@
+//! Native process actor request routing and response envelopes.
+
 impl ActorState {
     fn next_maintenance_delay(&self) -> Option<Duration> {
         self.runtime.next_pending_operation_delay()
@@ -10,9 +12,6 @@ impl ActorState {
         if !delay.is_zero() {
             return false;
         }
-        // This is the sole reconciliation path for pending work. It also
-        // refreshes the read model so background completions can wake event
-        // consumers without a foreground query.
         let before = self.runtime.snapshot_json.clone();
         self.runtime.reconcile_pending_operations();
         before != self.runtime.snapshot_json
@@ -67,19 +66,24 @@ impl ActorState {
                 let before =
                     payload.get("beforeMessageId").and_then(Value::as_str).unwrap_or_default();
                 let before_at_ms = payload.get("beforeAtMs").and_then(Value::as_i64);
-                let limit =
-                    payload.get("limit").and_then(Value::as_u64).unwrap_or(100).clamp(1, 200)
-                        as u32;
+                let limit = payload
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(100)
+                    .clamp(1, 200) as u32;
                 let cursor = if before.is_empty() { None } else { Some(before) };
-                self.runtime.conversation_page(conversation, before_at_ms, cursor, limit as usize)
+                self.runtime
+                    .conversation_page(conversation, before_at_ms, cursor, limit as usize)
             }
             ("query", "conversation.search") => {
                 let conversation =
                     payload.get("conversationId").and_then(Value::as_str).unwrap_or_default();
                 let query = payload.get("query").and_then(Value::as_str).unwrap_or_default();
-                let limit =
-                    payload.get("limit").and_then(Value::as_u64).unwrap_or(100).clamp(1, 200)
-                        as u32;
+                let limit = payload
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(100)
+                    .clamp(1, 200) as u32;
                 self.runtime.search_messages(conversation, query, limit as usize)
             }
             ("query", "notifications.poll") => {
@@ -102,7 +106,8 @@ impl ActorState {
                             "snapshot": snapshot,
                             "events": events.get("events").cloned().unwrap_or_else(|| serde_json::json!([])),
                             "afterCursor": events.get("afterCursor").cloned().unwrap_or(Value::from(cursor)),
-                        }).to_string();
+                        })
+                        .to_string();
                     }
                     events_code
                 }
@@ -167,15 +172,21 @@ impl ActorState {
         {
             object.insert("runtimeId".into(), Value::String(self.runtime_id.clone()));
             object.insert("revision".into(), Value::from(self.revision));
-            object
-                .insert("notificationCursor".into(), Value::from(self.runtime.notification_cursor));
+            object.insert(
+                "notificationCursor".into(),
+                Value::from(self.runtime.notification_cursor),
+            );
         }
         let operation_result =
             serde_json::from_str::<Value>(&self.runtime.last_result_json).unwrap_or(Value::Null);
         let result_kind = operation_result
             .get("kind")
             .and_then(Value::as_str)
-            .unwrap_or(if name == "profile.set" { "profile_updated" } else { "snapshot" });
+            .unwrap_or(if name == "profile.set" {
+                "profile_updated"
+            } else {
+                "snapshot"
+            });
         let resource_id = operation_result.get("resourceId").cloned().unwrap_or(Value::Null);
         let invite_uri = operation_result.get("inviteUri").cloned().unwrap_or(Value::Null);
         let response = serde_json::to_vec(&json!({
@@ -185,9 +196,11 @@ impl ActorState {
             "inviteUri": invite_uri,
             "runtimeId": self.runtime_id, "revision": self.revision, "snapshot": snapshot,
             "error": Value::Null, "timing": { "queuedMs": 0, "executionMs": started.elapsed().as_millis() }
-        })).expect("runtime response is serializable");
+        }))
+        .expect("runtime response is serializable");
         if is_idempotent_command(kind) && !request_id.is_empty() {
-            self.completed.insert(request_id.to_owned(), response.clone(), Instant::now());
+            self.completed
+                .insert(request_id.to_owned(), response.clone(), Instant::now());
         }
         response
     }
@@ -199,26 +212,52 @@ impl ActorState {
             "error": { "code": code, "category": "runtime", "severity": "error",
                 "retryable": retryable, "messageKey": message_key, "diagnosticId": secure_id_hex().unwrap_or_default() },
             "timing": { "queuedMs": 0, "executionMs": 0 }
-        })).expect("runtime error is serializable")
+        }))
+        .expect("runtime error is serializable")
     }
 
     fn native_error(&self, request_id: &str) -> Vec<u8> {
-        let descriptor = serde_json::from_str::<Value>(&self.runtime.last_result_json)
-            .ok()
-            .and_then(|value| {
-                let kind = value.get("kind")?.as_str()?.strip_prefix("error:")?.to_owned();
-                Some(kind)
-            })
-            .unwrap_or_else(|| "RUNTIME_OPERATION_FAILED".into());
-        let normalized = descriptor.to_ascii_uppercase();
-        let message_key = match normalized.as_str() {
-            "PROFILE_NOT_READY" => "profile.not_ready",
-            "PROFILE_SNAPSHOT_INCONSISTENT" => "profile.snapshot.inconsistent",
-            "RELAY_DEGRADED" => "relay.degraded",
-            "RELAY_NOT_READY" => "relay.not_ready",
-            "IDENTITY_CHANGED" => "identity.changed",
-            _ => "runtime.operation.failed",
+        let Some(descriptor) = self.runtime.last_error_descriptor else {
+            return self.error(
+                request_id,
+                "RUNTIME_OPERATION_FAILED",
+                "runtime.operation.failed",
+                true,
+            );
         };
-        self.error(request_id, &normalized, message_key, normalized != "PROFILE_NOT_READY")
+        let category = match descriptor.category() {
+            torca_foundation::ErrorCategory::InvalidInput => "invalid_input",
+            torca_foundation::ErrorCategory::NotFound => "not_found",
+            torca_foundation::ErrorCategory::Conflict => "conflict",
+            torca_foundation::ErrorCategory::Unauthorized => "unauthorized",
+            torca_foundation::ErrorCategory::Forbidden => "forbidden",
+            torca_foundation::ErrorCategory::Unavailable => "unavailable",
+            torca_foundation::ErrorCategory::Timeout => "timeout",
+            torca_foundation::ErrorCategory::Cancelled => "cancelled",
+            torca_foundation::ErrorCategory::Internal => "internal",
+        };
+        let retryable = !matches!(
+            descriptor.retry_advice(),
+            torca_foundation::RetryAdvice::Never
+        );
+        serde_json::to_vec(&json!({
+            "schema": 1,
+            "requestId": request_id,
+            "status": "failed",
+            "resultKind": "error",
+            "runtimeId": self.runtime_id,
+            "revision": self.revision,
+            "snapshot": Value::Null,
+            "error": {
+                "code": descriptor.code().as_str(),
+                "category": category,
+                "severity": "error",
+                "retryable": retryable,
+                "messageKey": descriptor.code().as_str(),
+                "diagnosticId": secure_id_hex().unwrap_or_default()
+            },
+            "timing": { "queuedMs": 0, "executionMs": 0 }
+        }))
+        .expect("runtime typed error is serializable")
     }
 }

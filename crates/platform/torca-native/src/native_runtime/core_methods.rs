@@ -75,6 +75,7 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         last_radio_log_state: HashMap::new(),
         network_ready_logged: false,
         last_result_json: success_result("initialized"),
+        last_error_descriptor: None,
         snapshot_json: empty_snapshot_json(),
         query_json: "{\"messages\":[],\"hasMore\":false}".into(),
         logger,
@@ -144,6 +145,7 @@ pub(crate) fn execute_with_request_id(
     command: torca_contract::BridgeCommand,
     request_id: &str,
 ) -> i32 {
+    self.last_error_descriptor = None;
     if self.is_closed() {
         self.last_result_json = error_result("native engine is closed");
         return ABI_CLOSED;
@@ -236,10 +238,13 @@ pub(crate) fn execute_with_request_id(
     if let Some((operation, session_id)) = &pairing_operation {
         self.log_pairing(request_id, operation, session_id, "PAIRING_REQUEST_STARTED", None);
     }
-    let result = bridge_result_from_application(match decode_application_command(command) {
+
+    let application_result = match decode_application_command(command) {
         Ok(command) => self.application_runtime.execute(command),
         Err(error) => Err(ApplicationError::invalid_input(error)),
-    });
+    };
+    self.last_error_descriptor = application_result.as_ref().err().map(ClassifiedError::descriptor);
+    let result = bridge_result_from_application(application_result);
     if !result.ok {
         if is_profile {
             self.log_profile(request_id, "PROFILE_STORAGE_FAILED");
@@ -248,7 +253,6 @@ pub(crate) fn execute_with_request_id(
             let context = json!({
                 "operation": operation,
                 "errorCode": &result.error_code,
-                "error": &result.error,
             })
             .to_string();
             let _ = logger.event_with_context(
@@ -283,6 +287,7 @@ pub(crate) fn execute_with_request_id(
     if is_profile {
         self.log_profile(request_id, "PROFILE_STORAGE_COMMITTED");
     }
+    self.last_error_descriptor = None;
     self.last_result_json = bridge_result_json(&result);
     let _ = self.refresh_snapshot();
     if is_profile {

@@ -24,7 +24,7 @@ use torca_contract::{
     bridge_snapshot_from_application, decode_application_command,
 };
 use torca_conversations::ConversationId;
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{ClassifiedError, ErrorDescriptor, OpaqueId, Timestamp};
 use torca_logging::{Level, Logger, default_root};
 use torca_messaging::MessageDirection;
 use torca_messaging::MessageId;
@@ -111,6 +111,7 @@ pub struct TorcaRuntime {
     last_radio_log_state: HashMap<String, String>,
     network_ready_logged: bool,
     pub(crate) last_result_json: String,
+    pub(crate) last_error_descriptor: Option<ErrorDescriptor>,
     pub(crate) snapshot_json: String,
     pub(crate) query_json: String,
     logger: Option<Logger>,
@@ -126,8 +127,6 @@ pub struct TorcaRuntime {
 }
 
 impl TorcaRuntime {
-    // Associated-item includes keep private method access identical while each
-    // file owns a coherent use-case group.
     include!("core_methods.rs");
     include!("projection_methods.rs");
     include!("operation_methods.rs");
