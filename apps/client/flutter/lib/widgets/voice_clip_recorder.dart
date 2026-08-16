@@ -390,14 +390,18 @@ class _RecordingOverlay extends StatelessWidget {
                 size: 16,
               ),
               const SizedBox(width: 6),
-              Text(
-                'REC',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
-                  fontWeight: FontWeight.w800,
+              Expanded(
+                child: Text(
+                  context.strings.voiceClipRecording(secondsLeft),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Text(
                 '${secondsLeft}s',
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -419,7 +423,7 @@ class _RecordingOverlay extends StatelessWidget {
           ),
           const SizedBox(height: 3),
           Text(
-            'Release to send · slide left to cancel',
+            '← ${context.strings.cancel}',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: Theme.of(context).colorScheme.onErrorContainer,
             ),
