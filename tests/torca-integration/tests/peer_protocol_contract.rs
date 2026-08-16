@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use torca_attachment_transfer::ATTACHMENT_MESSAGE_KIND as TRANSFER_ATTACHMENT_MESSAGE_KIND;
 use torca_communication_driver::{
     ATTACHMENT_MESSAGE_KIND, PROBE_MESSAGE_KIND, RADIO_CONTROL_MESSAGE_KIND,
     REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND,
@@ -24,6 +25,10 @@ fn production_peer_kinds_match_the_protocol_registry() {
     assert_eq!(
         aliases.iter().copied().collect::<BTreeSet<_>>().len(),
         aliases.len()
+    );
+    assert_eq!(
+        TRANSFER_ATTACHMENT_MESSAGE_KIND,
+        PeerApplicationKind::Attachment.as_u16()
     );
 }
 
