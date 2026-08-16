@@ -5,12 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-authors.workspace = true
+owsers.workspace = true
 publish = false
 
 [dependencies]
 torca-foundation = { path = "../../crates/foundation/torca-foundation" }
 torca-client-engine = { path = "../../crates/application/torca-client-engine" }
+torca-communication-driver = { path = "../../crates/application/torca-communication-driver" }
+torca-delivery = { path = "../../crates/application/torca-delivery" }
 torca-identity = { path = "../../crates/domains/torca-identity" }
 torca-contacts = { path = "../../crates/domains/torca-contacts" }
 torca-conversations = { path = "../../crates/domains/torca-conversations" }
@@ -22,6 +24,7 @@ torca-crypto = { path = "../../crates/infrastructure/torca-crypto" }
 torca-file-storage = { path = "../../crates/infrastructure/torca-file-storage" }
 torca-pairing-coordinator = { path = "../../crates/application/torca-pairing-coordinator" }
 torca-pairing-protocol = { path = "../../crates/protocol/torca-pairing-protocol" }
+torca-peer-protocol = { path = "../../crates/protocol/torca-peer-protocol" }
 torca-relay = { path = "../../services/relay" }
 torca-relay-protocol = { path = "../../crates/protocol/torca-relay-protocol" }
 torca-storage-sqlite = { path = "../../crates/infrastructure/torca-storage-sqlite" }
