@@ -1,16 +1,21 @@
 //! In-process Tor lifecycle with bounded restart backoff.
 
+mod bootstrap_worker;
+mod endpoint;
+mod onion_publisher;
 mod recovery_epoch;
+mod timing;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
-use std::sync::{Arc, RwLock};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use bootstrap_worker::TorBootstrapWorker;
+pub use endpoint::SharedTorEndpoint;
+use onion_publisher::OnionPublisher;
 use recovery_epoch::RecoveryEpoch;
+use timing::{MAX_BOOTSTRAP_ATTEMPTS, RESTART_BACKOFF};
 
 use crate::{
     OnionServiceHealth, TorActivityMode, TorBootstrapEvent, TorBootstrapObserver,
@@ -19,396 +24,12 @@ use crate::{
 use torca_foundation::Timestamp;
 use torca_runtime::{OnionServiceState, RuntimeDriverError, TorDriver, TorState};
 
-const RESTART_BACKOFF: [Duration; 3] =
-    [Duration::from_secs(5), Duration::from_secs(15), Duration::from_secs(30)];
-const MAX_BOOTSTRAP_ATTEMPTS: u32 = 3;
-// A publication attempt may wait on Arti internals, but must never make
-// shutdown or a recovery cycle wait a minute. The durable worker retries.
-const ONION_SERVICE_TIMEOUT: Duration = Duration::from_secs(8);
-// Arti can self-heal a temporary directory/circuit loss.  Keep the published
-// endpoint during this window; after it expires the durable publisher performs
-// a controlled re-publication without restarting the Tor client.
-// Descriptor uploads can remain degraded while Arti still has working
-// introduction points. Give its internal retry loop enough time to recover;
-// a client-side restart here would lose the service's progress.
-const ONION_DEGRADED_GRACE: Duration = Duration::from_secs(300);
-// A descriptor publication normally advances through several internal Arti
-// states.  It must not be allowed to wait forever, however: a stalled
-// publication leaves a client unable to accept peer sessions while the rest
-// of the runtime looks healthy.  Recovery only replaces the onion service on
-// the already bootstrapped Tor client.
-// Descriptor publication is eventually consistent and can legitimately take
-// several minutes on a cold Android/relay deployment.  A shorter deadline
-// turns healthy Arti progress into a destructive republish loop: every retry
-// throws away introduction-point work and starts from zero.  Keep the service
-// alive for ten minutes before declaring it genuinely stalled.
-const ONION_PUBLISHING_GRACE: Duration = Duration::from_secs(600);
-const MAX_ONION_PUBLICATION_ATTEMPTS: u32 = 2;
-const ONION_HEALTH_INTERVAL_REACHABLE: Duration = Duration::from_secs(15);
-const ONION_HEALTH_INTERVAL_TRANSITIONING: Duration = Duration::from_secs(3);
-// A recovery attempt must never occupy the application runtime owner.  The
-// Tor service itself applies its own bounded retry policy; this is the bound
-// for one attempt in that background lane.
-const RESTART_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
-
 type TorWake = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 
 fn notify_tor_wake(wake: &TorWake) {
     let callback = wake.lock().ok().and_then(|slot| slot.clone());
     if let Some(callback) = callback {
         callback();
-    }
-}
-
-enum OnionWorkerCommand {
-    Shutdown,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OnionRepublishReason {
-    PublishingStalled,
-    DegradedTimeout,
-    Failed,
-    Stopped,
-    LaunchFailed,
-    WorkerStopped,
-}
-
-impl OnionRepublishReason {
-    const fn code(self) -> &'static str {
-        match self {
-            Self::PublishingStalled => "publishing_stalled",
-            Self::DegradedTimeout => "degraded_timeout",
-            Self::Failed => "failed",
-            Self::Stopped => "stopped",
-            Self::LaunchFailed => "launch_failed",
-            Self::WorkerStopped => "worker_stopped",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct OnionPublisherFailure {
-    reason: OnionRepublishReason,
-    attempts: u32,
-}
-
-enum OnionWaitOutcome {
-    Shutdown,
-    Republish { reason: OnionRepublishReason, was_reachable: bool },
-}
-
-#[derive(Default)]
-struct OnionRecoveryTracker {
-    degraded_since: Option<Instant>,
-    publishing_since: Option<Instant>,
-    publication_revision: Option<u64>,
-    was_reachable: bool,
-}
-
-impl OnionRecoveryTracker {
-    fn observe(
-        &mut self,
-        health: OnionServiceHealth,
-        publication_revision: u64,
-        now: Instant,
-    ) -> Option<OnionRepublishReason> {
-        match health {
-            OnionServiceHealth::Reachable => {
-                self.was_reachable = true;
-                self.degraded_since = None;
-                self.publishing_since = None;
-                self.publication_revision = Some(publication_revision);
-                None
-            }
-            OnionServiceHealth::Publishing => {
-                self.degraded_since = None;
-                if self.publication_revision != Some(publication_revision) {
-                    self.publication_revision = Some(publication_revision);
-                    self.publishing_since = Some(now);
-                    return None;
-                }
-                let since = self.publishing_since.get_or_insert(now);
-                (now.duration_since(*since) >= ONION_PUBLISHING_GRACE)
-                    .then_some(OnionRepublishReason::PublishingStalled)
-            }
-            OnionServiceHealth::Degraded => {
-                self.publishing_since = None;
-                let since = self.degraded_since.get_or_insert(now);
-                (now.duration_since(*since) >= ONION_DEGRADED_GRACE)
-                    .then_some(OnionRepublishReason::DegradedTimeout)
-            }
-            OnionServiceHealth::Failed => Some(OnionRepublishReason::Failed),
-            OnionServiceHealth::Stopped => Some(OnionRepublishReason::Stopped),
-        }
-    }
-}
-
-/// Owns only public endpoint publication. It deliberately does not own the
-/// Tor client lifecycle, pairing, relay or peer maintenance.
-struct OnionPublisher {
-    commands: SyncSender<OnionWorkerCommand>,
-    events: Receiver<OnionPublisherFailure>,
-    worker: Option<JoinHandle<()>>,
-}
-
-/// A single asynchronous recovery attempt for the Tor client.  Initial warm-up
-/// is deliberately sequential (the composition worker waits for Tor before it
-/// composes Tor-dependent peer and relay adapters); subsequent recovery must
-/// not be: doing Arti bootstrap from `TorDriver::maintenance` used to freeze
-/// pairing, delivery and diagnostics for up to the bootstrap timeout.
-struct TorBootstrapWorker {
-    epoch: RecoveryEpoch,
-    receiver: Receiver<(RecoveryEpoch, Result<TorService, crate::TorError>)>,
-    worker: Option<JoinHandle<()>>,
-}
-
-impl TorBootstrapWorker {
-    fn spawn(
-        epoch: RecoveryEpoch,
-        state_root: PathBuf,
-        previous_client: Option<Arc<TorService>>,
-        wake: TorWake,
-    ) -> Result<Self, std::io::Error> {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let worker = thread::Builder::new().name("torca-tor-recovery".into()).spawn(move || {
-            // The old runtime owns locks below the same Arti state root. Drop it
-            // in this background lane before constructing the replacement so
-            // maintenance and the ABI actor never block on runtime shutdown.
-            drop(previous_client);
-            let result = TorService::bootstrap(state_root, RESTART_BOOTSTRAP_TIMEOUT);
-            let _ = sender.send((epoch, result));
-            notify_tor_wake(&wake);
-        })?;
-        Ok(Self { epoch, receiver, worker: Some(worker) })
-    }
-
-    fn try_take_result(
-        &mut self,
-    ) -> Option<(RecoveryEpoch, Result<TorService, crate::TorError>)> {
-        match self.receiver.try_recv() {
-            Ok(result) => {
-                if let Some(worker) = self.worker.take() {
-                    let _ = worker.join();
-                }
-                Some(result)
-            }
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some((
-                self.epoch,
-                Err(crate::TorError("Tor recovery worker disconnected".into())),
-            )),
-        }
-    }
-}
-
-impl OnionPublisher {
-    fn spawn(
-        client: Arc<TorService>,
-        target: SocketAddr,
-        endpoint: SharedTorEndpoint,
-        observer: Option<TorBootstrapObserver>,
-        wake: TorWake,
-    ) -> Result<Self, std::io::Error> {
-        let observer = observer.map(|observer| {
-            let wake = Arc::clone(&wake);
-            Arc::new(move |event: TorBootstrapEvent| {
-                observer(event);
-                notify_tor_wake(&wake);
-            }) as TorBootstrapObserver
-        });
-        let (commands, receiver) = mpsc::sync_channel(1);
-        let (event_sender, events) = mpsc::sync_channel(1);
-        let worker =
-            thread::Builder::new().name("torca-onion-publisher".into()).spawn(move || {
-                let mut failures = 0_u32;
-                loop {
-                    let (reason, was_reachable) = match client
-                        .publish_onion_service(target, ONION_SERVICE_TIMEOUT)
-                    {
-                        Ok(address) => {
-                            endpoint.set(Some(address));
-                            match wait_for_onion_recovery(&client, &receiver, observer.as_ref()) {
-                                OnionWaitOutcome::Shutdown => {
-                                    client.stop_onion_service();
-                                    endpoint.set(None);
-                                    return;
-                                }
-                                OnionWaitOutcome::Republish { reason, was_reachable } => {
-                                    (reason, was_reachable)
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            eprintln!("torca-tor: onion publication launch failed: {error}");
-                            (OnionRepublishReason::LaunchFailed, false)
-                        }
-                    };
-
-                    if let Some(observer) = &observer {
-                        observer(TorBootstrapEvent {
-                            stage: TorBootstrapStage::OnionService,
-                            progress: 8,
-                            attempt: failures.saturating_add(1),
-                            retry_after_ms: None,
-                            code: "ONION_SERVICE_RETRYING",
-                            summary: format!(
-                                "Onion publication recovery scheduled after {}",
-                                reason.code()
-                            ),
-                        });
-                    }
-
-                    if was_reachable {
-                        failures = 0;
-                    }
-                    failures = failures.saturating_add(1);
-                    endpoint.set(None);
-                    client.stop_onion_service();
-
-                    if failures >= MAX_ONION_PUBLICATION_ATTEMPTS {
-                        client.mark_onion_publication_failed();
-                        eprintln!(
-                            "torca-tor: onion publication exhausted attempts={} reason={}; escalating to Tor recovery",
-                            failures,
-                            reason.code()
-                        );
-                        let _ = event_sender.send(OnionPublisherFailure {
-                            reason,
-                            attempts: failures,
-                        });
-                        notify_tor_wake(&wake);
-                        return;
-                    }
-
-                    let index = usize::try_from(failures.saturating_sub(1))
-                        .unwrap_or(usize::MAX)
-                        .min(RESTART_BACKOFF.len() - 1);
-                    let retry = RESTART_BACKOFF[index];
-                    eprintln!(
-                        "torca-tor: onion re-publication scheduled attempt={} reason={} retry_after_s={}",
-                        failures.saturating_add(1),
-                        reason.code(),
-                        retry.as_secs()
-                    );
-                    match receiver.recv_timeout(retry) {
-                        Ok(OnionWorkerCommand::Shutdown)
-                        | Err(RecvTimeoutError::Disconnected) => return,
-                        Err(RecvTimeoutError::Timeout) => {}
-                    }
-                }
-            })?;
-        Ok(Self { commands, events, worker: Some(worker) })
-    }
-
-    fn try_take_failure(&mut self) -> Option<OnionPublisherFailure> {
-        let failure = match self.events.try_recv() {
-            Ok(failure) => Some(failure),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected)
-                if self.worker.as_ref().is_some_and(JoinHandle::is_finished) =>
-            {
-                Some(OnionPublisherFailure {
-                    reason: OnionRepublishReason::WorkerStopped,
-                    attempts: 0,
-                })
-            }
-            Err(TryRecvError::Disconnected) => None,
-        }?;
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        Some(failure)
-    }
-
-    fn shutdown(mut self) {
-        let _ = self.commands.send(OnionWorkerCommand::Shutdown);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-
-/// Waits after a successful publication instead of treating that success as
-/// the end of the publisher lifecycle. Returns `true` when a controlled
-/// republish is needed and `false` for shutdown.
-fn wait_for_onion_recovery(
-    client: &TorService,
-    receiver: &Receiver<OnionWorkerCommand>,
-    observer: Option<&TorBootstrapObserver>,
-) -> OnionWaitOutcome {
-    let mut tracker = OnionRecoveryTracker::default();
-    let mut last_health = None;
-    loop {
-        let interval = match last_health {
-            Some(OnionServiceHealth::Reachable) => ONION_HEALTH_INTERVAL_REACHABLE,
-            _ => ONION_HEALTH_INTERVAL_TRANSITIONING,
-        };
-        match receiver.recv_timeout(interval) {
-            Ok(OnionWorkerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
-                return OnionWaitOutcome::Shutdown;
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-        }
-        let health = client.onion_service_health();
-        if last_health != Some(health) {
-            if let Some(observer) = observer {
-                let (progress, code, summary) = match health {
-                    OnionServiceHealth::Reachable => {
-                        (100, "ONION_SERVICE_READY", "Private onion service is reachable")
-                    }
-                    OnionServiceHealth::Degraded => (
-                        60,
-                        "ONION_SERVICE_DEGRADED",
-                        "Onion service is reachable with degraded publication",
-                    ),
-                    OnionServiceHealth::Publishing => {
-                        (8, "ONION_SERVICE_PUBLISHING", "Publishing private onion service")
-                    }
-                    OnionServiceHealth::Failed => {
-                        (0, "ONION_SERVICE_FAILED", "Onion service publication failed")
-                    }
-                    OnionServiceHealth::Stopped => {
-                        (0, "ONION_SERVICE_STOPPED", "Onion service stopped")
-                    }
-                };
-                observer(TorBootstrapEvent {
-                    stage: TorBootstrapStage::OnionService,
-                    progress,
-                    attempt: 1,
-                    retry_after_ms: None,
-                    code,
-                    summary: summary.into(),
-                });
-            }
-            last_health = Some(health);
-        }
-        if let Some(reason) =
-            tracker.observe(health, client.onion_publication_revision(), Instant::now())
-        {
-            eprintln!(
-                "torca-tor: onion publication requires recovery reason={} was_reachable={}",
-                reason.code(),
-                tracker.was_reachable
-            );
-            return OnionWaitOutcome::Republish { reason, was_reachable: tracker.was_reachable };
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct SharedTorEndpoint {
-    inner: Arc<RwLock<Option<String>>>,
-}
-impl SharedTorEndpoint {
-    pub fn get(&self) -> Option<String> {
-        self.inner.read().ok().and_then(|value| value.clone())
-    }
-
-    fn set(&self, value: Option<String>) {
-        if let Ok(mut endpoint) = self.inner.write() {
-            *endpoint = value;
-        }
     }
 }
 
@@ -589,8 +210,10 @@ impl OwnedTorDriver {
     }
 
     fn reap_onion_publisher(&mut self) -> Result<(), RuntimeDriverError> {
-        let Some(failure) =
-            self.onion_publisher.as_mut().and_then(OnionPublisher::try_take_failure)
+        let Some(failure) = self
+            .onion_publisher
+            .as_mut()
+            .and_then(OnionPublisher::try_take_failure)
         else {
             return Ok(());
         };
@@ -678,7 +301,10 @@ impl TorDriver for OwnedTorDriver {
         self.detect_process_state(now)?;
         self.reap_recovery(now)?;
         self.reap_onion_publisher()?;
-        if self.client.as_ref().is_none_or(|client| client.current().is_err())
+        if self
+            .client
+            .as_ref()
+            .is_none_or(|client| client.current().is_err())
             && self.bootstrap_worker.is_none()
             && self.next_restart_at.is_some_and(|deadline| deadline <= now)
         {
@@ -721,7 +347,9 @@ impl TorDriver for OwnedTorDriver {
     }
 
     fn set_dormant(&mut self, dormant: bool) -> Result<(), RuntimeDriverError> {
-        let Some(client) = self.client.as_ref() else { return Ok(()) };
+        let Some(client) = self.client.as_ref() else {
+            return Ok(());
+        };
         client
             .set_activity_mode(if dormant {
                 TorActivityMode::SoftDormant
@@ -778,103 +406,5 @@ impl TorDriver for OwnedTorDriver {
             drop(previous);
         }
         self.state = TorState::Stopped;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        ONION_DEGRADED_GRACE, ONION_PUBLISHING_GRACE, OnionRecoveryTracker, OnionRepublishReason,
-    };
-    use crate::OnionServiceHealth;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn publishing_without_a_new_revision_requests_controlled_republication() {
-        let start = Instant::now();
-        let mut tracker = OnionRecoveryTracker::default();
-        assert_eq!(tracker.observe(OnionServiceHealth::Publishing, 1, start), None);
-        assert_eq!(
-            tracker.observe(
-                OnionServiceHealth::Publishing,
-                1,
-                (start + ONION_PUBLISHING_GRACE)
-                    .checked_sub(Duration::from_secs(1))
-                    .expect("grace period is longer than one second")
-            ),
-            None
-        );
-        assert_eq!(
-            tracker.observe(OnionServiceHealth::Publishing, 1, start + ONION_PUBLISHING_GRACE),
-            Some(OnionRepublishReason::PublishingStalled)
-        );
-    }
-
-    #[test]
-    fn a_new_publication_revision_restarts_the_publishing_deadline() {
-        let start = Instant::now();
-        let mut tracker = OnionRecoveryTracker::default();
-        assert_eq!(tracker.observe(OnionServiceHealth::Publishing, 1, start), None);
-        assert_eq!(
-            tracker.observe(
-                OnionServiceHealth::Publishing,
-                2,
-                (start + ONION_PUBLISHING_GRACE)
-                    .checked_sub(Duration::from_secs(1))
-                    .expect("grace period is longer than one second")
-            ),
-            None
-        );
-        assert_eq!(
-            tracker.observe(
-                OnionServiceHealth::Publishing,
-                2,
-                (start + ONION_PUBLISHING_GRACE * 2)
-                    .checked_sub(Duration::from_secs(2))
-                    .expect("grace period is longer than two seconds")
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn reachable_resets_the_degraded_deadline() {
-        let start = Instant::now();
-        let mut tracker = OnionRecoveryTracker::default();
-        assert_eq!(tracker.observe(OnionServiceHealth::Degraded, 1, start), None);
-        assert_eq!(
-            tracker.observe(OnionServiceHealth::Reachable, 2, start + Duration::from_secs(30)),
-            None
-        );
-        assert!(tracker.was_reachable);
-        let degrading_again = start + Duration::from_secs(40);
-        assert_eq!(tracker.observe(OnionServiceHealth::Degraded, 3, degrading_again), None);
-        assert_eq!(
-            tracker.observe(
-                OnionServiceHealth::Degraded,
-                3,
-                degrading_again + ONION_DEGRADED_GRACE
-            ),
-            Some(OnionRepublishReason::DegradedTimeout)
-        );
-    }
-
-    #[test]
-    fn degraded_and_terminal_states_request_recovery() {
-        let start = Instant::now();
-        let mut tracker = OnionRecoveryTracker::default();
-        assert_eq!(tracker.observe(OnionServiceHealth::Degraded, 1, start), None);
-        assert_eq!(
-            tracker.observe(OnionServiceHealth::Degraded, 1, start + ONION_DEGRADED_GRACE),
-            Some(OnionRepublishReason::DegradedTimeout)
-        );
-        assert_eq!(
-            tracker.observe(OnionServiceHealth::Failed, 1, start),
-            Some(OnionRepublishReason::Failed)
-        );
-        assert_eq!(
-            tracker.observe(OnionServiceHealth::Stopped, 1, start),
-            Some(OnionRepublishReason::Stopped)
-        );
     }
 }
