@@ -42,13 +42,12 @@ const SHUTDOWN_WAIT: Duration = Duration::from_secs(15);
 const MAILBOX_CAPACITY: usize = 256;
 const ENQUEUE_WAIT: Duration = Duration::from_secs(2);
 
-// The runtime stays in one module namespace so the public API and private
-// ownership boundaries remain unchanged. Each included file owns one runtime
-// responsibility and can evolve independently without growing this root.
 include!("actor/model.rs");
 include!("actor/ports.rs");
 include!("actor/mailbox.rs");
+include!("actor/state.rs");
 include!("actor/owner.rs");
+include!("actor/maintenance.rs");
 include!("actor/scheduler.rs");
 include!("actor/command_dispatch.rs");
 include!("actor/support.rs");
