@@ -33,11 +33,9 @@ use torca_pairing::{
 };
 use torca_receipts::{InMemoryReceiptRepository, Receipt, ReceiptRepository};
 
-// `include!` is intentional here: the engine remains one private namespace so
-// its existing public API and repository visibility do not change, while the
-// implementation is physically separated by responsibility.
 include!("engine/model.rs");
 include!("engine/relationship_repository.rs");
 include!("engine/core.rs");
+include!("engine/dispatch.rs");
 include!("engine/runtime_port.rs");
 include!("engine/actor.rs");
