@@ -44,30 +44,15 @@ struct StoreState {
 
 impl SharedStore {
     fn inbound(&self, id: MessageId) -> Option<Message> {
-        self.inner
-            .lock()
-            .expect("store")
-            .inbound_messages
-            .get(&id)
-            .cloned()
+        self.inner.lock().expect("store").inbound_messages.get(&id).cloned()
     }
 
     fn outbox_state(&self, id: MessageId) -> Option<OutboxState> {
-        self.inner
-            .lock()
-            .expect("store")
-            .outbox
-            .get(&id)
-            .map(|record| record.state)
+        self.inner.lock().expect("store").outbox.get(&id).map(|record| record.state)
     }
 
     fn outbox_attempts(&self, id: MessageId) -> Option<u32> {
-        self.inner
-            .lock()
-            .expect("store")
-            .outbox
-            .get(&id)
-            .map(|record| record.attempts)
+        self.inner.lock().expect("store").outbox.get(&id).map(|record| record.attempts)
     }
 }
 
@@ -177,12 +162,7 @@ impl DurableDeliveryStore for SharedStore {
     }
 
     fn record_inbound(&mut self, envelope_id: OpaqueId) -> Result<bool, DurableDeliveryError> {
-        Ok(self
-            .inner
-            .lock()
-            .expect("store")
-            .inbound_envelopes
-            .insert(envelope_id))
+        Ok(self.inner.lock().expect("store").inbound_envelopes.insert(envelope_id))
     }
 
     fn next_due(&self) -> Result<Option<Timestamp>, DurableDeliveryError> {
@@ -249,9 +229,7 @@ impl WireSender {
                 .send(frame.clone())
                 .map_err(|_| DeliveryTransportError("wire closed".into()))?;
         }
-        self.tx
-            .send(frame)
-            .map_err(|_| DeliveryTransportError("wire closed".into()))
+        self.tx.send(frame).map_err(|_| DeliveryTransportError("wire closed".into()))
     }
 
     fn drop_next_ack(&self) {
@@ -334,9 +312,8 @@ impl InboundAcknowledger for WireAcknowledger {
             DeliveryAck::Accepted => AckStatus::Accepted,
             DeliveryAck::Duplicate => AckStatus::Duplicate,
         };
-        let frame = PeerCodec::encode(&PeerMessage::Ack { envelope_id, status })
-            .map_err(|error| DeliveryTransportError(format!("encode ack: {error}")))?;
-        self.wire.send(frame)
+        send_ack(self.wire.clone(), envelope_id, status);
+        Ok(())
     }
 }
 
@@ -360,12 +337,7 @@ impl Endpoint {
         DeliveryLane { store: self.store.clone(), transport: self.transport.clone() }
     }
 
-    fn send_payload(
-        &self,
-        envelope_id: OpaqueId,
-        kind: u16,
-        payload: Vec<u8>,
-    ) -> DeliveryAck {
+    fn send_payload(&self, envelope_id: OpaqueId, kind: u16, payload: Vec<u8>) -> DeliveryAck {
         self.transport
             .send_data(envelope_id, kind, payload)
             .expect("control/attachment ack")
@@ -432,17 +404,15 @@ impl TestPair {
             faults: Arc::new(Mutex::new(FaultPlan::default())),
         };
         let a = spawn_endpoint(
-            OpaqueId::from_u128(1),
             OpaqueId::from_u128(2),
             a_wire.clone(),
-            b_wire.clone(),
+            a_wire,
             b_to_a_rx,
         );
         let b = spawn_endpoint(
-            OpaqueId::from_u128(2),
             OpaqueId::from_u128(1),
+            b_wire.clone(),
             b_wire,
-            a_wire,
             a_to_b_rx,
         );
         Self { a, b }
@@ -450,7 +420,6 @@ impl TestPair {
 }
 
 fn spawn_endpoint(
-    _local_contact_id: OpaqueId,
     remote_contact_id: OpaqueId,
     outbound_wire: WireSender,
     ack_wire: WireSender,
@@ -471,8 +440,7 @@ fn spawn_endpoint(
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => break,
             };
-            let message = PeerCodec::decode(&frame).expect("decode peer wire");
-            match message {
+            match PeerCodec::decode(&frame).expect("decode peer wire") {
                 PeerMessage::Ack { envelope_id, status } => {
                     let _ = ack_tx.send((envelope_id, status));
                 }
@@ -674,7 +642,10 @@ fn receipt_reaction_and_attachment_use_the_same_peer_wire() {
         offset: 0,
         bytes: b"abc".to_vec(),
     });
-    for (id, frame) in [(OpaqueId::from_u128(72), metadata.clone()), (OpaqueId::from_u128(73), chunk.clone())] {
+    for (id, frame) in [
+        (OpaqueId::from_u128(72), metadata.clone()),
+        (OpaqueId::from_u128(73), chunk.clone()),
+    ] {
         assert_eq!(
             pair.a.send_payload(
                 id,
@@ -687,4 +658,40 @@ fn receipt_reaction_and_attachment_use_the_same_peer_wire() {
 
     assert_eq!(pair.b.controls(), vec![receipt, reaction]);
     assert_eq!(pair.b.attachments(), vec![metadata, chunk]);
+}
+
+#[test]
+fn text_delivery_remains_live_while_attachment_frames_are_in_flight() {
+    let pair = TestPair::new();
+    let attachment_transport = pair.a.transport.clone();
+    let b_lane = pair.b.delivery_lane();
+    b_lane.queue(outbound_message(81, 801, "text during attachment", 50), ts(50));
+
+    let attachment_sender = thread::spawn(move || {
+        for index in 0_u64..8 {
+            let frame = AttachmentFrame::Chunk(AttachmentChunkFrame {
+                attachment_id: AttachmentId::from_u128(82),
+                offset: index,
+                bytes: vec![u8::try_from(index).expect("small index")],
+            });
+            attachment_transport
+                .send_data(
+                    OpaqueId::from_u128(8_200 + u128::from(index)),
+                    ATTACHMENT_MESSAGE_KIND,
+                    AttachmentCodec::encode(&frame).expect("attachment encode"),
+                )
+                .expect("attachment ack");
+        }
+    });
+    let text_sender = thread::spawn(move || b_lane.run(ts(50)));
+
+    attachment_sender.join().expect("attachment sender");
+    text_sender.join().expect("text sender");
+
+    assert_eq!(pair.b.store.outbox_state(MessageId::from_u128(81)), Some(OutboxState::Completed));
+    assert_eq!(
+        pair.a.store.inbound(MessageId::from_u128(81)).expect("text arrived").body().as_str(),
+        "text during attachment"
+    );
+    assert_eq!(pair.b.attachments().len(), 8);
 }
