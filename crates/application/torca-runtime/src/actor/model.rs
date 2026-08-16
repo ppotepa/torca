@@ -1,3 +1,5 @@
+//! Runtime-facing state snapshots and classified driver errors.
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TorState {
     Stopped,
@@ -6,9 +8,6 @@ pub enum TorState {
     Degraded,
     Failed,
 }
-/// Publication health of this device's onion endpoint.  This is deliberately
-/// separate from `TorState`: a bootstrapped Tor client can still be waiting
-/// for introduction points or descriptor publication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OnionServiceState {
     Unknown,
@@ -18,7 +17,6 @@ pub enum OnionServiceState {
     Failed,
     Stopped,
 }
-/// Application-owned peer session state. Infrastructure adapters map their provider state here.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum PeerConnectionStatus {
     Disconnected,
@@ -47,8 +45,6 @@ pub struct PeerHealthSnapshot {
     pub reconnect_attempt: u32,
 }
 
-/// Redacted transport activity used only to animate presentation indicators.
-/// It intentionally carries no payload, address, key or message content.
 #[must_use]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TransportActivitySnapshot {
@@ -56,9 +52,6 @@ pub struct TransportActivitySnapshot {
     pub sequence: u64,
 }
 
-/// Monotonic, payload-free transport counters exposed by communication
-/// executors. The runtime samples deltas and records them as health evidence;
-/// counters never contain message contents or identifiers.
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PeerActivityEvidence {
@@ -77,12 +70,10 @@ pub struct PeerActivityEvidence {
 struct TransportActivityLedger {
     peers: BTreeMap<ContactId, TransportActivitySnapshot>,
 }
-
 impl TransportActivityLedger {
     fn mark_peer(&mut self, contact_id: ContactId, now: Timestamp) {
         Self::mark(self.peers.entry(contact_id).or_default(), now);
     }
-
     fn mark(activity: &mut TransportActivitySnapshot, now: Timestamp) {
         activity.last_activity_at = Some(now);
         activity.sequence = activity.sequence.saturating_add(1);
@@ -139,12 +130,11 @@ pub struct RelayServiceInfo {
     pub source_commit: String,
     pub protocol_version: u16,
 }
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeDriverError {
     Pairing,
     Communication,
-    /// A stable, redacted descriptor preserved from a narrower application
-    /// port.  The runtime must not erase the cause into `Communication`.
     Classified(ErrorDescriptor),
     Tor,
     Engine,
@@ -156,6 +146,12 @@ impl core::fmt::Display for RuntimeDriverError {
     }
 }
 impl std::error::Error for RuntimeDriverError {}
+
+impl From<torca_client_engine::EngineError> for RuntimeDriverError {
+    fn from(value: torca_client_engine::EngineError) -> Self {
+        Self::Classified(value.descriptor())
+    }
+}
 
 impl ClassifiedError for RuntimeDriverError {
     fn descriptor(&self) -> ErrorDescriptor {

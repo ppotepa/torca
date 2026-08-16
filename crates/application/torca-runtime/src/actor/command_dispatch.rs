@@ -1,3 +1,5 @@
+//! Runtime command dispatch into engine and narrow communication ports.
+
 fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     command: RuntimeCommand,
     engine: &EngineHandle,
@@ -93,26 +95,16 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let body = MessageBody::new(format!("Attachment: {}", request_value.name))
                 .map_err(|_| RuntimeDriverError::Communication);
             let result = body.and_then(|body| {
-                // `attachments.message_id` is a foreign key. The companion
-                // message must be durable before attachment metadata can be
-                // committed; this actor cannot run delivery maintenance until
-                // the command returns, so the message is not sent in between.
-                if engine
-                    .dispatch(EngineCommand::QueueMessage {
-                        message_id,
-                        conversation_id: ConversationId::from_opaque(request_value.conversation_id),
-                        body,
-                        reply_to: None,
-                        at: now,
-                    })
-                    .is_err()
-                {
-                    return Err(RuntimeDriverError::Engine);
+                if let Err(error) = engine.dispatch(EngineCommand::QueueMessage {
+                    message_id,
+                    conversation_id: ConversationId::from_opaque(request_value.conversation_id),
+                    body,
+                    reply_to: None,
+                    at: now,
+                }) {
+                    return Err(RuntimeDriverError::from(error));
                 }
                 if let Err(error) = communication.prepare_attachment(&request_value, now) {
-                    // A failed local attachment must not leave a deliverable
-                    // placeholder message behind. Cancelling also prevents the
-                    // durable outbox from transmitting it on a later tick.
                     let _ = engine.dispatch(EngineCommand::CancelMessage { message_id, at: now });
                     return Err(error);
                 }
@@ -167,8 +159,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::NetworkSnapshot(r) => {
             diagnostics.count(RuntimeCounter::FfiWake);
             let result = (|| {
-                let snapshot =
-                    engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+                let snapshot = engine.overview_snapshot().map_err(RuntimeDriverError::from)?;
                 let peers = snapshot
                     .contacts
                     .iter()
