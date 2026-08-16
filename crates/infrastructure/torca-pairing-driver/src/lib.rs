@@ -1,9 +1,10 @@
 //! TorcaRuntime adapter for the completed pairing coordinator/runtime.
 
+mod worker;
+pub use worker::PairingWorkerDriver;
+
 use std::collections::BTreeMap;
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use torca_client_engine::EngineHandle;
 use torca_crypto::{CryptoProvider, RustCryptoProvider};
@@ -34,11 +35,7 @@ struct PairingPollSchedule {
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_POLL_BACKOFF: Duration = Duration::from_secs(30);
-/// Allow the first Tor stream establishment to complete before classifying a
-/// command as pending. The outer runtime command timeout is ten seconds, so
-/// this leaves a small margin for response propagation while avoiding the old
-/// 250 ms false-queue path on cold Android/desktop boots.
-const INTERACTIVE_REPLY_WAIT: Duration = Duration::from_secs(8);
+
 impl<R, C, A, S> RuntimePairingDriver<R, C, A, S>
 where
     R: PairingRendezvousPort,
@@ -59,8 +56,12 @@ where
             poll_schedule: BTreeMap::new(),
         }
     }
+
     fn context(&mut self) -> Result<LocalPairingContext, RuntimeDriverError> {
-        let snapshot = self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+        let snapshot = self
+            .engine
+            .overview_snapshot()
+            .map_err(|_| RuntimeDriverError::Engine)?;
         let identity = snapshot.identity.ok_or(RuntimeDriverError::Pairing)?;
         // The local onion endpoint is a readiness dependency, not a protocol
         // rejection. Keep it retryable so a cold Android Tor bootstrap does
@@ -93,13 +94,18 @@ where
             Err(RuntimeDriverError::Tor) => return Ok(false),
             Err(error) => return Err(error),
         };
-        self.runtime.publish_local_offer(session_id, context).map_err(map_pairing_error)?;
+        self.runtime
+            .publish_local_offer(session_id, context)
+            .map_err(map_pairing_error)?;
         Ok(true)
     }
+
     fn random_id(&mut self) -> Result<OpaqueId, RuntimeDriverError> {
         for _ in 0..8 {
             let mut bytes = [0_u8; 16];
-            self.random.fill_random(&mut bytes).map_err(|_| RuntimeDriverError::Pairing)?;
+            self.random
+                .fill_random(&mut bytes)
+                .map_err(|_| RuntimeDriverError::Pairing)?;
             let id = OpaqueId::from_bytes(bytes);
             if !id.is_nil() {
                 return Ok(id);
@@ -107,22 +113,29 @@ where
         }
         Err(RuntimeDriverError::Pairing)
     }
+
     fn active_sessions(&self) -> Result<Vec<PairingSessionId>, RuntimeDriverError> {
-        self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Pairing).map(|snapshot| {
-            snapshot
-                .pairings
-                .into_iter()
-                .filter(|s| {
-                    !matches!(
-                        s.state(),
-                        PairingState::Rejected | PairingState::Cancelled | PairingState::Expired
-                    )
-                })
-                .map(|s| s.id())
-                .collect()
-        })
+        self.engine
+            .overview_snapshot()
+            .map_err(|_| RuntimeDriverError::Pairing)
+            .map(|snapshot| {
+                snapshot
+                    .pairings
+                    .into_iter()
+                    .filter(|s| {
+                        !matches!(
+                            s.state(),
+                            PairingState::Rejected
+                                | PairingState::Cancelled
+                                | PairingState::Expired
+                        )
+                    })
+                    .map(|s| s.id())
+                    .collect()
+            })
     }
 }
+
 impl<R, C, A, S> PairingDriver for RuntimePairingDriver<R, C, A, S>
 where
     R: PairingRendezvousPort + Send + 'static,
@@ -148,6 +161,7 @@ where
             expires_at: invitation.expires_at,
         })
     }
+
     fn join(
         &mut self,
         session_id: PairingSessionId,
@@ -162,27 +176,40 @@ where
         self.schedule_now(session_id, now);
         Ok(())
     }
+
     fn approve(
         &mut self,
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.runtime.approve(session_id, now).map_err(map_pairing_error)?;
+        self.runtime
+            .approve(session_id, now)
+            .map_err(map_pairing_error)?;
         self.schedule_now(session_id, now);
         Ok(())
     }
+
     fn reject(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError> {
         self.runtime.reject(session_id).map_err(map_pairing_error)
     }
+
     fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError> {
         self.runtime.cancel(session_id).map_err(map_pairing_error)
     }
+
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
-        self.runtime.maintenance(now).map_err(|_| RuntimeDriverError::Pairing)?;
+        self.runtime
+            .maintenance(now)
+            .map_err(|_| RuntimeDriverError::Pairing)?;
         let active_sessions = self.active_sessions()?;
-        self.poll_schedule.retain(|id, _| active_sessions.contains(id));
+        self.poll_schedule
+            .retain(|id, _| active_sessions.contains(id));
         for session_id in active_sessions {
-            if self.poll_schedule.get(&session_id).is_some_and(|state| now < state.next_at) {
+            if self
+                .poll_schedule
+                .get(&session_id)
+                .is_some_and(|state| now < state.next_at)
+            {
                 continue;
             }
             if !self.publish_local_offer_if_ready(session_id)? {
@@ -209,12 +236,14 @@ where
             .map(|schedule| schedule.next_at.duration_since(now).unwrap_or_default())
             .min()
     }
+
     fn network_changed(&mut self, now: Timestamp) {
         self.runtime.network_changed();
         for session_id in self.poll_schedule.keys().copied().collect::<Vec<_>>() {
             self.schedule_now(session_id, now);
         }
     }
+
     fn shutdown(&mut self) {
         if let Ok(sessions) = self.active_sessions() {
             for id in sessions {
@@ -226,15 +255,29 @@ where
 
 impl<R, C, A, S> RuntimePairingDriver<R, C, A, S> {
     fn schedule_now(&mut self, session_id: PairingSessionId, now: Timestamp) {
-        self.poll_schedule
-            .insert(session_id, PairingPollSchedule { next_at: now, consecutive_failures: 0 });
+        self.poll_schedule.insert(
+            session_id,
+            PairingPollSchedule {
+                next_at: now,
+                consecutive_failures: 0,
+            },
+        );
     }
 
     fn schedule_success(&mut self, session_id: PairingSessionId, now: Timestamp, active: bool) {
-        let delay = if active { ACTIVE_POLL_INTERVAL } else { IDLE_POLL_INTERVAL };
+        let delay = if active {
+            ACTIVE_POLL_INTERVAL
+        } else {
+            IDLE_POLL_INTERVAL
+        };
         let next_at = now.checked_add(delay).unwrap_or(now);
-        self.poll_schedule
-            .insert(session_id, PairingPollSchedule { next_at, consecutive_failures: 0 });
+        self.poll_schedule.insert(
+            session_id,
+            PairingPollSchedule {
+                next_at,
+                consecutive_failures: 0,
+            },
+        );
     }
 
     fn schedule_failure(&mut self, session_id: PairingSessionId, now: Timestamp) {
@@ -245,8 +288,13 @@ impl<R, C, A, S> RuntimePairingDriver<R, C, A, S> {
         let exponent = u32::from(failures.saturating_sub(1).min(5));
         let delay = Duration::from_secs(1_u64 << exponent).min(MAX_POLL_BACKOFF);
         let next_at = now.checked_add(delay).unwrap_or(now);
-        self.poll_schedule
-            .insert(session_id, PairingPollSchedule { next_at, consecutive_failures: failures });
+        self.poll_schedule.insert(
+            session_id,
+            PairingPollSchedule {
+                next_at,
+                consecutive_failures: failures,
+            },
+        );
     }
 }
 
@@ -261,169 +309,4 @@ fn map_pairing_error(error: PairingRuntimeError) -> RuntimeDriverError {
         PairingRuntimeError::SessionNotFound => RuntimeDriverError::Pairing,
         _ => RuntimeDriverError::Pairing,
     }
-}
-
-enum PairingWorkerCommand {
-    Create {
-        session_id: PairingSessionId,
-        now: Timestamp,
-        reply: SyncSender<Result<PairingInvitationView, RuntimeDriverError>>,
-    },
-    Join {
-        session_id: PairingSessionId,
-        code: PairingCode,
-        ticket: Option<[u8; 16]>,
-        now: Timestamp,
-        reply: SyncSender<Result<(), RuntimeDriverError>>,
-    },
-    Approve {
-        session_id: PairingSessionId,
-        now: Timestamp,
-        reply: SyncSender<Result<(), RuntimeDriverError>>,
-    },
-    Reject {
-        session_id: PairingSessionId,
-        reply: SyncSender<Result<(), RuntimeDriverError>>,
-    },
-    Cancel {
-        session_id: PairingSessionId,
-        reply: SyncSender<Result<(), RuntimeDriverError>>,
-    },
-    NetworkChanged(Timestamp),
-    Shutdown,
-}
-
-/// Isolates relay I/O from the main runtime actor. Periodic polls are coalesced in a bounded
-/// mailbox, so a slow Tor circuit cannot freeze snapshots, message delivery, or the UI.
-pub struct PairingWorkerDriver {
-    sender: SyncSender<PairingWorkerCommand>,
-    worker: Option<JoinHandle<()>>,
-}
-
-impl PairingWorkerDriver {
-    pub fn spawn<D: PairingDriver>(mut driver: D) -> Result<Self, RuntimeDriverError> {
-        let (sender, receiver) = mpsc::sync_channel(8);
-        let worker = std::thread::Builder::new()
-            .name("torca-pairing-supervisor".to_owned())
-            .spawn(move || run_pairing_worker(&mut driver, &receiver))
-            .map_err(|_| RuntimeDriverError::Pairing)?;
-        Ok(Self { sender, worker: Some(worker) })
-    }
-
-    fn request<T>(
-        &self,
-        build: impl FnOnce(SyncSender<Result<T, RuntimeDriverError>>) -> PairingWorkerCommand,
-    ) -> Result<T, RuntimeDriverError> {
-        let (reply, receiver) = mpsc::sync_channel(1);
-        match self.sender.try_send(build(reply)) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => return Err(RuntimeDriverError::Pending),
-            Err(TrySendError::Disconnected(_)) => return Err(RuntimeDriverError::Pairing),
-        }
-        receiver.recv_timeout(INTERACTIVE_REPLY_WAIT).map_err(|error| match error {
-            mpsc::RecvTimeoutError::Timeout => RuntimeDriverError::Pending,
-            mpsc::RecvTimeoutError::Disconnected => RuntimeDriverError::Pairing,
-        })?
-    }
-}
-
-impl PairingDriver for PairingWorkerDriver {
-    fn create(
-        &mut self,
-        session_id: PairingSessionId,
-        now: Timestamp,
-    ) -> Result<PairingInvitationView, RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Create { session_id, now, reply })
-    }
-
-    fn join(
-        &mut self,
-        session_id: PairingSessionId,
-        code: PairingCode,
-        ticket: Option<[u8; 16]>,
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Join { session_id, code, ticket, now, reply })
-    }
-
-    fn approve(
-        &mut self,
-        session_id: PairingSessionId,
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Approve { session_id, now, reply })
-    }
-
-    fn reject(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Reject { session_id, reply })
-    }
-
-    fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Cancel { session_id, reply })
-    }
-
-    fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
-        let _ = now;
-        // The worker owns its own deadline-driven poll/maintenance clock.
-        // RuntimeOwner still calls this trait method for compatibility, but it
-        // must not enqueue a periodic message behind interactive relay I/O.
-        Ok(())
-    }
-
-    fn network_changed(&mut self, now: Timestamp) {
-        let _ = self.sender.try_send(PairingWorkerCommand::NetworkChanged(now));
-    }
-
-    fn shutdown(&mut self) {
-        let _ = self.sender.send(PairingWorkerCommand::Shutdown);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-
-fn run_pairing_worker<D: PairingDriver>(driver: &mut D, receiver: &Receiver<PairingWorkerCommand>) {
-    loop {
-        let timeout = worker_timestamp()
-            .and_then(|now| driver.next_maintenance_delay(now))
-            .unwrap_or(Duration::from_secs(3_600));
-        let command = match receiver.recv_timeout(timeout) {
-            Ok(command) => command,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(now) = worker_timestamp() {
-                    let _ = driver.maintenance(now);
-                }
-                continue;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        };
-        match command {
-            PairingWorkerCommand::Create { session_id, now, reply } => {
-                let _ = reply.send(driver.create(session_id, now));
-            }
-            PairingWorkerCommand::Join { session_id, code, ticket, now, reply } => {
-                let _ = reply.send(driver.join(session_id, code, ticket, now));
-            }
-            PairingWorkerCommand::Approve { session_id, now, reply } => {
-                let _ = reply.send(driver.approve(session_id, now));
-            }
-            PairingWorkerCommand::Reject { session_id, reply } => {
-                let _ = reply.send(driver.reject(session_id));
-            }
-            PairingWorkerCommand::Cancel { session_id, reply } => {
-                let _ = reply.send(driver.cancel(session_id));
-            }
-            PairingWorkerCommand::NetworkChanged(now) => driver.network_changed(now),
-            PairingWorkerCommand::Shutdown => {
-                driver.shutdown();
-                break;
-            }
-        }
-    }
-}
-
-fn worker_timestamp() -> Option<Timestamp> {
-    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
-    let millis = i64::try_from(elapsed.as_millis()).ok()?;
-    Timestamp::from_unix_millis(millis).ok()
 }
