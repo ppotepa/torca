@@ -62,6 +62,8 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
   IconData get radio => pixel ? PixelArtIcons.radio_handheld : HeroIcons.radio;
   IconData get pushToTalk =>
       pixel ? PixelArtIcons.radio_on : HeroIcons.microphone;
+  IconData get play => pixel ? PixelArtIcons.play : HeroIcons.play;
+  IconData get pause => pixel ? PixelArtIcons.pause : HeroIcons.pause;
   IconData get file => pixel ? PixelArtIcons.file : HeroIcons.document;
   IconData get image => pixel ? PixelArtIcons.image : HeroIcons.photo;
   IconData get video => pixel ? PixelArtIcons.video : HeroIcons.film;

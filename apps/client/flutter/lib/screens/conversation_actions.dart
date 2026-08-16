@@ -362,6 +362,22 @@ extension on _ConversationPaneState {
     });
   }
 
+  Future<String?> _materializeAttachment(AttachmentDto attachment) async {
+    final ext =
+        contentExtension(attachment.mediaType) ??
+        safeExtension(attachment.name);
+    final path =
+        '${Directory.systemTemp.path}${torcaPathSeparator}torca-voice-${attachment.id}$ext';
+    final result = await widget.gateway.execute(
+      ExportAttachmentCommandDto(
+        attachmentIdHex: attachment.id,
+        destinationPath: path,
+      ),
+    );
+    if (!result.ok || !await File(path).exists()) return null;
+    return path;
+  }
+
   Future<void> _attachmentCommand(
     String attachmentId,
     String action,

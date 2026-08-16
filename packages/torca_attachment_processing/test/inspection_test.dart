@@ -26,6 +26,26 @@ void main() {
     );
   });
 
+  test('classifies M4A voice clips as audio, not video', () {
+    final bytes = Uint8List.fromList(<int>[
+      0,
+      0,
+      0,
+      0,
+      0x66,
+      0x74,
+      0x79,
+      0x70,
+      0x4d,
+      0x34,
+      0x41,
+      0x20,
+    ]);
+    final result = inspectAttachment(bytes, 'm4a');
+    expect(result.mediaType, 'audio/mp4');
+    expect(result.kind, AttachmentMediaKind.audio);
+  });
+
   test('keeps an OOXML document identity despite its ZIP signature', () {
     final result = inspectAttachment(
       Uint8List.fromList(const <int>[0x50, 0x4b, 0x03, 0x04]),

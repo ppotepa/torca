@@ -19,6 +19,9 @@ class _FakeRecorder implements AudioClipRecorder {
   }
 
   @override
+  Future<double?> amplitude() async => -60;
+
+  @override
   Future<String?> stop() async => path;
 
   @override
@@ -55,8 +58,6 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 50));
-    expect(find.text('10'), findsOneWidget);
-
     expect(recorder.path, endsWith('.m4a'));
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await tester.pump();

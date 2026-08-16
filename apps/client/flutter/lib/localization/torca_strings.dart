@@ -292,6 +292,12 @@ class TorcaStrings {
   String get voiceClipRecordingFailed => _pl
       ? 'Nie udalo sie nagrac klipu glosowego.'
       : 'Could not record the voice clip.';
+  String get voiceMessage => _pl ? 'Wiadomosc glosowa' : 'Voice message';
+  String get playVoiceMessage =>
+      _pl ? 'Odtworz wiadomosc glosowa' : 'Play voice message';
+  String get voiceMessageReady =>
+      _pl ? 'Gotowe do odtworzenia' : 'Ready to play';
+  String get voiceMessagePlayed => _pl ? 'Odtworzono' : 'Played';
   String get couldNotUpdateRadio =>
       _pl ? 'Nie udalo sie zmienic trybu radio' : 'Could not update Radio mode';
   String get couldNotStartRadio => _pl

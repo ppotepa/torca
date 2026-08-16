@@ -32,6 +32,7 @@ class VoiceClipRecorder extends StatefulWidget {
 
 abstract interface class AudioClipRecorder {
   Future<bool> start(String path);
+  Future<double?> amplitude();
   Future<String?> stop();
   Future<void> cancel();
   Future<void> dispose();
@@ -48,7 +49,7 @@ class _RecordAudioClipRecorder implements AudioClipRecorder {
     await _recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.aacLc,
-        bitRate: 24000,
+        bitRate: 16000,
         sampleRate: 16000,
         numChannels: 1,
         autoGain: true,
@@ -59,6 +60,10 @@ class _RecordAudioClipRecorder implements AudioClipRecorder {
     );
     return true;
   }
+
+  @override
+  Future<double?> amplitude() =>
+      _recorder.getAmplitude().then((value) => value.current);
 
   @override
   Future<String?> stop() => _recorder.stop();
@@ -81,6 +86,9 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
   bool _finishing = false;
   Duration _elapsed = Duration.zero;
   String? _pendingPath;
+  double? _pointerStartX;
+  final List<double> _waveform = <double>[];
+  Timer? _amplitudeTimer;
 
   @override
   void initState() {
@@ -117,6 +125,10 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
       }
       _recording = true;
       _elapsed = Duration.zero;
+      _waveform.clear();
+      _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+        unawaited(_sampleAmplitude());
+      });
       _limitTimer = Timer(voiceClipMaximumDuration, () => unawaited(_finish()));
       _elapsedTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
         if (!mounted || !_recording) return;
@@ -183,6 +195,26 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
     _limitTimer = null;
     _elapsedTimer?.cancel();
     _elapsedTimer = null;
+    _amplitudeTimer?.cancel();
+    _amplitudeTimer = null;
+  }
+
+  Future<void> _sampleAmplitude() async {
+    if (!_recording || !mounted) return;
+    // AudioRecorder exposes amplitude independently of the encoded file. Keep
+    // only a compact rolling history so the overlay remains cheap to paint.
+    double? amplitude;
+    try {
+      amplitude = await _recorder.amplitude();
+    } on Object {
+      return;
+    }
+    final currentAmplitude = amplitude;
+    if (!mounted || !_recording || currentAmplitude == null) return;
+    setState(() {
+      _waveform.add(((currentAmplitude + 60) / 60).clamp(0.04, 1.0));
+      if (_waveform.length > 64) _waveform.removeAt(0);
+    });
   }
 
   Future<void> _discardFile(String path) async {
@@ -218,51 +250,182 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
           : context.strings.holdToRecordVoiceClip,
       child: Listener(
         behavior: HitTestBehavior.opaque,
-        onPointerDown: widget.disabled ? null : (_) => unawaited(_start()),
+        onPointerDown: widget.disabled
+            ? null
+            : (event) {
+                _pointerStartX = event.position.dx;
+                unawaited(_start());
+              },
+        onPointerMove: widget.disabled
+            ? null
+            : (event) {
+                final start = _pointerStartX;
+                if (start != null && start - event.position.dx > 60) {
+                  unawaited(_cancel());
+                }
+              },
         onPointerUp: widget.disabled ? null : (_) => unawaited(_finish()),
         onPointerCancel: widget.disabled ? null : (_) => unawaited(_cancel()),
-        child: AnimatedContainer(
-          key: const ValueKey<String>('voice-clip-recorder'),
-          duration: const Duration(milliseconds: 160),
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: _recording
-                ? Theme.of(context).colorScheme.error
-                : Theme.of(context).colorScheme.secondaryContainer,
-            borderRadius: BorderRadius.circular(
-              context.torcaTokens.radiusLarge,
-            ),
-          ),
-          alignment: Alignment.center,
-          child: _finishing
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Icon(
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.bottomRight,
+          children: <Widget>[
+            if (_recording)
+              Positioned(
+                right: 0,
+                bottom: 54,
+                child: _RecordingOverlay(
+                  waveform: List<double>.of(_waveform),
+                  secondsLeft: secondsLeft.clamp(0, 10),
+                ),
+              ),
+            AnimatedContainer(
+              key: const ValueKey<String>('voice-clip-recorder'),
+              duration: const Duration(milliseconds: 160),
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: _recording
+                    ? Theme.of(context).colorScheme.error
+                    : Theme.of(context).colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(
+                  context.torcaTokens.radiusLarge,
+                ),
+                boxShadow: _recording
+                    ? <BoxShadow>[
+                        BoxShadow(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.error.withValues(alpha: 0.42),
+                          blurRadius: 16,
+                          spreadRadius: 4,
+                        ),
+                      ]
+                    : null,
+              ),
+              alignment: Alignment.center,
+              child: _finishing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
                       context.torcaIcons.pushToTalk,
                       size: busy ? 19 : 22,
                       color: _recording
                           ? Theme.of(context).colorScheme.onError
                           : Theme.of(context).colorScheme.onSecondaryContainer,
                     ),
-                    if (_recording)
-                      Text(
-                        '${secondsLeft.clamp(0, 10)}',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onError,
-                          height: 1,
-                        ),
-                      ),
-                  ],
-                ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+class _WaveformPainter extends CustomPainter {
+  const _WaveformPainter({required this.values, required this.color});
+  final List<double> values;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    if (values.isEmpty) {
+      canvas.drawLine(
+        Offset(0, size.height / 2),
+        Offset(size.width, size.height / 2),
+        paint,
+      );
+      return;
+    }
+    final step = size.width / values.length;
+    for (var index = 0; index < values.length; index++) {
+      final height = values[index] * size.height;
+      final x = (index + 0.5) * step;
+      canvas.drawLine(
+        Offset(x, (size.height - height) / 2),
+        Offset(x, (size.height + height) / 2),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WaveformPainter oldDelegate) =>
+      oldDelegate.values != values || oldDelegate.color != color;
+}
+
+class _RecordingOverlay extends StatelessWidget {
+  const _RecordingOverlay({required this.waveform, required this.secondsLeft});
+  final List<double> waveform;
+  final int secondsLeft;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    elevation: 8,
+    color: Theme.of(context).colorScheme.errorContainer,
+    borderRadius: BorderRadius.circular(context.torcaTokens.radiusMedium),
+    child: Container(
+      width: 244,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 9),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.error),
+        borderRadius: BorderRadius.circular(context.torcaTokens.radiusMedium),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(
+                context.torcaIcons.pushToTalk,
+                color: Theme.of(context).colorScheme.onErrorContainer,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'REC',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${secondsLeft}s',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          SizedBox(
+            height: 30,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: _WaveformPainter(
+                values: waveform,
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Release to send · slide left to cancel',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onErrorContainer,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

@@ -287,7 +287,12 @@ AttachmentInspection inspectAttachment(Uint8List prefix, String? extension) {
     });
   }
   if (starts(const <int>[0x1f, 0x8b])) return _type('application/gzip');
-  if (prefix.length >= 12 && asciiAt(4, 'ftyp')) return _type('video/mp4');
+  if (prefix.length >= 12 && asciiAt(4, 'ftyp')) {
+    return _type(switch (ext) {
+      'm4a' || 'm4b' || 'm4p' => 'audio/mp4',
+      _ => 'video/mp4',
+    });
+  }
   if (asciiAt(0, 'ID3')) return _type('audio/mpeg');
   if (asciiAt(0, 'OggS')) return _type('audio/ogg');
   if (asciiAt(0, 'RIFF') && asciiAt(8, 'WAVE')) return _type('audio/wav');
@@ -315,6 +320,7 @@ AttachmentInspection inspectAttachment(Uint8List prefix, String? extension) {
     'mp4' || 'm4v' => 'video/mp4',
     'webm' => 'video/webm',
     'mp3' => 'audio/mpeg',
+    'm4a' || 'm4b' || 'm4p' => 'audio/mp4',
     'wav' => 'audio/wav',
     'ogg' || 'oga' => 'audio/ogg',
     _ => 'application/octet-stream',

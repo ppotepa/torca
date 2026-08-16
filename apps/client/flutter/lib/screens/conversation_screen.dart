@@ -22,6 +22,7 @@ import '../widgets/message_bubble.dart';
 import '../widgets/operation_tracker.dart';
 import '../widgets/radio_conversation_controls.dart';
 import '../widgets/voice_clip_recorder.dart';
+import '../widgets/voice_message_tile.dart';
 import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
 
@@ -645,31 +646,39 @@ class _ConversationPaneState extends State<ConversationPane>
                                       .anyWithPrefix(
                                         'attachment:${attachment.id}:',
                                       );
+                                  final retry = () => _attachmentCommand(
+                                    attachment.id,
+                                    'retry',
+                                    RetryAttachmentCommandDto(
+                                      attachmentIdHex: attachment.id,
+                                    ),
+                                  );
+                                  final cancel = () => _attachmentCommand(
+                                    attachment.id,
+                                    'cancel',
+                                    CancelAttachmentCommandDto(
+                                      attachmentIdHex: attachment.id,
+                                    ),
+                                  );
+                                  if (attachment.mediaType.startsWith(
+                                    'audio/',
+                                  )) {
+                                    return VoiceMessageTile(
+                                      attachment: attachment,
+                                      operationBusy: attachmentBusy,
+                                      materialize: () =>
+                                          _materializeAttachment(attachment),
+                                      onRetry: retry,
+                                      onCancel: cancel,
+                                    );
+                                  }
                                   return AttachmentTile(
                                     attachment: attachment,
                                     operationBusy: attachmentBusy,
-                                    onRetry: () => _attachmentCommand(
-                                      attachment.id,
-                                      'retry',
-                                      RetryAttachmentCommandDto(
-                                        attachmentIdHex: attachment.id,
-                                      ),
-                                    ),
-                                    onCancel: () => _attachmentCommand(
-                                      attachment.id,
-                                      'cancel',
-                                      CancelAttachmentCommandDto(
-                                        attachmentIdHex: attachment.id,
-                                      ),
-                                    ),
+                                    onRetry: retry,
+                                    onCancel: cancel,
                                     onOpen: () => _openAttachment(attachment),
                                     onSave: () => _saveAttachment(attachment),
-                                    // A v2 preview is a small, separately
-                                    // encrypted JPEG.  It is available before
-                                    // the complete attachment, for both images
-                                    // and videos.  Images open in-app; a video
-                                    // card uses the same cover image but opens
-                                    // the final media in the platform player.
                                     onPreview:
                                         attachment.mediaType.startsWith(
                                           'image/',
