@@ -236,7 +236,6 @@ object AndroidKeystoreBridge {
             record.release()
             return false
         }
-        nativeSetRadioCaptureActive(true)
         val session = record.audioSessionId
         val aec = if (AcousticEchoCanceler.isAvailable()) {
             AcousticEchoCanceler.create(session)?.also { effect ->
@@ -253,12 +252,23 @@ object AndroidKeystoreBridge {
                 runCatching { effect.enabled = true }
             }
         } else null
+        try {
+            record.startRecording()
+            check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING)
+        } catch (error: Throwable) {
+            Log.w("TorcaAudio", "could not start voice communication capture", error)
+            aec?.release()
+            ns?.release()
+            agc?.release()
+            record.release()
+            return false
+        }
+        nativeSetRadioCaptureActive(true)
         val stop = AtomicBoolean(false)
         radioCaptureStop = stop
         radioCaptureThread = Thread {
             val buffer = ByteArray(bufferSize and -2)
             try {
-                record.startRecording()
                 while (!stop.get()) {
                     val read = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         record.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
