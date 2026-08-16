@@ -1,3 +1,5 @@
+//! Communication policy and semantic application message registry.
+
 use std::time::Duration;
 
 use torca_control_delivery::{ControlKind, PendingControlJob, ReadCandidate};
@@ -10,14 +12,30 @@ use torca_runtime::PeerHealthQuality;
 
 use crate::CommunicationError;
 
-// Stable peer-application discriminants. Existing values are wire compatibility
-// commitments for the current peer protocol generation; append new kinds only.
-pub const TEXT_MESSAGE_KIND: u16 = 1;
-pub const RECEIPT_MESSAGE_KIND: u16 = 2;
-pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
-pub const PROBE_MESSAGE_KIND: u16 = 4;
-pub const RADIO_CONTROL_MESSAGE_KIND: u16 = 5;
-pub const REACTION_MESSAGE_KIND: u16 = 6;
+/// Application-facing peer payload kinds. Numeric wire compatibility is
+/// verified at the infrastructure boundary against `PeerApplicationKind`.
+#[repr(u16)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApplicationMessageKind {
+    Text = 1,
+    Receipt = 2,
+    Attachment = 3,
+    Probe = 4,
+    RadioControl = 5,
+    Reaction = 6,
+}
+impl ApplicationMessageKind {
+    pub const fn as_u16(self) -> u16 {
+        self as u16
+    }
+}
+
+pub const TEXT_MESSAGE_KIND: u16 = ApplicationMessageKind::Text.as_u16();
+pub const RECEIPT_MESSAGE_KIND: u16 = ApplicationMessageKind::Receipt.as_u16();
+pub const ATTACHMENT_MESSAGE_KIND: u16 = ApplicationMessageKind::Attachment.as_u16();
+pub const PROBE_MESSAGE_KIND: u16 = ApplicationMessageKind::Probe.as_u16();
+pub const RADIO_CONTROL_MESSAGE_KIND: u16 = ApplicationMessageKind::RadioControl.as_u16();
+pub const REACTION_MESSAGE_KIND: u16 = ApplicationMessageKind::Reaction.as_u16();
 
 pub fn classify_peer_health(
     rtt_ms: Option<u64>,
@@ -33,8 +51,6 @@ pub fn classify_peer_health(
     }
 }
 
-/// Application policy that turns read candidates into durable control jobs.
-/// Storage receives the resulting jobs and never decides whether a receipt is required.
 pub fn plan_read_receipts(
     candidates: &[ReadCandidate],
     at: Timestamp,
