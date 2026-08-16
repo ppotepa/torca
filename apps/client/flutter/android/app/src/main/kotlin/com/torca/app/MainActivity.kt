@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.media.AudioManager
 import android.view.WindowManager
 import java.io.ByteArrayOutputStream
 import com.torca.host.AndroidKeystoreBridge
@@ -118,6 +119,16 @@ class MainActivity : FlutterActivity() {
                                 REQUEST_MICROPHONE_PERMISSION,
                             )
                         }
+                    }
+                    "setCommunicationAudioMode" -> {
+                        val enabled = call.argument<Boolean>("enabled") == true
+                        val audioManager = getSystemService(AudioManager::class.java)
+                        if (enabled) {
+                            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                        } else if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
+                            audioManager.mode = AudioManager.MODE_NORMAL
+                        }
+                        result.success(null)
                     }
                     else -> result.notImplemented()
                 }

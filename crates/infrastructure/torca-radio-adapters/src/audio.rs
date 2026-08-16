@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::Duration;
 
 use crossbeam_queue::ArrayQueue;
 use torca_contacts::ContactId;
@@ -24,6 +25,7 @@ pub struct AudioPipeline {
     capture_level_milli: Arc<AtomicU32>,
     playback_frame_active: Arc<AtomicBool>,
     start_cue_generation: Arc<AtomicU32>,
+    start_cue_finished: Arc<AtomicBool>,
     end_cue_requested: Arc<AtomicBool>,
     end_cue_finished: Arc<AtomicBool>,
 }
@@ -40,6 +42,7 @@ impl Default for AudioPipeline {
             capture_level_milli: Arc::new(AtomicU32::new(0)),
             playback_frame_active: Arc::new(AtomicBool::new(false)),
             start_cue_generation: Arc::new(AtomicU32::new(1)),
+            start_cue_finished: Arc::new(AtomicBool::new(true)),
             end_cue_requested: Arc::new(AtomicBool::new(false)),
             end_cue_finished: Arc::new(AtomicBool::new(false)),
         }
@@ -103,6 +106,7 @@ impl AudioPipeline {
 
     pub(crate) fn prepare_playback(&self) {
         self.start_cue_generation.fetch_add(1, Ordering::AcqRel);
+        self.start_cue_finished.store(false, Ordering::Release);
         self.end_cue_requested.store(false, Ordering::Release);
         self.end_cue_finished.store(false, Ordering::Release);
         self.set_playback_frame_active(false);
@@ -114,6 +118,14 @@ impl AudioPipeline {
 
     fn start_cue_generation(&self) -> u32 {
         self.start_cue_generation.load(Ordering::Acquire)
+    }
+
+    fn mark_start_cue_finished(&self) {
+        self.start_cue_finished.store(true, Ordering::Release);
+    }
+
+    fn start_cue_finished(&self) -> bool {
+        self.start_cue_finished.load(Ordering::Acquire)
     }
 
     fn end_cue_requested(&self) -> bool {
@@ -135,6 +147,7 @@ impl AudioPipeline {
         self.set_playback_frame_active(false);
         self.end_cue_requested.store(false, Ordering::Release);
         self.end_cue_finished.store(false, Ordering::Release);
+        self.start_cue_finished.store(true, Ordering::Release);
         self.capture_level_milli.store(0, Ordering::Release);
     }
 }
@@ -203,6 +216,13 @@ impl RadioAudioPort for RadioAudioAdapter {
         // Playback is best-effort here: microphone capture must remain usable
         // when a platform has no output device.
         let _ = self.platform.begin_playback();
+        // The cue is deliberately completed before opening the microphone.
+        // Otherwise the local beep is guaranteed to be captured on speaker
+        // devices and sent to the peer as an apparent echo.
+        let deadline = std::time::Instant::now() + Duration::from_millis(180);
+        while !self.pipeline.start_cue_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let result = self.platform.begin_capture();
         if result.is_ok() {
             self.pipeline.set_capture_enabled(true);
@@ -582,6 +602,13 @@ mod platform {
                 self.noise = self.noise.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 let sample = f32::from((self.noise >> 16) as i16) / f32::from(i16::MAX);
                 return sample * 0.055;
+            }
+            input.mark_start_cue_finished();
+            // Radio is half-duplex. Once local capture owns the floor, do not
+            // render remote frames into the speaker while the microphone is
+            // open. This is the first line of echo protection on every host.
+            if input.capture_enabled() {
+                return 0.0;
             }
             if self.frame.is_none() {
                 self.frame = input.inbound.pop();

@@ -24,4 +24,21 @@ abstract final class MicrophonePermission {
       return false;
     }
   }
+
+  /// Places Android in the voice-communication audio mode while a radio burst
+  /// is active. This lets the platform route and voice DSP (when available)
+  /// treat the microphone/render pair as a communications stream.
+  static Future<void> setCommunicationMode(bool enabled) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>(
+        'setCommunicationAudioMode',
+        <String, Object?>{'enabled': enabled},
+      );
+    } on MissingPluginException {
+      // The Rust/CPAL fallback remains usable on hosts without the channel.
+    } on PlatformException {
+      // Audio mode is an enhancement; capture lifecycle remains authoritative.
+    }
+  }
 }

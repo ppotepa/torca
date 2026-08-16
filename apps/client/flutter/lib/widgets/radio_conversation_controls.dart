@@ -320,6 +320,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       _transmissionActive = true;
       _commandBusy = true;
     });
+    await MicrophonePermission.setCommunicationMode(true);
     unawaited(HapticFeedback.mediumImpact());
     _burstTimer = Timer(
       const Duration(seconds: 10),
@@ -334,6 +335,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
           EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
         );
       }
+      await MicrophonePermission.setCommunicationMode(false);
       return;
     }
     setState(() => _commandBusy = false);
@@ -343,6 +345,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       await widget.gateway.execute(
         EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
       );
+      await MicrophonePermission.setCommunicationMode(false);
       return;
     }
     if (!result.ok) {
@@ -352,6 +355,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _pointerHeld = false;
         _transmissionActive = false;
       });
+      await MicrophonePermission.setCommunicationMode(false);
       _syncPulse();
       _showError(
         BridgeErrorPresenter.localized(
@@ -382,6 +386,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
     await widget.gateway.execute(
       EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
     );
+    await MicrophonePermission.setCommunicationMode(false);
   }
 
   void _showError(String message) {
