@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-/// Cloneable callback type used only as a non-blocking wake edge.
-pub type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// Small callback slot shared by background workers.
 ///
@@ -13,7 +12,7 @@ pub struct WakeSlot {
 }
 
 impl WakeSlot {
-    pub fn set(&self, callback: WakeCallback) -> bool {
+    pub fn set(&self, callback: Arc<dyn Fn() + Send + Sync>) -> bool {
         self.callback
             .lock()
             .map(|mut slot| {

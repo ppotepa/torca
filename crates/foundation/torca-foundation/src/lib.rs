@@ -21,4 +21,4 @@ pub use event::{DomainEventEnvelope, EventMetadata};
 pub use id::{CausationId, CommandId, CorrelationId, EventId, OpaqueId, ParseOpaqueIdError};
 pub use secret::SecretBytes;
 pub use time::{Timestamp, TimestampError};
-pub use wake::{WakeCallback, WakeSlot};
+pub use wake::WakeSlot;

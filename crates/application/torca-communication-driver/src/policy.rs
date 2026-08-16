@@ -12,11 +12,9 @@ use torca_runtime::PeerHealthQuality;
 
 use crate::CommunicationError;
 
-/// Application-facing peer payload kinds. Numeric wire compatibility is
-/// verified at the infrastructure boundary against `PeerApplicationKind`.
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ApplicationMessageKind {
+enum ApplicationMessageKind {
     Text = 1,
     Receipt = 2,
     Attachment = 3,
@@ -25,7 +23,7 @@ pub enum ApplicationMessageKind {
     Reaction = 6,
 }
 impl ApplicationMessageKind {
-    pub const fn as_u16(self) -> u16 {
+    const fn as_u16(self) -> u16 {
         self as u16
     }
 }
