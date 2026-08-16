@@ -125,6 +125,8 @@ impl RadioMediaSystem {
         tor.register_onion_route(TOR_RADIO_VIRTUAL_PORT, listener.local_addr())
             .map_err(|_| RadioApplicationError::MediaTransport)?;
         let pipeline = AudioPipeline::default();
+        #[cfg(target_os = "android")]
+        crate::install_android_pipeline(pipeline.clone());
         let audio = crate::RadioAudioAdapter::new(pipeline.clone());
         let media = RadioMediaAdapter::start(tor, listener, directory, pipeline)?;
         Ok(Self { media, audio })

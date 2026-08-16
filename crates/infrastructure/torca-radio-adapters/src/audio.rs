@@ -1,5 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+#[cfg(target_os = "android")]
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crossbeam_queue::ArrayQueue;
@@ -14,6 +16,93 @@ use crate::codec::{decode_mulaw, encode_mulaw};
 
 pub type AudioFrame = [u8; RADIO_SAMPLES_PER_FRAME];
 const INBOUND_AUDIO_QUEUE_FRAMES: usize = 75;
+
+#[cfg(target_os = "android")]
+static ANDROID_PIPELINE: OnceLock<Mutex<Option<AudioPipeline>>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+static ANDROID_NATIVE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "android")]
+static ANDROID_ENCODER: OnceLock<Mutex<AndroidCaptureEncoder>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+struct AndroidCaptureEncoder {
+    frame: AudioFrame,
+    position: usize,
+    envelope: f32,
+}
+
+#[cfg(target_os = "android")]
+impl Default for AndroidCaptureEncoder {
+    fn default() -> Self {
+        Self { frame: [0xff; RADIO_SAMPLES_PER_FRAME], position: 0, envelope: 0.0 }
+    }
+}
+
+/// Installs the single runtime audio lane used by the Android JNI capture
+/// bridge. The media system owns the actual pipeline; this only retains a
+/// bounded clone for native callback delivery.
+#[cfg(target_os = "android")]
+pub fn install_android_pipeline(pipeline: AudioPipeline) {
+    let slot = ANDROID_PIPELINE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut current) = slot.lock() {
+        *current = Some(pipeline);
+    }
+    if let Some(encoder) = ANDROID_ENCODER.get() {
+        if let Ok(mut encoder) = encoder.lock() {
+            *encoder = AndroidCaptureEncoder::default();
+        }
+    } else {
+        let _ = ANDROID_ENCODER.set(Mutex::new(AndroidCaptureEncoder::default()));
+    }
+}
+
+#[cfg(target_os = "android")]
+pub fn set_android_native_capture_active(active: bool) {
+    ANDROID_NATIVE_CAPTURE_ACTIVE.store(active, Ordering::Release);
+}
+
+#[cfg(target_os = "android")]
+fn android_native_capture_active() -> bool {
+    ANDROID_NATIVE_CAPTURE_ACTIVE.load(Ordering::Acquire)
+}
+
+/// Accepts little-endian mono PCM from Android's AudioRecord and converts it
+/// into the exact μ-law frames consumed by the existing radio media worker.
+/// Calls are ignored while the Rust coordinator has not granted the floor.
+#[cfg(target_os = "android")]
+pub fn push_android_pcm(bytes: &[u8]) {
+    let Some(slot) = ANDROID_PIPELINE.get() else { return };
+    let Ok(pipeline) = slot.lock().map(|current| current.clone()) else { return };
+    let Some(pipeline) = pipeline else { return };
+    if !pipeline.capture_enabled() {
+        return;
+    }
+    let Some(encoder) = ANDROID_ENCODER.get() else { return };
+    let Ok(mut encoder) = encoder.lock() else { return };
+    for chunk in bytes.chunks_exact(2) {
+        let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+        let level = f32::from(sample.unsigned_abs()) / f32::from(i16::MAX as u16);
+        encoder.envelope = if level > encoder.envelope {
+            encoder.envelope * 0.62 + level * 0.38
+        } else {
+            encoder.envelope * 0.94 + level * 0.06
+        };
+        pipeline.set_capture_level(encoder.envelope);
+        let position = encoder.position;
+        encoder.frame[position] = encode_mulaw(sample);
+        encoder.position += 1;
+        if encoder.position == RADIO_SAMPLES_PER_FRAME {
+            let frame = encoder.frame;
+            if pipeline.outbound.push(frame).is_err() {
+                let _ = pipeline.outbound.pop();
+                let _ = pipeline.outbound.push(frame);
+            }
+            encoder.position = 0;
+        }
+    }
+}
 
 /// Shared fixed-capacity lane between real-time callbacks and the media
 /// worker. Neither side can grow memory under a slow Tor circuit.
@@ -223,6 +312,10 @@ impl RadioAudioPort for RadioAudioAdapter {
         while !self.pipeline.start_cue_finished() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
+        #[cfg(target_os = "android")]
+        let result =
+            if android_native_capture_active() { Ok(()) } else { self.platform.begin_capture() };
+        #[cfg(not(target_os = "android"))]
         let result = self.platform.begin_capture();
         if result.is_ok() {
             self.pipeline.set_capture_enabled(true);

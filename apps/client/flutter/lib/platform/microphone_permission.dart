@@ -41,4 +41,27 @@ abstract final class MicrophonePermission {
       // Audio mode is an enhancement; capture lifecycle remains authoritative.
     }
   }
+
+  static Future<bool> startNativeCapture() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      return await _channel.invokeMethod<bool>('startNativeRadioCapture') ??
+          false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  static Future<void> stopNativeCapture() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('stopNativeRadioCapture');
+    } on MissingPluginException {
+      // CPAL remains the fallback.
+    } on PlatformException {
+      // Capture shutdown is best effort after the Rust command completed.
+    }
+  }
 }

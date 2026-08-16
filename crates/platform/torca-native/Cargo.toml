@@ -36,6 +36,7 @@ torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client
 torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
 torca-runtime = { path = "../../application/torca-runtime" }
 torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
+torca-radio-adapters = { path = "../../infrastructure/torca-radio-adapters" }
 torca-connectivity = { path = "../../application/torca-connectivity" }
 torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
 torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor" }

@@ -1,10 +1,19 @@
 package com.torca.host
 
 import android.content.Context
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
+import android.os.Build
 import android.util.Log
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.max
 import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -140,6 +149,8 @@ object AndroidKeystoreBridge {
     private lateinit var peerSecrets: AndroidKeystoreSecretStore
     private lateinit var databaseFile: File
     private lateinit var runtimeRoot: File
+    private var radioCaptureThread: Thread? = null
+    private var radioCaptureStop: AtomicBoolean? = null
 
     @JvmStatic
     fun initialize(context: Context) {
@@ -192,6 +203,99 @@ object AndroidKeystoreBridge {
         Log.e("TorcaRuntime", message)
     }
 
+    /** Starts the Android voice-communication capture path with platform DSP. */
+    @JvmStatic
+    @Synchronized
+    fun startRadioCapture(): Boolean {
+        if (radioCaptureThread?.isAlive == true) return true
+        val sampleRate = 8_000
+        val minimum = AudioRecord.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        if (minimum <= 0) return false
+        val bufferSize = max(minimum, sampleRate / 5 * 2)
+        val record = try {
+            AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(sampleRate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(bufferSize)
+                .build()
+        } catch (error: Throwable) {
+            Log.w("TorcaAudio", "could not create voice communication capture", error)
+            return false
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            return false
+        }
+        nativeSetRadioCaptureActive(true)
+        val session = record.audioSessionId
+        val aec = if (AcousticEchoCanceler.isAvailable()) {
+            AcousticEchoCanceler.create(session)?.also { effect ->
+                runCatching { effect.enabled = true }
+            }
+        } else null
+        val ns = if (NoiseSuppressor.isAvailable()) {
+            NoiseSuppressor.create(session)?.also { effect ->
+                runCatching { effect.enabled = true }
+            }
+        } else null
+        val agc = if (AutomaticGainControl.isAvailable()) {
+            AutomaticGainControl.create(session)?.also { effect ->
+                runCatching { effect.enabled = true }
+            }
+        } else null
+        val stop = AtomicBoolean(false)
+        radioCaptureStop = stop
+        radioCaptureThread = Thread {
+            val buffer = ByteArray(bufferSize and -2)
+            try {
+                record.startRecording()
+                while (!stop.get()) {
+                    val read = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        record.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        record.read(buffer, 0, buffer.size)
+                    }
+                    if (read > 0) nativePushRadioPcm(buffer.copyOf(read))
+                }
+            } catch (error: Throwable) {
+                Log.w("TorcaAudio", "voice communication capture stopped", error)
+            } finally {
+                runCatching { record.stop() }
+                aec?.release()
+                ns?.release()
+                agc?.release()
+                record.release()
+                nativeSetRadioCaptureActive(false)
+            }
+        }.apply {
+            name = "torca-radio-capture"
+            isDaemon = true
+            start()
+        }
+        return true
+    }
+
+    @JvmStatic
+    @Synchronized
+    fun stopRadioCapture() {
+        nativeSetRadioCaptureActive(false)
+        radioCaptureStop?.set(true)
+        radioCaptureThread?.interrupt()
+        radioCaptureThread = null
+        radioCaptureStop = null
+    }
+
     private fun store(namespace: String): AndroidKeystoreSecretStore = when (namespace) {
         "database" -> databaseSecrets
         "identity" -> identitySecrets
@@ -201,4 +305,6 @@ object AndroidKeystoreBridge {
 
     @JvmStatic external fun nativeBindRuntime(): Boolean
     @JvmStatic external fun nativeInitializeAudioContext(context: Context): Boolean
+    @JvmStatic external fun nativePushRadioPcm(data: ByteArray)
+    @JvmStatic external fun nativeSetRadioCaptureActive(active: Boolean)
 }

@@ -5944,6 +5944,7 @@ dependencies = [
  "torca-platform",
  "torca-platform-android",
  "torca-platform-windows",
+ "torca-radio-adapters",
  "torca-radio-coordinator",
  "torca-relay-protocol",
  "torca-rendezvous-client",

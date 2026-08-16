@@ -162,6 +162,13 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(null)
                     }
+                    "startNativeRadioCapture" -> result.success(
+                        AndroidKeystoreBridge.startRadioCapture(),
+                    )
+                    "stopNativeRadioCapture" -> {
+                        AndroidKeystoreBridge.stopRadioCapture()
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }

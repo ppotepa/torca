@@ -80,6 +80,28 @@ pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativeIn
     1
 }
 
+/// Receives bounded PCM chunks from the Android AudioRecord voice
+/// communication engine. The adapter converts them to μ-law frames and drops
+/// them unless the Rust radio coordinator currently owns the floor.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativePushRadioPcm(
+    mut env: JNIEnv,
+    _class: JClass,
+    data: JByteArray,
+) {
+    let Ok(bytes) = env.convert_byte_array(&data) else { return };
+    torca_radio_adapters::push_android_pcm(&bytes);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativeSetRadioCaptureActive(
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    active: jni::sys::jboolean,
+) {
+    torca_radio_adapters::set_android_native_capture_active(active != 0);
+}
+
 pub(crate) struct AndroidProtectedSecretStore {
     namespace: &'static str,
 }
