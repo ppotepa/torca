@@ -40,3 +40,5 @@ include!("engine/core.rs");
 include!("engine/dispatch.rs");
 include!("engine/runtime_port.rs");
 include!("engine/actor.rs");
+#[cfg(test)]
+include!("engine/tests.rs");
