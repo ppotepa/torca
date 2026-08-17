@@ -1,4 +1,4 @@
-//! Runtime-facing state snapshots and classified driver errors.
+// Responsibility: runtime-facing state snapshots and classified driver errors.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TorState {

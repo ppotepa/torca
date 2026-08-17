@@ -1,4 +1,4 @@
-//! Engine runtime port used by the single-writer actor.
+// Responsibility: runtime port implemented by the single-writer engine.
 
 pub trait EngineRuntime: Send + 'static {
     fn dispatch(&mut self, command: EngineCommand) -> Result<EngineResult, EngineError>;

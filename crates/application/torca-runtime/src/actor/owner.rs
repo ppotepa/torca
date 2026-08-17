@@ -1,4 +1,4 @@
-//! Runtime owner and linear event loop.
+// Responsibility: runtime owner and linear event loop.
 
 impl RuntimeOwner {
     pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(

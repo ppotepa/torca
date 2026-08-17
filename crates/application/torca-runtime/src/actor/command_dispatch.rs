@@ -1,4 +1,4 @@
-//! Runtime command dispatch into engine and narrow communication ports.
+// Responsibility: runtime command dispatch into engine and narrow communication ports.
 
 fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     command: RuntimeCommand,

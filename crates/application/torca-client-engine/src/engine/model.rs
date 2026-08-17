@@ -1,54 +1,19 @@
-//! Public command/result model and classified engine errors.
+// Responsibility: public command/result model and classified engine errors.
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineCommand {
-    CreateIdentity {
-        identity_id: IdentityId,
-        profile: Option<Profile>,
-        at: Timestamp,
-    },
-    UpdateProfile {
-        display_name: ProfileName,
-        at: Timestamp,
-    },
-    SetAvatarGenome {
-        record: AvatarGenomeRecord,
-        at: Timestamp,
-    },
-    StartPairing {
-        session_id: PairingSessionId,
-        code: PairingCode,
-        expires_at: Timestamp,
-    },
-    JoinPairing {
-        session_id: PairingSessionId,
-        code: PairingCode,
-        expires_at: Timestamp,
-    },
-    PeerJoined {
-        session_id: PairingSessionId,
-        proposal: PeerProposal,
-        at: Timestamp,
-    },
-    ApprovePairing {
-        session_id: PairingSessionId,
-        at: Timestamp,
-    },
-    RejectPairing {
-        session_id: PairingSessionId,
-    },
-    CancelPairing {
-        session_id: PairingSessionId,
-    },
-    ExpirePairing {
-        session_id: PairingSessionId,
-        at: Timestamp,
-    },
-    RemoteApproved {
-        session_id: PairingSessionId,
-        at: Timestamp,
-    },
+    CreateIdentity { identity_id: IdentityId, profile: Option<Profile>, at: Timestamp },
+    UpdateProfile { display_name: ProfileName, at: Timestamp },
+    SetAvatarGenome { record: AvatarGenomeRecord, at: Timestamp },
+    StartPairing { session_id: PairingSessionId, code: PairingCode, expires_at: Timestamp },
+    JoinPairing { session_id: PairingSessionId, code: PairingCode, expires_at: Timestamp },
+    PeerJoined { session_id: PairingSessionId, proposal: PeerProposal, at: Timestamp },
+    ApprovePairing { session_id: PairingSessionId, at: Timestamp },
+    RejectPairing { session_id: PairingSessionId },
+    CancelPairing { session_id: PairingSessionId },
+    ExpirePairing { session_id: PairingSessionId, at: Timestamp },
+    RemoteApproved { session_id: PairingSessionId, at: Timestamp },
     CompletePairing {
         session_id: PairingSessionId,
         contact_id: ContactId,
@@ -57,25 +22,11 @@ pub enum EngineCommand {
         credential: PeerCredential,
         at: Timestamp,
     },
-    EnsureConversation {
-        contact_id: ContactId,
-        conversation_id: ConversationId,
-        at: Timestamp,
-    },
-    ArchiveConversation {
-        conversation_id: ConversationId,
-        at: Timestamp,
-    },
-    RestoreConversation {
-        conversation_id: ConversationId,
-        at: Timestamp,
-    },
-    RemoveContact {
-        contact_id: ContactId,
-    },
-    RemovePairing {
-        session_id: PairingSessionId,
-    },
+    EnsureConversation { contact_id: ContactId, conversation_id: ConversationId, at: Timestamp },
+    ArchiveConversation { conversation_id: ConversationId, at: Timestamp },
+    RestoreConversation { conversation_id: ConversationId, at: Timestamp },
+    RemoveContact { contact_id: ContactId },
+    RemovePairing { session_id: PairingSessionId },
     QueueMessage {
         message_id: MessageId,
         conversation_id: ConversationId,
@@ -83,35 +34,13 @@ pub enum EngineCommand {
         reply_to: Option<ReplyReference>,
         at: Timestamp,
     },
-    CancelMessage {
-        message_id: MessageId,
-        at: Timestamp,
-    },
-    EditMessage {
-        message_id: MessageId,
-        body: MessageBody,
-        at: Timestamp,
-    },
-    SetMessageReaction {
-        reaction: MessageReaction,
-    },
-    BeginMessageSend {
-        message_id: MessageId,
-        at: Timestamp,
-    },
-    MarkMessageSent {
-        message_id: MessageId,
-        at: Timestamp,
-    },
-    MarkMessageFailed {
-        message_id: MessageId,
-        at: Timestamp,
-        error_code: ErrorCode,
-    },
-    RetryMessage {
-        message_id: MessageId,
-        at: Timestamp,
-    },
+    CancelMessage { message_id: MessageId, at: Timestamp },
+    EditMessage { message_id: MessageId, body: MessageBody, at: Timestamp },
+    SetMessageReaction { reaction: MessageReaction },
+    BeginMessageSend { message_id: MessageId, at: Timestamp },
+    MarkMessageSent { message_id: MessageId, at: Timestamp },
+    MarkMessageFailed { message_id: MessageId, at: Timestamp, error_code: ErrorCode },
+    RetryMessage { message_id: MessageId, at: Timestamp },
     ApplyReceipt(Receipt),
 }
 

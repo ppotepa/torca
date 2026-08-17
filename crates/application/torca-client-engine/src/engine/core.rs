@@ -1,4 +1,4 @@
-//! Core engine ownership and read projections.
+// Responsibility: core engine ownership and read projections.
 
 pub struct ClientEngine<
     I = InMemoryIdentityRepository,

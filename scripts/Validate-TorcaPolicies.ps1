@@ -11,7 +11,8 @@ $checks = @(
     'Torca.SecretLifetimePolicy.ps1',
     'Torca.LintPolicy.ps1',
     'Torca.DebtPolicy.ps1',
-    'Torca.LogRedactionPolicy.ps1'
+    'Torca.LogRedactionPolicy.ps1',
+    'Torca.IncludePolicy.ps1'
 )
 
 foreach ($check in $checks) {

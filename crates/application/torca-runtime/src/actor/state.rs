@@ -1,4 +1,4 @@
-//! Runtime-owned mutable state grouped by lifecycle responsibility.
+// Responsibility: runtime-owned mutable state grouped by lifecycle responsibility.
 
 #[derive(Default)]
 struct RuntimeHealthState {

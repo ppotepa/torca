@@ -1,4 +1,4 @@
-//! Relationship storage boundary and in-memory implementation.
+// Responsibility: relationship storage boundary and in-memory implementation.
 
 pub trait RelationshipRepository:
     ContactRepository + ConversationRepository + PeerCredentialRepository

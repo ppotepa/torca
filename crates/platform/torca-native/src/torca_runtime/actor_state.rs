@@ -1,4 +1,4 @@
-//! Native process actor request routing and response envelopes.
+// Responsibility: native process actor request routing and response envelopes.
 
 impl ActorState {
     fn next_maintenance_delay(&self) -> Option<Duration> {

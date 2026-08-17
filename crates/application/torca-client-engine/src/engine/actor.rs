@@ -1,4 +1,4 @@
-//! Single-writer engine actor and bounded mailbox.
+// Responsibility: bounded single-writer engine mailbox and actor lifetime.
 
 enum ActorRequest {
     Dispatch(Box<EngineCommand>, Sender<Result<EngineResult, EngineError>>),

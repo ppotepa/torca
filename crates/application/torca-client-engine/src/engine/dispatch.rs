@@ -1,4 +1,4 @@
-//! Domain-oriented engine command dispatch.
+// Responsibility: domain-oriented engine command dispatch.
 
 impl<I, K, P, L, M, R> ClientEngine<I, K, P, L, M, R>
 where
@@ -123,9 +123,8 @@ where
                 if credential.contact_id() != contact_id {
                     return Err(EngineError::InvalidState);
                 }
-                let existing_contact =
-                    ContactRepository::get(&self.relationships, contact_id)
-                        .map_err(|_| EngineError::Repository)?;
+                let existing_contact = ContactRepository::get(&self.relationships, contact_id)
+                    .map_err(|_| EngineError::Repository)?;
                 let existing_conversation =
                     ConversationRepository::get(&self.relationships, conversation_id)
                         .map_err(|_| EngineError::Repository)?;
@@ -221,20 +220,18 @@ where
                 Ok(EngineResult::ContactRemoved { contact_id })
             }
             EngineCommand::ArchiveConversation { conversation_id, at } => {
-                let mut conversation =
-                    ConversationRepository::get(&self.relationships, conversation_id)
-                        .map_err(|_| EngineError::Repository)?
-                        .ok_or(EngineError::NotFound)?;
+                let mut conversation = ConversationRepository::get(&self.relationships, conversation_id)
+                    .map_err(|_| EngineError::Repository)?
+                    .ok_or(EngineError::NotFound)?;
                 conversation.archive(at).map_err(|_| EngineError::InvalidState)?;
                 ConversationRepository::update(&mut self.relationships, conversation)
                     .map_err(|_| EngineError::Repository)?;
                 Ok(EngineResult::ConversationUpdated { conversation_id })
             }
             EngineCommand::RestoreConversation { conversation_id, at } => {
-                let mut conversation =
-                    ConversationRepository::get(&self.relationships, conversation_id)
-                        .map_err(|_| EngineError::Repository)?
-                        .ok_or(EngineError::NotFound)?;
+                let mut conversation = ConversationRepository::get(&self.relationships, conversation_id)
+                    .map_err(|_| EngineError::Repository)?
+                    .ok_or(EngineError::NotFound)?;
                 conversation.restore(at).map_err(|_| EngineError::InvalidState)?;
                 ConversationRepository::update(&mut self.relationships, conversation)
                     .map_err(|_| EngineError::Repository)?;
@@ -259,9 +256,7 @@ where
                 Ok(EngineResult::MessageQueued { message_id })
             }
             EngineCommand::CancelMessage { message_id, at } => {
-                let mut message = self
-                    .messages
-                    .get(message_id)
+                let mut message = self.messages.get(message_id)
                     .map_err(|_| EngineError::Repository)?
                     .ok_or(EngineError::NotFound)?;
                 message.cancel(at).map_err(|_| EngineError::Messaging)?;
@@ -269,9 +264,7 @@ where
                 Ok(EngineResult::MessageUpdated { message_id })
             }
             EngineCommand::EditMessage { message_id, body, at } => {
-                let mut message = self
-                    .messages
-                    .get(message_id)
+                let mut message = self.messages.get(message_id)
                     .map_err(|_| EngineError::Repository)?
                     .ok_or(EngineError::NotFound)?;
                 message.edit(body, at).map_err(|_| EngineError::Messaging)?;
@@ -280,17 +273,13 @@ where
             }
             EngineCommand::SetMessageReaction { reaction } => {
                 let message_id = reaction.message_id();
-                if self
-                    .messages
-                    .get(message_id)
+                if self.messages.get(message_id)
                     .map_err(|_| EngineError::Repository)?
                     .is_none()
                 {
                     return Err(EngineError::NotFound);
                 }
-                self.messages
-                    .upsert_reaction(reaction)
-                    .map_err(|_| EngineError::Repository)?;
+                self.messages.upsert_reaction(reaction).map_err(|_| EngineError::Repository)?;
                 Ok(EngineResult::ReactionUpdated { message_id })
             }
             EngineCommand::BeginMessageSend { message_id, at } => {

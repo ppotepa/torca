@@ -1,4 +1,4 @@
-//! One maintenance turn split into explicit phases.
+// Responsibility: one runtime maintenance turn split into explicit phases.
 
 fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     engine: &EngineHandle,
