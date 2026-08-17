@@ -147,7 +147,6 @@ fn advance_runtime_start(&mut self) {
                 self.application_runtime.attach_runtime(handle);
                 self.application_runtime.attach_radio(radio);
                 self.apply_battery_policy(false);
-                self.apply_battery_policy(false);
                 self.host = Some(owner);
                 self.host_retry_at = None;
                 self.host_failures = 0;

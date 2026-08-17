@@ -41,7 +41,3 @@ where
         ClientEngine::message_status(self, message_id)
     }
 }
-
-fn map_error(_error: impl fmt::Display) -> EngineError {
-    EngineError::Repository
-}
