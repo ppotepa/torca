@@ -26,4 +26,26 @@ mod tests {
         assert!(!second.matches(first));
         assert!(current.matches(second));
     }
+
+    #[test]
+    fn shutdown_then_restart_cannot_accept_the_shutdown_generation() {
+        let mut current = RecoveryEpoch::default();
+        let bootstrap = current.advance();
+        let shutdown = current.advance();
+        let restarted = current.advance();
+
+        assert!(!current.matches(bootstrap));
+        assert!(!current.matches(shutdown));
+        assert!(current.matches(restarted));
+    }
+
+    #[test]
+    fn newer_recovery_supersedes_an_in_flight_worker_result() {
+        let mut current = RecoveryEpoch::default();
+        let slow_worker = current.advance();
+        let replacement_worker = current.advance();
+
+        assert!(!current.matches(slow_worker));
+        assert!(current.matches(replacement_worker));
+    }
 }
