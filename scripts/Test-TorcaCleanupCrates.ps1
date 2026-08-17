@@ -7,7 +7,11 @@ $packages = @(
     'torca-client-engine',
     'torca-native',
     'torca-peer-link',
-    'torca-pairing-coordinator'
+    'torca-pairing-coordinator',
+    'torca-storage-sqlite',
+    'torca-communication-adapters',
+    'torca-tor',
+    'torca-runtime-policy'
 )
 
 Push-Location $RepoRoot
@@ -22,4 +26,4 @@ try {
 } finally {
     Pop-Location
 }
-Write-Host 'Changed Torca crate tests passed.'
+Write-Host 'Cleanup-sensitive Torca crate tests passed.'
