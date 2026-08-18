@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $false)][int]$DurationMinutes = 60,
     [Parameter(Mandatory = $false)][string]$Package = 'com.torca.torca_app',
     [Parameter(Mandatory = $false)][string]$DeviceId,
-    [Parameter(Mandatory = $false)][string]$OutputRoot
+    [Parameter(Mandatory = $false)][string]$OutputRoot,
+    [Parameter(Mandatory = $false)][switch]$RequireUnplugged
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,8 +40,21 @@ function Capture-Adb([string]$Name, [string[]]$Arguments) {
     Invoke-SelectedAdb $Arguments 2>&1 | Out-File -Encoding utf8 $path
 }
 
+function Get-PowerSource([string]$BatteryText) {
+    $sources = @('AC', 'USB', 'Wireless') | Where-Object {
+        $BatteryText -match "(?im)^\s*$($_) powered:\s*true\s*$"
+    }
+    if ($sources.Count -eq 0) { return 'battery' }
+    return ($sources -join ',').ToLowerInvariant()
+}
+
 Capture-Adb 'device.txt' @('shell', 'getprop')
-Capture-Adb 'battery-before.txt' @('shell', 'dumpsys', 'battery')
+$batteryBeforeText = Invoke-SelectedAdb @('shell', 'dumpsys', 'battery') 2>&1 | Out-String
+$batteryBeforeText | Out-File -Encoding utf8 (Join-Path $output 'battery-before.txt')
+$powerSourceBefore = Get-PowerSource $batteryBeforeText
+if ($RequireUnplugged -and $powerSourceBefore -ne 'battery') {
+    throw "Battery soak requires an unplugged device, but '$DeviceId' reports power source '$powerSourceBefore'."
+}
 Capture-Adb 'power-before.txt' @('shell', 'dumpsys', 'power')
 
 Invoke-SelectedAdb @('shell', 'dumpsys', 'batterystats', '--reset') | Out-Null
@@ -57,6 +71,8 @@ $started = Get-Date
     package = $Package
     deviceId = $DeviceId
     durationMinutes = $DurationMinutes
+    requireUnplugged = [bool]$RequireUnplugged
+    powerSourceBefore = $powerSourceBefore
     startedAt = $started.ToString('o')
     scenario = 'warm-start then background idle'
 } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $output 'scenario.json')
@@ -71,11 +87,16 @@ Capture-Adb 'deviceidle-after.txt' @('shell', 'dumpsys', 'deviceidle')
 Capture-Adb 'services-after.txt' @('shell', 'dumpsys', 'activity', 'services', $Package)
 Capture-Adb 'process-after.txt' @('shell', 'ps', '-A')
 Capture-Adb 'logcat.txt' @('logcat', '-d', '-v', 'threadtime')
+$batteryAfterText = Get-Content (Join-Path $output 'battery-after.txt') -Raw
+$powerSourceAfter = Get-PowerSource $batteryAfterText
 
 @{
     package = $Package
     deviceId = $DeviceId
     durationMinutes = $DurationMinutes
+    requireUnplugged = [bool]$RequireUnplugged
+    powerSourceBefore = $powerSourceBefore
+    powerSourceAfter = $powerSourceAfter
     startedAt = $started.ToString('o')
     finishedAt = (Get-Date).ToString('o')
     output = (Resolve-Path $output).Path

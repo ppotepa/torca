@@ -8,6 +8,13 @@ Run from the repository root with a physical Android device connected through AD
 ./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60
 ```
 
+For an energy-valid run, require the device to be disconnected from all
+chargers:
+
+```powershell
+./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 -RequireUnplugged
+```
+
 If more than one ADB transport is ready, pass the exact serial reported by
 `adb devices` (wireless ADB serials include the mDNS suffix):
 
@@ -17,7 +24,9 @@ If more than one ADB transport is ready, pass the exact serial reported by
 ```
 
 The harness refuses an ambiguous or stale device selection and verifies that
-the Torca process is running before starting the measured window.
+the Torca process is running before starting the measured window. With
+`-RequireUnplugged`, it also fails before launching if Android reports AC, USB,
+or wireless power.
 
 The harness launches Torca once, backgrounds it, resets Android batterystats before the measured idle window, and captures battery/power/device-idle/service/process/logcat evidence under `artifacts/soak/`.
 
