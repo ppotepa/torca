@@ -71,6 +71,9 @@ class ConversationHeader extends StatelessWidget {
     this.receiving = false,
     this.compact = false,
     this.leading,
+    this.instantContact = false,
+    this.instantContactBusy = false,
+    this.onInstantContactChanged,
     super.key,
   });
 
@@ -85,6 +88,9 @@ class ConversationHeader extends StatelessWidget {
   final bool sending;
   final bool receiving;
   final Widget? leading;
+  final bool instantContact;
+  final bool instantContactBusy;
+  final ValueChanged<bool>? onInstantContactChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -133,6 +139,12 @@ class ConversationHeader extends StatelessWidget {
               avatar,
               const SizedBox(width: 10),
               Expanded(child: _contactText(context, value, name, blocked)),
+              _InstantContactAction(
+                enabled: instantContact,
+                busy: instantContactBusy,
+                compact: true,
+                onChanged: onInstantContactChanged,
+              ),
               if (radioAction != null) radioAction,
             ],
           ),
@@ -154,6 +166,12 @@ class ConversationHeader extends StatelessWidget {
           const SizedBox(width: 8),
           networkStatus,
         ],
+        _InstantContactAction(
+          enabled: instantContact,
+          busy: instantContactBusy,
+          compact: false,
+          onChanged: onInstantContactChanged,
+        ),
         if (radioAction != null) radioAction,
         IconButton(
           tooltip: context.strings.connectionDetails,
@@ -198,6 +216,36 @@ class ConversationHeader extends StatelessWidget {
                 ),
               ),
     ],
+  );
+}
+
+class _InstantContactAction extends StatelessWidget {
+  const _InstantContactAction({
+    required this.enabled,
+    required this.busy,
+    required this.compact,
+    required this.onChanged,
+  });
+
+  final bool enabled;
+  final bool busy;
+  final bool compact;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    visualDensity: compact ? VisualDensity.compact : null,
+    tooltip: enabled
+        ? 'Instant connection enabled'
+        : 'Keep this contact instantly available',
+    onPressed: busy || onChanged == null ? null : () => onChanged!(!enabled),
+    icon: busy
+        ? const SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(context.torcaIcons.instant),
+    color: enabled ? Theme.of(context).colorScheme.primary : null,
   );
 }
 

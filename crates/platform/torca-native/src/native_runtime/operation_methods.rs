@@ -1,3 +1,5 @@
+impl TorcaRuntime {
+
 pub(crate) fn close(&mut self) -> i32 {
     self.log(
         "runtime",
@@ -319,6 +321,11 @@ pub(crate) fn lifecycle(&mut self, event: &str) -> i32 {
         let _ = self.application_runtime.radio_lifecycle(lifecycle);
     }
     self.battery_policy.apply_system_event(event);
+    if event == "foregrounded" || event == "host_started" {
+        self.application_runtime.set_foreground(true);
+    } else if event == "backgrounded" {
+        self.application_runtime.set_foreground(false);
+    }
     self.apply_battery_policy(false);
     if event == "network_changed" {
         if let Some(host) = &self.host {
@@ -328,4 +335,6 @@ pub(crate) fn lifecycle(&mut self, event: &str) -> i32 {
         }
     }
     if event == "terminating" { self.close() } else { ABI_OK }
+}
+
 }

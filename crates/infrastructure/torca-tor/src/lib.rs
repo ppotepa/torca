@@ -600,6 +600,8 @@ impl TorService {
         timeout: std::time::Duration,
     ) -> Result<std::net::TcpStream, TorError> {
         let hostname = hostname.into();
+        let endpoint = hostname.clone();
+        let started = std::time::Instant::now();
         let client = Arc::clone(&self.client);
         let connect_timeout = timeout;
         let (address, ready) = self.runtime.block_on(async move {
@@ -642,17 +644,33 @@ impl TorService {
             Ok::<_, TorError>((address, ready_receiver))
         })?;
 
-        let stream = std::net::TcpStream::connect_timeout(&address, timeout)
-            .map_err(|error| TorError(format!("connect to Arti stream bridge: {error}")))?;
-        self.runtime.block_on(async move {
+        let stream = std::net::TcpStream::connect_timeout(&address, timeout).map_err(|error| {
+            eprintln!(
+                "torca-tor: onion connect failed endpoint={endpoint}:{port} phase=bridge elapsed_ms={} error={error}",
+                started.elapsed().as_millis(),
+            );
+            TorError(format!("connect to Arti stream bridge: {error}"))
+        })?;
+        let ready_result = self.runtime.block_on(async move {
             tokio::time::timeout(timeout, ready)
                 .await
                 .map_err(|_| TorError("Arti stream bridge timed out".into()))?
                 .map_err(|_| TorError("Arti stream bridge stopped before connection".into()))?
-        })?;
+        });
+        if let Err(error) = ready_result {
+            eprintln!(
+                "torca-tor: onion connect failed endpoint={endpoint}:{port} phase=arti elapsed_ms={} error={error}",
+                started.elapsed().as_millis(),
+            );
+            return Err(error);
+        }
         stream
             .set_nodelay(true)
             .map_err(|error| TorError(format!("configure Arti stream bridge: {error}")))?;
+        eprintln!(
+            "torca-tor: onion connect ready endpoint={endpoint}:{port} elapsed_ms={}",
+            started.elapsed().as_millis(),
+        );
         Ok(stream)
     }
 }

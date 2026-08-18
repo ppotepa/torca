@@ -9,11 +9,7 @@ pub(crate) fn build_relay_probe(
     transport: SharedTorRelayTransport,
     timeout: Duration,
 ) -> Arc<dyn RelayProbe> {
-    Arc::new(TorRelayProbe {
-        transport,
-        timeout,
-        info: Mutex::new(None),
-    })
+    Arc::new(TorRelayProbe { transport, timeout, info: Mutex::new(None) })
 }
 
 struct TorRelayProbe {

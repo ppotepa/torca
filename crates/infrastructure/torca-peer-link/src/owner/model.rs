@@ -89,4 +89,5 @@ pub struct PeerLink<S, K> {
     inbound: VecDeque<InboundPeerEnvelope>,
     activity: BTreeMap<ContactId, PeerActivitySnapshot>,
     connectivity: Option<ConnectivityObserver>,
+    waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }

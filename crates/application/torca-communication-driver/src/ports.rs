@@ -38,6 +38,10 @@ pub trait PeerLinkRuntime: Send {
     }
 
     fn network_changed(&mut self, _now: Timestamp) {}
+    /// Requests a one-shot connection warm-up for relationships that were
+    /// just created or restored. This is intentionally event-driven and is
+    /// not a permanent keep-alive policy.
+    fn prime_connections(&mut self) {}
 
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
 
@@ -55,6 +59,14 @@ pub trait PeerLinkRuntime: Send {
 
     fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
         Vec::new()
+    }
+
+    fn close_idle_peers(
+        &mut self,
+        _retained: &[ContactId],
+        _now: Timestamp,
+    ) -> Result<usize, CommunicationError> {
+        Ok(0)
     }
 
     fn peer_probe_eligible(&self, _contact_id: ContactId) -> bool {
@@ -148,14 +160,10 @@ pub trait AttachmentRuntime: Send {
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
 
-    fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp)
-        -> Result<(), CommunicationError>;
+    fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
 
-    fn cancel(
-        &mut self,
-        attachment_id: OpaqueId,
-        now: Timestamp,
-    ) -> Result<(), CommunicationError>;
+    fn cancel(&mut self, attachment_id: OpaqueId, now: Timestamp)
+    -> Result<(), CommunicationError>;
 
     fn snapshot(&self, messages: &[Message]) -> Result<Vec<AttachmentView>, CommunicationError>;
 

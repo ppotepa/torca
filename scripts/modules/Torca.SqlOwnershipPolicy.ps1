@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Get-TorcaRelativePath { param([string]$BasePath,[string]$TargetPath); $base=(Resolve-Path -LiteralPath $BasePath).Path.TrimEnd('\')+'\'; $target=(Resolve-Path -LiteralPath $TargetPath).Path; if ($target.StartsWith($base,[StringComparison]::OrdinalIgnoreCase)) { return $target.Substring($base.Length).Replace('\','/') }; [Uri]::UnescapeDataString(([Uri]::new($base)).MakeRelativeUri([Uri]::new($target)).ToString()) }
 $cratesRoot = Join-Path $RepoRoot 'crates'
 
 $productionRust = Get-ChildItem -LiteralPath $cratesRoot -Recurse -File -Filter '*.rs' |
@@ -24,7 +25,7 @@ $violations = @()
 foreach ($file in $productionRust) {
     $text = Get-Content -LiteralPath $file.FullName -Raw
     if ($text -match $callPattern -or $text -match $constPattern) {
-        $relative = [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+        $relative = Get-TorcaRelativePath $RepoRoot $file.FullName
         $violations += $relative
     }
 }

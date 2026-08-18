@@ -18,12 +18,15 @@ struct RuntimeHealthState {
 
 struct RuntimeWorkState {
     battery_policy: BatteryPolicy,
+    background_sync: torca_battery::BackgroundSyncCadence,
+    foreground: bool,
     metered_transfers: MeteredTransferPolicy,
     metered_network: bool,
     contacts: Vec<ContactId>,
     refresh_contacts: bool,
     attention_owner: Option<OpaqueId>,
     attention_generation: u64,
+    visible_contact_leases: BTreeMap<ContactId, OpaqueId>,
     active_attachment_leases: BTreeSet<OpaqueId>,
     active_delivery_leases: BTreeSet<OpaqueId>,
     bootstrap_relay_probe_started: bool,
@@ -34,12 +37,15 @@ impl RuntimeWorkState {
     fn new() -> Self {
         Self {
             battery_policy: BatteryPolicy::new(BatteryProfile::AlwaysAvailable),
+            background_sync: torca_battery::BackgroundSyncCadence::FiveMinutes,
+            foreground: true,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             metered_network: false,
             contacts: Vec::new(),
             refresh_contacts: true,
             attention_owner: None,
             attention_generation: 0,
+            visible_contact_leases: BTreeMap::new(),
             active_attachment_leases: BTreeSet::new(),
             active_delivery_leases: BTreeSet::new(),
             bootstrap_relay_probe_started: false,
@@ -61,6 +67,7 @@ struct RuntimeCounters {
 struct RuntimeSchedulingState {
     next_maintenance_at: Option<std::time::Instant>,
     peer_probe_deadline: Option<Timestamp>,
+    background_sync_deadline: Option<std::time::Instant>,
 }
 
 impl RuntimeSchedulingState {
@@ -68,6 +75,7 @@ impl RuntimeSchedulingState {
         Self {
             next_maintenance_at: Some(std::time::Instant::now()),
             peer_probe_deadline: None,
+            background_sync_deadline: None,
         }
     }
 }

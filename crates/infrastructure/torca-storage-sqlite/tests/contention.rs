@@ -6,10 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use torca_storage_sqlite::{DatabaseKey, SqlCipherBackend, StorageBackend, StorageKernel};
 
 fn temporary_database_path() -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time")
-        .as_nanos();
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time").as_nanos();
     std::env::temp_dir().join(format!("torca-contention-{}-{stamp}.db", std::process::id()))
 }
 

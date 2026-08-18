@@ -1,3 +1,8 @@
+impl<S, K> PeerLink<S, K>
+where
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+{
 fn accept_pending(&mut self, report: &mut PeerLinkReport) -> Result<(), PeerLinkError> {
     while self.pending.len() < MAX_PENDING_INCOMING {
         match self.listener.try_accept_transport().map_err(map_tor)? {
@@ -160,4 +165,5 @@ fn connect_outgoing(
     }
     self.outgoing.insert(contact_id, session);
     Ok(())
+}
 }

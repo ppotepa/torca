@@ -217,6 +217,8 @@ final class AvatarFrameClock extends ChangeNotifier
     if (_clients == 1) {
       WidgetsBinding.instance.addObserver(this);
       _start();
+    } else if (focused) {
+      _restartForCadence();
     }
   }
 
@@ -229,6 +231,8 @@ final class AvatarFrameClock extends ChangeNotifier
       _timer?.cancel();
       _timer = null;
       if (_clients == 0) WidgetsBinding.instance.removeObserver(this);
+    } else if (focused) {
+      _restartForCadence();
     }
   }
 
@@ -251,8 +255,21 @@ final class AvatarFrameClock extends ChangeNotifier
         (_policy == AvatarVisualActivityPolicy.focusedOnly &&
             _focusedClients == 0))
       return;
-    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+    // Focused/speaking avatars retain the responsive 10 fps cadence. Large
+    // contact/chat lists share a 4 fps clock, which avoids rebuilding every
+    // visible avatar ten times per second while preserving animation.
+    final cadence = _focusedClients > 0
+        ? const Duration(milliseconds: 100)
+        : const Duration(milliseconds: 250);
+    _timer = Timer.periodic(cadence, (_) {
       notifyListeners();
     });
+  }
+
+  void _restartForCadence() {
+    if (_timer == null) return;
+    _timer?.cancel();
+    _timer = null;
+    _start();
   }
 }

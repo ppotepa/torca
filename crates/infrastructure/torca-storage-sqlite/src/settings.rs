@@ -3,14 +3,20 @@ use std::path::Path;
 
 use rusqlite::OptionalExtension;
 use torca_battery::{
-    BackgroundSyncCadence, BatteryPreferences, MeteredTransferPolicy, RequestedBatteryMode,
-    VisualActivityPolicy,
+    BackgroundSyncCadence, BatteryPreferences, ContactAvailabilityMode, MeteredTransferPolicy,
+    RequestedBatteryMode, VisualActivityPolicy,
 };
+use torca_contacts::ContactId;
 
 const BATTERY_PREFERENCES_SQL: &str =
     include_str!("../sql/queries/runtime_battery_preferences.sql");
 const BATTERY_PREFERENCES_UPDATE_SQL: &str =
     include_str!("../sql/commands/runtime_battery_preferences_update.sql");
+const CONTACT_AVAILABILITY_SQL: &str = include_str!("../sql/queries/contact_availability.sql");
+const CONTACT_AVAILABILITY_UPSERT_SQL: &str =
+    include_str!("../sql/commands/contact_availability_upsert.sql");
+#[cfg(test)]
+const TEST_CONTACT_INSERT_SQL: &str = include_str!("../sql/commands/test_contact_insert.sql");
 
 use crate::{DatabaseKey, SqlCipherBackend, SqlCipherStoreOpenError};
 
@@ -50,6 +56,38 @@ impl SqlCipherSettingsStore {
             .bootstrap()
             .map_err(|error| SettingsError::Open(SqlCipherStoreOpenError::Migration(error)))?;
         Ok(Self { backend: kernel.into_backend() })
+    }
+
+    pub fn contact_availability(
+        &self,
+        contact_id: ContactId,
+    ) -> Result<ContactAvailabilityMode, SettingsError> {
+        let id = contact_id.to_opaque().into_bytes();
+        self.backend
+            .connection()
+            .query_row(CONTACT_AVAILABILITY_SQL, [id.as_slice()], |row| row.get::<_, String>(0))
+            .optional()
+            .map_err(|_| SettingsError::Query)?
+            .map_or(Ok(ContactAvailabilityMode::Adaptive), |value| {
+                Ok(ContactAvailabilityMode::from_wire(&value))
+            })
+    }
+
+    pub fn set_contact_availability(
+        &self,
+        contact_id: ContactId,
+        mode: ContactAvailabilityMode,
+        updated_at_ms: i64,
+    ) -> Result<(), SettingsError> {
+        let id = contact_id.to_opaque().into_bytes();
+        self.backend
+            .connection()
+            .execute(
+                CONTACT_AVAILABILITY_UPSERT_SQL,
+                rusqlite::params![id.as_slice(), mode.wire(), updated_at_ms],
+            )
+            .map_err(|_| SettingsError::Write)?;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -188,6 +226,7 @@ fn mode_value(value: RequestedBatteryMode) -> &'static str {
 
 fn parse_sync(value: &str) -> BackgroundSyncCadence {
     match value {
+        "five_minutes" => BackgroundSyncCadence::FiveMinutes,
         "fifteen_minutes" => BackgroundSyncCadence::FifteenMinutes,
         "thirty_minutes" => BackgroundSyncCadence::ThirtyMinutes,
         "hourly" => BackgroundSyncCadence::Hourly,
@@ -200,6 +239,7 @@ fn parse_sync(value: &str) -> BackgroundSyncCadence {
 fn sync_value(value: BackgroundSyncCadence) -> &'static str {
     match value {
         BackgroundSyncCadence::Instant => "instant",
+        BackgroundSyncCadence::FiveMinutes => "five_minutes",
         BackgroundSyncCadence::FifteenMinutes => "fifteen_minutes",
         BackgroundSyncCadence::ThirtyMinutes => "thirty_minutes",
         BackgroundSyncCadence::Hourly => "hourly",
@@ -246,6 +286,9 @@ fn visual_value(value: VisualActivityPolicy) -> &'static str {
 mod tests {
     use super::SqlCipherSettingsStore;
     use crate::DatabaseKey;
+    use torca_battery::ContactAvailabilityMode;
+    use torca_contacts::ContactId;
+    use torca_foundation::OpaqueId;
 
     #[test]
     fn notification_setting_is_durable_for_the_connection() {
@@ -291,5 +334,38 @@ mod tests {
         };
         store.set_battery_preferences(preferences, 42).expect("write battery settings");
         assert_eq!(store.battery_preferences().expect("read battery settings"), preferences);
+    }
+
+    #[test]
+    fn contact_availability_defaults_to_adaptive_and_persists_instant() {
+        let key = DatabaseKey::new([0x22; 32]);
+        let store = SqlCipherSettingsStore::open_in_memory(&key).expect("settings store");
+        let contact = ContactId::from_opaque(OpaqueId::from_u128(77));
+        assert_eq!(
+            store.contact_availability(contact).expect("default availability"),
+            ContactAvailabilityMode::Adaptive
+        );
+        let id = contact.to_opaque().into_bytes();
+        store
+            .backend
+            .connection()
+            .execute(
+                super::TEST_CONTACT_INSERT_SQL,
+                rusqlite::params![
+                    id.as_slice(),
+                    [1_u8; 16].as_slice(),
+                    [2_u8; 16].as_slice(),
+                    [3_u8; 32].as_slice(),
+                    [4_u8; 16].as_slice()
+                ],
+            )
+            .expect("contact fixture");
+        store
+            .set_contact_availability(contact, ContactAvailabilityMode::Instant, 42)
+            .expect("persist instant");
+        assert_eq!(
+            store.contact_availability(contact).expect("stored availability"),
+            ContactAvailabilityMode::Instant
+        );
     }
 }

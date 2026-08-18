@@ -260,7 +260,7 @@ impl DiagnosticBuffer {
             });
         let _ = write!(
             output,
-            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{}}}}}",
+            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
             self.profile,
             optional_json_u8(platform.battery_percent),
             optional_json_bool(platform.charging),
@@ -290,6 +290,7 @@ impl DiagnosticBuffer {
             counters.attachment_chunks_rx,
             counters.suppressed_work,
             counters.total_work(),
+            counters.energy_score(),
         );
         output
     }

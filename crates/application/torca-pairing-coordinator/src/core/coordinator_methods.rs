@@ -1,3 +1,8 @@
+impl<R, C> PairingCoordinator<R, C>
+where
+    R: PairingRendezvousPort,
+    C: PairingCryptoPort,
+{
 pub const fn new(rendezvous: R, crypto: C) -> Self {
     Self { rendezvous, crypto, sessions: BTreeMap::new() }
 }
@@ -313,4 +318,5 @@ fn random_id(&mut self) -> Result<OpaqueId, PairingCoordinatorError> {
         }
     }
     Err(PairingCoordinatorError::Crypto)
+}
 }

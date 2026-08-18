@@ -4,7 +4,7 @@ mod ack;
 mod reconnect;
 
 use core::fmt;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -14,7 +14,7 @@ use torca_connectivity::{
     ConnectivityObserver, OperationPhase, TransportDirection, TransportLayer, TransportOperation,
 };
 use torca_contacts::{
-    Contact, ContactError, ContactId, ContactRepository, PeerCredentialRepository,
+    Contact, ContactError, ContactId, ContactRepository, ContactStatus, PeerCredentialRepository,
 };
 use torca_crypto::{CryptoProvider, Ed25519HandshakeVerifier, RustCryptoProvider};
 use torca_foundation::{OpaqueId, Timestamp};
@@ -35,15 +35,9 @@ const MAX_ACK_WAIT_SLICE: Duration = Duration::from_secs(1);
 
 include!("owner/model.rs");
 
-impl<S, K> PeerLink<S, K>
-where
-    S: ContactRepository + PeerCredentialRepository,
-    K: HandshakeSigner,
-{
-    include!("owner/public_methods.rs");
-    include!("owner/handshake_methods.rs");
-    include!("owner/telemetry_methods.rs");
-    include!("owner/session_methods.rs");
-}
+include!("owner/public_methods.rs");
+include!("owner/handshake_methods.rs");
+include!("owner/telemetry_methods.rs");
+include!("owner/session_methods.rs");
 
 include!("owner/support.rs");

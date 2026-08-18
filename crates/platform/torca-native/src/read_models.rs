@@ -46,9 +46,7 @@ impl ConversationHistoryPort for SqliteHistory {
         query: &str,
         limit: usize,
     ) -> Result<Vec<Message>, ApplicationQueryError> {
-        self.0
-            .search_conversation(id, query, limit)
-            .map_err(|_| ApplicationQueryError::Unavailable)
+        self.0.search_conversation(id, query, limit).map_err(|_| ApplicationQueryError::Unavailable)
     }
 
     fn conversation_summaries(
@@ -83,9 +81,7 @@ struct SqliteSecurity(SqlCipherSecurityProjection);
 
 impl SecurityProjectionPort for SqliteSecurity {
     fn requires_reverification(&self, id: ConversationId) -> Result<bool, ApplicationQueryError> {
-        self.0
-            .requires_reverification(id)
-            .map_err(|_| ApplicationQueryError::Unavailable)
+        self.0.requires_reverification(id).map_err(|_| ApplicationQueryError::Unavailable)
     }
 
     fn contact_states(
@@ -111,13 +107,7 @@ impl SecurityProjectionPort for SqliteSecurity {
                                 ContactSecurityState::IdentityChanged
                             }
                         };
-                        (
-                            id,
-                            ContactSecuritySnapshot {
-                                state,
-                                verified_at: snapshot.verified_at,
-                            },
-                        )
+                        (id, ContactSecuritySnapshot { state, verified_at: snapshot.verified_at })
                     })
                     .collect()
             })
@@ -129,9 +119,7 @@ struct SqliteSettings(SqlCipherSettingsStore);
 
 impl RuntimeSettingsPort for SqliteSettings {
     fn notifications_enabled(&self) -> Result<bool, ApplicationQueryError> {
-        self.0
-            .notifications_enabled()
-            .map_err(|_| ApplicationQueryError::Unavailable)
+        self.0.notifications_enabled().map_err(|_| ApplicationQueryError::Unavailable)
     }
 
     fn set_notifications_enabled(
@@ -145,9 +133,7 @@ impl RuntimeSettingsPort for SqliteSettings {
     }
 
     fn read_receipts_enabled(&self) -> Result<bool, ApplicationQueryError> {
-        self.0
-            .read_receipts_enabled()
-            .map_err(|_| ApplicationQueryError::Unavailable)
+        self.0.read_receipts_enabled().map_err(|_| ApplicationQueryError::Unavailable)
     }
 
     fn set_read_receipts_enabled(
@@ -163,9 +149,7 @@ impl RuntimeSettingsPort for SqliteSettings {
     fn battery_preferences(
         &self,
     ) -> Result<torca_battery::BatteryPreferences, ApplicationQueryError> {
-        self.0
-            .battery_preferences()
-            .map_err(|_| ApplicationQueryError::Unavailable)
+        self.0.battery_preferences().map_err(|_| ApplicationQueryError::Unavailable)
     }
 
     fn set_battery_preferences(
@@ -178,15 +162,29 @@ impl RuntimeSettingsPort for SqliteSettings {
             .map_err(|_| ApplicationQueryError::Unavailable)
     }
 
-    fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError> {
+    fn contact_availability(
+        &self,
+        contact_id: torca_contacts::ContactId,
+    ) -> Result<torca_battery::ContactAvailabilityMode, ApplicationQueryError> {
+        self.0.contact_availability(contact_id).map_err(|_| ApplicationQueryError::Unavailable)
+    }
+
+    fn set_contact_availability(
+        &self,
+        contact_id: torca_contacts::ContactId,
+        mode: torca_battery::ContactAvailabilityMode,
+        at: i64,
+    ) -> Result<(), ApplicationQueryError> {
         self.0
-            .new_contacts_acknowledged_at_ms()
+            .set_contact_availability(contact_id, mode, at)
             .map_err(|_| ApplicationQueryError::Unavailable)
     }
 
+    fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError> {
+        self.0.new_contacts_acknowledged_at_ms().map_err(|_| ApplicationQueryError::Unavailable)
+    }
+
     fn acknowledge_new_contacts(&self, at: i64) -> Result<(), ApplicationQueryError> {
-        self.0
-            .acknowledge_new_contacts(at)
-            .map_err(|_| ApplicationQueryError::Unavailable)
+        self.0.acknowledge_new_contacts(at).map_err(|_| ApplicationQueryError::Unavailable)
     }
 }

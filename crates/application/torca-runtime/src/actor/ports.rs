@@ -45,6 +45,11 @@ pub trait PeerSessionPort: Send + 'static {
     /// Invalidates stale transport sessions and resets reconnect backoff after
     /// an OS route/network change.
     fn network_changed(&mut self, _now: Timestamp) {}
+    /// Primes newly-created relationships immediately after pairing. The
+    /// default keeps lightweight test drivers compatible; production
+    /// transports use this as an explicit, event-driven warm-up rather than
+    /// waiting for the first user message to discover a disconnected peer.
+    fn prime_connections(&mut self) {}
     /// Installs a non-blocking wake path for inbound listener activity.
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
@@ -54,6 +59,13 @@ pub trait PeerSessionPort: Send + 'static {
     /// Returns monotonic transport activity counters for policy evidence.
     fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
         Vec::new()
+    }
+    fn close_idle_peers(
+        &mut self,
+        _retained: &[ContactId],
+        _now: Timestamp,
+    ) -> Result<usize, RuntimeDriverError> {
+        Ok(0)
     }
     /// Whether this device is the deterministic initiator of the keepalive
     /// for this relationship. The adapter supplies the transport capability;

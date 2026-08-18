@@ -11,12 +11,13 @@ enum TorcaBatteryMode {
 
   static TorcaBatteryMode parse(String? value) => values.firstWhere(
     (candidate) => candidate.wireValue == value,
-    orElse: () => TorcaBatteryMode.automatic,
+    orElse: () => TorcaBatteryMode.balanced,
   );
 }
 
 enum TorcaBackgroundSyncCadence {
   instant('instant'),
+  fiveMinutes('five_minutes'),
   fifteenMinutes('fifteen_minutes'),
   thirtyMinutes('thirty_minutes'),
   hourly('hourly'),
@@ -28,7 +29,7 @@ enum TorcaBackgroundSyncCadence {
 
   static TorcaBackgroundSyncCadence parse(String? value) => values.firstWhere(
     (candidate) => candidate.wireValue == value,
-    orElse: () => TorcaBackgroundSyncCadence.instant,
+    orElse: () => TorcaBackgroundSyncCadence.fiveMinutes,
   );
 }
 

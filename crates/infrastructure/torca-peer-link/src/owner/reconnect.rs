@@ -20,17 +20,13 @@ pub(super) fn reconnect_delay(
     failures: u32,
 ) -> Result<Duration, PeerLinkError> {
     let exponent = failures.saturating_sub(1).min(16);
-    let base = RECONNECT_BASE_MS
-        .saturating_mul(1_u64 << exponent)
-        .min(RECONNECT_MAX_MS);
+    let base = RECONNECT_BASE_MS.saturating_mul(1_u64 << exponent).min(RECONNECT_MAX_MS);
     let jitter_room = (base / 4).min(RECONNECT_MAX_MS.saturating_sub(base));
     let jitter = if jitter_room == 0 {
         0
     } else {
         let mut random = [0_u8; 8];
-        random_provider
-            .fill_random(&mut random)
-            .map_err(|_| PeerLinkError::Randomness)?;
+        random_provider.fill_random(&mut random).map_err(|_| PeerLinkError::Randomness)?;
         u64::from_le_bytes(random) % (jitter_room + 1)
     };
     Ok(Duration::from_millis(base + jitter))

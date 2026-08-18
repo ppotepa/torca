@@ -1337,6 +1337,15 @@ class SetBatteryPreferencesCommandDto extends BridgeCommandDto {
   final String visualActivity;
 }
 
+class SetContactAvailabilityCommandDto extends BridgeCommandDto {
+  const SetContactAvailabilityCommandDto({
+    required this.contactIdHex,
+    required this.mode,
+  });
+  final String contactIdHex;
+  final String mode;
+}
+
 class AcknowledgeNewContactsCommandDto extends BridgeCommandDto {
   const AcknowledgeNewContactsCommandDto();
 }
@@ -1635,6 +1644,12 @@ class RuntimeRequestDto {
             command.allowDelayedBackgroundDelivery,
         'meteredTransfers': command.meteredTransfers,
         'visualActivity': command.visualActivity,
+      });
+    }
+    if (command is SetContactAvailabilityCommandDto) {
+      return _command('contact.availability.set', <String, Object?>{
+        'contactIdHex': command.contactIdHex,
+        'mode': command.mode,
       });
     }
     if (command is AcknowledgeNewContactsCommandDto) {

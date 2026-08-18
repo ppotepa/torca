@@ -1,3 +1,5 @@
+impl TorcaRuntime {
+
 pub(crate) fn refresh_snapshot(&mut self) -> i32 {
     if self.is_closed() {
         return ABI_CLOSED;
@@ -86,6 +88,34 @@ fn log_network_transitions(&mut self, snapshot: &torca_contract::BridgeSnapshot)
                 ),
             );
             self.last_peer_log_state.insert(contact.id.clone(), current);
+        }
+    }
+    for message in &snapshot.messages {
+        let current = (message.status.clone(), message.attempt_count);
+        if self.last_message_log_state.get(&message.id) != Some(&current) {
+            let level = match message.status.as_str() {
+                "failed" => Level::Error,
+                "queued" | "sending" => Level::Warn,
+                _ => Level::Info,
+            };
+            self.log(
+                "messaging",
+                level,
+                "delivery",
+                "MESSAGE_STATE_CHANGED",
+                &format!(
+                    "message={} conversation={} direction={} status={} attempt={} sent_at_ms={} delivered_at_ms={} read_at_ms={}",
+                    message.id,
+                    message.conversation_id,
+                    message.direction,
+                    message.status,
+                    message.attempt_count,
+                    message.sent_at_ms.map_or_else(|| "none".into(), |value| value.to_string()),
+                    message.delivered_at_ms.map_or_else(|| "none".into(), |value| value.to_string()),
+                    message.read_at_ms.map_or_else(|| "none".into(), |value| value.to_string()),
+                ),
+            );
+            self.last_message_log_state.insert(message.id.clone(), current);
         }
     }
     for attachment in &snapshot.attachments {
@@ -323,4 +353,6 @@ pub(crate) fn search_messages(
         }
         Err(_) => self.query_error("conversation search unavailable"),
     }
+}
+
 }

@@ -1,3 +1,5 @@
+impl TorcaRuntime {
+
 fn begin_runtime_start(&mut self) {
     if self.is_closed() || self.host.is_some() || self.host_start.is_some() {
         return;
@@ -224,6 +226,7 @@ fn effective_battery_policy(&self, diagnostics_override: bool) -> EffectiveBatte
 fn apply_battery_policy(&self, diagnostics_override: bool) {
     let effective = self.effective_battery_policy(diagnostics_override);
     self.application_runtime.set_battery_profile(effective.profile);
+    self.application_runtime.set_background_sync(effective.background_sync);
     self.application_runtime.set_tor_dormancy(effective.tor_dormancy_allowed);
     self.application_runtime
         .set_metered_network(self.battery_policy.system.metered_network == Some(true));
@@ -293,4 +296,6 @@ fn log_pairing(
             Some(&context),
         );
     }
+}
+
 }

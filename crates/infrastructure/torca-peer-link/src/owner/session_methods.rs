@@ -1,3 +1,8 @@
+impl<S, K> PeerLink<S, K>
+where
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+{
 fn poll_sessions(
     &mut self,
     now: Timestamp,
@@ -194,6 +199,10 @@ fn queue_inbound(&mut self, envelope: InboundPeerEnvelope) -> Result<(), PeerLin
 
 fn plan_disconnected(&mut self, contacts: &[ContactId]) {
     for &contact_id in contacts {
+        if !self.preferred_dialer(contact_id) {
+            self.reconnect.remove(&contact_id);
+            continue;
+        }
         match self.connection_state(contact_id) {
             PeerConnectionState::Ready => {
                 self.reconnect.remove(&contact_id);
@@ -314,6 +323,14 @@ fn prefer_outgoing(&self, contact: &Contact) -> bool {
     self.local_identity_id < contact.remote_identity().identity_id().to_opaque()
 }
 
+fn preferred_dialer(&self, contact_id: ContactId) -> bool {
+    self.relationships
+        .get(contact_id)
+        .ok()
+        .flatten()
+        .is_some_and(|contact| self.prefer_outgoing(&contact))
+}
+
 fn random_id(&mut self) -> Result<OpaqueId, PeerLinkError> {
     for _ in 0..8 {
         let mut bytes = [0_u8; 16];
@@ -334,4 +351,5 @@ fn random_32(&mut self) -> Result<[u8; 32], PeerLinkError> {
         .fill_random(&mut bytes)
         .map_err(|_| PeerLinkError::Randomness)?;
     Ok(bytes)
+}
 }

@@ -58,10 +58,7 @@ where
     }
 
     fn context(&mut self) -> Result<LocalPairingContext, RuntimeDriverError> {
-        let snapshot = self
-            .engine
-            .overview_snapshot()
-            .map_err(|_| RuntimeDriverError::Engine)?;
+        let snapshot = self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         let identity = snapshot.identity.ok_or(RuntimeDriverError::Pairing)?;
         // The local onion endpoint is a readiness dependency, not a protocol
         // rejection. Keep it retryable so a cold Android Tor bootstrap does
@@ -94,18 +91,14 @@ where
             Err(RuntimeDriverError::Tor) => return Ok(false),
             Err(error) => return Err(error),
         };
-        self.runtime
-            .publish_local_offer(session_id, context)
-            .map_err(map_pairing_error)?;
+        self.runtime.publish_local_offer(session_id, context).map_err(map_pairing_error)?;
         Ok(true)
     }
 
     fn random_id(&mut self) -> Result<OpaqueId, RuntimeDriverError> {
         for _ in 0..8 {
             let mut bytes = [0_u8; 16];
-            self.random
-                .fill_random(&mut bytes)
-                .map_err(|_| RuntimeDriverError::Pairing)?;
+            self.random.fill_random(&mut bytes).map_err(|_| RuntimeDriverError::Pairing)?;
             let id = OpaqueId::from_bytes(bytes);
             if !id.is_nil() {
                 return Ok(id);
@@ -115,24 +108,19 @@ where
     }
 
     fn active_sessions(&self) -> Result<Vec<PairingSessionId>, RuntimeDriverError> {
-        self.engine
-            .overview_snapshot()
-            .map_err(|_| RuntimeDriverError::Pairing)
-            .map(|snapshot| {
-                snapshot
-                    .pairings
-                    .into_iter()
-                    .filter(|s| {
-                        !matches!(
-                            s.state(),
-                            PairingState::Rejected
-                                | PairingState::Cancelled
-                                | PairingState::Expired
-                        )
-                    })
-                    .map(|s| s.id())
-                    .collect()
-            })
+        self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Pairing).map(|snapshot| {
+            snapshot
+                .pairings
+                .into_iter()
+                .filter(|s| {
+                    !matches!(
+                        s.state(),
+                        PairingState::Rejected | PairingState::Cancelled | PairingState::Expired
+                    )
+                })
+                .map(|s| s.id())
+                .collect()
+        })
     }
 }
 
@@ -182,9 +170,7 @@ where
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.runtime
-            .approve(session_id, now)
-            .map_err(map_pairing_error)?;
+        self.runtime.approve(session_id, now).map_err(map_pairing_error)?;
         self.schedule_now(session_id, now);
         Ok(())
     }
@@ -198,18 +184,11 @@ where
     }
 
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
-        self.runtime
-            .maintenance(now)
-            .map_err(|_| RuntimeDriverError::Pairing)?;
+        self.runtime.maintenance(now).map_err(|_| RuntimeDriverError::Pairing)?;
         let active_sessions = self.active_sessions()?;
-        self.poll_schedule
-            .retain(|id, _| active_sessions.contains(id));
+        self.poll_schedule.retain(|id, _| active_sessions.contains(id));
         for session_id in active_sessions {
-            if self
-                .poll_schedule
-                .get(&session_id)
-                .is_some_and(|state| now < state.next_at)
-            {
+            if self.poll_schedule.get(&session_id).is_some_and(|state| now < state.next_at) {
                 continue;
             }
             if !self.publish_local_offer_if_ready(session_id)? {
@@ -255,29 +234,15 @@ where
 
 impl<R, C, A, S> RuntimePairingDriver<R, C, A, S> {
     fn schedule_now(&mut self, session_id: PairingSessionId, now: Timestamp) {
-        self.poll_schedule.insert(
-            session_id,
-            PairingPollSchedule {
-                next_at: now,
-                consecutive_failures: 0,
-            },
-        );
+        self.poll_schedule
+            .insert(session_id, PairingPollSchedule { next_at: now, consecutive_failures: 0 });
     }
 
     fn schedule_success(&mut self, session_id: PairingSessionId, now: Timestamp, active: bool) {
-        let delay = if active {
-            ACTIVE_POLL_INTERVAL
-        } else {
-            IDLE_POLL_INTERVAL
-        };
+        let delay = if active { ACTIVE_POLL_INTERVAL } else { IDLE_POLL_INTERVAL };
         let next_at = now.checked_add(delay).unwrap_or(now);
-        self.poll_schedule.insert(
-            session_id,
-            PairingPollSchedule {
-                next_at,
-                consecutive_failures: 0,
-            },
-        );
+        self.poll_schedule
+            .insert(session_id, PairingPollSchedule { next_at, consecutive_failures: 0 });
     }
 
     fn schedule_failure(&mut self, session_id: PairingSessionId, now: Timestamp) {
@@ -288,13 +253,8 @@ impl<R, C, A, S> RuntimePairingDriver<R, C, A, S> {
         let exponent = u32::from(failures.saturating_sub(1).min(5));
         let delay = Duration::from_secs(1_u64 << exponent).min(MAX_POLL_BACKOFF);
         let next_at = now.checked_add(delay).unwrap_or(now);
-        self.poll_schedule.insert(
-            session_id,
-            PairingPollSchedule {
-                next_at,
-                consecutive_failures: failures,
-            },
-        );
+        self.poll_schedule
+            .insert(session_id, PairingPollSchedule { next_at, consecutive_failures: failures });
     }
 }
 

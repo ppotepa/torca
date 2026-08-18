@@ -91,6 +91,16 @@ pub trait RuntimeSettingsPort {
         preferences: BatteryPreferences,
         updated_at_ms: i64,
     ) -> Result<(), ApplicationQueryError>;
+    fn contact_availability(
+        &self,
+        contact_id: torca_contacts::ContactId,
+    ) -> Result<torca_battery::ContactAvailabilityMode, ApplicationQueryError>;
+    fn set_contact_availability(
+        &self,
+        contact_id: torca_contacts::ContactId,
+        mode: torca_battery::ContactAvailabilityMode,
+        updated_at_ms: i64,
+    ) -> Result<(), ApplicationQueryError>;
     fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError>;
     fn acknowledge_new_contacts(&self, updated_at_ms: i64) -> Result<(), ApplicationQueryError>;
 }

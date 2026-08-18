@@ -339,6 +339,7 @@ class _BatterySettingsCard extends StatelessWidget {
 
   String _cadenceLabel(TorcaBackgroundSyncCadence value) => switch (value) {
     TorcaBackgroundSyncCadence.instant => 'Instant',
+    TorcaBackgroundSyncCadence.fiveMinutes => 'Every 5 minutes',
     TorcaBackgroundSyncCadence.fifteenMinutes => 'Every 15 minutes',
     TorcaBackgroundSyncCadence.thirtyMinutes => 'Every 30 minutes',
     TorcaBackgroundSyncCadence.hourly => 'Every hour',

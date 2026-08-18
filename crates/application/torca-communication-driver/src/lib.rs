@@ -17,9 +17,8 @@ use std::time::Duration;
 use attachment_scheduler::AttachmentJobScheduler;
 pub use error::{AttachmentFailureStage, CommunicationError};
 pub use policy::{
-    ATTACHMENT_MESSAGE_KIND, PROBE_MESSAGE_KIND, RADIO_CONTROL_MESSAGE_KIND,
-    REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND, classify_peer_health,
-    plan_read_receipts,
+    ATTACHMENT_MESSAGE_KIND, PROBE_MESSAGE_KIND, RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND,
+    RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND, classify_peer_health, plan_read_receipts,
 };
 pub use ports::{
     AttachmentExportRuntime, AttachmentMaintenanceResult, AttachmentRuntime,
@@ -34,12 +33,12 @@ use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
 use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
-pub use torca_runtime::{PeerActivityEvidence, PeerConnectionStatus};
 use torca_runtime::{
     AttachmentExportPort, AttachmentSendRequest, AttachmentTransferPort, AttachmentView,
     ContactVerificationSnapshot, ConversationReadPort, PeerSessionPort, RelationshipAdminPort,
     RuntimeDriverError,
 };
+pub use torca_runtime::{PeerActivityEvidence, PeerConnectionStatus};
 pub use torca_runtime::{PeerHealthQuality, PeerHealthSnapshot};
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
@@ -121,9 +120,7 @@ impl TorcaCommunicationDriver {
     fn attachment_runtime(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, Box<dyn AttachmentRuntime>>, CommunicationError> {
-        self.attachments
-            .lock()
-            .map_err(|_| CommunicationError::Attachment)
+        self.attachments.lock().map_err(|_| CommunicationError::Attachment)
     }
 
     pub fn peer_health(&self, contact_id: ContactId) -> PeerHealthSnapshot {
@@ -133,8 +130,7 @@ impl TorcaCommunicationDriver {
     /// Defers an attachment frame without letting it block text/control ingress.
     fn defer_attachment(&mut self, envelope: InboundEnvelope) {
         if self.deferred_attachments.iter().any(|queued| {
-            queued.contact_id == envelope.contact_id
-                && queued.envelope_id == envelope.envelope_id
+            queued.contact_id == envelope.contact_id && queued.envelope_id == envelope.envelope_id
         }) {
             return;
         }
@@ -160,10 +156,7 @@ impl TorcaCommunicationDriver {
             match self.attachments.try_lock() {
                 Ok(mut attachments) => match attachments.process_inbound(envelope.clone(), now) {
                     Ok(()) => {
-                        refresh_attachment_cache(
-                            &self.attachment_snapshot_cache,
-                            &**attachments,
-                        );
+                        refresh_attachment_cache(&self.attachment_snapshot_cache, &**attachments);
                         false
                     }
                     Err(CommunicationError::AttachmentStage(
@@ -239,8 +232,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         {
             if result.more_work && !result.policy_blocked {
                 if let Some(delay) = result.retry_after_ms {
-                    self.attachment_scheduler
-                        .wake_after(now, Duration::from_millis(delay));
+                    self.attachment_scheduler.wake_after(now, Duration::from_millis(delay));
                 } else {
                     self.attachment_scheduler.wake();
                 }
@@ -250,12 +242,8 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         }
         self.peer.maintenance(contacts, now).map_err(map_runtime)?;
         self.drain_inbound(now).map_err(map_runtime)?;
-        self.text
-            .maintenance(now, TEXT_BATCH)
-            .map_err(map_runtime)?;
-        self.control
-            .maintenance(now, CONTROL_BATCH)
-            .map_err(map_runtime)?;
+        self.text.maintenance(now, TEXT_BATCH).map_err(map_runtime)?;
+        self.control.maintenance(now, CONTROL_BATCH).map_err(map_runtime)?;
         if let Some(radio) = self.radio.as_mut()
             && let Err(error) = radio.maintenance(now)
         {
@@ -309,9 +297,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             self.text.next_maintenance_delay(now),
             self.control.next_maintenance_delay(now),
             self.attachment_scheduler.next_delay(now),
-            self.radio
-                .as_ref()
-                .and_then(|radio| radio.next_maintenance_delay(now)),
+            self.radio.as_ref().and_then(|radio| radio.next_maintenance_delay(now)),
         ]
         .into_iter()
         .flatten()
@@ -320,6 +306,10 @@ impl PeerSessionPort for TorcaCommunicationDriver {
 
     fn network_changed(&mut self, now: Timestamp) {
         self.peer.network_changed(now);
+    }
+
+    fn prime_connections(&mut self) {
+        self.peer.prime_connections();
     }
 
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
@@ -341,6 +331,14 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         self.peer.peer_activity()
     }
 
+    fn close_idle_peers(
+        &mut self,
+        retained: &[ContactId],
+        now: Timestamp,
+    ) -> Result<usize, RuntimeDriverError> {
+        self.peer.close_idle_peers(retained, now).map_err(map_runtime)
+    }
+
     fn peer_probe_eligible(&self, contact_id: ContactId) -> bool {
         self.peer.peer_probe_eligible(contact_id)
     }
@@ -351,9 +349,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         probe_id: OpaqueId,
         reported_rtt_ms: u64,
     ) -> Result<(), RuntimeDriverError> {
-        self.peer
-            .begin_probe(contact_id, probe_id, reported_rtt_ms)
-            .map_err(map_runtime)
+        self.peer.begin_probe(contact_id, probe_id, reported_rtt_ms).map_err(map_runtime)
     }
 
     fn take_peer_probe_completion(
@@ -388,17 +384,11 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
     }
 
     fn blob_write_count(&self) -> u64 {
-        self.attachments
-            .lock()
-            .map(|attachments| attachments.blob_write_count())
-            .unwrap_or(0)
+        self.attachments.lock().map(|attachments| attachments.blob_write_count()).unwrap_or(0)
     }
 
     fn attachment_chunk_tx_count(&self) -> u64 {
-        self.attachments
-            .lock()
-            .map(|attachments| attachments.chunk_tx_count())
-            .unwrap_or(0)
+        self.attachments.lock().map(|attachments| attachments.chunk_tx_count()).unwrap_or(0)
     }
 
     fn attachment_policy_suppressed_count(&self) -> u64 {
@@ -414,9 +404,7 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
         reaction: ReactionPayload,
         at: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.control
-            .queue_reaction(contact_id, reaction, at)
-            .map_err(map_runtime)
+        self.control.queue_reaction(contact_id, reaction, at).map_err(map_runtime)
     }
 }
 
@@ -428,25 +416,15 @@ impl RelationshipAdminPort for TorcaCommunicationDriver {
     fn contact_verifications(
         &self,
     ) -> Result<BTreeMap<ContactId, ContactVerificationSnapshot>, RuntimeDriverError> {
-        self.relationships
-            .contact_verifications()
-            .map_err(map_runtime)
+        self.relationships.contact_verifications().map_err(map_runtime)
     }
 
-    fn verify_contact(
-        &mut self,
-        id: ContactId,
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
-        self.relationships
-            .verify_contact(id, now)
-            .map_err(map_runtime)
+    fn verify_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.verify_contact(id, now).map_err(map_runtime)
     }
 
     fn reset_contact_verification(&mut self, id: ContactId) -> Result<(), RuntimeDriverError> {
-        self.relationships
-            .reset_contact_verification(id)
-            .map_err(map_runtime)
+        self.relationships.reset_contact_verification(id).map_err(map_runtime)
     }
 
     fn rename_contact(
@@ -455,37 +433,20 @@ impl RelationshipAdminPort for TorcaCommunicationDriver {
         name: String,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.relationships
-            .rename_contact(id, name, now)
-            .map_err(map_runtime)
+        self.relationships.rename_contact(id, name, now).map_err(map_runtime)
     }
 
-    fn block_contact(
-        &mut self,
-        id: ContactId,
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
-        self.relationships
-            .block_contact(id, now)
-            .map_err(map_runtime)?;
+    fn block_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.block_contact(id, now).map_err(map_runtime)?;
         self.peer.shutdown();
         Ok(())
     }
 
-    fn unblock_contact(
-        &mut self,
-        id: ContactId,
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
-        self.relationships
-            .unblock_contact(id, now)
-            .map_err(map_runtime)
+    fn unblock_contact(&mut self, id: ContactId, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.relationships.unblock_contact(id, now).map_err(map_runtime)
     }
 
-    fn clear_conversation_history(
-        &mut self,
-        id: ConversationId,
-    ) -> Result<(), RuntimeDriverError> {
+    fn clear_conversation_history(&mut self, id: ConversationId) -> Result<(), RuntimeDriverError> {
         self.relationships.clear_history(id).map_err(map_runtime)
     }
 
@@ -502,9 +463,7 @@ impl ConversationReadPort for TorcaCommunicationDriver {
         id: OpaqueId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.read_state
-            .mark_conversation_read(id, now)
-            .map_err(map_runtime)
+        self.read_state.mark_conversation_read(id, now).map_err(map_runtime)
     }
 }
 
@@ -528,9 +487,7 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
         let result = {
             let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
-            let result = attachments
-                .prepare_outgoing(request, now)
-                .map_err(map_runtime);
+            let result = attachments.prepare_outgoing(request, now).map_err(map_runtime);
             if result.is_ok() {
                 refresh_attachment_cache(&projection_cache, &**attachments);
             }
@@ -542,11 +499,7 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         result
     }
 
-    fn retry_attachment(
-        &mut self,
-        id: OpaqueId,
-        now: Timestamp,
-    ) -> Result<(), RuntimeDriverError> {
+    fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
         let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
         let result = {
             let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
@@ -582,20 +535,13 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
                 .map(|snapshot| snapshot.clone())
                 .unwrap_or_default());
         };
-        let snapshot = if let Some(snapshot) = attachments
-            .snapshot_projection()
-            .map_err(map_runtime)?
-        {
-            snapshot
-        } else {
-            let messages = self
-                .engine
-                .snapshot()
-                .map_err(|_| RuntimeDriverError::Engine)?;
-            attachments
-                .snapshot(&messages.messages)
-                .map_err(map_runtime)?
-        };
+        let snapshot =
+            if let Some(snapshot) = attachments.snapshot_projection().map_err(map_runtime)? {
+                snapshot
+            } else {
+                let messages = self.engine.snapshot().map_err(|_| RuntimeDriverError::Engine)?;
+                attachments.snapshot(&messages.messages).map_err(map_runtime)?
+            };
         if let Ok(mut cache) = self.attachment_snapshot_cache.lock() {
             *cache = snapshot.clone();
         }
@@ -609,9 +555,7 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
         id: AttachmentId,
         destination: PathBuf,
     ) -> Result<(), RuntimeDriverError> {
-        self.attachment_export
-            .export_attachment(id, destination)
-            .map_err(map_runtime)
+        self.attachment_export.export_attachment(id, destination).map_err(map_runtime)
     }
 
     fn export_attachment_preview(
@@ -619,16 +563,11 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
         id: AttachmentId,
         destination: PathBuf,
     ) -> Result<(), RuntimeDriverError> {
-        self.attachment_export
-            .export_attachment_preview(id, destination)
-            .map_err(map_runtime)
+        self.attachment_export.export_attachment_preview(id, destination).map_err(map_runtime)
     }
 }
 
-fn refresh_attachment_cache(
-    cache: &Mutex<Vec<AttachmentView>>,
-    runtime: &dyn AttachmentRuntime,
-) {
+fn refresh_attachment_cache(cache: &Mutex<Vec<AttachmentView>>, runtime: &dyn AttachmentRuntime) {
     let Ok(Some(snapshot)) = runtime.snapshot_projection() else {
         return;
     };
@@ -645,8 +584,8 @@ fn map_runtime(error: CommunicationError) -> RuntimeDriverError {
 mod tests {
     use super::{
         ATTACHMENT_MESSAGE_KIND, CommunicationError, PROBE_MESSAGE_KIND,
-        RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND,
-        TEXT_MESSAGE_KIND, map_runtime, plan_read_receipts,
+        RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND,
+        map_runtime, plan_read_receipts,
     };
     use std::collections::BTreeSet;
     use torca_control_delivery::ReadCandidate;
@@ -662,10 +601,7 @@ mod tests {
             RADIO_CONTROL_MESSAGE_KIND,
             REACTION_MESSAGE_KIND,
         ];
-        assert_eq!(
-            kinds.iter().copied().collect::<BTreeSet<_>>().len(),
-            kinds.len()
-        );
+        assert_eq!(kinds.iter().copied().collect::<BTreeSet<_>>().len(), kinds.len());
         assert_eq!(kinds, [1, 2, 3, 4, 5, 6]);
     }
 
@@ -687,23 +623,14 @@ mod tests {
     #[test]
     fn runtime_error_preserves_communication_descriptor() {
         let error = map_runtime(CommunicationError::Peer);
-        assert_eq!(
-            error.descriptor().code().as_str(),
-            "communication.peer_unavailable"
-        );
+        assert_eq!(error.descriptor().code().as_str(), "communication.peer_unavailable");
     }
 
     #[test]
     fn attachment_delivery_failure_is_retryable() {
         let error = map_runtime(CommunicationError::Attachment);
         let descriptor = error.descriptor();
-        assert_eq!(
-            descriptor.code().as_str(),
-            "communication.attachment_unavailable"
-        );
-        assert_eq!(
-            descriptor.retry_advice(),
-            torca_foundation::RetryAdvice::Backoff
-        );
+        assert_eq!(descriptor.code().as_str(), "communication.attachment_unavailable");
+        assert_eq!(descriptor.retry_advice(), torca_foundation::RetryAdvice::Backoff);
     }
 }

@@ -166,6 +166,15 @@ fn maintain_delivery_state<C: CommunicationDriver>(
     now: Timestamp,
 ) -> Result<(), RuntimeDriverError> {
     let maintenance_result = communication.maintenance(&work.contacts, now);
+    if work.active_attachment_leases.is_empty() && work.active_delivery_leases.is_empty() {
+        let retained = work
+            .contacts
+            .iter()
+            .copied()
+            .filter(|contact_id| has_peer_or_radio_lease(policy, *contact_id))
+            .collect::<Vec<_>>();
+        let _ = communication.close_idle_peers(&retained, now);
+    }
 
     let worker_database_writes = communication.database_write_count();
     if worker_database_writes > counters.last_worker_database_writes {
@@ -439,11 +448,14 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDrive
     pairing: &P,
     communication: &C,
     policy: &mut RuntimeGovernor,
+    background_sync: torca_battery::BackgroundSyncCadence,
+    foreground: bool,
     scheduling: &mut RuntimeSchedulingState,
     diagnostics: &mut DiagnosticBuffer,
     active_transport: bool,
     now: Timestamp,
 ) {
+    let background_delay = (!foreground).then(|| policy_background_delay(scheduling, background_sync)).flatten();
     let lease_delay = policy
         .next_lease_expiry()
         .map(|expiry| expiry.saturating_duration_since(std::time::Instant::now()));
@@ -457,7 +469,19 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDrive
         communication.next_maintenance_delay(now),
         lease_delay,
         peer_delay,
+        background_delay,
     );
     diagnostics.set_policy_snapshot(policy.snapshot(std::time::Instant::now()));
     scheduling.next_maintenance_at = next_delay.map(|delay| std::time::Instant::now() + delay);
+}
+
+fn policy_background_delay(
+    scheduling: &mut RuntimeSchedulingState,
+    cadence: torca_battery::BackgroundSyncCadence,
+) -> Option<Duration> {
+    let interval = cadence.approximate_interval()?;
+    let deadline = scheduling
+        .background_sync_deadline
+        .get_or_insert_with(|| std::time::Instant::now() + interval);
+    Some(deadline.saturating_duration_since(std::time::Instant::now()))
 }

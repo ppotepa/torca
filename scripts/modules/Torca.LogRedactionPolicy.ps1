@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Get-TorcaRelativePath { param([string]$BasePath,[string]$TargetPath); $base=(Resolve-Path -LiteralPath $BasePath).Path.TrimEnd('\')+'\'; $target=(Resolve-Path -LiteralPath $TargetPath).Path; if ($target.StartsWith($base,[StringComparison]::OrdinalIgnoreCase)) { return $target.Substring($base.Length).Replace('\','/') }; [Uri]::UnescapeDataString(([Uri]::new($base)).MakeRelativeUri([Uri]::new($target)).ToString()) }
 
 $roots = @(
     'crates/platform/torca-native/src',
@@ -32,14 +33,18 @@ foreach ($relativeRoot in $roots) {
     foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.rs') {
         $text = Get-Content -LiteralPath $file.FullName -Raw
         if ($text -notmatch '(?:logger\.|\.log\(|event_with_context|eprintln!|println!)') { continue }
+        # Native query payloads are ABI responses, not diagnostic output.  Do
+        # not classify their private fields as logs merely because the same
+        # implementation file also owns lifecycle logging.
+        $logText = [regex]::Replace($text, '(?s)self\.query_json\s*=.*?\.to_string\(\);', '')
         foreach ($field in $forbiddenStructuredFields) {
-            if ($text.Contains($field)) {
-                $relative = [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+            if ($logText.Contains($field)) {
+                $relative = Get-TorcaRelativePath $RepoRoot $file.FullName
                 throw "Sensitive value must not be written to logs: $relative ($field)"
             }
         }
-        if ($text -match '(?i)(?:ticket|secret|private[_ ]?key|database[_ ]?key)\s*=\s*\{') {
-            $relative = [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+        if ($logText -match '(?i)(?:ticket|secret|private[_ ]?key|database[_ ]?key)\s*=\s*\{') {
+            $relative = Get-TorcaRelativePath $RepoRoot $file.FullName
             throw "Sensitive value interpolation must not be written to logs: $relative"
         }
     }
@@ -51,7 +56,7 @@ $nativeRoot = Join-Path $RepoRoot 'crates/platform/torca-native/src'
 foreach ($file in Get-ChildItem -LiteralPath $nativeRoot -Recurse -File -Filter '*.rs') {
     $text = Get-Content -LiteralPath $file.FullName -Raw
     if ($text -match '(?i)(?:error|message|display)\.to_string\(\)\.contains\s*\(') {
-        $relative = [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+        $relative = Get-TorcaRelativePath $RepoRoot $file.FullName
         throw "Native error classification must remain descriptor based: $relative"
     }
 }

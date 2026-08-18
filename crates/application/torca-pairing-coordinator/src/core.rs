@@ -7,12 +7,6 @@ use torca_pairing_protocol::PairingEnvelope;
 
 include!("core/model_ports.rs");
 
-impl<R, C> PairingCoordinator<R, C>
-where
-    R: PairingRendezvousPort,
-    C: PairingCryptoPort,
-{
-    include!("core/coordinator_methods.rs");
-}
+include!("core/coordinator_methods.rs");
 
 include!("core/codec.rs");

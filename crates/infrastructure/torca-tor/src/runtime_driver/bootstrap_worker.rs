@@ -6,7 +6,7 @@ use std::thread::{self, JoinHandle};
 use super::recovery_epoch::RecoveryEpoch;
 use super::timing::RESTART_BOOTSTRAP_TIMEOUT;
 use super::{TorWake, notify_tor_wake};
-use crate::{TorService, TorError};
+use crate::{TorError, TorService};
 
 /// One asynchronous Tor recovery attempt. Initial warm-up remains sequential;
 /// recovery work is isolated so runtime maintenance never blocks on Arti bootstrap.
@@ -47,10 +47,9 @@ impl TorBootstrapWorker {
                 Some(result)
             }
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some((
-                self.epoch,
-                Err(TorError("Tor recovery worker disconnected".into())),
-            )),
+            Err(TryRecvError::Disconnected) => {
+                Some((self.epoch, Err(TorError("Tor recovery worker disconnected".into()))))
+            }
         }
     }
 }

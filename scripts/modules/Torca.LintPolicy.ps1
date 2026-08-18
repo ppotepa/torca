@@ -5,6 +5,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Get-TorcaRelativePath {
+    param([string]$BasePath, [string]$TargetPath)
+    $base = (Resolve-Path -LiteralPath $BasePath).Path.TrimEnd('\') + '\'
+    $target = (Resolve-Path -LiteralPath $TargetPath).Path
+    if ($target.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { return $target.Substring($base.Length).Replace('\', '/') }
+    $baseUri = [Uri]::new($base)
+    $targetUri = [Uri]::new($target)
+    [Uri]::UnescapeDataString($baseUri.MakeRelativeUri($targetUri).ToString()).Replace('/', '/')
+}
+
 $roots = @(
     'crates/application/torca-runtime/src',
     'crates/application/torca-client-engine/src',
@@ -26,7 +36,7 @@ foreach ($relativeRoot in $roots) {
         $text = Get-Content -LiteralPath $file.FullName -Raw
         foreach ($fragment in $forbidden) {
             if ($text.Contains($fragment)) {
-                $relative = [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+                $relative = Get-TorcaRelativePath $RepoRoot $file.FullName
                 throw "Cleanup hotspot still suppresses '$fragment': $relative"
             }
         }
@@ -39,7 +49,7 @@ foreach ($file in Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Rec
     $text = Get-Content -LiteralPath $file.FullName -Raw
     foreach ($fragment in @('#![allow(clippy::all)]', 'allow(clippy::pedantic)', 'allow(clippy::nursery)')) {
         if ($text.Contains($fragment)) {
-            $relative = [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+            $relative = Get-TorcaRelativePath $RepoRoot $file.FullName
             throw "Broad lint suppression is forbidden: $relative ($fragment)"
         }
     }

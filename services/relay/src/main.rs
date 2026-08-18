@@ -26,10 +26,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // the next poll; individual client operations retain their own much
         // shorter request deadline.
         .unwrap_or(45_000);
-    let server = RelayServer::bind(RelayServerConfig::new(
-        bind,
-        Duration::from_millis(timeout_ms),
-    ))?;
+    let server =
+        RelayServer::bind(RelayServerConfig::new(bind, Duration::from_millis(timeout_ms)))?;
 
     let state_root = std::env::var_os("TORCA_TOR_STATE")
         .map(PathBuf::from)
@@ -52,16 +50,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The local broker is useful and healthy before its public onion address
     // is reachable. Public publication/recovery belongs to its own worker so
     // slow directory bootstrap cannot terminate or block the relay process.
-    let _onion_worker = thread::Builder::new()
-        .name("torca-relay-onion".into())
-        .spawn(move || {
-            publish_onion_forever(
-                state_root,
-                local_target,
-                endpoint_file,
-                ready_file,
-                status_file,
-            );
+    let _onion_worker =
+        thread::Builder::new().name("torca-relay-onion".into()).spawn(move || {
+            publish_onion_forever(state_root, local_target, endpoint_file, ready_file, status_file);
         })?;
 
     server.run()?;

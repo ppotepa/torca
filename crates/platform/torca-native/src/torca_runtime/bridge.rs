@@ -56,6 +56,10 @@ fn bridge_command(
             metered_transfers: text("meteredTransfers")?,
             visual_activity: text("visualActivity")?,
         }),
+        "contact.availability.set" => Ok(BridgeCommand::SetContactAvailability {
+            contact_id_hex: text("contactIdHex")?,
+            mode: text("mode")?,
+        }),
         "contacts.acknowledge_new" => Ok(BridgeCommand::AcknowledgeNewContacts),
         "profile.set" => Ok(BridgeCommand::UpdateProfile {
             display_name: text("displayName")?,

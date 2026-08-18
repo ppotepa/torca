@@ -70,10 +70,27 @@ const DELIVERY_OWNER_NAMESPACE: u128 = 0xD311_0000_0000_0000_0000_0000_0000_0001
 const PAIRING_OWNER_NAMESPACE: u128 = 0xA117_0000_0000_0000_0000_0000_0000_0001;
 const RADIO_OWNER_NAMESPACE: u128 = 0xA1D1_0000_0000_0000_0000_0000_0000_0001;
 const RADIO_TRANSMISSION_OWNER_NAMESPACE: u128 = 0xA1D2_0000_0000_0000_0000_0000_0000_0001;
+const INSTANT_CONTACT_OWNER_NAMESPACE: u128 = 0x1A57_AA70_0000_0000_0000_0000_0000_0001;
+const VISIBLE_CONTACT_OWNER_NAMESPACE: u128 = 0x5151_B1E0_0000_0000_0000_0000_0000_0001;
 const BOOTSTRAP_RELAY_OWNER: u128 = 0xB007_57A4_0000_0000_0000_0000_0000_0001;
+const BACKGROUND_SYNC_OWNER: u128 = 0xB007_57A4_0000_0000_0000_0000_0000_0002;
 
 fn bootstrap_relay_lease_owner() -> OpaqueId {
     OpaqueId::from_u128(BOOTSTRAP_RELAY_OWNER)
+}
+
+fn background_sync_lease_owner() -> OpaqueId {
+    OpaqueId::from_u128(BACKGROUND_SYNC_OWNER)
+}
+
+fn acquire_background_sync_lease(policy: &mut RuntimeGovernor) {
+    policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Relay,
+        class: WorkClass::RelayProbe,
+        reason: DemandReason::BackgroundRendezvous,
+        owner: background_sync_lease_owner(),
+        expires_at: std::time::Instant::now() + Duration::from_secs(90),
+    });
 }
 
 fn acquire_bootstrap_relay_lease(policy: &mut RuntimeGovernor) {
@@ -118,16 +135,53 @@ fn radio_transmission_lease_owner(contact_id: ContactId) -> OpaqueId {
     OpaqueId::from_u128(contact_id.to_opaque().to_u128() ^ RADIO_TRANSMISSION_OWNER_NAMESPACE)
 }
 
-fn acquire_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
+fn instant_contact_lease_owner(contact_id: ContactId) -> OpaqueId {
+    OpaqueId::from_u128(contact_id.to_opaque().to_u128() ^ INSTANT_CONTACT_OWNER_NAMESPACE)
+}
+
+fn visible_contact_lease_owner(contact_id: ContactId, generation: u64) -> OpaqueId {
+    OpaqueId::from_u128(
+        contact_id.to_opaque().to_u128()
+            ^ VISIBLE_CONTACT_OWNER_NAMESPACE
+            ^ u128::from(generation),
+    )
+}
+
+fn acquire_visible_contact_lease(
+    policy: &mut RuntimeGovernor,
+    contact_id: ContactId,
+    owner: OpaqueId,
+    expires_at: std::time::Instant,
+) {
     policy.acquire_lease(WorkDemand {
+        scope: ResourceScope::Peer(contact_id.to_opaque()),
+        class: WorkClass::PeerProbe,
+        reason: DemandReason::VisibleContact,
+        owner,
+        expires_at,
+    });
+}
+
+fn acquire_instant_contact_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
+    policy.acquire_persistent_lease(WorkDemand {
+        scope: ResourceScope::Peer(contact_id.to_opaque()),
+        class: WorkClass::PeerDial,
+        reason: DemandReason::InstantContact,
+        owner: instant_contact_lease_owner(contact_id),
+        expires_at: std::time::Instant::now(),
+    });
+}
+
+fn acquire_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
+    policy.acquire_persistent_lease(WorkDemand {
         scope: ResourceScope::Radio(contact_id.to_opaque()),
         class: WorkClass::Radio,
         reason: DemandReason::RadioSession,
         owner: radio_lease_owner(contact_id),
-        // An enabled radio is an explicit user demand. It is process-local and
-        // is released when the toggle is disabled; the long bound prevents an
-        // accidental policy expiry while the UI remains open.
-        expires_at: std::time::Instant::now() + Duration::from_secs(365 * 24 * 60 * 60),
+        // Persistent leases have an explicit release on radio disable. The
+        // timestamp is retained for the common demand shape but is not used
+        // as a synthetic renewal timer.
+        expires_at: std::time::Instant::now(),
     });
 }
 

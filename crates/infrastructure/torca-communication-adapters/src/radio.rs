@@ -70,6 +70,11 @@ where
         if self.queued.len() >= RADIO_CONTROL_QUEUE_LIMIT {
             return Err(RadioApplicationError::ControlTransport);
         }
+        eprintln!(
+            "torca-radio: control queued contact={} frame={frame:?} queue_len={}",
+            contact_id,
+            self.queued.len().saturating_add(1),
+        );
         self.queued.push_back((contact_id, frame));
         Ok(())
     }
@@ -94,18 +99,19 @@ where
             &payload,
         )
         .map_err(|_| RadioApplicationError::Crypto)?;
-        if self
+        let result = self
             .link
             .send_envelope(contact_id, envelope_id, RADIO_CONTROL_MESSAGE_KIND, ciphertext)
-            .is_ok()
-        {
+            .is_ok();
+        if result {
+            eprintln!("torca-radio: control sent contact={contact_id}");
             self.queued.pop_front();
         }
         Ok(())
     }
 
     fn next_maintenance_delay(&self) -> Option<Duration> {
-        (!self.queued.is_empty()).then_some(Duration::from_secs(1))
+        (!self.queued.is_empty()).then_some(Duration::from_millis(250))
     }
 }
 

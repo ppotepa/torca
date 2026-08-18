@@ -1,3 +1,5 @@
+impl TorcaRuntime {
+
 fn apply_history_summaries(
     &self,
     snapshot: &mut torca_contract::BridgeSnapshot,
@@ -84,4 +86,6 @@ fn query_error(&mut self, error: &str) -> i32 {
     self.last_result_json = error_result(error);
     self.query_json = "{\"messages\":[],\"hasMore\":false}".into();
     ABI_ERROR
+}
+
 }

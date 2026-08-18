@@ -90,6 +90,30 @@ impl BatterySnapshot {
         .into_iter()
         .sum()
     }
+
+    /// Stable regression score, not a physical energy estimate. Expensive
+    /// wakeups have larger weights so idle simulations can fail early.
+    pub fn energy_score(&self) -> u64 {
+        self.scheduler_wakeups
+            .saturating_add(self.snapshot_builds.saturating_mul(2))
+            .saturating_add(self.peer_probes.saturating_mul(20))
+            .saturating_add(self.relay_probes.saturating_mul(25))
+            .saturating_add(self.ffi_wakes)
+            .saturating_add(self.db_reads.saturating_mul(3))
+            .saturating_add(self.db_writes.saturating_mul(4))
+            .saturating_add(self.blob_writes.saturating_mul(5))
+            .saturating_add(self.projection_events.saturating_mul(2))
+            .saturating_add(self.radio_wakeups.saturating_mul(20))
+            .saturating_add(self.tor_dials.saturating_mul(100))
+            .saturating_add(self.relay_dials.saturating_mul(25))
+            .saturating_add(self.peer_dials.saturating_mul(50))
+            .saturating_add(self.handshakes.saturating_mul(20))
+            .saturating_add(self.tx_frames.saturating_mul(2))
+            .saturating_add(self.rx_frames.saturating_mul(2))
+            .saturating_add(self.attachment_chunks_tx)
+            .saturating_add(self.attachment_chunks_rx)
+            .saturating_add(self.suppressed_work)
+    }
 }
 
 /// Runtime behavior profile. Policy profiles never weaken durable delivery.
@@ -100,6 +124,28 @@ pub enum BatteryProfile {
     Balanced,
     BatterySaver,
     Diagnostics,
+}
+
+/// Durable per-contact connectivity intent. Radio owns an independent
+/// transient lease, so disabling radio never changes this preference.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ContactAvailabilityMode {
+    #[default]
+    Adaptive,
+    Instant,
+}
+
+impl ContactAvailabilityMode {
+    pub fn from_wire(value: &str) -> Self {
+        if value == "instant" { Self::Instant } else { Self::Adaptive }
+    }
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Adaptive => "adaptive",
+            Self::Instant => "instant",
+        }
+    }
 }
 
 /// User-facing availability preference.  This is deliberately separate from
@@ -118,8 +164,9 @@ pub enum RequestedBatteryMode {
 /// Android Doze and Windows power policy may defer a wake beyond them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BackgroundSyncCadence {
-    #[default]
     Instant,
+    #[default]
+    FiveMinutes,
     FifteenMinutes,
     ThirtyMinutes,
     Hourly,
@@ -131,6 +178,7 @@ impl BackgroundSyncCadence {
     pub fn approximate_interval(self) -> Option<Duration> {
         match self {
             Self::Instant => None,
+            Self::FiveMinutes => Some(Duration::from_secs(5 * 60)),
             Self::FifteenMinutes => Some(Duration::from_secs(15 * 60)),
             Self::ThirtyMinutes => Some(Duration::from_secs(30 * 60)),
             Self::Hourly => Some(Duration::from_secs(60 * 60)),
@@ -171,9 +219,9 @@ pub struct BatteryPreferences {
 impl Default for BatteryPreferences {
     fn default() -> Self {
         Self {
-            mode: RequestedBatteryMode::Automatic,
-            background_sync: BackgroundSyncCadence::Instant,
-            allow_delayed_background_delivery: false,
+            mode: RequestedBatteryMode::Balanced,
+            background_sync: BackgroundSyncCadence::FiveMinutes,
+            allow_delayed_background_delivery: true,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             visual_activity: VisualActivityPolicy::FollowSystem,
         }
@@ -300,6 +348,10 @@ impl BatteryPreferences {
 
         let profile = if diagnostics_override || has_critical_lease || system.foreground {
             BatteryProfile::AlwaysAvailable
+        } else if system.power_saver == Some(true)
+            || system.battery_percent.is_some_and(|value| value <= 15)
+        {
+            BatteryProfile::BatterySaver
         } else {
             match self.mode {
                 RequestedBatteryMode::AlwaysAvailable => BatteryProfile::AlwaysAvailable,
@@ -321,8 +373,7 @@ impl BatteryPreferences {
             && !has_critical_lease
             && !system.foreground
             && self.allow_delayed_background_delivery
-            && self.background_sync != BackgroundSyncCadence::Instant
-            && self.background_sync != BackgroundSyncCadence::OnOpen;
+            && self.background_sync != BackgroundSyncCadence::Instant;
 
         EffectiveBatteryPolicy {
             profile,
@@ -358,6 +409,7 @@ impl RequestedBatteryMode {
 impl BackgroundSyncCadence {
     pub fn from_wire(value: &str) -> Self {
         match value {
+            "five_minutes" => Self::FiveMinutes,
             "fifteen_minutes" => Self::FifteenMinutes,
             "thirty_minutes" => Self::ThirtyMinutes,
             "hourly" => Self::Hourly,
@@ -370,6 +422,7 @@ impl BackgroundSyncCadence {
     pub fn wire(self) -> &'static str {
         match self {
             Self::Instant => "instant",
+            Self::FiveMinutes => "five_minutes",
             Self::FifteenMinutes => "fifteen_minutes",
             Self::ThirtyMinutes => "thirty_minutes",
             Self::Hourly => "hourly",
@@ -682,6 +735,7 @@ mod tests {
     #[test]
     fn idle_ledger_has_no_work() {
         assert_eq!(BatteryLedger::new().snapshot().total_work(), 0);
+        assert_eq!(BatteryLedger::new().snapshot().energy_score(), 0);
     }
 
     #[test]
@@ -738,20 +792,35 @@ mod tests {
     }
 
     #[test]
-    fn automatic_mode_is_reliability_first_until_delayed_delivery_is_explicit() {
+    fn default_balanced_mode_uses_the_five_minute_background_window() {
         let preferences = BatteryPreferences::default();
         let effective = preferences.effective(
             SystemEnergyState {
                 foreground: false,
-                power_saver: Some(true),
-                battery_percent: Some(12),
+                power_saver: Some(false),
+                battery_percent: Some(60),
                 ..SystemEnergyState::default()
             },
             false,
             false,
         );
+        assert_eq!(effective.profile, BatteryProfile::Balanced);
+        assert!(effective.tor_dormancy_allowed);
+        assert_eq!(
+            effective.background_sync.approximate_interval(),
+            Some(Duration::from_secs(5 * 60))
+        );
+    }
+
+    #[test]
+    fn platform_power_saver_suppresses_discretionary_balanced_work() {
+        let effective = BatteryPreferences::default().effective(
+            SystemEnergyState { power_saver: Some(true), ..SystemEnergyState::default() },
+            false,
+            false,
+        );
         assert_eq!(effective.profile, BatteryProfile::BatterySaver);
-        assert!(!effective.tor_dormancy_allowed);
+        assert_eq!(effective.reason, PolicyOverrideReason::PowerSaver);
     }
 
     #[test]

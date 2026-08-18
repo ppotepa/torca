@@ -22,9 +22,7 @@ use torca_relay_protocol::{
     RelaySequence, RelaySideToken, RelaySlotCapability, RelaySlotId,
 };
 
-pub use error::{
-    RelayTransportError, RelayTransportFailureKind, RendezvousClientError,
-};
+pub use error::{RelayTransportError, RelayTransportFailureKind, RendezvousClientError};
 pub use scripted::ScriptedRelayTransport;
 pub use tcp::TcpRelayTransport;
 pub use tor::{SharedTorRelayTransport, TorRelayTransport};
@@ -47,11 +45,7 @@ pub struct RendezvousClient<T> {
 
 impl<T> RendezvousClient<T> {
     pub const fn new(transport: T, timeout: Duration) -> Self {
-        Self {
-            transport,
-            timeout,
-            connectivity: None,
-        }
+        Self { transport, timeout, connectivity: None }
     }
 
     #[must_use]
@@ -93,10 +87,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
             ticket: torca_relay_protocol::RelayJoinTicket(ticket),
         })?;
         match response {
-            RelayResponse::Opened {
-                slot_id,
-                expires_at,
-            } => Ok((slot_id, expires_at)),
+            RelayResponse::Opened { slot_id, expires_at } => Ok((slot_id, expires_at)),
             _ => Err(RendezvousClientError::UnexpectedResponse),
         }
     }
@@ -116,11 +107,9 @@ impl<T: RelayTransport> RendezvousClient<T> {
             ticket: ticket.map(torca_relay_protocol::RelayJoinTicket),
         })?;
         match response {
-            RelayResponse::Joined {
-                slot_id,
-                expires_at,
-                creator_blob,
-            } => Ok((slot_id, expires_at, creator_blob)),
+            RelayResponse::Joined { slot_id, expires_at, creator_blob } => {
+                Ok((slot_id, expires_at, creator_blob))
+            }
             _ => Err(RendezvousClientError::UnexpectedResponse),
         }
     }
@@ -151,11 +140,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         token: RelaySideToken,
         after: RelaySequence,
     ) -> Result<Vec<RelayDelivery>, RendezvousClientError> {
-        let response = self.exchange(RelayRequest::Poll {
-            slot_id,
-            token,
-            after,
-        })?;
+        let response = self.exchange(RelayRequest::Poll { slot_id, token, after })?;
         match response {
             RelayResponse::Deliveries(deliveries) => Ok(deliveries),
             _ => Err(RendezvousClientError::UnexpectedResponse),
@@ -168,11 +153,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         token: RelaySideToken,
         up_to: RelaySequence,
     ) -> Result<(), RendezvousClientError> {
-        let response = self.exchange(RelayRequest::Ack {
-            slot_id,
-            token,
-            up_to,
-        })?;
+        let response = self.exchange(RelayRequest::Ack { slot_id, token, up_to })?;
         match response {
             RelayResponse::Acked(acked) if acked == up_to => Ok(()),
             _ => Err(RendezvousClientError::UnexpectedResponse),
@@ -184,10 +165,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
         slot_id: RelaySlotId,
         capability: RelaySlotCapability,
     ) -> Result<(), RendezvousClientError> {
-        let response = self.exchange(RelayRequest::Close {
-            slot_id,
-            capability,
-        })?;
+        let response = self.exchange(RelayRequest::Close { slot_id, capability })?;
         match response {
             RelayResponse::Closed => Ok(()),
             _ => Err(RendezvousClientError::UnexpectedResponse),
@@ -199,13 +177,9 @@ impl<T: RelayTransport> RendezvousClient<T> {
         let result = match self.transport.exchange(&request, self.timeout) {
             Ok(response) => checked_response(response),
             Err(first_error) if !matches!(request, RelayRequest::Close { .. }) => {
-                self.transport
-                    .reconnect()
-                    .map_err(RendezvousClientError::Transport)?;
-                let response = self
-                    .transport
-                    .exchange(&request, self.timeout)
-                    .map_err(|error| {
+                self.transport.reconnect().map_err(RendezvousClientError::Transport)?;
+                let response =
+                    self.transport.exchange(&request, self.timeout).map_err(|error| {
                         if error.request_was_sent {
                             RendezvousClientError::OutcomeUnknown(error.kind)
                         } else {
@@ -219,9 +193,7 @@ impl<T: RelayTransport> RendezvousClient<T> {
                 Err(RendezvousClientError::OutcomeUnknown(error.kind))
             }
             Err(_first_error) => {
-                self.transport
-                    .reconnect()
-                    .map_err(RendezvousClientError::Transport)?;
+                self.transport.reconnect().map_err(RendezvousClientError::Transport)?;
                 self.transport
                     .exchange(&request, self.timeout)
                     .map_err(RendezvousClientError::Transport)
@@ -253,9 +225,9 @@ impl<T: RelayTransport> RendezvousClient<T> {
         let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
             return;
         };
-        let Ok(at) = Timestamp::from_unix_millis(
-            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
-        ) else {
+        let Ok(at) =
+            Timestamp::from_unix_millis(i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        else {
             return;
         };
         for layer in [TransportLayer::Relay, TransportLayer::Tor] {
@@ -308,10 +280,7 @@ mod tests {
             )
             .expect("replayed poll");
         assert_eq!(client.transport.requests().len(), 2);
-        assert_eq!(
-            client.transport.requests()[0],
-            client.transport.requests()[1]
-        );
+        assert_eq!(client.transport.requests()[0], client.transport.requests()[1]);
     }
 
     #[test]
@@ -327,10 +296,7 @@ mod tests {
             RelaySlotId(OpaqueId::from_u128(1)),
             torca_relay_protocol::RelaySlotCapability(OpaqueId::from_u128(3)),
         );
-        assert!(matches!(
-            result,
-            Err(RendezvousClientError::OutcomeUnknown(_))
-        ));
+        assert!(matches!(result, Err(RendezvousClientError::OutcomeUnknown(_))));
         assert_eq!(client.transport.requests().len(), 1);
     }
 }

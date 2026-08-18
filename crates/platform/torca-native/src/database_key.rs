@@ -10,10 +10,7 @@ pub(crate) fn load_or_create_database_key<C: CryptoProvider>(
     handle: torca_identity::KeyId,
     mut crypto: C,
 ) -> Result<torca_storage_sqlite::DatabaseKey, NativeCompositionError> {
-    match store
-        .load(handle)
-        .map_err(|error| secret_error("load database key", &error))?
-    {
+    match store.load(handle).map_err(|error| secret_error("load database key", &error))? {
         Some(mut bytes) => {
             if bytes.len() != 32 {
                 bytes.fill(0);

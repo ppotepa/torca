@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Get-TorcaRelativePath { param([string]$BasePath,[string]$TargetPath); $base=(Resolve-Path -LiteralPath $BasePath).Path.TrimEnd('\')+'\'; $target=(Resolve-Path -LiteralPath $TargetPath).Path; if ($target.StartsWith($base,[StringComparison]::OrdinalIgnoreCase)) { return $target.Substring($base.Length).Replace('\','/') }; [Uri]::UnescapeDataString(([Uri]::new($base)).MakeRelativeUri([Uri]::new($target)).ToString()) }
 $storageRoot = Join-Path $RepoRoot 'crates/infrastructure/torca-storage-sqlite/src'
 $factory = [IO.Path]::GetFullPath((Join-Path $storageRoot 'sqlcipher.rs'))
 
@@ -21,7 +22,7 @@ foreach ($file in $productionRust) {
     $text = Get-Content -LiteralPath $file.FullName -Raw
     if ($text -match '\bConnection::open(?:_with_flags|_in_memory)?\s*\(' -or
         $text -match '\brusqlite::Connection::open(?:_with_flags|_in_memory)?\s*\(') {
-        $violations += [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+        $violations += Get-TorcaRelativePath $RepoRoot $file.FullName
     }
 }
 

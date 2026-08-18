@@ -1,3 +1,8 @@
+impl<S, K> PeerLink<S, K>
+where
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+{
 fn observe(
     &mut self,
     contact_id: ContactId,
@@ -82,4 +87,5 @@ fn observe_send_ack(
             now,
         );
     }
+}
 }

@@ -31,12 +31,13 @@ const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
 // Keep the authenticated media stream alive without waking the device every
 // few seconds. The 10-second interval remains comfortably below the
 // connection idle budget, while halving idle radio traffic during a session.
-const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const KEEP_ALIVE_MAX_INTERVAL: Duration = Duration::from_secs(120);
 const AUDIO_RETRANSMIT_AFTER: Duration = Duration::from_millis(250);
 const AUDIO_FRAME_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_RETRANSMITS_PER_TICK: usize = 8;
 const MAX_UNACKED_AUDIO_AGE: Duration = Duration::from_secs(8);
-const CONNECTION_IDLE_LIMIT: Duration = Duration::from_secs(20);
+const CONNECTION_IDLE_LIMIT: Duration = Duration::from_secs(180);
 const READ_BUFFER_LIMIT: usize = (MAX_RADIO_MEDIA_FRAME + 4) * 8;
 const COMPLETED_BURST_HISTORY: usize = 8;
 
@@ -309,6 +310,7 @@ struct LiveSession {
     last_media_activity_at: Instant,
     last_keep_alive_at: Instant,
     keep_alive_sequence: u64,
+    idle_keep_alives: u8,
     unacked_audio: VecDeque<(u32, Vec<u8>, Instant)>,
     oldest_unacked_at: Option<Instant>,
 }
@@ -356,6 +358,7 @@ impl LiveSession {
             last_media_activity_at: now,
             last_keep_alive_at: now,
             keep_alive_sequence: 0,
+            idle_keep_alives: 0,
             unacked_audio: VecDeque::new(),
             oldest_unacked_at: None,
         })
@@ -449,11 +452,18 @@ impl MediaWorker {
             let wait = active_media_wait(
                 now,
                 live.authenticated,
+                live.local_burst.is_some()
+                    || live.remote_burst.is_some()
+                    || !live.unacked_audio.is_empty()
+                    || !live.jitter.is_empty()
+                    || !self.audio.outbound_is_empty()
+                    || !self.audio.inbound_is_empty(),
                 live.last_received_at,
                 live.oldest_unacked_at,
                 live.local_burst_started_at,
                 live.last_media_activity_at,
                 live.last_keep_alive_at,
+                radio_keep_alive_interval(live.idle_keep_alives),
             );
             // Align the next socket read timeout with the selected deadline;
             // otherwise a 20-ms stale timeout could postpone an ACK or burst
@@ -625,17 +635,38 @@ impl MediaWorker {
         let Some(pending) = self.pending.clone() else {
             return;
         };
+        let started = Instant::now();
         let stream = if pending.initiate_connection {
             if Instant::now() < pending.next_connect_at {
                 return;
             }
+            eprintln!(
+                "torca-radio: media connect started contact={} attempt={} virtual_port={}",
+                pending.contact_id,
+                pending.reconnect_attempt.saturating_add(1),
+                TOR_RADIO_VIRTUAL_PORT,
+            );
             match self.tor.connect_onion_with_timeout(
                 &pending.route.onion_address,
                 TOR_RADIO_VIRTUAL_PORT,
                 CONNECT_TIMEOUT,
             ) {
-                Ok(stream) => Some(stream),
-                Err(_) => {
+                Ok(stream) => {
+                    eprintln!(
+                        "torca-radio: media connect succeeded contact={} attempt={} elapsed_ms={}",
+                        pending.contact_id,
+                        pending.reconnect_attempt.saturating_add(1),
+                        started.elapsed().as_millis(),
+                    );
+                    Some(stream)
+                }
+                Err(error) => {
+                    eprintln!(
+                        "torca-radio: media connect failed contact={} attempt={} elapsed_ms={} error={error:?}",
+                        pending.contact_id,
+                        pending.reconnect_attempt.saturating_add(1),
+                        started.elapsed().as_millis(),
+                    );
                     if let Some(current) = self.pending.as_mut() {
                         schedule_reconnect(current);
                     }
@@ -677,12 +708,15 @@ impl MediaWorker {
             return Err(());
         }
         if live.authenticated
-            && now.duration_since(live.last_media_activity_at) >= KEEP_ALIVE_INTERVAL
-            && now.duration_since(live.last_keep_alive_at) >= KEEP_ALIVE_INTERVAL
+            && now.duration_since(live.last_media_activity_at)
+                >= radio_keep_alive_interval(live.idle_keep_alives)
+            && now.duration_since(live.last_keep_alive_at)
+                >= radio_keep_alive_interval(live.idle_keep_alives)
         {
             live.keep_alive_sequence = live.keep_alive_sequence.saturating_add(1);
             send_frame(live, &RadioMediaFrame::KeepAlive { sequence: live.keep_alive_sequence })?;
             live.last_keep_alive_at = now;
+            live.idle_keep_alives = live.idle_keep_alives.saturating_add(1);
         }
         if live.authenticated {
             enforce_burst_deadlines(live, &self.events, &self.audio)?;
@@ -725,13 +759,22 @@ impl MediaWorker {
 fn active_media_wait(
     now: Instant,
     authenticated: bool,
+    audio_active: bool,
     last_received_at: Instant,
     oldest_unacked_at: Option<Instant>,
     local_burst_started_at: Option<Instant>,
     last_media_activity_at: Instant,
     last_keep_alive_at: Instant,
+    keep_alive_interval: Duration,
 ) -> Duration {
-    let mut deadline = now + AUDIO_FRAME_INTERVAL;
+    // A 20-ms deadline is required only while audio is actually moving.
+    // Keeping it for an authenticated but idle session woke the worker about
+    // 50 times per second and was the largest avoidable radio battery cost.
+    let mut deadline = if audio_active {
+        now + AUDIO_FRAME_INTERVAL
+    } else {
+        now + ACTIVE_READ_TIMEOUT.max(keep_alive_interval)
+    };
     if authenticated {
         deadline = deadline.min(last_received_at + CONNECTION_IDLE_LIMIT);
         if let Some(oldest) = oldest_unacked_at {
@@ -740,11 +783,19 @@ fn active_media_wait(
         if let Some(started) = local_burst_started_at {
             deadline = deadline.min(started + Duration::from_millis(MAX_RADIO_BURST_MS.into()));
         }
-        let keep_alive_at = (last_media_activity_at + KEEP_ALIVE_INTERVAL)
-            .max(last_keep_alive_at + KEEP_ALIVE_INTERVAL);
+        let keep_alive_at = (last_media_activity_at + keep_alive_interval)
+            .max(last_keep_alive_at + keep_alive_interval);
         deadline = deadline.min(keep_alive_at);
     }
     deadline.saturating_duration_since(now)
+}
+
+fn radio_keep_alive_interval(idle_keep_alives: u8) -> Duration {
+    match idle_keep_alives {
+        0 => KEEP_ALIVE_INTERVAL,
+        1 => Duration::from_secs(60),
+        _ => KEEP_ALIVE_MAX_INTERVAL,
+    }
 }
 
 fn fill_playback_queue(jitter: &mut JitterBuffer, audio: &AudioPipeline) {
@@ -865,6 +916,10 @@ fn handle_incoming(
         live.cipher.open(nonce, &hello_aad(live.pending.session_id), &proof).map_err(|_| ())?;
         live.authenticated = true;
         live.pending.reconnect_attempt = 0;
+        eprintln!(
+            "torca-radio: media session ready contact={} session={}",
+            live.pending.contact_id, live.pending.session_id,
+        );
         emit(
             events,
             RadioSessionEvent::Ready {
@@ -877,6 +932,7 @@ fn handle_incoming(
     }
     if !matches!(&frame, RadioMediaFrame::KeepAlive { .. }) {
         live.last_media_activity_at = Instant::now();
+        live.idle_keep_alives = 0;
     }
     match frame {
         RadioMediaFrame::Hello { .. } => return Err(()),
@@ -1245,6 +1301,7 @@ fn enforce_burst_deadlines(
 fn send_frame(live: &mut LiveSession, frame: &RadioMediaFrame) -> Result<(), ()> {
     if !matches!(frame, RadioMediaFrame::KeepAlive { .. }) {
         live.last_media_activity_at = Instant::now();
+        live.idle_keep_alives = 0;
     }
     let bytes = RadioMediaCodec::encode_framed(frame).map_err(|_| ())?;
     live.stream.write_all(&bytes).map_err(|_| ())?;
@@ -1372,9 +1429,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inactive_media_uses_the_audio_frame_bound() {
+    fn inactive_media_sleeps_until_the_transport_deadline() {
         let now = Instant::now();
-        assert_eq!(active_media_wait(now, false, now, None, None, now, now), AUDIO_FRAME_INTERVAL);
+        assert_eq!(
+            active_media_wait(now, false, false, now, None, None, now, now, KEEP_ALIVE_INTERVAL,),
+            KEEP_ALIVE_INTERVAL
+        );
     }
 
     #[test]
@@ -1384,6 +1444,7 @@ mod tests {
             active_media_wait(
                 now,
                 true,
+                true,
                 now + Duration::from_secs(10),
                 Some(now.checked_sub(Duration::from_millis(247)).unwrap_or(now)),
                 Some(
@@ -1392,6 +1453,7 @@ mod tests {
                 ),
                 now,
                 now,
+                KEEP_ALIVE_INTERVAL,
             ),
             Duration::from_millis(3)
         );

@@ -57,6 +57,10 @@ pub enum BridgeCommand {
         metered_transfers: String,
         visual_activity: String,
     },
+    SetContactAvailability {
+        contact_id_hex: String,
+        mode: String,
+    },
     AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
@@ -538,6 +542,12 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
             metered_transfers,
             visual_activity,
         },
+        BridgeCommand::SetContactAvailability { contact_id_hex, mode } => {
+            ApplicationCommand::SetContactAvailability {
+                contact_id: parse_id(&contact_id_hex)?,
+                mode,
+            }
+        }
         BridgeCommand::AcknowledgeNewContacts => ApplicationCommand::AcknowledgeNewContacts,
         BridgeCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
             ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms }

@@ -95,11 +95,7 @@ fn wait_for_onion_reachability(
             write_status(
                 status_file,
                 endpoint,
-                if e2e_verified {
-                    "reachable"
-                } else {
-                    onion_health_state(health)
-                },
+                if e2e_verified { "reachable" } else { onion_health_state(health) },
                 e2e_verified,
                 started.elapsed().as_millis(),
             );
@@ -109,10 +105,7 @@ fn wait_for_onion_reachability(
         // service can already be reachable. Probe the real client path at a
         // controlled cadence instead of waiting indefinitely for that event.
         if !e2e_verified
-            && matches!(
-                health,
-                OnionServiceHealth::Publishing | OnionServiceHealth::Reachable
-            )
+            && matches!(health, OnionServiceHealth::Publishing | OnionServiceHealth::Reachable)
             && std::time::Instant::now() >= next_e2e_probe
         {
             match verify_onion_endpoint(tor, endpoint) {
@@ -202,10 +195,9 @@ fn verify_onion_endpoint(tor: &TorService, endpoint: &str) -> Result<(), String>
         )
         .map_err(|error| format!("write E2E probe: {error}"))?;
     let mut header = [0_u8; RELAY_HEADER_LEN];
-    stream
-        .read_exact(&mut header)
-        .map_err(|error| format!("read E2E probe header: {error}"))?;
-    let frame_len = RelayCodec::frame_len_from_header(&header).map_err(|error| error.to_string())?;
+    stream.read_exact(&mut header).map_err(|error| format!("read E2E probe header: {error}"))?;
+    let frame_len =
+        RelayCodec::frame_len_from_header(&header).map_err(|error| error.to_string())?;
     let mut frame = Vec::with_capacity(frame_len);
     frame.extend_from_slice(&header);
     frame.resize(frame_len, 0);
@@ -225,13 +217,7 @@ fn write_endpoint(path: &PathBuf, endpoint: &str) -> std::io::Result<()> {
     std::fs::write(path, format!("{endpoint}:443\n"))
 }
 
-fn write_status(
-    path: &PathBuf,
-    endpoint: &str,
-    state: &str,
-    e2e_verified: bool,
-    elapsed_ms: u128,
-) {
+fn write_status(path: &PathBuf, endpoint: &str, state: &str, e2e_verified: bool, elapsed_ms: u128) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

@@ -104,6 +104,8 @@ class _ConversationPaneState extends State<ConversationPane>
   bool _markingRead = false;
   bool _loadingOlder = false;
   bool _showJumpToLatest = false;
+  bool _instantContact = false;
+  bool _instantContactBusy = false;
   int _jumpMessageCount = 0;
   int _lastActivityAtMs = 0;
   String? _unreadBoundaryMessageId;
@@ -124,6 +126,7 @@ class _ConversationPaneState extends State<ConversationPane>
     unawaited(_initializeTimeline());
     unawaited(_restoreDraft());
     unawaited(_restoreBookmarks());
+    unawaited(_restoreInstantContact());
   }
 
   ConversationTimelineController _newTimeline() =>
@@ -478,6 +481,9 @@ class _ConversationPaneState extends State<ConversationPane>
                   sending: transfer.$1,
                   receiving: transfer.$2,
                   compact: widget.compactHeader,
+                  instantContact: _instantContact,
+                  instantContactBusy: _instantContactBusy,
+                  onInstantContactChanged: _setInstantContact,
                   leading: widget.showBackButton
                       ? BackButton(
                           onPressed: () => Navigator.of(context).maybePop(),

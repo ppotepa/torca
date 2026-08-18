@@ -52,10 +52,7 @@ impl PairingWorkerDriver {
             .name("torca-pairing-supervisor".to_owned())
             .spawn(move || run_pairing_worker(&mut driver, &receiver))
             .map_err(|_| RuntimeDriverError::Pairing)?;
-        Ok(Self {
-            sender,
-            worker: Some(worker),
-        })
+        Ok(Self { sender, worker: Some(worker) })
     }
 
     fn request<T>(
@@ -68,12 +65,10 @@ impl PairingWorkerDriver {
             Err(TrySendError::Full(_)) => return Err(RuntimeDriverError::Pending),
             Err(TrySendError::Disconnected(_)) => return Err(RuntimeDriverError::Pairing),
         }
-        receiver
-            .recv_timeout(INTERACTIVE_REPLY_WAIT)
-            .map_err(|error| match error {
-                mpsc::RecvTimeoutError::Timeout => RuntimeDriverError::Pending,
-                mpsc::RecvTimeoutError::Disconnected => RuntimeDriverError::Pairing,
-            })?
+        receiver.recv_timeout(INTERACTIVE_REPLY_WAIT).map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => RuntimeDriverError::Pending,
+            mpsc::RecvTimeoutError::Disconnected => RuntimeDriverError::Pairing,
+        })?
     }
 }
 
@@ -83,11 +78,7 @@ impl PairingDriver for PairingWorkerDriver {
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<PairingInvitationView, RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Create {
-            session_id,
-            now,
-            reply,
-        })
+        self.request(|reply| PairingWorkerCommand::Create { session_id, now, reply })
     }
 
     fn join(
@@ -97,13 +88,7 @@ impl PairingDriver for PairingWorkerDriver {
         ticket: Option<[u8; 16]>,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Join {
-            session_id,
-            code,
-            ticket,
-            now,
-            reply,
-        })
+        self.request(|reply| PairingWorkerCommand::Join { session_id, code, ticket, now, reply })
     }
 
     fn approve(
@@ -111,11 +96,7 @@ impl PairingDriver for PairingWorkerDriver {
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Approve {
-            session_id,
-            now,
-            reply,
-        })
+        self.request(|reply| PairingWorkerCommand::Approve { session_id, now, reply })
     }
 
     fn reject(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError> {
@@ -135,9 +116,7 @@ impl PairingDriver for PairingWorkerDriver {
     }
 
     fn network_changed(&mut self, now: Timestamp) {
-        let _ = self
-            .sender
-            .try_send(PairingWorkerCommand::NetworkChanged(now));
+        let _ = self.sender.try_send(PairingWorkerCommand::NetworkChanged(now));
     }
 
     fn shutdown(&mut self) {
@@ -164,27 +143,13 @@ fn run_pairing_worker<D: PairingDriver>(driver: &mut D, receiver: &Receiver<Pair
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
-            PairingWorkerCommand::Create {
-                session_id,
-                now,
-                reply,
-            } => {
+            PairingWorkerCommand::Create { session_id, now, reply } => {
                 let _ = reply.send(driver.create(session_id, now));
             }
-            PairingWorkerCommand::Join {
-                session_id,
-                code,
-                ticket,
-                now,
-                reply,
-            } => {
+            PairingWorkerCommand::Join { session_id, code, ticket, now, reply } => {
                 let _ = reply.send(driver.join(session_id, code, ticket, now));
             }
-            PairingWorkerCommand::Approve {
-                session_id,
-                now,
-                reply,
-            } => {
+            PairingWorkerCommand::Approve { session_id, now, reply } => {
                 let _ = reply.send(driver.approve(session_id, now));
             }
             PairingWorkerCommand::Reject { session_id, reply } => {

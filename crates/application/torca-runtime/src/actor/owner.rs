@@ -166,6 +166,17 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 if let Some(owner) = work.attention_owner.take() {
                     policy.release_lease(owner);
                 }
+                for owner in work.visible_contact_leases.values().copied() {
+                    policy.release_lease(owner);
+                }
+                work.visible_contact_leases.clear();
+                let visible_expiry = now + Duration::from_secs(3 * 60);
+                for opaque_id in context.visible_contact_ids.iter().copied() {
+                    let contact_id = ContactId::from_opaque(opaque_id);
+                    let owner = visible_contact_lease_owner(contact_id, context.generation);
+                    acquire_visible_contact_lease(policy, contact_id, owner, visible_expiry);
+                    work.visible_contact_leases.insert(contact_id, owner);
+                }
                 let owner = OpaqueId::from_u128(u128::from(context.generation.max(1)));
                 let expires_at = now + Duration::from_secs(5 * 60);
                 let demand = match context.surface {
@@ -236,6 +247,14 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     policy.release_lease(radio_lease_owner(contact_id));
                 }
             }
+            RuntimeWait::Command(RuntimeCommand::SetInstantContactDemand(contact_id, enabled)) => {
+                if enabled {
+                    let _ = tor.set_dormant(false);
+                    acquire_instant_contact_lease(policy, contact_id);
+                } else {
+                    policy.release_lease(instant_contact_lease_owner(contact_id));
+                }
+            }
             RuntimeWait::Command(RuntimeCommand::SetRadioTransmission(contact_id, active)) => {
                 if active {
                     let _ = tor.set_dormant(false);
@@ -253,6 +272,16 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     work.metered_network,
                 );
                 diagnostics.set_battery_profile(profile);
+            }
+            RuntimeWait::Command(RuntimeCommand::SetBackgroundSync(cadence)) => {
+                work.background_sync = cadence;
+                scheduling.background_sync_deadline = None;
+            }
+            RuntimeWait::Command(RuntimeCommand::SetForeground(foreground)) => {
+                work.foreground = foreground;
+                if foreground {
+                    scheduling.background_sync_deadline = None;
+                }
             }
             RuntimeWait::Command(RuntimeCommand::SetMeteredNetwork(metered)) => {
                 work.metered_network = metered;
@@ -316,6 +345,37 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 
         diagnostics.count(RuntimeCounter::SchedulerWakeup);
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+        if !work.foreground
+            && !policy.has_any_active_lease(std::time::Instant::now())
+            && !matches!(
+                work.background_sync,
+                torca_battery::BackgroundSyncCadence::Instant
+                    | torca_battery::BackgroundSyncCadence::OnOpen
+            )
+        {
+            let _ = tor.set_dormant(true);
+        }
+        if scheduling
+            .background_sync_deadline
+            .is_some_and(|deadline| deadline <= std::time::Instant::now())
+        {
+            if let Some(interval) = work.background_sync.approximate_interval() {
+                scheduling.background_sync_deadline =
+                    Some(std::time::Instant::now() + interval);
+                let _ = tor.set_dormant(false);
+                acquire_background_sync_lease(policy);
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Engine,
+                    HealthState::Starting,
+                    "BACKGROUND_SYNC_WAKE",
+                );
+            } else {
+                scheduling.background_sync_deadline = None;
+            }
+        }
         maintain_runtime_health(
             engine,
             pairing,
@@ -357,6 +417,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             pairing,
             communication,
             policy,
+            work.background_sync,
+            work.foreground,
             &mut scheduling,
             diagnostics,
             active_transport,

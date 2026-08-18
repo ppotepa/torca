@@ -2,7 +2,7 @@
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
 
 pub const SCHEMA_VERSION: u16 = 1;
-pub const CONTRACT_VERSION: u16 = 19;
+pub const CONTRACT_VERSION: u16 = 20;
 pub const COMMANDS: &[&str] = &[
     "profile.set",
     "pairing.create",
@@ -29,6 +29,7 @@ pub const COMMANDS: &[&str] = &[
     "notifications.set",
     "privacy.read_receipts.set",
     "battery.preferences.set",
+    "contact.availability.set",
     "contacts.acknowledge_new",
     "conversation.read",
     "attachment.queue",

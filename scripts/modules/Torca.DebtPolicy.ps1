@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Get-TorcaRelativePath { param([string]$BasePath,[string]$TargetPath); $base=(Resolve-Path -LiteralPath $BasePath).Path.TrimEnd('\')+'\'; $target=(Resolve-Path -LiteralPath $TargetPath).Path; if ($target.StartsWith($base,[StringComparison]::OrdinalIgnoreCase)) { return $target.Substring($base.Length).Replace('\','/') }; [Uri]::UnescapeDataString(([Uri]::new($base)).MakeRelativeUri([Uri]::new($target)).ToString()) }
 
 $sourceRoots = @(
     (Join-Path $RepoRoot 'crates'),
@@ -17,7 +18,7 @@ foreach ($root in $sourceRoots) {
         $text = Get-Content -LiteralPath $file.FullName -Raw
         foreach ($marker in @('TODO', 'FIXME')) {
             if ($text.Contains($marker) -and $text -notmatch "${marker}\(#\d+\)") {
-                $relative = [IO.Path]::GetRelativePath($RepoRoot, $file.FullName).Replace('\\', '/')
+                $relative = Get-TorcaRelativePath $RepoRoot $file.FullName
                 throw "$marker must reference a concrete tracker issue as ${marker}(#123): $relative"
             }
         }

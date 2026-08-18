@@ -207,10 +207,8 @@ impl OwnedTorDriver {
     }
 
     fn reap_onion_publisher(&mut self) -> Result<(), RuntimeDriverError> {
-        let Some(failure) = self
-            .onion_publisher
-            .as_mut()
-            .and_then(OnionPublisher::try_take_failure)
+        let Some(failure) =
+            self.onion_publisher.as_mut().and_then(OnionPublisher::try_take_failure)
         else {
             return Ok(());
         };
@@ -294,10 +292,7 @@ impl TorDriver for OwnedTorDriver {
         self.detect_process_state(now)?;
         self.reap_recovery(now)?;
         self.reap_onion_publisher()?;
-        if self
-            .client
-            .as_ref()
-            .is_none_or(|client| client.current().is_err())
+        if self.client.as_ref().is_none_or(|client| client.current().is_err())
             && self.bootstrap_worker.is_none()
             && self.next_restart_at.is_some_and(|deadline| deadline <= now)
         {

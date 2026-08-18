@@ -5,6 +5,34 @@ part of 'conversation_screen.dart';
 // Flutter's protected State APIs.
 // ignore_for_file: invalid_use_of_protected_member
 extension on _ConversationPaneState {
+  Future<void> _restoreInstantContact() async {
+    final value =
+        await widget.preferences?.contactInstant(
+          widget.conversation.contactId,
+        ) ??
+        false;
+    if (mounted) setState(() => _instantContact = value);
+  }
+
+  Future<void> _setInstantContact(bool enabled) async {
+    if (_instantContactBusy) return;
+    setState(() => _instantContactBusy = true);
+    final result = await widget.gateway.execute(
+      SetContactAvailabilityCommandDto(
+        contactIdHex: widget.conversation.contactId,
+        mode: enabled ? 'instant' : 'adaptive',
+      ),
+    );
+    if (result.ok) {
+      await widget.preferences?.setContactInstant(
+        widget.conversation.contactId,
+        enabled,
+      );
+      if (mounted) setState(() => _instantContact = enabled);
+    }
+    if (mounted) setState(() => _instantContactBusy = false);
+  }
+
   Future<void> _queueVoiceClip(String path, String originalName) async {
     final source = File(path);
     try {

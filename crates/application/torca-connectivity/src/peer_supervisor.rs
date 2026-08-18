@@ -10,7 +10,7 @@ use std::time::Duration;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_runtime_policy::Freshness;
 
-const HEALTHY_INTERVAL: Duration = Duration::from_secs(30);
+const HEALTHY_INTERVAL: Duration = Duration::from_secs(60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,7 +36,7 @@ struct PeerSchedule {
 
 /// One single-flight lane for all P2P probes in a runtime. It prevents a large
 /// contact list from opening many concurrent Tor streams while still letting
-/// every ready contact receive a periodic health sample.
+/// a leased ready contact receive an occasional health sample.
 #[derive(Default)]
 pub struct PeerProbeSupervisor {
     schedules: BTreeMap<OpaqueId, PeerSchedule>,

@@ -563,6 +563,14 @@ void _workerMainImpl(List<Object?> arguments) {
   }
   SendPort? eventsPort;
   Timer? snapshotTimer;
+  var fallbackFailures = 0;
+  Duration fallbackDelay() {
+    const seconds = <int>[1, 2, 5, 15, 30];
+    final index = fallbackFailures.clamp(0, seconds.length - 1);
+    fallbackFailures++;
+    return Duration(seconds: seconds[index]);
+  }
+
   final waiterReady = ReceivePort();
   SendPort? waiterPort;
   Isolate? waiterIsolate;
@@ -638,7 +646,7 @@ void _workerMainImpl(List<Object?> arguments) {
         }
         final waiter = waiterPort;
         if (waiter == null) {
-          snapshotTimer = Timer(const Duration(seconds: 1), pollSnapshot);
+          snapshotTimer = Timer(fallbackDelay(), pollSnapshot);
           return;
         }
         final reply = ReceivePort();
@@ -657,11 +665,12 @@ void _workerMainImpl(List<Object?> arguments) {
             .then<void>(
               (_) {
                 reply.close();
+                fallbackFailures = 0;
                 snapshotTimer = Timer(Duration.zero, pollSnapshot);
               },
               onError: (Object _, StackTrace __) {
                 reply.close();
-                snapshotTimer = Timer(const Duration(seconds: 1), pollSnapshot);
+                snapshotTimer = Timer(fallbackDelay(), pollSnapshot);
               },
             );
       }

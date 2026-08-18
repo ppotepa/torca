@@ -25,16 +25,8 @@ const PAIRING_STATE_VERSION: u8 = 2;
 
 include!("runtime/model.rs");
 
-impl<R, C, A, S> PairingRuntime<R, C, A, S>
-where
-    R: PairingRendezvousPort,
-    C: PairingCryptoPort,
-    A: PairingApprovalPort,
-    S: PairingPeerSecretStore,
-{
-    include!("runtime/lifecycle_methods.rs");
-    include!("runtime/poll_methods.rs");
-    include!("runtime/completion_methods.rs");
-}
+include!("runtime/lifecycle_methods.rs");
+include!("runtime/poll_methods.rs");
+include!("runtime/completion_methods.rs");
 
 include!("runtime/persistence.rs");

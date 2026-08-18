@@ -1,3 +1,10 @@
+impl<R, C, A, S> PairingRuntime<R, C, A, S>
+where
+    R: PairingRendezvousPort,
+    C: PairingCryptoPort,
+    A: PairingApprovalPort,
+    S: PairingPeerSecretStore,
+{
 pub fn maintenance(&mut self, now: Timestamp) -> Result<usize, PairingRuntimeError> {
     let due = self
         .engine
@@ -151,4 +158,5 @@ pub fn network_changed(&mut self) {
 
 pub fn into_parts(self) -> (PairingCoordinator<R, C>, EngineHandle, A, S) {
     (self.coordinator, self.engine, self.approval, self.peer_secrets)
+}
 }

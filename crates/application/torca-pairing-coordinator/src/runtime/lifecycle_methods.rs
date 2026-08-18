@@ -1,3 +1,10 @@
+impl<R, C, A, S> PairingRuntime<R, C, A, S>
+where
+    R: PairingRendezvousPort,
+    C: PairingCryptoPort,
+    A: PairingApprovalPort,
+    S: PairingPeerSecretStore,
+{
 pub const fn new(
     coordinator: PairingCoordinator<R, C>,
     engine: EngineHandle,
@@ -300,4 +307,5 @@ pub fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), PairingRunt
         .map_err(|_| PairingRuntimeError::Engine)?;
     self.cleanup_terminal(session_id);
     Ok(())
+}
 }

@@ -29,6 +29,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             acquire_pairing_lease(policy, id);
             wake_relay(relay_health);
             let result = pairing.join(id, code, ticket, now);
+            if result.is_ok() {
+                communication.prime_connections();
+            }
             record_pairing_result(&result, "JOIN", diagnostics, sequence, now);
             let _ = r.send(result);
         }
@@ -38,6 +41,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let result = pairing.approve(id, now);
             if result.is_ok() {
                 policy.release_lease(pairing_lease_owner(id));
+                communication.prime_connections();
             }
             record_pairing_result(&result, "APPROVE", diagnostics, sequence, now);
             let _ = r.send(result);
@@ -195,10 +199,14 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::WakeDelivery(_) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
         RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),
-        RuntimeCommand::SetRadioDemand(_, _) | RuntimeCommand::SetRadioTransmission(_, _) => {
+        RuntimeCommand::SetRadioDemand(_, _)
+        | RuntimeCommand::SetRadioTransmission(_, _)
+        | RuntimeCommand::SetInstantContactDemand(_, _) => {
             unreachable!()
         }
         RuntimeCommand::SetBatteryProfile(_) => unreachable!(),
+        RuntimeCommand::SetBackgroundSync(_) => unreachable!(),
+        RuntimeCommand::SetForeground(_) => unreachable!(),
         RuntimeCommand::SetMeteredNetwork(_) | RuntimeCommand::SetMeteredTransferPolicy(_) => {
             unreachable!()
         }

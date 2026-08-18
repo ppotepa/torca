@@ -20,7 +20,9 @@ use torca_delivery::{
     OutboxRecord, OutboxState, ReactionPayload, ReceiptPayload, TextPayload,
 };
 use torca_foundation::{CommandId, OpaqueId, Timestamp};
-use torca_messaging::{Message, MessageBody, MessageDirection, MessageId, MessageStatus, RetryPolicy};
+use torca_messaging::{
+    Message, MessageBody, MessageDirection, MessageId, MessageStatus, RetryPolicy,
+};
 use torca_peer_protocol::{AckStatus, PeerCodec, PeerMessage};
 
 const ACK_TIMEOUT: Duration = Duration::from_millis(80);
@@ -272,12 +274,8 @@ impl TestDeliveryTransport {
         message_kind: u16,
         ciphertext: Vec<u8>,
     ) -> Result<DeliveryAck, DeliveryTransportError> {
-        let frame = PeerCodec::encode(&PeerMessage::Data {
-            envelope_id,
-            message_kind,
-            ciphertext,
-        })
-        .map_err(|error| DeliveryTransportError(format!("encode peer frame: {error}")))?;
+        let frame = PeerCodec::encode(&PeerMessage::Data { envelope_id, message_kind, ciphertext })
+            .map_err(|error| DeliveryTransportError(format!("encode peer frame: {error}")))?;
         self.wire.send(frame)?;
         self.wait_for_ack(envelope_id)
     }
@@ -338,9 +336,7 @@ impl Endpoint {
     }
 
     fn send_payload(&self, envelope_id: OpaqueId, kind: u16, payload: Vec<u8>) -> DeliveryAck {
-        self.transport
-            .send_data(envelope_id, kind, payload)
-            .expect("control/attachment ack")
+        self.transport.send_data(envelope_id, kind, payload).expect("control/attachment ack")
     }
 
     fn controls(&self) -> Vec<ApplicationPayload> {
@@ -382,7 +378,7 @@ impl DeliveryLane {
             max_delay: Duration::from_secs(4),
         };
         let mut worker = DeliveryWorker::new(self.store.clone(), self.transport.clone(), policy);
-        worker.run_once(now, 8).expect("delivery maintenance");
+        let _ = worker.run_once(now, 8).expect("delivery maintenance");
     }
 }
 
@@ -395,26 +391,12 @@ impl TestPair {
     fn new() -> Self {
         let (a_to_b_tx, a_to_b_rx) = mpsc::sync_channel(64);
         let (b_to_a_tx, b_to_a_rx) = mpsc::sync_channel(64);
-        let a_wire = WireSender {
-            tx: a_to_b_tx,
-            faults: Arc::new(Mutex::new(FaultPlan::default())),
-        };
-        let b_wire = WireSender {
-            tx: b_to_a_tx,
-            faults: Arc::new(Mutex::new(FaultPlan::default())),
-        };
-        let a = spawn_endpoint(
-            OpaqueId::from_u128(2),
-            a_wire.clone(),
-            a_wire,
-            b_to_a_rx,
-        );
-        let b = spawn_endpoint(
-            OpaqueId::from_u128(1),
-            b_wire.clone(),
-            b_wire,
-            a_to_b_rx,
-        );
+        let a_wire =
+            WireSender { tx: a_to_b_tx, faults: Arc::new(Mutex::new(FaultPlan::default())) };
+        let b_wire =
+            WireSender { tx: b_to_a_tx, faults: Arc::new(Mutex::new(FaultPlan::default())) };
+        let a = spawn_endpoint(OpaqueId::from_u128(2), a_wire.clone(), a_wire, b_to_a_rx);
+        let b = spawn_endpoint(OpaqueId::from_u128(1), b_wire.clone(), b_wire, a_to_b_rx);
         Self { a, b }
     }
 }
@@ -497,10 +479,8 @@ fn handle_inbound_data(
                 }),
                 text.sent_at,
             );
-            let mut handler = InboundDeliveryHandler::new(
-                store,
-                WireAcknowledger { wire: ack_wire },
-            );
+            let mut handler =
+                InboundDeliveryHandler::new(store, WireAcknowledger { wire: ack_wire });
             handler.handle(envelope_id, message).expect("durable inbound text");
         }
         RECEIPT_MESSAGE_KIND | REACTION_MESSAGE_KIND => {
@@ -572,7 +552,12 @@ fn dropped_ack_retries_same_envelope_and_completes_as_duplicate() {
     lane.run(ts(1_020));
     assert_eq!(pair.a.store.outbox_state(MessageId::from_u128(31)), Some(OutboxState::Completed));
     assert_eq!(
-        pair.b.store.inbound(MessageId::from_u128(31)).expect("single durable inbound").body().as_str(),
+        pair.b
+            .store
+            .inbound(MessageId::from_u128(31))
+            .expect("single durable inbound")
+            .body()
+            .as_str(),
         "retry after lost ack"
     );
 }
@@ -587,7 +572,12 @@ fn duplicated_wire_data_is_deduplicated_before_ack_completion() {
 
     assert_eq!(pair.a.store.outbox_state(MessageId::from_u128(41)), Some(OutboxState::Completed));
     assert_eq!(
-        pair.b.store.inbound(MessageId::from_u128(41)).expect("deduplicated inbound").body().as_str(),
+        pair.b
+            .store
+            .inbound(MessageId::from_u128(41))
+            .expect("deduplicated inbound")
+            .body()
+            .as_str(),
         "duplicate frame"
     );
 }
@@ -642,10 +632,9 @@ fn receipt_reaction_and_attachment_use_the_same_peer_wire() {
         offset: 0,
         bytes: b"abc".to_vec(),
     });
-    for (id, frame) in [
-        (OpaqueId::from_u128(72), metadata.clone()),
-        (OpaqueId::from_u128(73), chunk.clone()),
-    ] {
+    for (id, frame) in
+        [(OpaqueId::from_u128(72), metadata.clone()), (OpaqueId::from_u128(73), chunk.clone())]
+    {
         assert_eq!(
             pair.a.send_payload(
                 id,

@@ -40,12 +40,7 @@ pub(crate) fn spawn_production_runtime(
     read_receipt_policy: ReadReceiptPolicy,
 ) -> Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError> {
     let platform = crate::platform_selector::platform_services()?;
-    spawn_runtime_for(
-        platform.as_ref(),
-        engine,
-        bootstrap_observer,
-        read_receipt_policy,
-    )
+    spawn_runtime_for(platform.as_ref(), engine, bootstrap_observer, read_receipt_policy)
 }
 
 fn spawn_runtime_for(
@@ -92,29 +87,27 @@ fn spawn_runtime_for(
         key_id,
     );
     let connectivity = ConnectivityObserver::default();
-    let ProductionCommunicationOutput {
-        driver: communication,
-        radio,
-    } = build_production_communication(
-        engine.clone(),
-        &database_path,
-        &database_key,
-        &paths.cache.join("attachments"),
-        &paths.data.join("attachments").join("staging"),
-        ProductionCommunicationInputs {
-            signer,
-            peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-            listener,
-            tor_client: tor_client.clone(),
-            local_identity_id: identity_id,
-            connectivity: connectivity.clone(),
-            read_receipt_policy,
-        },
-    )
-    .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
+    let ProductionCommunicationOutput { driver: communication, radio } =
+        build_production_communication(
+            engine.clone(),
+            &database_path,
+            &database_key,
+            &paths.cache.join("attachments"),
+            &paths.data.join("attachments").join("staging"),
+            ProductionCommunicationInputs {
+                signer,
+                peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+                listener,
+                tor_client: tor_client.clone(),
+                local_identity_id: identity_id,
+                connectivity: connectivity.clone(),
+                read_receipt_policy,
+            },
+        )
+        .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
 
     let relay = platform
         .relay_endpoint()

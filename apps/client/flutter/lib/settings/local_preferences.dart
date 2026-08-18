@@ -35,6 +35,8 @@ class LocalPreferences extends ChangeNotifier {
       'conversation.muted.$conversationId';
   static String _messageBookmarksKey(String conversationId) =>
       'conversation.bookmarks.$conversationId';
+  static String _contactInstantKey(String contactId) =>
+      'contact.instant.$contactId';
 
   AppThemeMode _themeMode = AppThemeMode.system;
   TorcaAppearance _appearance = const TorcaAppearance();
@@ -45,10 +47,10 @@ class LocalPreferences extends ChangeNotifier {
   bool _closeToTrayEnabled = true;
   String? _audioInputDeviceId;
   String? _audioOutputDeviceId;
-  TorcaBatteryMode _batteryMode = TorcaBatteryMode.automatic;
+  TorcaBatteryMode _batteryMode = TorcaBatteryMode.balanced;
   TorcaBackgroundSyncCadence _backgroundSync =
-      TorcaBackgroundSyncCadence.instant;
-  bool _allowDelayedBackgroundDelivery = false;
+      TorcaBackgroundSyncCadence.fiveMinutes;
+  bool _allowDelayedBackgroundDelivery = true;
   TorcaMeteredTransferPolicy _meteredTransfers =
       TorcaMeteredTransferPolicy.pauseLarge;
   TorcaVisualActivityPolicy _visualActivity =
@@ -85,6 +87,13 @@ class LocalPreferences extends ChangeNotifier {
   TorcaMeteredTransferPolicy get meteredTransfers => _meteredTransfers;
   TorcaVisualActivityPolicy get visualActivity => _visualActivity;
   Listenable get shellChanges => _shellRevision;
+
+  Future<bool> contactInstant(String contactId) async =>
+      await _store.getBool(_contactInstantKey(contactId)) ?? false;
+
+  Future<void> setContactInstant(String contactId, bool enabled) async {
+    await _store.setBool(_contactInstantKey(contactId), enabled);
+  }
 
   void _notifyShellChanged() {
     _shellRevision.value++;
@@ -173,7 +182,7 @@ class LocalPreferences extends ChangeNotifier {
       await _store.getString(_backgroundSyncKey),
     );
     _allowDelayedBackgroundDelivery =
-        await _store.getBool(_delayedDeliveryKey) ?? false;
+        await _store.getBool(_delayedDeliveryKey) ?? true;
     _meteredTransfers = TorcaMeteredTransferPolicy.parse(
       await _store.getString(_meteredTransfersKey),
     );

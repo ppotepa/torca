@@ -1,3 +1,8 @@
+impl<S, K> PeerLink<S, K>
+where
+    S: ContactRepository + PeerCredentialRepository,
+    K: HandshakeSigner,
+{
 pub const fn new(
     listener: PeerListener,
     relationships: S,
@@ -20,6 +25,7 @@ pub const fn new(
         inbound: VecDeque::new(),
         activity: BTreeMap::new(),
         connectivity: None,
+        waker: None,
     }
 }
 
@@ -29,8 +35,18 @@ pub fn with_connectivity(mut self, connectivity: ConnectivityObserver) -> Self {
     self
 }
 
-pub fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
-    self.listener.set_waker(waker).map_err(|_| PeerLinkError::Listener)
+pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
+    self.listener
+        .set_waker(Arc::clone(&waker))
+        .map_err(|_| PeerLinkError::Listener)?;
+    self.waker = Some(waker);
+    Ok(())
+}
+
+fn notify_waker(&self) {
+    if let Some(waker) = &self.waker {
+        waker();
+    }
 }
 
 pub fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {
@@ -69,6 +85,32 @@ pub fn ensure_connected(
     Ok(true)
 }
 
+/// Starts a one-shot warm-up for active contacts after a relationship has
+/// just been created or restored. This is deliberately explicit: normal
+/// maintenance does not keep every contact connected, preserving the lazy
+/// connection policy for idle/background use.
+pub fn prime_connections(&mut self) -> Result<usize, PeerLinkError> {
+    let contacts = self.relationships.list().map_err(map_contact)?;
+    let now = system_timestamp()?;
+    let mut started = 0;
+    for contact in contacts {
+        if contact.status() != ContactStatus::Active {
+            continue;
+        }
+        if self.connection_state(contact.id()) == PeerConnectionState::Disconnected
+            && self.preferred_dialer(contact.id())
+        {
+            self.reconnect.entry(contact.id()).or_insert(ReconnectEntry {
+                failures: 0,
+                next_attempt_at: now,
+                in_progress: false,
+            });
+            started += 1;
+        }
+    }
+    Ok(started)
+}
+
 pub fn maintenance(
     &mut self,
     contacts: &[ContactId],
@@ -80,7 +122,60 @@ pub fn maintenance(
     self.poll_sessions(now, &mut report)?;
     self.plan_disconnected(contacts);
     self.run_due_reconnects(now, &mut report)?;
+    if report.became_ready > 0
+        || report.disconnected > 0
+        || report.reconnect_started > 0
+        || report.inbound_queued > 0
+    {
+        self.notify_waker();
+    }
     Ok(report)
+}
+
+/// Closes quiet ready streams which have no active runtime demand.  Inbound
+/// queued work is always preserved; the next durable delivery or attention
+/// lease will schedule a reconnect without losing relationship state.
+pub fn close_idle_sessions(
+    &mut self,
+    retained: &[ContactId],
+    now: Timestamp,
+) -> Result<usize, PeerLinkError> {
+    const IDLE_LIMIT: Duration = Duration::from_secs(10 * 60);
+    let cutoff = now.checked_sub(IDLE_LIMIT);
+    let queued = self.inbound.iter().map(|item| item.contact_id).collect::<BTreeSet<_>>();
+    let should_close = |contact_id: ContactId, activity: &BTreeMap<ContactId, PeerActivitySnapshot>| {
+        !retained.contains(&contact_id)
+            && !queued.contains(&contact_id)
+            && activity
+                .get(&contact_id)
+                .and_then(|entry| entry.last_activity_at)
+                .zip(cutoff)
+                .is_some_and(|(last, cutoff)| last <= cutoff)
+    };
+    let mut closed = 0;
+    for contact_id in self
+        .outgoing
+        .keys()
+        .chain(self.incoming.keys())
+        .copied()
+        .collect::<BTreeSet<_>>()
+    {
+        if !should_close(contact_id, &self.activity) {
+            continue;
+        }
+        if let Some(mut session) = self.outgoing.remove(&contact_id) {
+            session.close().map_err(map_session)?;
+        }
+        if let Some(mut session) = self.incoming.remove(&contact_id) {
+            session.close().map_err(map_session)?;
+        }
+        self.reconnect.remove(&contact_id);
+        closed += 1;
+    }
+    if closed > 0 {
+        self.notify_waker();
+    }
+    Ok(closed)
 }
 
 pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
@@ -100,6 +195,12 @@ pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
 }
 
 pub fn network_changed(&mut self, now: Timestamp) {
+    let had_session = self
+        .incoming
+        .keys()
+        .chain(self.outgoing.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
     let mut contacts = self
         .incoming
         .keys()
@@ -119,11 +220,20 @@ pub fn network_changed(&mut self, now: Timestamp) {
     self.pending_acks.clear();
     self.reconnect.clear();
     for contact_id in contacts {
+        let preferred = self.preferred_dialer(contact_id);
+        if !preferred && !had_session.contains(&contact_id) {
+            continue;
+        }
+        let next_attempt_at = if preferred {
+            now
+        } else {
+            now.checked_add(Duration::from_secs(20)).unwrap_or(now)
+        };
         self.reconnect.insert(
             contact_id,
             ReconnectEntry {
                 failures: 0,
-                next_attempt_at: now,
+                next_attempt_at,
                 in_progress: false,
             },
         );
@@ -190,7 +300,9 @@ pub fn send_envelope(
 ) -> Result<(), PeerLinkError> {
     if !self.is_ready(contact_id) {
         let now = system_timestamp()?;
-        let _ = self.ensure_connected(contact_id, now);
+        if matches!(self.ensure_connected(contact_id, now), Ok(true)) {
+            self.notify_waker();
+        }
         return Err(PeerLinkError::NotReady);
     }
     let started_at = system_timestamp()?;
@@ -375,4 +487,5 @@ pub fn shutdown(&mut self) {
 
 pub fn into_parts(self) -> (PeerListener, S, K) {
     (self.listener, self.relationships, self.signer)
+}
 }

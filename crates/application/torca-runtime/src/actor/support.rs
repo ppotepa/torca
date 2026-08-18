@@ -154,13 +154,13 @@ mod tests {
 
     #[test]
     fn idle_scheduler_has_no_application_deadline() {
-        assert_eq!(next_runtime_delay(None, None, None, None, None), None);
+        assert_eq!(next_runtime_delay(None, None, None, None, None, None), None);
     }
 
     #[test]
     fn active_scheduler_uses_executor_deadline() {
         assert_eq!(
-            next_runtime_delay(None, None, Some(Duration::from_millis(250)), None, None),
+            next_runtime_delay(None, None, Some(Duration::from_millis(250)), None, None, None),
             Some(Duration::from_millis(250))
         );
     }
@@ -174,6 +174,7 @@ mod tests {
                 Some(Duration::from_secs(7)),
                 Some(Duration::from_secs(2)),
                 Some(Duration::from_secs(4)),
+                Some(Duration::from_secs(6)),
             ),
             Some(Duration::from_secs(2))
         );

@@ -1,3 +1,5 @@
+impl TorcaRuntime {
+
 fn read_models(&self) -> &ApplicationReadModels {
     self.application_runtime
         .read_models()
@@ -71,6 +73,7 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         last_onion_log_state: None,
         last_relay_log_state: None,
         last_peer_log_state: HashMap::new(),
+        last_message_log_state: HashMap::new(),
         last_attachment_log_state: HashMap::new(),
         last_radio_log_state: HashMap::new(),
         network_ready_logged: false,
@@ -129,6 +132,32 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         );
         eprintln!("Torca native engine initialization failed: initial snapshot unavailable");
         return Err("initial native snapshot unavailable".to_owned());
+    }
+    let instant_contacts = runtime
+        .application_runtime
+        .snapshot_context()
+        .map(|context| {
+            context
+                .application
+                .contacts
+                .iter()
+                .filter_map(|contact| {
+                    let id = contact.id();
+                    runtime
+                        .read_models()
+                        .settings
+                        .contact_availability(id)
+                        .ok()
+                        .filter(|mode| {
+                            *mode == torca_battery::ContactAvailabilityMode::Instant
+                        })
+                        .map(|_| id)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for contact_id in instant_contacts {
+        runtime.application_runtime.set_instant_contact_demand(contact_id, true);
     }
     runtime.log(
         "bootstrap",
@@ -193,6 +222,28 @@ pub(crate) fn execute_with_request_id(
         self.application_runtime.set_battery_profile(profile_for_preferences(preferences));
         self.application_runtime.set_metered_transfer_policy(preferences.metered_transfers);
     }
+    if let torca_contract::BridgeCommand::SetContactAvailability {
+        contact_id_hex,
+        mode,
+    } = &command
+    {
+        let Ok(contact_id) = contact_id_hex.parse::<OpaqueId>() else {
+            self.last_result_json = error_result("invalid contact availability id");
+            return ABI_ERROR;
+        };
+        let contact_id = torca_contacts::ContactId::from_opaque(contact_id);
+        let availability = torca_battery::ContactAvailabilityMode::from_wire(mode);
+        let now = unix_time_ms().unwrap_or(0);
+        if self
+            .read_models()
+            .settings
+            .set_contact_availability(contact_id, availability, now)
+            .is_err()
+        {
+            self.last_result_json = error_result("contact availability storage unavailable");
+            return ABI_ERROR;
+        }
+    }
     if matches!(&command, torca_contract::BridgeCommand::AcknowledgeNewContacts) {
         let now = unix_time_ms().unwrap_or(0);
         if self.read_models().settings.acknowledge_new_contacts(now).is_err() {
@@ -220,12 +271,26 @@ pub(crate) fn execute_with_request_id(
         _ => None,
     };
     let radio_operation = match &command {
-        torca_contract::BridgeCommand::SetRadioEnabled { .. } => Some("radio.set_enabled"),
-        torca_contract::BridgeCommand::BeginRadioTransmission { .. } => {
-            Some("radio.begin_transmission")
+        torca_contract::BridgeCommand::SetRadioEnabled { contact_id_hex, .. } => {
+            Some(("radio.set_enabled".to_owned(), contact_id_hex.clone()))
         }
-        torca_contract::BridgeCommand::EndRadioTransmission { .. } => {
-            Some("radio.end_transmission")
+        torca_contract::BridgeCommand::BeginRadioTransmission { contact_id_hex } => {
+            Some(("radio.begin_transmission".to_owned(), contact_id_hex.clone()))
+        }
+        torca_contract::BridgeCommand::EndRadioTransmission { contact_id_hex } => {
+            Some(("radio.end_transmission".to_owned(), contact_id_hex.clone()))
+        }
+        _ => None,
+    };
+    let message_operation = match &command {
+        torca_contract::BridgeCommand::QueueMessage { message_id_hex, .. } => {
+            Some(("message.queue".to_owned(), message_id_hex.clone()))
+        }
+        torca_contract::BridgeCommand::RetryMessage { message_id_hex, .. } => {
+            Some(("message.retry".to_owned(), message_id_hex.clone()))
+        }
+        torca_contract::BridgeCommand::CancelMessage { message_id_hex, .. } => {
+            Some(("message.cancel".to_owned(), message_id_hex.clone()))
         }
         _ => None,
     };
@@ -238,6 +303,24 @@ pub(crate) fn execute_with_request_id(
     if let Some((operation, session_id)) = &pairing_operation {
         self.log_pairing(request_id, operation, session_id, "PAIRING_REQUEST_STARTED", None);
     }
+    if let Some((operation, contact_id)) = radio_operation.as_ref() {
+        self.log(
+            "radio",
+            Level::Info,
+            "command",
+            "RADIO_COMMAND_STARTED",
+            &format!("operation={operation} contact={contact_id} requestId={request_id}"),
+        );
+    }
+    if let Some((operation, message_id)) = message_operation.as_ref() {
+        self.log(
+            "messaging",
+            Level::Info,
+            "command",
+            "MESSAGE_COMMAND_STARTED",
+            &format!("operation={operation} message={} requestId={request_id}", message_id),
+        );
+    }
 
     let application_result = match decode_application_command(command) {
         Ok(command) => self.application_runtime.execute(command),
@@ -249,9 +332,11 @@ pub(crate) fn execute_with_request_id(
         if is_profile {
             self.log_profile(request_id, "PROFILE_STORAGE_FAILED");
         }
-        if let (Some(logger), Some(operation)) = (&self.logger, radio_operation) {
+        if let (Some(logger), Some((operation, contact_id))) = (&self.logger, radio_operation.as_ref()) {
             let context = json!({
                 "operation": operation,
+                "contactId": contact_id,
+                "requestId": request_id,
                 "errorCode": &result.error_code,
             })
             .to_string();
@@ -281,6 +366,20 @@ pub(crate) fn execute_with_request_id(
                 result.error_code.as_deref(),
             );
         }
+        if let Some((operation, message_id)) = message_operation.as_ref() {
+            self.log(
+                "messaging",
+                Level::Error,
+                "command",
+                "MESSAGE_COMMAND_FAILED",
+                &format!(
+                    "operation={operation} message={} requestId={} errorCode={}",
+                    message_id,
+                    request_id,
+                    result.error_code.as_deref().unwrap_or("unknown"),
+                ),
+            );
+        }
         self.last_result_json = bridge_result_json(&result);
         return ABI_ERROR;
     }
@@ -303,5 +402,25 @@ pub(crate) fn execute_with_request_id(
             Some(result.kind.as_str()),
         );
     }
+    if let Some((operation, contact_id)) = radio_operation.as_ref() {
+        self.log(
+            "radio",
+            Level::Info,
+            "command",
+            "RADIO_COMMAND_SUCCEEDED",
+            &format!("operation={operation} contact={contact_id} requestId={request_id}"),
+        );
+    }
+    if let Some((operation, message_id)) = message_operation.as_ref() {
+        self.log(
+            "messaging",
+            Level::Info,
+            "command",
+            "MESSAGE_COMMAND_SUCCEEDED",
+            &format!("operation={operation} message={} requestId={request_id}", message_id),
+        );
+    }
     ABI_OK
+}
+
 }

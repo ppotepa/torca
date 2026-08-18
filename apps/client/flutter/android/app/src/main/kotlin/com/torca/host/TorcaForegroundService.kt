@@ -14,6 +14,8 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
+import android.net.ConnectivityDiagnosticsManager
+import android.net.NetworkCapabilities
 import android.net.Network
 import android.net.NetworkRequest
 import android.os.Build
@@ -22,6 +24,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import java.util.concurrent.Executors
 import com.torca.app.MainActivity
 import org.json.JSONObject
 
@@ -39,6 +42,10 @@ class TorcaForegroundService : Service() {
     // fetches notifications after a real runtime change.
     private var runtimeRevision = 0L
     private lateinit var connectivityManager: ConnectivityManager
+    private var connectivityDiagnosticsManager: ConnectivityDiagnosticsManager? = null
+    private val connectivityDiagnosticsExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "TorcaConnectivityDiagnostics")
+    }
     private var warmupWakeLock: PowerManager.WakeLock? = null
     private val energyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -76,10 +83,37 @@ class TorcaForegroundService : Service() {
             capabilities: android.net.NetworkCapabilities,
         ) = observeCapabilities(network, capabilities)
     }
+    private val connectivityDiagnosticsCallback =
+        object : ConnectivityDiagnosticsManager.ConnectivityDiagnosticsCallback() {
+            override fun onDataStallSuspected(
+                report: ConnectivityDiagnosticsManager.DataStallReport,
+            ) {
+                if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                    NativeRuntimeBridge.nativeLifecycleEvent("data_stall_on")
+                }
+            }
+
+            override fun onConnectivityReportAvailable(
+                report: ConnectivityDiagnosticsManager.ConnectivityReport,
+            ) {
+                if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                    NativeRuntimeBridge.nativeLifecycleEvent("data_stall_off")
+                }
+            }
+
+        }
     private val notificationPoller = object : Runnable {
+        private var retryIndex = 0
+
+        private fun retry() {
+            val delay = RUNTIME_RETRY_MS[retryIndex.coerceAtMost(RUNTIME_RETRY_MS.lastIndex)]
+            retryIndex = (retryIndex + 1).coerceAtMost(RUNTIME_RETRY_MS.lastIndex)
+            notificationHandler.postDelayed(this, delay)
+        }
+
         override fun run() {
             if (!NativeRuntimeBridge.nativeRuntimeAvailable()) {
-                notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
+                retry()
                 return
             }
             val waitResult = NativeRuntimeBridge.nativeWaitForRevision(
@@ -90,9 +124,10 @@ class TorcaForegroundService : Service() {
             if (waitResult < 0) {
                 // A transient native restart should not strand the service;
                 // retry at a bounded low-frequency fallback interval.
-                notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
+                retry()
                 return
             }
+            retryIndex = 0
             runtimeRevision = NativeRuntimeBridge.nativeRuntimeRevision().coerceAtLeast(runtimeRevision)
             pollMessageNotifications()
             // A timeout simply re-enters the blocking wait. No periodic
@@ -140,6 +175,19 @@ class TorcaForegroundService : Service() {
                 )
             }
         }.onFailure { Log.w(TAG, "Could not register network callback", it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                connectivityDiagnosticsManager =
+                    getSystemService(ConnectivityDiagnosticsManager::class.java)
+                connectivityDiagnosticsManager?.registerConnectivityDiagnosticsCallback(
+                    NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(),
+                    connectivityDiagnosticsExecutor,
+                    connectivityDiagnosticsCallback,
+                )
+            }.onFailure { Log.w(TAG, "Could not register connectivity diagnostics", it) }
+        }
         createServiceChannel()
         createMessageChannel()
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -213,6 +261,14 @@ class TorcaForegroundService : Service() {
         warmupWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
         warmupWakeLock = null
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                connectivityDiagnosticsManager?.unregisterConnectivityDiagnosticsCallback(
+                    connectivityDiagnosticsCallback,
+                )
+            }
+        }
+        connectivityDiagnosticsExecutor.shutdownNow()
         runCatching { unregisterReceiver(energyReceiver) }
         notificationHandler.removeCallbacks(notificationPoller)
         notificationHandler.removeCallbacks(networkChangeRunnable)
@@ -488,9 +544,12 @@ class TorcaForegroundService : Service() {
         // Runtime creation is an exceptional startup/restart path. Once the
         // native runtime exists, the service blocks on its revision hub and
         // does not use this fallback at all.
-        const val RUNTIME_WAIT_MS = 1000L
+        val RUNTIME_RETRY_MS = longArrayOf(1_000L, 2_000L, 5_000L, 15_000L, 30_000L)
         const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
-        const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
+        // Bootstrap gets a short bounded boost. Holding a partial wake lock
+        // for ten minutes hid stalled startup and caused a severe battery
+        // regression on fresh profiles.
+        const val WARMUP_WAKELOCK_MS = 90 * 1000L
         const val TAG = "TorcaRuntime"
     }
 

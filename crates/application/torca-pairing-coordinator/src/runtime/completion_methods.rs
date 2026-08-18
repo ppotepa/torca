@@ -1,3 +1,10 @@
+impl<R, C, A, S> PairingRuntime<R, C, A, S>
+where
+    R: PairingRendezvousPort,
+    C: PairingCryptoPort,
+    A: PairingApprovalPort,
+    S: PairingPeerSecretStore,
+{
 fn maybe_send_completion(
     &mut self,
     session_id: PairingSessionId,
@@ -252,4 +259,5 @@ fn local_offer(
         pairing_id: context.0,
         payload: PairingPayload::Offer(Box::new(offer)),
     })
+}
 }

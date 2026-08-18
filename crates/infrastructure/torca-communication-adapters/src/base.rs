@@ -81,6 +81,10 @@ where
         let _ = self.link.network_changed(now);
     }
 
+    fn prime_connections(&mut self) {
+        let _ = self.link.prime_connections();
+    }
+
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
         let _ = self.link.set_waker(waker);
     }
@@ -105,6 +109,14 @@ where
                 last_activity_at: activity.last_activity_at,
             })
             .collect()
+    }
+
+    fn close_idle_peers(
+        &mut self,
+        retained: &[ContactId],
+        now: Timestamp,
+    ) -> Result<usize, CommunicationError> {
+        self.link.close_idle_sessions(retained, now).map_err(|_| CommunicationError::Peer)
     }
 
     fn take_inbound(&mut self) -> Result<Option<InboundEnvelope>, CommunicationError> {

@@ -20,10 +20,7 @@ struct TestDatabase(PathBuf);
 impl TestDatabase {
     fn new(label: &str) -> Self {
         let id = NEXT_DB.fetch_add(1, Ordering::Relaxed);
-        Self(std::env::temp_dir().join(format!(
-            "torca-{label}-{}-{id}.db",
-            std::process::id()
-        )))
+        Self(std::env::temp_dir().join(format!("torca-{label}-{}-{id}.db", std::process::id())))
     }
 
     fn path(&self) -> &Path {
@@ -92,9 +89,7 @@ fn several_sqlcipher_connections_can_commit_a_writer_burst_without_busy_errors()
 
     // Bootstrap every connection before the synchronized burst so this test
     // measures normal application writer contention, not migration startup.
-    let connections = (0..WRITERS)
-        .map(|_| open_configured(database.path()))
-        .collect::<Vec<_>>();
+    let connections = (0..WRITERS).map(|_| open_configured(database.path())).collect::<Vec<_>>();
     let barrier = Arc::new(Barrier::new(WRITERS));
     let mut workers = Vec::with_capacity(WRITERS);
 
@@ -116,9 +111,7 @@ fn several_sqlcipher_connections_can_commit_a_writer_burst_without_busy_errors()
         worker.join().expect("writer thread");
     }
 
-    let count: i64 = verifier
-        .connection()
-        .query_row(COUNT_SQL, [], |row| row.get(0))
-        .expect("count burst rows");
+    let count: i64 =
+        verifier.connection().query_row(COUNT_SQL, [], |row| row.get(0)).expect("count burst rows");
     assert_eq!(count, i64::try_from(WRITERS * WRITES_PER_WRITER).expect("count fits"));
 }

@@ -29,8 +29,11 @@ enum RuntimeCommand {
     Diagnostics(Sender<String>),
     NetworkChanged,
     SetRadioDemand(ContactId, bool),
+    SetInstantContactDemand(ContactId, bool),
     SetRadioTransmission(ContactId, bool),
     SetBatteryProfile(BatteryProfile),
+    SetBackgroundSync(torca_battery::BackgroundSyncCadence),
+    SetForeground(bool),
     SetMeteredNetwork(bool),
     SetMeteredTransferPolicy(MeteredTransferPolicy),
     SetTorDormancy(bool),
@@ -183,6 +186,16 @@ impl RuntimeHandle {
             send_with_timeout(&self.sender, RuntimeCommand::SetRadioDemand(contact_id, enabled));
     }
 
+    /// Keeps a user-selected contact immediately reachable until explicitly
+    /// disabled. The setting owner persists intent; this actor owns only the
+    /// process-local connection lease.
+    pub fn set_instant_contact_demand(&self, contact_id: ContactId, enabled: bool) {
+        let _ = send_with_timeout(
+            &self.sender,
+            RuntimeCommand::SetInstantContactDemand(contact_id, enabled),
+        );
+    }
+
     /// Keeps a short lease while a push-to-talk transmission is being negotiated.
     pub fn set_radio_transmission(&self, contact_id: ContactId, active: bool) {
         let _ = send_with_timeout(
@@ -199,6 +212,14 @@ impl RuntimeHandle {
 
     pub fn set_metered_network(&self, metered: bool) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::SetMeteredNetwork(metered));
+    }
+
+    pub fn set_background_sync(&self, cadence: torca_battery::BackgroundSyncCadence) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetBackgroundSync(cadence));
+    }
+
+    pub fn set_foreground(&self, foreground: bool) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetForeground(foreground));
     }
 
     pub fn set_metered_transfer_policy(&self, policy: MeteredTransferPolicy) {
@@ -247,8 +268,12 @@ fn next_runtime_delay(
     communication: Option<Duration>,
     lease: Option<Duration>,
     peer_probe: Option<Duration>,
+    background_sync: Option<Duration>,
 ) -> Option<Duration> {
-    [tor, pairing, communication, lease, peer_probe].into_iter().flatten().min()
+    [tor, pairing, communication, lease, peer_probe, background_sync]
+        .into_iter()
+        .flatten()
+        .min()
 }
 
 fn command_writes_database(command: &RuntimeCommand) -> bool {

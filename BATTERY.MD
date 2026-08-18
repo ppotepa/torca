@@ -10,7 +10,7 @@ exists.
 
 ### Audited implementation status
 
-Last reconciled with the source tree on 2026-08-16.
+Last reconciled with the source tree on 2026-08-18.
 
 | Capability | Status | Current implementation |
 | --- | --- | --- |
@@ -23,16 +23,16 @@ Last reconciled with the source tree on 2026-08-16.
 | Health freshness suppressing some peer probes | Implemented core | `PeerProbeSupervisor` consumes freshness; peer TX/RX/ACK/handshake/failure counters now feed policy evidence. Attachment chunks are authenticated envelope frames and therefore already refresh the peer evidence; a separate chunk metric is optional diagnostics only |
 | Attention/viewport contract from Flutter | Implemented core | `runtime.attention.set` crosses the generated contract; top-level navigation reports up to seven visible contacts, focused conversation routes report on entry and on mobile route return, and both policy and runtime lease ownership reject stale generations |
 | Feature-owned leases | Implemented core | queued/retried attachments, message delivery and pairing operations create runtime leases independent of UI attention; relay health is gated by the active relay lease; radio enable/transmit commands create separate leases and release the previous contact’s lease when the coordinator switches channels |
-| Central deadline scheduler | Implemented core | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, radio control/state-sync retry, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines and lease expiry expose wake sources. A 250-ms compatibility fallback remains only while a peer transport is Connecting/Handshaking/Reconnecting |
+| Central deadline scheduler | Implemented core | fixed 100-ms tick, native 1-s pending reconcile fallback and idle fallback were removed when no executor owns work; delivery/control outboxes, radio control/state-sync retry, Tor lifecycle, peer/radio listener events, onion-publisher callbacks, durable pending deadlines, background-sync cadence and lease expiry expose wake sources. A 250-ms compatibility fallback remains only while a peer transport is Connecting/Handshaking/Reconnecting |
 | Demand/evidence-driven relay health | Implemented core | production runtime uses a demand-driven supervisor: no initial/healthy probe exists without a relay lease; pairing/network events wake one lane and retry backoff is bounded |
-| Fully evidence-driven peer health | Implemented core | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs, peer TX/RX/ACK counters and ready-to-disconnected transitions feed policy evidence; stale/failed peers use 30-second healthy and 10-second retry intervals through one single-flight lane |
+| Fully evidence-driven peer health | Implemented core | fresh Live/Recent evidence removes peer deadlines entirely; handshake transitions, successful probe ACKs, peer TX/RX/ACK counters and ready-to-disconnected transitions feed policy evidence; leased stale/failed peers use 60-second healthy and 10-second retry intervals through one single-flight lane |
 | Event-driven peer ACK waits | Implemented core | interactive envelope ACKs use a bounded blocking socket read (`receive_timeout`) instead of a fixed 10-ms worker polling loop; the shared fallback uses 5-50 ms exponential backoff while the bounded wait remains pending |
 | Fair attachment scheduling | Implemented core | outgoing attachment maintenance advances a round-robin cursor, so one message/contact cannot consume every bounded chunk slot |
-| Blocking/deadline radio worker | Implemented core | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout, 10-second idle keepalive, and audio/ACK/burst deadlines covered by deterministic tests |
-| Arti soft dormancy | Integrated, soak-gated | Effective background policy now calls `TorActivityMode::SoftDormant`; foreground, durable demand and network lifecycle return it to `Active`. Pairing, message delivery, attachments and radio commands explicitly wake Tor before transport work. Release rollout still requires Android onion/pairing/delivery/radio soak evidence |
+| Blocking/deadline radio worker | Implemented core | idle command waiting and radio-media listener acceptance are blocking; radio control/state-sync queues expose retry deadlines to the central scheduler; active media uses a dynamically bounded I/O timeout, adaptive 30/60/120-second idle keepalive, and audio/ACK/burst deadlines covered by deterministic tests |
+| Arti soft dormancy | Integrated, soak-gated | Effective background policy now calls `TorActivityMode::SoftDormant`; foreground, durable demand, background rendezvous and network lifecycle return it to `Active`. Pairing, message delivery, attachments and radio commands explicitly wake Tor before transport work. Release rollout still requires Android onion/pairing/delivery/radio soak evidence |
 | Runtime Energy Ledger | Implemented core | `torca-battery::BatteryLedger` is the shared bounded ledger; diagnostics exports scheduler/native/FFI/radio wakeups, snapshots/DB reads, command and worker writes, peer/relay probes, TX/RX/handshake/chunk deltas, suppressed work and radio demand; physical byte totals remain platform samples |
 | Revision-gated runtime poll | Implemented core | Flutter sends its last revision/cursor and native reuses the cached projection when both are current, while the first poll and stale cursors still force a refresh |
-| User battery preferences | Implemented and enforced | `battery.preferences.set`, SQLite migration `0012_battery_preferences.sql`, Flutter settings, metered transfer admission and visual avatar policy are wired into executors |
+| User battery preferences | Implemented and enforced | `battery.preferences.set`, SQLite migrations `0012_battery_preferences.sql` and contact availability persistence, Flutter settings, metered transfer admission, visual avatar policy, instant-contact leases and background-sync cadence are wired into executors |
 | Android energy callbacks | Implemented core | `TorcaForegroundService` forwards Power Saver, charging, metered-network and validated-network transitions as lifecycle events; no polling loop is added |
 | Windows energy provider | Implemented core | `torca-platform-windows::WindowsEnergyProvider` samples `GetSystemPowerStatus` on demand; host notification wiring remains platform-shell specific |
 | Why Awake diagnostics | Implemented core | Runtime policy exports redaction-safe lease reasons, scheduled work classes, active counts, network generation and next deadline through `diagnostics.get` |
@@ -74,11 +74,9 @@ The plan is intentionally narrowed into three confidence tiers:
 2. **Measurement-gated optimization:** apply Arti soft dormancy only after
    Android onion resume, pairing, delivery, attachments and radio pass soak
    tests. Dormancy is not a prerequisite for event-driven runtime savings.
-3. **Optional experiments:** deterministic dial ownership, viewport-driven
-   contact probing and rendezvous windows. They are not part of the minimum
-   battery architecture and must not add latency or reduce delivery
-   reliability. Implement them only when traces demonstrate a concrete
-   problem that the first tier does not solve.
+3. **Measurement-gated extension:** rendezvous-window coalescing remains
+   optional. Deterministic dial ownership and bounded viewport contact leases
+   are implemented, but their release decision still requires soak traces.
 
 This avoids over-engineering the current system. In particular, a stored
 contact is not a reason to keep a stream open, but the application must remain
@@ -127,11 +125,9 @@ on an experimental dormant/resume cycle.
 
 The following remain documented options, not required architecture:
 
-- `TorClient::set_dormant()` and background rendezvous windows;
-- deterministic dial ownership and takeover rules;
-- viewport-level contact IDs and affinity scoring;
-- Android `ConnectivityDiagnosticsManager` integration;
-- abstract energy costs that pretend to be physical battery measurements.
+- shared rendezvous windows and deterministic takeover timing;
+- physical battery estimates; the implemented `energyScore` remains an
+  explicitly abstract regression metric.
 
 Each deferred item needs a trace, a measurable acceptance test and a rollback
 path before implementation. This keeps the runtime simpler and prevents a
@@ -349,8 +345,8 @@ After the final lease expires:
 - relay stream closes after its own grace period;
 - no contact exists in a default always-connected set.
 
-Deterministic dial ownership is an optional experiment, not part of the
-reliability baseline:
+Deterministic dial ownership is part of the reliability baseline for
+speculative reconnects:
 
 - identity ordering selects the preferred initiator for speculative connect, rendezvous, and recovery;
 - concrete outbound work may dial immediately regardless of preferred ownership;
@@ -439,6 +435,10 @@ publisher events wake the runtime immediately; low-priority work is coalesced:
 - foreground slack: up to 3 seconds;
 - background slack: up to 15 seconds;
 - user actions, protocol ACKs, pairing expiry, and audio deadlines: no slack.
+- selected background-sync cadence: one best-effort deadline with a bounded
+  90-second rendezvous lease; no fixed background tick is retained.
+- quiet ready peer sessions without a lease close after ten minutes while
+  inbound queues and durable transfer leases remain protected.
 
 ## Radio and adaptive keepalive (implemented core; hardening ongoing)
 
@@ -521,7 +521,10 @@ projection_events
 ffi_wakes
 ```
 
-Energy Ledger assigns stable abstract costs for regression testing. It is not presented as mWh. Android UID TX/RX totals are sampled only on lifecycle changes, Diagnostics entry, and scenario completion.
+Energy Ledger assigns stable abstract costs for regression testing through
+`BatterySnapshot::energy_score()`. It is not presented as mWh. Android UID
+TX/RX totals are sampled only on lifecycle changes, Diagnostics entry, and
+scenario completion.
 
 ## Implementation sequence and current progress
 
@@ -574,8 +577,8 @@ Energy Ledger assigns stable abstract costs for regression testing. It is not pr
    the default idle path at zero worker iterations.
 9. **Deferred / measurement-gated:** evaluate Arti soft dormancy only after
    reliability soak tests pass. It is optional and not a release blocker.
-10. **Optional experiments:** deterministic dial ownership, viewport contact
-    probing and rendezvous windows, each behind its own trace-based gate.
+10. **Measurement-gated extension:** shared rendezvous windows remain optional
+    and require trace evidence before changing delivery timing.
 11. **Final cleanup:** delete every replaced polling constant, reconnect-all
     path and obsolete scheduler only after the corresponding executor exposes
     a tested deadline and cancellation path.

@@ -7,10 +7,7 @@ use crate::{InboundPeerEnvelope, LinkAck, PeerLinkError};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AckWaitAction {
     Complete(Result<LinkAck, PeerLinkError>),
-    Store {
-        envelope_id: OpaqueId,
-        ack: Result<LinkAck, PeerLinkError>,
-    },
+    Store { envelope_id: OpaqueId, ack: Result<LinkAck, PeerLinkError> },
     QueueInbound(InboundPeerEnvelope),
     Ignore,
 }
@@ -37,16 +34,14 @@ pub(crate) fn classify_ack_wait_message(
                 AckWaitAction::Store { envelope_id, ack }
             }
         }
-        PeerMessage::Data {
-            envelope_id,
-            message_kind,
-            ciphertext,
-        } => AckWaitAction::QueueInbound(InboundPeerEnvelope {
-            contact_id,
-            envelope_id,
-            message_kind,
-            ciphertext,
-        }),
+        PeerMessage::Data { envelope_id, message_kind, ciphertext } => {
+            AckWaitAction::QueueInbound(InboundPeerEnvelope {
+                contact_id,
+                envelope_id,
+                message_kind,
+                ciphertext,
+            })
+        }
         _ => AckWaitAction::Ignore,
     }
 }
@@ -67,11 +62,7 @@ mod tests {
         let action = classify_ack_wait_message(
             contact_id,
             expected,
-            PeerMessage::Data {
-                envelope_id: incoming,
-                message_kind: 7,
-                ciphertext: vec![1, 2, 3],
-            },
+            PeerMessage::Data { envelope_id: incoming, message_kind: 7, ciphertext: vec![1, 2, 3] },
         );
         let AckWaitAction::QueueInbound(envelope) = action else {
             panic!("inbound application data must yield to durable ingress");
@@ -91,11 +82,7 @@ mod tests {
             let action = classify_ack_wait_message(
                 contact,
                 expected,
-                PeerMessage::Data {
-                    envelope_id: incoming,
-                    message_kind: 1,
-                    ciphertext: vec![9],
-                },
+                PeerMessage::Data { envelope_id: incoming, message_kind: 1, ciphertext: vec![9] },
             );
             assert!(matches!(action, AckWaitAction::QueueInbound(_)));
         }
@@ -107,10 +94,7 @@ mod tests {
         let action = classify_ack_wait_message(
             ContactId::from_u128(30),
             expected,
-            PeerMessage::Ack {
-                envelope_id: expected,
-                status: AckStatus::Accepted,
-            },
+            PeerMessage::Ack { envelope_id: expected, status: AckStatus::Accepted },
         );
         assert_eq!(action, AckWaitAction::Complete(Ok(LinkAck::Accepted)));
     }
@@ -122,17 +106,11 @@ mod tests {
         let action = classify_ack_wait_message(
             ContactId::from_u128(40),
             expected,
-            PeerMessage::Ack {
-                envelope_id: other,
-                status: AckStatus::Duplicate,
-            },
+            PeerMessage::Ack { envelope_id: other, status: AckStatus::Duplicate },
         );
         assert_eq!(
             action,
-            AckWaitAction::Store {
-                envelope_id: other,
-                ack: Ok(LinkAck::Duplicate),
-            }
+            AckWaitAction::Store { envelope_id: other, ack: Ok(LinkAck::Duplicate) }
         );
     }
 }

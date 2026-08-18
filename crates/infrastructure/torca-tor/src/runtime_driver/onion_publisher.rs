@@ -6,9 +6,9 @@ use std::time::Instant;
 
 use super::endpoint::SharedTorEndpoint;
 use super::timing::{
-    MAX_ONION_PUBLICATION_ATTEMPTS, ONION_DEGRADED_GRACE,
-    ONION_HEALTH_INTERVAL_REACHABLE, ONION_HEALTH_INTERVAL_TRANSITIONING,
-    ONION_PUBLISHING_GRACE, ONION_SERVICE_TIMEOUT, RESTART_BACKOFF,
+    MAX_ONION_PUBLICATION_ATTEMPTS, ONION_DEGRADED_GRACE, ONION_HEALTH_INTERVAL_REACHABLE,
+    ONION_HEALTH_INTERVAL_TRANSITIONING, ONION_PUBLISHING_GRACE, ONION_SERVICE_TIMEOUT,
+    RESTART_BACKOFF,
 };
 use super::{TorWake, notify_tor_wake};
 use crate::{
@@ -50,10 +50,7 @@ pub(super) struct OnionPublisherFailure {
 
 enum OnionWaitOutcome {
     Shutdown,
-    Republish {
-        reason: OnionRepublishReason,
-        was_reachable: bool,
-    },
+    Republish { reason: OnionRepublishReason, was_reachable: bool },
 }
 
 #[derive(Default)]
@@ -213,11 +210,7 @@ impl OnionPublisher {
                     }
                 }
             })?;
-        Ok(Self {
-            commands,
-            events,
-            worker: Some(worker),
-        })
+        Ok(Self { commands, events, worker: Some(worker) })
     }
 
     pub(super) fn try_take_failure(&mut self) -> Option<OnionPublisherFailure> {
@@ -270,26 +263,20 @@ fn wait_for_onion_recovery(
         if last_health != Some(health) {
             if let Some(observer) = observer {
                 let (progress, code, summary) = match health {
-                    OnionServiceHealth::Reachable => (
-                        100,
-                        "ONION_SERVICE_READY",
-                        "Private onion service is reachable",
-                    ),
+                    OnionServiceHealth::Reachable => {
+                        (100, "ONION_SERVICE_READY", "Private onion service is reachable")
+                    }
                     OnionServiceHealth::Degraded => (
                         60,
                         "ONION_SERVICE_DEGRADED",
                         "Onion service is reachable with degraded publication",
                     ),
-                    OnionServiceHealth::Publishing => (
-                        8,
-                        "ONION_SERVICE_PUBLISHING",
-                        "Publishing private onion service",
-                    ),
-                    OnionServiceHealth::Failed => (
-                        0,
-                        "ONION_SERVICE_FAILED",
-                        "Onion service publication failed",
-                    ),
+                    OnionServiceHealth::Publishing => {
+                        (8, "ONION_SERVICE_PUBLISHING", "Publishing private onion service")
+                    }
+                    OnionServiceHealth::Failed => {
+                        (0, "ONION_SERVICE_FAILED", "Onion service publication failed")
+                    }
                     OnionServiceHealth::Stopped => {
                         (0, "ONION_SERVICE_STOPPED", "Onion service stopped")
                     }
@@ -313,10 +300,7 @@ fn wait_for_onion_recovery(
                 reason.code(),
                 tracker.was_reachable
             );
-            return OnionWaitOutcome::Republish {
-                reason,
-                was_reachable: tracker.was_reachable,
-            };
+            return OnionWaitOutcome::Republish { reason, was_reachable: tracker.was_reachable };
         }
     }
 }
@@ -345,11 +329,7 @@ mod tests {
             None
         );
         assert_eq!(
-            tracker.observe(
-                OnionServiceHealth::Publishing,
-                1,
-                start + ONION_PUBLISHING_GRACE
-            ),
+            tracker.observe(OnionServiceHealth::Publishing, 1, start + ONION_PUBLISHING_GRACE),
             Some(OnionRepublishReason::PublishingStalled)
         );
     }
@@ -387,11 +367,7 @@ mod tests {
         let mut tracker = OnionRecoveryTracker::default();
         assert_eq!(tracker.observe(OnionServiceHealth::Degraded, 1, start), None);
         assert_eq!(
-            tracker.observe(
-                OnionServiceHealth::Reachable,
-                2,
-                start + Duration::from_secs(30)
-            ),
+            tracker.observe(OnionServiceHealth::Reachable, 2, start + Duration::from_secs(30)),
             None
         );
         assert!(tracker.was_reachable);
@@ -413,11 +389,7 @@ mod tests {
         let mut tracker = OnionRecoveryTracker::default();
         assert_eq!(tracker.observe(OnionServiceHealth::Degraded, 1, start), None);
         assert_eq!(
-            tracker.observe(
-                OnionServiceHealth::Degraded,
-                1,
-                start + ONION_DEGRADED_GRACE
-            ),
+            tracker.observe(OnionServiceHealth::Degraded, 1, start + ONION_DEGRADED_GRACE),
             Some(OnionRepublishReason::DegradedTimeout)
         );
         assert_eq!(

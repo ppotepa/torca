@@ -107,6 +107,7 @@ pub struct TorcaRuntime {
     last_onion_log_state: Option<(String, Option<String>)>,
     last_relay_log_state: Option<(String, Option<String>)>,
     last_peer_log_state: HashMap<String, (String, u32)>,
+    last_message_log_state: HashMap<String, (String, u32)>,
     last_attachment_log_state: HashMap<String, (String, u64, u32)>,
     last_radio_log_state: HashMap<String, String>,
     network_ready_logged: bool,
@@ -126,12 +127,10 @@ pub struct TorcaRuntime {
     read_receipt_policy: ReadReceiptPolicy,
 }
 
-impl TorcaRuntime {
-    include!("core_methods.rs");
-    include!("projection_methods.rs");
-    include!("operation_methods.rs");
-    include!("projection_helpers.rs");
-    include!("startup_methods.rs");
-}
+include!("core_methods.rs");
+include!("projection_methods.rs");
+include!("operation_methods.rs");
+include!("projection_helpers.rs");
+include!("startup_methods.rs");
 
 include!("support.rs");

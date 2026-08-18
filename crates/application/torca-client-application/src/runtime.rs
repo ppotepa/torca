@@ -87,6 +87,10 @@ pub enum ApplicationCommand {
         metered_transfers: String,
         visual_activity: String,
     },
+    SetContactAvailability {
+        contact_id: OpaqueId,
+        mode: String,
+    },
     AcknowledgeNewContacts,
     UpdateProfile {
         display_name: String,
@@ -360,6 +364,24 @@ impl ClientApplicationRuntime {
     pub fn set_battery_profile(&self, profile: BatteryProfile) {
         if let Some(runtime) = &self.runtime {
             runtime.set_battery_profile(profile);
+        }
+    }
+
+    pub fn set_background_sync(&self, cadence: torca_battery::BackgroundSyncCadence) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_background_sync(cadence);
+        }
+    }
+
+    pub fn set_foreground(&self, foreground: bool) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_foreground(foreground);
+        }
+    }
+
+    pub fn set_instant_contact_demand(&self, contact_id: ContactId, enabled: bool) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_instant_contact_demand(contact_id, enabled);
         }
     }
 
@@ -659,6 +681,7 @@ impl ClientApplicationRuntime {
             | ApplicationCommand::RejectPairing { session_id }
             | ApplicationCommand::CancelPairing { session_id } => Some(*session_id),
             ApplicationCommand::StartConversation { contact_id } => Some(*contact_id),
+            ApplicationCommand::SetContactAvailability { contact_id, .. } => Some(*contact_id),
             ApplicationCommand::SetRadioEnabled { contact_id, .. }
             | ApplicationCommand::BeginRadioTransmission { contact_id }
             | ApplicationCommand::EndRadioTransmission { contact_id } => Some(*contact_id),
@@ -684,6 +707,11 @@ impl ClientApplicationRuntime {
             ApplicationCommand::SetNotifications { .. } => "notifications_updated",
             ApplicationCommand::SetReadReceipts { .. } => "read_receipts_updated",
             ApplicationCommand::SetBatteryPreferences { .. } => "battery_preferences_updated",
+            ApplicationCommand::SetContactAvailability { contact_id, mode } => {
+                let enabled = mode == "instant";
+                self.set_instant_contact_demand(ContactId::from_opaque(contact_id), enabled);
+                "contact_availability_updated"
+            }
             ApplicationCommand::AcknowledgeNewContacts => "contacts_acknowledged",
             ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
                 let display_name = ProfileName::new(display_name).map_err(string_error)?;

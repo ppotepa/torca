@@ -215,6 +215,10 @@ where
         }
     }
 
+    fn prime_connections(&mut self) {
+        let _ = self.link.prime_connections();
+    }
+
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<std::time::Duration> {
         self.link.next_maintenance_delay(now)
     }
@@ -267,6 +271,14 @@ where
                 last_activity_at: activity.last_activity_at,
             })
             .collect()
+    }
+
+    fn close_idle_peers(
+        &mut self,
+        retained: &[ContactId],
+        now: Timestamp,
+    ) -> Result<usize, CommunicationError> {
+        self.link.close_idle_sessions(retained, now).map_err(|_| CommunicationError::Peer)
     }
 
     fn peer_probe_eligible(&self, contact_id: ContactId) -> bool {
