@@ -2,8 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
 use torca_foundation::{OpaqueId, Timestamp};
@@ -128,30 +127,18 @@ where
         timeout: Duration,
         wait_limit: Duration,
     ) -> Result<LinkAck, PeerLinkError> {
-        {
-            let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;
-            link.send_envelope(contact_id, envelope_id, message_kind, ciphertext)?;
-        }
-        let deadline =
-            Instant::now().checked_add(timeout.min(wait_limit)).ok_or(PeerLinkError::AckTimeout)?;
-        // ACKs normally arrive immediately, but a fixed 10 ms poll keeps the
-        // CPU awake for the entire network wait. Start with low latency and
-        // back off while the bounded wait is still pending.
-        let mut poll_delay = Duration::from_millis(5);
-        loop {
-            let ack = {
-                let mut link = self.inner.lock().map_err(|_| PeerLinkError::Protocol)?;
-                link.poll_envelope_ack(contact_id, envelope_id)?
-            };
-            if let Some(ack) = ack {
-                return Ok(ack);
-            }
-            if Instant::now() >= deadline {
-                return Err(PeerLinkError::AckTimeout);
-            }
-            thread::sleep(poll_delay);
-            poll_delay = (poll_delay * 2).min(Duration::from_millis(50));
-        }
+        // PeerLink owns the event-driven socket wait. Holding the shared lock
+        // for this bounded operation prevents a second caller from starting a
+        // competing ACK poll loop while the reader thread can still deliver
+        // frames and wake the runtime.
+        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.send_and_wait_ack_with_limit(
+            contact_id,
+            envelope_id,
+            message_kind,
+            ciphertext,
+            timeout,
+            wait_limit,
+        )
     }
 
     pub fn send_keepalive_and_wait_ack(

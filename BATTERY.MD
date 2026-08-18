@@ -49,8 +49,9 @@ permanent cancelled waiter. A finite timeout remains available to diagnostic
 callers, but it is not used by the idle platform workers.
 The reliability baseline is implemented. Remaining work is validation: run
 platform soak tests for radio/lease recovery before changing policy defaults.
-Arti dormancy remains a deferred experiment and is not required for the
-no-idle-polling guarantee.
+Arti soft dormancy is wired into the background/no-demand lifecycle, but its
+release rollout remains gated on Android onion, pairing, delivery, attachment
+and radio evidence; it is not required for the no-idle-polling guarantee.
 
 The central model is:
 
@@ -143,8 +144,9 @@ resume failures already seen in production testing.
   kernel during the migration and is re-exported by the battery facade.
 - The policy crate owns decisions, leases, evidence, budgets, deadlines, event waiting, and counters. It does not own sockets, SQLite, Flutter, JNI, Android APIs, or Arti execution.
 - The target Tor policy uses adaptive Arti soft dormancy instead of destroying
-  the client or clearing its cache/state. The low-level API exists; automatic
-  runtime policy integration is intentionally not enabled yet.
+  the client or clearing its cache/state. The runtime enters it only after
+  backgrounding and the absence of durable work; foreground and demand events
+  wake it back to active mode. Rollout remains measurement-gated.
 - Relay, peer connections, pairing, attachments, and radio remain separate executors controlled by policy permits.
 - Android uses `NetworkCallback` and a fingerprint of route capabilities
   (`validated`, `internet`, `metered`, Wi-Fi/cellular); changes to that
@@ -371,7 +373,7 @@ Network changes increment `network_generation` and perform staged recovery:
 5. Do not reconnect unrelated contacts.
 6. Allow cosmetic work only from the remaining budget.
 
-## Adaptive Tor and rendezvous windows (planned, measurement-gated)
+## Adaptive Tor and rendezvous windows (integrated, measurement-gated rollout)
 
 The exposed `torca-tor` API is:
 
@@ -380,9 +382,10 @@ set_activity_mode(TorActivityMode::Active | SoftDormant)
 ```
 
 It delegates to Arti `TorClient::set_dormant()` while retaining directory
-cache, persistent state, and onion identity. The runtime does not call it
-automatically yet; the policy integration remains gated on Android onion,
-pairing, delivery, attachment and radio soak tests.
+cache, persistent state, and onion identity. The runtime calls it from the
+background/no-demand lifecycle; foreground, delivery, pairing, attachment,
+radio and network-recovery events wake it back to active. Rollout remains
+gated on Android onion, pairing, delivery, attachment and radio soak tests.
 
 Dormancy must land behind an explicit runtime policy (`AlwaysAvailable`,
 `Balanced`, `BatterySaver`) and soak tests. `AlwaysAvailable` remains the
@@ -575,8 +578,9 @@ scenario completion.
    `SessionOpen` is not stranded after one attempt. Active media selects the
    next audio, ACK, burst or keepalive deadline with deterministic tests; keep
    the default idle path at zero worker iterations.
-9. **Deferred / measurement-gated:** evaluate Arti soft dormancy only after
-   reliability soak tests pass. It is optional and not a release blocker.
+9. **Implemented / measurement-gated rollout:** Arti soft dormancy is active
+   for background/no-demand policy; keep the reliability soak gate before
+   enabling more aggressive defaults or rendezvous windows.
 10. **Measurement-gated extension:** shared rendezvous windows remain optional
     and require trace evidence before changing delivery timing.
 11. **Final cleanup:** delete every replaced polling constant, reconnect-all
