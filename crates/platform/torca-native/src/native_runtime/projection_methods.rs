@@ -26,23 +26,20 @@ pub(crate) fn refresh_snapshot(&mut self) -> i32 {
     }
     self.apply_host_state_hint(&mut snapshot);
     self.log_network_transitions(&snapshot);
-    let snapshot_json = bridge_snapshot_json(&snapshot);
-    self.snapshot_json = serde_json::from_str::<serde_json::Value>(&snapshot_json)
-        .map(|mut value| {
-            value["notificationsEnabled"] = serde_json::Value::Bool(self.notifications_enabled);
-            value["readReceiptsEnabled"] = serde_json::Value::Bool(self.read_receipts_enabled);
-            let (mode, background_sync, allow_delayed, metered, visual) =
-                self.battery_policy.preferences.wire();
-            value["batteryPreferences"] = json!({
-                "mode": mode,
-                "backgroundSync": background_sync,
-                "allowDelayedBackgroundDelivery": allow_delayed,
-                "meteredTransfers": metered,
-                "visualActivity": visual,
-            });
-            value.to_string()
-        })
-        .unwrap_or(snapshot_json);
+    let mut value = bridge_snapshot_value(&snapshot);
+    value["notificationsEnabled"] = serde_json::Value::Bool(self.notifications_enabled);
+    value["readReceiptsEnabled"] = serde_json::Value::Bool(self.read_receipts_enabled);
+    let (mode, background_sync, allow_delayed, metered, visual) =
+        self.battery_policy.preferences.wire();
+    value["batteryPreferences"] = json!({
+        "mode": mode,
+        "backgroundSync": background_sync,
+        "allowDelayedBackgroundDelivery": allow_delayed,
+        "meteredTransfers": metered,
+        "visualActivity": visual,
+    });
+    self.snapshot_value = value;
+    self.snapshot_json = self.snapshot_value.to_string();
     ABI_OK
 }
 
@@ -198,10 +195,15 @@ fn log_network_transitions(&mut self, snapshot: &torca_contract::BridgeSnapshot)
 
 pub(crate) fn reconcile_pending_operations(&mut self) -> bool {
     let before_snapshot = std::mem::take(&mut self.snapshot_json);
+    let before_snapshot_value = std::mem::replace(
+        &mut self.snapshot_value,
+        serde_json::Value::Null,
+    );
     let before_cursor = self.notification_cursor;
     let _ = self.application_runtime.advance_pending_operations();
     if self.refresh_snapshot() != ABI_OK {
         self.snapshot_json = before_snapshot;
+        self.snapshot_value = before_snapshot_value;
         return self.notification_cursor != before_cursor;
     }
     self.snapshot_json != before_snapshot || self.notification_cursor != before_cursor
@@ -219,9 +221,7 @@ fn apply_host_state_hint(&self, snapshot: &mut torca_contract::BridgeSnapshot) {
         "ready"
     } else if matches!(self.host_state_hint, TorState::Degraded | TorState::Failed) {
         "failed"
-    } else if self.host_retry_at.is_some() {
-        "running"
-    } else if self.host_start.is_some() {
+    } else if self.host_retry_at.is_some() || self.host_start.is_some() {
         "running"
     } else {
         "pending"

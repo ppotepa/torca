@@ -1305,7 +1305,14 @@ fn send_frame(live: &mut LiveSession, frame: &RadioMediaFrame) -> Result<(), ()>
     }
     let bytes = RadioMediaCodec::encode_framed(frame).map_err(|_| ())?;
     live.stream.write_all(&bytes).map_err(|_| ())?;
-    live.stream.flush().map_err(|_| ())
+    // TcpStream writes are already handed to the kernel. Flushing every
+    // 20-ms audio frame adds a syscall without improving delivery (TCP_NODELAY
+    // is enabled on the stream). Control frames still flush immediately so
+    // floor/burst transitions do not wait behind a buffered audio batch.
+    if !matches!(frame, RadioMediaFrame::Audio { .. }) {
+        live.stream.flush().map_err(|_| ())?;
+    }
+    Ok(())
 }
 
 fn read_frames(live: &mut LiveSession) -> Result<Vec<RadioMediaFrame>, ()> {
@@ -1325,23 +1332,28 @@ fn read_frames(live: &mut LiveSession) -> Result<Vec<RadioMediaFrame>, ()> {
             ) => {}
         Err(_) => return Err(()),
     }
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(2);
+    let mut consumed = 0;
     loop {
-        if live.read_buffer.len() < 4 {
+        if live.read_buffer.len().saturating_sub(consumed) < 4 {
             break;
         }
-        let length =
-            u32::from_be_bytes(live.read_buffer[..4].try_into().expect("four-byte media prefix"))
-                as usize;
+        let length = u32::from_be_bytes(
+            live.read_buffer[consumed..consumed + 4].try_into().expect("four-byte media prefix"),
+        ) as usize;
         if length == 0 || length > MAX_RADIO_MEDIA_FRAME {
             return Err(());
         }
-        if live.read_buffer.len() < 4 + length {
+        if live.read_buffer.len().saturating_sub(consumed) < 4 + length {
             break;
         }
-        let payload = live.read_buffer[4..4 + length].to_vec();
-        live.read_buffer.drain(..4 + length);
+        let start = consumed + 4;
+        let payload = live.read_buffer[start..start + length].to_vec();
+        consumed = start + length;
         output.push(RadioMediaCodec::decode(&payload).map_err(|_| ())?);
+    }
+    if consumed > 0 {
+        live.read_buffer.drain(..consumed);
     }
     Ok(output)
 }

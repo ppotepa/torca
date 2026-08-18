@@ -67,9 +67,9 @@ fn busy_timeout_waits_for_a_short_lived_writer_instead_of_failing_immediately() 
 
     thread::sleep(Duration::from_millis(150));
     writer.connection().execute_batch(COMMIT_SQL).expect("release write lock");
-    let waited = waiter.join().expect("writer thread");
-    assert!(waited >= Duration::from_millis(100));
-    assert!(waited < Duration::from_secs(5));
+    let wait_duration = waiter.join().expect("writer thread");
+    assert!(wait_duration >= Duration::from_millis(100));
+    assert!(wait_duration < Duration::from_secs(5));
 
     let count: i64 = writer
         .connection()

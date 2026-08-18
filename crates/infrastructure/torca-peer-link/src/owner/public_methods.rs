@@ -35,13 +35,19 @@ pub fn with_connectivity(mut self, connectivity: ConnectivityObserver) -> Self {
     self
 }
 
-pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
-    self.listener
-        .set_waker(Arc::clone(&waker))
-        .map_err(|_| PeerLinkError::Listener)?;
-    self.waker = Some(waker);
-    Ok(())
-}
+    pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
+        self.listener
+            .set_waker(Arc::clone(&waker))
+            .map_err(|_| PeerLinkError::Listener)?;
+        for session in self.incoming.values_mut() {
+            session.set_waker(Arc::clone(&waker));
+        }
+        for session in self.outgoing.values_mut() {
+            session.set_waker(Arc::clone(&waker));
+        }
+        self.waker = Some(waker);
+        Ok(())
+    }
 
 fn notify_waker(&self) {
     if let Some(waker) = &self.waker {
@@ -185,8 +191,13 @@ pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
         .filter(|entry| !entry.in_progress)
         .filter_map(|entry| entry.next_attempt_at.duration_since(now))
         .min();
-    let active =
-        !self.pending.is_empty() || !self.incoming.is_empty() || !self.outgoing.is_empty();
+    // Ready sessions have a blocking reader that wakes the runtime actor on
+    // data or disconnect. Only pending/handshaking sessions need a deadline;
+    // keeping ready sockets in this calculation would recreate the old
+    // periodic `WouldBlock` hot loop.
+    let active = !self.pending.is_empty()
+        || self.incoming.values().any(|session| session.state() != PeerSessionState::Ready)
+        || self.outgoing.values().any(|session| session.state() != PeerSessionState::Ready);
     match (active, reconnect_delay) {
         (true, Some(delay)) => Some(delay.min(Duration::from_millis(250))),
         (true, None) => Some(Duration::from_millis(250)),

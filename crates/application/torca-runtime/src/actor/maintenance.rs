@@ -36,7 +36,7 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     critical_lease.store(
         !work.active_attachment_leases.is_empty()
             || !work.active_delivery_leases.is_empty()
-            || policy.has_active_lease(ResourceScope::Relay, std::time::Instant::now()),
+            || policy.has_durable_lease(std::time::Instant::now()),
         Ordering::Release,
     );
 

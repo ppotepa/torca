@@ -79,7 +79,7 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
     with WidgetsBindingObserver {
   late final AudioClipRecorder _recorder;
   Timer? _limitTimer;
-  Timer? _elapsedTimer;
+  Timer? _recordingTimer;
   bool _pointerHeld = false;
   bool _starting = false;
   bool _recording = false;
@@ -88,7 +88,7 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
   String? _pendingPath;
   double? _pointerStartX;
   final List<double> _waveform = <double>[];
-  Timer? _amplitudeTimer;
+  bool _samplingAmplitude = false;
 
   @override
   void initState() {
@@ -126,19 +126,20 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
       _recording = true;
       _elapsed = Duration.zero;
       _waveform.clear();
-      _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-        unawaited(_sampleAmplitude());
-      });
-      _limitTimer = Timer(voiceClipMaximumDuration, () => unawaited(_finish()));
-      _elapsedTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      // One UI timer drives both elapsed time and waveform sampling. Two
+      // independent 100-ms timers caused duplicate wakeups and setState calls
+      // during every short recording.
+      _recordingTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
         if (!mounted || !_recording) return;
+        final next = _elapsed + const Duration(milliseconds: 100);
         setState(() {
-          final next = _elapsed + const Duration(milliseconds: 100);
           _elapsed = next > voiceClipMaximumDuration
               ? voiceClipMaximumDuration
               : next;
         });
+        unawaited(_sampleAmplitude());
       });
+      _limitTimer = Timer(voiceClipMaximumDuration, () => unawaited(_finish()));
       if (mounted) setState(() {});
       if (!_pointerHeld) await _finish();
     } on Object {
@@ -193,28 +194,32 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
   void _stopTimers() {
     _limitTimer?.cancel();
     _limitTimer = null;
-    _elapsedTimer?.cancel();
-    _elapsedTimer = null;
-    _amplitudeTimer?.cancel();
-    _amplitudeTimer = null;
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
   }
 
   Future<void> _sampleAmplitude() async {
-    if (!_recording || !mounted) return;
+    if (!_recording || !mounted || _samplingAmplitude) return;
+    _samplingAmplitude = true;
     // AudioRecorder exposes amplitude independently of the encoded file. Keep
     // only a compact rolling history so the overlay remains cheap to paint.
     double? amplitude;
     try {
       amplitude = await _recorder.amplitude();
     } on Object {
+      _samplingAmplitude = false;
       return;
     }
     final currentAmplitude = amplitude;
-    if (!mounted || !_recording || currentAmplitude == null) return;
+    if (!mounted || !_recording || currentAmplitude == null) {
+      _samplingAmplitude = false;
+      return;
+    }
     setState(() {
       _waveform.add(((currentAmplitude + 60) / 60).clamp(0.04, 1.0));
       if (_waveform.length > 64) _waveform.removeAt(0);
     });
+    _samplingAmplitude = false;
   }
 
   Future<void> _discardFile(String path) async {

@@ -436,12 +436,14 @@ class _ConversationPaneState extends State<ConversationPane>
       // rebuild.
       final attachmentsByMessage = <String, List<AttachmentDto>>{};
       for (final attachment in snapshot.attachments) {
+        if (!byId.containsKey(attachment.messageId)) continue;
         (attachmentsByMessage[attachment.messageId] ??= <AttachmentDto>[]).add(
           attachment,
         );
       }
       final reactionsByMessage = <String, List<ReactionDto>>{};
       for (final reaction in snapshot.reactions) {
+        if (!byId.containsKey(reaction.messageId)) continue;
         (reactionsByMessage[reaction.messageId] ??= <ReactionDto>[]).add(
           reaction,
         );

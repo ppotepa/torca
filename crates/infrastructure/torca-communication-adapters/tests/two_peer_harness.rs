@@ -255,14 +255,14 @@ impl TestDeliveryTransport {
         let receiver = self.ack_rx.lock().expect("ack receiver");
         loop {
             match receiver.recv_timeout(ACK_TIMEOUT) {
-                Ok((received, status)) if received == envelope_id => {
+                Ok((received_id, status)) if received_id == envelope_id => {
                     return match status {
                         AckStatus::Accepted => Ok(DeliveryAck::Accepted),
                         AckStatus::Duplicate => Ok(DeliveryAck::Duplicate),
                         AckStatus::Rejected => Err(DeliveryTransportError("rejected".into())),
                     };
                 }
-                Ok(_) => continue,
+                Ok(_) => {}
                 Err(_) => return Err(DeliveryTransportError("ack timeout".into())),
             }
         }

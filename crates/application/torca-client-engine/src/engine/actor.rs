@@ -59,6 +59,11 @@ pub struct ClientEngineActor {
     join: Option<JoinHandle<()>>,
 }
 impl ClientEngineActor {
+    /// Starts the single-threaded engine actor and returns its command handle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operating system cannot create the named actor thread.
     pub fn spawn<E: EngineRuntime>(mut engine: E) -> (EngineHandle, Self) {
         let (sender, receiver): (SyncSender<ActorRequest>, Receiver<ActorRequest>) =
             mpsc::sync_channel(256);

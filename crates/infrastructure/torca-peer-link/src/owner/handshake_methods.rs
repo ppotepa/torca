@@ -6,7 +6,10 @@ where
 fn accept_pending(&mut self, report: &mut PeerLinkReport) -> Result<(), PeerLinkError> {
     while self.pending.len() < MAX_PENDING_INCOMING {
         match self.listener.try_accept_transport().map_err(map_tor)? {
-            Some(transport) => {
+            Some(mut transport) => {
+                if let Some(waker) = &self.waker {
+                    transport.set_waker(Arc::clone(waker));
+                }
                 self.pending.push(transport);
                 report.accepted += 1;
             }
@@ -91,6 +94,9 @@ fn try_authenticate(
     };
     let transport = self.pending.swap_remove(index);
     let mut session = PeerSession::new(transport, verifier, policy);
+    if let Some(waker) = &self.waker {
+        session.set_waker(Arc::clone(waker));
+    }
     session.receive(&payload, now).map_err(map_session)?;
     let ack = HandshakeAck::signed(hello.session_id, hello.nonce, &self.signer)
         .map_err(|_| PeerLinkError::Protocol)?;
@@ -133,6 +139,9 @@ fn connect_outgoing(
         TOR_PEER_VIRTUAL_PORT,
     );
     let mut session = PeerSession::new(transport, verifier, policy);
+    if let Some(waker) = &self.waker {
+        session.set_waker(Arc::clone(waker));
+    }
     let session_id = self.random_id()?;
     let nonce = self.random_32()?;
     let hello = HandshakeHello::signed(

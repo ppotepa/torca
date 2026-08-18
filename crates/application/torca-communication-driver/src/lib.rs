@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
+    mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
 };
 use std::thread;
 use std::time::Duration;
@@ -52,6 +53,10 @@ const CONTROL_BATCH: usize = 16;
 const ATTACHMENT_BATCH: usize = 8;
 const MAX_DEFERRED_ATTACHMENTS: usize = 64;
 
+struct AttachmentWork {
+    now: Timestamp,
+}
+
 pub struct TorcaCommunicationDriver {
     engine: EngineHandle,
     peer: Box<dyn PeerLinkRuntime>,
@@ -63,6 +68,7 @@ pub struct TorcaCommunicationDriver {
     attachment_job_result: Arc<Mutex<Option<AttachmentMaintenanceResult>>>,
     attachment_waker: WakeSlot,
     attachment_snapshot_cache: Arc<Mutex<Vec<AttachmentView>>>,
+    attachment_job_sender: SyncSender<AttachmentWork>,
     deferred_attachments: VecDeque<InboundEnvelope>,
     attachment_export: Box<dyn AttachmentExportRuntime>,
     read_state: Box<dyn ReadStateRuntime>,
@@ -84,17 +90,32 @@ impl TorcaCommunicationDriver {
         read_state: Box<dyn ReadStateRuntime>,
         relationships: Box<dyn RelationshipAdminRuntime>,
     ) -> Self {
+        let attachments = Arc::new(Mutex::new(attachments));
+        let attachment_job_result = Arc::new(Mutex::new(None));
+        let attachment_job_active = Arc::new(AtomicBool::new(false));
+        let attachment_waker = Arc::new(Mutex::new(None));
+        let attachment_snapshot_cache = Arc::new(Mutex::new(Vec::new()));
+        let (attachment_job_sender, attachment_job_receiver) = sync_channel(1);
+        spawn_attachment_worker(
+            Arc::clone(&attachments),
+            Arc::clone(&attachment_job_active),
+            Arc::clone(&attachment_job_result),
+            Arc::clone(&attachment_waker),
+            Arc::clone(&attachment_snapshot_cache),
+            attachment_job_receiver,
+        );
         Self {
             engine,
             peer,
             text,
             control,
             inbound,
-            attachments: Arc::new(Mutex::new(attachments)),
-            attachment_job_active: Arc::new(AtomicBool::new(false)),
-            attachment_job_result: Arc::new(Mutex::new(None)),
-            attachment_waker: Arc::new(Mutex::new(None)),
-            attachment_snapshot_cache: Arc::new(Mutex::new(Vec::new())),
+            attachments,
+            attachment_job_active,
+            attachment_job_result,
+            attachment_waker,
+            attachment_snapshot_cache,
+            attachment_job_sender,
             deferred_attachments: VecDeque::new(),
             attachment_export,
             read_state,
@@ -252,41 +273,12 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         if self.attachment_scheduler.due(now)
             && !self.attachment_job_active.swap(true, Ordering::AcqRel)
         {
-            let attachments = Arc::clone(&self.attachments);
-            let active = Arc::clone(&self.attachment_job_active);
-            let result_slot = Arc::clone(&self.attachment_job_result);
-            let waker = Arc::clone(&self.attachment_waker);
-            let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
             self.attachment_scheduler.disarm();
-            thread::spawn(move || {
-                let result = attachments
-                    .lock()
-                    .map_err(|_| CommunicationError::Attachment)
-                    .and_then(|mut runtime| {
-                        let outcome = runtime.maintenance_outgoing(now, ATTACHMENT_BATCH)?;
-                        refresh_attachment_cache(&projection_cache, &**runtime);
-                        Ok(outcome)
-                    });
-                let outcome = match result {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        eprintln!("torca-attachment: maintenance failed code={error}");
-                        AttachmentMaintenanceResult {
-                            more_work: true,
-                            policy_blocked: false,
-                            retry_after_ms: Some(2_000),
-                        }
-                    }
-                };
-                if let Ok(mut slot) = result_slot.lock() {
-                    *slot = Some(outcome);
-                }
-                active.store(false, Ordering::Release);
-                let callback = waker.lock().ok().and_then(|target| target.clone());
-                if let Some(callback) = callback {
-                    callback();
-                }
-            });
+            if let Err(error) = self.attachment_job_sender.try_send(AttachmentWork { now })
+                && matches!(error, TrySendError::Disconnected(_))
+            {
+                self.attachment_job_active.store(false, Ordering::Release);
+            }
         }
         Ok(())
     }
@@ -565,6 +557,45 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
     ) -> Result<(), RuntimeDriverError> {
         self.attachment_export.export_attachment_preview(id, destination).map_err(map_runtime)
     }
+}
+
+fn spawn_attachment_worker(
+    attachments: Arc<Mutex<Box<dyn AttachmentRuntime>>>,
+    active: Arc<AtomicBool>,
+    result_slot: Arc<Mutex<Option<AttachmentMaintenanceResult>>>,
+    waker: WakeSlot,
+    projection_cache: Arc<Mutex<Vec<AttachmentView>>>,
+    receiver: Receiver<AttachmentWork>,
+) {
+    thread::spawn(move || {
+        while let Ok(work) = receiver.recv() {
+            let result = attachments.lock().map_err(|_| CommunicationError::Attachment).and_then(
+                |mut runtime| {
+                    let outcome = runtime.maintenance_outgoing(work.now, ATTACHMENT_BATCH)?;
+                    refresh_attachment_cache(&projection_cache, &**runtime);
+                    Ok(outcome)
+                },
+            );
+            let outcome = match result {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    eprintln!("torca-attachment: maintenance failed code={error}");
+                    AttachmentMaintenanceResult {
+                        more_work: true,
+                        policy_blocked: false,
+                        retry_after_ms: Some(2_000),
+                    }
+                }
+            };
+            if let Ok(mut slot) = result_slot.lock() {
+                *slot = Some(outcome);
+            }
+            active.store(false, Ordering::Release);
+            if let Some(callback) = waker.lock().ok().and_then(|target| target.clone()) {
+                callback();
+            }
+        }
+    });
 }
 
 fn refresh_attachment_cache(cache: &Mutex<Vec<AttachmentView>>, runtime: &dyn AttachmentRuntime) {

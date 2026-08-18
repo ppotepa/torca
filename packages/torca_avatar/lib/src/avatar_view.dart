@@ -233,23 +233,25 @@ class _AnimatedSpriteState extends State<_AnimatedSprite> {
           : (AvatarFrameClock.instance.elapsedMilliseconds ~/
                     widget.sheet.frameDuration.inMilliseconds) %
                 widget.sheet.frameCount;
-      return ClipRect(
-        child: SizedBox.square(
-          dimension: widget.size,
-          child: OverflowBox(
-            alignment: Alignment.centerLeft,
-            minWidth: widget.size * widget.sheet.frameCount,
-            maxWidth: widget.size * widget.sheet.frameCount,
-            child: Transform.translate(
-              offset: Offset(-frame * widget.size, 0),
-              child: Image.memory(
-                widget.sheet.bytes,
-                key: const ValueKey<String>('torca-avatar-sprite'),
-                width: widget.size * widget.sheet.frameCount,
-                height: widget.size,
-                fit: BoxFit.fill,
-                filterQuality: FilterQuality.none,
-                gaplessPlayback: true,
+      return RepaintBoundary(
+        child: ClipRect(
+          child: SizedBox.square(
+            dimension: widget.size,
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              minWidth: widget.size * widget.sheet.frameCount,
+              maxWidth: widget.size * widget.sheet.frameCount,
+              child: Transform.translate(
+                offset: Offset(-frame * widget.size, 0),
+                child: Image.memory(
+                  widget.sheet.bytes,
+                  key: const ValueKey<String>('torca-avatar-sprite'),
+                  width: widget.size * widget.sheet.frameCount,
+                  height: widget.size,
+                  fit: BoxFit.fill,
+                  filterQuality: FilterQuality.none,
+                  gaplessPlayback: true,
+                ),
               ),
             ),
           ),

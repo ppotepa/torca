@@ -16,6 +16,10 @@ struct RuntimeHealthState {
     transport_activity: TransportActivityLedger,
 }
 
+// These flags are independent policy inputs (foreground, metering and two
+// one-shot bootstrap observations); combining them into an enum would create
+// invalid coupling between unrelated lifecycle dimensions.
+#[allow(clippy::struct_excessive_bools)]
 struct RuntimeWorkState {
     battery_policy: BatteryPolicy,
     background_sync: torca_battery::BackgroundSyncCadence,

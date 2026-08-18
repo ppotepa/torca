@@ -5,6 +5,7 @@
 
 use core::fmt;
 use std::collections::{BTreeSet, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 
 use torca_foundation::{OpaqueId, Timestamp};
@@ -47,6 +48,11 @@ pub trait PeerTransport {
         self.try_receive()
     }
     fn close(&mut self) -> Result<(), PeerTransportError>;
+
+    /// Installs a non-blocking wake callback for data arriving on a reader
+    /// owned by the transport. Transports without an evented reader may keep
+    /// the default no-op implementation.
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
 }
 
 /// Peer-session failure.
@@ -104,6 +110,11 @@ impl<T: PeerTransport, V: HandshakeVerifier> PeerSession<T, V> {
     /// Returns current lifecycle state.
     pub const fn state(&self) -> PeerSessionState {
         self.state
+    }
+
+    /// Connects transport readability to the runtime actor wake path.
+    pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.transport.set_waker(waker);
     }
 
     /// Opens the transport and sends the authenticated initiator hello.

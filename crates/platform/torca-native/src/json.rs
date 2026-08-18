@@ -62,9 +62,12 @@ pub(crate) fn empty_snapshot_json() -> String {
     }).to_string()
 }
 
-pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
+/// Builds the native projection once as a parsed value. Callers that need to
+/// add runtime-owned fields can now mutate this value directly instead of
+/// serializing and immediately reparsing the same snapshot.
+pub(crate) fn bridge_snapshot_value(snapshot: &BridgeSnapshot) -> Value {
     let mut value = serde_json::to_value(snapshot).unwrap_or_else(|_| json!({}));
-    let Some(object) = value.as_object_mut() else { return "{}".into() };
+    let Some(object) = value.as_object_mut() else { return json!({}) };
     object.insert("identity".into(), identity_value(snapshot));
     object.insert(
         "navigationBadges".into(),
@@ -81,7 +84,7 @@ pub(crate) fn bridge_snapshot_json(snapshot: &BridgeSnapshot) -> String {
             )
         });
     }
-    serde_json::to_string(&value).unwrap_or_else(|_| "{}".into())
+    value
 }
 
 fn identity_value(snapshot: &BridgeSnapshot) -> Value {

@@ -61,4 +61,18 @@ mod tests {
         assert!(operation_counts_for_revision("command", "profile.set"));
         assert!(operation_counts_for_revision("lifecycle", "foregrounded"));
     }
+
+    #[test]
+    fn queries_do_not_wake_revision_waiters_without_state_change() {
+        assert!(!request_emits_runtime_revision(
+            r#"{"kind":"query","name":"runtime.poll"}"#,
+        ));
+        assert!(!request_emits_runtime_revision(
+            r#"{"kind":"query","name":"snapshot.get"}"#,
+        ));
+        assert!(request_emits_runtime_revision(
+            r#"{"kind":"command","name":"message.send"}"#,
+        ));
+        assert!(request_emits_runtime_revision("not-json"));
+    }
 }

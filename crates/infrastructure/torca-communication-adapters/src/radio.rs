@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rand_core::{OsRng, RngCore};
 use torca_communication_driver::{
@@ -32,6 +32,8 @@ pub struct PeerRadioControl<R, S, K, C, P> {
     crypto: SharedPeerCrypto<C, P>,
     local_identity: OpaqueId,
     queued: VecDeque<(ContactId, RadioControlFrame)>,
+    next_attempt_at: Option<Instant>,
+    retry_delay: Duration,
 }
 
 impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
@@ -41,7 +43,15 @@ impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
         crypto: SharedPeerCrypto<C, P>,
         local_identity: OpaqueId,
     ) -> Self {
-        Self { relationships, link, crypto, local_identity, queued: VecDeque::new() }
+        Self {
+            relationships,
+            link,
+            crypto,
+            local_identity,
+            queued: VecDeque::new(),
+            next_attempt_at: None,
+            retry_delay: Duration::from_millis(500),
+        }
     }
 }
 
@@ -80,9 +90,17 @@ where
     }
 
     fn maintain(&mut self, _now: Timestamp) -> Result<(), RadioApplicationError> {
+        let now_instant = Instant::now();
+        if self.next_attempt_at.is_some_and(|deadline| deadline > now_instant) {
+            return Ok(());
+        }
         let Some((contact_id, frame)) = self.queued.front().cloned() else {
             return Ok(());
         };
+        // Arm the retry deadline before doing repository/crypto/transport
+        // work as well. Those early failures must not turn into an immediate
+        // maintenance loop while the queue remains non-empty.
+        self.next_attempt_at = Some(now_instant + self.retry_delay);
         let contact = load_contact(&self.relationships, contact_id)
             .map_err(|_| RadioApplicationError::ContactUnavailable)?;
         let credential = load_credential(&self.relationships, contact_id)
@@ -106,12 +124,22 @@ where
         if result {
             eprintln!("torca-radio: control sent contact={contact_id}");
             self.queued.pop_front();
+            self.next_attempt_at = None;
+            self.retry_delay = Duration::from_millis(500);
+        } else {
+            self.next_attempt_at = Some(now_instant + self.retry_delay);
+            self.retry_delay = (self.retry_delay * 2).min(Duration::from_secs(30));
         }
         Ok(())
     }
 
     fn next_maintenance_delay(&self) -> Option<Duration> {
-        (!self.queued.is_empty()).then_some(Duration::from_millis(250))
+        if self.queued.is_empty() {
+            return None;
+        }
+        self.next_attempt_at
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+            .or(Some(Duration::ZERO))
     }
 }
 

@@ -208,7 +208,6 @@ fn actor_loop(
                     state.revision = state.revision.saturating_add(1);
                     event_hub.publish(state.revision);
                 }
-                event_hub.publish(state.revision);
             }
             ActorMessage::Lifecycle { event, response } => {
                 let _ = response.send(state.runtime.lifecycle(&event));

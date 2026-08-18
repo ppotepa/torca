@@ -96,8 +96,7 @@ impl ActorState {
                 } else {
                     let events_code = self.runtime.notification_events_json(cursor);
                     if events_code == ABI_OK {
-                        let snapshot = serde_json::from_str::<Value>(&self.runtime.snapshot_json)
-                            .unwrap_or(Value::Null);
+                        let snapshot = self.runtime.snapshot_value.clone();
                         let events = serde_json::from_str::<Value>(&self.runtime.query_json)
                             .unwrap_or(Value::Null);
                         self.runtime.query_json = serde_json::json!({
@@ -159,7 +158,7 @@ impl ActorState {
         {
             serde_json::from_str(&self.runtime.query_json).unwrap_or(Value::Null)
         } else {
-            serde_json::from_str(&self.runtime.snapshot_json).unwrap_or(Value::Null)
+            self.runtime.snapshot_value.clone()
         };
         if name != "conversation.page"
             && name != "conversation.search"

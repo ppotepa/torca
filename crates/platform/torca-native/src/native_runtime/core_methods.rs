@@ -80,6 +80,7 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         last_result_json: success_result("initialized"),
         last_error_descriptor: None,
         snapshot_json: empty_snapshot_json(),
+        snapshot_value: serde_json::Value::Null,
         query_json: "{\"messages\":[],\"hasMore\":false}".into(),
         logger,
         notification_seen: HashMap::new(),

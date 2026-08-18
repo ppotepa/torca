@@ -346,7 +346,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         diagnostics.count(RuntimeCounter::SchedulerWakeup);
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
         if !work.foreground
-            && !policy.has_any_active_lease(std::time::Instant::now())
+            // Viewport/focus leases keep peer state useful, but they are not
+            // sufficient reason to keep the whole Tor stack awake while the
+            // host is backgrounded. Durable delivery/radio/pairing leases
+            // still prevent dormancy through this policy query.
+            && !policy.has_durable_lease(std::time::Instant::now())
             && !matches!(
                 work.background_sync,
                 torca_battery::BackgroundSyncCadence::Instant

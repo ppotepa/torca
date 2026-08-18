@@ -36,7 +36,7 @@ use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
 use crate::battery_policy::BatteryPolicyState;
 use crate::composition::{NativeCompositionError, spawn_production_engine};
 use crate::json::{
-    bridge_message_page_json, bridge_result_json, bridge_snapshot_json, empty_snapshot_json,
+    bridge_message_page_json, bridge_result_json, bridge_snapshot_value, empty_snapshot_json,
     error_result, success_result,
 };
 use crate::runtime_composition::spawn_production_runtime;
@@ -114,6 +114,11 @@ pub struct TorcaRuntime {
     pub(crate) last_result_json: String,
     pub(crate) last_error_descriptor: Option<ErrorDescriptor>,
     pub(crate) snapshot_json: String,
+    /// Parsed projection retained alongside the ABI string. Native request
+    /// routing frequently needs to embed the current snapshot in another
+    /// response; reparsing the same JSON for every poll doubled CPU and
+    /// allocation work on larger contact books.
+    pub(crate) snapshot_value: serde_json::Value,
     pub(crate) query_json: String,
     logger: Option<Logger>,
     notification_seen: HashMap<String, u32>,
