@@ -152,10 +152,10 @@ resume failures already seen in production testing.
   (`validated`, `internet`, `metered`, Wi-Fi/cellular); changes to that
   fingerprint wake recovery even when the `Network` object is unchanged.
   Power Saver propagation is implemented through the Android power-save
-  broadcast; `ConnectivityDiagnosticsManager` remains deferred because the
-  existing capability callback supplies the required metered/validated signal
-  without another polling loop. Windows energy sampling is exposed as an
-  event-triggered provider and must be invoked by the host notification shell.
+  broadcast; `ConnectivityDiagnosticsManager` reports data-stall signals
+  through the same event path without another polling loop. Windows energy
+  sampling is exposed as an event-triggered provider and must be invoked by the
+  host notification shell.
 - There is no legacy runtime mode and no parallel old scheduler. Each old polling/tick path is removed when its replacement lands.
 - Relay continues to store only invitations. It does not become a message mailbox.
 - Background delivery without push is best-effort and may wait for a rendezvous window or for the recipient to open Torca.
@@ -492,9 +492,9 @@ Android:
 - The 250-ms and 1500-ms pollers disappear.
 - The manifest explicitly includes `ACCESS_NETWORK_STATE`.
 - `NetworkCallback` reports availability, validation, meteredness, blocked state, and generation.
-- Power Saver and `ConnectivityDiagnosticsManager` are intentionally not wired
-  yet; their future integration must be event-driven and must not add a polling
-  loop to the foreground service.
+- Power Saver and `ConnectivityDiagnosticsManager` are wired through event
+  callbacks. Their integration must remain event-driven and must not add a
+  polling loop to the foreground service.
 
 ## Observability and Energy Ledger (implemented core; counters still expanding)
 
