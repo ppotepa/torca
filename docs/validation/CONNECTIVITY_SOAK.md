@@ -8,6 +8,17 @@ Run:
 ./scripts/Run-TorcaConnectivitySoak.ps1 -Iterations 10 -SettleSeconds 15
 ```
 
+When multiple devices are connected, select one explicitly with the exact
+serial from `adb devices`:
+
+```powershell
+./scripts/Run-TorcaConnectivitySoak.ps1 -Iterations 10 -SettleSeconds 15 `
+  -DeviceId 'adb-<device-id>-<transport>._adb-tls-connect._tcp'
+```
+
+The harness fails before changing network state if the selected device is not
+ready, and verifies that the Torca process started on that same device.
+
 Optionally include mobile-data transitions:
 
 ```powershell

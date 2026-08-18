@@ -8,6 +8,17 @@ Run from the repository root with a physical Android device connected through AD
 ./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60
 ```
 
+If more than one ADB transport is ready, pass the exact serial reported by
+`adb devices` (wireless ADB serials include the mDNS suffix):
+
+```powershell
+./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 `
+  -DeviceId 'adb-<device-id>-<transport>._adb-tls-connect._tcp'
+```
+
+The harness refuses an ambiguous or stale device selection and verifies that
+the Torca process is running before starting the measured window.
+
 The harness launches Torca once, backgrounds it, resets Android batterystats before the measured idle window, and captures battery/power/device-idle/service/process/logcat evidence under `artifacts/soak/`.
 
 Acceptance review should compare at least two equivalent runs and inspect: Torca UID battery attribution, partial wakelocks, foreground-service residency, unexpected process restarts, repeated network bootstrap/reconnect loops, scheduler wake frequency, and whether an otherwise idle device is prevented from entering normal idle states.
