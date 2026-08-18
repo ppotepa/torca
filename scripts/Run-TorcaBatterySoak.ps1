@@ -49,10 +49,17 @@ function Get-PowerSource([string]$BatteryText) {
     return ($sources -join ',').ToLowerInvariant()
 }
 
+function Get-BatteryLevel([string]$BatteryText) {
+    $match = [regex]::Match($BatteryText, '(?im)^\s*level:\s*(\d+)\s*$')
+    if (-not $match.Success) { return $null }
+    return [int]$match.Groups[1].Value
+}
+
 Capture-Adb 'device.txt' @('shell', 'getprop')
 $batteryBeforeText = Invoke-SelectedAdb @('shell', 'dumpsys', 'battery') 2>&1 | Out-String
 $batteryBeforeText | Out-File -Encoding utf8 (Join-Path $output 'battery-before.txt')
 $powerSourceBefore = Get-PowerSource $batteryBeforeText
+$batteryLevelBefore = Get-BatteryLevel $batteryBeforeText
 if ($RequireUnplugged -and $powerSourceBefore -ne 'battery') {
     throw "Battery soak requires an unplugged device, but '$DeviceId' reports power source '$powerSourceBefore'."
 }
@@ -86,6 +93,9 @@ $started = Get-Date
     requireUnplugged = [bool]$RequireUnplugged
     requireScreenOff = [bool]$RequireScreenOff
     powerSourceBefore = $powerSourceBefore
+    batteryLevelBefore = $batteryLevelBefore
+    appPid = $appPid
+    screenStateAtStart = if ($RequireScreenOff) { 'dozing_or_asleep' } else { 'unspecified' }
     startedAt = $started.ToString('o')
     scenario = 'warm-start then background idle'
 } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $output 'scenario.json')
@@ -98,10 +108,13 @@ Capture-Adb 'battery-after.txt' @('shell', 'dumpsys', 'battery')
 Capture-Adb 'power-after.txt' @('shell', 'dumpsys', 'power')
 Capture-Adb 'deviceidle-after.txt' @('shell', 'dumpsys', 'deviceidle')
 Capture-Adb 'services-after.txt' @('shell', 'dumpsys', 'activity', 'services', $Package)
-Capture-Adb 'process-after.txt' @('shell', 'ps', '-A')
+$processAfterText = Invoke-SelectedAdb @('shell', 'ps', '-A') 2>&1 | Out-String
+$processAfterText | Out-File -Encoding utf8 (Join-Path $output 'process-after.txt')
 Capture-Adb 'logcat.txt' @('logcat', '-d', '-v', 'threadtime')
 $batteryAfterText = Get-Content (Join-Path $output 'battery-after.txt') -Raw
 $powerSourceAfter = Get-PowerSource $batteryAfterText
+$batteryLevelAfter = Get-BatteryLevel $batteryAfterText
+$appRunningAtEnd = $processAfterText -match "(?m)\s$([regex]::Escape($Package))\s*$"
 
 @{
     package = $Package
@@ -111,6 +124,11 @@ $powerSourceAfter = Get-PowerSource $batteryAfterText
     requireScreenOff = [bool]$RequireScreenOff
     powerSourceBefore = $powerSourceBefore
     powerSourceAfter = $powerSourceAfter
+    batteryLevelBefore = $batteryLevelBefore
+    batteryLevelAfter = $batteryLevelAfter
+    appPid = $appPid
+    appRunningAtEnd = [bool]$appRunningAtEnd
+    screenStateAtStart = if ($RequireScreenOff) { 'dozing_or_asleep' } else { 'unspecified' }
     startedAt = $started.ToString('o')
     finishedAt = (Get-Date).ToString('o')
     output = (Resolve-Path $output).Path
