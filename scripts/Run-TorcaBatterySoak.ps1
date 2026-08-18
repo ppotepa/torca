@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $false)][string]$Package = 'com.torca.torca_app',
     [Parameter(Mandatory = $false)][string]$DeviceId,
     [Parameter(Mandatory = $false)][string]$OutputRoot,
-    [Parameter(Mandatory = $false)][switch]$RequireUnplugged
+    [Parameter(Mandatory = $false)][switch]$RequireUnplugged,
+    [Parameter(Mandatory = $false)][switch]$RequireScreenOff
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,6 +66,17 @@ $appPid = (Invoke-SelectedAdb @('shell', 'pidof', $Package) 2>$null | Out-String
 if (-not $appPid) { throw "Torca process '$Package' did not start on ADB device '$DeviceId'." }
 Start-Sleep -Seconds 20
 Invoke-SelectedAdb @('shell', 'input', 'keyevent', 'KEYCODE_HOME') | Out-Null
+if ($RequireScreenOff) {
+    Invoke-SelectedAdb @('shell', 'input', 'keyevent', 'KEYCODE_SLEEP') | Out-Null
+    Start-Sleep -Seconds 3
+    $powerAtStartText = Invoke-SelectedAdb @('shell', 'dumpsys', 'power') 2>&1 | Out-String
+    $powerAtStartText | Out-File -Encoding utf8 (Join-Path $output 'power-start.txt')
+    if ($powerAtStartText -notmatch '(?im)mWakefulness=(Dozing|Asleep)') {
+        throw "Battery soak requires the screen to be off, but Android did not enter Dozing/Asleep on '$DeviceId'."
+    }
+} else {
+    $powerAtStartText = ''
+}
 
 $started = Get-Date
 @{
@@ -72,6 +84,7 @@ $started = Get-Date
     deviceId = $DeviceId
     durationMinutes = $DurationMinutes
     requireUnplugged = [bool]$RequireUnplugged
+    requireScreenOff = [bool]$RequireScreenOff
     powerSourceBefore = $powerSourceBefore
     startedAt = $started.ToString('o')
     scenario = 'warm-start then background idle'
@@ -95,6 +108,7 @@ $powerSourceAfter = Get-PowerSource $batteryAfterText
     deviceId = $DeviceId
     durationMinutes = $DurationMinutes
     requireUnplugged = [bool]$RequireUnplugged
+    requireScreenOff = [bool]$RequireScreenOff
     powerSourceBefore = $powerSourceBefore
     powerSourceAfter = $powerSourceAfter
     startedAt = $started.ToString('o')

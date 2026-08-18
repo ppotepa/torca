@@ -15,6 +15,13 @@ chargers:
 ./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 -RequireUnplugged
 ```
 
+For the strict background-idle gate, also require the display to enter Doze:
+
+```powershell
+./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 360 `
+  -RequireUnplugged -RequireScreenOff
+```
+
 If more than one ADB transport is ready, pass the exact serial reported by
 `adb devices` (wireless ADB serials include the mDNS suffix):
 
@@ -27,6 +34,8 @@ The harness refuses an ambiguous or stale device selection and verifies that
 the Torca process is running before starting the measured window. With
 `-RequireUnplugged`, it also fails before launching if Android reports AC, USB,
 or wireless power.
+With `-RequireScreenOff`, it sends `KEYCODE_SLEEP` and fails unless Android
+reports `Dozing` or `Asleep` before the measured window begins.
 
 The harness launches Torca once, backgrounds it, resets Android batterystats before the measured idle window, and captures battery/power/device-idle/service/process/logcat evidence under `artifacts/soak/`.
 
