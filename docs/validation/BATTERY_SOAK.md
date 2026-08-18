@@ -43,6 +43,14 @@ The harness launches Torca once, backgrounds it, resets Android batterystats bef
 power source, screen-state requirement and whether the process was still
 present at the end of the window.
 
+Validate a completed strict artifact before using it as a release gate:
+
+```powershell
+./scripts/Validate-TorcaBatterySoak.ps1 `
+  -Path artifacts/soak/battery-YYYYMMDD-HHMMSS `
+  -MinimumMinutes 360
+```
+
 Acceptance review should compare at least two equivalent runs and inspect: Torca UID battery attribution, partial wakelocks, foreground-service residency, unexpected process restarts, repeated network bootstrap/reconnect loops, scheduler wake frequency, and whether an otherwise idle device is prevented from entering normal idle states.
 
 For a release-oriented result, also run a longer 6–8 hour background window on battery power with the screen off. Keep device model, Android version, Torca build, network type, charging state and battery profile in the recorded test notes. Do not compare absolute battery percentages across materially different devices or radio conditions.
