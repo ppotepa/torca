@@ -306,7 +306,9 @@ class MainActivity : FlutterActivity() {
         // permission/system dialog). Rust will reconcile the burst on resume.
         AndroidKeystoreBridge.stopRadioCapture()
         if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
-            NativeRuntimeBridge.nativeLifecycleEvent("radio_capture_interrupted:activity_paused")
+            // Use the existing lifecycle contract so the Rust coordinator
+            // atomically ends any local burst and releases its radio lease.
+            NativeRuntimeBridge.nativeLifecycleEvent("backgrounded")
         }
         val audioManager = getSystemService(AudioManager::class.java)
         if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
