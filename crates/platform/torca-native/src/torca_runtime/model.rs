@@ -21,6 +21,7 @@ struct RuntimeHandleInner {
     sender: SyncSender<ActorMessage>,
     startup_error: Option<String>,
     event_hub: Arc<RuntimeEventHub>,
+    alive: Arc<AtomicBool>,
 }
 
 #[repr(C)]

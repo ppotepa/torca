@@ -1,5 +1,6 @@
 use core::{ptr, slice, str};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;

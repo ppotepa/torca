@@ -29,7 +29,7 @@ pub unsafe extern "C" fn torca_runtime_invoke(
     else {
         return -1;
     };
-    if handle.inner.startup_error.is_some() {
+    if handle.inner.startup_error.is_some() || !handle.inner.alive.load(Ordering::Acquire) {
         let request_id = serde_json::from_str::<Value>(request)
             .ok()
             .and_then(|value| value.get("requestId").and_then(Value::as_str).map(str::to_owned))
@@ -114,7 +114,7 @@ unsafe fn torca_runtime_wait_for_revision_with_waiter(
     let Some(handle) = (unsafe { handle.as_ref() }) else {
         return -1;
     };
-    if handle.inner.startup_error.is_some() {
+    if handle.inner.startup_error.is_some() || !handle.inner.alive.load(Ordering::Acquire) {
         return -2;
     }
     let result = if timeout_ms == 0 {
@@ -218,7 +218,12 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeEnsureRunti
         0
     } else {
         let available =
-            unsafe { handle.as_ref().is_some_and(|value| value.inner.startup_error.is_none()) };
+            unsafe {
+                handle.as_ref().is_some_and(|value| {
+                    value.inner.startup_error.is_none()
+                        && value.inner.alive.load(Ordering::Acquire)
+                })
+            };
         unsafe {
             torca_runtime_release(handle);
         }
@@ -234,7 +239,9 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeRuntimeAvai
 ) -> jni::sys::jboolean {
     let registry = REGISTRY.get_or_init(|| Mutex::new(None));
     registry.lock().map_or(0, |guard| {
-        u8::from(guard.as_ref().is_some_and(|value| value.startup_error.is_none()))
+        u8::from(guard.as_ref().is_some_and(|value| {
+            value.startup_error.is_none() && value.alive.load(Ordering::Acquire)
+        }))
     })
 }
 

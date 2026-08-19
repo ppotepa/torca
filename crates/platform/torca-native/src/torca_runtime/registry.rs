@@ -141,11 +141,14 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
     let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
     let event_hub = Arc::new(RuntimeEventHub::default());
     let actor_event_hub = Arc::clone(&event_hub);
+    let alive = Arc::new(AtomicBool::new(false));
+    let actor_alive = Arc::clone(&alive);
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     thread::Builder::new()
         .name("torca-runtime".into())
         .spawn(move || match TorcaRuntime::new(Arc::clone(&actor_event_hub)) {
             Ok(runtime) => {
+                actor_alive.store(true, Ordering::Release);
                 let runtime_id = secure_id_hex().unwrap_or_else(|_| "runtime-unavailable".into());
                 let _ = ready_tx.send(Ok(()));
                 actor_loop(
@@ -158,9 +161,11 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                     },
                     actor_event_hub,
                 );
+                actor_alive.store(false, Ordering::Release);
             }
             Err(error) => {
                 eprintln!("Torca runtime startup failed: {error}");
+                actor_alive.store(false, Ordering::Release);
                 let _ = ready_tx.send(Err(error));
             }
         })
@@ -170,7 +175,7 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
         Ok(Err(error)) => Some(error),
         Err(_) => return Err(()),
     };
-    Ok(Arc::new(RuntimeHandleInner { sender, startup_error, event_hub }))
+    Ok(Arc::new(RuntimeHandleInner { sender, startup_error, event_hub, alive }))
 }
 
 fn actor_loop(
