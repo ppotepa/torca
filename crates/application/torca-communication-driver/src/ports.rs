@@ -99,6 +99,7 @@ pub trait PeerLinkRuntime: Send {
 }
 
 pub trait TextDeliveryRuntime: Send {
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
 
@@ -112,6 +113,7 @@ pub trait TextDeliveryRuntime: Send {
 }
 
 pub trait ControlDeliveryRuntime: Send {
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
 

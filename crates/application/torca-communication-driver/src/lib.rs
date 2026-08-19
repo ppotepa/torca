@@ -55,8 +55,9 @@ const CONTROL_BATCH: usize = 1;
 const ATTACHMENT_BATCH: usize = 8;
 const MAX_DEFERRED_ATTACHMENTS: usize = 64;
 
-struct AttachmentWork {
-    now: Timestamp,
+enum AttachmentWork {
+    Maintenance { now: Timestamp },
+    Prepare { request: AttachmentSendRequest, now: Timestamp },
 }
 
 pub struct TorcaCommunicationDriver {
@@ -68,6 +69,7 @@ pub struct TorcaCommunicationDriver {
     attachments: Arc<Mutex<Box<dyn AttachmentRuntime>>>,
     attachment_job_active: Arc<AtomicBool>,
     attachment_job_result: Arc<Mutex<Option<AttachmentMaintenanceResult>>>,
+    attachment_job_error: Arc<Mutex<Option<CommunicationError>>>,
     attachment_waker: WakeSlot,
     attachment_snapshot_cache: Arc<Mutex<Vec<AttachmentView>>>,
     attachment_job_sender: SyncSender<AttachmentWork>,
@@ -94,18 +96,22 @@ impl TorcaCommunicationDriver {
     ) -> Self {
         let attachments = Arc::new(Mutex::new(attachments));
         let attachment_job_result = Arc::new(Mutex::new(None));
+        let attachment_job_error = Arc::new(Mutex::new(None));
         let attachment_job_active = Arc::new(AtomicBool::new(false));
         let attachment_waker = Arc::new(Mutex::new(None));
         let attachment_snapshot_cache = Arc::new(Mutex::new(Vec::new()));
-        let (attachment_job_sender, attachment_job_receiver) = sync_channel(1);
+        let (attachment_job_sender, attachment_job_receiver) = sync_channel(8);
         spawn_attachment_worker(
             Arc::clone(&attachments),
             Arc::clone(&attachment_job_active),
             Arc::clone(&attachment_job_result),
+            Arc::clone(&attachment_job_error),
             Arc::clone(&attachment_waker),
             Arc::clone(&attachment_snapshot_cache),
             attachment_job_receiver,
         );
+        let text = Box::new(TextDeliveryBridge::new(text));
+        let control = Box::new(ControlDeliveryBridge::new(control));
         Self {
             engine,
             peer,
@@ -115,6 +121,7 @@ impl TorcaCommunicationDriver {
             attachments,
             attachment_job_active,
             attachment_job_result,
+            attachment_job_error,
             attachment_waker,
             attachment_snapshot_cache,
             attachment_job_sender,
@@ -263,6 +270,11 @@ impl PeerSessionPort for TorcaCommunicationDriver {
                 self.attachment_scheduler.disarm();
             }
         }
+        if let Ok(mut error) = self.attachment_job_error.lock()
+            && let Some(error) = error.take()
+        {
+            return Err(map_runtime(error));
+        }
         self.peer.maintenance(contacts, now).map_err(map_runtime)?;
         self.drain_inbound(now).map_err(map_runtime)?;
         self.text.maintenance(now, TEXT_BATCH).map_err(map_runtime)?;
@@ -276,7 +288,8 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             && !self.attachment_job_active.swap(true, Ordering::AcqRel)
         {
             self.attachment_scheduler.disarm();
-            if let Err(error) = self.attachment_job_sender.try_send(AttachmentWork { now })
+            if let Err(error) =
+                self.attachment_job_sender.try_send(AttachmentWork::Maintenance { now })
                 && matches!(error, TrySendError::Disconnected(_))
             {
                 self.attachment_job_active.store(false, Ordering::Release);
@@ -310,7 +323,9 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         if let Ok(mut target) = self.attachment_waker.lock() {
             *target = Some(Arc::clone(&waker));
         }
-        self.peer.set_waker(waker);
+        self.peer.set_waker(Arc::clone(&waker));
+        self.text.set_waker(Arc::clone(&waker));
+        self.control.set_waker(waker);
     }
 
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus {
@@ -478,19 +493,12 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         request: &AttachmentSendRequest,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        let projection_cache = Arc::clone(&self.attachment_snapshot_cache);
-        let result = {
-            let mut attachments = self.attachment_runtime().map_err(map_runtime)?;
-            let result = attachments.prepare_outgoing(request, now).map_err(map_runtime);
-            if result.is_ok() {
-                refresh_attachment_cache(&projection_cache, &**attachments);
-            }
-            result
-        };
-        if result.is_ok() {
-            self.attachment_scheduler.wake();
-        }
-        result
+        self.attachment_job_sender
+            .try_send(AttachmentWork::Prepare { request: request.clone(), now })
+            .map_err(|_| {
+                RuntimeDriverError::Classified(CommunicationError::Attachment.descriptor())
+            })?;
+        Ok(())
     }
 
     fn retry_attachment(&mut self, id: OpaqueId, now: Timestamp) -> Result<(), RuntimeDriverError> {
@@ -561,10 +569,234 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
     }
 }
 
+enum ControlWork {
+    Recover(Timestamp),
+    Maintenance { now: Timestamp, limit: usize },
+    Reaction { contact_id: ContactId, reaction: ReactionPayload, at: Timestamp },
+}
+
+struct ControlDeliveryBridge {
+    sender: SyncSender<ControlWork>,
+    state: Arc<Mutex<TextWorkerState>>,
+}
+
+impl ControlDeliveryBridge {
+    fn new(runtime: Box<dyn ControlDeliveryRuntime>) -> Self {
+        let (sender, receiver) = sync_channel(8);
+        let state = Arc::new(Mutex::new(TextWorkerState {
+            in_flight: false,
+            result: None,
+            next_delay: None,
+            writes: 0,
+            waker: None,
+        }));
+        let worker_state = Arc::clone(&state);
+        thread::spawn(move || {
+            let mut runtime = runtime;
+            while let Ok(work) = receiver.recv() {
+                let (result, now) = match work {
+                    ControlWork::Recover(now) => (runtime.recover(now), now),
+                    ControlWork::Maintenance { now, limit } => {
+                        (runtime.maintenance(now, limit), now)
+                    }
+                    ControlWork::Reaction { contact_id, reaction, at } => {
+                        (runtime.queue_reaction(contact_id, reaction, at), at)
+                    }
+                };
+                let next_delay = runtime.next_maintenance_delay(now);
+                let writes = runtime.database_write_count();
+                let waker = worker_state.lock().ok().and_then(|mut value| {
+                    value.in_flight = false;
+                    value.result = Some(result);
+                    value.next_delay = next_delay;
+                    value.writes = writes;
+                    value.waker.clone()
+                });
+                if let Some(waker) = waker {
+                    waker();
+                }
+            }
+        });
+        Self { sender, state }
+    }
+
+    fn dispatch(&self, work: ControlWork) -> Result<(), CommunicationError> {
+        if self.sender.try_send(work).is_err() {
+            if let Ok(mut state) = self.state.lock() {
+                state.in_flight = false;
+            }
+            return Err(CommunicationError::Control);
+        }
+        Ok(())
+    }
+
+    fn take_result(&self) -> Result<(), CommunicationError> {
+        self.state.lock().map_err(|_| CommunicationError::Control)?.result.take().unwrap_or(Ok(()))
+    }
+}
+
+impl ControlDeliveryRuntime for ControlDeliveryBridge {
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.waker = Some(waker);
+        }
+    }
+
+    fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
+        self.take_result()?;
+        if let Ok(mut state) = self.state.lock() {
+            if state.in_flight {
+                return Ok(());
+            }
+            state.in_flight = true;
+        }
+        self.dispatch(ControlWork::Recover(now))
+    }
+
+    fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
+        self.take_result()?;
+        if let Ok(mut state) = self.state.lock() {
+            if state.in_flight {
+                return Ok(());
+            }
+            state.in_flight = true;
+        }
+        self.dispatch(ControlWork::Maintenance { now, limit })
+    }
+
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        let state = self.state.lock().ok()?;
+        if state.in_flight { None } else { state.next_delay }
+    }
+
+    fn database_write_count(&self) -> u64 {
+        self.state.lock().map(|state| state.writes).unwrap_or(0)
+    }
+
+    fn queue_reaction(
+        &mut self,
+        contact_id: ContactId,
+        reaction: ReactionPayload,
+        at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.dispatch(ControlWork::Reaction { contact_id, reaction, at })
+    }
+}
+
+enum TextWork {
+    Recover(Timestamp),
+    Maintenance { now: Timestamp, limit: usize },
+}
+
+struct TextWorkerState {
+    in_flight: bool,
+    result: Option<Result<(), CommunicationError>>,
+    next_delay: Option<Duration>,
+    writes: u64,
+    waker: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+struct TextDeliveryBridge {
+    sender: SyncSender<TextWork>,
+    state: Arc<Mutex<TextWorkerState>>,
+}
+
+impl TextDeliveryBridge {
+    fn new(runtime: Box<dyn TextDeliveryRuntime>) -> Self {
+        let (sender, receiver) = sync_channel(1);
+        let state = Arc::new(Mutex::new(TextWorkerState {
+            in_flight: false,
+            result: None,
+            next_delay: None,
+            writes: 0,
+            waker: None,
+        }));
+        let worker_state = Arc::clone(&state);
+        thread::spawn(move || {
+            let mut runtime = runtime;
+            while let Ok(work) = receiver.recv() {
+                let (result, now) = match work {
+                    TextWork::Recover(now) => (runtime.recover(now), now),
+                    TextWork::Maintenance { now, limit } => (runtime.maintenance(now, limit), now),
+                };
+                let next_delay = runtime.next_maintenance_delay(now);
+                let writes = runtime.database_write_count();
+                let waker = worker_state.lock().ok().and_then(|mut value| {
+                    value.in_flight = false;
+                    value.result = Some(result);
+                    value.next_delay = next_delay;
+                    value.writes = writes;
+                    value.waker.clone()
+                });
+                if let Some(waker) = waker {
+                    waker();
+                }
+            }
+        });
+        Self { sender, state }
+    }
+
+    fn take_result(&self) -> Result<(), CommunicationError> {
+        self.state.lock().map_err(|_| CommunicationError::Text)?.result.take().unwrap_or(Ok(()))
+    }
+}
+
+impl TextDeliveryRuntime for TextDeliveryBridge {
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.waker = Some(waker);
+        }
+    }
+
+    fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
+        self.take_result()?;
+        if let Ok(mut state) = self.state.lock() {
+            if state.in_flight {
+                return Ok(());
+            }
+            state.in_flight = true;
+        }
+        if self.sender.try_send(TextWork::Recover(now)).is_err() {
+            if let Ok(mut state) = self.state.lock() {
+                state.in_flight = false;
+            }
+            return Err(CommunicationError::Text);
+        }
+        Ok(())
+    }
+
+    fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
+        self.take_result()?;
+        if let Ok(mut state) = self.state.lock() {
+            if state.in_flight {
+                return Ok(());
+            }
+            state.in_flight = true;
+        }
+        if self.sender.try_send(TextWork::Maintenance { now, limit }).is_err() {
+            if let Ok(mut state) = self.state.lock() {
+                state.in_flight = false;
+            }
+            return Err(CommunicationError::Text);
+        }
+        Ok(())
+    }
+
+    fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        let state = self.state.lock().ok()?;
+        if state.in_flight { None } else { state.next_delay }
+    }
+
+    fn database_write_count(&self) -> u64 {
+        self.state.lock().map(|state| state.writes).unwrap_or(0)
+    }
+}
+
 fn spawn_attachment_worker(
     attachments: Arc<Mutex<Box<dyn AttachmentRuntime>>>,
     active: Arc<AtomicBool>,
     result_slot: Arc<Mutex<Option<AttachmentMaintenanceResult>>>,
+    error_slot: Arc<Mutex<Option<CommunicationError>>>,
     waker: WakeSlot,
     projection_cache: Arc<Mutex<Vec<AttachmentView>>>,
     receiver: Receiver<AttachmentWork>,
@@ -572,22 +804,40 @@ fn spawn_attachment_worker(
     thread::spawn(move || {
         while let Ok(work) = receiver.recv() {
             let result = attachments.lock().map_err(|_| CommunicationError::Attachment).and_then(
-                |mut runtime| {
-                    let outcome = runtime.maintenance_outgoing(work.now, ATTACHMENT_BATCH)?;
-                    refresh_attachment_cache(&projection_cache, &**runtime);
-                    Ok(outcome)
+                |mut runtime| match work {
+                    AttachmentWork::Maintenance { now } => {
+                        let outcome = runtime.maintenance_outgoing(now, ATTACHMENT_BATCH)?;
+                        refresh_attachment_cache(&projection_cache, &**runtime);
+                        Ok(Some(outcome))
+                    }
+                    AttachmentWork::Prepare { request, now } => {
+                        runtime.prepare_outgoing(&request, now)?;
+                        refresh_attachment_cache(&projection_cache, &**runtime);
+                        Ok(None)
+                    }
                 },
             );
+            if let Ok(None) = result {
+                active.store(false, Ordering::Release);
+                if let Some(callback) = waker.lock().ok().and_then(|target| target.clone()) {
+                    callback();
+                }
+                continue;
+            }
             let outcome = match result {
-                Ok(outcome) => outcome,
+                Ok(Some(outcome)) => outcome,
                 Err(error) => {
                     eprintln!("torca-attachment: maintenance failed code={error}");
+                    if let Ok(mut slot) = error_slot.lock() {
+                        *slot = Some(error);
+                    }
                     AttachmentMaintenanceResult {
                         more_work: true,
                         policy_blocked: false,
                         retry_after_ms: Some(2_000),
                     }
                 }
+                Ok(None) => unreachable!(),
             };
             if let Ok(mut slot) = result_slot.lock() {
                 *slot = Some(outcome);

@@ -99,7 +99,15 @@ pub unsafe extern "C" fn torca_free(data: *mut u8, length: usize) {
 pub extern "C" fn torca_runtime_acquire() -> *mut TorcaRuntimeHandle {
     let registry = REGISTRY.get_or_init(|| Mutex::new(None));
     let existing = match registry.lock() {
-        Ok(guard) => guard.as_ref().cloned(),
+        Ok(mut guard) => {
+            if guard.as_ref().is_some_and(|inner| !inner.alive.load(Ordering::Acquire)) {
+                // The actor exited but a stale registry entry may still be held by
+                // platform waiters. Drop it so the next acquire performs a clean
+                // controlled respawn instead of returning a zombie handle.
+                *guard = None;
+            }
+            guard.as_ref().cloned()
+        }
         Err(_) => return ptr::null_mut(),
     };
     let inner = if let Some(existing) = existing {
@@ -113,7 +121,11 @@ pub extern "C" fn torca_runtime_acquire() -> *mut TorcaRuntimeHandle {
             return ptr::null_mut();
         };
         if let Ok(guard) = registry.lock() {
-            if let Some(existing) = guard.as_ref().cloned() {
+            if let Some(existing) = guard
+                .as_ref()
+                .filter(|inner| inner.alive.load(Ordering::Acquire))
+                .cloned()
+            {
                 existing
             } else {
                 drop(guard);
