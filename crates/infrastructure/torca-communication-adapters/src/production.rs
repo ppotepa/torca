@@ -34,7 +34,9 @@ use crate::{
     SharedPeerCrypto, TextPeerTransport, TextWorkerAdapter,
 };
 
-const ACK_TIMEOUT: Duration = Duration::from_secs(30);
+// Delivery is durable and retried by the worker. Keep the actor turn bounded
+// so one missing peer ACK cannot monopolize runtime maintenance for 30s.
+const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 const RETRY_MAX_ATTEMPTS: u32 = 12;
 const RETRY_BASE: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(60);
