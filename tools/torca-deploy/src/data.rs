@@ -85,14 +85,13 @@ impl<'a> DataController<'a> {
         // Probe package presence once and treat an absent package as an
         // already-reset profile.  Other adb/package-manager failures remain
         // hard errors so a disconnected device is never reported as reset.
-        let package = self.command(&device.id, &["shell", "pm", "path", "com.torca.torca_app"])?;
-        let package_detail = package.text.to_ascii_lowercase();
-        if package_detail.contains("unknown package") || package_detail.contains("not found") {
-            return Ok(());
-        }
+        let package =
+            self.command(&device.id, &["shell", "pm", "list", "packages", "com.torca.torca_app"])?;
         if !package.success {
             return Err(DataError::Command(package.text));
         }
+        // `pm list packages` returns success with no output when the package
+        // is not installed. This is the normal state before a fresh install.
         if package.text.trim().is_empty() {
             return Ok(());
         }
@@ -202,7 +201,8 @@ mod tests {
             let text = if command.arguments.ends_with(&[
                 "shell".into(),
                 "pm".into(),
-                "path".into(),
+                "list".into(),
+                "packages".into(),
                 "com.torca.torca_app".into(),
             ]) {
                 "package:/data/app/com.torca.torca_app/base.apk\n".into()
