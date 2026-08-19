@@ -46,8 +46,10 @@ type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 type WakeSlot = Arc<Mutex<Option<WakeCallback>>>;
 
 const INBOUND_BATCH: usize = 64;
-const TEXT_BATCH: usize = 16;
-const CONTROL_BATCH: usize = 16;
+// Delivery transports are durable and may wait for a peer ACK. Keep each
+// actor maintenance turn bounded; retries remain queued for later turns.
+const TEXT_BATCH: usize = 1;
+const CONTROL_BATCH: usize = 1;
 // Process a bounded batch per worker turn. This keeps transport fairness while
 // avoiding one OS thread per 64 KiB chunk for large attachments.
 const ATTACHMENT_BATCH: usize = 8;
