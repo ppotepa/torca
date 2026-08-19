@@ -79,6 +79,23 @@ impl<'a> DataController<'a> {
     }
 
     fn reset_android(&self, device: &Device, policy: ClientDataPolicy) -> Result<(), DataError> {
+        // Resets run before installation in a fresh deployment.  In that
+        // case the package legitimately does not exist yet; there is no
+        // profile to clear and `run-as` would fail with "unknown package".
+        // Probe package presence once and treat an absent package as an
+        // already-reset profile.  Other adb/package-manager failures remain
+        // hard errors so a disconnected device is never reported as reset.
+        let package = self.command(&device.id, &["shell", "pm", "path", "com.torca.torca_app"])?;
+        let package_detail = package.text.to_ascii_lowercase();
+        if package_detail.contains("unknown package") || package_detail.contains("not found") {
+            return Ok(());
+        }
+        if !package.success {
+            return Err(DataError::Command(package.text));
+        }
+        if package.text.trim().is_empty() {
+            return Ok(());
+        }
         match policy {
             // The Android host keeps profile data below no_backup/torca while
             // Arti's reusable state is below no_backup/torca/runtime.  `pm
@@ -182,7 +199,17 @@ mod tests {
     impl CommandRunner for RecordingRunner {
         fn run(&self, command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
             self.commands.lock().expect("commands").push(command.clone());
-            Ok(CommandOutput { success: true, status: Some(0), text: String::new() })
+            let text = if command.arguments.ends_with(&[
+                "shell".into(),
+                "pm".into(),
+                "path".into(),
+                "com.torca.torca_app".into(),
+            ]) {
+                "package:/data/app/com.torca.torca_app/base.apk\n".into()
+            } else {
+                String::new()
+            };
+            Ok(CommandOutput { success: true, status: Some(0), text })
         }
     }
 
@@ -202,9 +229,9 @@ mod tests {
             .expect("profile reset");
 
         let commands = runner.commands.lock().expect("commands");
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert_eq!(
-            commands[1].arguments,
+            commands[2].arguments,
             [
                 "-s",
                 "phone",
