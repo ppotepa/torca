@@ -331,27 +331,6 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       _transmissionActive = true;
       _commandBusy = true;
     });
-    try {
-      await MicrophonePermission.setCommunicationMode(true);
-      await MicrophonePermission.startNativeCapture();
-    } on Object {
-      await _stopCaptureSafely();
-      if (!mounted) return;
-      setState(() {
-        _activePointerId = null;
-        _pointerHeld = false;
-        _transmissionActive = false;
-        _commandBusy = false;
-      });
-      _syncPulse();
-      _showError(context.strings.couldNotStartRadio);
-      return;
-    }
-    unawaited(HapticFeedback.mediumImpact());
-    _burstTimer = Timer(
-      const Duration(seconds: 10),
-      () => unawaited(_release()),
-    );
     BridgeResultDto? result;
     try {
       result = await widget.gateway.execute(
@@ -405,7 +384,30 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
           fallback: context.strings.couldNotStartRadio,
         ),
       );
+      return;
     }
+    // Do not open the microphone until Rust has granted the radio floor. This
+    // prevents local capture from outliving a queued/rejected transmission.
+    try {
+      await MicrophonePermission.setCommunicationMode(true);
+      await MicrophonePermission.startNativeCapture();
+    } on Object {
+      await _stopCaptureSafely();
+      await widget.gateway.execute(
+        EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
+      );
+      if (!mounted) return;
+      setState(() {
+        _activePointerId = null;
+        _pointerHeld = false;
+        _transmissionActive = false;
+      });
+      _syncPulse();
+      _showError(context.strings.couldNotStartRadio);
+      return;
+    }
+    unawaited(HapticFeedback.mediumImpact());
+    _burstTimer = Timer(const Duration(seconds: 10), () => unawaited(_release()));
   }
 
   Future<void> _release({int? pointerId, bool force = false}) async {
@@ -423,11 +425,14 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       _syncPulse();
     }
     unawaited(HapticFeedback.selectionClick());
+    // Releasing PTT is a local privacy boundary: stop the microphone even
+    // when the Rust command is still queued or the runtime is stalled. The
+    // network-side End command remains best-effort and is sent afterwards.
+    await _stopCaptureSafely();
     if (_commandBusy) return;
     await widget.gateway.execute(
       EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
     );
-    await _stopCaptureSafely();
   }
 
   Future<void> _stopCaptureSafely() async {

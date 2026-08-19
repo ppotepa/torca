@@ -45,6 +45,14 @@ pub struct PeerProbeSupervisor {
 }
 
 impl PeerProbeSupervisor {
+    /// Disable cosmetic probes while a restrictive battery profile is active.
+    /// Clearing schedules prevents an already-due deadline from creating a
+    /// zero-delay scheduler spin when the profile changes mid-probe.
+    pub fn suspend(&mut self) {
+        self.schedules.clear();
+        self.in_flight = None;
+    }
+
     pub fn reconcile(&mut self, candidates: &[PeerProbeCandidate], now: Timestamp) {
         let active = candidates.iter().map(|candidate| candidate.peer_id).collect::<BTreeSet<_>>();
         self.schedules.retain(|peer_id, _| active.contains(peer_id));

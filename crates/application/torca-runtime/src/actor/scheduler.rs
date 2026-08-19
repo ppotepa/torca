@@ -12,7 +12,8 @@ fn maintain_peer_probes<C: PeerSessionPort>(
     if matches!(battery_policy.profile(), BatteryProfile::BatterySaver) {
         // Cosmetic reachability probes are suppressed in Battery Saver. Real
         // traffic and durable delivery remain owned by their executors.
-        return Ok((supervisor.next_deadline(), false));
+        supervisor.suspend();
+        return Ok((None, false));
     }
     if let Some(contact_id) = communication.take_peer_probe_completion(now)? {
         let health = communication.peer_health(contact_id);

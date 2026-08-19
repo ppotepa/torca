@@ -222,6 +222,10 @@ pub(crate) fn execute_with_request_id(
         self.battery_policy.preferences = preferences;
         self.application_runtime.set_battery_profile(profile_for_preferences(preferences));
         self.application_runtime.set_metered_transfer_policy(preferences.metered_transfers);
+        // Reconcile the complete effective policy immediately. Previously
+        // only two fields were forwarded here and dormancy/background sync
+        // remained stale until a later lifecycle tick or restart.
+        self.apply_battery_policy(false);
     }
     if let torca_contract::BridgeCommand::SetContactAvailability {
         contact_id_hex,

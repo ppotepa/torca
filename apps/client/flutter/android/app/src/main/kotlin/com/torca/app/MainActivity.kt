@@ -15,6 +15,7 @@ import android.media.AudioFocusRequest
 import android.view.WindowManager
 import java.io.ByteArrayOutputStream
 import com.torca.host.AndroidKeystoreBridge
+import com.torca.host.NativeRuntimeBridge
 import com.torca.host.TorcaForegroundService
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -304,6 +305,9 @@ class MainActivity : FlutterActivity() {
         // when Android backgrounds the activity (screen lock, app switch,
         // permission/system dialog). Rust will reconcile the burst on resume.
         AndroidKeystoreBridge.stopRadioCapture()
+        if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+            NativeRuntimeBridge.nativeLifecycleEvent("radio_capture_interrupted:activity_paused")
+        }
         val audioManager = getSystemService(AudioManager::class.java)
         if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
