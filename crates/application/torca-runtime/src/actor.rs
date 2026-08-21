@@ -11,10 +11,6 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
 use torca_battery::{
-    AttentionContext, DemandReason, PolicyEvent, ResourceScope, RuntimeGovernor, WorkClass,
-    WorkDemand,
-};
-use torca_battery::{
     BatteryMetric, BatteryPolicy, BatteryPreferences, BatteryProfile, MeteredTransferPolicy,
     SystemEnergyState, WakeReason,
 };
@@ -36,6 +32,10 @@ use torca_foundation::{
 use torca_messaging::{MessageBody, MessageId, MessageStatus};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
+use torca_runtime_policy::{
+    AttentionContext, AttentionSurface, DemandReason, EvidenceKind, PolicyEvent, ResourceScope,
+    RuntimeGovernor, WorkClass, WorkDemand,
+};
 
 // Included runtime files use `thread::spawn` and `thread::yield_now`. Keep that
 // compact vocabulary while guaranteeing the process-owned runtime thread has a

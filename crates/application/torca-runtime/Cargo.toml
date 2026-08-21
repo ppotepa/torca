@@ -22,6 +22,7 @@ torca-messaging = { path = "../../domains/torca-messaging" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-probing = { path = "../torca-probing" }
 torca-presence = { path = "../../domains/torca-presence" }
+torca-runtime-policy = { path = "../torca-runtime-policy" }
 
 [lints]
 workspace = true

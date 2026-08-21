@@ -50,7 +50,7 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
         policy.apply(
             PolicyEvent::Evidence {
                 scope: ResourceScope::Relay,
-                kind: torca_battery::EvidenceKind::Probe,
+                kind: EvidenceKind::Probe,
             },
             std::time::Instant::now(),
         );
@@ -342,7 +342,7 @@ fn maintain_peer_state<C: CommunicationDriver>(
             policy.apply(
                 PolicyEvent::Evidence {
                     scope: ResourceScope::Peer(id.to_opaque()),
-                    kind: torca_battery::EvidenceKind::Handshake,
+                    kind: EvidenceKind::Handshake,
                 },
                 std::time::Instant::now(),
             );
@@ -356,7 +356,7 @@ fn maintain_peer_state<C: CommunicationDriver>(
             policy.apply(
                 PolicyEvent::Evidence {
                     scope: ResourceScope::Peer(id.to_opaque()),
-                    kind: torca_battery::EvidenceKind::Failure,
+                    kind: EvidenceKind::Failure,
                 },
                 std::time::Instant::now(),
             );
@@ -370,7 +370,7 @@ fn maintain_peer_state<C: CommunicationDriver>(
             policy.apply(
                 PolicyEvent::Evidence {
                     scope: ResourceScope::Peer(id.to_opaque()),
-                    kind: torca_battery::EvidenceKind::Ack,
+                    kind: EvidenceKind::Ack,
                 },
                 std::time::Instant::now(),
             );
@@ -423,11 +423,11 @@ fn maintain_peer_state<C: CommunicationDriver>(
             let scope = ResourceScope::Peer(id.to_opaque());
             let policy_now = std::time::Instant::now();
             for (changed, kind) in [
-                (tx_changed, torca_battery::EvidenceKind::Tx),
-                (rx_changed, torca_battery::EvidenceKind::Rx),
-                (ack_changed, torca_battery::EvidenceKind::Ack),
-                (handshake_changed, torca_battery::EvidenceKind::Handshake),
-                (failure_changed, torca_battery::EvidenceKind::Failure),
+                (tx_changed, EvidenceKind::Tx),
+                (rx_changed, EvidenceKind::Rx),
+                (ack_changed, EvidenceKind::Ack),
+                (handshake_changed, EvidenceKind::Handshake),
+                (failure_changed, EvidenceKind::Failure),
             ] {
                 if changed {
                     policy.apply(PolicyEvent::Evidence { scope, kind }, policy_now);

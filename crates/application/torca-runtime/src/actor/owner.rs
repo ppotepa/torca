@@ -214,12 +214,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
                 let owner = OpaqueId::from_u128(u128::from(context.generation.max(1)));
                 let demand = match context.surface {
-                    torca_battery::AttentionSurface::Conversation(peer)
-                    | torca_battery::AttentionSurface::Radio(peer) => Some(WorkDemand {
+                    AttentionSurface::Conversation(peer) | AttentionSurface::Radio(peer) => Some(WorkDemand {
                         scope: ResourceScope::Peer(peer),
                         class: if matches!(
                             context.surface,
-                            torca_battery::AttentionSurface::Conversation(_)
+                            AttentionSurface::Conversation(_)
                         ) {
                             WorkClass::PeerDial
                         } else {
@@ -227,7 +226,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                         },
                         reason: if matches!(
                             context.surface,
-                            torca_battery::AttentionSurface::Radio(_)
+                            AttentionSurface::Radio(_)
                         ) {
                             DemandReason::RadioSession
                         } else {
@@ -236,7 +235,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                         owner,
                         expires_at: now,
                     }),
-                    torca_battery::AttentionSurface::Pairing(_relay) => Some(WorkDemand {
+                    AttentionSurface::Pairing(_relay) => Some(WorkDemand {
                         scope: ResourceScope::Relay,
                         class: WorkClass::RelayProbe,
                         reason: DemandReason::ActivePairing,
@@ -246,7 +245,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     _ => None,
                 };
                 if let Some(demand) = demand {
-                    if let torca_battery::AttentionSurface::Conversation(peer) = context.surface {
+                    if let AttentionSurface::Conversation(peer) = context.surface {
                         policy.acquire_persistent_focus(peer, owner, now);
                     } else {
                         policy.acquire_persistent_lease(demand);
