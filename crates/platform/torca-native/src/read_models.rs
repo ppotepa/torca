@@ -165,14 +165,14 @@ impl RuntimeSettingsPort for SqliteSettings {
     fn contact_availability(
         &self,
         contact_id: torca_contacts::ContactId,
-    ) -> Result<torca_battery::ContactAvailabilityMode, ApplicationQueryError> {
+    ) -> Result<torca_runtime_policy::ContactAvailabilityMode, ApplicationQueryError> {
         self.0.contact_availability(contact_id).map_err(|_| ApplicationQueryError::Unavailable)
     }
 
     fn set_contact_availability(
         &self,
         contact_id: torca_contacts::ContactId,
-        mode: torca_battery::ContactAvailabilityMode,
+        mode: torca_runtime_policy::ContactAvailabilityMode,
         at: i64,
     ) -> Result<(), ApplicationQueryError> {
         self.0

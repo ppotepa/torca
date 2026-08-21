@@ -66,6 +66,30 @@ pub enum DemandReason {
     FocusedConversation,
 }
 
+/// Durable per-contact connectivity intent.
+///
+/// This is policy input, not a battery metric. Radio owns an independent
+/// transient lease, so disabling radio never changes this persisted intent.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ContactAvailabilityMode {
+    #[default]
+    Adaptive,
+    Instant,
+}
+
+impl ContactAvailabilityMode {
+    pub fn from_wire(value: &str) -> Self {
+        if value == "instant" { Self::Instant } else { Self::Adaptive }
+    }
+
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Adaptive => "adaptive",
+            Self::Instant => "instant",
+        }
+    }
+}
+
 /// A resource controlled by policy. Feature crates map their own IDs here.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ResourceScope {

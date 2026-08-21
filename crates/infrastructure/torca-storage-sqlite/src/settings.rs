@@ -3,10 +3,11 @@ use std::path::Path;
 
 use rusqlite::OptionalExtension;
 use torca_battery::{
-    BackgroundSyncCadence, BatteryPreferences, ContactAvailabilityMode, MeteredTransferPolicy,
-    RequestedBatteryMode, VisualActivityPolicy,
+    BackgroundSyncCadence, BatteryPreferences, MeteredTransferPolicy, RequestedBatteryMode,
+    VisualActivityPolicy,
 };
 use torca_contacts::ContactId;
+use torca_runtime_policy::ContactAvailabilityMode;
 
 const BATTERY_PREFERENCES_SQL: &str =
     include_str!("../sql/queries/runtime_battery_preferences.sql");
@@ -272,9 +273,9 @@ fn visual_value(value: VisualActivityPolicy) -> &'static str {
 mod tests {
     use super::SqlCipherSettingsStore;
     use crate::DatabaseKey;
-    use torca_battery::ContactAvailabilityMode;
     use torca_contacts::ContactId;
     use torca_foundation::OpaqueId;
+    use torca_runtime_policy::ContactAvailabilityMode;
 
     #[test]
     fn notification_setting_is_durable_for_the_connection() {

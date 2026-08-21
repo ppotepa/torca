@@ -150,7 +150,7 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
                         .contact_availability(id)
                         .ok()
                         .filter(|mode| {
-                            *mode == torca_battery::ContactAvailabilityMode::Instant
+                            *mode == torca_runtime_policy::ContactAvailabilityMode::Instant
                         })
                         .map(|_| id)
                 })
@@ -266,7 +266,7 @@ pub(crate) fn execute_with_request_id(
             return ABI_ERROR;
         };
         let contact_id = torca_contacts::ContactId::from_opaque(contact_id);
-        let availability = torca_battery::ContactAvailabilityMode::from_wire(mode);
+        let availability = torca_runtime_policy::ContactAvailabilityMode::from_wire(mode);
         let now = unix_time_ms().unwrap_or(0);
         if self
             .read_models()

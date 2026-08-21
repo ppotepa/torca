@@ -5,6 +5,7 @@ use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_foundation::Timestamp;
 use torca_messaging::{Message, MessageId};
+use torca_runtime_policy::ContactAvailabilityMode;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApplicationQueryError {
@@ -94,11 +95,11 @@ pub trait RuntimeSettingsPort {
     fn contact_availability(
         &self,
         contact_id: torca_contacts::ContactId,
-    ) -> Result<torca_battery::ContactAvailabilityMode, ApplicationQueryError>;
+    ) -> Result<ContactAvailabilityMode, ApplicationQueryError>;
     fn set_contact_availability(
         &self,
         contact_id: torca_contacts::ContactId,
-        mode: torca_battery::ContactAvailabilityMode,
+        mode: ContactAvailabilityMode,
         updated_at_ms: i64,
     ) -> Result<(), ApplicationQueryError>;
     fn new_contacts_acknowledged_at_ms(&self) -> Result<Option<i64>, ApplicationQueryError>;

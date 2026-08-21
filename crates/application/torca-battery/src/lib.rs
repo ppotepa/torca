@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
-    AttentionContext, AttentionSurface, ConnectionLease, DemandReason, EvidenceKind, FocusLease,
-    Freshness, LeaseLifetime, PolicyEvent, ResourceScope, RuntimeEventHub, RuntimeEventHubStats,
-    RuntimeGovernor, RuntimePolicySnapshot, WorkClass, WorkDemand,
+    AttentionContext, AttentionSurface, ConnectionLease, ContactAvailabilityMode, DemandReason,
+    EvidenceKind, FocusLease, Freshness, LeaseLifetime, PolicyEvent, ResourceScope,
+    RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, WorkClass,
+    WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
@@ -124,28 +125,6 @@ pub enum BatteryProfile {
     Balanced,
     BatterySaver,
     Diagnostics,
-}
-
-/// Durable per-contact connectivity intent. Radio owns an independent
-/// transient lease, so disabling radio never changes this preference.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ContactAvailabilityMode {
-    #[default]
-    Adaptive,
-    Instant,
-}
-
-impl ContactAvailabilityMode {
-    pub fn from_wire(value: &str) -> Self {
-        if value == "instant" { Self::Instant } else { Self::Adaptive }
-    }
-
-    pub fn wire(self) -> &'static str {
-        match self {
-            Self::Adaptive => "adaptive",
-            Self::Instant => "instant",
-        }
-    }
 }
 
 /// User-facing availability preference.  This is deliberately separate from

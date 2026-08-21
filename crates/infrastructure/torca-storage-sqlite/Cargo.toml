@@ -18,6 +18,7 @@ torca-conversations = { path = "../../domains/torca-conversations" }
 torca-delivery = { path = "../../application/torca-delivery" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-battery = { path = "../../application/torca-battery" }
+torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-messaging = { path = "../../domains/torca-messaging" }
