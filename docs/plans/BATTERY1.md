@@ -51,7 +51,7 @@ incoming work can still hold a durable lease independently of the UI.
 | 4 | Implemented core | One-shot background grace and soft dormancy; no recurring rendezvous. Legacy persisted cadence values normalize to `on_open` and no runtime policy type exposes a periodic interval. |
 | 5 | Implemented core | Demand/dirty-peer maintenance and unified platform visibility. Radio owns a separate deadline lane; peer maintenance derives its set from leases, live sessions, durable control outbox recipients and transport evidence rather than the contact book. Durable delivery and attachment leases are released by their job completion rather than synthetic TTL renewal. |
 | 6 | Implemented | Debug-only Battery/Runtime/Logs/Incident console, explicit bounded log tails and local support bundle. |
-| 7 | In progress | Canonical docs and deterministic/device validation are in place; optional dev ingest and a production-crate headless lab peer remain. |
+| 7 | Implemented code | Canonical docs, deterministic validation and a production-crate headless lab peer are in place. Physical device validation remains explicit evidence, not an inferred code result. |
 
 The remaining implementation work is:
 
@@ -59,10 +59,13 @@ The remaining implementation work is:
    every delivery path continues to route only active contacts. Current
    messages, attachments and durable control-outbox recipients are scoped;
    startup recovery queries only `Queued`/`Sending` outbound message recipients.
-2. Add an optional dev-only incident ingest endpoint with a bounded compressed
-   payload, explicit token, TTL and no listing capability.
-3. Add a production-crate headless lab peer, then run the documented physical
-   device validation matrix.
+2. Run the documented physical device validation matrix and retain its incident
+   bundles as release evidence.
+
+The optional dev-only incident ingest is intentionally not implemented in the
+pairing relay: it would require a separate authenticated support service with
+a bounded compressed payload, explicit token, TTL and no listing capability.
+It is not a prerequisite for BATTERY1's local diagnostics or validation.
 
 The native host accepts a process-scoped `TORCA_APP_ROOT` override for that
 runner. It isolates the lab peer's identity, database and Tor state while
