@@ -32,15 +32,25 @@ incoming work can still hold a durable lease independently of the UI.
 
 ## Delivery batches
 
-1. Typed wake diagnostics and observation sessions.
-2. One runtime policy owner; migrate user preferences to Automatic, Always
+| Batch | Status | Scope |
+| --- | --- | --- |
+| 1 | Implemented | Typed wake diagnostics and observation sessions. |
+| 2 | Implemented core | RuntimeOwner receives atomic host-policy inputs; legacy values normalize safely. |
+| 3 | Implemented core | One deadline registry with source-selective maintenance. |
+| 4 | Implemented core | One-shot background grace and soft dormancy; no recurring rendezvous. |
+| 5 | In progress | Demand/dirty-peer maintenance and unified platform visibility. |
+| 6 | In progress | Debug-only Battery/Runtime/Logs/Incident console and bounded support bundle. |
+| 7 | In progress | Canonical docs, lab peer and deterministic/device validation. |
+
+The remaining implementation work is:
+
+1. Migrate user preferences to Automatic, Always
    reachable and Battery saver while accepting legacy persisted values.
-3. One scheduler with explicit wake sources and source-selective executors.
-4. Grace-to-dormant background lifecycle; remove recurring rendezvous.
-5. Demand/dirty-peer maintenance and one Android visibility owner.
-6. Debug-only Battery, Runtime, Logs and Incident console; bounded sanitized
+2. Finish dirty-peer maintenance so delivery routes only active contacts rather
+   than using the current transitional contact projection.
+3. Finish the Debug-only Battery, Runtime, Logs and Incident console; bounded sanitized
    incident bundles and optional dev-only ingest.
-7. Canonical runtime/power documentation, lab peer and deterministic/real
+4. Add the lab peer and deterministic/real
    device validation.
 
 ## Acceptance checks
