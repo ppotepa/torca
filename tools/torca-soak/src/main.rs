@@ -40,6 +40,10 @@ struct Cli {
     /// Android serial. Omit to run the fake-peer-only laboratory scenario.
     #[arg(long)]
     android: Option<String>,
+    /// Build/install the debug Android client when the selected device has no
+    /// launchable Torca activity. The deploy is scoped to `--android` only.
+    #[arg(long)]
+    android_auto_deploy: bool,
     #[arg(long, default_value_t = 3)]
     fake_peers: usize,
     #[arg(long, default_value_t = 1800)]
@@ -327,6 +331,19 @@ fn run() -> Result<(), String> {
 
     let mut peers: Vec<Participant> = Vec::new();
     if let Some(serial) = &cli.android {
+        if cli.android_auto_deploy {
+            record(
+                &mut timeline,
+                "android_preflight_started",
+                serde_json::json!({"serial": serial, "autoDeploy": true}),
+            )?;
+            ensure_android_deployed(&cli.repo_root, serial)?;
+            record(
+                &mut timeline,
+                "android_preflight_ready",
+                serde_json::json!({"serial": serial}),
+            )?;
+        }
         let android = AndroidBridge::connect(serial)?;
         record(&mut timeline, "android_ready", serde_json::json!({"serial": serial}))?;
         peers.push(Participant::Android(android));
@@ -882,13 +899,77 @@ fn android_launchable_activity(serial: &str) -> Result<String, String> {
     })
 }
 
+fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String> {
+    let state = Command::new("adb")
+        .args(["-s", serial, "get-state"])
+        .output()
+        .map_err(|error| format!("check Android device {serial}: {error}"))?;
+    if !state.status.success() || String::from_utf8_lossy(&state.stdout).trim() != "device" {
+        return Err(format!(
+            "Android device '{serial}' is not ready (adb get-state returned '{}')",
+            String::from_utf8_lossy(&state.stdout).trim()
+        ));
+    }
+    if android_launchable_activity(serial).is_ok() {
+        return Ok(());
+    }
+
+    let arguments = android_deploy_arguments(serial);
+    let output = Command::new("cargo")
+        .current_dir(repo_root)
+        .args(&arguments)
+        .output()
+        .map_err(|error| format!("start Android auto-deploy: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Android auto-deploy failed on '{serial}' (exit={:?}).\n{}{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    android_launchable_activity(serial).map(|_| ()).map_err(|error| {
+        format!(
+            "Android auto-deploy completed but the client is still not launchable on '{serial}': {error}"
+        )
+    })
+}
+
+fn android_deploy_arguments(serial: &str) -> Vec<String> {
+    [
+        "run",
+        "-p",
+        "torca-deploy",
+        "--locked",
+        "--",
+        "deploy",
+        "--target",
+        "android",
+        "--device",
+        serial,
+        "--configuration",
+        "debug",
+        "--client-build",
+        "if-required",
+        "--relay-build",
+        "if-required",
+        "--onion",
+        "ensure",
+        "--client-data",
+        "preserve",
+        "--validation",
+        "quick",
+        "--launch",
+        "restart",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
 fn parse_launchable_activity(package: &str, output: &str) -> Option<String> {
     let prefix = format!("{package}/");
-    output
-        .lines()
-        .map(str::trim)
-        .find(|line| line.starts_with(&prefix))
-        .map(str::to_owned)
+    output.lines().map(str::trim).find(|line| line.starts_with(&prefix)).map(str::to_owned)
 }
 
 fn first_conversation_id(response: &serde_json::Value) -> Option<String> {
@@ -988,7 +1069,7 @@ fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_launchable_activity, valid_endpoint};
+    use super::{android_deploy_arguments, parse_launchable_activity, valid_endpoint};
 
     #[test]
     fn endpoint_validation_requires_v3_onion_and_port() {
@@ -1005,5 +1086,13 @@ mod tests {
             Some("com.torca.torca_app/com.torca.MainActivity")
         );
         assert!(parse_launchable_activity("com.torca.torca_app", "No activity found").is_none());
+    }
+
+    #[test]
+    fn auto_deploy_is_scoped_to_the_requested_android_device() {
+        let arguments = android_deploy_arguments("device-123");
+        assert!(arguments.windows(2).any(|pair| pair[0] == "--device" && pair[1] == "device-123"));
+        assert!(arguments.windows(2).any(|pair| pair[0] == "--target" && pair[1] == "android"));
+        assert!(!arguments.contains(&"windows".to_owned()));
     }
 }

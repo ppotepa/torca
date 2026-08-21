@@ -41,6 +41,14 @@ the authorized ADB serial:
 cargo run -p torca-soak -- --android 2406APNFAG --relay managed
 ```
 
+To let the orchestrator install the debug client when the selected device has
+no launchable activity, add `--android-auto-deploy`. The deploy is restricted
+to that serial and preserves client data:
+
+```powershell
+cargo run -p torca-soak -- --android 2406APNFAG --android-auto-deploy --relay managed
+```
+
 The bridge binds only to Android loopback. The runner reads its random token
 through `adb run-as`, creates an `adb forward`, and sends the same typed
 pairing/message/attachment/radio operations used by fake peers. Release builds
