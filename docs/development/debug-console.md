@@ -11,6 +11,13 @@ The target sections are:
 - **Logs** — bounded, redacted structured log tail with filtering.
 - **Incident** — mark an incident and export a bounded support bundle.
 
+`Mark incident` is an explicit local command. It writes a redacted
+`incidents/<incident-id>/` bundle below the current native log run, containing
+`manifest.json`, `diagnostics.json` and bounded tails for the structured log
+domains. It neither starts a network request nor schedules a background wake.
+The normal cross-device collector can copy this bundle with the rest of the
+native log tree.
+
 Do not render unbounded logs in Flutter. Do not expose message plaintext,
 attachments, Radio audio, pairing capabilities, private keys or relationship
 secrets in the console or any export.
@@ -23,4 +30,3 @@ cargo run -p torca-deploy -- logs --target all
 
 See [`../diagnostics.md`](../diagnostics.md) for the bundle layout and sharing
 rules.
-

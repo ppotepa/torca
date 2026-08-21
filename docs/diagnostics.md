@@ -61,6 +61,23 @@ The collector first attempts to enumerate Torca native log files under the app's
 
 Android collection depends on ADB/device access and platform storage visibility. Missing evidence must not be described as a complete incident merely because a manifest exists.
 
+### In-app incident marker
+
+In debug builds, **Debug -> Incident -> Mark incident** creates a local bounded
+bundle below the active native run:
+
+```text
+<run>/incidents/<incident-id>/
+  manifest.json
+  diagnostics.json
+  logs/<domain>.log
+```
+
+The bundle contains only the current redacted diagnostics projection and
+bounded tails of redacted structured domain logs. Marking an incident is local
+and event-driven: it does not contact the relay, wake Tor, or begin a periodic
+collection task.
+
 ### Relay
 
 When the repository Docker Compose file is available, the collector captures a bounded tail of the live `relay` service output. It also copies the current endpoint/readiness/status files when present.
