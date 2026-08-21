@@ -7,6 +7,7 @@ enum ActorRequest {
     AvatarGenomeForIdentity(IdentityId, Sender<Result<Option<AvatarGenomeRecord>, EngineError>>),
     MessageStatus(MessageId, Sender<Result<Option<MessageStatus>, EngineError>>),
     MessageContact(MessageId, Sender<Result<Option<ContactId>, EngineError>>),
+    PendingDeliveryContacts(Sender<Result<Vec<ContactId>, EngineError>>),
     Shutdown,
 }
 
@@ -56,6 +57,11 @@ impl EngineHandle {
     ) -> Result<Option<ContactId>, EngineError> {
         let (sender, receiver) = mpsc::channel();
         send_with_timeout(&self.sender, ActorRequest::MessageContact(message_id, sender))?;
+        receiver.recv_timeout(Duration::from_secs(5)).map_err(|_| EngineError::Unavailable)?
+    }
+    pub fn pending_delivery_contacts(&self) -> Result<Vec<ContactId>, EngineError> {
+        let (sender, receiver) = mpsc::channel();
+        send_with_timeout(&self.sender, ActorRequest::PendingDeliveryContacts(sender))?;
         receiver.recv_timeout(Duration::from_secs(5)).map_err(|_| EngineError::Unavailable)?
     }
     pub fn projection_event_count(&self) -> u64 {
@@ -116,6 +122,9 @@ impl ClientEngineActor {
                         }
                         ActorRequest::MessageContact(message_id, response) => {
                             let _ = response.send(engine.message_contact(message_id));
+                        }
+                        ActorRequest::PendingDeliveryContacts(response) => {
+                            let _ = response.send(engine.pending_delivery_contacts());
                         }
                         ActorRequest::Shutdown => break,
                     }

@@ -127,6 +127,29 @@ where
             .map(|conversation| conversation.map(|value| value.contact_id()))
     }
 
+    /// Returns only recipients that currently own retryable durable message
+    /// work. This avoids treating every stored relationship as a peer-demand
+    /// during RuntimeOwner recovery.
+    pub fn pending_delivery_contacts(&self) -> Result<Vec<ContactId>, EngineError> {
+        let mut contacts = std::collections::BTreeSet::new();
+        for message in self.messages.list().map_err(|_| EngineError::Repository)? {
+            if message.direction() != MessageDirection::Outbound
+                || !matches!(message.status(), MessageStatus::Queued | MessageStatus::Sending)
+            {
+                continue;
+            }
+            if let Some(conversation) = ConversationRepository::get(
+                &self.relationships,
+                message.conversation_id(),
+            )
+            .map_err(|_| EngineError::Repository)?
+            {
+                contacts.insert(conversation.contact_id());
+            }
+        }
+        Ok(contacts.into_iter().collect())
+    }
+
     fn load_pairing(&self, id: PairingSessionId) -> Result<PairingSession, EngineError> {
         self.pairings
             .get(id)

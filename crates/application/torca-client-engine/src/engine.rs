@@ -24,8 +24,8 @@ use torca_identity::{
     UpdateProfile,
 };
 use torca_messaging::{
-    InMemoryMessageRepository, Message, MessageBody, MessageId, MessageReaction, MessageRepository,
-    MessageStatus, ReplyReference,
+    InMemoryMessageRepository, Message, MessageBody, MessageDirection, MessageId, MessageReaction,
+    MessageRepository, MessageStatus, ReplyReference,
 };
 use torca_pairing::{
     InMemoryPairingRepository, PairingCode, PairingRepository, PairingSession, PairingSessionId,

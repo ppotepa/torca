@@ -12,6 +12,7 @@ pub trait EngineRuntime: Send + 'static {
     ) -> Result<Option<AvatarGenomeRecord>, EngineError>;
     fn message_status(&self, message_id: MessageId) -> Result<Option<MessageStatus>, EngineError>;
     fn message_contact(&self, message_id: MessageId) -> Result<Option<ContactId>, EngineError>;
+    fn pending_delivery_contacts(&self) -> Result<Vec<ContactId>, EngineError>;
 }
 
 impl<I, K, P, L, M, R> EngineRuntime for ClientEngine<I, K, P, L, M, R>
@@ -43,5 +44,8 @@ where
     }
     fn message_contact(&self, message_id: MessageId) -> Result<Option<ContactId>, EngineError> {
         ClientEngine::message_contact(self, message_id)
+    }
+    fn pending_delivery_contacts(&self) -> Result<Vec<ContactId>, EngineError> {
+        ClientEngine::pending_delivery_contacts(self)
     }
 }

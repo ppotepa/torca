@@ -167,14 +167,11 @@ fn maintain_delivery_state<C: CommunicationDriver>(
         .values()
         .copied()
         .chain(work.active_attachment_contacts.values().copied())
+        .chain(work.pending_delivery_contacts.iter().copied())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let delivery_contacts = if scoped_delivery_contacts.is_empty() {
-        work.contacts.as_slice()
-    } else {
-        scoped_delivery_contacts.as_slice()
-    };
+    let delivery_contacts = scoped_delivery_contacts.as_slice();
     let maintenance_result = communication.maintenance(delivery_contacts, now);
     if work.active_attachment_leases.is_empty() && work.active_delivery_leases.is_empty() {
         let retained = work
@@ -233,6 +230,12 @@ fn maintain_delivery_state<C: CommunicationDriver>(
         );
     }
     counters.last_projection_events = projection_events;
+
+    work.pending_delivery_contacts = engine
+        .pending_delivery_contacts()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
 
     if !work.active_attachment_leases.is_empty()
         && let Ok(views) = communication.attachment_snapshot()

@@ -44,10 +44,10 @@ incoming work can still hold a durable lease independently of the UI.
 
 The remaining implementation work is:
 
-1. Finish dirty-peer maintenance for restart recovery, so every delivery path
-   routes only active contacts rather than using the remaining transitional
-   contact projection fallback. New/retried messages and attachments already
-   carry their recipient into RuntimeOwner.
+1. Finish dirty-peer maintenance for remaining control/reaction routes so
+   every delivery path routes only active contacts. New/retried messages and
+   attachments carry their recipient into RuntimeOwner; startup recovery now
+   queries only `Queued`/`Sending` outbound message recipients.
 2. Finish the Debug-only Battery, Runtime, Logs and Incident console; bounded sanitized
    incident bundles and optional dev-only ingest.
 3. Add the lab peer and deterministic/real

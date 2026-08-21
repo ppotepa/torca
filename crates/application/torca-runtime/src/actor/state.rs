@@ -32,6 +32,9 @@ struct RuntimeWorkState {
     metered_network: bool,
     contacts: Vec<ContactId>,
     refresh_contacts: bool,
+    /// Recipients reconstructed from the durable outbox at startup and after
+    /// a delivery turn. Unlike `contacts`, this set is actual runtime demand.
+    pending_delivery_contacts: BTreeSet<ContactId>,
     attention_owner: Option<OpaqueId>,
     attention_generation: u64,
     visible_contact_leases: BTreeMap<ContactId, OpaqueId>,
@@ -61,7 +64,8 @@ impl RuntimeWorkState {
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             metered_network: false,
             contacts: Vec::new(),
-            refresh_contacts: true,
+            refresh_contacts: false,
+            pending_delivery_contacts: BTreeSet::new(),
             attention_owner: None,
             attention_generation: 0,
             visible_contact_leases: BTreeMap::new(),

@@ -153,6 +153,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 ) {
     let mut health = RuntimeHealthState::default();
     let mut work = RuntimeWorkState::new();
+    work.pending_delivery_contacts = engine
+        .pending_delivery_contacts()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     let mut counters = RuntimeCounters::default();
     let mut scheduling = RuntimeSchedulingState::new();
 
