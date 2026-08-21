@@ -13,6 +13,8 @@ cargo run -p torca-deploy -- resume
 cargo run -p torca-deploy -- relay --dry-run rotate --confirm-rotate
 cargo run -p torca-deploy -- logs --target all --dry-run
 cargo run -p torca-deploy -- build --target windows --configuration debug
+# Limit a repeatable Android deploy/soak to one exact ADB serial.
+cargo run -p torca-deploy -- deploy --target android --device <adb-serial>
 # Explicitly allow Android screenshots/screen recording for a local test run.
 cargo run -p torca-deploy -- run --target android --privacy allow-capture
 ```
@@ -33,6 +35,9 @@ Each run is saved under:
 
 The TUI asks for target, debug/release configuration, client-data policy,
 onion policy and screen-capture privacy after the workflow is selected.
+The CLI-only `--device` option restricts discovery, ABI selection, reset,
+installation and launch to one exact device id; when omitted, all ready
+devices for the selected target are used.
 `Strict` is the default and keeps Android `FLAG_SECURE` enabled. The explicit
 `Allow screenshots/recording` option only changes that Android window flag; it
 does not change message encryption, transport privacy, or relay data handling.
