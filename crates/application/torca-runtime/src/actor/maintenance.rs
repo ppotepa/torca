@@ -166,6 +166,7 @@ fn maintain_delivery_state<C: CommunicationDriver>(
         .active_delivery_contacts
         .values()
         .copied()
+        .chain(work.active_attachment_contacts.values().copied())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -239,6 +240,7 @@ fn maintain_delivery_state<C: CommunicationDriver>(
         for view in views {
             if matches!(view.status.as_str(), "available" | "cancelled") {
                 work.active_attachment_leases.remove(&view.id);
+                work.active_attachment_contacts.remove(&view.id);
                 policy.release_lease(attachment_lease_owner(view.id));
             } else {
                 acquire_attachment_lease(policy, &mut work.active_attachment_leases, view.id);

@@ -13,6 +13,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     connectivity: &ConnectivityObserver,
     policy: &mut RuntimeGovernor,
     active_attachment_leases: &mut BTreeSet<OpaqueId>,
+    active_attachment_contacts: &mut BTreeMap<OpaqueId, ContactId>,
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
     now: Timestamp,
@@ -120,6 +121,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     active_attachment_leases,
                     request_value.attachment_id,
                 );
+                if let Ok(Some(contact_id)) = engine.message_contact(message_id) {
+                    active_attachment_contacts.insert(request_value.attachment_id, contact_id);
+                }
             }
             let _ = r.send(result);
         }
@@ -130,6 +134,12 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let result = communication.retry_attachment(id, now);
             if result.is_ok() {
                 acquire_attachment_lease(policy, active_attachment_leases, id);
+                if let Ok(views) = communication.attachment_snapshot()
+                    && let Some(view) = views.iter().find(|view| view.id == id)
+                    && let Ok(Some(contact_id)) = engine.message_contact(MessageId::from_opaque(view.message_id))
+                {
+                    active_attachment_contacts.insert(id, contact_id);
+                }
             }
             let _ = r.send(result);
         }
@@ -137,6 +147,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let result = communication.cancel_attachment(id, now);
             if result.is_ok() {
                 active_attachment_leases.remove(&id);
+                active_attachment_contacts.remove(&id);
                 policy.release_lease(attachment_lease_owner(id));
             }
             let _ = r.send(result);
@@ -154,6 +165,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 for view in views {
                     if matches!(view.status.as_str(), "available" | "cancelled") {
                         active_attachment_leases.remove(&view.id);
+                        active_attachment_contacts.remove(&view.id);
                         policy.release_lease(attachment_lease_owner(view.id));
                     }
                 }

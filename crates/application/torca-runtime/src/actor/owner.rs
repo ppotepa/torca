@@ -383,6 +383,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     &connectivity,
                     policy,
                     &mut work.active_attachment_leases,
+                    &mut work.active_attachment_contacts,
                     diagnostics,
                     sequence,
                     now,
