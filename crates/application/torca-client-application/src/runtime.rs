@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 
 use torca_attachments::AttachmentId;
-use torca_battery::{BatteryProfile, MeteredTransferPolicy};
+use torca_battery::{BatteryPreferences, BatteryProfile, MeteredTransferPolicy, SystemEnergyState};
 use torca_bootstrap::{BootstrapSnapshot, BootstrapState, BootstrapStepId, BootstrapStepState};
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
@@ -368,6 +368,16 @@ impl ClientApplicationRuntime {
     pub fn set_battery_profile(&self, profile: BatteryProfile) {
         if let Some(runtime) = &self.runtime {
             runtime.set_battery_profile(profile);
+        }
+    }
+
+    pub fn set_battery_policy_inputs(
+        &self,
+        preferences: BatteryPreferences,
+        system: SystemEnergyState,
+    ) {
+        if let Some(runtime) = &self.runtime {
+            runtime.set_battery_policy_inputs(preferences, system);
         }
     }
 

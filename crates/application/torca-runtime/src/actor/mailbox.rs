@@ -35,6 +35,9 @@ enum RuntimeCommand {
     SetInstantContactDemand(ContactId, bool),
     SetRadioTransmission(ContactId, bool),
     SetBatteryProfile(BatteryProfile),
+    /// Host facts and persisted intent. RuntimeOwner performs the reduction
+    /// and is the only component that applies its result to executors.
+    SetBatteryPolicyInputs(BatteryPreferences, SystemEnergyState),
     SetForeground(bool),
     SetMeteredNetwork(bool),
     SetMeteredTransferPolicy(MeteredTransferPolicy),
@@ -244,6 +247,17 @@ impl RuntimeHandle {
     /// policy and diagnostics; durable delivery remains unaffected.
     pub fn set_battery_profile(&self, profile: BatteryProfile) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::SetBatteryProfile(profile));
+    }
+
+    pub fn set_battery_policy_inputs(
+        &self,
+        preferences: BatteryPreferences,
+        system: SystemEnergyState,
+    ) {
+        let _ = send_with_timeout(
+            &self.sender,
+            RuntimeCommand::SetBatteryPolicyInputs(preferences, system),
+        );
     }
 
     pub fn set_metered_network(&self, metered: bool) {

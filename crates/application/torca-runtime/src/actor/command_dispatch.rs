@@ -213,6 +213,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             unreachable!()
         }
         RuntimeCommand::SetTorDormancyAllowed(_) => unreachable!(),
+        RuntimeCommand::SetBatteryPolicyInputs(_, _) => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),
     }
 }

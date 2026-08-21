@@ -1,8 +1,8 @@
 use torca_battery::{BatteryPreferences, EffectiveBatteryPolicy, SystemEnergyState};
 
-/// Native-owned battery policy state. Keeping preference/system inputs and
-/// effective-policy calculation together prevents lifecycle, diagnostics and
-/// startup from drifting apart.
+/// Native-owned cache of host facts and persisted preference input. The cache
+/// does not control executors: `RuntimeOwner` receives these inputs and owns
+/// the effective policy it applies to Tor and communication.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BatteryPolicyState {
     pub preferences: BatteryPreferences,

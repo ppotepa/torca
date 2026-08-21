@@ -223,12 +223,14 @@ fn effective_battery_policy(&self, diagnostics_override: bool) -> EffectiveBatte
 }
 
 fn apply_battery_policy(&self, diagnostics_override: bool) {
-    let effective = self.effective_battery_policy(diagnostics_override);
-    self.application_runtime.set_battery_profile(effective.profile);
-    self.application_runtime.set_tor_dormancy_allowed(effective.tor_dormancy_allowed);
-    self.application_runtime
-        .set_metered_network(self.battery_policy.system.metered_network == Some(true));
-    self.application_runtime.set_metered_transfer_policy(effective.metered_transfers);
+    // Native owns only host facts and persisted preference input. RuntimeOwner
+    // performs the effective-policy reduction and applies it atomically to the
+    // Tor/communication executors.
+    let _ = diagnostics_override;
+    self.application_runtime.set_battery_policy_inputs(
+        self.battery_policy.preferences,
+        self.battery_policy.system,
+    );
 }
 
 fn has_identity(&self) -> Result<bool, ()> {

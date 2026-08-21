@@ -22,6 +22,8 @@ struct RuntimeHealthState {
 #[allow(clippy::struct_excessive_bools)]
 struct RuntimeWorkState {
     battery_policy: BatteryPolicy,
+    battery_preferences: BatteryPreferences,
+    system_energy: SystemEnergyState,
     foreground: bool,
     /// A policy permission, not an imperative. RuntimeOwner applies it only
     /// after background grace and only when no durable work owns Tor.
@@ -47,6 +49,8 @@ impl RuntimeWorkState {
             // default so a standalone RuntimeOwner cannot accidentally make
             // cosmetic probes always available.
             battery_policy: BatteryPolicy::new(BatteryProfile::Balanced),
+            battery_preferences: BatteryPreferences::default(),
+            system_energy: SystemEnergyState::default().with_foreground(true),
             foreground: true,
             tor_dormancy_allowed: false,
             metered_transfers: MeteredTransferPolicy::PauseLarge,

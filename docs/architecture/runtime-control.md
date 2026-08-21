@@ -6,10 +6,10 @@ validated unless that scenario is recorded in validation evidence.
 
 ## Ownership
 
-`RuntimeOwner` is the sole owner of application-controlled runtime wake-ups.
-The native hosts report facts only: application visibility, power and network
-state, and user commands. Flutter attention is an ephemeral hint, not a source
-of delivery correctness.
+`RuntimeOwner` is the sole owner of application-controlled runtime wake-ups and
+effective executor policy. The native hosts report facts only: application
+visibility, power/network state and persisted user preference. Flutter
+attention is an ephemeral hint, not a source of delivery correctness.
 
 ```text
 Flutter / native host facts
@@ -95,4 +95,3 @@ Diagnostics records typed wake sources and supports observation baselines so a
 single device can demonstrate what Torca itself did during an idle window. See
 [`../validation/runtime-power.md`](../validation/runtime-power.md) and
 [`../diagnostics.md`](../diagnostics.md) for the test and collection protocol.
-

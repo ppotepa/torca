@@ -15,7 +15,8 @@ use torca_battery::{
     WorkDemand,
 };
 use torca_battery::{
-    BatteryMetric, BatteryPolicy, BatteryProfile, MeteredTransferPolicy, WakeReason,
+    BatteryMetric, BatteryPolicy, BatteryPreferences, BatteryProfile, MeteredTransferPolicy,
+    SystemEnergyState, WakeReason,
 };
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_connectivity::{
