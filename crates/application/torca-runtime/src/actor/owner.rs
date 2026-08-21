@@ -242,6 +242,18 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
                 policy.apply(PolicyEvent::Attention(context), now);
             }
+            RuntimeWait::Command(RuntimeCommand::StartBatteryObservation(response)) => {
+                diagnostics.start_battery_observation();
+                let _ = response.send(Ok(()));
+            }
+            RuntimeWait::Command(RuntimeCommand::StopBatteryObservation(response)) => {
+                diagnostics.stop_battery_observation();
+                let _ = response.send(Ok(()));
+            }
+            RuntimeWait::Command(RuntimeCommand::ResetBatteryObservation(response)) => {
+                diagnostics.reset_battery_observation();
+                let _ = response.send(Ok(()));
+            }
             RuntimeWait::Command(RuntimeCommand::NetworkChanged) => {
                 work.refresh_contacts = true;
                 if let Some(relay) = &relay_health {

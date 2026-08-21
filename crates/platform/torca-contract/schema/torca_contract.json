@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "contractVersion": 20,
+  "contractVersion": 21,
   "wireVersion": 1,
   "nativeAbi": 1,
   "operations": {
@@ -10,6 +10,7 @@
       "contact.verification.reset", "contact.block", "contact.unblock",
       "contact.remove", "conversation.start", "conversation.clear", "conversation.archive", "conversation.restore", "message.send", "message.retry", "message.cancel", "message.edit", "message.reaction", "runtime.attention.set",
       "notifications.set", "privacy.read_receipts.set", "battery.preferences.set", "contact.availability.set", "contacts.acknowledge_new",
+      "diagnostics.observation.start", "diagnostics.observation.stop", "diagnostics.observation.reset",
       "conversation.read", "attachment.queue", "attachment.retry",
       "attachment.cancel", "attachment.export", "radio.set_enabled", "radio.audio.configure",
       "radio.transmission.begin", "radio.transmission.end"

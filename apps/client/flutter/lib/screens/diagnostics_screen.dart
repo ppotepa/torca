@@ -128,6 +128,19 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     );
   }
 
+  Future<void> _observation(BridgeCommandDto command) async {
+    setState(() => _loading = true);
+    try {
+      final result = await widget.gateway.execute(command);
+      if (!result.ok) throw StateError(result.errorCode ?? 'Observation command failed');
+      await _refresh();
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   bool _hasReadableEvents(String? value) {
     if (value == null || value.isEmpty) return false;
     try {
@@ -185,6 +198,20 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 ),
                 const SizedBox(height: 12),
                 _WhyAwakeCard(data: _whyAwake()),
+                const SizedBox(height: 20),
+                _ObservationCard(
+                  data: _observationData(),
+                  busy: _loading,
+                  onStart: () => _observation(
+                    const StartBatteryObservationCommandDto(),
+                  ),
+                  onStop: () => _observation(
+                    const StopBatteryObservationCommandDto(),
+                  ),
+                  onReset: () => _observation(
+                    const ResetBatteryObservationCommandDto(),
+                  ),
+                ),
                 const SizedBox(height: 20),
                 Wrap(
                   spacing: 8,
@@ -247,6 +274,85 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     } on FormatException {
       return null;
     }
+  }
+
+  Map<String, dynamic>? _observationData() {
+    final raw = _json;
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final value = decoded['observation'];
+      return value is Map<String, dynamic> ? value : null;
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
+class _ObservationCard extends StatelessWidget {
+  const _ObservationCard({
+    required this.data,
+    required this.busy,
+    required this.onStart,
+    required this.onStop,
+    required this.onReset,
+  });
+
+  final Map<String, dynamic>? data;
+  final bool busy;
+  final VoidCallback onStart, onStop, onReset;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = data?['active'] == true;
+    final wakeSources = data?['wakeSources'] is Map
+        ? (data!['wakeSources'] as Map).entries
+              .map((entry) => '${entry.key}: ${entry.value}')
+              .join(', ')
+        : 'none';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Battery observation', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+              active
+                  ? 'Recording deltas since the observation baseline.'
+                  : 'Start before an idle or recovery scenario to record only new work.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Text('State: ${active ? 'recording' : 'stopped'}'),
+            Text('Work: ${data?['totalWork'] ?? 0}'),
+            Text('Regression score: ${data?['energyScore'] ?? 0}'),
+            Text('Wake sources: $wakeSources'),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                FilledButton.tonal(
+                  onPressed: busy || active ? null : onStart,
+                  child: const Text('Start observation'),
+                ),
+                OutlinedButton(
+                  onPressed: busy || !active ? null : onStop,
+                  child: const Text('Stop observation'),
+                ),
+                OutlinedButton(
+                  onPressed: busy ? null : onReset,
+                  child: const Text('Reset baseline'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

@@ -196,6 +196,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(diagnostics.export_json());
         }
         RuntimeCommand::Wake(_) => {}
+        RuntimeCommand::StartBatteryObservation(_)
+        | RuntimeCommand::StopBatteryObservation(_)
+        | RuntimeCommand::ResetBatteryObservation(_) => unreachable!(),
         RuntimeCommand::WakeDelivery(_) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
         RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),

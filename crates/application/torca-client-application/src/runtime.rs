@@ -460,6 +460,30 @@ impl ClientApplicationRuntime {
         )
     }
 
+    pub fn start_battery_observation(&self) -> Result<(), EngineError> {
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| EngineError("runtime unavailable".into()))?
+            .start_battery_observation()
+            .map_err(|_| EngineError("battery observation unavailable".into()))
+    }
+
+    pub fn stop_battery_observation(&self) -> Result<(), EngineError> {
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| EngineError("runtime unavailable".into()))?
+            .stop_battery_observation()
+            .map_err(|_| EngineError("battery observation unavailable".into()))
+    }
+
+    pub fn reset_battery_observation(&self) -> Result<(), EngineError> {
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| EngineError("runtime unavailable".into()))?
+            .reset_battery_observation()
+            .map_err(|_| EngineError("battery observation unavailable".into()))
+    }
+
     pub fn bootstrap_snapshot(&self) -> Result<BootstrapSnapshot, EngineError> {
         self.bootstrap
             .lock()

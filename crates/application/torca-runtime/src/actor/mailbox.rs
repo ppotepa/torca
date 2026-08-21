@@ -27,6 +27,9 @@ enum RuntimeCommand {
     AttachmentSnapshot(Sender<Result<Vec<AttachmentView>, RuntimeDriverError>>),
     NetworkSnapshot(Sender<Result<NetworkSnapshot, RuntimeDriverError>>),
     Diagnostics(Sender<String>),
+    StartBatteryObservation(Sender<Result<(), RuntimeDriverError>>),
+    StopBatteryObservation(Sender<Result<(), RuntimeDriverError>>),
+    ResetBatteryObservation(Sender<Result<(), RuntimeDriverError>>),
     NetworkChanged,
     SetRadioDemand(ContactId, bool),
     SetInstantContactDemand(ContactId, bool),
@@ -54,6 +57,9 @@ impl RuntimeCommand {
             Self::AttachmentSnapshot(_)
                 | Self::NetworkSnapshot(_)
                 | Self::Diagnostics(_)
+                | Self::StartBatteryObservation(_)
+                | Self::StopBatteryObservation(_)
+                | Self::ResetBatteryObservation(_)
                 | Self::ExportAttachment(_, _, _)
                 | Self::ExportAttachmentPreview(_, _, _)
                 | Self::Wake(_)
@@ -174,6 +180,15 @@ impl RuntimeHandle {
         let (tx, rx) = mpsc::channel();
         send_with_timeout(&self.sender, RuntimeCommand::Diagnostics(tx))?;
         rx.recv_timeout(QUERY_WAIT).map_err(|_| RuntimeDriverError::Communication)
+    }
+    pub fn start_battery_observation(&self) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, RuntimeCommand::StartBatteryObservation)
+    }
+    pub fn stop_battery_observation(&self) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, RuntimeCommand::StopBatteryObservation)
+    }
+    pub fn reset_battery_observation(&self) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, RuntimeCommand::ResetBatteryObservation)
     }
     pub fn wake_delivery(&self) {
         let _ = send_with_timeout(

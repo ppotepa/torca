@@ -348,7 +348,7 @@ impl DiagnosticBuffer {
             .join(",");
         let _ = write!(
             output,
-            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"observation\":{{\"active\":{},\"wakeSources\":{{{}}}}},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
+            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"observation\":{{\"active\":{},\"wakeSources\":{{{}}},\"totalWork\":{},\"energyScore\":{}}},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
             self.profile,
             optional_json_u8(platform.battery_percent),
             optional_json_bool(platform.charging),
@@ -360,6 +360,8 @@ impl DiagnosticBuffer {
             why_awake,
             observation.active,
             wake_sources,
+            observation.counters.total_work(),
+            observation.counters.energy_score(),
             counters.scheduler_wakeups,
             counters.snapshot_builds,
             counters.peer_probes,
@@ -503,6 +505,7 @@ mod tests {
         diagnostics.stop_battery_observation();
         assert!(!diagnostics.battery_observation().active);
         assert!(diagnostics.export_json().contains("\"wakeSources\""));
+        assert!(diagnostics.export_json().contains("\"totalWork\":2"));
     }
 
     #[test]

@@ -181,6 +181,25 @@ pub(crate) fn execute_with_request_id(
         return ABI_CLOSED;
     }
     self.advance_runtime_start();
+    let observation_result = match command {
+        torca_contract::BridgeCommand::StartBatteryObservation => {
+            Some(("battery_observation_started", self.application_runtime.start_battery_observation()))
+        }
+        torca_contract::BridgeCommand::StopBatteryObservation => {
+            Some(("battery_observation_stopped", self.application_runtime.stop_battery_observation()))
+        }
+        torca_contract::BridgeCommand::ResetBatteryObservation => {
+            Some(("battery_observation_reset", self.application_runtime.reset_battery_observation()))
+        }
+        _ => None,
+    };
+    if let Some((kind, result)) = observation_result {
+        self.last_result_json = match result {
+            Ok(()) => success_result(kind),
+            Err(_) => error_result("battery observation unavailable"),
+        };
+        return if result.is_ok() { ABI_OK } else { ABI_ERROR };
+    }
     if let torca_contract::BridgeCommand::SetNotifications { enabled } = &command {
         self.notifications_enabled = *enabled;
         if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {

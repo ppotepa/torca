@@ -1350,6 +1350,18 @@ class AcknowledgeNewContactsCommandDto extends BridgeCommandDto {
   const AcknowledgeNewContactsCommandDto();
 }
 
+class StartBatteryObservationCommandDto extends BridgeCommandDto {
+  const StartBatteryObservationCommandDto();
+}
+
+class StopBatteryObservationCommandDto extends BridgeCommandDto {
+  const StopBatteryObservationCommandDto();
+}
+
+class ResetBatteryObservationCommandDto extends BridgeCommandDto {
+  const ResetBatteryObservationCommandDto();
+}
+
 class RefreshSnapshotCommandDto extends BridgeCommandDto {
   const RefreshSnapshotCommandDto();
 }
@@ -1654,6 +1666,15 @@ class RuntimeRequestDto {
     }
     if (command is AcknowledgeNewContactsCommandDto) {
       return _command('contacts.acknowledge_new', const <String, Object?>{});
+    }
+    if (command is StartBatteryObservationCommandDto) {
+      return _command('diagnostics.observation.start', const <String, Object?>{});
+    }
+    if (command is StopBatteryObservationCommandDto) {
+      return _command('diagnostics.observation.stop', const <String, Object?>{});
+    }
+    if (command is ResetBatteryObservationCommandDto) {
+      return _command('diagnostics.observation.reset', const <String, Object?>{});
     }
     return null;
   }
