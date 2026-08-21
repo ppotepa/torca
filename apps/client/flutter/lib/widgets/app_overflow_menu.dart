@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
@@ -40,16 +41,18 @@ class AppOverflowMenu extends StatelessWidget {
           title: Text(context.strings.yourIdentity),
         ),
       ),
-      const PopupMenuDivider(),
-      PopupMenuItem(
-        value: AppOverflowAction.diagnostics,
-        child: ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(context.torcaIcons.diagnostics),
-          title: Text(context.strings.diagnostics),
+      if (kDebugMode) ...<PopupMenuEntry<AppOverflowAction>>[
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: AppOverflowAction.diagnostics,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(context.torcaIcons.diagnostics),
+            title: Text(context.strings.diagnostics),
+          ),
         ),
-      ),
+      ],
       PopupMenuItem(
         value: AppOverflowAction.settings,
         child: ListTile(
