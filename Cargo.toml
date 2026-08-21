@@ -51,6 +51,7 @@ members = [
     "crates/platform/torca-platform-windows",
     "tools/torca-contract-gen",
     "tools/torca-deploy",
+    "tools/torca-lab-peer",
     "tests/torca-integration",
 ]
 resolver = "3"

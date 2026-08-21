@@ -52,5 +52,6 @@ include!("model.rs");
 include!("registry.rs");
 include!("actor_state.rs");
 include!("abi.rs");
+include!("safe_client.rs");
 include!("bridge.rs");
 include!("tests.rs");

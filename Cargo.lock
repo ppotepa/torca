@@ -5896,6 +5896,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "torca-lab-peer"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "torca-native",
+]
+
+[[package]]
 name = "torca-logging"
 version = "0.2.0-alpha.0"
 
