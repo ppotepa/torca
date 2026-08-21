@@ -305,15 +305,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     policy.release_lease(radio_transmission_lease_owner(contact_id));
                 }
             }
-            RuntimeWait::Command(RuntimeCommand::SetBatteryProfile(profile)) => {
-                work.battery_policy.set_profile(profile);
-                communication.set_battery_policy(
-                    profile,
-                    work.metered_transfers,
-                    work.metered_network,
-                );
-                diagnostics.set_battery_profile(profile);
-            }
             RuntimeWait::Command(RuntimeCommand::SetBatteryPolicyInputs(preferences, system)) => {
                 work.battery_preferences = preferences;
                 work.system_energy = system;
@@ -341,31 +332,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     release_attention_leases(policy, &mut work);
                     scheduling.background_grace_deadline =
                         Some(std::time::Instant::now() + Duration::from_secs(30));
-                }
-            }
-            RuntimeWait::Command(RuntimeCommand::SetMeteredNetwork(metered)) => {
-                work.metered_network = metered;
-                communication.set_battery_policy(
-                    work.battery_policy.profile(),
-                    work.metered_transfers,
-                    work.metered_network,
-                );
-            }
-            RuntimeWait::Command(RuntimeCommand::SetMeteredTransferPolicy(transfer_policy)) => {
-                work.metered_transfers = transfer_policy;
-                communication.set_battery_policy(
-                    work.battery_policy.profile(),
-                    work.metered_transfers,
-                    work.metered_network,
-                );
-            }
-            RuntimeWait::Command(RuntimeCommand::SetTorDormancyAllowed(allowed)) => {
-                work.tor_dormancy_allowed = allowed;
-                // Removing permission is immediate: users must never remain
-                // dormant after selecting a reachability-first policy. Giving
-                // permission is deliberately deferred to grace expiry below.
-                if !allowed {
-                    let _ = tor.set_dormant(false);
                 }
             }
             RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id)) => {

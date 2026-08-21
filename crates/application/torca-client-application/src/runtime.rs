@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 
 use torca_attachments::AttachmentId;
-use torca_battery::{BatteryPreferences, BatteryProfile, MeteredTransferPolicy, SystemEnergyState};
+use torca_battery::{BatteryPreferences, SystemEnergyState};
 use torca_bootstrap::{BootstrapSnapshot, BootstrapState, BootstrapStepId, BootstrapStepState};
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
@@ -365,12 +365,6 @@ impl ClientApplicationRuntime {
         self.radio = Some(radio);
     }
 
-    pub fn set_battery_profile(&self, profile: BatteryProfile) {
-        if let Some(runtime) = &self.runtime {
-            runtime.set_battery_profile(profile);
-        }
-    }
-
     pub fn set_battery_policy_inputs(
         &self,
         preferences: BatteryPreferences,
@@ -390,24 +384,6 @@ impl ClientApplicationRuntime {
     pub fn set_instant_contact_demand(&self, contact_id: ContactId, enabled: bool) {
         if let Some(runtime) = &self.runtime {
             runtime.set_instant_contact_demand(contact_id, enabled);
-        }
-    }
-
-    pub fn set_metered_network(&self, metered: bool) {
-        if let Some(runtime) = &self.runtime {
-            runtime.set_metered_network(metered);
-        }
-    }
-
-    pub fn set_metered_transfer_policy(&self, policy: MeteredTransferPolicy) {
-        if let Some(runtime) = &self.runtime {
-            runtime.set_metered_transfer_policy(policy);
-        }
-    }
-
-    pub fn set_tor_dormancy_allowed(&self, allowed: bool) {
-        if let Some(runtime) = &self.runtime {
-            runtime.set_tor_dormancy_allowed(allowed);
         }
     }
 

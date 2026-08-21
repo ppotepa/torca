@@ -34,14 +34,10 @@ enum RuntimeCommand {
     SetRadioDemand(ContactId, bool),
     SetInstantContactDemand(ContactId, bool),
     SetRadioTransmission(ContactId, bool),
-    SetBatteryProfile(BatteryProfile),
     /// Host facts and persisted intent. RuntimeOwner performs the reduction
     /// and is the only component that applies its result to executors.
     SetBatteryPolicyInputs(BatteryPreferences, SystemEnergyState),
     SetForeground(bool),
-    SetMeteredNetwork(bool),
-    SetMeteredTransferPolicy(MeteredTransferPolicy),
-    SetTorDormancyAllowed(bool),
     /// An executor event.  Unlike a user command this is not permission to run
     /// every maintenance path; it names the lanes that actually need service.
     Wake(Vec<RuntimeWakeSource>),
@@ -273,12 +269,6 @@ impl RuntimeHandle {
         );
     }
 
-    /// Selects the runtime battery profile. This changes discretionary work
-    /// policy and diagnostics; durable delivery remains unaffected.
-    pub fn set_battery_profile(&self, profile: BatteryProfile) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetBatteryProfile(profile));
-    }
-
     pub fn set_battery_policy_inputs(
         &self,
         preferences: BatteryPreferences,
@@ -290,24 +280,10 @@ impl RuntimeHandle {
         );
     }
 
-    pub fn set_metered_network(&self, metered: bool) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetMeteredNetwork(metered));
-    }
-
     pub fn set_foreground(&self, foreground: bool) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::SetForeground(foreground));
     }
 
-    pub fn set_metered_transfer_policy(&self, policy: MeteredTransferPolicy) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetMeteredTransferPolicy(policy));
-    }
-
-    /// Updates policy permission only. RuntimeOwner decides when the Tor
-    /// client can actually become dormant, preserving transition grace and
-    /// durable-work leases.
-    pub fn set_tor_dormancy_allowed(&self, allowed: bool) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetTorDormancyAllowed(allowed));
-    }
 }
 
 pub struct RuntimeOwner {
