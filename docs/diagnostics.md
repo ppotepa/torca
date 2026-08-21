@@ -1,5 +1,9 @@
 # Diagnostic logging and incident collection
 
+For the debug-only console and its observation sessions, see
+[`development/debug-console.md`](development/debug-console.md). Runtime power
+validation is specified in [`validation/runtime-power.md`](validation/runtime-power.md).
+
 Torca keeps runtime producers separate and creates a fresh incident snapshot when diagnostics are collected. Diagnostics are operational evidence, not an alternative source of product state, and must remain redaction-conscious.
 
 ## Canonical collection

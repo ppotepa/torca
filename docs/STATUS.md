@@ -1,8 +1,8 @@
 # Torca project status
 
-Last reviewed against the repository: **2026-08-14**.
+Last reviewed against the repository: **2026-08-21**.
 
-This page is the concise project-status entry point. It summarizes maturity and validation state without duplicating the detailed implementation ledger in [`../0.3_PROGRESS.md`](../0.3_PROGRESS.md).
+This page is the concise project-status entry point. It summarizes maturity and validation state; checked-in source and executed evidence remain authoritative.
 
 ## Maturity
 
@@ -23,7 +23,7 @@ The active implementation has:
 - Safety Number-style contact verification;
 - redaction-conscious diagnostics and privacy-aware notification handling;
 - experimental mutual-consent Radio Mode with session-specific media keys; and
-- an event/deadline-driven runtime baseline intended to avoid periodic application-controlled idle polling.
+- an event/deadline-driven runtime baseline with a one-shot background grace and no default periodic rendezvous wake.
 
 Groups, calls, multi-device sync, public discovery, cloud backup and a Linux production client are not part of the current supported baseline.
 
@@ -59,7 +59,8 @@ Use the documents in this order when they disagree:
 1. the checked-in source, generated contracts and tests;
 2. [`../ARCHITECTURE.md`](../ARCHITECTURE.md), [`../SECURITY.md`](../SECURITY.md), [`../PRIVACY.md`](../PRIVACY.md) and the threat model for maintained guarantees/boundaries;
 3. this status page for a concise maturity summary;
-4. [`../0.3_PROGRESS.md`](../0.3_PROGRESS.md) for detailed implementation/validation handoff;
-5. focused working records such as [`../BATTERY.MD`](../BATTERY.MD), [`../CONNECTIVITY_HARDENING.md`](../CONNECTIVITY_HARDENING.md) and [`../FINALIZE.md`](../FINALIZE.md).
+4. [`architecture/runtime-control.md`](architecture/runtime-control.md) for runtime/power invariants;
+5. [`validation/runtime-power.md`](validation/runtime-power.md) and [`diagnostics.md`](diagnostics.md) for evidence and collection;
+6. historical working records only as historical context.
 
 Planning documents and progress ledgers may contain historical checkpoints. They should never be used to claim that a current binary, platform or release passed a gate that was not actually run.

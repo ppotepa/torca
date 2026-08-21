@@ -193,6 +193,22 @@ mod tests {
     }
 
     #[test]
+    fn background_grace_is_one_shot_and_never_becomes_periodic_work() {
+        let now = std::time::Instant::now();
+        let mut scheduler = RuntimeSchedulingState::new();
+        scheduler.replace_deadlines(
+            now,
+            [(RuntimeWakeSource::BackgroundGrace, Some(Duration::from_secs(30)))],
+        );
+
+        assert_eq!(
+            scheduler.take_due(now + Duration::from_secs(30)),
+            [RuntimeWakeSource::BackgroundGrace].into_iter().collect()
+        );
+        assert_eq!(scheduler.next_deadline(), None);
+    }
+
+    #[test]
     fn contact_activity_is_monotonic_and_redacted() {
         let at = Timestamp::from_unix_millis(1).expect("valid timestamp");
         let contact = ContactId::from_opaque(OpaqueId::from_u128(1));

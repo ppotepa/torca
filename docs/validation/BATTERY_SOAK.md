@@ -1,5 +1,9 @@
 # Android battery soak
 
+> Canonical runtime policy and acceptance invariants are in
+> [`runtime-power.md`](runtime-power.md). This document retains the concrete
+> Android harness instructions.
+
 This validation is intentionally device-side. It is not a CI check and must not be marked as passed from source inspection alone.
 
 Run from the repository root with a physical Android device connected through ADB:
