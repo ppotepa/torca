@@ -96,12 +96,15 @@ fn delivery_lease_owner(message_id: OpaqueId) -> OpaqueId {
 }
 
 fn acquire_delivery_lease(policy: &mut RuntimeGovernor, message_id: OpaqueId) {
-    policy.acquire_lease(WorkDemand {
+    // Durable delivery is released by its terminal job/status transition. A
+    // synthetic ten-minute expiry would create an unnecessary deadline and
+    // can let Tor sleep while a slow peer still has queued work.
+    policy.acquire_persistent_lease(WorkDemand {
         scope: ResourceScope::Delivery(message_id),
         class: WorkClass::Delivery,
         reason: DemandReason::PendingMessage,
         owner: delivery_lease_owner(message_id),
-        expires_at: std::time::Instant::now() + Duration::from_secs(10 * 60),
+        expires_at: std::time::Instant::now(),
     });
 }
 
@@ -183,7 +186,9 @@ fn acquire_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
 }
 
 fn acquire_radio_transmission_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
-    policy.acquire_lease(WorkDemand {
+    // The transfer worker explicitly releases this lease on completion or
+    // cancellation, so no periodic renewal is required while it is durable.
+    policy.acquire_persistent_lease(WorkDemand {
         scope: ResourceScope::Radio(contact_id.to_opaque()),
         class: WorkClass::Radio,
         reason: DemandReason::RadioSession,
@@ -213,7 +218,7 @@ fn acquire_attachment_lease(
         class: WorkClass::Attachment,
         reason: DemandReason::AttachmentTransfer,
         owner: attachment_lease_owner(attachment_id),
-        expires_at: std::time::Instant::now() + Duration::from_secs(10 * 60),
+        expires_at: std::time::Instant::now(),
     });
 }
 

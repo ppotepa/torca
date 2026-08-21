@@ -40,7 +40,7 @@ incoming work can still hold a durable lease independently of the UI.
 | 2 | Implemented core | RuntimeOwner receives atomic host-policy inputs and consumes `torca-runtime-policy` directly; legacy values normalize safely. |
 | 3 | Implemented core | One deadline registry with source-selective maintenance. |
 | 4 | Implemented core | One-shot background grace and soft dormancy; no recurring rendezvous. |
-| 5 | Implemented core | Demand/dirty-peer maintenance and unified platform visibility. Radio owns a separate deadline lane; peer maintenance derives its set from leases, live sessions, durable control outbox recipients and transport evidence rather than the contact book. |
+| 5 | Implemented core | Demand/dirty-peer maintenance and unified platform visibility. Radio owns a separate deadline lane; peer maintenance derives its set from leases, live sessions, durable control outbox recipients and transport evidence rather than the contact book. Durable delivery and attachment leases are released by their job completion rather than synthetic TTL renewal. |
 | 6 | In progress | Debug-only Battery/Runtime/Logs/Incident console, explicit bounded log tails and local support bundle. |
 | 7 | In progress | Canonical docs, lab peer and deterministic/device validation. |
 

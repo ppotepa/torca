@@ -281,4 +281,22 @@ mod tests {
             std::time::Instant::now(),
         ));
     }
+
+    #[test]
+    fn durable_delivery_lease_never_expires_before_job_completion() {
+        let now = std::time::Instant::now();
+        let message = OpaqueId::from_u128(81);
+        let mut policy = RuntimeGovernor::new(now);
+        acquire_delivery_lease(&mut policy, message);
+
+        assert!(policy.has_active_lease(
+            ResourceScope::Delivery(message),
+            now + Duration::from_secs(24 * 60 * 60),
+        ));
+        policy.release_lease(delivery_lease_owner(message));
+        assert!(!policy.has_active_lease(
+            ResourceScope::Delivery(message),
+            now + Duration::from_secs(24 * 60 * 60),
+        ));
+    }
 }
