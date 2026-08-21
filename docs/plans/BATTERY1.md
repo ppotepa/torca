@@ -64,6 +64,10 @@ The remaining implementation work is:
 3. Add a production-crate headless lab peer, then run the documented physical
    device validation matrix.
 
+The native host accepts a process-scoped `TORCA_APP_ROOT` override for that
+runner. It isolates the lab peer's identity, database and Tor state while
+leaving the normal desktop storage root unchanged.
+
 The deterministic soak now includes both `torca-runtime` and
 `torca-diagnostics`, so policy scheduling and observation/export regressions
 are exercised together on every requested iteration.
