@@ -11,6 +11,10 @@ tools/*
 !tools/torca-contract-gen/**
 !tools/torca-deploy/
 !tools/torca-deploy/**
+!tools/torca-lab-peer/
+!tools/torca-lab-peer/**
+!tools/torca-soak/
+!tools/torca-soak/**
 scripts
 vendor
 release

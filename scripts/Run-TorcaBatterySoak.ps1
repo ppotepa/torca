@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory = $false)][switch]$RequireUnplugged,
     [Parameter(Mandatory = $false)][switch]$RequireScreenOff,
     [Parameter(Mandatory = $false)][switch]$CollectNativeDiagnostics,
-    [Parameter(Mandatory = $false)][string]$NativeLogRoot
+    [Parameter(Mandatory = $false)][string]$NativeLogRoot,
+    [Parameter(Mandatory = $false)][ValidateRange(1, 3)][int]$AutoDeployAttempts = 2
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,6 +71,42 @@ function Get-BatteryLevel([string]$BatteryText) {
     return [int]$match.Groups[1].Value
 }
 
+function Test-PackageInstalled {
+    $path = Invoke-SelectedAdb @('shell', 'pm', 'path', $Package) 2>$null | Out-String
+    return ($LASTEXITCODE -eq 0 -and $path -match '(?im)^package:')
+}
+
+function Ensure-PackageInstalled {
+    if (Test-PackageInstalled) { return }
+
+    $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+    $deployLog = Join-Path $output 'auto-deploy.log'
+    $deployStdout = "$deployLog.stdout"
+    $deployStderr = "$deployLog.stderr"
+    Write-Host "Package '$Package' is not installed; running Android deploy before the battery soak."
+    for ($attempt = 1; $attempt -le $AutoDeployAttempts; $attempt++) {
+        $deploy = Start-Process -FilePath 'cargo' -WorkingDirectory $repoRoot -NoNewWindow -Wait -PassThru `
+            -ArgumentList @('run', '-p', 'torca-deploy', '--', 'deploy', '--target', 'android', '--configuration', 'debug', '--client-build', 'if-required', '--relay-build', 'if-required', '--onion', 'ensure', '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart') `
+            -RedirectStandardOutput $deployStdout -RedirectStandardError $deployStderr
+        @(
+            "--- auto-deploy attempt $attempt/$AutoDeployAttempts ---"
+            if (Test-Path $deployStdout) { Get-Content $deployStdout }
+            if (Test-Path $deployStderr) { Get-Content $deployStderr }
+        ) | Out-File -Append -Encoding utf8 $deployLog
+        Remove-Item $deployStdout, $deployStderr -Force -ErrorAction SilentlyContinue
+        if ($deploy.ExitCode -eq 0 -and (Test-PackageInstalled)) { return }
+
+        $tail = (Get-Content $deployLog -Tail 30 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+        if ($tail -match 'INSTALL_FAILED_USER_RESTRICTED|Install canceled by user' -and $attempt -lt $AutoDeployAttempts) {
+            Write-Warning "Android installation was blocked by the device. Approve the install prompt on '$DeviceId'; retrying automatically."
+            Start-Sleep -Seconds 5
+            continue
+        }
+        throw "Android auto-deploy failed (attempt=$attempt, exit=$($deploy.ExitCode)). See '$deployLog'.`n$tail"
+    }
+    throw "Android deploy completed without installing '$Package' on '$DeviceId'. Check '$deployLog' and approve the installation prompt on the device."
+}
+
 Capture-Adb 'device.txt' @('shell', 'getprop')
 $batteryBeforeText = Invoke-SelectedAdb @('shell', 'dumpsys', 'battery') 2>&1 | Out-String
 $batteryBeforeText | Out-File -Encoding utf8 (Join-Path $output 'battery-before.txt')
@@ -79,6 +116,7 @@ if ($RequireUnplugged -and $powerSourceBefore -ne 'battery') {
     throw "Battery soak requires an unplugged device, but '$DeviceId' reports power source '$powerSourceBefore'."
 }
 Capture-Adb 'power-before.txt' @('shell', 'dumpsys', 'power')
+Ensure-PackageInstalled
 $nativeDiagnosticsBefore = $false
 if ($CollectNativeDiagnostics) {
     $nativeDiagnosticsBefore = Capture-NativeDiagnostics 'native-before'
@@ -86,7 +124,10 @@ if ($CollectNativeDiagnostics) {
 
 Invoke-SelectedAdb @('shell', 'dumpsys', 'batterystats', '--reset') | Out-Null
 Invoke-SelectedAdb @('shell', 'logcat', '-c') | Out-Null
-Invoke-SelectedAdb @('shell', 'monkey', '-p', $Package, '-c', 'android.intent.category.LAUNCHER', '1') | Out-Null
+$monkeyOutput = Invoke-SelectedAdb @('shell', 'monkey', '-p', $Package, '-c', 'android.intent.category.LAUNCHER', '1') 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -or $monkeyOutput -match '(?im)No activities found|monkey aborted') {
+    throw "Torca package '$Package' has no launchable activity on '$DeviceId'. Install the debug APK and approve Android's installation prompt before starting the battery soak. Details: $($monkeyOutput.Trim())"
+}
 Start-Sleep -Seconds 2
 $appPid = (Invoke-SelectedAdb @('shell', 'pidof', $Package) 2>$null | Out-String).Trim()
 if (-not $appPid) { throw "Torca process '$Package' did not start on ADB device '$DeviceId'." }

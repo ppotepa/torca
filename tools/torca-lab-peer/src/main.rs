@@ -4,6 +4,7 @@
 //! two copies with different roots; their identities, databases and Tor caches
 //! remain isolated exactly as on two physical clients.
 
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -41,6 +42,9 @@ struct Cli {
     /// Pairing session id required by `approve`.
     #[arg(long)]
     session_id: Option<String>,
+    /// Keep the process alive and accept newline-delimited JSON commands.
+    #[arg(long)]
+    control_stdio: bool,
 }
 
 fn main() {
@@ -60,6 +64,9 @@ fn run() -> Result<(), String> {
     {
         wait_until_ready(&mut runtime, cli.startup_timeout_seconds)?;
         execute_operation(&mut runtime, &cli)?;
+        if cli.control_stdio {
+            return control_loop(&mut runtime, &cli.root);
+        }
         let started = Instant::now();
         let deadline = started + Duration::from_secs(cli.duration_seconds);
         while Instant::now() < deadline {
@@ -80,6 +87,136 @@ fn run() -> Result<(), String> {
         }
         Ok(())
     }
+}
+
+fn control_loop(
+    runtime: &mut torca_native::NativeRuntimeClient,
+    root: &std::path::Path,
+) -> Result<(), String> {
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|error| format!("read control request failed: {error}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|error| format!("decode control request failed: {error}"))?;
+        let id = request.get("id").cloned().unwrap_or_else(|| serde_json::json!(null));
+        let result = control_request(runtime, root, &request);
+        let response = match result {
+            Ok(value) => serde_json::json!({"id": id, "status": "succeeded", "result": value}),
+            Err(error) => serde_json::json!({"id": id, "status": "failed", "error": error}),
+        };
+        writeln!(stdout, "{response}")
+            .map_err(|error| format!("write control response failed: {error}"))?;
+        stdout.flush().map_err(|error| format!("flush control response failed: {error}"))?;
+        if request.get("op").and_then(serde_json::Value::as_str) == Some("shutdown") {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn control_request(
+    runtime: &mut torca_native::NativeRuntimeClient,
+    root: &std::path::Path,
+    request: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let operation = request.get("op").and_then(serde_json::Value::as_str).unwrap_or_default();
+    if operation == "shutdown" {
+        return Ok(serde_json::json!({"stopping": true}));
+    }
+    if operation == "attachment.fixture" {
+        let size =
+            request.get("size").and_then(serde_json::Value::as_u64).ok_or("size is required")?;
+        if !(1..=5 * 1024 * 1024).contains(&size) {
+            return Err("fixture size must be between 1 byte and 5 MiB".into());
+        }
+        let path = root.join("scenario-fixture.bin");
+        let mut file =
+            std::fs::File::create(&path).map_err(|error| format!("create fixture: {error}"))?;
+        let block = [0x54_u8; 4096];
+        let mut remaining = size;
+        while remaining > 0 {
+            let count = remaining.min(block.len() as u64) as usize;
+            std::io::Write::write_all(&mut file, &block[..count])
+                .map_err(|error| format!("write fixture: {error}"))?;
+            remaining -= count as u64;
+        }
+        return Ok(serde_json::json!({"path": path, "size": size}));
+    }
+    let (kind, name, payload) = match operation {
+        "snapshot" => ("query", "snapshot.get", serde_json::json!({})),
+        "diagnostics" => ("query", "diagnostics.get", serde_json::json!({})),
+        "pairing.create" => ("command", "pairing.create", serde_json::json!({})),
+        "pairing.join" => (
+            "command",
+            "pairing.join",
+            serde_json::json!({
+                "code": request.get("code").and_then(serde_json::Value::as_str).ok_or("code is required")?
+            }),
+        ),
+        "pairing.approve" | "pairing.reject" | "pairing.cancel" => (
+            "command",
+            operation,
+            serde_json::json!({
+                "sessionIdHex": request.get("sessionIdHex").and_then(serde_json::Value::as_str).ok_or("sessionIdHex is required")?
+            }),
+        ),
+        "message.send" => (
+            "command",
+            "message.send",
+            serde_json::json!({
+                "conversationIdHex": request.get("conversationIdHex").and_then(serde_json::Value::as_str).ok_or("conversationIdHex is required")?,
+                "body": request.get("body").and_then(serde_json::Value::as_str).ok_or("body is required")?
+            }),
+        ),
+        "attachment.queue" => (
+            "command",
+            "attachment.queue",
+            serde_json::json!({
+                "conversationIdHex": request.get("conversationIdHex").and_then(serde_json::Value::as_str).ok_or("conversationIdHex is required")?,
+                "sourcePath": request.get("sourcePath").and_then(serde_json::Value::as_str).ok_or("sourcePath is required")?,
+                "name": request.get("name").and_then(serde_json::Value::as_str).ok_or("name is required")?,
+                "mediaType": request.get("mediaType").and_then(serde_json::Value::as_str).unwrap_or("application/octet-stream"),
+                "size": request.get("size").and_then(serde_json::Value::as_u64).ok_or("size is required")?
+            }),
+        ),
+        "radio.enable" => (
+            "command",
+            "radio.set_enabled",
+            serde_json::json!({
+                "contactIdHex": request.get("contactIdHex").and_then(serde_json::Value::as_str).ok_or("contactIdHex is required")?,
+                "enabled": request.get("enabled").and_then(serde_json::Value::as_bool).unwrap_or(true)
+            }),
+        ),
+        "radio.begin" => (
+            "command",
+            "radio.begin_transmission",
+            serde_json::json!({
+                "contactIdHex": request.get("contactIdHex").and_then(serde_json::Value::as_str).ok_or("contactIdHex is required")?
+            }),
+        ),
+        "radio.end" => (
+            "command",
+            "radio.end_transmission",
+            serde_json::json!({
+                "contactIdHex": request.get("contactIdHex").and_then(serde_json::Value::as_str).ok_or("contactIdHex is required")?
+            }),
+        ),
+        _ => return Err(format!("unsupported control operation: {operation}")),
+    };
+    let response = invoke_request(runtime, "lab-control", kind, name, payload)?;
+    let status = response.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+    if status == "failed" {
+        return Err(response
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("runtime operation failed")
+            .to_owned());
+    }
+    Ok(response.get("result").cloned().unwrap_or(response))
 }
 
 fn wait_until_ready(
@@ -105,12 +242,20 @@ fn wait_until_ready(
             .pointer("/snapshot/bootstrapPhase")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("starting");
-        if status == "succeeded" && phase == "ready" {
+        // The soak harness must be able to observe degraded/slow Tor startup
+        // instead of exiting before it can record a useful runtime snapshot.
+        // `runtimeId` proves that the native actor is alive; network readiness
+        // is deliberately validated by the subsequent pairing/workload steps.
+        let actor_alive = response
+            .pointer("/runtimeId")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.is_empty());
+        if status == "succeeded" && actor_alive && phase != "failed" {
             return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "runtime did not reach bootstrap ready within {timeout_seconds}s (phase={phase})"
+                "native actor did not become observable within {timeout_seconds}s (phase={phase})"
             ));
         }
         thread::sleep(Duration::from_secs(1));

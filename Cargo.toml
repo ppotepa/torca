@@ -52,6 +52,7 @@ members = [
     "tools/torca-contract-gen",
     "tools/torca-deploy",
     "tools/torca-lab-peer",
+    "tools/torca-soak",
     "tests/torca-integration",
 ]
 resolver = "3"

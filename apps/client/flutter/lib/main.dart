@@ -16,6 +16,7 @@ import 'platform/deep_link_router.dart';
 import 'platform/desktop_lifecycle.dart';
 import 'platform/platform_capabilities.dart';
 import 'platform/runtime_lifecycle.dart';
+import 'platform/scenario_bridge.dart';
 import 'settings/battery_preferences.dart';
 import 'settings/local_preferences.dart';
 
@@ -67,6 +68,7 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
   DesktopLifecycle? _desktopLifecycle;
   DeepLinkRouter? _deepLinkRouter;
   AndroidNotificationRouter? _androidNotificationRouter;
+  ScenarioBridge? _scenarioBridge;
   bool _initializing = false;
   RuntimeLifecycleObserver? _runtimeLifecycleObserver;
   String? _startupFailure;
@@ -172,6 +174,10 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
         // Deep links are an optional entry path; failure must not prevent secure runtime startup.
       }
       if (isTorcaAndroid) {
+        if (gateway is FfiEngineGateway) {
+          _scenarioBridge = ScenarioBridge(gateway);
+          await _scenarioBridge!.start();
+        }
         _runtimeLifecycleObserver = RuntimeLifecycleObserver(gateway)..attach();
         _androidNotificationRouter = AndroidNotificationRouter(
           navigation,
@@ -241,6 +247,8 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
   }
 
   Future<void> _disposeRuntimeComposition() async {
+    await _scenarioBridge?.dispose();
+    _scenarioBridge = null;
     final runtimeLifecycleObserver = _runtimeLifecycleObserver;
     final androidNotificationRouter = _androidNotificationRouter;
     final deepLinkRouter = _deepLinkRouter;

@@ -35,6 +35,8 @@ class MainActivity : FlutterActivity() {
     private var pendingReplyText: String? = null
 
     companion object {
+        @Volatile
+        var isVisible: Boolean = false
         const val EXTRA_CONVERSATION_ID = "torca.conversation_id"
         const val EXTRA_NOTIFICATION_ACTION = "torca.notification_action"
         const val EXTRA_PAIRING_ID = "torca.pairing_id"
@@ -314,6 +316,12 @@ class MainActivity : FlutterActivity() {
             audioManager.mode = AudioManager.MODE_NORMAL
         }
         super.onPause()
+        isVisible = false
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isVisible = true
     }
 
     private fun videoThumbnail(path: String): ByteArray? {
