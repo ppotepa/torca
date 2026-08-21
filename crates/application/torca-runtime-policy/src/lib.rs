@@ -78,6 +78,24 @@ pub enum VisualActivityPolicy {
     FollowSystem,
 }
 
+/// Compatibility representation for old persisted background-sync values.
+/// BATTERY1 has no periodic cadence; every value normalizes to `OnOpen`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BackgroundSyncCadence {
+    #[default]
+    OnOpen,
+}
+
+impl BackgroundSyncCadence {
+    pub const fn from_wire(_value: &str) -> Self {
+        Self::OnOpen
+    }
+
+    pub const fn wire(self) -> &'static str {
+        "on_open"
+    }
+}
+
 impl VisualActivityPolicy {
     pub fn from_wire(value: &str) -> Self {
         match value {

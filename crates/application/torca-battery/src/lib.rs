@@ -10,10 +10,11 @@ use std::time::{Duration, Instant};
 
 pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
-    AttentionContext, AttentionSurface, BatteryProfile, ConnectionLease, ContactAvailabilityMode,
-    DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime, MeteredTransferPolicy,
-    PolicyEvent, RequestedBatteryMode, ResourceScope, RuntimeEventHub, RuntimeEventHubStats,
-    RuntimeGovernor, RuntimePolicySnapshot, VisualActivityPolicy, WorkClass, WorkDemand,
+    AttentionContext, AttentionSurface, BackgroundSyncCadence, BatteryProfile, ConnectionLease,
+    ContactAvailabilityMode, DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime,
+    MeteredTransferPolicy, PolicyEvent, RequestedBatteryMode, ResourceScope, RuntimeEventHub,
+    RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, VisualActivityPolicy, WorkClass,
+    WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
@@ -115,16 +116,6 @@ impl BatterySnapshot {
             .saturating_add(self.attachment_chunks_rx)
             .saturating_add(self.suppressed_work)
     }
-}
-
-/// User-visible promise for background delivery.  The durations are hints;
-/// BATTERY1 retains only the migration-safe `OnOpen` representation: durable
-/// work owns an explicit lease and background behavior is grace/idle based,
-/// never a periodic rendezvous cadence.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum BackgroundSyncCadence {
-    #[default]
-    OnOpen,
 }
 
 /// Durable user preference.  It contains intent, not executor-specific
@@ -309,16 +300,6 @@ impl BatteryPreferences {
             metered_transfers: self.metered_transfers,
             visual_activity: self.visual_activity,
         }
-    }
-}
-
-impl BackgroundSyncCadence {
-    pub fn from_wire(_value: &str) -> Self {
-        Self::OnOpen
-    }
-
-    pub fn wire(self) -> &'static str {
-        "on_open"
     }
 }
 

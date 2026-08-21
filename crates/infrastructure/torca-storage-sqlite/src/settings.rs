@@ -2,10 +2,11 @@ use core::fmt;
 use std::path::Path;
 
 use rusqlite::OptionalExtension;
-use torca_battery::{BackgroundSyncCadence, BatteryPreferences};
+use torca_battery::BatteryPreferences;
 use torca_contacts::ContactId;
 use torca_runtime_policy::{
-    ContactAvailabilityMode, MeteredTransferPolicy, RequestedBatteryMode, VisualActivityPolicy,
+    BackgroundSyncCadence, ContactAvailabilityMode, MeteredTransferPolicy, RequestedBatteryMode,
+    VisualActivityPolicy,
 };
 
 const BATTERY_PREFERENCES_SQL: &str =
@@ -285,8 +286,10 @@ mod tests {
 
     #[test]
     fn battery_preferences_are_durable_for_the_connection() {
-        use torca_battery::{BackgroundSyncCadence, BatteryPreferences};
-        use torca_runtime_policy::{RequestedBatteryMode, VisualActivityPolicy};
+        use torca_battery::BatteryPreferences;
+        use torca_runtime_policy::{
+            BackgroundSyncCadence, RequestedBatteryMode, VisualActivityPolicy,
+        };
         let key = DatabaseKey::new([0x21; 32]);
         let store = SqlCipherSettingsStore::open_in_memory(&key).expect("settings store");
         let preferences = BatteryPreferences {
