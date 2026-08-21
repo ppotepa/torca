@@ -9,7 +9,6 @@ use torca_attachments::{
     Attachment, AttachmentId, AttachmentName, AttachmentRepository, AttachmentStatus,
     MAX_ATTACHMENT_BYTES, MediaType,
 };
-use torca_battery::MeteredTransferPolicy;
 use torca_communication_driver::{
     AttachmentFailureStage, AttachmentMaintenanceResult, AttachmentRuntime, CommunicationError,
     InboundEnvelope,
@@ -21,7 +20,7 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageId, MessageRepository};
 use torca_peer_protocol::HandshakeSigner;
 use torca_runtime::{AttachmentSendRequest, AttachmentView};
-use torca_runtime_policy::BatteryProfile;
+use torca_runtime_policy::{BatteryProfile, MeteredTransferPolicy};
 
 /// Attachment adapter with separate SQLCipher control/projection connections. Transfer and user
 /// controls operate on durable attachment rows; the UI projection no longer needs full message

@@ -26,6 +26,33 @@ pub enum BatteryProfile {
     Diagnostics,
 }
 
+/// User/runtime policy for attachment transfer on a metered network.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MeteredTransferPolicy {
+    AllowAll,
+    #[default]
+    PauseLarge,
+    PauseAll,
+}
+
+impl MeteredTransferPolicy {
+    pub fn from_wire(value: &str) -> Self {
+        match value {
+            "allow_all" => Self::AllowAll,
+            "pause_all" => Self::PauseAll,
+            _ => Self::PauseLarge,
+        }
+    }
+
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::AllowAll => "allow_all",
+            Self::PauseLarge => "pause_large",
+            Self::PauseAll => "pause_all",
+        }
+    }
+}
+
 /// A UI surface currently receiving user attention.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AttentionSurface {

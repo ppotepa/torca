@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
     AttentionContext, AttentionSurface, BatteryProfile, ConnectionLease, ContactAvailabilityMode,
-    DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime, PolicyEvent, ResourceScope,
-    RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, WorkClass,
-    WorkDemand,
+    DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime, MeteredTransferPolicy,
+    PolicyEvent, ResourceScope, RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor,
+    RuntimePolicySnapshot, WorkClass, WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
@@ -137,14 +137,6 @@ pub enum RequestedBatteryMode {
 pub enum BackgroundSyncCadence {
     #[default]
     OnOpen,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum MeteredTransferPolicy {
-    AllowAll,
-    #[default]
-    PauseLarge,
-    PauseAll,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -371,24 +363,6 @@ impl BackgroundSyncCadence {
 
     pub fn wire(self) -> &'static str {
         "on_open"
-    }
-}
-
-impl MeteredTransferPolicy {
-    pub fn from_wire(value: &str) -> Self {
-        match value {
-            "allow_all" => Self::AllowAll,
-            "pause_all" => Self::PauseAll,
-            _ => Self::PauseLarge,
-        }
-    }
-
-    pub fn wire(self) -> &'static str {
-        match self {
-            Self::AllowAll => "allow_all",
-            Self::PauseLarge => "pause_large",
-            Self::PauseAll => "pause_all",
-        }
     }
 }
 
