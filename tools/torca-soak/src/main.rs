@@ -40,8 +40,8 @@ struct Cli {
     /// Android serial. Omit to run the fake-peer-only laboratory scenario.
     #[arg(long)]
     android: Option<String>,
-    /// Build/install the debug Android client when the selected device has no
-    /// launchable Torca activity. The deploy is scoped to `--android` only.
+    /// Install/restart the current debug Android client before the run. The
+    /// deploy is scoped to `--android` only and preserves client data.
     #[arg(long)]
     android_auto_deploy: bool,
     #[arg(long, default_value_t = 3)]
@@ -735,22 +735,17 @@ impl AndroidBridge {
             return Err(format!("Android activity '{activity}' failed to start on {serial}"));
         }
         let deadline = Instant::now() + Duration::from_secs(120);
-        let discovery = loop {
-            let output = Command::new("adb")
-                .args([
-                    "-s",
-                    serial,
-                    "exec-out",
-                    "run-as",
-                    "com.torca.torca_app",
-                    "cat",
-                    "cache/torca-scenario.json",
-                ])
-                .output()
-                .map_err(|error| format!("read Android scenario discovery: {error}"))?;
-            if output.status.success() {
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    break value;
+        let discovery_paths = ["cache/torca-scenario.json", "cache/torca/torca-scenario.json"];
+        let discovery = 'discovery: loop {
+            for path in discovery_paths {
+                let output = Command::new("adb")
+                    .args(["-s", serial, "exec-out", "run-as", "com.torca.torca_app", "cat", path])
+                    .output()
+                    .map_err(|error| format!("read Android scenario discovery: {error}"))?;
+                if output.status.success() {
+                    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        break 'discovery value;
+                    }
                 }
             }
             if Instant::now() >= deadline {
@@ -910,10 +905,6 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String>
             String::from_utf8_lossy(&state.stdout).trim()
         ));
     }
-    if android_launchable_activity(serial).is_ok() {
-        return Ok(());
-    }
-
     let arguments = android_deploy_arguments(serial);
     let output = Command::new("cargo")
         .current_dir(repo_root)
@@ -950,7 +941,7 @@ fn android_deploy_arguments(serial: &str) -> Vec<String> {
         "--configuration",
         "debug",
         "--client-build",
-        "if-required",
+        "rebuild",
         "--relay-build",
         "if-required",
         "--onion",
@@ -958,7 +949,7 @@ fn android_deploy_arguments(serial: &str) -> Vec<String> {
         "--client-data",
         "preserve",
         "--validation",
-        "quick",
+        "skip",
         "--launch",
         "restart",
     ]

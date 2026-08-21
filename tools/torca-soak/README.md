@@ -41,9 +41,9 @@ the authorized ADB serial:
 cargo run -p torca-soak -- --android 2406APNFAG --relay managed
 ```
 
-To let the orchestrator install the debug client when the selected device has
-no launchable activity, add `--android-auto-deploy`. The deploy is restricted
-to that serial and preserves client data:
+To let the orchestrator install/restart the current debug client (including the
+debug-only ScenarioBridge), add `--android-auto-deploy`. The deploy is
+restricted to that serial and preserves client data:
 
 ```powershell
 cargo run -p torca-soak -- --android 2406APNFAG --android-auto-deploy --relay managed

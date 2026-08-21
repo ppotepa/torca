@@ -145,10 +145,10 @@ impl<'a> BuildController<'a> {
             for target in android_targets(&android_abis) {
                 let abi = target.abi.package_name();
                 let triple = target.triple;
-                let source = self
-                    .paths
-                    .repo_root
-                    .join(format!("target/{triple}/{profile}/libtorca_native.so"));
+                let source = cargo_target_root(&self.paths.repo_root)
+                    .join(triple)
+                    .join(profile)
+                    .join("libtorca_native.so");
                 let destination = self.paths.repo_root.join(format!(
                     "apps/client/flutter/android/app/src/main/jniLibs/{abi}/libtorca_native.so"
                 ));
@@ -157,6 +157,8 @@ impl<'a> BuildController<'a> {
                         std::fs::create_dir_all(parent).map_err(BuildError::Io)?;
                     }
                     std::fs::copy(source, destination).map_err(BuildError::Io)?;
+                } else {
+                    return Err(BuildError::NativeArtifactMissing(source));
                 }
             }
         }
@@ -177,12 +179,15 @@ impl<'a> BuildController<'a> {
                 let diagnostic = self.windows_install_diagnostic(mode);
                 return Err(BuildError::WindowsFlutter { output: output.text, diagnostic });
             }
-            let source = self.paths.repo_root.join(format!("target/{mode}/torca_native.dll"));
+            let source =
+                cargo_target_root(&self.paths.repo_root).join(mode).join("torca_native.dll");
             let destination = self.paths.repo_root.join(format!(
                 "apps/client/flutter/build/windows/x64/runner/{mode}/torca_native.dll"
             ));
             if source.is_file() {
                 std::fs::copy(source, destination).map_err(BuildError::Io)?;
+            } else {
+                return Err(BuildError::NativeArtifactMissing(source));
             }
         }
         if targets.contains(&Target::Android) {
@@ -538,6 +543,21 @@ fn build_identity(
     let material = format!("{source_commit}\n{endpoint}\n{configuration}\n{target_list}");
     format!("{:X}", Sha256::digest(material.as_bytes()))
 }
+
+fn cargo_target_root(repo_root: &Path) -> PathBuf {
+    target_root_with_override(repo_root, env::var_os("CARGO_TARGET_DIR"))
+}
+
+fn target_root_with_override(
+    repo_root: &Path,
+    override_dir: Option<std::ffi::OsString>,
+) -> PathBuf {
+    override_dir
+        .map(PathBuf::from)
+        .map(|path| if path.is_absolute() { path } else { repo_root.join(path) })
+        .unwrap_or_else(|| repo_root.join("target"))
+}
+
 #[derive(Debug, Error)]
 pub enum BuildError {
     #[error("build requires a valid relay endpoint")]
@@ -560,6 +580,10 @@ pub enum BuildError {
     WindowsFlutter { output: String, diagnostic: String },
     #[error("build command failed: {program}: {output}")]
     Command { program: String, output: String },
+    #[error(
+        "native artifact was not produced at {0}; check CARGO_TARGET_DIR and the target build output"
+    )]
+    NativeArtifactMissing(PathBuf),
     #[error("build process error: {0}")]
     Process(#[from] ProcessError),
     #[error("build I/O failed: {0}")]
@@ -605,6 +629,20 @@ mod tests {
                 .is_err()
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_artifacts_follow_cargo_target_dir() {
+        let repo = Path::new(r"G:\torca");
+        assert_eq!(
+            target_root_with_override(repo, Some(r"C:\cargo-target".into())),
+            PathBuf::from(r"C:\cargo-target")
+        );
+        assert_eq!(
+            target_root_with_override(repo, Some(".build-target".into())),
+            repo.join(".build-target")
+        );
+        assert_eq!(target_root_with_override(repo, None), repo.join("target"));
     }
 
     #[test]

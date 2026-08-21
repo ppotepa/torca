@@ -12,8 +12,10 @@ use torca_radio_coordinator::RadioAudioDeviceProjection;
 use torca_radio_coordinator::{RadioApplicationError, RadioAudioPort, RadioAudioProjection};
 use torca_radio_protocol::{MAX_RADIO_BURST_FRAMES, RADIO_SAMPLES_PER_FRAME};
 
+#[cfg(all(feature = "audio", target_os = "android"))]
+use crate::codec::decode_mulaw;
 #[cfg(target_os = "android")]
-use crate::codec::{decode_mulaw, encode_mulaw};
+use crate::codec::encode_mulaw;
 
 pub type AudioFrame = [u8; RADIO_SAMPLES_PER_FRAME];
 const INBOUND_AUDIO_QUEUE_FRAMES: usize = 75;

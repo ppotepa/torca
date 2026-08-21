@@ -27,6 +27,7 @@ class ScenarioBridge {
     if (!kDebugMode || !Platform.isAndroid || _server != null) return;
     final token = _randomToken();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    await Directory.systemTemp.create(recursive: true);
     final discovery = File(
       '${Directory.systemTemp.path}${Platform.pathSeparator}torca-scenario.json',
     );

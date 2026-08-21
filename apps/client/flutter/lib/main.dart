@@ -91,7 +91,18 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
         await _disposeRuntimeComposition();
         return;
       }
-      final EngineGateway gateway = await _openNativeGateway();
+      final EngineGateway gateway = await _openNativeGateway(
+        onOpened: (nativeGateway) async {
+          if (!isTorcaAndroid) return;
+          final bridge = ScenarioBridge(nativeGateway);
+          _scenarioBridge = bridge;
+          await bridge.start();
+        },
+        onInitializationFailed: () async {
+          await _scenarioBridge?.dispose();
+          _scenarioBridge = null;
+        },
+      );
       _gateway = gateway;
       if (!mounted) {
         await _disposeRuntimeComposition();
@@ -174,10 +185,6 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
         // Deep links are an optional entry path; failure must not prevent secure runtime startup.
       }
       if (isTorcaAndroid) {
-        if (gateway is FfiEngineGateway) {
-          _scenarioBridge = ScenarioBridge(gateway);
-          await _scenarioBridge!.start();
-        }
         _runtimeLifecycleObserver = RuntimeLifecycleObserver(gateway)..attach();
         _androidNotificationRouter = AndroidNotificationRouter(
           navigation,
@@ -346,11 +353,19 @@ class _StartupScreen extends StatelessWidget {
   );
 }
 
-Future<EngineGateway> _openNativeGateway() async {
+Future<EngineGateway> _openNativeGateway({
+  Future<void> Function(FfiEngineGateway gateway)? onOpened,
+  Future<void> Function()? onInitializationFailed,
+}) async {
   try {
     final FfiEngineGateway nativeGateway = await FfiEngineGateway.open();
+    await onOpened?.call(nativeGateway);
     final result = await nativeGateway.initialize();
     if (result.ok) return nativeGateway;
+    // Keep a debug ScenarioBridge alive long enough for the soak harness to
+    // retrieve the startup error.  The bridge is disposed by the bootstrap
+    // composition teardown (retry/dispose), not before diagnostics can read
+    // its discovery file.
     // A failed native actor is cached process-wide. Clear it before exposing
     // Retry, otherwise every retry only reacquires the same failed actor.
     await nativeGateway.shutdown();
@@ -359,6 +374,7 @@ Future<EngineGateway> _openNativeGateway() async {
       result.error ?? 'native Torca engine failed to initialize',
     );
   } on Object catch (error) {
+    await onInitializationFailed?.call();
     return StartupFailureGateway(_formatNativeGatewayFailure(error));
   }
 }
