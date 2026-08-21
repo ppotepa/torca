@@ -7,11 +7,12 @@ use std::time::Duration;
 use crossbeam_queue::ArrayQueue;
 use torca_contacts::ContactId;
 use torca_radio::{RadioOperationId, RadioSessionId};
-use torca_radio_coordinator::{
-    RadioApplicationError, RadioAudioDeviceProjection, RadioAudioPort, RadioAudioProjection,
-};
+#[cfg(all(feature = "audio", any(target_os = "windows", target_os = "android")))]
+use torca_radio_coordinator::RadioAudioDeviceProjection;
+use torca_radio_coordinator::{RadioApplicationError, RadioAudioPort, RadioAudioProjection};
 use torca_radio_protocol::{MAX_RADIO_BURST_FRAMES, RADIO_SAMPLES_PER_FRAME};
 
+#[cfg(target_os = "android")]
 use crate::codec::{decode_mulaw, encode_mulaw};
 
 pub type AudioFrame = [u8; RADIO_SAMPLES_PER_FRAME];
@@ -154,6 +155,7 @@ impl AudioPipeline {
         }
     }
 
+    #[cfg(any(target_os = "android", feature = "audio"))]
     fn set_capture_level(&self, level: f32) {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let milli = (level.clamp(0.0, 1.0) * 1000.0).round() as u32;
@@ -164,6 +166,7 @@ impl AudioPipeline {
         u16::try_from(self.capture_level_milli.load(Ordering::Acquire)).unwrap_or(1000).min(1000)
     }
 
+    #[cfg(any(target_os = "android", feature = "audio"))]
     fn capture_enabled(&self) -> bool {
         self.capture_enabled.load(Ordering::Acquire)
     }
@@ -205,10 +208,12 @@ impl AudioPipeline {
         !self.end_cue_requested.swap(true, Ordering::AcqRel)
     }
 
+    #[cfg(any(target_os = "android", feature = "audio"))]
     fn start_cue_generation(&self) -> u32 {
         self.start_cue_generation.load(Ordering::Acquire)
     }
 
+    #[cfg(any(target_os = "android", feature = "audio"))]
     fn mark_start_cue_finished(&self) {
         self.start_cue_finished.store(true, Ordering::Release);
     }
@@ -217,10 +222,12 @@ impl AudioPipeline {
         self.start_cue_finished.load(Ordering::Acquire)
     }
 
+    #[cfg(any(target_os = "android", feature = "audio"))]
     fn end_cue_requested(&self) -> bool {
         self.end_cue_requested.load(Ordering::Acquire)
     }
 
+    #[cfg(any(target_os = "android", feature = "audio"))]
     fn mark_end_cue_finished(&self) {
         self.end_cue_finished.store(true, Ordering::Release);
         self.set_playback_frame_active(false);
@@ -369,12 +376,13 @@ impl RadioAudioPort for RadioAudioAdapter {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "android"))]
+#[cfg(all(feature = "audio", any(target_os = "windows", target_os = "android")))]
 mod platform {
     use super::{
         AudioFrame, AudioPipeline, RADIO_SAMPLES_PER_FRAME, RadioApplicationError,
-        RadioAudioDeviceProjection, RadioAudioProjection, decode_mulaw, encode_mulaw,
+        RadioAudioDeviceProjection, RadioAudioProjection,
     };
+    use crate::codec::{decode_mulaw, encode_mulaw};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use std::sync::{
         Arc,
@@ -922,14 +930,15 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "android")))]
+#[cfg(not(all(feature = "audio", any(target_os = "windows", target_os = "android"))))]
 mod platform {
     use super::{AudioPipeline, RadioApplicationError, RadioAudioProjection};
 
     pub struct PlatformAudio;
 
+    #[allow(clippy::unused_self)]
     impl PlatformAudio {
-        pub const fn new(_pipeline: AudioPipeline) -> Self {
+        pub fn new(_pipeline: AudioPipeline) -> Self {
             Self
         }
         pub fn devices(&self) -> RadioAudioProjection {

@@ -32,7 +32,7 @@ torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
 torca-peer-shared = { path = "../torca-peer-shared" }
 torca-receipts = { path = "../../domains/torca-receipts" }
 torca-radio = { path = "../../domains/torca-radio" }
-torca-radio-adapters = { path = "../torca-radio-adapters" }
+torca-radio-adapters = { path = "../torca-radio-adapters", default-features = false }
 torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 torca-radio-protocol = { path = "../../protocol/torca-radio-protocol" }
 torca-runtime = { path = "../../application/torca-runtime" }

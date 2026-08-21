@@ -8,6 +8,10 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+default = ["audio"]
+audio = ["dep:cpal"]
+
 [dependencies]
 crossbeam-queue = "0.3.12"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
@@ -20,7 +24,7 @@ torca-radio-protocol = { path = "../../protocol/torca-radio-protocol" }
 torca-tor = { path = "../torca-tor" }
 
 [target.'cfg(any(target_os = "windows", target_os = "android"))'.dependencies]
-cpal = "0.17.1"
+cpal = { version = "0.17.1", optional = true }
 
 [lints]
 workspace = true
