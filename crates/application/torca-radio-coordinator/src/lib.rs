@@ -26,6 +26,8 @@ pub enum RadioApplicationError {
     Persistence,
     ControlTransport,
     MediaTransport,
+    MediaQueueFull,
+    MediaWorkerUnavailable,
     Crypto,
 }
 

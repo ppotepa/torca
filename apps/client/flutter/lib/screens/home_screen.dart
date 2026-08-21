@@ -177,6 +177,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final relayInfo = snapshot.transport.relayInfo;
       return AdaptiveAppShell(
         title: snapshot.identity?.displayName ?? 'Torca',
+        showRuntimeStatus: !(_section == _HomeSection.chats &&
+            _selectedConversationId != null),
         buildLabel:
             'f ${_shortBuild(_buildId)} / '
             'r ${_shortBuild(buildInfo?.buildId ?? '—')}',

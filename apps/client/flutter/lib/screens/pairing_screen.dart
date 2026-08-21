@@ -173,6 +173,30 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   }
 
   Future<void> _create() async {
+    // A retry must reconcile the existing invitation instead of creating a
+    // second relay slot. This also makes the modal idempotent across transient
+    // Flutter rebuilds and activity recreation.
+    if (_createdSessionId != null || _operations.isActive('pairing:create')) {
+      return;
+    }
+    final existing = widget.gateway.snapshots.value.pairings.where(
+      (pairing) =>
+          pairing.typedRole == PairingRole.creator &&
+          pairing.typedState != PairingState.completed &&
+          pairing.typedState != PairingState.cancelled &&
+          pairing.typedState != PairingState.expired &&
+          pairing.typedState != PairingState.rejected,
+    );
+    final existingPairing = existing.firstOrNull;
+    if (existingPairing != null) {
+      setState(() {
+        _createdSessionId = existingPairing.id;
+        _createdPairing = existingPairing;
+        _inviteUri = existingPairing.inviteUri;
+      });
+      PairingModalRegistry.instance.claim(existingPairing.id);
+      return;
+    }
     _contactsBeforeCreation = widget.gateway.snapshots.value.contacts
         .map((contact) => contact.id)
         .toSet();
@@ -194,7 +218,11 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     }
     setState(() {
       _createdSessionId = result.resourceId;
-      _createdPairing = _pairingFor(result.resourceId);
+      // The command response already contains the authoritative invite URI.
+      // Render it immediately; snapshot reconciliation can enrich the card
+      // later with remote identity/state without hiding a valid QR.
+      _createdPairing =
+          _pairingFor(result.resourceId) ?? _draftPairingFromResult(result);
       _inviteUri = result.inviteUri;
     });
     PairingModalRegistry.instance.claim(result.resourceId ?? '');
@@ -285,6 +313,32 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   PairingDto? _pairingFor(String? id) => widget.gateway.snapshots.value.pairings
       .where((pairing) => pairing.id == id)
       .firstOrNull;
+
+  PairingDto? _draftPairingFromResult(BridgeResultDto result) {
+    final id = result.resourceId;
+    final uri = result.inviteUri;
+    if (id == null || id.isEmpty || uri == null || uri.isEmpty) return null;
+    String code = '';
+    try {
+      final parsed = Uri.parse(uri);
+      code =
+          parsed.queryParameters['code'] ??
+          parsed.queryParameters['invite'] ??
+          (parsed.pathSegments.isEmpty ? '' : parsed.pathSegments.last);
+    } on FormatException {
+      // The QR can still be rendered from the opaque invite URI.
+    }
+    return PairingDto(
+      id: id,
+      code: code,
+      inviteUri: uri,
+      role: 'creator',
+      state: 'open',
+      expiresAtMs: DateTime.now().millisecondsSinceEpoch + 5 * 60 * 1000,
+      localApproved: false,
+      remoteApproved: false,
+    );
+  }
 
   Future<BridgeResultDto?> _run(String key, BridgeCommandDto command) async {
     BridgeResultDto? result;

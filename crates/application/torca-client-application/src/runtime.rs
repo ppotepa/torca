@@ -256,6 +256,13 @@ impl ApplicationError {
             ),
         }
     }
+
+    /// Returns the non-user-facing cause for structured diagnostics. Bridge
+    /// responses still expose only the stable error code; callers must never
+    /// render this value directly to users.
+    pub fn diagnostic_message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl core::fmt::Display for ApplicationError {

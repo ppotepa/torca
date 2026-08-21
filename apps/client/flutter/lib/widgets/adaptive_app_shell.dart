@@ -18,6 +18,7 @@ class AdaptiveAppShell extends StatefulWidget {
     this.floatingActionButton,
     this.buildLabel = 'dev',
     this.relayLabel = 'rel —',
+    this.showRuntimeStatus = true,
     this.onBuildInfo,
     super.key,
   });
@@ -31,6 +32,9 @@ class AdaptiveAppShell extends StatefulWidget {
   final Widget? floatingActionButton;
   final String buildLabel;
   final String relayLabel;
+  /// Hides the global monitor when the active surface already renders the
+  /// same monitor in its contextual header (for example a conversation).
+  final bool showRuntimeStatus;
   final VoidCallback? onBuildInfo;
 
   @override
@@ -94,6 +98,7 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
         appBar: RuntimeAppBar(
           title: Text(widget.title),
           actions: widget.actions,
+          showNetworkStatus: widget.showRuntimeStatus,
         ),
         body: widget.body,
         floatingActionButton: widget.floatingActionButton,

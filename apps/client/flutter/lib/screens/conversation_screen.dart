@@ -101,6 +101,7 @@ class _ConversationPaneState extends State<ConversationPane>
   List<MessageDto> _searchResults = const <MessageDto>[];
   bool _searching = false;
   bool _searchBusy = false;
+  bool _timelineInitialized = false;
   bool _markingRead = false;
   bool _loadingOlder = false;
   bool _showJumpToLatest = false;
@@ -142,6 +143,7 @@ class _ConversationPaneState extends State<ConversationPane>
     // that raced with initialization cannot leave the pane stale.
     await _timeline.refreshLatest();
     if (!mounted) return;
+    _timelineInitialized = true;
     _captureUnreadBoundary();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -171,6 +173,7 @@ class _ConversationPaneState extends State<ConversationPane>
       _timeline.dispose();
       _timeline = _newTimeline();
       _timeline.addListener(_timelineChanged);
+      _timelineInitialized = false;
       _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
       _unreadBoundaryMessageId = null;
       unawaited(_initializeTimeline());
@@ -329,6 +332,10 @@ class _ConversationPaneState extends State<ConversationPane>
     final activity = summary?.lastActivityAtMs ?? 0;
     final activityChanged = activity != _lastActivityAtMs;
     _lastActivityAtMs = activity;
+    // Transport/health revisions are frequent but do not change the
+    // conversation projection. Avoid turning every RX/TX LED update into a
+    // serialized history query (and let commands overtake stale UI refreshes).
+    if (!activityChanged && _timelineInitialized) return;
     final follow = _nearBottom();
     final beforeCount = _timeline.messages.length;
     unawaited(() async {

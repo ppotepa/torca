@@ -141,6 +141,7 @@ pub struct RadioMediaAdapter {
     commands: SyncSender<MediaCommand>,
     events: Receiver<RadioSessionEvent>,
     wakeups: Arc<AtomicU64>,
+    worker_alive: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RadioMediaAdapter {
@@ -155,6 +156,8 @@ impl RadioMediaAdapter {
         let wake_sender = command_tx.clone();
         let wakeups = Arc::new(AtomicU64::new(0));
         let wake_counter = Arc::clone(&wakeups);
+        let worker_alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_alive_flag = Arc::clone(&worker_alive);
         listener
             .set_waker(std::sync::Arc::new(move || {
                 wake_counter.fetch_add(1, Ordering::Relaxed);
@@ -164,14 +167,42 @@ impl RadioMediaAdapter {
         thread::Builder::new()
             .name("torca-radio-media".into())
             .spawn(move || {
-                MediaWorker::new(tor, listener, directory, audio, command_rx, event_tx).run();
+                let worker = MediaWorker::new(
+                    tor,
+                    listener,
+                    directory,
+                    audio,
+                    command_rx,
+                    event_tx,
+                    Arc::clone(&worker_alive_flag),
+                );
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker.run()));
+                if result.is_err() {
+                    eprintln!("torca-radio: media worker panicked; marking worker unavailable");
+                    worker_alive_flag.store(false, Ordering::Release);
+                }
             })
             .map_err(|_| RadioApplicationError::MediaTransport)?;
-        Ok(Self { commands: command_tx, events: event_rx, wakeups })
+        Ok(Self { commands: command_tx, events: event_rx, wakeups, worker_alive })
     }
 
     fn submit(&self, command: MediaCommand) -> Result<(), RadioApplicationError> {
-        self.commands.try_send(command).map_err(|_| RadioApplicationError::MediaTransport)
+        self.commands.try_send(command).map_err(|error| {
+            let (reason, failure) = match error {
+                mpsc::TrySendError::Full(_) => {
+                    ("command_queue_full", RadioApplicationError::MediaQueueFull)
+                }
+                mpsc::TrySendError::Disconnected(_) => {
+                    ("worker_disconnected", RadioApplicationError::MediaWorkerUnavailable)
+                }
+            };
+            eprintln!(
+                "torca-radio: media command rejected reason={reason} worker_alive={}",
+                self.worker_alive.load(Ordering::Acquire)
+            );
+            failure
+        })
     }
 }
 
@@ -378,6 +409,7 @@ struct MediaWorker {
     events: SyncSender<RadioSessionEvent>,
     pending: Option<PendingSession>,
     live: Option<LiveSession>,
+    worker_alive: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MediaWorker {
@@ -388,11 +420,23 @@ impl MediaWorker {
         audio: AudioPipeline,
         commands: Receiver<MediaCommand>,
         events: SyncSender<RadioSessionEvent>,
+        worker_alive: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
-        Self { tor, listener, directory, audio, commands, events, pending: None, live: None }
+        Self {
+            tor,
+            listener,
+            directory,
+            audio,
+            commands,
+            events,
+            pending: None,
+            live: None,
+            worker_alive,
+        }
     }
 
     fn run(mut self) {
+        self.worker_alive.store(true, Ordering::Release);
         loop {
             match self.drain_commands() {
                 Ok(true) => break,
@@ -444,6 +488,7 @@ impl MediaWorker {
             }
         }
         self.shutdown_live(SessionCloseReason::Disabled);
+        self.worker_alive.store(false, Ordering::Release);
     }
 
     fn next_wait_duration(&self) -> Duration {

@@ -39,6 +39,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.titleSpacing,
     this.backgroundColor,
     this.blurBackground = false,
+    this.showNetworkStatus = true,
     super.key,
   });
 
@@ -48,6 +49,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final double? titleSpacing;
   final Color? backgroundColor;
   final bool blurBackground;
+  final bool showNetworkStatus;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -59,6 +61,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
       return _buildAppBar(context, actions);
     }
     final gateway = scope.gateway;
+    if (!showNetworkStatus) return _buildAppBar(context, actions);
     return ValueListenableBuilder<AppSnapshotDto>(
       valueListenable: gateway.snapshots,
       builder: (context, snapshot, _) => _buildAppBar(context, <Widget>[

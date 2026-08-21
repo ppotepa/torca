@@ -331,6 +331,10 @@ pub(crate) fn execute_with_request_id(
         Ok(command) => self.application_runtime.execute(command),
         Err(error) => Err(ApplicationError::invalid_input(error)),
     };
+    let diagnostic_error = application_result
+        .as_ref()
+        .err()
+        .map(|error| error.diagnostic_message().to_owned());
     self.last_error_descriptor = application_result.as_ref().err().map(ClassifiedError::descriptor);
     let result = bridge_result_from_application(application_result);
     if !result.ok {
@@ -343,6 +347,7 @@ pub(crate) fn execute_with_request_id(
                 "contactId": contact_id,
                 "requestId": request_id,
                 "errorCode": &result.error_code,
+                "cause": diagnostic_error,
             })
             .to_string();
             let _ = logger.event_with_context(

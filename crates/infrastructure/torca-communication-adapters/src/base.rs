@@ -30,7 +30,6 @@ use torca_delivery::{
 };
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
-use torca_peer_link::LinkAck;
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
 use torca_receipts::{Receipt, ReceiptId, ReceiptKind};
@@ -331,7 +330,7 @@ pub struct TextPeerTransport<R, S, K, C, P> {
     link: SharedPeerLink<S, K>,
     crypto: SharedPeerCrypto<C, P>,
     local_identity_id: OpaqueId,
-    ack_timeout: Duration,
+    _ack_timeout: Duration,
 }
 impl<R, S, K, C, P> TextPeerTransport<R, S, K, C, P> {
     pub const fn new(
@@ -341,7 +340,7 @@ impl<R, S, K, C, P> TextPeerTransport<R, S, K, C, P> {
         local_identity_id: OpaqueId,
         ack_timeout: Duration,
     ) -> Self {
-        Self { relationships, link, crypto, local_identity_id, ack_timeout }
+        Self { relationships, link, crypto, local_identity_id, _ack_timeout: ack_timeout }
     }
 }
 impl<R, S, K, C, P> DeliveryTransport for TextPeerTransport<R, S, K, C, P>
@@ -389,15 +388,12 @@ where
             contact.remote_identity().identity_id().to_opaque(),
             &plaintext,
         )?;
+        // Delivery is durable and receipt-driven.  Never wait for a remote
+        // ACK while running the application actor: a missing peer must only
+        // cause the durable worker to retry on a later maintenance turn.
         self.link
-            .send_and_wait_ack(
-                contact.id(),
-                message.id().to_opaque(),
-                TEXT_MESSAGE_KIND,
-                encrypted,
-                self.ack_timeout,
-            )
-            .map(map_ack)
+            .send_envelope(contact.id(), message.id().to_opaque(), TEXT_MESSAGE_KIND, encrypted)
+            .map(|_| DeliveryAck::Accepted)
             .map_err(|_| CommunicationError::Peer)
     }
 }
@@ -407,7 +403,7 @@ pub struct ReceiptPeerTransport<R, S, K, C, P> {
     link: SharedPeerLink<S, K>,
     crypto: SharedPeerCrypto<C, P>,
     local_identity_id: OpaqueId,
-    ack_timeout: Duration,
+    _ack_timeout: Duration,
 }
 impl<R, S, K, C, P> ReceiptPeerTransport<R, S, K, C, P> {
     pub const fn new(
@@ -417,7 +413,7 @@ impl<R, S, K, C, P> ReceiptPeerTransport<R, S, K, C, P> {
         local_identity_id: OpaqueId,
         ack_timeout: Duration,
     ) -> Self {
-        Self { relationships, link, crypto, local_identity_id, ack_timeout }
+        Self { relationships, link, crypto, local_identity_id, _ack_timeout: ack_timeout }
     }
 }
 impl<R, S, K, C, P> ControlTransport for ReceiptPeerTransport<R, S, K, C, P>
@@ -452,7 +448,7 @@ where
         )
         .map_err(|_| ControlTransportError)?;
         self.link
-            .send_and_wait_ack(
+            .send_envelope(
                 contact_id,
                 job.job_id,
                 if job.kind == ControlKind::Reaction {
@@ -461,12 +457,8 @@ where
                     RECEIPT_MESSAGE_KIND
                 },
                 encrypted,
-                self.ack_timeout,
             )
-            .map(|ack| match ack {
-                LinkAck::Accepted => ControlAck::Accepted,
-                LinkAck::Duplicate => ControlAck::Duplicate,
-            })
+            .map(|_| ControlAck::Accepted)
             .map_err(|_| ControlTransportError)
     }
 }
@@ -746,11 +738,4 @@ fn peer_aad(
     aad.extend_from_slice(first.as_bytes());
     aad.extend_from_slice(second.as_bytes());
     aad
-}
-
-fn map_ack(ack: LinkAck) -> DeliveryAck {
-    match ack {
-        LinkAck::Accepted => DeliveryAck::Accepted,
-        LinkAck::Duplicate => DeliveryAck::Duplicate,
-    }
 }

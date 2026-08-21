@@ -497,13 +497,22 @@ function Stop-TorcaStack { param($Paths)
 }
 function Get-TorcaStackStatus { param($Paths)
     $state = Get-TorcaRuntimeState $Paths
+    # The endpoint marker is written immediately when Arti allocates the onion
+    # and is the authoritative value during warm-up. Runtime state can lag
+    # after an interrupted deploy, so never report that stale value to the
+    # wizard or diagnostics when the marker is available.
+    $endpoint = [string]$state.Endpoint
+    if (Test-Path -LiteralPath $Paths.RelayEndpoint) {
+        $marker = (Get-Content -LiteralPath $Paths.RelayEndpoint -Raw).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($marker)) { $endpoint = $marker }
+    }
     $dockerStatus = if ($state.Provider -eq 'docker') { Get-TorcaDockerRelayStatus -Paths $Paths } else { $null }
     $dockerRelay = $dockerStatus -and $dockerStatus.Status -eq 'running'
     $processRelay = [bool]($state.RelayPid -and (Get-Process -Id ([int]$state.RelayPid) -ErrorAction SilentlyContinue))
     [pscustomobject]@{
         Provider = $state.Provider
         RelayRunning = [bool]($dockerRelay -or $processRelay)
-        Endpoint = $state.Endpoint
+        Endpoint = $endpoint
         OnionReachable = Test-Path -LiteralPath $Paths.RelayReady
         RelayPortOpen = if ($state.Provider -eq 'docker') { $dockerRelay } else { Test-TorcaPort 8844 }
         ContainerState = if ($dockerStatus) { $dockerStatus.Status } else { $null }

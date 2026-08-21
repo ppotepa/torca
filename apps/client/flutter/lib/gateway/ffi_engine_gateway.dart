@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:ffi' as ffi;
 import 'dart:isolate';
 
@@ -94,13 +95,16 @@ class FfiEngineGateway
         // Do not silently retain an old, partly compatible snapshot. The
         // stream remains alive, while Diagnostics and the visible runtime
         // error channel receive an actionable contract failure.
+        _logFfi('CONTRACT_DECODE_FAILED', <String, Object?>{'error': '$error'});
         _eventsController.addError(error, stackTrace);
       } on FormatException catch (error, stackTrace) {
+        _logFfi('EVENT_DECODE_FAILED', <String, Object?>{'error': '$error'});
         _eventsController.addError(
           ContractDecodeException('Invalid native runtime event: $error'),
           stackTrace,
         );
       } on Object catch (error, stackTrace) {
+        _logFfi('EVENT_DECODE_FAILED', <String, Object?>{'error': '$error'});
         _eventsController.addError(
           ContractDecodeException('Invalid native runtime payload: $error'),
           stackTrace,
@@ -336,6 +340,22 @@ class FfiEngineGateway
     }
     final status = value['status'] as String?;
     final snapshot = value['snapshot'];
+    final resultKind = value['resultKind'] as String?;
+    final resourceId = value['resourceId'] as String?;
+    final error = value['error'];
+    _logFfi('RESPONSE', <String, Object?>{
+      'status': status,
+      'resultKind': resultKind,
+      'resourceId': resourceId,
+      'inviteUriPresent':
+          value['inviteUri'] is String &&
+          (value['inviteUri'] as String).isNotEmpty,
+      'snapshotPresent': snapshot is Map,
+      'snapshotPairings': snapshot is Map && snapshot['pairings'] is List
+          ? (snapshot['pairings'] as List).length
+          : null,
+      'errorCode': error is Map ? error['code'] : null,
+    });
     if (snapshot is Map) {
       try {
         _snapshots.value = _decodeSnapshot(jsonEncode(snapshot));
@@ -352,12 +372,11 @@ class FfiEngineGateway
     if (status == 'succeeded') {
       return BridgeResultDto(
         ok: true,
-        kind: value['resultKind'] as String? ?? 'succeeded',
-        resourceId: value['resourceId'] as String?,
+        kind: resultKind ?? 'succeeded',
+        resourceId: resourceId,
         inviteUri: value['inviteUri'] as String?,
       );
     }
-    final error = value['error'];
     final code = error is Map ? error['code'] as String? : null;
     return BridgeResultDto(
       ok: false,
@@ -379,6 +398,20 @@ class FfiEngineGateway
     retryable: false,
   );
 
+  void _logFfi(String code, Map<String, Object?> context) {
+    // Keep this structured and metadata-only: invitation URIs, message text,
+    // fingerprints and attachment paths must never be emitted to logcat.
+    developer.log(
+      jsonEncode(<String, Object?>{
+        'schema': 1,
+        'domain': 'ffi',
+        'code': code,
+        'context': context,
+      }),
+      name: 'torca.ffi',
+    );
+  }
+
   ConversationPageDto _decodePage(String raw) =>
       decodeConversationPageResponse(raw);
 
@@ -389,22 +422,40 @@ class FfiEngineGateway
   );
 }
 
+class _QueuedRuntimeRequest {
+  _QueuedRuntimeRequest(this.request, this.requestId, this.completer);
+
+  final RuntimeRequestDto request;
+  final String requestId;
+  final Completer<String> completer;
+}
+
 class NativeRuntimeWorker {
   NativeRuntimeWorker._(
     this._commandPort,
     this._events,
     this._isolate,
+    this._exitPort,
     this.buildInfo,
-  );
+  ) {
+    _exitPort.listen((_) {
+      _dead = true;
+      _failQueued(StateError('native runtime worker exited'));
+      _exitPort.close();
+    });
+  }
 
   static Future<NativeRuntimeWorker> start() async {
     final ready = ReceivePort();
     Isolate? isolate;
     ReceivePort? eventPort;
+    ReceivePort? exitPort;
     try {
       isolate = await Isolate.spawn(_workerMain, <Object?>[
         ready.sendPort,
       ], debugName: 'torca-native-runtime-worker');
+      exitPort = ReceivePort();
+      isolate.addOnExitListener(exitPort.sendPort);
       final value = await ready.first.timeout(const Duration(seconds: 15));
       if (value is! Map) {
         throw StateError('native runtime worker returned an invalid handshake');
@@ -421,11 +472,13 @@ class NativeRuntimeWorker {
         commandPort,
         eventPort,
         isolate,
+        exitPort,
         ClientBuildInfo.fromJson(metadata),
       );
     } on Object {
       ready.close();
       eventPort?.close();
+      exitPort?.close();
       isolate?.kill(priority: Isolate.immediate);
       rethrow;
     }
@@ -434,32 +487,68 @@ class NativeRuntimeWorker {
   final SendPort _commandPort;
   final ReceivePort _events;
   final Isolate _isolate;
+  final ReceivePort _exitPort;
   final ClientBuildInfo buildInfo;
   int _requestCounter = 0;
   bool _disposed = false;
-  Future<void> _requestTail = Future<void>.value();
+  bool _dead = false;
+  final List<_QueuedRuntimeRequest> _interactiveQueue =
+      <_QueuedRuntimeRequest>[];
+  final List<_QueuedRuntimeRequest> _queryQueue = <_QueuedRuntimeRequest>[];
+  bool _pumping = false;
 
   Stream<String> get events =>
       _events.where((value) => value is String).cast<String>();
-  bool get isAlive => !_disposed;
+
+  /// True only while the Dart worker isolate has not exited. This is more
+  /// useful to the UI than checking whether the wrapper object was disposed;
+  /// an isolate can die after a native panic or channel failure.
+  bool get isAlive => !_disposed && !_dead;
 
   Future<String> invoke(RuntimeRequestDto request) async {
     if (_disposed) throw StateError('native worker disposed');
+    if (_dead) throw StateError('native runtime worker exited');
     final requestId = 'flutter-${++_requestCounter}';
-    final queued = _requestTail.then<String>((_) async {
-      final first = await _invokeNow(request, requestId);
-      if (_isRetryableTimeout(first)) {
-        // Reuse the same correlation id. Rust's operation ledger then returns
-        // the first committed result instead of duplicating a mutation.
-        return _invokeNow(request, requestId);
+    final completer = Completer<String>();
+    final queued = _QueuedRuntimeRequest(request, requestId, completer);
+    (request.kind == 'query' ? _queryQueue : _interactiveQueue).add(queued);
+    unawaited(_pumpRequests());
+    return completer.future;
+  }
+
+  /// A single native handle still has one response buffer, so invocations are
+  /// executed serially. Interactive commands are nevertheless kept in a
+  /// separate priority lane: a stale history/diagnostics query can no longer
+  /// starve pairing, Radio, lifecycle or message commands in the Dart queue.
+  Future<void> _pumpRequests() async {
+    if (_pumping) return;
+    _pumping = true;
+    try {
+      while (!_disposed && (_interactiveQueue.isNotEmpty || _queryQueue.isNotEmpty)) {
+        final queued = _interactiveQueue.isNotEmpty
+            ? _interactiveQueue.removeAt(0)
+            : _queryQueue.removeAt(0);
+        try {
+          var response = await _invokeNow(queued.request, queued.requestId);
+          if (queued.request.kind != 'query' && _isRetryableTimeout(response)) {
+            // Reuse the same correlation id. Rust's operation ledger then
+            // returns the first committed result instead of duplicating a
+            // mutation.
+            response = await _invokeNow(queued.request, queued.requestId);
+          }
+          if (!queued.completer.isCompleted) queued.completer.complete(response);
+        } on Object catch (error, stackTrace) {
+          if (!queued.completer.isCompleted) {
+            queued.completer.completeError(error, stackTrace);
+          }
+        }
       }
-      return first;
-    });
-    _requestTail = queued.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    return queued;
+    } finally {
+      _pumping = false;
+      if (!_disposed && (_interactiveQueue.isNotEmpty || _queryQueue.isNotEmpty)) {
+        unawaited(_pumpRequests());
+      }
+    }
   }
 
   Future<String> _invokeNow(RuntimeRequestDto request, String requestId) async {
@@ -491,30 +580,48 @@ class NativeRuntimeWorker {
 
   Future<void> shutdown() async {
     if (_disposed) return;
-    final queued = _requestTail.then((_) async {
-      final reply = ReceivePort();
-      try {
-        _commandPort.send(<String, Object?>{
-          'shutdown': true,
-          'reply': reply.sendPort,
-        });
-        await reply.first.timeout(const Duration(seconds: 17));
-      } finally {
-        reply.close();
-      }
-    });
-    _requestTail = queued.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    await queued;
+    while (_pumping ||
+        _interactiveQueue.isNotEmpty ||
+        _queryQueue.isNotEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    final reply = ReceivePort();
+    try {
+      _commandPort.send(<String, Object?>{
+        'shutdown': true,
+        'reply': reply.sendPort,
+      });
+      await reply.first.timeout(const Duration(seconds: 17));
+    } finally {
+      reply.close();
+    }
   }
 
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    final error = StateError('native worker disposed');
+    _failQueued(error);
+    await _disposeNative();
+  }
+
+  void _failQueued(Object error) {
+    for (final queued in <_QueuedRuntimeRequest>[
+      ..._interactiveQueue,
+      ..._queryQueue,
+    ]) {
+      if (!queued.completer.isCompleted) queued.completer.completeError(error);
+    }
+    _interactiveQueue.clear();
+    _queryQueue.clear();
+  }
+
+  Future<void> _disposeNative() async {
     try {
-      await _requestTail.timeout(const Duration(seconds: 12));
+      final deadline = DateTime.now().add(const Duration(seconds: 12));
+      while (_pumping && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
       final reply = ReceivePort();
       try {
         _commandPort.send(<String, Object?>{
@@ -530,6 +637,7 @@ class NativeRuntimeWorker {
       // bounded cleanup path.
     } finally {
       _events.close();
+      _exitPort.close();
       _isolate.kill(priority: Isolate.immediate);
     }
   }

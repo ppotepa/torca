@@ -76,8 +76,14 @@ class FakeGatewayResponse {
   FakeGatewayResponse.success({
     required String kind,
     String? resourceId,
+    String? inviteUri,
     this.snapshot,
-  }) : result = BridgeResultDto(ok: true, kind: kind, resourceId: resourceId);
+  }) : result = BridgeResultDto(
+         ok: true,
+         kind: kind,
+         resourceId: resourceId,
+         inviteUri: inviteUri,
+       );
 
   final BridgeResultDto result;
   final AppSnapshotDto? snapshot;

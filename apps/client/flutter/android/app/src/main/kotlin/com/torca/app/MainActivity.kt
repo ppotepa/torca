@@ -33,6 +33,7 @@ class MainActivity : FlutterActivity() {
     private var pendingNotificationAction: String? = null
     private var pendingPairingId: String? = null
     private var pendingReplyText: String? = null
+    @Volatile private var lifecycleGeneration: Long = 0
 
     companion object {
         const val EXTRA_CONVERSATION_ID = "torca.conversation_id"
@@ -296,19 +297,34 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        lifecycleGeneration += 1
         isVisible = true
     }
 
     override fun onPause() {
+        val pauseGeneration = lifecycleGeneration + 1
+        lifecycleGeneration = pauseGeneration
         isVisible = false
         // Never leave an open microphone or communication audio focus behind
         // when Android backgrounds the activity (screen lock, app switch,
         // permission/system dialog). Rust will reconcile the burst on resume.
         AndroidKeystoreBridge.stopRadioCapture()
         if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
-            // Use the existing lifecycle contract so the Rust coordinator
-            // atomically ends any local burst and releases its radio lease.
-            NativeRuntimeBridge.nativeLifecycleEvent("backgrounded")
+            // Do not block Android's main thread on the native actor. The
+            // lifecycle command is idempotent and Rust will reconcile the
+            // radio lease asynchronously. A synchronous call here previously
+            // made Activity.onPause take ~5 seconds and could freeze Flutter
+            // before an invitation/QR was rendered.
+            Thread {
+                try {
+                    // A rapid pause/resume must not deliver a stale
+                    // backgrounded event after the foreground event.
+                    if (pauseGeneration != lifecycleGeneration || isVisible) return@Thread
+                    NativeRuntimeBridge.nativeLifecycleEvent("backgrounded")
+                } catch (_: Throwable) {
+                    // The process may be tearing down; no UI work is possible.
+                }
+            }.start()
         }
         val audioManager = getSystemService(AudioManager::class.java)
         if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {

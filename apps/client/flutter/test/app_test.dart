@@ -45,6 +45,43 @@ void main() {
     expect(find.text('Generate Invitation'), findsNothing);
   });
 
+  testWidgets('generator renders QR from the create response before snapshot', (
+    WidgetTester tester,
+  ) async {
+    const id = '00000000000000000000000000000082';
+    final gateway = FakeEngineGateway(
+      responses: <FakeGatewayResponse>[
+        FakeGatewayResponse.success(
+          kind: 'pairing_started',
+          resourceId: id,
+          inviteUri: 'torca://pair?v=2&code=FAST82',
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () => showInvitationGeneratorModal(context, gateway),
+              child: const Text('Open generator'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open generator'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('FAST82'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Torca pairing invitation QR code'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'one invitation modal follows the session state and closes on contact',
     (WidgetTester tester) async {
