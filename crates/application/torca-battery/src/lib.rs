@@ -349,13 +349,17 @@ impl BatteryPreferences {
             PolicyOverrideReason::UserPreference
         };
 
-        let profile = if diagnostics_override || system.foreground {
-            BatteryProfile::AlwaysAvailable
+        let profile = if diagnostics_override {
+            BatteryProfile::Diagnostics
         } else if system.power_saver == Some(true)
             || system.battery_percent.is_some_and(|value| value <= 15)
         {
             BatteryProfile::BatterySaver
         } else {
+            // Foreground is a host fact, not a global performance profile.
+            // RuntimeOwner uses it to permit UI-owned demand and prevent Tor
+            // dormancy; it must not make unrelated peers, probes or relay
+            // work `AlwaysAvailable` merely because a screen is visible.
             match self.mode {
                 RequestedBatteryMode::AlwaysAvailable => BatteryProfile::AlwaysAvailable,
                 RequestedBatteryMode::Balanced => BatteryProfile::Balanced,
@@ -756,6 +760,15 @@ mod tests {
         let span = ledger.begin(BatteryMetric::TxFrame, WakeReason::Radio);
         let _ = span.finish();
         assert_eq!(ledger.snapshot().tx_frames, 1);
+    }
+
+    #[test]
+    fn foreground_does_not_escalate_automatic_policy_globally() {
+        let system = SystemEnergyState::default().with_foreground(true);
+        let policy = BatteryPreferences::default().effective(system, false);
+        assert_eq!(policy.profile, BatteryProfile::Balanced);
+        assert_eq!(policy.reason, PolicyOverrideReason::ForegroundActivity);
+        assert!(!policy.tor_dormancy_allowed);
     }
 
     #[test]

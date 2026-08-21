@@ -336,6 +336,18 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             RuntimeWait::Command(RuntimeCommand::SetForeground(foreground)) => {
                 work.foreground = foreground;
+                work.system_energy.foreground = foreground;
+                let effective = work.battery_preferences.effective(work.system_energy, false);
+                work.battery_policy.set_profile(effective.profile);
+                work.tor_dormancy_allowed = effective.tor_dormancy_allowed;
+                work.metered_transfers = effective.metered_transfers;
+                work.metered_network = work.system_energy.metered_network == Some(true);
+                communication.set_battery_policy(
+                    effective.profile,
+                    effective.metered_transfers,
+                    work.metered_network,
+                );
+                diagnostics.set_battery_profile(effective.profile);
                 if foreground {
                     scheduling.background_grace_deadline = None;
                     let _ = tor.set_dormant(false);

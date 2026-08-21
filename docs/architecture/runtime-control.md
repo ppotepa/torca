@@ -58,6 +58,11 @@ remains, the Tor client enters soft dormancy; directory cache and onion identity
 are retained. A user action, real durable work or a relevant platform event can
 wake the required lane again.
 
+Foreground is likewise a host fact rather than an implicit
+`AlwaysAvailable` profile. It permits visible UI demand and prevents dormant
+Tor while the app is present, but it does not promote unrelated peer, relay or
+cosmetic probe work.
+
 The relay is an untrusted pairing rendezvous service, not a mailbox. It receives
 a lease only for active pairing, pending relay work or explicit diagnostics.
 

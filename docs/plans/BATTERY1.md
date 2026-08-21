@@ -29,6 +29,8 @@ incoming work can still hold a durable lease independently of the UI.
   due; it must not run broad maintenance after an unrelated wake.
 - Background idle without durable work has no application-controlled deadline
   after grace expiry.
+- Foreground permits visible demand and prevents dormancy, but is not a global
+  `AlwaysAvailable` profile for unrelated runtime lanes.
 
 ## Delivery batches
 
