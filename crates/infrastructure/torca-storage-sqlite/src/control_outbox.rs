@@ -11,6 +11,7 @@ use crate::{DatabaseKey, SqlCipherBackend, StorageBackendError, StorageKernel};
 const INSERT_SQL: &str = include_str!("../sql/commands/control_insert.sql");
 const CLAIM_SQL: &str = include_str!("../sql/queries/control_claim_due.sql");
 const NEXT_DUE_SQL: &str = include_str!("../sql/queries/control_next_due.sql");
+const ACTIVE_CONTACTS_SQL: &str = include_str!("../sql/queries/control_active_contacts.sql");
 const RESCHEDULE_SQL: &str = include_str!("../sql/commands/control_reschedule.sql");
 const COMPLETE_SQL: &str = include_str!("../sql/commands/control_complete.sql");
 const DEAD_LETTER_SQL: &str = include_str!("../sql/commands/control_dead_letter.sql");
@@ -148,6 +149,21 @@ impl ControlOutboxStore for SqlCipherControlOutbox {
                 Timestamp::from_unix_millis(value).map_err(|_| ControlDeliveryError::Backend)
             })
             .transpose()
+    }
+    fn active_contacts(&self) -> Result<Vec<OpaqueId>, ControlDeliveryError> {
+        let mut statement = self
+            .backend
+            .connection()
+            .prepare(ACTIVE_CONTACTS_SQL)
+            .map_err(|_| ControlDeliveryError::Backend)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(|_| ControlDeliveryError::Backend)?;
+        rows.map(|row| {
+            row.map_err(|_| ControlDeliveryError::Backend)
+                .and_then(|value| fixed16(value).map(OpaqueId::from_bytes))
+        })
+        .collect()
     }
     fn reschedule(
         &mut self,

@@ -125,6 +125,10 @@ pub trait ControlDeliveryRuntime: Send {
         0
     }
 
+    fn active_contacts(&self) -> Result<Vec<ContactId>, CommunicationError> {
+        Ok(Vec::new())
+    }
+
     fn queue_reaction(
         &mut self,
         _contact_id: ContactId,

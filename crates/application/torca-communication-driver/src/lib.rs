@@ -414,6 +414,10 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
             .unwrap_or(0)
     }
 
+    fn active_control_contacts(&self) -> Vec<ContactId> {
+        self.control.active_contacts().unwrap_or_default()
+    }
+
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,
@@ -584,17 +588,27 @@ enum ControlWork {
 
 struct ControlDeliveryBridge {
     sender: SyncSender<ControlWork>,
-    state: Arc<Mutex<TextWorkerState>>,
+    state: Arc<Mutex<ControlWorkerState>>,
+}
+
+struct ControlWorkerState {
+    in_flight: bool,
+    result: Option<Result<(), CommunicationError>>,
+    next_delay: Option<Duration>,
+    writes: u64,
+    contacts: Vec<ContactId>,
+    waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ControlDeliveryBridge {
     fn new(runtime: Box<dyn ControlDeliveryRuntime>) -> Self {
         let (sender, receiver) = sync_channel(8);
-        let state = Arc::new(Mutex::new(TextWorkerState {
+        let state = Arc::new(Mutex::new(ControlWorkerState {
             in_flight: false,
             result: None,
             next_delay: None,
             writes: 0,
+            contacts: Vec::new(),
             waker: None,
         }));
         let worker_state = Arc::clone(&state);
@@ -612,11 +626,13 @@ impl ControlDeliveryBridge {
                 };
                 let next_delay = runtime.next_maintenance_delay(now);
                 let writes = runtime.database_write_count();
+                let contacts = runtime.active_contacts().unwrap_or_default();
                 let waker = worker_state.lock().ok().and_then(|mut value| {
                     value.in_flight = false;
                     value.result = Some(result);
                     value.next_delay = next_delay;
                     value.writes = writes;
+                    value.contacts = contacts;
                     value.waker.clone()
                 });
                 if let Some(waker) = waker {
@@ -680,13 +696,26 @@ impl ControlDeliveryRuntime for ControlDeliveryBridge {
         self.state.lock().map(|state| state.writes).unwrap_or(0)
     }
 
+    fn active_contacts(&self) -> Result<Vec<ContactId>, CommunicationError> {
+        self.state
+            .lock()
+            .map(|state| state.contacts.clone())
+            .map_err(|_| CommunicationError::Control)
+    }
+
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,
         reaction: ReactionPayload,
         at: Timestamp,
     ) -> Result<(), CommunicationError> {
-        self.dispatch(ControlWork::Reaction { contact_id, reaction, at })
+        self.dispatch(ControlWork::Reaction { contact_id, reaction, at })?;
+        if let Ok(mut state) = self.state.lock()
+            && !state.contacts.contains(&contact_id)
+        {
+            state.contacts.push(contact_id);
+        }
+        Ok(())
     }
 }
 

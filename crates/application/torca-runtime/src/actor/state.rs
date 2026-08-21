@@ -39,6 +39,8 @@ struct RuntimeWorkState {
     active_attachment_leases: BTreeSet<OpaqueId>,
     /// Attachment-to-recipient routing for the worker's current durable jobs.
     active_attachment_contacts: BTreeMap<OpaqueId, ContactId>,
+    /// Contacts with durable receipt/reaction/attachment-control outbox work.
+    active_control_contacts: BTreeSet<ContactId>,
     active_delivery_leases: BTreeSet<OpaqueId>,
     /// Recipient routing for live durable delivery. This is ephemeral: the
     /// durable message/outbox remains authoritative after a process restart.
@@ -67,6 +69,7 @@ impl RuntimeWorkState {
             visible_contact_leases: BTreeMap::new(),
             active_attachment_leases: BTreeSet::new(),
             active_attachment_contacts: BTreeMap::new(),
+            active_control_contacts: BTreeSet::new(),
             active_delivery_leases: BTreeSet::new(),
             active_delivery_contacts: BTreeMap::new(),
             bootstrap_relay_probe_started: false,

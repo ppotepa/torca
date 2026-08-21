@@ -221,6 +221,12 @@ pub trait CommunicationDriver:
         0
     }
 
+    /// Contacts with durable control outbox work (receipts, reactions or
+    /// attachment controls). This must not enumerate the contact book.
+    fn active_control_contacts(&self) -> Vec<ContactId> {
+        Vec::new()
+    }
+
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,

@@ -150,12 +150,14 @@ fn maintain_delivery_state<C: CommunicationDriver>(
         .values()
         .copied()
         .chain(work.active_attachment_contacts.values().copied())
+        .chain(work.active_control_contacts.iter().copied())
         .chain(work.pending_delivery_contacts.iter().copied())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
     let delivery_contacts = scoped_delivery_contacts.as_slice();
     let maintenance_result = communication.maintenance(delivery_contacts, now);
+    work.active_control_contacts = communication.active_control_contacts().into_iter().collect();
     if work.active_attachment_leases.is_empty() && work.active_delivery_leases.is_empty() {
         let retained = policy
             .active_peer_ids(std::time::Instant::now())

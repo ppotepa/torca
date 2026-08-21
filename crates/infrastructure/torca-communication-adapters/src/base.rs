@@ -289,6 +289,14 @@ impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedCont
     fn database_write_count(&self) -> u64 {
         self.database_writes.load(Ordering::Relaxed)
     }
+    fn active_contacts(&self) -> Result<Vec<ContactId>, CommunicationError> {
+        self.inner
+            .lock()
+            .map_err(|_| CommunicationError::Control)?
+            .active_contacts()
+            .map(|contacts| contacts.into_iter().map(ContactId::from_opaque).collect())
+            .map_err(|_| CommunicationError::Control)
+    }
     fn queue_reaction(
         &mut self,
         contact_id: ContactId,

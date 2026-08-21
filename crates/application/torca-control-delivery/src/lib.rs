@@ -102,6 +102,13 @@ pub trait ControlOutboxStore: Send {
     fn next_due(&self) -> Result<Option<Timestamp>, ControlDeliveryError> {
         Ok(None)
     }
+
+    /// Contacts with queued or claimed control work. This is a demand query,
+    /// not a contact-book query: callers use it to keep only those peer lanes
+    /// eligible while receipts, reactions or attachment controls are pending.
+    fn active_contacts(&self) -> Result<Vec<OpaqueId>, ControlDeliveryError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -150,6 +157,10 @@ impl<T: ControlTransport> ControlDeliveryWorker<T> {
 
     pub fn next_due(&self) -> Result<Option<Timestamp>, ControlDeliveryError> {
         self.outbox.next_due()
+    }
+
+    pub fn active_contacts(&self) -> Result<Vec<OpaqueId>, ControlDeliveryError> {
+        self.outbox.active_contacts()
     }
 
     pub fn run_once(
