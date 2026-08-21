@@ -709,12 +709,13 @@ fn snapshot_with_retry(
 
 impl AndroidBridge {
     fn connect(serial: &str) -> Result<Self, String> {
+        let activity = android_launchable_activity(serial)?;
         let status = Command::new("adb")
-            .args(["-s", serial, "shell", "am", "start", "-n", "com.torca.torca_app/.MainActivity"])
+            .args(["-s", serial, "shell", "am", "start", "-W", "-n", &activity])
             .status()
             .map_err(|error| format!("start Android activity: {error}"))?;
         if !status.success() {
-            return Err(format!("Android activity failed to start on {serial}"));
+            return Err(format!("Android activity '{activity}' failed to start on {serial}"));
         }
         let deadline = Instant::now() + Duration::from_secs(120);
         let discovery = loop {
@@ -829,6 +830,67 @@ impl AndroidBridge {
     }
 }
 
+fn android_launchable_activity(serial: &str) -> Result<String, String> {
+    let state = Command::new("adb")
+        .args(["-s", serial, "get-state"])
+        .output()
+        .map_err(|error| format!("check Android device {serial}: {error}"))?;
+    if !state.status.success() || String::from_utf8_lossy(&state.stdout).trim() != "device" {
+        return Err(format!(
+            "Android device '{serial}' is not ready (adb get-state returned '{}')",
+            String::from_utf8_lossy(&state.stdout).trim()
+        ));
+    }
+
+    let package = "com.torca.torca_app";
+    let installed = Command::new("adb")
+        .args(["-s", serial, "shell", "pm", "path", package])
+        .output()
+        .map_err(|error| format!("check Android package on {serial}: {error}"))?;
+    if !installed.status.success()
+        || !String::from_utf8_lossy(&installed.stdout)
+            .lines()
+            .any(|line| line.starts_with("package:"))
+    {
+        return Err(format!(
+            "Android package '{package}' is not installed on '{serial}'. Install the debug APK or run Run-TorcaBatterySoak.ps1 first."
+        ));
+    }
+
+    let resolved = Command::new("adb")
+        .args([
+            "-s",
+            serial,
+            "shell",
+            "cmd",
+            "package",
+            "resolve-activity",
+            "--brief",
+            "-a",
+            "android.intent.action.MAIN",
+            "-c",
+            "android.intent.category.LAUNCHER",
+            package,
+        ])
+        .output()
+        .map_err(|error| format!("resolve Android launcher on {serial}: {error}"))?;
+    let component = parse_launchable_activity(package, &String::from_utf8_lossy(&resolved.stdout));
+    component.ok_or_else(|| {
+        format!(
+            "Android package '{package}' has no launchable MAIN/LAUNCHER activity on '{serial}'. Install a debug APK with ScenarioBridge enabled."
+        )
+    })
+}
+
+fn parse_launchable_activity(package: &str, output: &str) -> Option<String> {
+    let prefix = format!("{package}/");
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with(&prefix))
+        .map(str::to_owned)
+}
+
 fn first_conversation_id(response: &serde_json::Value) -> Option<String> {
     response
         .pointer("/snapshot/conversations")
@@ -926,12 +988,22 @@ fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::valid_endpoint;
+    use super::{parse_launchable_activity, valid_endpoint};
 
     #[test]
     fn endpoint_validation_requires_v3_onion_and_port() {
         assert!(valid_endpoint(&format!("{}.onion:443", "a".repeat(56))));
         assert!(!valid_endpoint("invalid.onion:443"));
         assert!(!valid_endpoint("a.onion"));
+    }
+
+    #[test]
+    fn launcher_parser_ignores_unrelated_resolution_lines() {
+        let output = "priority=0\ncom.torca.torca_app/com.torca.MainActivity\n";
+        assert_eq!(
+            parse_launchable_activity("com.torca.torca_app", output).as_deref(),
+            Some("com.torca.torca_app/com.torca.MainActivity")
+        );
+        assert!(parse_launchable_activity("com.torca.torca_app", "No activity found").is_none());
     }
 }

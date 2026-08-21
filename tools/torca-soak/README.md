@@ -21,12 +21,12 @@ rebuilds `torca-lab-peer` with that endpoint before starting peers:
 
 ```powershell
 cargo run -p torca-soak -- --relay managed --duration-seconds 1800
+```
 
 The workspace uses a compact shared developer profile so the headless peer
 reuses the same Tor/SQLCipher artifacts as other local developer commands.
 Production client profiles are unchanged. Override the binary with
 `--lab-peer` when using a separately built executable.
-```
 
 The relay is stopped when the run exits, including when a peer or assertion
 fails. Each run is written to `.torca/soak/<run-id>/` with a manifest and
