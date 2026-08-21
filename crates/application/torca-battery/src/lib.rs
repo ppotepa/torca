@@ -219,8 +219,12 @@ pub struct BatteryPreferences {
 impl Default for BatteryPreferences {
     fn default() -> Self {
         Self {
-            mode: RequestedBatteryMode::Balanced,
-            background_sync: BackgroundSyncCadence::FiveMinutes,
+            // Legacy cadence values are still decoded for migration, but new
+            // profiles never schedule a periodic background rendezvous.  The
+            // RuntimeOwner applies a bounded background grace and then lets
+            // Tor become soft dormant unless durable work owns a lease.
+            mode: RequestedBatteryMode::Automatic,
+            background_sync: BackgroundSyncCadence::OnOpen,
             allow_delayed_background_delivery: true,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             visual_activity: VisualActivityPolicy::FollowSystem,
@@ -300,14 +304,16 @@ pub struct EffectiveBatteryPolicy {
 impl BatteryPreferences {
     pub fn from_wire(
         mode: &str,
-        background_sync: &str,
+        _background_sync: &str,
         allow_delayed_background_delivery: bool,
         metered_transfers: &str,
         visual_activity: &str,
     ) -> Self {
         Self {
             mode: RequestedBatteryMode::from_wire(mode),
-            background_sync: BackgroundSyncCadence::from_wire(background_sync),
+            // Accept old values at the boundary, but persist the BATTERY1
+            // migration target.  Cadence is no longer a runtime policy.
+            background_sync: BackgroundSyncCadence::OnOpen,
             allow_delayed_background_delivery,
             metered_transfers: MeteredTransferPolicy::from_wire(metered_transfers),
             visual_activity: VisualActivityPolicy::from_wire(visual_activity),
@@ -327,13 +333,10 @@ impl BatteryPreferences {
     pub fn effective(
         self,
         system: SystemEnergyState,
-        has_critical_lease: bool,
         diagnostics_override: bool,
     ) -> EffectiveBatteryPolicy {
         let reason = if diagnostics_override {
             PolicyOverrideReason::Diagnostics
-        } else if has_critical_lease {
-            PolicyOverrideReason::DurableLease
         } else if system.foreground {
             PolicyOverrideReason::ForegroundActivity
         } else if system.charging == Some(true) {
@@ -346,7 +349,7 @@ impl BatteryPreferences {
             PolicyOverrideReason::UserPreference
         };
 
-        let profile = if diagnostics_override || has_critical_lease || system.foreground {
+        let profile = if diagnostics_override || system.foreground {
             BatteryProfile::AlwaysAvailable
         } else if system.power_saver == Some(true)
             || system.battery_percent.is_some_and(|value| value <= 15)
@@ -369,11 +372,8 @@ impl BatteryPreferences {
             }
         };
 
-        let tor_dormancy_allowed = !diagnostics_override
-            && !has_critical_lease
-            && !system.foreground
-            && self.allow_delayed_background_delivery
-            && self.background_sync != BackgroundSyncCadence::Instant;
+        let tor_dormancy_allowed =
+            !diagnostics_override && !system.foreground && self.allow_delayed_background_delivery;
 
         EffectiveBatteryPolicy {
             profile,
@@ -390,8 +390,11 @@ impl RequestedBatteryMode {
     pub fn from_wire(value: &str) -> Self {
         match value {
             "always_available" => Self::AlwaysAvailable,
-            "balanced" => Self::Balanced,
             "battery_saver" => Self::BatterySaver,
+            // `balanced` was a previous public choice.  Its intended
+            // semantics now belong to Automatic, without carrying a hidden
+            // periodic scheduler policy forward.
+            "balanced" => Self::Automatic,
             _ => Self::Automatic,
         }
     }
@@ -792,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn default_balanced_mode_uses_the_five_minute_background_window() {
+    fn default_automatic_mode_does_not_schedule_background_rendezvous() {
         let preferences = BatteryPreferences::default();
         let effective = preferences.effective(
             SystemEnergyState {
@@ -802,21 +805,16 @@ mod tests {
                 ..SystemEnergyState::default()
             },
             false,
-            false,
         );
         assert_eq!(effective.profile, BatteryProfile::Balanced);
         assert!(effective.tor_dormancy_allowed);
-        assert_eq!(
-            effective.background_sync.approximate_interval(),
-            Some(Duration::from_secs(5 * 60))
-        );
+        assert_eq!(effective.background_sync, BackgroundSyncCadence::OnOpen);
     }
 
     #[test]
     fn platform_power_saver_suppresses_discretionary_balanced_work() {
         let effective = BatteryPreferences::default().effective(
             SystemEnergyState { power_saver: Some(true), ..SystemEnergyState::default() },
-            false,
             false,
         );
         assert_eq!(effective.profile, BatteryProfile::BatterySaver);
@@ -831,7 +829,7 @@ mod tests {
             allow_delayed_background_delivery: true,
             ..BatteryPreferences::default()
         };
-        let effective = preferences.effective(SystemEnergyState::default(), false, false);
+        let effective = preferences.effective(SystemEnergyState::default(), false);
         assert!(effective.tor_dormancy_allowed);
         assert_eq!(
             effective.background_sync.approximate_interval(),
@@ -840,17 +838,17 @@ mod tests {
     }
 
     #[test]
-    fn critical_lease_keeps_tor_active_even_in_saver_mode() {
+    fn durable_work_does_not_globally_promote_battery_profile() {
         let preferences = BatteryPreferences {
             mode: RequestedBatteryMode::BatterySaver,
             background_sync: BackgroundSyncCadence::OnOpen,
             allow_delayed_background_delivery: true,
             ..BatteryPreferences::default()
         };
-        let effective = preferences.effective(SystemEnergyState::default(), true, false);
-        assert_eq!(effective.profile, BatteryProfile::AlwaysAvailable);
-        assert_eq!(effective.reason, PolicyOverrideReason::DurableLease);
-        assert!(!effective.tor_dormancy_allowed);
+        let effective = preferences.effective(SystemEnergyState::default(), false);
+        assert_eq!(effective.profile, BatteryProfile::BatterySaver);
+        assert_eq!(effective.reason, PolicyOverrideReason::UserPreference);
+        assert!(effective.tor_dormancy_allowed);
     }
 
     #[test]
@@ -863,6 +861,10 @@ mod tests {
             visual_activity: VisualActivityPolicy::FocusedOnly,
         };
         let (mode, sync, delayed, metered, visual) = original.wire();
-        assert_eq!(BatteryPreferences::from_wire(mode, sync, delayed, metered, visual), original);
+        let migrated = BatteryPreferences::from_wire(mode, sync, delayed, metered, visual);
+        assert_eq!(migrated.mode, original.mode);
+        assert_eq!(migrated.background_sync, BackgroundSyncCadence::OnOpen);
+        assert_eq!(migrated.metered_transfers, original.metered_transfers);
+        assert_eq!(migrated.visual_activity, original.visual_activity);
     }
 }

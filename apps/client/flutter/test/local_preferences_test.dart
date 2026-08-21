@@ -10,7 +10,7 @@ void main() {
     var shellChanges = 0;
     preferences.shellChanges.addListener(() => shellChanges++);
 
-    await preferences.setBatteryMode(TorcaBatteryMode.balanced);
+    await preferences.setBatteryMode(TorcaBatteryMode.automatic);
     expect(shellChanges, 0);
 
     await preferences.setThemeMode(AppThemeMode.dark);

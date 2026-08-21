@@ -268,14 +268,6 @@ class _BatterySettingsCard extends StatelessWidget {
           labelFor: _batteryModeLabel,
           onChanged: preferences.setBatteryMode,
         ),
-        _select<TorcaBackgroundSyncCadence>(
-          context,
-          label: 'Background sync',
-          value: preferences.backgroundSync,
-          values: TorcaBackgroundSyncCadence.values,
-          labelFor: _cadenceLabel,
-          onChanged: preferences.setBackgroundSync,
-        ),
         TorcaSwitchTile(
           secondary: Icon(context.torcaIcons.save),
           title: const Text('Allow delayed background delivery'),
@@ -333,18 +325,7 @@ class _BatterySettingsCard extends StatelessWidget {
   String _batteryModeLabel(TorcaBatteryMode value) => switch (value) {
     TorcaBatteryMode.automatic => 'Automatic',
     TorcaBatteryMode.alwaysAvailable => 'Always available',
-    TorcaBatteryMode.balanced => 'Balanced',
     TorcaBatteryMode.batterySaver => 'Battery saver',
-  };
-
-  String _cadenceLabel(TorcaBackgroundSyncCadence value) => switch (value) {
-    TorcaBackgroundSyncCadence.instant => 'Instant',
-    TorcaBackgroundSyncCadence.fiveMinutes => 'Every 5 minutes',
-    TorcaBackgroundSyncCadence.fifteenMinutes => 'Every 15 minutes',
-    TorcaBackgroundSyncCadence.thirtyMinutes => 'Every 30 minutes',
-    TorcaBackgroundSyncCadence.hourly => 'Every hour',
-    TorcaBackgroundSyncCadence.twoHours => 'Every 2 hours',
-    TorcaBackgroundSyncCadence.onOpen => 'Only when opened',
   };
 
   String _meteredLabel(TorcaMeteredTransferPolicy value) => switch (value) {

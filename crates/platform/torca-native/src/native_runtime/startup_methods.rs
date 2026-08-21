@@ -219,8 +219,7 @@ fn advance_runtime_start(&mut self) {
 }
 
 fn effective_battery_policy(&self, diagnostics_override: bool) -> EffectiveBatteryPolicy {
-    self.battery_policy
-        .effective(self.application_runtime.has_critical_network_lease(), diagnostics_override)
+    self.battery_policy.effective(diagnostics_override)
 }
 
 fn apply_battery_policy(&self, diagnostics_override: bool) {

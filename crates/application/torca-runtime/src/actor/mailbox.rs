@@ -46,15 +46,11 @@ enum RuntimeCommand {
 #[derive(Clone)]
 pub struct RuntimeHandle {
     sender: SyncSender<RuntimeCommand>,
-    critical_lease: Arc<AtomicBool>,
 }
 impl RuntimeHandle {
     /// True while durable delivery, attachment transfer or radio work must
     /// keep the network awake. This is a lock-free observation used by the
     /// platform battery coordinator; the actor remains the sole writer.
-    pub fn has_critical_network_lease(&self) -> bool {
-        self.critical_lease.load(Ordering::Acquire)
-    }
     pub fn set_attention(&self, context: AttentionContext) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::SetAttention(context));
     }
@@ -260,20 +256,6 @@ fn wait_for_runtime_command(
             Err(_) => RuntimeWait::Closed,
         },
     }
-}
-
-fn next_runtime_delay(
-    tor: Option<Duration>,
-    pairing: Option<Duration>,
-    communication: Option<Duration>,
-    lease: Option<Duration>,
-    peer_probe: Option<Duration>,
-    background_sync: Option<Duration>,
-) -> Option<Duration> {
-    [tor, pairing, communication, lease, peer_probe, background_sync]
-        .into_iter()
-        .flatten()
-        .min()
 }
 
 fn command_writes_database(command: &RuntimeCommand) -> bool {

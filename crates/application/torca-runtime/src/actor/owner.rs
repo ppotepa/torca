@@ -53,15 +53,13 @@ impl RuntimeOwner {
         });
         let relay_health = relay_worker.as_ref().map(RelayHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
-        let critical_lease = Arc::new(AtomicBool::new(false));
-        let critical_lease_for_actor = Arc::clone(&critical_lease);
         let wake_sender = sender.clone();
         let runtime_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             let _ = wake_sender.try_send(RuntimeCommand::Wake);
         });
         communication.set_waker(Arc::clone(&runtime_waker));
         tor.set_waker(runtime_waker);
-        let handle = RuntimeHandle { sender: sender.clone(), critical_lease };
+        let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
             let mut diagnostics = DiagnosticBuffer::new(256);
             let mut policy = RuntimeGovernor::new(std::time::Instant::now());
@@ -105,7 +103,6 @@ impl RuntimeOwner {
                 relay_health,
                 relay_info,
                 connectivity,
-                critical_lease_for_actor,
             );
             communication.shutdown();
             pairing.shutdown();
@@ -144,7 +141,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     relay_health: Option<RelayHealthHandle>,
     relay_info: Option<Arc<dyn RelayProbe>>,
     connectivity: ConnectivityObserver,
-    critical_lease: Arc<AtomicBool>,
 ) {
     let mut health = RuntimeHealthState::default();
     let mut work = RuntimeWorkState::new();
@@ -152,7 +148,24 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     let mut scheduling = RuntimeSchedulingState::new();
 
     loop {
-        match wait_for_runtime_command(&receiver, scheduling.next_maintenance_at) {
+        let runtime_wait = wait_for_runtime_command(&receiver, scheduling.next_deadline());
+        let command_wake = matches!(&runtime_wait, RuntimeWait::Command(_));
+        let due_sources = matches!(&runtime_wait, RuntimeWait::Timeout)
+            .then(|| scheduling.take_due(std::time::Instant::now()))
+            .unwrap_or_default();
+        if due_sources.is_empty() {
+            diagnostics.record_runtime_wake(match &runtime_wait {
+                RuntimeWait::Command(RuntimeCommand::NetworkChanged) => RuntimeWakeSource::NetworkChange,
+                RuntimeWait::Command(_) => RuntimeWakeSource::Command,
+                RuntimeWait::Timeout => RuntimeWakeSource::Platform,
+                RuntimeWait::Closed => RuntimeWakeSource::Platform,
+            });
+        } else {
+            for source in due_sources.iter().copied() {
+                diagnostics.record_runtime_wake(source);
+            }
+        }
+        match runtime_wait {
             RuntimeWait::Command(RuntimeCommand::Shutdown(response)) => {
                 let _ = response.send(());
                 break;
@@ -274,13 +287,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 diagnostics.set_battery_profile(profile);
             }
             RuntimeWait::Command(RuntimeCommand::SetBackgroundSync(cadence)) => {
-                work.background_sync = cadence;
-                scheduling.background_sync_deadline = None;
+                // Compatibility input for profiles written by older clients.
+                // Scheduling cadence is deliberately ignored: recurring
+                // background rendezvous caused a 90 s Tor lease every five
+                // minutes even when no feature had work to do.
+                let _ = cadence;
             }
             RuntimeWait::Command(RuntimeCommand::SetForeground(foreground)) => {
                 work.foreground = foreground;
                 if foreground {
-                    scheduling.background_sync_deadline = None;
+                    scheduling.background_grace_deadline = None;
+                    let _ = tor.set_dormant(false);
+                } else {
+                    scheduling.background_grace_deadline =
+                        Some(std::time::Instant::now() + Duration::from_secs(30));
                 }
             }
             RuntimeWait::Command(RuntimeCommand::SetMeteredNetwork(metered)) => {
@@ -346,83 +366,89 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         diagnostics.count(RuntimeCounter::SchedulerWakeup);
         let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
         if !work.foreground
-            // Viewport/focus leases keep peer state useful, but they are not
-            // sufficient reason to keep the whole Tor stack awake while the
-            // host is backgrounded. Durable delivery/radio/pairing leases
-            // still prevent dormancy through this policy query.
-            && !policy.has_durable_lease(std::time::Instant::now())
-            && !matches!(
-                work.background_sync,
-                torca_battery::BackgroundSyncCadence::Instant
-                    | torca_battery::BackgroundSyncCadence::OnOpen
-            )
+            && scheduling
+                .background_grace_deadline
+                .is_some_and(|deadline| deadline <= std::time::Instant::now())
         {
-            let _ = tor.set_dormant(true);
-        }
-        if scheduling
-            .background_sync_deadline
-            .is_some_and(|deadline| deadline <= std::time::Instant::now())
-        {
-            if let Some(interval) = work.background_sync.approximate_interval() {
-                scheduling.background_sync_deadline =
-                    Some(std::time::Instant::now() + interval);
-                let _ = tor.set_dormant(false);
-                acquire_background_sync_lease(policy);
+            scheduling.background_grace_deadline = None;
+            // Viewport/focus leases are deliberately not sufficient here.
+            // Only durable feature work keeps Tor active beyond the short
+            // transition grace period.
+            if !policy.has_durable_lease(std::time::Instant::now()) {
+                let _ = tor.set_dormant(true);
                 record(
                     diagnostics,
                     sequence,
                     now,
-                    Component::Engine,
-                    HealthState::Starting,
-                    "BACKGROUND_SYNC_WAKE",
+                    Component::Tor,
+                    HealthState::Stopped,
+                    "BACKGROUND_GRACE_EXPIRED",
                 );
-            } else {
-                scheduling.background_sync_deadline = None;
             }
         }
-        maintain_runtime_health(
-            engine,
-            pairing,
-            tor,
-            relay_health.as_ref(),
-            policy,
-            &mut health,
-            &mut work,
-            &mut counters,
-            diagnostics,
-            sequence,
-            &connectivity,
-            critical_lease.as_ref(),
-            now,
-        );
-        let communication_result = maintain_delivery_state(
-            engine,
-            communication,
-            policy,
-            &mut work,
-            &mut counters,
-            diagnostics,
-            now,
-        );
-        let active_transport = maintain_peer_state(
-            communication,
-            policy,
-            &mut health,
-            &work,
-            &mut scheduling,
-            diagnostics,
-            sequence,
-            &connectivity,
-            now,
-            communication_result,
-        );
+        // A command is allowed to reconcile the immediately affected state.
+        // Deadline wakes, however, execute only the owning subsystem.  This
+        // prevents an unrelated Tor deadline from scanning contacts, probing
+        // peers or driving attachment state in the background.
+        let run_health = command_wake
+            || work.refresh_contacts
+            || due_sources.contains(&RuntimeWakeSource::TorDeadline)
+            || due_sources.contains(&RuntimeWakeSource::PairingDeadline)
+            || due_sources.contains(&RuntimeWakeSource::RelayDeadline)
+            || due_sources.contains(&RuntimeWakeSource::LeaseExpiry);
+        let run_delivery = command_wake
+            || due_sources.contains(&RuntimeWakeSource::DeliveryDeadline);
+        let run_peer = command_wake || due_sources.contains(&RuntimeWakeSource::PeerDeadline);
+        if run_health {
+            maintain_runtime_health(
+                engine,
+                pairing,
+                tor,
+                relay_health.as_ref(),
+                policy,
+                &mut health,
+                &mut work,
+                &mut counters,
+                diagnostics,
+                sequence,
+                &connectivity,
+                now,
+            );
+        }
+        let communication_result = if run_delivery {
+            maintain_delivery_state(
+                engine,
+                communication,
+                policy,
+                &mut work,
+                &mut counters,
+                diagnostics,
+                now,
+            )
+        } else {
+            Ok(())
+        };
+        let active_transport = if run_peer {
+            maintain_peer_state(
+                communication,
+                policy,
+                &mut health,
+                &work,
+                &mut scheduling,
+                diagnostics,
+                sequence,
+                &connectivity,
+                now,
+                communication_result,
+            )
+        } else {
+            false
+        };
         update_runtime_schedule(
             tor,
             pairing,
             communication,
             policy,
-            work.background_sync,
-            work.foreground,
             &mut scheduling,
             diagnostics,
             active_transport,

@@ -12,7 +12,6 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
     connectivity: &ConnectivityObserver,
-    critical_lease: &AtomicBool,
     now: Timestamp,
 ) {
     if work.refresh_contacts {
@@ -33,12 +32,6 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
         let demanded = policy.has_active_lease(ResourceScope::Relay, std::time::Instant::now());
         relay.set_demand(demanded);
     }
-    critical_lease.store(
-        !work.active_attachment_leases.is_empty()
-            || !work.active_delivery_leases.is_empty()
-            || policy.has_durable_lease(std::time::Instant::now()),
-        Ordering::Release,
-    );
 
     let relay_snapshot = relay_health
         .map_or_else(RelayHealthSnapshot::default, RelayHealthHandle::snapshot);
@@ -280,9 +273,34 @@ fn maintain_peer_state<C: CommunicationDriver>(
         .into_iter()
         .map(|evidence| (evidence.contact_id, evidence))
         .collect::<BTreeMap<_, _>>();
+    // Known contacts are durable data, not runtime work.  Only a peer that
+    // currently owns a lease, has an active session state, or emitted real
+    // transport evidence is observed by this turn.  This keeps a 100-contact
+    // address book equivalent to zero peer work while idle.
+    let observed_contacts = work
+        .contacts
+        .iter()
+        .copied()
+        .filter(|contact_id| {
+            has_peer_or_radio_lease(policy, *contact_id)
+                || health
+                    .last_peer_states
+                    .get(contact_id)
+                    .is_some_and(|state| {
+                        matches!(
+                            state,
+                            PeerConnectionStatus::Ready
+                                | PeerConnectionStatus::Connecting
+                                | PeerConnectionStatus::Handshaking
+                                | PeerConnectionStatus::Reconnecting
+                        )
+                    })
+                || activity.contains_key(contact_id)
+        })
+        .collect::<Vec<_>>();
     let mut current_activity = BTreeMap::new();
 
-    for id in work.contacts.iter().copied() {
+    for id in observed_contacts.iter().copied() {
         let state = communication.connection_state(id);
         let previous_state = health.last_peer_states.get(&id).copied();
         if health.last_peer_states.get(&id) != Some(&state) {
@@ -416,7 +434,7 @@ fn maintain_peer_state<C: CommunicationDriver>(
     if maintenance_result.is_ok() {
         maintenance_result = maintain_peer_probes(
             communication,
-            &work.contacts,
+            &observed_contacts,
             &mut health.peer_probes,
             policy,
             work.battery_policy,
@@ -448,14 +466,14 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDrive
     pairing: &P,
     communication: &C,
     policy: &mut RuntimeGovernor,
-    background_sync: torca_battery::BackgroundSyncCadence,
-    foreground: bool,
     scheduling: &mut RuntimeSchedulingState,
     diagnostics: &mut DiagnosticBuffer,
     active_transport: bool,
     now: Timestamp,
 ) {
-    let background_delay = (!foreground).then(|| policy_background_delay(scheduling, background_sync)).flatten();
+    let background_delay = scheduling
+        .background_grace_deadline
+        .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()));
     let lease_delay = policy
         .next_lease_expiry()
         .map(|expiry| expiry.saturating_duration_since(std::time::Instant::now()));
@@ -463,25 +481,16 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDrive
         .then_some(scheduling.peer_probe_deadline)
         .flatten()
         .and_then(|deadline| deadline.duration_since(now));
-    let next_delay = next_runtime_delay(
-        tor.next_maintenance_delay(now),
-        pairing.next_maintenance_delay(now),
-        communication.next_maintenance_delay(now),
-        lease_delay,
-        peer_delay,
-        background_delay,
+    scheduling.replace_deadlines(
+        std::time::Instant::now(),
+        [
+            (RuntimeWakeSource::TorDeadline, tor.next_maintenance_delay(now)),
+            (RuntimeWakeSource::PairingDeadline, pairing.next_maintenance_delay(now)),
+            (RuntimeWakeSource::DeliveryDeadline, communication.next_maintenance_delay(now)),
+            (RuntimeWakeSource::LeaseExpiry, lease_delay),
+            (RuntimeWakeSource::PeerDeadline, peer_delay),
+            (RuntimeWakeSource::BackgroundGrace, background_delay),
+        ],
     );
     diagnostics.set_policy_snapshot(policy.snapshot(std::time::Instant::now()));
-    scheduling.next_maintenance_at = next_delay.map(|delay| std::time::Instant::now() + delay);
-}
-
-fn policy_background_delay(
-    scheduling: &mut RuntimeSchedulingState,
-    cadence: torca_battery::BackgroundSyncCadence,
-) -> Option<Duration> {
-    let interval = cadence.approximate_interval()?;
-    let deadline = scheduling
-        .background_sync_deadline
-        .get_or_insert_with(|| std::time::Instant::now() + interval);
-    Some(deadline.saturating_duration_since(std::time::Instant::now()))
 }

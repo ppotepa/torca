@@ -154,29 +154,41 @@ mod tests {
 
     #[test]
     fn idle_scheduler_has_no_application_deadline() {
-        assert_eq!(next_runtime_delay(None, None, None, None, None, None), None);
+        let mut scheduler = RuntimeSchedulingState::new();
+        let now = std::time::Instant::now() + Duration::from_secs(1);
+        // Startup is an explicit one-shot bootstrap wake. Once consumed, an
+        // idle runtime has no synthetic application deadline.
+        let _ = scheduler.take_due(now);
+        assert_eq!(scheduler.next_deadline(), None);
     }
 
     #[test]
-    fn active_scheduler_uses_executor_deadline() {
-        assert_eq!(
-            next_runtime_delay(None, None, Some(Duration::from_millis(250)), None, None, None),
-            Some(Duration::from_millis(250))
+    fn scheduler_records_the_source_for_an_executor_deadline() {
+        let now = std::time::Instant::now();
+        let mut scheduler = RuntimeSchedulingState::new();
+        scheduler.replace_deadlines(
+            now,
+            [(RuntimeWakeSource::DeliveryDeadline, Some(Duration::from_millis(250)))],
         );
+        assert_eq!(scheduler.next_deadline(), Some(now + Duration::from_millis(250)));
     }
 
     #[test]
     fn scheduler_selects_earliest_executor_deadline() {
+        let now = std::time::Instant::now();
+        let mut scheduler = RuntimeSchedulingState::new();
+        scheduler.replace_deadlines(
+            now,
+            [
+                (RuntimeWakeSource::TorDeadline, Some(Duration::from_secs(5))),
+                (RuntimeWakeSource::PairingDeadline, Some(Duration::from_secs(3))),
+                (RuntimeWakeSource::LeaseExpiry, Some(Duration::from_secs(2))),
+            ],
+        );
+        assert_eq!(scheduler.next_deadline(), Some(now + Duration::from_secs(2)));
         assert_eq!(
-            next_runtime_delay(
-                Some(Duration::from_secs(5)),
-                Some(Duration::from_secs(3)),
-                Some(Duration::from_secs(7)),
-                Some(Duration::from_secs(2)),
-                Some(Duration::from_secs(4)),
-                Some(Duration::from_secs(6)),
-            ),
-            Some(Duration::from_secs(2))
+            scheduler.take_due(now + Duration::from_secs(2)),
+            [RuntimeWakeSource::LeaseExpiry].into_iter().collect()
         );
     }
 

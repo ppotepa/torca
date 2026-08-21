@@ -6,7 +6,6 @@ pub use attachments::{AttachmentSendRequest, AttachmentView};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -28,6 +27,7 @@ use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
 use torca_diagnostics::{
     Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState, RuntimeCounter,
+    RuntimeWakeSource,
 };
 use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,

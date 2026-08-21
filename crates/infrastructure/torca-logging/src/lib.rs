@@ -10,8 +10,11 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_MESSAGE_LENGTH: usize = 512;
-const MAX_LOCAL_RUNS: usize = 10;
-const MAX_LOCAL_BYTES: u64 = 500 * 1024 * 1024;
+// Diagnostics must stay useful on a phone without turning into a storage or
+// write-amplification workload.  Incident export is the escape hatch for a
+// longer history; the on-device rolling window is intentionally bounded.
+const MAX_LOCAL_RUNS: usize = 5;
+const MAX_LOCAL_BYTES: u64 = 64 * 1024 * 1024;
 const LOG_DOMAINS: [&str; 9] =
     ["runtime", "bootstrap", "tor", "relay", "storage", "profile", "messaging", "ffi", "ui"];
 

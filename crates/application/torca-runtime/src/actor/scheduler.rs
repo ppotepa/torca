@@ -74,24 +74,9 @@ const RADIO_TRANSMISSION_OWNER_NAMESPACE: u128 = 0xA1D2_0000_0000_0000_0000_0000
 const INSTANT_CONTACT_OWNER_NAMESPACE: u128 = 0x1A57_AA70_0000_0000_0000_0000_0000_0001;
 const VISIBLE_CONTACT_OWNER_NAMESPACE: u128 = 0x5151_B1E0_0000_0000_0000_0000_0000_0001;
 const BOOTSTRAP_RELAY_OWNER: u128 = 0xB007_57A4_0000_0000_0000_0000_0000_0001;
-const BACKGROUND_SYNC_OWNER: u128 = 0xB007_57A4_0000_0000_0000_0000_0000_0002;
 
 fn bootstrap_relay_lease_owner() -> OpaqueId {
     OpaqueId::from_u128(BOOTSTRAP_RELAY_OWNER)
-}
-
-fn background_sync_lease_owner() -> OpaqueId {
-    OpaqueId::from_u128(BACKGROUND_SYNC_OWNER)
-}
-
-fn acquire_background_sync_lease(policy: &mut RuntimeGovernor) {
-    policy.acquire_lease(WorkDemand {
-        scope: ResourceScope::Relay,
-        class: WorkClass::RelayProbe,
-        reason: DemandReason::BackgroundRendezvous,
-        owner: background_sync_lease_owner(),
-        expires_at: std::time::Instant::now() + Duration::from_secs(90),
-    });
 }
 
 fn acquire_bootstrap_relay_lease(policy: &mut RuntimeGovernor) {

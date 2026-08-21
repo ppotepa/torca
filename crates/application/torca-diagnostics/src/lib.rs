@@ -15,6 +15,41 @@ pub type RuntimeCounters = BatterySnapshot;
 /// Backwards-compatible name for the unified battery metric enum.
 pub type RuntimeCounter = BatteryMetric;
 
+/// A redaction-safe explanation for a RuntimeOwner turn.  This is deliberately
+/// independent from feature metrics: it answers *why the actor woke*, not how
+/// much work a feature subsequently performed.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RuntimeWakeSource {
+    Command,
+    TorDeadline,
+    PairingDeadline,
+    DeliveryDeadline,
+    PeerDeadline,
+    RelayDeadline,
+    LeaseExpiry,
+    BackgroundGrace,
+    NetworkChange,
+    Platform,
+    NativeRevision,
+    Debug,
+}
+
+/// Bounded observation data for a user-started diagnostics interval.  It is a
+/// counter delta, not a physical battery measurement.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BatteryObservation {
+    pub active: bool,
+    pub counters: BatterySnapshot,
+    pub wake_sources: BTreeMap<RuntimeWakeSource, u64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ObservationState {
+    active: bool,
+    baseline: BatterySnapshot,
+    wake_baseline: BTreeMap<RuntimeWakeSource, u64>,
+}
+
 /// Application component represented in health reports.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Component {
@@ -133,6 +168,8 @@ pub struct DiagnosticBuffer {
     battery: BatteryLedger,
     profile: BatteryProfile,
     policy: Option<RuntimePolicySnapshot>,
+    wake_sources: BTreeMap<RuntimeWakeSource, u64>,
+    observation: ObservationState,
 }
 
 impl DiagnosticBuffer {
@@ -145,6 +182,8 @@ impl DiagnosticBuffer {
             battery: BatteryLedger::new(),
             profile: BatteryProfile::AlwaysAvailable,
             policy: None,
+            wake_sources: BTreeMap::new(),
+            observation: ObservationState::default(),
         }
     }
     /// Records an event and updates health.
@@ -180,6 +219,48 @@ impl DiagnosticBuffer {
     /// Records a feature-owned metric with its explicit wake reason.
     pub fn record_battery(&mut self, metric: BatteryMetric, amount: u64, reason: WakeReason) {
         self.battery.record(metric, amount, reason);
+    }
+    /// Records the explicit cause that woke the runtime actor.
+    pub fn record_runtime_wake(&mut self, source: RuntimeWakeSource) {
+        *self.wake_sources.entry(source).or_default() += 1;
+    }
+    /// Starts a new diagnostics interval without resetting process counters.
+    pub fn start_battery_observation(&mut self) {
+        self.observation = ObservationState {
+            active: true,
+            baseline: self.battery.snapshot(),
+            wake_baseline: self.wake_sources.clone(),
+        };
+    }
+    /// Stops the current interval while retaining its final delta for export.
+    pub fn stop_battery_observation(&mut self) {
+        self.observation.active = false;
+    }
+    /// Resets the interval baseline and starts a new observation.
+    pub fn reset_battery_observation(&mut self) {
+        self.start_battery_observation();
+    }
+    /// Returns deltas since the last observation start.  Counter subtraction
+    /// is saturating so a future bounded ledger implementation remains safe.
+    pub fn battery_observation(&self) -> BatteryObservation {
+        let current = self.battery.snapshot();
+        BatteryObservation {
+            active: self.observation.active,
+            counters: battery_snapshot_delta(current, self.observation.baseline),
+            wake_sources: self
+                .wake_sources
+                .iter()
+                .map(|(source, count)| {
+                    (
+                        *source,
+                        count.saturating_sub(
+                            *self.observation.wake_baseline.get(source).unwrap_or(&0),
+                        ),
+                    )
+                })
+                .filter(|(_, count)| *count > 0)
+                .collect(),
+        }
     }
     pub fn counters(&self) -> RuntimeCounters {
         self.battery.snapshot()
@@ -258,9 +339,16 @@ impl DiagnosticBuffer {
                     policy.focus_remaining_ms.map_or_else(|| "null".into(), |value| value.to_string()),
                 )
             });
+        let observation = self.battery_observation();
+        let wake_sources = observation
+            .wake_sources
+            .iter()
+            .map(|(source, count)| format!("\"{source:?}\":{count}"))
+            .collect::<Vec<_>>()
+            .join(",");
         let _ = write!(
             output,
-            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
+            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"observation\":{{\"active\":{},\"wakeSources\":{{{}}}}},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
             self.profile,
             optional_json_u8(platform.battery_percent),
             optional_json_bool(platform.charging),
@@ -270,6 +358,8 @@ impl DiagnosticBuffer {
             optional_json_u64(platform.uid_tx_bytes),
             optional_json_u64(platform.uid_rx_bytes),
             why_awake,
+            observation.active,
+            wake_sources,
             counters.scheduler_wakeups,
             counters.snapshot_builds,
             counters.peer_probes,
@@ -293,6 +383,34 @@ impl DiagnosticBuffer {
             counters.energy_score(),
         );
         output
+    }
+}
+
+fn battery_snapshot_delta(current: BatterySnapshot, baseline: BatterySnapshot) -> BatterySnapshot {
+    BatterySnapshot {
+        scheduler_wakeups: current.scheduler_wakeups.saturating_sub(baseline.scheduler_wakeups),
+        snapshot_builds: current.snapshot_builds.saturating_sub(baseline.snapshot_builds),
+        peer_probes: current.peer_probes.saturating_sub(baseline.peer_probes),
+        relay_probes: current.relay_probes.saturating_sub(baseline.relay_probes),
+        ffi_wakes: current.ffi_wakes.saturating_sub(baseline.ffi_wakes),
+        db_reads: current.db_reads.saturating_sub(baseline.db_reads),
+        db_writes: current.db_writes.saturating_sub(baseline.db_writes),
+        blob_writes: current.blob_writes.saturating_sub(baseline.blob_writes),
+        projection_events: current.projection_events.saturating_sub(baseline.projection_events),
+        radio_wakeups: current.radio_wakeups.saturating_sub(baseline.radio_wakeups),
+        tor_dials: current.tor_dials.saturating_sub(baseline.tor_dials),
+        relay_dials: current.relay_dials.saturating_sub(baseline.relay_dials),
+        peer_dials: current.peer_dials.saturating_sub(baseline.peer_dials),
+        handshakes: current.handshakes.saturating_sub(baseline.handshakes),
+        tx_frames: current.tx_frames.saturating_sub(baseline.tx_frames),
+        rx_frames: current.rx_frames.saturating_sub(baseline.rx_frames),
+        attachment_chunks_tx: current
+            .attachment_chunks_tx
+            .saturating_sub(baseline.attachment_chunks_tx),
+        attachment_chunks_rx: current
+            .attachment_chunks_rx
+            .saturating_sub(baseline.attachment_chunks_rx),
+        suppressed_work: current.suppressed_work.saturating_sub(baseline.suppressed_work),
     }
 }
 fn push_json_string(value: &str, output: &mut String) {
@@ -365,6 +483,26 @@ mod tests {
         assert!(diagnostics.export_json().contains("\"projectionEvents\":1"));
         assert!(diagnostics.export_json().contains("\"batteryProfile\":\"BatterySaver\""));
         assert!(diagnostics.export_json().contains("\"batteryPercent\":73"));
+    }
+
+    #[test]
+    fn observation_reports_only_work_after_its_baseline() {
+        let mut diagnostics = DiagnosticBuffer::new(4);
+        diagnostics.count(RuntimeCounter::DbRead);
+        diagnostics.record_runtime_wake(RuntimeWakeSource::Command);
+        diagnostics.start_battery_observation();
+        diagnostics.count_by(RuntimeCounter::DbRead, 2);
+        diagnostics.record_runtime_wake(RuntimeWakeSource::BackgroundGrace);
+
+        let observation = diagnostics.battery_observation();
+        assert!(observation.active);
+        assert_eq!(observation.counters.db_reads, 2);
+        assert_eq!(observation.wake_sources.get(&RuntimeWakeSource::Command), None);
+        assert_eq!(observation.wake_sources.get(&RuntimeWakeSource::BackgroundGrace), Some(&1));
+
+        diagnostics.stop_battery_observation();
+        assert!(!diagnostics.battery_observation().active);
+        assert!(diagnostics.export_json().contains("\"wakeSources\""));
     }
 
     #[test]

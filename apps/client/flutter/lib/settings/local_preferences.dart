@@ -47,9 +47,9 @@ class LocalPreferences extends ChangeNotifier {
   bool _closeToTrayEnabled = true;
   String? _audioInputDeviceId;
   String? _audioOutputDeviceId;
-  TorcaBatteryMode _batteryMode = TorcaBatteryMode.balanced;
+  TorcaBatteryMode _batteryMode = TorcaBatteryMode.automatic;
   TorcaBackgroundSyncCadence _backgroundSync =
-      TorcaBackgroundSyncCadence.fiveMinutes;
+      TorcaBackgroundSyncCadence.onOpen;
   bool _allowDelayedBackgroundDelivery = true;
   TorcaMeteredTransferPolicy _meteredTransfers =
       TorcaMeteredTransferPolicy.pauseLarge;
@@ -178,9 +178,11 @@ class LocalPreferences extends ChangeNotifier {
     _batteryMode = TorcaBatteryMode.parse(
       await _store.getString(_batteryModeKey),
     );
-    _backgroundSync = TorcaBackgroundSyncCadence.parse(
-      await _store.getString(_backgroundSyncKey),
-    );
+    final legacyBackgroundSync = await _store.getString(_backgroundSyncKey);
+    _backgroundSync = TorcaBackgroundSyncCadence.parse(legacyBackgroundSync);
+    if (legacyBackgroundSync != _backgroundSync.wireValue) {
+      await _store.setString(_backgroundSyncKey, _backgroundSync.wireValue);
+    }
     _allowDelayedBackgroundDelivery =
         await _store.getBool(_delayedDeliveryKey) ?? true;
     _meteredTransfers = TorcaMeteredTransferPolicy.parse(

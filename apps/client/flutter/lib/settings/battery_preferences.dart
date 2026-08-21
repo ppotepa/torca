@@ -3,7 +3,6 @@
 enum TorcaBatteryMode {
   automatic('automatic'),
   alwaysAvailable('always_available'),
-  balanced('balanced'),
   batterySaver('battery_saver');
 
   const TorcaBatteryMode(this.wireValue);
@@ -11,26 +10,23 @@ enum TorcaBatteryMode {
 
   static TorcaBatteryMode parse(String? value) => values.firstWhere(
     (candidate) => candidate.wireValue == value,
-    orElse: () => TorcaBatteryMode.balanced,
+    // `balanced` is migrated to Automatic.  The persisted value remains
+    // backwards-compatible but no longer exposes scheduling internals.
+    orElse: () => TorcaBatteryMode.automatic,
   );
 }
 
+/// Compatibility value kept only so old local preferences and the generated
+/// native command remain decodable.  BATTERY1 no longer exposes cadence to
+/// users: RuntimeOwner uses a short background grace and durable demand.
 enum TorcaBackgroundSyncCadence {
-  instant('instant'),
-  fiveMinutes('five_minutes'),
-  fifteenMinutes('fifteen_minutes'),
-  thirtyMinutes('thirty_minutes'),
-  hourly('hourly'),
-  twoHours('two_hours'),
   onOpen('on_open');
 
   const TorcaBackgroundSyncCadence(this.wireValue);
   final String wireValue;
 
-  static TorcaBackgroundSyncCadence parse(String? value) => values.firstWhere(
-    (candidate) => candidate.wireValue == value,
-    orElse: () => TorcaBackgroundSyncCadence.fiveMinutes,
-  );
+  static TorcaBackgroundSyncCadence parse(String? value) =>
+      TorcaBackgroundSyncCadence.onOpen;
 }
 
 enum TorcaMeteredTransferPolicy {

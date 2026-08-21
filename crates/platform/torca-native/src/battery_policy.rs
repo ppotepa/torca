@@ -14,12 +14,8 @@ impl BatteryPolicyState {
         Self { preferences, system }
     }
 
-    pub fn effective(
-        self,
-        has_critical_lease: bool,
-        diagnostics_override: bool,
-    ) -> EffectiveBatteryPolicy {
-        self.preferences.effective(self.system, has_critical_lease, diagnostics_override)
+    pub fn effective(self, diagnostics_override: bool) -> EffectiveBatteryPolicy {
+        self.preferences.effective(self.system, diagnostics_override)
     }
 
     pub fn apply_system_event(&mut self, event: &str) {

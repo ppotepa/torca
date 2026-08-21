@@ -319,9 +319,6 @@ pub struct ClientApplicationRuntime {
 }
 
 impl ClientApplicationRuntime {
-    pub fn has_critical_network_lease(&self) -> bool {
-        self.runtime.as_ref().is_some_and(RuntimeHandle::has_critical_network_lease)
-    }
     /// Returns the local content-addressed avatar envelope for an explicit
     /// targeted query. The regular snapshot never contains the compressed
     /// genome payload.

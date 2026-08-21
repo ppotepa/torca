@@ -22,7 +22,6 @@ struct RuntimeHealthState {
 #[allow(clippy::struct_excessive_bools)]
 struct RuntimeWorkState {
     battery_policy: BatteryPolicy,
-    background_sync: torca_battery::BackgroundSyncCadence,
     foreground: bool,
     metered_transfers: MeteredTransferPolicy,
     metered_network: bool,
@@ -41,7 +40,6 @@ impl RuntimeWorkState {
     fn new() -> Self {
         Self {
             battery_policy: BatteryPolicy::new(BatteryProfile::AlwaysAvailable),
-            background_sync: torca_battery::BackgroundSyncCadence::FiveMinutes,
             foreground: true,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             metered_network: false,
@@ -69,17 +67,53 @@ struct RuntimeCounters {
 }
 
 struct RuntimeSchedulingState {
-    next_maintenance_at: Option<std::time::Instant>,
+    deadlines: BTreeMap<std::time::Instant, BTreeSet<RuntimeWakeSource>>,
     peer_probe_deadline: Option<Timestamp>,
-    background_sync_deadline: Option<std::time::Instant>,
+    background_grace_deadline: Option<std::time::Instant>,
 }
 
 impl RuntimeSchedulingState {
     fn new() -> Self {
+        let now = std::time::Instant::now();
+        let mut initial = BTreeSet::new();
+        initial.extend([
+            RuntimeWakeSource::TorDeadline,
+            RuntimeWakeSource::PairingDeadline,
+            RuntimeWakeSource::DeliveryDeadline,
+            RuntimeWakeSource::PeerDeadline,
+        ]);
         Self {
-            next_maintenance_at: Some(std::time::Instant::now()),
+            deadlines: BTreeMap::from([(now, initial)]),
             peer_probe_deadline: None,
-            background_sync_deadline: None,
+            background_grace_deadline: None,
         }
+    }
+
+    fn replace_deadlines(
+        &mut self,
+        now: std::time::Instant,
+        candidates: impl IntoIterator<Item = (RuntimeWakeSource, Option<Duration>)>,
+    ) {
+        self.deadlines.clear();
+        for (source, delay) in candidates {
+            if let Some(delay) = delay {
+                self.deadlines.entry(now + delay).or_default().insert(source);
+            }
+        }
+    }
+
+    fn next_deadline(&self) -> Option<std::time::Instant> {
+        self.deadlines.keys().next().copied()
+    }
+
+    fn take_due(&mut self, now: std::time::Instant) -> BTreeSet<RuntimeWakeSource> {
+        let due = self.deadlines.range(..=now).map(|(deadline, _)| *deadline).collect::<Vec<_>>();
+        let mut sources = BTreeSet::new();
+        for deadline in due {
+            if let Some(items) = self.deadlines.remove(&deadline) {
+                sources.extend(items);
+            }
+        }
+        sources
     }
 }

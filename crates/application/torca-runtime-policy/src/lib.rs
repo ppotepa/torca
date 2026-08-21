@@ -61,7 +61,6 @@ pub enum DemandReason {
     IncomingSession,
     RecentConversation,
     ExplicitDiagnostic,
-    BackgroundRendezvous,
     InstantContact,
     /// Explicit, time-boxed user boost for one conversation.
     FocusedConversation,
@@ -440,7 +439,6 @@ impl RuntimeGovernor {
                         | DemandReason::ActivePairing
                         | DemandReason::RadioSession
                         | DemandReason::IncomingSession
-                        | DemandReason::BackgroundRendezvous
                         | DemandReason::InstantContact
                         | DemandReason::ExplicitDiagnostic
                 )
