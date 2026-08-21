@@ -19,7 +19,7 @@ use torca_connectivity::{
     ConnectivityObserver, ConnectivitySnapshot, PeerProbeCandidate, PeerProbeSupervisor,
     RelayHealthHandle, RelayHealthPort, RelayHealthSnapshot, RelayHealthWorker,
 };
-use torca_contacts::{ContactId, ContactStatus};
+use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
 use torca_diagnostics::{

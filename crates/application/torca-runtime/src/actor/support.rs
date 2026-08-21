@@ -180,16 +180,6 @@ mod tests {
         assert!(!command.requires_health_maintenance());
         assert!(!command.requires_delivery_maintenance());
         assert!(!command.requires_peer_maintenance());
-        assert!(!command.requires_contact_refresh());
-    }
-
-    #[test]
-    fn diagnostics_and_attachment_queries_do_not_refresh_contacts() {
-        let (tx, _rx) = std::sync::mpsc::channel();
-        assert!(!RuntimeCommand::Diagnostics(tx).requires_contact_refresh());
-
-        let (tx, _rx) = std::sync::mpsc::channel();
-        assert!(!RuntimeCommand::AttachmentSnapshot(tx).requires_contact_refresh());
     }
 
     #[test]
@@ -201,7 +191,6 @@ mod tests {
         assert!(command.requires_delivery_maintenance());
         assert!(command.requires_peer_maintenance());
         assert!(command.requires_health_maintenance());
-        assert!(!command.requires_contact_refresh());
     }
 
     #[test]

@@ -96,20 +96,6 @@ impl RuntimeCommand {
         )
     }
 
-    /// Only relationship-changing commands may refresh the durable contact
-    /// projection.  A local setting, diagnostics export, attachment query or
-    /// message command must not turn into a full contact scan merely because
-    /// it crossed the actor boundary.
-    fn requires_contact_refresh(&self) -> bool {
-        matches!(
-            self,
-            Self::ApprovePairing(..)
-                | Self::BlockContact(..)
-                | Self::UnblockContact(..)
-                | Self::RemoveContact(..)
-                | Self::NetworkChanged
-        )
-    }
 }
 
 #[derive(Clone)]

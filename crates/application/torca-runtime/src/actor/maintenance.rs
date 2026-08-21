@@ -1,7 +1,6 @@
 // Responsibility: one runtime maintenance turn split into explicit phases.
 
 fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
-    engine: &EngineHandle,
     pairing: &mut P,
     tor: &mut T,
     relay_health: Option<&RelayHealthHandle>,
@@ -14,20 +13,6 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     connectivity: &ConnectivityObserver,
     now: Timestamp,
 ) {
-    if work.refresh_contacts {
-        if let Ok(snapshot) = engine.overview_snapshot() {
-            diagnostics.count(RuntimeCounter::SnapshotBuild);
-            diagnostics.count(RuntimeCounter::DbRead);
-            work.contacts = snapshot
-                .contacts
-                .iter()
-                .filter(|contact| contact.status() == ContactStatus::Active)
-                .map(torca_contacts::Contact::id)
-                .collect();
-        }
-        work.refresh_contacts = false;
-    }
-
     if let Some(relay) = relay_health {
         let demanded = policy.has_active_lease(ResourceScope::Relay, std::time::Instant::now());
         relay.set_demand(demanded);
@@ -159,9 +144,7 @@ fn maintain_delivery_state<C: CommunicationDriver>(
     now: Timestamp,
 ) -> Result<(), RuntimeDriverError> {
     // The regular path contains only recipients with durable pending work.
-    // `work.contacts` is retained as a restart/legacy fallback when an older
-    // caller cannot supply routing; it is never consulted for ordinary UI or
-    // diagnostics work.
+    // A known contact never becomes maintenance work by itself.
     let scoped_delivery_contacts = work
         .active_delivery_contacts
         .values()
@@ -174,11 +157,10 @@ fn maintain_delivery_state<C: CommunicationDriver>(
     let delivery_contacts = scoped_delivery_contacts.as_slice();
     let maintenance_result = communication.maintenance(delivery_contacts, now);
     if work.active_attachment_leases.is_empty() && work.active_delivery_leases.is_empty() {
-        let retained = work
-            .contacts
-            .iter()
-            .copied()
-            .filter(|contact_id| has_peer_or_radio_lease(policy, *contact_id))
+        let retained = policy
+            .active_peer_ids(std::time::Instant::now())
+            .into_iter()
+            .map(ContactId::from_opaque)
             .collect::<Vec<_>>();
         let _ = communication.close_idle_peers(&retained, now);
     }
@@ -281,7 +263,7 @@ fn maintain_peer_state<C: CommunicationDriver>(
     communication: &mut C,
     policy: &mut RuntimeGovernor,
     health: &mut RuntimeHealthState,
-    work: &RuntimeWorkState,
+    battery_policy: BatteryPolicy,
     scheduling: &mut RuntimeSchedulingState,
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
@@ -295,30 +277,31 @@ fn maintain_peer_state<C: CommunicationDriver>(
         .into_iter()
         .map(|evidence| (evidence.contact_id, evidence))
         .collect::<BTreeMap<_, _>>();
-    // Known contacts are durable data, not runtime work.  Only a peer that
-    // currently owns a lease, has an active session state, or emitted real
-    // transport evidence is observed by this turn.  This keeps a 100-contact
-    // address book equivalent to zero peer work while idle.
-    let observed_contacts = work
-        .contacts
-        .iter()
-        .copied()
-        .filter(|contact_id| {
-            has_peer_or_radio_lease(policy, *contact_id)
-                || health
-                    .last_peer_states
-                    .get(contact_id)
-                    .is_some_and(|state| {
-                        matches!(
-                            state,
-                            PeerConnectionStatus::Ready
-                                | PeerConnectionStatus::Connecting
-                                | PeerConnectionStatus::Handshaking
-                                | PeerConnectionStatus::Reconnecting
-                        )
-                    })
-                || activity.contains_key(contact_id)
-        })
+    // Known contacts are durable data, not runtime work. Only an active
+    // lease, an existing live transport state, or real transport evidence can
+    // place a peer on this turn's observation set.
+    let observed_contacts = policy
+        .active_peer_ids(std::time::Instant::now())
+        .into_iter()
+        .map(ContactId::from_opaque)
+        .chain(
+            health
+                .last_peer_states
+                .iter()
+                .filter_map(|(contact_id, state)| {
+                    matches!(
+                        state,
+                        PeerConnectionStatus::Ready
+                            | PeerConnectionStatus::Connecting
+                            | PeerConnectionStatus::Handshaking
+                            | PeerConnectionStatus::Reconnecting
+                    )
+                    .then_some(*contact_id)
+                }),
+        )
+        .chain(activity.keys().copied())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
     let mut current_activity = BTreeMap::new();
 
@@ -459,7 +442,7 @@ fn maintain_peer_state<C: CommunicationDriver>(
             &observed_contacts,
             &mut health.peer_probes,
             policy,
-            work.battery_policy,
+            battery_policy,
             now,
         )
         .map(|(deadline, probe_started)| {

@@ -30,8 +30,6 @@ struct RuntimeWorkState {
     tor_dormancy_allowed: bool,
     metered_transfers: MeteredTransferPolicy,
     metered_network: bool,
-    contacts: Vec<ContactId>,
-    refresh_contacts: bool,
     /// Recipients reconstructed from the durable outbox at startup and after
     /// a delivery turn. Unlike `contacts`, this set is actual runtime demand.
     pending_delivery_contacts: BTreeSet<ContactId>,
@@ -63,8 +61,6 @@ impl RuntimeWorkState {
             tor_dormancy_allowed: false,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             metered_network: false,
-            contacts: Vec::new(),
-            refresh_contacts: false,
             pending_delivery_contacts: BTreeSet::new(),
             attention_owner: None,
             attention_generation: 0,

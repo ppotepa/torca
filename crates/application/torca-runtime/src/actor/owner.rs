@@ -267,7 +267,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 let _ = response.send(Ok(()));
             }
             RuntimeWait::Command(RuntimeCommand::NetworkChanged) => {
-                work.refresh_contacts = true;
                 if let Some(relay) = &relay_health {
                     relay.network_changed();
                 }
@@ -351,11 +350,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 work.active_delivery_leases.insert(message_id);
                 if let Some(contact_id) = contact_id {
                     work.active_delivery_contacts.insert(message_id, contact_id);
-                } else {
-                    // Recovery from an older caller has no recipient hint.
-                    // Keep the durable fallback bounded to this explicit
-                    // delivery wake, never an unrelated runtime command.
-                    work.refresh_contacts = true;
+                } else if let Ok(Some(contact_id)) =
+                    engine.message_contact(MessageId::from_opaque(message_id))
+                {
+                    // Legacy callers may not have sent the recipient hint.
+                    // Resolve only this durable message; do not refresh or
+                    // scan the contact projection as a fallback.
+                    work.active_delivery_contacts.insert(message_id, contact_id);
                 }
                 acquire_delivery_lease(policy, message_id);
             }
@@ -365,14 +366,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 policy.release_lease(delivery_lease_owner(message_id));
             }
             RuntimeWait::Command(command) => {
-                let refresh_contacts = command.requires_contact_refresh();
                 if command_requires_network(&command) {
                     let _ = tor.set_dormant(false);
                 }
                 if command_writes_database(&command) {
                     diagnostics.count(RuntimeCounter::DbWrite);
                 }
-                work.refresh_contacts |= refresh_contacts;
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 handle_command(
                     command,
@@ -425,7 +424,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         // prevents an unrelated Tor deadline from scanning contacts, probing
         // peers or driving attachment state in the background.
         let run_health = command_health
-            || work.refresh_contacts
             || due_sources.contains(&RuntimeWakeSource::TorDeadline)
             || due_sources.contains(&RuntimeWakeSource::PairingDeadline)
             || due_sources.contains(&RuntimeWakeSource::RelayDeadline)
@@ -436,7 +434,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         let run_peer = command_peer || due_sources.contains(&RuntimeWakeSource::PeerDeadline);
         if run_health {
             maintain_runtime_health(
-                engine,
                 pairing,
                 tor,
                 relay_health.as_ref(),
@@ -468,7 +465,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 communication,
                 policy,
                 &mut health,
-                &work,
+                work.battery_policy,
                 &mut scheduling,
                 diagnostics,
                 sequence,
