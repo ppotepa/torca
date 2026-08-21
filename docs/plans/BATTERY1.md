@@ -74,6 +74,8 @@ two-peer scenario will orchestrate two independent invocations. The runner
 also exposes `--operation create`, `join --code <code>` and
 `approve --session-id <id>` as the native contract pairing commands; it prints
 the redacted pairing projection after each successful command.
+It waits for `bootstrapPhase=ready` before executing an operation, with a
+bounded `--startup-timeout-seconds` rather than an implicit sleep.
 
 The deterministic soak now includes both `torca-runtime` and
 `torca-diagnostics`, so policy scheduling and observation/export regressions

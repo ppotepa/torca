@@ -27,6 +27,11 @@ struct Cli {
     /// How long the real native runtime remains available for orchestration.
     #[arg(long, default_value_t = 30)]
     duration_seconds: u64,
+    /// Bounded time to wait for the production runtime bootstrap before an
+    /// operation is sent. This prevents a lab scenario from mistaking startup
+    /// races for pairing failures.
+    #[arg(long, default_value_t = 120)]
+    startup_timeout_seconds: u64,
     /// Contract operation to execute before observing the real runtime.
     #[arg(long, value_enum, default_value_t = Operation::Observe)]
     operation: Operation,
@@ -53,6 +58,7 @@ fn run() -> Result<(), String> {
     validate_lab_root(&cli.root)?;
     let mut runtime = torca_native::NativeRuntimeClient::acquire_at(&cli.root)?;
     {
+        wait_until_ready(&mut runtime, cli.startup_timeout_seconds)?;
         execute_operation(&mut runtime, &cli)?;
         let started = Instant::now();
         let deadline = started + Duration::from_secs(cli.duration_seconds);
@@ -73,6 +79,41 @@ fn run() -> Result<(), String> {
             thread::sleep(Duration::from_secs(1));
         }
         Ok(())
+    }
+}
+
+fn wait_until_ready(
+    runtime: &mut torca_native::NativeRuntimeClient,
+    timeout_seconds: u64,
+) -> Result<(), String> {
+    if timeout_seconds == 0 {
+        return Err("startup-timeout-seconds must be positive".into());
+    }
+    let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+    loop {
+        let response = invoke(runtime, "lab-readiness")?;
+        let status =
+            response.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+        if status == "failed" {
+            let code = response
+                .pointer("/error/code")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("UNKNOWN");
+            return Err(format!("native runtime startup failed ({code})"));
+        }
+        let phase = response
+            .pointer("/snapshot/bootstrapPhase")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("starting");
+        if status == "succeeded" && phase == "ready" {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "runtime did not reach bootstrap ready within {timeout_seconds}s (phase={phase})"
+            ));
+        }
+        thread::sleep(Duration::from_secs(1));
     }
 }
 
