@@ -76,8 +76,27 @@ function Test-PackageInstalled {
     return ($LASTEXITCODE -eq 0 -and $path -match '(?im)^package:')
 }
 
+function Get-PackageLaunchableActivity {
+    $resolved = Invoke-SelectedAdb @(
+        'shell', 'cmd', 'package', 'resolve-activity', '--brief',
+        '-a', 'android.intent.action.MAIN',
+        '-c', 'android.intent.category.LAUNCHER',
+        $Package
+    ) 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $component = $resolved -split '\r?\n' |
+        Where-Object { $_ -match "^$([regex]::Escape($Package))/[^\s]+$" } |
+        Select-Object -Last 1
+    if ([string]::IsNullOrWhiteSpace($component)) { return $null }
+    return $component.Trim()
+}
+
+function Test-PackageLaunchable {
+    return -not [string]::IsNullOrWhiteSpace((Get-PackageLaunchableActivity))
+}
+
 function Ensure-PackageInstalled {
-    if (Test-PackageInstalled) { return }
+    if ((Test-PackageInstalled) -and (Test-PackageLaunchable)) { return }
 
     $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
     $deployLog = Join-Path $output 'auto-deploy.log'
@@ -94,7 +113,7 @@ function Ensure-PackageInstalled {
             if (Test-Path $deployStderr) { Get-Content $deployStderr }
         ) | Out-File -Append -Encoding utf8 $deployLog
         Remove-Item $deployStdout, $deployStderr -Force -ErrorAction SilentlyContinue
-        if ($deploy.ExitCode -eq 0 -and (Test-PackageInstalled)) { return }
+        if ($deploy.ExitCode -eq 0 -and (Test-PackageInstalled) -and (Test-PackageLaunchable)) { return }
 
         $tail = (Get-Content $deployLog -Tail 30 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
         if ($tail -match 'INSTALL_FAILED_USER_RESTRICTED|Install canceled by user' -and $attempt -lt $AutoDeployAttempts) {
@@ -104,7 +123,7 @@ function Ensure-PackageInstalled {
         }
         throw "Android auto-deploy failed (attempt=$attempt, exit=$($deploy.ExitCode)). See '$deployLog'.`n$tail"
     }
-    throw "Android deploy completed without installing '$Package' on '$DeviceId'. Check '$deployLog' and approve the installation prompt on the device."
+    throw "Android deploy completed without a launchable '$Package' activity on '$DeviceId'. Check '$deployLog' and approve the installation prompt on the device."
 }
 
 Capture-Adb 'device.txt' @('shell', 'getprop')
@@ -124,9 +143,13 @@ if ($CollectNativeDiagnostics) {
 
 Invoke-SelectedAdb @('shell', 'dumpsys', 'batterystats', '--reset') | Out-Null
 Invoke-SelectedAdb @('shell', 'logcat', '-c') | Out-Null
-$monkeyOutput = Invoke-SelectedAdb @('shell', 'monkey', '-p', $Package, '-c', 'android.intent.category.LAUNCHER', '1') 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0 -or $monkeyOutput -match '(?im)No activities found|monkey aborted') {
-    throw "Torca package '$Package' has no launchable activity on '$DeviceId'. Install the debug APK and approve Android's installation prompt before starting the battery soak. Details: $($monkeyOutput.Trim())"
+$activity = Get-PackageLaunchableActivity
+if ([string]::IsNullOrWhiteSpace($activity)) {
+    throw "Torca package '$Package' has no launchable activity on '$DeviceId'. Install the debug APK and approve Android's installation prompt before starting the battery soak."
+}
+$launchOutput = Invoke-SelectedAdb @('shell', 'am', 'start', '-W', '-n', $activity) 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -or $launchOutput -notmatch '(?im)^Status:\s*ok\s*$') {
+    throw "Torca activity '$activity' failed to start on '$DeviceId'. Details: $($launchOutput.Trim())"
 }
 Start-Sleep -Seconds 2
 $appPid = (Invoke-SelectedAdb @('shell', 'pidof', $Package) 2>$null | Out-String).Trim()
