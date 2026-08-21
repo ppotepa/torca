@@ -188,6 +188,8 @@ impl<'a> BuildController<'a> {
         if targets.contains(&Target::Android) {
             let define = format!("TORCA_RELAY_ENDPOINT={endpoint}");
             let flutter = flutter_program()?;
+            let target_platforms =
+                flutter_target_platforms(&selected_android_abis(devices)).to_owned();
             self.command_with_env(
                 &flutter,
                 &[
@@ -195,6 +197,8 @@ impl<'a> BuildController<'a> {
                     "apk",
                     &format!("--{mode}"),
                     "--split-per-abi",
+                    "--target-platform",
+                    &target_platforms,
                     "--dart-define",
                     &define,
                 ],
@@ -390,6 +394,17 @@ fn android_targets(abis: &[AndroidAbi]) -> Vec<AndroidTarget> {
             },
         })
         .collect()
+}
+
+fn flutter_target_platforms(abis: &[AndroidAbi]) -> &'static str {
+    match abis {
+        [AndroidAbi::Arm64] => "android-arm64",
+        [AndroidAbi::X86_64] => "android-x64",
+        [AndroidAbi::Arm64, AndroidAbi::X86_64] | [AndroidAbi::X86_64, AndroidAbi::Arm64] => {
+            "android-arm64,android-x64"
+        }
+        _ => "android-arm64,android-x64",
+    }
 }
 
 struct AndroidToolchain {
@@ -617,11 +632,16 @@ mod tests {
         let targets = android_targets(&selected_android_abis(&devices));
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].linker, "aarch64-linux-android26-clang.cmd");
+        assert_eq!(flutter_target_platforms(&[AndroidAbi::Arm64]), "android-arm64");
     }
 
     #[test]
     fn artifact_build_without_devices_produces_both_supported_abis() {
         assert_eq!(selected_android_abis(&[]), vec![AndroidAbi::Arm64, AndroidAbi::X86_64]);
+        assert_eq!(
+            flutter_target_platforms(&[AndroidAbi::Arm64, AndroidAbi::X86_64]),
+            "android-arm64,android-x64"
+        );
     }
 
     #[test]
