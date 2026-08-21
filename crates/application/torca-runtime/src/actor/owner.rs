@@ -53,12 +53,21 @@ impl RuntimeOwner {
         });
         let relay_health = relay_worker.as_ref().map(RelayHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
-        let wake_sender = sender.clone();
-        let runtime_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            let _ = wake_sender.try_send(RuntimeCommand::Wake);
+        let communication_sender = sender.clone();
+        let communication_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            // Transport activity can advance delivery and peer evidence, but
+            // must not become an anonymous "maintain everything" wake.
+            let _ = communication_sender.try_send(RuntimeCommand::Wake(vec![
+                RuntimeWakeSource::DeliveryDeadline,
+                RuntimeWakeSource::PeerDeadline,
+            ]));
         });
-        communication.set_waker(Arc::clone(&runtime_waker));
-        tor.set_waker(runtime_waker);
+        let tor_sender = sender.clone();
+        let tor_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _ = tor_sender.try_send(RuntimeCommand::Wake(vec![RuntimeWakeSource::TorDeadline]));
+        });
+        communication.set_waker(communication_waker);
+        tor.set_waker(tor_waker);
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
             let mut diagnostics = DiagnosticBuffer::new(256);
@@ -149,13 +158,20 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 
     loop {
         let runtime_wait = wait_for_runtime_command(&receiver, scheduling.next_deadline());
-        let command_wake = matches!(&runtime_wait, RuntimeWait::Command(_));
-        let due_sources = matches!(&runtime_wait, RuntimeWait::Timeout)
+        let command_wake = matches!(
+            &runtime_wait,
+            RuntimeWait::Command(command) if command.requires_reconciliation()
+        );
+        let mut due_sources = matches!(&runtime_wait, RuntimeWait::Timeout)
             .then(|| scheduling.take_due(std::time::Instant::now()))
             .unwrap_or_default();
+        if let RuntimeWait::Command(RuntimeCommand::Wake(sources)) = &runtime_wait {
+            due_sources.extend(sources.iter().copied());
+        }
         if due_sources.is_empty() {
             diagnostics.record_runtime_wake(match &runtime_wait {
                 RuntimeWait::Command(RuntimeCommand::NetworkChanged) => RuntimeWakeSource::NetworkChange,
+                RuntimeWait::Command(RuntimeCommand::Wake(_)) => RuntimeWakeSource::Platform,
                 RuntimeWait::Command(_) => RuntimeWakeSource::Command,
                 RuntimeWait::Timeout => RuntimeWakeSource::Platform,
                 RuntimeWait::Closed => RuntimeWakeSource::Platform,

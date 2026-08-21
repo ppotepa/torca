@@ -163,6 +163,15 @@ mod tests {
     }
 
     #[test]
+    fn read_only_commands_do_not_request_runtime_reconciliation() {
+        let (diagnostics, _response) = mpsc::channel();
+        let (attachments, _response) = mpsc::channel();
+        assert!(!RuntimeCommand::Diagnostics(diagnostics).requires_reconciliation());
+        assert!(!RuntimeCommand::AttachmentSnapshot(attachments).requires_reconciliation());
+        assert!(RuntimeCommand::SetForeground(false).requires_reconciliation());
+    }
+
+    #[test]
     fn scheduler_records_the_source_for_an_executor_deadline() {
         let now = std::time::Instant::now();
         let mut scheduler = RuntimeSchedulingState::new();

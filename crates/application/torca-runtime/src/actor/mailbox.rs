@@ -36,10 +36,30 @@ enum RuntimeCommand {
     SetMeteredNetwork(bool),
     SetMeteredTransferPolicy(MeteredTransferPolicy),
     SetTorDormancy(bool),
-    Wake,
+    /// An executor event.  Unlike a user command this is not permission to run
+    /// every maintenance path; it names the lanes that actually need service.
+    Wake(Vec<RuntimeWakeSource>),
     WakeDelivery(OpaqueId),
     ReleaseDelivery(OpaqueId),
     Shutdown(Sender<()>),
+}
+
+impl RuntimeCommand {
+    /// A query must not accidentally become a network/persistence maintenance
+    /// pass.  Executor wakes carry their own source and are handled by the
+    /// scheduler in `RuntimeOwner`.
+    fn requires_reconciliation(&self) -> bool {
+        !matches!(
+            self,
+            Self::AttachmentSnapshot(_)
+                | Self::NetworkSnapshot(_)
+                | Self::Diagnostics(_)
+                | Self::ExportAttachment(_, _, _)
+                | Self::ExportAttachmentPreview(_, _, _)
+                | Self::Wake(_)
+                | Self::Shutdown(_)
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -156,7 +176,13 @@ impl RuntimeHandle {
         rx.recv_timeout(QUERY_WAIT).map_err(|_| RuntimeDriverError::Communication)
     }
     pub fn wake_delivery(&self) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::Wake);
+        let _ = send_with_timeout(
+            &self.sender,
+            RuntimeCommand::Wake(vec![
+                RuntimeWakeSource::DeliveryDeadline,
+                RuntimeWakeSource::PeerDeadline,
+            ]),
+        );
     }
 
     /// Wakes durable delivery and grants a temporary lease for this message.

@@ -195,7 +195,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             diagnostics.count(RuntimeCounter::FfiWake);
             let _ = r.send(diagnostics.export_json());
         }
-        RuntimeCommand::Wake => {}
+        RuntimeCommand::Wake(_) => {}
         RuntimeCommand::WakeDelivery(_) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
         RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),
