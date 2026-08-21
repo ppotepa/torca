@@ -55,8 +55,10 @@ struct Cli {
     #[arg(long, default_value = ".torca/soak")]
     output: PathBuf,
     /// Path to the already-built lab peer executable.
-    #[arg(long, default_value = "target/debug/torca-lab-peer.exe")]
-    lab_peer: PathBuf,
+    /// Optional prebuilt lab peer. When omitted, use the platform-native
+    /// binary produced by `cargo build -p torca-lab-peer`.
+    #[arg(long)]
+    lab_peer: Option<PathBuf>,
     #[arg(long, default_value = ".")]
     repo_root: PathBuf,
 }
@@ -320,7 +322,7 @@ fn run() -> Result<(), String> {
     let peer_executable = if managed_relay.is_some() {
         build_lab_peer(&cli.repo_root, endpoint.as_deref().unwrap())?
     } else {
-        cli.lab_peer.clone()
+        cli.lab_peer.clone().unwrap_or_else(default_lab_peer_path)
     };
 
     let mut peers: Vec<Participant> = Vec::new();
@@ -570,6 +572,14 @@ fn build_lab_peer(repo_root: &Path, endpoint: &str) -> Result<PathBuf, String> {
     } else {
         "target/debug/torca-lab-peer"
     }))
+}
+
+fn default_lab_peer_path() -> PathBuf {
+    PathBuf::from(if cfg!(windows) {
+        "target/debug/torca-lab-peer.exe"
+    } else {
+        "target/debug/torca-lab-peer"
+    })
 }
 
 fn pair_mesh(peers: &mut [Participant], timeline: &mut File) -> Result<(), String> {
