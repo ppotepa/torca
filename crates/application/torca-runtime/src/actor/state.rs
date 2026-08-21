@@ -39,7 +39,11 @@ struct RuntimeWorkState {
 impl RuntimeWorkState {
     fn new() -> Self {
         Self {
-            battery_policy: BatteryPolicy::new(BatteryProfile::AlwaysAvailable),
+            // The host applies the persisted effective policy during startup.
+            // Until that event arrives, choose the safe non-aggressive
+            // default so a standalone RuntimeOwner cannot accidentally make
+            // cosmetic probes always available.
+            battery_policy: BatteryPolicy::new(BatteryProfile::Balanced),
             foreground: true,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             metered_network: false,

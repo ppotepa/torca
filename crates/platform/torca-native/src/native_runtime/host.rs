@@ -11,10 +11,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use torca_battery::{
-    BatteryPreferences, BatteryProfile, EffectiveBatteryPolicy, RequestedBatteryMode,
-    SystemEnergyState,
-};
+use torca_battery::{BatteryPreferences, EffectiveBatteryPolicy, SystemEnergyState};
 use torca_client_application::{
     ApplicationError, ApplicationReadModels, ClientApplicationRuntime, ContactSecurityState,
 };

@@ -73,16 +73,6 @@ fn unix_time_ms() -> Result<i64, ()> {
     i64::try_from(elapsed.as_millis()).map_err(|_| ())
 }
 
-fn profile_for_preferences(preferences: BatteryPreferences) -> BatteryProfile {
-    match preferences.mode {
-        RequestedBatteryMode::Automatic | RequestedBatteryMode::AlwaysAvailable => {
-            BatteryProfile::AlwaysAvailable
-        }
-        RequestedBatteryMode::Balanced => BatteryProfile::Balanced,
-        RequestedBatteryMode::BatterySaver => BatteryProfile::BatterySaver,
-    }
-}
-
 fn instant_to_unix_ms(deadline: Instant) -> Option<i64> {
     let remaining = deadline.checked_duration_since(Instant::now()).unwrap_or_default();
     let remaining_ms = i64::try_from(remaining.as_millis()).ok()?;
