@@ -321,8 +321,14 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     work.metered_network,
                 );
             }
-            RuntimeWait::Command(RuntimeCommand::SetTorDormancy(dormant)) => {
-                let _ = tor.set_dormant(dormant);
+            RuntimeWait::Command(RuntimeCommand::SetTorDormancyAllowed(allowed)) => {
+                work.tor_dormancy_allowed = allowed;
+                // Removing permission is immediate: users must never remain
+                // dormant after selecting a reachability-first policy. Giving
+                // permission is deliberately deferred to grace expiry below.
+                if !allowed {
+                    let _ = tor.set_dormant(false);
+                }
             }
             RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id)) => {
                 let _ = tor.set_dormant(false);
@@ -376,7 +382,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             // Viewport/focus leases are deliberately not sufficient here.
             // Only durable feature work keeps Tor active beyond the short
             // transition grace period.
-            if !policy.has_durable_lease(std::time::Instant::now()) {
+            if work.tor_dormancy_allowed && !policy.has_durable_lease(std::time::Instant::now()) {
                 let _ = tor.set_dormant(true);
                 record(
                     diagnostics,

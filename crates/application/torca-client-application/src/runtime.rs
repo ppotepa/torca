@@ -395,9 +395,9 @@ impl ClientApplicationRuntime {
         }
     }
 
-    pub fn set_tor_dormancy(&self, dormant: bool) {
+    pub fn set_tor_dormancy_allowed(&self, allowed: bool) {
         if let Some(runtime) = &self.runtime {
-            runtime.set_tor_dormancy(dormant);
+            runtime.set_tor_dormancy_allowed(allowed);
         }
     }
 

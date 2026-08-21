@@ -23,6 +23,9 @@ struct RuntimeHealthState {
 struct RuntimeWorkState {
     battery_policy: BatteryPolicy,
     foreground: bool,
+    /// A policy permission, not an imperative. RuntimeOwner applies it only
+    /// after background grace and only when no durable work owns Tor.
+    tor_dormancy_allowed: bool,
     metered_transfers: MeteredTransferPolicy,
     metered_network: bool,
     contacts: Vec<ContactId>,
@@ -45,6 +48,7 @@ impl RuntimeWorkState {
             // cosmetic probes always available.
             battery_policy: BatteryPolicy::new(BatteryProfile::Balanced),
             foreground: true,
+            tor_dormancy_allowed: false,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             metered_network: false,
             contacts: Vec::new(),

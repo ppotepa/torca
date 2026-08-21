@@ -35,7 +35,7 @@ enum RuntimeCommand {
     SetForeground(bool),
     SetMeteredNetwork(bool),
     SetMeteredTransferPolicy(MeteredTransferPolicy),
-    SetTorDormancy(bool),
+    SetTorDormancyAllowed(bool),
     /// An executor event.  Unlike a user command this is not permission to run
     /// every maintenance path; it names the lanes that actually need service.
     Wake(Vec<RuntimeWakeSource>),
@@ -243,8 +243,11 @@ impl RuntimeHandle {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::SetMeteredTransferPolicy(policy));
     }
 
-    pub fn set_tor_dormancy(&self, dormant: bool) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetTorDormancy(dormant));
+    /// Updates policy permission only. RuntimeOwner decides when the Tor
+    /// client can actually become dormant, preserving transition grace and
+    /// durable-work leases.
+    pub fn set_tor_dormancy_allowed(&self, allowed: bool) {
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetTorDormancyAllowed(allowed));
     }
 }
 

@@ -209,7 +209,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::SetMeteredNetwork(_) | RuntimeCommand::SetMeteredTransferPolicy(_) => {
             unreachable!()
         }
-        RuntimeCommand::SetTorDormancy(_) => unreachable!(),
+        RuntimeCommand::SetTorDormancyAllowed(_) => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),
     }
 }
