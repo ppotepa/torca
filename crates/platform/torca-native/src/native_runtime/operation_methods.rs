@@ -106,17 +106,9 @@ pub(crate) fn mark_incident(&mut self) -> Result<(), String> {
     let Some(logger) = &self.logger else {
         return Err("local diagnostics logger unavailable".into());
     };
-    let manifest = json!({
-        "schema": 1,
-        "kind": "torca_incident",
-        "markedAtMs": marked_at_ms,
-        "runId": logger.run_id(),
-        "diagnostics": serde_json::from_str::<Value>(&diagnostics)
-            .unwrap_or_else(|_| Value::Object(serde_json::Map::new())),
-    });
     logger
-        .write_json_file(&format!("incident-{marked_at_ms}.json"), &manifest.to_string())
-        .map_err(|error| format!("incident snapshot write failed: {error}"))?;
+        .write_incident_bundle(&format!("incident-{marked_at_ms}"), &diagnostics)
+        .map_err(|error| format!("incident bundle write failed: {error}"))?;
     let context = json!({ "markedAtMs": marked_at_ms }).to_string();
     let _ = logger.event_with_context(
         "diagnostics",

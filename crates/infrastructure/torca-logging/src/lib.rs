@@ -1,7 +1,7 @@
 //! Structured, redaction-safe JSONL logging shared by native Torca runtimes.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Mutex,
@@ -15,6 +15,8 @@ const MAX_MESSAGE_LENGTH: usize = 512;
 // longer history; the on-device rolling window is intentionally bounded.
 const MAX_LOCAL_RUNS: usize = 5;
 const MAX_LOCAL_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_INCIDENT_LOG_BYTES_PER_FILE: usize = 64 * 1024;
+const MAX_INCIDENT_LOG_FILES: usize = 12;
 const LOG_DOMAINS: [&str; 9] =
     ["runtime", "bootstrap", "tor", "relay", "storage", "profile", "messaging", "ffi", "ui"];
 
@@ -154,7 +156,7 @@ impl Logger {
         context_json: Option<&str>,
     ) -> std::io::Result<()> {
         let domain = sanitize_component(domain);
-        let context = context_json.map_or_else(|| "{}".into(), redact);
+        let context = context_json.map_or_else(|| "{}".into(), redact_limited);
         let line = format!(
             "{{\"schema\":1,\"ts_ms\":{},\"level\":\"{}\",\"run_id\":\"{}\",\"incident_id\":\"{}\",\"device_id\":\"{}\",\"build_id\":\"{}\",\"domain\":\"{}\",\"component\":\"{}\",\"code\":\"{}\",\"message\":\"{}\",\"context\":{}}}\n",
             now_ms(),
@@ -166,7 +168,7 @@ impl Logger {
             domain,
             escape(component),
             escape(&code.to_ascii_uppercase()),
-            escape(&redact(message)),
+            escape(&redact_limited(message)),
             context
         );
         let mut files =
@@ -204,6 +206,59 @@ impl Logger {
         let path = self.directory().join(safe_name);
         let mut file = File::create(path)?;
         file.write_all(redact(content).as_bytes())
+    }
+
+    /// Creates a bounded, redaction-safe local incident bundle.
+    ///
+    /// The caller supplies the current diagnostics projection. The bundle
+    /// includes that projection and short tails of this run's structured logs;
+    /// it never scans other runs, starts network work or creates a background
+    /// timer. This makes incident capture safe to invoke from a battery/debug
+    /// surface while an issue is happening.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the bundle cannot be created or written.
+    pub fn write_incident_bundle(
+        &self,
+        incident_id: &str,
+        diagnostics: &str,
+    ) -> std::io::Result<PathBuf> {
+        if let Ok(mut files) = self.files.lock() {
+            for (_, file) in &mut *files {
+                let _ = file.flush();
+            }
+        }
+        let incident_id = sanitize_component(incident_id);
+        let bundle = self.directory().join("incidents").join(&incident_id);
+        fs::create_dir_all(bundle.join("logs"))?;
+        write_redacted(&bundle.join("diagnostics.json"), diagnostics)?;
+
+        let mut copied = Vec::new();
+        for domain in LOG_DOMAINS.into_iter().take(MAX_INCIDENT_LOG_FILES) {
+            let source = self.directory().join(format!("{domain}.log"));
+            if !source.is_file() {
+                continue;
+            }
+            let target = bundle.join("logs").join(format!("{domain}.log"));
+            copy_redacted_log_tail(&source, &target)?;
+            copied.push(domain);
+        }
+        let logs = copied
+            .iter()
+            .map(|domain| format!("\"{}\"", escape(domain)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let manifest = format!(
+            "{{\"schema\":1,\"kind\":\"torca_incident_bundle\",\"incidentId\":\"{}\",\"runId\":\"{}\",\"createdAtMs\":{},\"logTailBytesPerFile\":{},\"logs\":[{}]}}\n",
+            escape(&incident_id),
+            escape(&self.run_id),
+            now_ms(),
+            MAX_INCIDENT_LOG_BYTES_PER_FILE,
+            logs,
+        );
+        write_redacted(&bundle.join("manifest.json"), &manifest)?;
+        Ok(bundle)
     }
 
     /// Marks the run as completed or interrupted and writes `run.end.json`.
@@ -413,7 +468,34 @@ fn redact(value: &str) -> String {
             output.replace_range(index.., "[REDACTED]");
         }
     }
-    output.chars().take(MAX_MESSAGE_LENGTH).collect()
+    output
+}
+
+fn redact_limited(value: &str) -> String {
+    redact(value).chars().take(MAX_MESSAGE_LENGTH).collect()
+}
+
+fn write_redacted(path: &Path, content: &str) -> std::io::Result<()> {
+    let mut file = File::create(path)?;
+    file.write_all(redact(content).as_bytes())
+}
+
+fn copy_redacted_log_tail(source: &Path, target: &Path) -> std::io::Result<()> {
+    let mut input = File::open(source)?;
+    let length = input.metadata()?.len();
+    let tail_len = length.min(u64::try_from(MAX_INCIDENT_LOG_BYTES_PER_FILE).unwrap_or(u64::MAX));
+    input.seek(SeekFrom::Start(length.saturating_sub(tail_len)))?;
+    let mut raw =
+        Vec::with_capacity(usize::try_from(tail_len).unwrap_or(MAX_INCIDENT_LOG_BYTES_PER_FILE));
+    input.read_to_end(&mut raw)?;
+    let tail = String::from_utf8_lossy(&raw);
+    let complete_lines = if length > tail_len {
+        tail.find('\n').map_or(tail.as_ref(), |index| &tail[index.saturating_add(1)..])
+    } else {
+        tail.as_ref()
+    };
+    let content = complete_lines.lines().map(redact_limited).collect::<Vec<_>>().join("\n");
+    write_redacted(target, &content)
 }
 
 trait EmptyString {
@@ -445,6 +527,27 @@ mod tests {
         assert!(!content.contains("private-key"));
         assert!(run.path().join("run.start.json").exists());
         assert!(run.path().join("run.end.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn incident_bundle_is_bounded_and_redacted() {
+        let root = std::env::temp_dir().join(format!("torca-incident-{}", std::process::id()));
+        let logger = Logger::new(&root, "test-device", "build").expect("logger");
+        logger
+            .event("runtime", Level::Warn, "runtime", "TEST", "secret=do-not-export")
+            .expect("event");
+        let bundle = logger
+            .write_incident_bundle("test-incident", "{\"diagnostic\":\"secret=hidden\"}")
+            .expect("bundle");
+        assert!(bundle.join("manifest.json").is_file());
+        let diagnostics =
+            std::fs::read_to_string(bundle.join("diagnostics.json")).expect("diagnostics");
+        assert!(diagnostics.contains("[REDACTED]"));
+        assert!(!diagnostics.contains("hidden"));
+        let log = std::fs::read_to_string(bundle.join("logs/runtime.log")).expect("runtime tail");
+        assert!(log.contains("[REDACTED]"));
+        assert!(!log.contains("do-not-export"));
         let _ = std::fs::remove_dir_all(root);
     }
 }
