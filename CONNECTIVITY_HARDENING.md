@@ -71,7 +71,10 @@ Attention -> Demand Lease -> Health Evidence -> Deadline Scheduler
 
 UI attention is advisory. It can justify freshness work but cannot control correctness of durable queues, pairing completion, attachments, inbound handling or Radio session rules.
 
-See [`BATTERY.MD`](BATTERY.MD) for the detailed runtime-policy/energy design and measurement-gated dormancy discussion.
+See [`docs/architecture/runtime-control.md`](docs/architecture/runtime-control.md)
+for the canonical runtime-policy/energy contract and
+[`docs/validation/runtime-power.md`](docs/validation/runtime-power.md) for
+measurement-gated dormancy validation.
 
 ## Observability
 

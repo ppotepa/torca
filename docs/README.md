@@ -33,7 +33,8 @@ The `0.3` label is a planning/work-track label. The package version in `Cargo.to
 
 These are useful design/acceptance records, but they are not evergreen product specifications:
 
-- [`../BATTERY.MD`](../BATTERY.MD) — attention/demand/evidence/deadline runtime design and battery-hardening status.
+- [`architecture/runtime-control.md`](architecture/runtime-control.md) — canonical attention/demand/evidence/deadline runtime contract.
+- [`validation/runtime-power.md`](validation/runtime-power.md) — runtime power validation and soak protocol.
 - [`../CONNECTIVITY_HARDENING.md`](../CONNECTIVITY_HARDENING.md) — connectivity supervision invariants and implementation notes.
 - [`../FINALIZE.md`](../FINALIZE.md) — detailed 0.3 implementation/release-gate checklist.
 - [`FINALIZE_MANUAL_RUNBOOK.md`](FINALIZE_MANUAL_RUNBOOK.md) — real-device manual acceptance procedure.
