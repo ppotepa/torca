@@ -132,7 +132,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     setState(() => _loading = true);
     try {
       final result = await widget.gateway.execute(command);
-      if (!result.ok) throw StateError(result.errorCode ?? 'Observation command failed');
+      if (!result.ok)
+        throw StateError(result.errorCode ?? 'Observation command failed');
       await _refresh();
     } on Object catch (error) {
       if (mounted) setState(() => _error = '$error');
@@ -152,107 +153,129 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: RuntimeAppBar(
-      title: Text(context.strings.diagnostics),
-      actions: <Widget>[
-        IconButton(
-          tooltip: context.strings.runSelfTest,
-          onPressed: _loading ? null : _selfTest,
-          icon: Icon(context.torcaIcons.diagnostics),
-        ),
-        IconButton(
-          tooltip: context.strings.exportDiagnostics,
-          onPressed: _loading ? null : _export,
-          icon: Icon(context.torcaIcons.save),
-        ),
-        IconButton(
-          tooltip: context.strings.refresh,
-          onPressed: _loading ? null : _refresh,
-          icon: Icon(context.torcaIcons.retry),
-        ),
-      ],
-    ),
-    body: _loading && _json == null
-        ? const Center(child: CircularProgressIndicator())
-        : _error != null
-        ? Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(_error!),
-            ),
-          )
-        : ValueListenableBuilder<AppSnapshotDto>(
-            valueListenable: widget.gateway.snapshots,
-            builder: (context, snapshot, _) => ListView(
-              padding: const EdgeInsets.all(16),
-              children: <Widget>[
-                Text(
-                  'Health overview',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                DiagnosticsOverview(
-                  snapshot: snapshot,
-                  diagnosticsReadable: _hasReadableEvents(_json),
-                ),
-                const SizedBox(height: 12),
-                _WhyAwakeCard(data: _whyAwake()),
-                const SizedBox(height: 20),
-                _ObservationCard(
-                  data: _observationData(),
-                  busy: _loading,
-                  onStart: () => _observation(
-                    const StartBatteryObservationCommandDto(),
-                  ),
-                  onStop: () => _observation(
-                    const StopBatteryObservationCommandDto(),
-                  ),
-                  onReset: () => _observation(
-                    const ResetBatteryObservationCommandDto(),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: <Widget>[
-                    FilledButton.tonalIcon(
-                      onPressed: _loading ? null : _selfTest,
-                      icon: Icon(context.torcaIcons.diagnostics),
-                      label: Text(context.strings.runSelfTest),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _loading ? null : _export,
-                      icon: Icon(context.torcaIcons.save),
-                      label: Text(context.strings.exportDiagnostics),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  title: Text(context.strings.rawDiagnostics),
-                  subtitle: Text(context.strings.redactedDeveloperEventStream),
-                  children: <Widget>[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(
-                          context.torcaTokens.radiusMedium,
-                        ),
-                      ),
-                      child: SelectableText(_pretty(_json ?? '{"events":[]}')),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+  Widget build(BuildContext context) => DefaultTabController(
+    length: 4,
+    child: Scaffold(
+      appBar: RuntimeAppBar(
+        title: const Text('Debug'),
+        actions: <Widget>[
+          IconButton(
+            tooltip: context.strings.refresh,
+            onPressed: _loading ? null : _refresh,
+            icon: Icon(context.torcaIcons.retry),
           ),
+        ],
+        bottom: const TabBar(
+          isScrollable: true,
+          tabs: <Widget>[
+            Tab(text: 'Battery'),
+            Tab(text: 'Runtime'),
+            Tab(text: 'Logs'),
+            Tab(text: 'Incident'),
+          ],
+        ),
+      ),
+      body: _loading && _json == null
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(_error!),
+              ),
+            )
+          : ValueListenableBuilder<AppSnapshotDto>(
+              valueListenable: widget.gateway.snapshots,
+              builder: (context, snapshot, _) => TabBarView(
+                children: <Widget>[
+                  _batteryTab(context),
+                  _runtimeTab(context, snapshot),
+                  _logsTab(context),
+                  _incidentTab(context),
+                ],
+              ),
+            ),
+    ),
+  );
+
+  Widget _batteryTab(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: <Widget>[
+      _ObservationCard(
+        data: _observationData(),
+        busy: _loading,
+        onStart: () => _observation(const StartBatteryObservationCommandDto()),
+        onStop: () => _observation(const StopBatteryObservationCommandDto()),
+        onReset: () => _observation(const ResetBatteryObservationCommandDto()),
+      ),
+      const SizedBox(height: 12),
+      _WhyAwakeCard(data: _whyAwake()),
+    ],
+  );
+
+  Widget _runtimeTab(BuildContext context, AppSnapshotDto snapshot) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: <Widget>[
+      Text('Runtime health', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 12),
+      DiagnosticsOverview(
+        snapshot: snapshot,
+        diagnosticsReadable: _hasReadableEvents(_json),
+      ),
+      const SizedBox(height: 12),
+      _WhyAwakeCard(data: _whyAwake()),
+    ],
+  );
+
+  Widget _logsTab(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: <Widget>[
+      Text(
+        context.strings.rawDiagnostics,
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+      const SizedBox(height: 6),
+      Text(context.strings.redactedDeveloperEventStream),
+      const SizedBox(height: 12),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(context.torcaTokens.radiusMedium),
+        ),
+        child: SelectableText(_pretty(_json ?? '{"events":[]}')),
+      ),
+    ],
+  );
+
+  Widget _incidentTab(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: <Widget>[
+      Text('Incident', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 6),
+      const Text(
+        'Run a self-test, then export the redacted snapshot when marking an incident. '
+        'Message text, attachments, audio and secrets are not included.',
+      ),
+      const SizedBox(height: 16),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: <Widget>[
+          FilledButton.tonalIcon(
+            onPressed: _loading ? null : _selfTest,
+            icon: Icon(context.torcaIcons.diagnostics),
+            label: Text(context.strings.runSelfTest),
+          ),
+          OutlinedButton.icon(
+            onPressed: _loading ? null : _export,
+            icon: Icon(context.torcaIcons.save),
+            label: Text(context.strings.exportDiagnostics),
+          ),
+        ],
+      ),
+    ],
   );
 
   String _pretty(String value) {
@@ -317,7 +340,10 @@ class _ObservationCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text('Battery observation', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Battery observation',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 6),
             Text(
               active

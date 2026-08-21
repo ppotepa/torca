@@ -40,6 +40,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.backgroundColor,
     this.blurBackground = false,
     this.showNetworkStatus = true,
+    this.bottom,
     super.key,
   });
 
@@ -50,9 +51,11 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
   final Color? backgroundColor;
   final bool blurBackground;
   final bool showNetworkStatus;
+  final PreferredSizeWidget? bottom;
 
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+  Size get preferredSize =>
+      Size.fromHeight(kToolbarHeight + (bottom?.preferredSize.height ?? 0));
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +84,7 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
       automaticallyImplyLeading: automaticallyImplyLeading,
       actions: resolvedActions,
       backgroundColor: blurBackground ? Colors.transparent : backgroundColor,
+      bottom: bottom,
       flexibleSpace: blurBackground
           ? ClipRect(
               child: BackdropFilter(
