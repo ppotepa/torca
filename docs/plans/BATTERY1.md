@@ -50,8 +50,8 @@ incoming work can still hold a durable lease independently of the UI.
 | 3 | Implemented core | One deadline registry with source-selective maintenance. |
 | 4 | Implemented core | One-shot background grace and soft dormancy; no recurring rendezvous. Legacy persisted cadence values normalize to `on_open` and no runtime policy type exposes a periodic interval. |
 | 5 | Implemented core | Demand/dirty-peer maintenance and unified platform visibility. Radio owns a separate deadline lane; peer maintenance derives its set from leases, live sessions, durable control outbox recipients and transport evidence rather than the contact book. Durable delivery and attachment leases are released by their job completion rather than synthetic TTL renewal. |
-| 6 | In progress | Debug-only Battery/Runtime/Logs/Incident console, explicit bounded log tails and local support bundle. |
-| 7 | In progress | Canonical docs, lab peer and deterministic/device validation. |
+| 6 | Implemented | Debug-only Battery/Runtime/Logs/Incident console, explicit bounded log tails and local support bundle. |
+| 7 | In progress | Canonical docs and deterministic/device validation are in place; optional dev ingest and a production-crate headless lab peer remain. |
 
 The remaining implementation work is:
 
@@ -59,10 +59,10 @@ The remaining implementation work is:
    every delivery path continues to route only active contacts. Current
    messages, attachments and durable control-outbox recipients are scoped;
    startup recovery queries only `Queued`/`Sending` outbound message recipients.
-2. Finish the Debug-only Battery, Runtime, Logs and Incident console; local incident
-   markers now persist a bounded redacted diagnostics bundle, while optional dev-only ingest remains.
-3. Add the lab peer and deterministic/real
-   device validation.
+2. Add an optional dev-only incident ingest endpoint with a bounded compressed
+   payload, explicit token, TTL and no listing capability.
+3. Add a production-crate headless lab peer, then run the documented physical
+   device validation matrix.
 
 ## Acceptance checks
 
