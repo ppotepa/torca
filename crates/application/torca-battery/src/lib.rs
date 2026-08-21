@@ -13,8 +13,8 @@ pub use torca_runtime_policy::{
     AttentionContext, AttentionSurface, BackgroundSyncCadence, BatteryProfile, ConnectionLease,
     ContactAvailabilityMode, DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime,
     MeteredTransferPolicy, PolicyEvent, RequestedBatteryMode, ResourceScope, RuntimeEventHub,
-    RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, VisualActivityPolicy, WorkClass,
-    WorkDemand,
+    RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, SystemEnergyState,
+    VisualActivityPolicy, WorkClass, WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
@@ -142,50 +142,6 @@ impl Default for BatteryPreferences {
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             visual_activity: VisualActivityPolicy::FollowSystem,
         }
-    }
-}
-
-/// Event-driven platform state. `None` means the host cannot provide the
-/// field; policy must not infer a physical battery state from missing data.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SystemEnergyState {
-    pub foreground: bool,
-    pub charging: Option<bool>,
-    pub battery_percent: Option<u8>,
-    pub power_saver: Option<bool>,
-    pub metered_network: Option<bool>,
-    pub validated_network: Option<bool>,
-    pub display_visible: Option<bool>,
-    pub data_stall_suspected: bool,
-}
-
-impl SystemEnergyState {
-    pub fn foreground(&self) -> bool {
-        self.foreground
-    }
-    pub fn with_foreground(mut self, value: bool) -> Self {
-        self.foreground = value;
-        self
-    }
-    pub fn with_charging(mut self, value: Option<bool>) -> Self {
-        self.charging = value;
-        self
-    }
-    pub fn with_power_saver(mut self, value: Option<bool>) -> Self {
-        self.power_saver = value;
-        self
-    }
-    pub fn with_metered_network(mut self, value: Option<bool>) -> Self {
-        self.metered_network = value;
-        self
-    }
-    pub fn with_validated_network(mut self, value: Option<bool>) -> Self {
-        self.validated_network = value;
-        self
-    }
-    pub fn with_data_stall(mut self, value: bool) -> Self {
-        self.data_stall_suspected = value;
-        self
     }
 }
 
