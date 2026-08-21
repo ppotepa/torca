@@ -371,12 +371,6 @@ impl ClientApplicationRuntime {
         }
     }
 
-    pub fn set_background_sync(&self, cadence: torca_battery::BackgroundSyncCadence) {
-        if let Some(runtime) = &self.runtime {
-            runtime.set_background_sync(cadence);
-        }
-    }
-
     pub fn set_foreground(&self, foreground: bool) {
         if let Some(runtime) = &self.runtime {
             runtime.set_foreground(foreground);

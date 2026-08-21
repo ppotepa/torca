@@ -205,7 +205,6 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             unreachable!()
         }
         RuntimeCommand::SetBatteryProfile(_) => unreachable!(),
-        RuntimeCommand::SetBackgroundSync(_) => unreachable!(),
         RuntimeCommand::SetForeground(_) => unreachable!(),
         RuntimeCommand::SetMeteredNetwork(_) | RuntimeCommand::SetMeteredTransferPolicy(_) => {
             unreachable!()

@@ -286,13 +286,6 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 );
                 diagnostics.set_battery_profile(profile);
             }
-            RuntimeWait::Command(RuntimeCommand::SetBackgroundSync(cadence)) => {
-                // Compatibility input for profiles written by older clients.
-                // Scheduling cadence is deliberately ignored: recurring
-                // background rendezvous caused a 90 s Tor lease every five
-                // minutes even when no feature had work to do.
-                let _ = cadence;
-            }
             RuntimeWait::Command(RuntimeCommand::SetForeground(foreground)) => {
                 work.foreground = foreground;
                 if foreground {

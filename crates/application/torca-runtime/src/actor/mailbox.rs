@@ -32,7 +32,6 @@ enum RuntimeCommand {
     SetInstantContactDemand(ContactId, bool),
     SetRadioTransmission(ContactId, bool),
     SetBatteryProfile(BatteryProfile),
-    SetBackgroundSync(torca_battery::BackgroundSyncCadence),
     SetForeground(bool),
     SetMeteredNetwork(bool),
     SetMeteredTransferPolicy(MeteredTransferPolicy),
@@ -208,10 +207,6 @@ impl RuntimeHandle {
 
     pub fn set_metered_network(&self, metered: bool) {
         let _ = send_with_timeout(&self.sender, RuntimeCommand::SetMeteredNetwork(metered));
-    }
-
-    pub fn set_background_sync(&self, cadence: torca_battery::BackgroundSyncCadence) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetBackgroundSync(cadence));
     }
 
     pub fn set_foreground(&self, foreground: bool) {
