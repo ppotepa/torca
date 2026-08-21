@@ -64,6 +64,10 @@ The remaining implementation work is:
 3. Add a production-crate headless lab peer, then run the documented physical
    device validation matrix.
 
+The deterministic soak now includes both `torca-runtime` and
+`torca-diagnostics`, so policy scheduling and observation/export regressions
+are exercised together on every requested iteration.
+
 ## Acceptance checks
 
 For 15--30 minutes background + screen-off idle with no durable work:

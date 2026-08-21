@@ -1,11 +1,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)][int]$Iterations = 25,
-    [Parameter(Mandatory = $false)][string]$RepoRoot = (Resolve-Path "$PSScriptRoot/..").Path
+    [Parameter(Mandatory = $false)][string]$RepoRoot
 )
 
 $ErrorActionPreference = 'Stop'
 if ($Iterations -lt 1) { throw 'Iterations must be at least 1.' }
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+}
 
 Push-Location $RepoRoot
 try {
@@ -14,6 +17,8 @@ try {
 
     $packages = @(
         'torca-runtime-policy',
+        'torca-diagnostics',
+        'torca-runtime',
         'torca-peer-link',
         'torca-storage-sqlite',
         'torca-tor'

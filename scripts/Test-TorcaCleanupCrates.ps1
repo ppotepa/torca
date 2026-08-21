@@ -1,7 +1,10 @@
 [CmdletBinding()]
-param([Parameter(Mandatory = $false)][string]$RepoRoot = (Resolve-Path "$PSScriptRoot/..").Path)
+param([Parameter(Mandatory = $false)][string]$RepoRoot)
 
 $ErrorActionPreference = 'Stop'
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+}
 $packages = @(
     'torca-runtime',
     'torca-client-engine',
@@ -11,7 +14,8 @@ $packages = @(
     'torca-storage-sqlite',
     'torca-communication-adapters',
     'torca-tor',
-    'torca-runtime-policy'
+    'torca-runtime-policy',
+    'torca-diagnostics'
 )
 
 Push-Location $RepoRoot
