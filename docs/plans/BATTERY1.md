@@ -48,8 +48,9 @@ The remaining implementation work is:
    every delivery path routes only active contacts. New/retried messages and
    attachments carry their recipient into RuntimeOwner; startup recovery now
    queries only `Queued`/`Sending` outbound message recipients.
-2. Finish the Debug-only Battery, Runtime, Logs and Incident console; bounded sanitized
-   incident bundles and optional dev-only ingest.
+2. Finish the Debug-only Battery, Runtime, Logs and Incident console; local incident
+   markers now persist a bounded redacted diagnostic snapshot, while a multi-file support
+   bundle and optional dev-only ingest remain.
 3. Add the lab peer and deterministic/real
    device validation.
 

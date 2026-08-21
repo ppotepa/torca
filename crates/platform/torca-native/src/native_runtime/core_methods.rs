@@ -183,13 +183,25 @@ pub(crate) fn execute_with_request_id(
     self.advance_runtime_start();
     let observation_result = match command {
         torca_contract::BridgeCommand::StartBatteryObservation => {
-            Some(("battery_observation_started", self.application_runtime.start_battery_observation()))
+            Some((
+                "battery_observation_started",
+                self.application_runtime.start_battery_observation().map_err(|error| error.to_string()),
+            ))
         }
         torca_contract::BridgeCommand::StopBatteryObservation => {
-            Some(("battery_observation_stopped", self.application_runtime.stop_battery_observation()))
+            Some((
+                "battery_observation_stopped",
+                self.application_runtime.stop_battery_observation().map_err(|error| error.to_string()),
+            ))
         }
         torca_contract::BridgeCommand::ResetBatteryObservation => {
-            Some(("battery_observation_reset", self.application_runtime.reset_battery_observation()))
+            Some((
+                "battery_observation_reset",
+                self.application_runtime.reset_battery_observation().map_err(|error| error.to_string()),
+            ))
+        }
+        torca_contract::BridgeCommand::MarkIncident => {
+            Some(("incident_marked", self.mark_incident()))
         }
         _ => None,
     };

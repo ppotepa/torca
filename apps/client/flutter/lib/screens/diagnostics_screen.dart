@@ -142,6 +142,18 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     }
   }
 
+  Future<void> _markIncident() async {
+    await _observation(const MarkIncidentCommandDto());
+    if (!mounted || _error != null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Incident snapshot saved to this run\'s local diagnostics.',
+        ),
+      ),
+    );
+  }
+
   bool _hasReadableEvents(String? value) {
     if (value == null || value.isEmpty) return false;
     try {
@@ -267,6 +279,11 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             onPressed: _loading ? null : _selfTest,
             icon: Icon(context.torcaIcons.diagnostics),
             label: Text(context.strings.runSelfTest),
+          ),
+          FilledButton.icon(
+            onPressed: _loading ? null : _markIncident,
+            icon: Icon(context.torcaIcons.diagnostics),
+            label: const Text('Mark incident'),
           ),
           OutlinedButton.icon(
             onPressed: _loading ? null : _export,

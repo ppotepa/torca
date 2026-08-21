@@ -2,7 +2,7 @@
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
 
 pub const SCHEMA_VERSION: u16 = 1;
-pub const CONTRACT_VERSION: u16 = 21;
+pub const CONTRACT_VERSION: u16 = 22;
 pub const COMMANDS: &[&str] = &[
     "profile.set",
     "pairing.create",
@@ -34,6 +34,7 @@ pub const COMMANDS: &[&str] = &[
     "diagnostics.observation.start",
     "diagnostics.observation.stop",
     "diagnostics.observation.reset",
+    "diagnostics.incident.mark",
     "conversation.read",
     "attachment.queue",
     "attachment.retry",

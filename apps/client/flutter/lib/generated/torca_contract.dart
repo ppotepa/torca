@@ -3,7 +3,7 @@
 
 import 'dart:convert';
 
-const int torcaContractVersion = 21;
+const int torcaContractVersion = 22;
 const int torcaNativeAbiVersion = 1;
 
 class ContractDecodeException extends FormatException {
@@ -1362,6 +1362,10 @@ class ResetBatteryObservationCommandDto extends BridgeCommandDto {
   const ResetBatteryObservationCommandDto();
 }
 
+class MarkIncidentCommandDto extends BridgeCommandDto {
+  const MarkIncidentCommandDto();
+}
+
 class RefreshSnapshotCommandDto extends BridgeCommandDto {
   const RefreshSnapshotCommandDto();
 }
@@ -1668,13 +1672,25 @@ class RuntimeRequestDto {
       return _command('contacts.acknowledge_new', const <String, Object?>{});
     }
     if (command is StartBatteryObservationCommandDto) {
-      return _command('diagnostics.observation.start', const <String, Object?>{});
+      return _command(
+        'diagnostics.observation.start',
+        const <String, Object?>{},
+      );
     }
     if (command is StopBatteryObservationCommandDto) {
-      return _command('diagnostics.observation.stop', const <String, Object?>{});
+      return _command(
+        'diagnostics.observation.stop',
+        const <String, Object?>{},
+      );
     }
     if (command is ResetBatteryObservationCommandDto) {
-      return _command('diagnostics.observation.reset', const <String, Object?>{});
+      return _command(
+        'diagnostics.observation.reset',
+        const <String, Object?>{},
+      );
+    }
+    if (command is MarkIncidentCommandDto) {
+      return _command('diagnostics.incident.mark', const <String, Object?>{});
     }
     return null;
   }

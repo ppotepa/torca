@@ -65,6 +65,7 @@ pub enum BridgeCommand {
     StartBatteryObservation,
     StopBatteryObservation,
     ResetBatteryObservation,
+    MarkIncident,
     UpdateProfile {
         display_name: String,
         avatar_envelope_json: Option<String>,
@@ -554,8 +555,9 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         BridgeCommand::AcknowledgeNewContacts => ApplicationCommand::AcknowledgeNewContacts,
         BridgeCommand::StartBatteryObservation
         | BridgeCommand::StopBatteryObservation
-        | BridgeCommand::ResetBatteryObservation => {
-            return Err("diagnostics observation command must be handled by the runtime".into());
+        | BridgeCommand::ResetBatteryObservation
+        | BridgeCommand::MarkIncident => {
+            return Err("diagnostics command must be handled by the native runtime".into());
         }
         BridgeCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
             ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms }

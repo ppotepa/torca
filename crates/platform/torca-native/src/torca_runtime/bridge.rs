@@ -64,6 +64,7 @@ fn bridge_command(
         "diagnostics.observation.start" => Ok(BridgeCommand::StartBatteryObservation),
         "diagnostics.observation.stop" => Ok(BridgeCommand::StopBatteryObservation),
         "diagnostics.observation.reset" => Ok(BridgeCommand::ResetBatteryObservation),
+        "diagnostics.incident.mark" => Ok(BridgeCommand::MarkIncident),
         "profile.set" => Ok(BridgeCommand::UpdateProfile {
             display_name: text("displayName")?,
             avatar_envelope_json: payload.get("avatarEnvelope").map(serde_json::Value::to_string),

@@ -79,47 +79,93 @@ pub(crate) fn notification_events_json(&mut self, after_cursor: u64) -> i32 {
 }
 
 pub(crate) fn diagnostics_json(&mut self) -> i32 {
-    match self.application_runtime.diagnostics_json() {
+    match self.diagnostic_snapshot_json() {
         Ok(diagnostics) => {
-            let mut value = serde_json::from_str::<Value>(&diagnostics)
-                .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
-            if let Some(counters) = value.get_mut("counters").and_then(Value::as_object_mut)
-                && let Some(stats) = self.event_hub.stats()
-            {
-                counters.insert("ffiWakes".into(), Value::from(stats.wakeups));
-            }
-            if let Some(counters) = value.get_mut("counters").and_then(Value::as_object_mut) {
-                counters.insert(
-                    "radioWakeups".into(),
-                    Value::from(self.application_runtime.radio_wake_count()),
-                );
-            }
-            let (mode, background_sync, allow_delayed, metered_transfers, visual_activity) =
-                self.battery_policy.preferences.wire();
-            let effective = self.effective_battery_policy(false);
-            value["batteryPreferences"] = json!({
-                "mode": mode,
-                "backgroundSync": background_sync,
-                "allowDelayedBackgroundDelivery": allow_delayed,
-                "meteredTransfers": metered_transfers,
-                "visualActivity": visual_activity,
-            });
-            value["effectiveBatteryPolicy"] = json!({
-                "profile": format!("{:?}", effective.profile),
-                "reason": format!("{:?}", effective.reason),
-                "torDormancyAllowed": effective.tor_dormancy_allowed,
-                "backgroundSync": effective.background_sync.wire(),
-                "meteredTransfers": effective.metered_transfers.wire(),
-                "visualActivity": effective.visual_activity.wire(),
-            });
-            self.query_json = value.to_string();
+            self.query_json = diagnostics;
             ABI_OK
         }
         Err(error) => {
-            self.last_result_json = error_result(&error.to_string());
+            self.last_result_json = error_result(&error);
             ABI_ERROR
         }
     }
+}
+
+/// Persists one explicitly user-requested, redacted diagnostics snapshot.
+///
+/// Incident capture is deliberately command-driven: it does not create a
+/// timer, a network request, or a new native worker. The existing run logger
+/// owns retention and redaction for the resulting small JSON file.
+pub(crate) fn mark_incident(&mut self) -> Result<(), String> {
+    let diagnostics = self.diagnostic_snapshot_json()?;
+    let marked_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0);
+    let Some(logger) = &self.logger else {
+        return Err("local diagnostics logger unavailable".into());
+    };
+    let manifest = json!({
+        "schema": 1,
+        "kind": "torca_incident",
+        "markedAtMs": marked_at_ms,
+        "runId": logger.run_id(),
+        "diagnostics": serde_json::from_str::<Value>(&diagnostics)
+            .unwrap_or_else(|_| Value::Object(serde_json::Map::new())),
+    });
+    logger
+        .write_json_file(&format!("incident-{marked_at_ms}.json"), &manifest.to_string())
+        .map_err(|error| format!("incident snapshot write failed: {error}"))?;
+    let context = json!({ "markedAtMs": marked_at_ms }).to_string();
+    let _ = logger.event_with_context(
+        "diagnostics",
+        torca_logging::Level::Info,
+        "incident",
+        "DIAGNOSTICS_INCIDENT_MARKED",
+        "User marked a local diagnostics incident",
+        Some(&context),
+    );
+    Ok(())
+}
+
+fn diagnostic_snapshot_json(&mut self) -> Result<String, String> {
+    let diagnostics = self
+        .application_runtime
+        .diagnostics_json()
+        .map_err(|error| error.to_string())?;
+    let mut value = serde_json::from_str::<Value>(&diagnostics)
+        .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+    if let Some(counters) = value.get_mut("counters").and_then(Value::as_object_mut)
+        && let Some(stats) = self.event_hub.stats()
+    {
+        counters.insert("ffiWakes".into(), Value::from(stats.wakeups));
+    }
+    if let Some(counters) = value.get_mut("counters").and_then(Value::as_object_mut) {
+        counters.insert(
+            "radioWakeups".into(),
+            Value::from(self.application_runtime.radio_wake_count()),
+        );
+    }
+    let (mode, background_sync, allow_delayed, metered_transfers, visual_activity) =
+        self.battery_policy.preferences.wire();
+    let effective = self.effective_battery_policy(false);
+    value["batteryPreferences"] = json!({
+        "mode": mode,
+        "backgroundSync": background_sync,
+        "allowDelayedBackgroundDelivery": allow_delayed,
+        "meteredTransfers": metered_transfers,
+        "visualActivity": visual_activity,
+    });
+    value["effectiveBatteryPolicy"] = json!({
+        "profile": format!("{:?}", effective.profile),
+        "reason": format!("{:?}", effective.reason),
+        "torDormancyAllowed": effective.tor_dormancy_allowed,
+        "backgroundSync": effective.background_sync.wire(),
+        "meteredTransfers": effective.metered_transfers.wire(),
+        "visualActivity": effective.visual_activity.wire(),
+    });
+    Ok(value.to_string())
 }
 
 pub(crate) fn avatar_genome_json(&mut self, identity_id: Option<&str>) -> i32 {
