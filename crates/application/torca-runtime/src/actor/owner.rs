@@ -246,9 +246,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 };
                 if let Some(demand) = demand {
                     if let AttentionSurface::Conversation(peer) = context.surface {
-                        policy.acquire_persistent_focus(peer, owner, now);
+                        policy.focus_until_release(peer, owner, now);
                     } else {
-                        policy.acquire_persistent_lease(demand);
+                        policy.acquire_until_release(demand);
                     }
                     work.attention_owner = Some(owner);
                 }

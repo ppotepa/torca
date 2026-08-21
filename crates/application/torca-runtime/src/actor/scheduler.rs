@@ -99,7 +99,7 @@ fn acquire_delivery_lease(policy: &mut RuntimeGovernor, message_id: OpaqueId) {
     // Durable delivery is released by its terminal job/status transition. A
     // synthetic ten-minute expiry would create an unnecessary deadline and
     // can let Tor sleep while a slow peer still has queued work.
-    policy.acquire_persistent_lease(WorkDemand {
+    policy.acquire_until_release(WorkDemand {
         scope: ResourceScope::Delivery(message_id),
         class: WorkClass::Delivery,
         reason: DemandReason::PendingMessage,
@@ -141,7 +141,7 @@ fn acquire_visible_contact_lease(
     contact_id: ContactId,
     owner: OpaqueId,
 ) {
-    policy.acquire_persistent_lease(WorkDemand {
+    policy.acquire_until_release(WorkDemand {
         scope: ResourceScope::Peer(contact_id.to_opaque()),
         class: WorkClass::PeerProbe,
         reason: DemandReason::VisibleContact,
@@ -163,7 +163,7 @@ fn release_attention_leases(policy: &mut RuntimeGovernor, work: &mut RuntimeWork
 }
 
 fn acquire_instant_contact_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
-    policy.acquire_persistent_lease(WorkDemand {
+    policy.acquire_until_release(WorkDemand {
         scope: ResourceScope::Peer(contact_id.to_opaque()),
         class: WorkClass::PeerDial,
         reason: DemandReason::InstantContact,
@@ -173,7 +173,7 @@ fn acquire_instant_contact_lease(policy: &mut RuntimeGovernor, contact_id: Conta
 }
 
 fn acquire_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
-    policy.acquire_persistent_lease(WorkDemand {
+    policy.acquire_until_release(WorkDemand {
         scope: ResourceScope::Radio(contact_id.to_opaque()),
         class: WorkClass::Radio,
         reason: DemandReason::RadioSession,
@@ -188,7 +188,7 @@ fn acquire_radio_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
 fn acquire_radio_transmission_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
     // The transfer worker explicitly releases this lease on completion or
     // cancellation, so no periodic renewal is required while it is durable.
-    policy.acquire_persistent_lease(WorkDemand {
+    policy.acquire_until_release(WorkDemand {
         scope: ResourceScope::Radio(contact_id.to_opaque()),
         class: WorkClass::Radio,
         reason: DemandReason::RadioSession,

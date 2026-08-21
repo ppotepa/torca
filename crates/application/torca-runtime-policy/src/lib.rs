@@ -322,9 +322,9 @@ impl RuntimeGovernor {
     }
 
     /// Acquires a lease that remains active until explicitly released.
-    /// Persistent leases model user-selected Instant contacts and active
-    /// radio sessions without manufacturing periodic renewal wakeups.
-    pub fn acquire_persistent_lease(&mut self, demand: WorkDemand) -> ConnectionLease {
+    /// This models user-selected Instant contacts and active radio sessions
+    /// without manufacturing periodic renewal wakeups.
+    pub fn acquire_until_release(&mut self, demand: WorkDemand) -> ConnectionLease {
         let lease = ConnectionLease {
             scope: demand.scope,
             reason: demand.reason,
@@ -372,8 +372,8 @@ impl RuntimeGovernor {
     }
 
     /// Installs UI focus that remains valid until the host explicitly changes
-    /// attention or backgrounds.  It intentionally creates no renewal timer.
-    pub fn acquire_persistent_focus(
+    /// attention or backgrounds. It intentionally creates no renewal timer.
+    pub fn focus_until_release(
         &mut self,
         contact: OpaqueId,
         owner: OpaqueId,
@@ -384,7 +384,7 @@ impl RuntimeGovernor {
         }
         let focus = FocusLease { contact, owner, expires_at: now };
         self.focus = Some(focus);
-        self.acquire_persistent_lease(WorkDemand {
+        self.acquire_until_release(WorkDemand {
             scope: ResourceScope::Peer(contact),
             class: WorkClass::PeerDial,
             reason: DemandReason::FocusedConversation,
@@ -728,7 +728,7 @@ mod tests {
         let mut governor = RuntimeGovernor::new(now);
         let owner = id(40);
         let scope = ResourceScope::Peer(id(41));
-        governor.acquire_persistent_lease(WorkDemand {
+        governor.acquire_until_release(WorkDemand {
             scope,
             class: WorkClass::PeerDial,
             reason: DemandReason::InstantContact,
@@ -753,7 +753,7 @@ mod tests {
             expires_at: now + Duration::from_secs(30),
         });
         assert!(!governor.has_durable_lease(now));
-        governor.acquire_persistent_lease(WorkDemand {
+        governor.acquire_until_release(WorkDemand {
             scope: ResourceScope::Radio(id(44)),
             class: WorkClass::Radio,
             reason: DemandReason::RadioSession,
@@ -821,7 +821,7 @@ mod tests {
         let now = Instant::now();
         let mut governor = RuntimeGovernor::new(now);
         let owner = id(81);
-        governor.acquire_persistent_focus(id(80), owner, now);
+        governor.focus_until_release(id(80), owner, now);
         assert!(governor.is_focused(id(80), now + Duration::from_secs(60 * 60)));
         assert_eq!(governor.next_lease_expiry(), None);
         governor.release_lease(owner);
