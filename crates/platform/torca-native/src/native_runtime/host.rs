@@ -11,7 +11,6 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use torca_battery::{BatteryPreferences, EffectiveBatteryPolicy, SystemEnergyState};
 use torca_client_application::{
     ApplicationError, ApplicationReadModels, ClientApplicationRuntime, ContactSecurityState,
 };
@@ -28,6 +27,7 @@ use torca_messaging::MessageId;
 use torca_radio_coordinator::SharedRadioCoordinator;
 use torca_runtime::{RuntimeHandle, RuntimeOwner, TorState};
 use torca_runtime_policy::RuntimeEventHub;
+use torca_runtime_policy::{BatteryPreferences, EffectiveBatteryPolicy, SystemEnergyState};
 use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
 
 use crate::battery_policy::BatteryPolicyState;

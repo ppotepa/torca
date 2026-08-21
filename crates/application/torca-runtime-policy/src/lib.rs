@@ -140,6 +140,130 @@ impl SystemEnergyState {
     }
 }
 
+/// Durable user intent consumed by RuntimeOwner. It carries no executor timer:
+/// background work is represented by leases and one-shot deadlines instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BatteryPreferences {
+    pub mode: RequestedBatteryMode,
+    pub background_sync: BackgroundSyncCadence,
+    pub allow_delayed_background_delivery: bool,
+    pub metered_transfers: MeteredTransferPolicy,
+    pub visual_activity: VisualActivityPolicy,
+}
+
+impl Default for BatteryPreferences {
+    fn default() -> Self {
+        Self {
+            mode: RequestedBatteryMode::Automatic,
+            background_sync: BackgroundSyncCadence::OnOpen,
+            allow_delayed_background_delivery: true,
+            metered_transfers: MeteredTransferPolicy::PauseLarge,
+            visual_activity: VisualActivityPolicy::FollowSystem,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PolicyOverrideReason {
+    UserPreference,
+    ForegroundActivity,
+    Charging,
+    PowerSaver,
+    CriticalBattery,
+    DurableLease,
+    Diagnostics,
+    NetworkStall,
+}
+
+/// Reducer output consumed by RuntimeOwner and feature executors.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EffectiveBatteryPolicy {
+    pub profile: BatteryProfile,
+    pub reason: PolicyOverrideReason,
+    pub tor_dormancy_allowed: bool,
+    pub background_sync: BackgroundSyncCadence,
+    pub metered_transfers: MeteredTransferPolicy,
+    pub visual_activity: VisualActivityPolicy,
+}
+
+impl BatteryPreferences {
+    pub fn from_wire(
+        mode: &str,
+        background_sync: &str,
+        allow_delayed_background_delivery: bool,
+        metered_transfers: &str,
+        visual_activity: &str,
+    ) -> Self {
+        Self {
+            mode: RequestedBatteryMode::from_wire(mode),
+            background_sync: BackgroundSyncCadence::from_wire(background_sync),
+            allow_delayed_background_delivery,
+            metered_transfers: MeteredTransferPolicy::from_wire(metered_transfers),
+            visual_activity: VisualActivityPolicy::from_wire(visual_activity),
+        }
+    }
+
+    pub const fn wire(self) -> (&'static str, &'static str, bool, &'static str, &'static str) {
+        (
+            self.mode.wire(),
+            self.background_sync.wire(),
+            self.allow_delayed_background_delivery,
+            self.metered_transfers.wire(),
+            self.visual_activity.wire(),
+        )
+    }
+
+    pub fn effective(
+        self,
+        system: SystemEnergyState,
+        diagnostics_override: bool,
+    ) -> EffectiveBatteryPolicy {
+        let reason = if diagnostics_override {
+            PolicyOverrideReason::Diagnostics
+        } else if system.foreground {
+            PolicyOverrideReason::ForegroundActivity
+        } else if system.charging == Some(true) {
+            PolicyOverrideReason::Charging
+        } else if system.power_saver == Some(true) {
+            PolicyOverrideReason::PowerSaver
+        } else if system.battery_percent.is_some_and(|value| value <= 15) {
+            PolicyOverrideReason::CriticalBattery
+        } else {
+            PolicyOverrideReason::UserPreference
+        };
+        let profile = if diagnostics_override {
+            BatteryProfile::Diagnostics
+        } else if system.power_saver == Some(true)
+            || system.battery_percent.is_some_and(|value| value <= 15)
+        {
+            BatteryProfile::BatterySaver
+        } else {
+            match self.mode {
+                RequestedBatteryMode::AlwaysAvailable => BatteryProfile::AlwaysAvailable,
+                RequestedBatteryMode::Balanced => BatteryProfile::Balanced,
+                RequestedBatteryMode::BatterySaver => BatteryProfile::BatterySaver,
+                RequestedBatteryMode::Automatic => {
+                    if system.battery_percent.is_some_and(|value| value <= 20) {
+                        BatteryProfile::BatterySaver
+                    } else {
+                        BatteryProfile::Balanced
+                    }
+                }
+            }
+        };
+        EffectiveBatteryPolicy {
+            profile,
+            reason,
+            tor_dormancy_allowed: !diagnostics_override
+                && !system.foreground
+                && self.allow_delayed_background_delivery,
+            background_sync: self.background_sync,
+            metered_transfers: self.metered_transfers,
+            visual_activity: self.visual_activity,
+        }
+    }
+}
+
 impl VisualActivityPolicy {
     pub fn from_wire(value: &str) -> Self {
         match value {

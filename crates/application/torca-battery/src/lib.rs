@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 
 pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
-    AttentionContext, AttentionSurface, BackgroundSyncCadence, BatteryProfile, ConnectionLease,
-    ContactAvailabilityMode, DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime,
-    MeteredTransferPolicy, PolicyEvent, RequestedBatteryMode, ResourceScope, RuntimeEventHub,
-    RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, SystemEnergyState,
-    VisualActivityPolicy, WorkClass, WorkDemand,
+    AttentionContext, AttentionSurface, BackgroundSyncCadence, BatteryPreferences, BatteryProfile,
+    ConnectionLease, ContactAvailabilityMode, DemandReason, EffectiveBatteryPolicy, EvidenceKind,
+    FocusLease, Freshness, LeaseLifetime, MeteredTransferPolicy, PolicyEvent, PolicyOverrideReason,
+    RequestedBatteryMode, ResourceScope, RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor,
+    RuntimePolicySnapshot, SystemEnergyState, VisualActivityPolicy, WorkClass, WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
@@ -115,147 +115,6 @@ impl BatterySnapshot {
             .saturating_add(self.attachment_chunks_tx)
             .saturating_add(self.attachment_chunks_rx)
             .saturating_add(self.suppressed_work)
-    }
-}
-
-/// Durable user preference.  It contains intent, not executor-specific
-/// timers; runtime policy derives deadlines from it and current system state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BatteryPreferences {
-    pub mode: RequestedBatteryMode,
-    pub background_sync: BackgroundSyncCadence,
-    pub allow_delayed_background_delivery: bool,
-    pub metered_transfers: MeteredTransferPolicy,
-    pub visual_activity: VisualActivityPolicy,
-}
-
-impl Default for BatteryPreferences {
-    fn default() -> Self {
-        Self {
-            // Legacy cadence values are still decoded for migration, but new
-            // profiles never schedule a periodic background rendezvous.  The
-            // RuntimeOwner applies a bounded background grace and then lets
-            // Tor become soft dormant unless durable work owns a lease.
-            mode: RequestedBatteryMode::Automatic,
-            background_sync: BackgroundSyncCadence::OnOpen,
-            allow_delayed_background_delivery: true,
-            metered_transfers: MeteredTransferPolicy::PauseLarge,
-            visual_activity: VisualActivityPolicy::FollowSystem,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PolicyOverrideReason {
-    UserPreference,
-    ForegroundActivity,
-    Charging,
-    PowerSaver,
-    CriticalBattery,
-    DurableLease,
-    Diagnostics,
-    NetworkStall,
-}
-
-/// Result of reducing user intent, platform state and runtime demand.  The
-/// executors consume this value; the battery crate never opens sockets or
-/// changes Tor itself.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EffectiveBatteryPolicy {
-    pub profile: BatteryProfile,
-    pub reason: PolicyOverrideReason,
-    pub tor_dormancy_allowed: bool,
-    pub background_sync: BackgroundSyncCadence,
-    pub metered_transfers: MeteredTransferPolicy,
-    pub visual_activity: VisualActivityPolicy,
-}
-
-impl BatteryPreferences {
-    pub fn from_wire(
-        mode: &str,
-        _background_sync: &str,
-        allow_delayed_background_delivery: bool,
-        metered_transfers: &str,
-        visual_activity: &str,
-    ) -> Self {
-        Self {
-            mode: RequestedBatteryMode::from_wire(mode),
-            // Accept old values at the boundary, but persist the BATTERY1
-            // migration target.  Cadence is no longer a runtime policy.
-            background_sync: BackgroundSyncCadence::OnOpen,
-            allow_delayed_background_delivery,
-            metered_transfers: MeteredTransferPolicy::from_wire(metered_transfers),
-            visual_activity: VisualActivityPolicy::from_wire(visual_activity),
-        }
-    }
-
-    pub fn wire(self) -> (&'static str, &'static str, bool, &'static str, &'static str) {
-        (
-            self.mode.wire(),
-            self.background_sync.wire(),
-            self.allow_delayed_background_delivery,
-            self.metered_transfers.wire(),
-            self.visual_activity.wire(),
-        )
-    }
-
-    pub fn effective(
-        self,
-        system: SystemEnergyState,
-        diagnostics_override: bool,
-    ) -> EffectiveBatteryPolicy {
-        let reason = if diagnostics_override {
-            PolicyOverrideReason::Diagnostics
-        } else if system.foreground {
-            PolicyOverrideReason::ForegroundActivity
-        } else if system.charging == Some(true) {
-            PolicyOverrideReason::Charging
-        } else if system.power_saver == Some(true) {
-            PolicyOverrideReason::PowerSaver
-        } else if system.battery_percent.is_some_and(|value| value <= 15) {
-            PolicyOverrideReason::CriticalBattery
-        } else {
-            PolicyOverrideReason::UserPreference
-        };
-
-        let profile = if diagnostics_override {
-            BatteryProfile::Diagnostics
-        } else if system.power_saver == Some(true)
-            || system.battery_percent.is_some_and(|value| value <= 15)
-        {
-            BatteryProfile::BatterySaver
-        } else {
-            // Foreground is a host fact, not a global performance profile.
-            // RuntimeOwner uses it to permit UI-owned demand and prevent Tor
-            // dormancy; it must not make unrelated peers, probes or relay
-            // work `AlwaysAvailable` merely because a screen is visible.
-            match self.mode {
-                RequestedBatteryMode::AlwaysAvailable => BatteryProfile::AlwaysAvailable,
-                RequestedBatteryMode::Balanced => BatteryProfile::Balanced,
-                RequestedBatteryMode::BatterySaver => BatteryProfile::BatterySaver,
-                RequestedBatteryMode::Automatic => {
-                    if system.power_saver == Some(true)
-                        || system.battery_percent.is_some_and(|value| value <= 20)
-                    {
-                        BatteryProfile::BatterySaver
-                    } else {
-                        BatteryProfile::Balanced
-                    }
-                }
-            }
-        };
-
-        let tor_dormancy_allowed =
-            !diagnostics_override && !system.foreground && self.allow_delayed_background_delivery;
-
-        EffectiveBatteryPolicy {
-            profile,
-            reason,
-            tor_dormancy_allowed,
-            background_sync: self.background_sync,
-            metered_transfers: self.metered_transfers,
-            visual_activity: self.visual_activity,
-        }
     }
 }
 

@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
-use torca_battery::BatteryPreferences;
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_foundation::Timestamp;
 use torca_messaging::{Message, MessageId};
-use torca_runtime_policy::ContactAvailabilityMode;
+use torca_runtime_policy::{BatteryPreferences, ContactAvailabilityMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApplicationQueryError {

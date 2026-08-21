@@ -148,13 +148,13 @@ impl RuntimeSettingsPort for SqliteSettings {
 
     fn battery_preferences(
         &self,
-    ) -> Result<torca_battery::BatteryPreferences, ApplicationQueryError> {
+    ) -> Result<torca_runtime_policy::BatteryPreferences, ApplicationQueryError> {
         self.0.battery_preferences().map_err(|_| ApplicationQueryError::Unavailable)
     }
 
     fn set_battery_preferences(
         &self,
-        preferences: torca_battery::BatteryPreferences,
+        preferences: torca_runtime_policy::BatteryPreferences,
         at: i64,
     ) -> Result<(), ApplicationQueryError> {
         self.0

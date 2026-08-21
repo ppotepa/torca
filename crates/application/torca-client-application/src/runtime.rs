@@ -5,7 +5,6 @@ use std::sync::Mutex;
 use base64::Engine as _;
 
 use torca_attachments::AttachmentId;
-use torca_battery::{BatteryPreferences, SystemEnergyState};
 use torca_bootstrap::{BootstrapSnapshot, BootstrapState, BootstrapStepId, BootstrapStepState};
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
@@ -19,6 +18,7 @@ use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_radio_coordinator::{HostRadioLifecycle, RadioProjection, SharedRadioCoordinator};
 use torca_runtime_policy::AttentionContext;
+use torca_runtime_policy::{BatteryPreferences, SystemEnergyState};
 
 use crate::{
     ApplicationReadModels, ApplicationSnapshotContext, AttachmentSendRequest,

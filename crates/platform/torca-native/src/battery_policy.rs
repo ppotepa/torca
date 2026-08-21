@@ -1,4 +1,4 @@
-use torca_battery::{BatteryPreferences, EffectiveBatteryPolicy, SystemEnergyState};
+use torca_runtime_policy::{BatteryPreferences, EffectiveBatteryPolicy, SystemEnergyState};
 
 /// Native-owned cache of host facts and persisted preference input. The cache
 /// does not control executors: `RuntimeOwner` receives these inputs and owns

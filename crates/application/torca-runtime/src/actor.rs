@@ -10,10 +10,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
-use torca_battery::{
-    BatteryMetric, BatteryPolicy, BatteryPreferences, BatteryProfile, MeteredTransferPolicy,
-    SystemEnergyState, WakeReason,
-};
+use torca_battery::{BatteryMetric, BatteryPolicy, WakeReason};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_connectivity::{
     ConnectivityObserver, ConnectivitySnapshot, PeerProbeCandidate, PeerProbeSupervisor,
@@ -35,6 +32,9 @@ use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeT
 use torca_runtime_policy::{
     AttentionContext, AttentionSurface, DemandReason, EvidenceKind, PolicyEvent, ResourceScope,
     RuntimeGovernor, WorkClass, WorkDemand,
+};
+use torca_runtime_policy::{
+    BatteryPreferences, BatteryProfile, MeteredTransferPolicy, SystemEnergyState,
 };
 
 // Included runtime files use `thread::spawn` and `thread::yield_now`. Keep that

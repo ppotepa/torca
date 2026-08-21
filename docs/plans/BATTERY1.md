@@ -43,6 +43,7 @@ incoming work can still hold a durable lease independently of the UI.
 | 1d | Implemented | `RequestedBatteryMode` and `VisualActivityPolicy` moved to `torca-runtime-policy`; SQLite uses their canonical wire mapping. |
 | 1e | Implemented | Legacy `BackgroundSyncCadence` moved to `torca-runtime-policy`; it remains an `on_open` migration value, never a timer policy. |
 | 1f | Implemented | `SystemEnergyState` moved to `torca-runtime-policy`; host facts now share policy ownership with demand and attention. |
+| 1g | Implemented | `BatteryPreferences`, `EffectiveBatteryPolicy` and `PolicyOverrideReason` moved to `torca-runtime-policy`; native, application and SQLite reducers now consume that canonical owner directly. |
 | 2 | Implemented core | RuntimeOwner receives atomic host-policy inputs and consumes `torca-runtime-policy` directly; legacy values normalize safely. Policy leases use explicit `Until`/`UntilRelease` lifetimes rather than a parallel persistent-owner side table. |
 | 3 | Implemented core | One deadline registry with source-selective maintenance. |
 | 4 | Implemented core | One-shot background grace and soft dormancy; no recurring rendezvous. Legacy persisted cadence values normalize to `on_open` and no runtime policy type exposes a periodic interval. |
