@@ -161,7 +161,34 @@ pub struct ConnectionLease {
     pub scope: ResourceScope,
     pub reason: DemandReason,
     pub owner: OpaqueId,
-    pub expires_at: Instant,
+    pub lifetime: LeaseLifetime,
+}
+
+/// Explicit ownership semantics for runtime demand.
+///
+/// UI attention and durable jobs use `UntilRelease`; bounded retries and
+/// protocol expiry use `Until`. This removes the old side-table that inferred
+/// persistence from the owner ID.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LeaseLifetime {
+    Until(Instant),
+    UntilRelease,
+}
+
+impl LeaseLifetime {
+    fn active_at(self, now: Instant) -> bool {
+        match self {
+            Self::Until(expires_at) => expires_at > now,
+            Self::UntilRelease => true,
+        }
+    }
+
+    fn expiry(self) -> Option<Instant> {
+        match self {
+            Self::Until(expires_at) => Some(expires_at),
+            Self::UntilRelease => None,
+        }
+    }
 }
 
 /// A user-visible, time-boxed priority lease. There is at most one active
@@ -182,7 +209,7 @@ impl FocusLease {
 impl ConnectionLease {
     /// Whether the lease is still valid at `now`.
     pub fn active_at(&self, now: Instant) -> bool {
-        self.expires_at > now
+        self.lifetime.active_at(now)
     }
 }
 
@@ -225,7 +252,6 @@ pub struct RuntimeGovernor {
     attention: AttentionContext,
     network_generation: u64,
     leases: HashMap<OpaqueId, ConnectionLease>,
-    persistent_lease_owners: HashSet<OpaqueId>,
     focus: Option<FocusLease>,
     demands: HashMap<OpaqueId, WorkDemand>,
     evidence: HashMap<ResourceScope, HealthEvidence>,
@@ -239,7 +265,6 @@ impl RuntimeGovernor {
             attention: AttentionContext::default(),
             network_generation: 0,
             leases: HashMap::new(),
-            persistent_lease_owners: HashSet::new(),
             focus: None,
             demands: HashMap::new(),
             evidence: HashMap::new(),
@@ -266,12 +291,11 @@ impl RuntimeGovernor {
             PolicyEvent::NetworkChanged { .. } => {}
             PolicyEvent::Evidence { scope, kind } => self.record_evidence(scope, kind, now),
             PolicyEvent::Demand(demand) => {
-                self.persistent_lease_owners.remove(&demand.owner);
                 let lease = ConnectionLease {
                     scope: demand.scope,
                     reason: demand.reason,
                     owner: demand.owner,
-                    expires_at: demand.expires_at,
+                    lifetime: LeaseLifetime::Until(demand.expires_at),
                 };
                 self.leases.insert(demand.owner, lease);
                 self.demands.insert(demand.owner, demand);
@@ -279,7 +303,6 @@ impl RuntimeGovernor {
             PolicyEvent::Release { owner } => {
                 self.leases.remove(&owner);
                 self.demands.remove(&owner);
-                self.persistent_lease_owners.remove(&owner);
             }
         }
         delta
@@ -287,12 +310,11 @@ impl RuntimeGovernor {
 
     /// Acquires or replaces a lease for a demand owner.
     pub fn acquire_lease(&mut self, demand: WorkDemand) -> ConnectionLease {
-        self.persistent_lease_owners.remove(&demand.owner);
         let lease = ConnectionLease {
             scope: demand.scope,
             reason: demand.reason,
             owner: demand.owner,
-            expires_at: demand.expires_at,
+            lifetime: LeaseLifetime::Until(demand.expires_at),
         };
         self.leases.insert(demand.owner, lease);
         self.demands.insert(demand.owner, demand);
@@ -303,9 +325,14 @@ impl RuntimeGovernor {
     /// Persistent leases model user-selected Instant contacts and active
     /// radio sessions without manufacturing periodic renewal wakeups.
     pub fn acquire_persistent_lease(&mut self, demand: WorkDemand) -> ConnectionLease {
-        let owner = demand.owner;
-        let lease = self.acquire_lease(demand);
-        self.persistent_lease_owners.insert(owner);
+        let lease = ConnectionLease {
+            scope: demand.scope,
+            reason: demand.reason,
+            owner: demand.owner,
+            lifetime: LeaseLifetime::UntilRelease,
+        };
+        self.leases.insert(demand.owner, lease);
+        self.demands.insert(demand.owner, demand);
         lease
     }
 
@@ -313,7 +340,6 @@ impl RuntimeGovernor {
     pub fn release_lease(&mut self, owner: OpaqueId) {
         self.leases.remove(&owner);
         self.demands.remove(&owner);
-        self.persistent_lease_owners.remove(&owner);
         if self.focus.is_some_and(|focus| focus.owner == owner) {
             self.focus = None;
         }
@@ -370,9 +396,8 @@ impl RuntimeGovernor {
 
     pub fn focus(&mut self, now: Instant) -> Option<FocusLease> {
         self.expire(now);
-        self.focus.filter(|focus| {
-            self.persistent_lease_owners.contains(&focus.owner) || focus.active_at(now)
-        })
+        self.focus
+            .filter(|focus| self.leases.get(&focus.owner).is_some_and(|lease| lease.active_at(now)))
     }
 
     pub fn is_focused(&mut self, contact: OpaqueId, now: Instant) -> bool {
@@ -382,10 +407,7 @@ impl RuntimeGovernor {
     /// Returns whether a scope has an unexpired lease.
     pub fn has_active_lease(&mut self, scope: ResourceScope, now: Instant) -> bool {
         self.expire(now);
-        self.leases.values().any(|lease| {
-            lease.scope == scope
-                && (self.persistent_lease_owners.contains(&lease.owner) || lease.active_at(now))
-        })
+        self.leases.values().any(|lease| lease.scope == scope && lease.active_at(now))
     }
 
     /// Returns whether any feature currently owns work that must keep the
@@ -393,9 +415,7 @@ impl RuntimeGovernor {
     /// is used only for global Tor dormancy decisions.
     pub fn has_any_active_lease(&mut self, now: Instant) -> bool {
         self.expire(now);
-        self.leases.values().any(|lease| {
-            self.persistent_lease_owners.contains(&lease.owner) || lease.active_at(now)
-        })
+        self.leases.values().any(|lease| lease.active_at(now))
     }
 
     /// Returns whether a lease represents work that must keep the transport
@@ -405,8 +425,7 @@ impl RuntimeGovernor {
     pub fn has_durable_lease(&mut self, now: Instant) -> bool {
         self.expire(now);
         self.leases.values().any(|lease| {
-            let active =
-                self.persistent_lease_owners.contains(&lease.owner) || lease.active_at(now);
+            let active = lease.active_at(now);
             active
                 && matches!(
                     lease.reason,
@@ -431,9 +450,7 @@ impl RuntimeGovernor {
         self.expire(now);
         self.leases
             .values()
-            .filter(|lease| {
-                self.persistent_lease_owners.contains(&lease.owner) || lease.active_at(now)
-            })
+            .filter(|lease| lease.active_at(now))
             .filter_map(|lease| match lease.scope {
                 ResourceScope::Peer(peer) | ResourceScope::Radio(peer) => Some(peer),
                 _ => None,
@@ -466,15 +483,7 @@ impl RuntimeGovernor {
     /// Returns the earliest lease expiry so the host scheduler can retire
     /// demand without relying on a periodic maintenance tick.
     pub fn next_lease_expiry(&self) -> Option<Instant> {
-        // Persistent leases intentionally have no expiry deadline. Their
-        // stored `expires_at` is only a diagnostic value (normally the time
-        // at which the lease was acquired); including it here would make the
-        // host scheduler wake continuously with a deadline in the past.
-        self.leases
-            .values()
-            .filter(|lease| !self.persistent_lease_owners.contains(&lease.owner))
-            .map(|lease| lease.expires_at)
-            .min()
+        self.leases.values().filter_map(|lease| lease.lifetime.expiry()).min()
     }
 
     /// Returns a snapshot suitable for diagnostics and tests.
@@ -497,27 +506,32 @@ impl RuntimeGovernor {
             next_deadline_in_ms: None,
             stats: self.stats,
             focus_active: self.focus.is_some(),
-            focus_remaining_ms: self.focus.map(|focus| {
-                focus
-                    .expires_at
-                    .saturating_duration_since(now)
-                    .as_millis()
-                    .min(u128::from(u64::MAX)) as u64
+            focus_remaining_ms: self.focus.and_then(|focus| {
+                self.leases.get(&focus.owner).and_then(|lease| match lease.lifetime {
+                    LeaseLifetime::Until(expires_at) => Some(
+                        expires_at
+                            .saturating_duration_since(now)
+                            .as_millis()
+                            .min(u128::from(u64::MAX)) as u64,
+                    ),
+                    LeaseLifetime::UntilRelease => None,
+                })
             }),
         }
     }
 
     fn expire(&mut self, now: Instant) {
         self.leases.retain(|owner, lease| {
-            let active = self.persistent_lease_owners.contains(owner) || lease.active_at(now);
+            let active = lease.active_at(now);
             if !active {
                 self.demands.remove(owner);
             }
             active
         });
-        if self.focus.is_some_and(|focus| {
-            !self.persistent_lease_owners.contains(&focus.owner) && !focus.active_at(now)
-        }) {
+        if self
+            .focus
+            .is_some_and(|focus| !self.leases.contains_key(&focus.owner) && !focus.active_at(now))
+        {
             self.focus = None;
         }
     }

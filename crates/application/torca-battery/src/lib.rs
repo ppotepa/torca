@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
     AttentionContext, AttentionSurface, ConnectionLease, DemandReason, EvidenceKind, FocusLease,
-    Freshness, PolicyEvent, ResourceScope, RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor,
-    RuntimePolicySnapshot, WorkClass, WorkDemand,
+    Freshness, LeaseLifetime, PolicyEvent, ResourceScope, RuntimeEventHub, RuntimeEventHubStats,
+    RuntimeGovernor, RuntimePolicySnapshot, WorkClass, WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
