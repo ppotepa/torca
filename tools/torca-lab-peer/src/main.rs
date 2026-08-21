@@ -8,7 +8,15 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Operation {
+    Observe,
+    Create,
+    Join,
+    Approve,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "torca-lab-peer")]
@@ -19,6 +27,15 @@ struct Cli {
     /// How long the real native runtime remains available for orchestration.
     #[arg(long, default_value_t = 30)]
     duration_seconds: u64,
+    /// Contract operation to execute before observing the real runtime.
+    #[arg(long, value_enum, default_value_t = Operation::Observe)]
+    operation: Operation,
+    /// Invitation code required by `join`.
+    #[arg(long)]
+    code: Option<String>,
+    /// Pairing session id required by `approve`.
+    #[arg(long)]
+    session_id: Option<String>,
 }
 
 fn main() {
@@ -36,6 +53,7 @@ fn run() -> Result<(), String> {
     validate_lab_root(&cli.root)?;
     let mut runtime = torca_native::NativeRuntimeClient::acquire_at(&cli.root)?;
     {
+        execute_operation(&mut runtime, &cli)?;
         let started = Instant::now();
         let deadline = started + Duration::from_secs(cli.duration_seconds);
         while Instant::now() < deadline {
@@ -80,12 +98,52 @@ fn invoke(
     runtime: &mut torca_native::NativeRuntimeClient,
     request_id: &str,
 ) -> Result<serde_json::Value, String> {
+    invoke_request(runtime, request_id, "query", "diagnostics.get", serde_json::json!({}))
+}
+
+fn execute_operation(
+    runtime: &mut torca_native::NativeRuntimeClient,
+    cli: &Cli,
+) -> Result<(), String> {
+    let (name, payload) = match cli.operation {
+        Operation::Observe => return Ok(()),
+        Operation::Create => ("pairing.create", serde_json::json!({})),
+        Operation::Join => (
+            "pairing.join",
+            serde_json::json!({ "code": cli.code.as_deref().ok_or("--code is required for join")? }),
+        ),
+        Operation::Approve => (
+            "pairing.approve",
+            serde_json::json!({ "sessionIdHex": cli.session_id.as_deref().ok_or("--session-id is required for approve")? }),
+        ),
+    };
+    let response = invoke_request(runtime, "lab-operation", "command", name, payload)?;
+    let status = response.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+    if status != "succeeded" {
+        let code = response
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("UNKNOWN");
+        return Err(format!("{name} failed ({code})"));
+    }
+    let pairings = response.pointer("/snapshot/pairings").cloned().unwrap_or_default();
+    println!("lab-peer operation={name} pairings={pairings}");
+    Ok(())
+}
+
+fn invoke_request(
+    runtime: &mut torca_native::NativeRuntimeClient,
+    request_id: &str,
+    kind: &str,
+    name: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let request = serde_json::json!({
         "schema": 1,
         "requestId": request_id,
-        "kind": "query",
-        "name": "diagnostics.get",
-        "payload": {},
+        "kind": kind,
+        "name": name,
+        "payload": payload,
     })
     .to_string();
     let response = runtime.invoke_json(&request, Duration::from_secs(5))?;

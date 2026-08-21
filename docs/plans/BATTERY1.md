@@ -70,7 +70,10 @@ leaving the normal desktop storage root unchanged.
 
 `cargo run -p torca-lab-peer -- --root <path>` starts one such production
 runtime and reads diagnostics through the same contract ABI as Flutter. A
-two-peer scenario will orchestrate two independent invocations.
+two-peer scenario will orchestrate two independent invocations. The runner
+also exposes `--operation create`, `join --code <code>` and
+`approve --session-id <id>` as the native contract pairing commands; it prints
+the redacted pairing projection after each successful command.
 
 The deterministic soak now includes both `torca-runtime` and
 `torca-diagnostics`, so policy scheduling and observation/export regressions
