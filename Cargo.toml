@@ -64,6 +64,16 @@ resolver = "3"
 [profile.release]
 incremental = true
 
+# The headless lab peer is used for long-running soak scenarios rather than
+# debugging the native ABI. Keep symbols small and retain incremental
+# compilation so rebuilding the scenario harness does not duplicate the large
+# Tor/SQLCipher artifacts in a full-debug target directory.
+[profile.lab]
+inherits = "dev"
+debug = 1
+incremental = true
+codegen-units = 256
+
 # Arti 0.45 currently pulls saturating-time 0.4.0.  The published crate can
 # spin forever on Windows where SystemTime rounds sub-100ns durations to zero.
 # Keep the fix reproducible until an upstream release contains the guard.
