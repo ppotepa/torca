@@ -493,4 +493,5 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDrive
         ],
     );
     diagnostics.set_policy_snapshot(policy.snapshot(std::time::Instant::now()));
+    diagnostics.set_runtime_schedule(scheduling.diagnostic_snapshot(std::time::Instant::now()));
 }

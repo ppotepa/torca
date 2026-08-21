@@ -128,4 +128,23 @@ impl RuntimeSchedulingState {
         }
         sources
     }
+
+    fn diagnostic_snapshot(
+        &self,
+        now: std::time::Instant,
+    ) -> torca_diagnostics::RuntimeScheduleSnapshot {
+        let mut sources = BTreeMap::new();
+        for wake_sources in self.deadlines.values() {
+            for source in wake_sources {
+                *sources.entry(*source).or_default() += 1;
+            }
+        }
+        torca_diagnostics::RuntimeScheduleSnapshot {
+            active_deadlines: self.deadlines.len() as u64,
+            next_deadline_in_ms: self
+                .next_deadline()
+                .map(|deadline| deadline.saturating_duration_since(now).as_millis() as u64),
+            sources,
+        }
+    }
 }

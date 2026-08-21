@@ -34,6 +34,15 @@ pub enum RuntimeWakeSource {
     Debug,
 }
 
+/// Redaction-safe view of the only application-owned deadline registry.
+/// Resource identifiers intentionally do not cross this boundary.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeScheduleSnapshot {
+    pub active_deadlines: u64,
+    pub next_deadline_in_ms: Option<u64>,
+    pub sources: BTreeMap<RuntimeWakeSource, u64>,
+}
+
 /// Bounded observation data for a user-started diagnostics interval.  It is a
 /// counter delta, not a physical battery measurement.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -168,6 +177,7 @@ pub struct DiagnosticBuffer {
     battery: BatteryLedger,
     profile: BatteryProfile,
     policy: Option<RuntimePolicySnapshot>,
+    schedule: RuntimeScheduleSnapshot,
     wake_sources: BTreeMap<RuntimeWakeSource, u64>,
     observation: ObservationState,
 }
@@ -182,6 +192,7 @@ impl DiagnosticBuffer {
             battery: BatteryLedger::new(),
             profile: BatteryProfile::AlwaysAvailable,
             policy: None,
+            schedule: RuntimeScheduleSnapshot::default(),
             wake_sources: BTreeMap::new(),
             observation: ObservationState::default(),
         }
@@ -282,6 +293,11 @@ impl DiagnosticBuffer {
     pub fn set_policy_snapshot(&mut self, snapshot: RuntimePolicySnapshot) {
         self.policy = Some(snapshot);
     }
+    /// Stores the RuntimeOwner deadline registry independently from policy.
+    /// This avoids pretending that attention/demand policy itself owns timers.
+    pub fn set_runtime_schedule(&mut self, snapshot: RuntimeScheduleSnapshot) {
+        self.schedule = snapshot;
+    }
     /// Updates the platform sample after a lifecycle transition or explicit
     /// diagnostics request; no polling is performed here.
     pub fn set_platform_energy_sample(&mut self, sample: PlatformEnergySample) {
@@ -322,18 +338,19 @@ impl DiagnosticBuffer {
                     .map(|(reason, count)| format!("\"{reason:?}\":{count}"))
                     .collect::<Vec<_>>()
                     .join(",");
-                let work = policy
-                    .scheduled_work_classes
+                let work = self
+                    .schedule
+                    .sources
                     .iter()
-                    .map(|(class, count)| format!("\"{class:?}\":{count}"))
+                    .map(|(source, count)| format!("\"{source:?}\":{count}"))
                     .collect::<Vec<_>>()
                     .join(",");
                 format!(
                     "{{\"activeLeases\":{},\"activeDemands\":{},\"scheduledDeadlines\":{},\"nextDeadlineInMs\":{},\"networkGeneration\":{},\"focusActive\":{},\"focusRemainingMs\":{},\"leaseReasons\":{{{reasons}}},\"scheduledWork\":{{{work}}}}}",
                     policy.active_leases,
                     policy.active_demands,
-                    policy.scheduled_deadlines,
-                    policy.next_deadline_in_ms.map_or_else(|| "null".into(), |value| value.to_string()),
+                    self.schedule.active_deadlines,
+                    self.schedule.next_deadline_in_ms.map_or_else(|| "null".into(), |value| value.to_string()),
                     policy.network_generation,
                     policy.focus_active,
                     policy.focus_remaining_ms.map_or_else(|| "null".into(), |value| value.to_string()),
@@ -516,15 +533,22 @@ mod tests {
             scope: torca_battery::ResourceScope::Relay,
             class: torca_battery::WorkClass::RelayProbe,
             reason: torca_battery::DemandReason::ActivePairing,
-            owner: torca_battery::OpaqueId::from_u128(42),
+            owner: torca_battery::OpaqueId::from_u128(9_999),
             expires_at: now + std::time::Duration::from_secs(30),
         });
         let mut diagnostics = DiagnosticBuffer::new(4);
         diagnostics.set_policy_snapshot(governor.snapshot(now));
+        diagnostics.set_runtime_schedule(RuntimeScheduleSnapshot {
+            active_deadlines: 1,
+            next_deadline_in_ms: Some(42),
+            sources: BTreeMap::from([(RuntimeWakeSource::DeliveryDeadline, 1)]),
+        });
         let json = diagnostics.export_json();
         assert!(json.contains("\"whyAwake\""));
         assert!(json.contains("\"activeLeases\":1"));
         assert!(json.contains("ActivePairing"));
-        assert!(!json.contains("42"));
+        assert!(json.contains("DeliveryDeadline"));
+        assert!(json.contains("\"nextDeadlineInMs\":42"));
+        assert!(!json.contains("9999"));
     }
 }
