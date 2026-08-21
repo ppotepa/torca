@@ -33,6 +33,7 @@ fn run() -> Result<(), String> {
     if cli.duration_seconds == 0 {
         return Err("duration-seconds must be positive".into());
     }
+    validate_lab_root(&cli.root)?;
     let mut runtime = torca_native::NativeRuntimeClient::acquire_at(&cli.root)?;
     {
         let started = Instant::now();
@@ -57,6 +58,24 @@ fn run() -> Result<(), String> {
     }
 }
 
+fn validate_lab_root(root: &std::path::Path) -> Result<(), String> {
+    let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") else {
+        return Ok(());
+    };
+    let production_root = PathBuf::from(local_app_data).join("Torca");
+    if is_production_root(root, &production_root) {
+        return Err(format!(
+            "lab root must not use the production Torca profile: {}",
+            production_root.display()
+        ));
+    }
+    Ok(())
+}
+
+fn is_production_root(root: &std::path::Path, production: &std::path::Path) -> bool {
+    root == production || root.starts_with(production)
+}
+
 fn invoke(
     runtime: &mut torca_native::NativeRuntimeClient,
     request_id: &str,
@@ -72,4 +91,24 @@ fn invoke(
     let response = runtime.invoke_json(&request, Duration::from_secs(5))?;
     serde_json::from_str(&response)
         .map_err(|error| format!("decode runtime response failed: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_production_root;
+    use std::path::Path;
+
+    #[test]
+    fn lab_root_does_not_accept_the_production_profile() {
+        let root = Path::new("C:/Users/example/AppData/Local/Torca");
+        let production = Path::new("C:/Users/example/AppData/Local/Torca");
+        assert!(is_production_root(root, production));
+    }
+
+    #[test]
+    fn unrelated_root_is_not_a_production_profile() {
+        let root = Path::new("G:/lab/peer-a");
+        let production = Path::new("C:/Users/example/AppData/Local/Torca");
+        assert!(!is_production_root(root, production));
+    }
 }
