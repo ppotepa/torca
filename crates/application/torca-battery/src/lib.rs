@@ -10,11 +10,12 @@ use std::time::{Duration, Instant};
 
 pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
-    AttentionContext, AttentionSurface, BackgroundSyncCadence, BatteryPreferences, BatteryProfile,
-    ConnectionLease, ContactAvailabilityMode, DemandReason, EffectiveBatteryPolicy, EvidenceKind,
-    FocusLease, Freshness, LeaseLifetime, MeteredTransferPolicy, PolicyEvent, PolicyOverrideReason,
-    RequestedBatteryMode, ResourceScope, RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor,
-    RuntimePolicySnapshot, SystemEnergyState, VisualActivityPolicy, WorkClass, WorkDemand,
+    AttentionContext, AttentionSurface, BackgroundSyncCadence, BatteryPolicy, BatteryPreferences,
+    BatteryProfile, ConnectionLease, ContactAvailabilityMode, DemandReason, EffectiveBatteryPolicy,
+    EvidenceKind, FocusLease, Freshness, LeaseLifetime, MeteredTransferPolicy, PolicyEvent,
+    PolicyOverrideReason, RequestedBatteryMode, ResourceScope, RuntimeEventHub,
+    RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, SystemEnergyState,
+    TransferDecision, VisualActivityPolicy, WorkClass, WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
@@ -158,75 +159,6 @@ pub enum WakeReason {
     Diagnostic,
     Scheduler,
     PolicySuppressed,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TransferDecision {
-    Allow,
-    PauseMetered,
-    PauseBatterySaver,
-}
-
-/// Small policy facade used by executors for discretionary work. Reliable
-/// delivery must continue even when this facade denies cosmetic work.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BatteryPolicy {
-    profile: BatteryProfile,
-    metered_transfers: MeteredTransferPolicy,
-}
-
-impl BatteryPolicy {
-    pub fn new(profile: BatteryProfile) -> Self {
-        Self { profile, metered_transfers: MeteredTransferPolicy::PauseLarge }
-    }
-
-    pub fn profile(self) -> BatteryProfile {
-        self.profile
-    }
-
-    pub fn set_profile(&mut self, profile: BatteryProfile) {
-        self.profile = profile;
-    }
-
-    pub fn with_metered_transfers(mut self, policy: MeteredTransferPolicy) -> Self {
-        self.metered_transfers = policy;
-        self
-    }
-
-    /// Central admission decision for attachments. Reliable text/control
-    /// traffic is intentionally outside this method and is never suppressed.
-    pub fn attachment_decision(self, bytes: u64, metered: bool) -> TransferDecision {
-        if self.profile == BatteryProfile::BatterySaver && bytes > 256 * 1024 {
-            return TransferDecision::PauseBatterySaver;
-        }
-        if !metered {
-            return TransferDecision::Allow;
-        }
-        match self.metered_transfers {
-            MeteredTransferPolicy::AllowAll => TransferDecision::Allow,
-            MeteredTransferPolicy::PauseLarge if bytes > 5 * 1024 * 1024 => {
-                TransferDecision::PauseMetered
-            }
-            MeteredTransferPolicy::PauseAll => TransferDecision::PauseMetered,
-            MeteredTransferPolicy::PauseLarge => TransferDecision::Allow,
-        }
-    }
-
-    /// Whether an optional cosmetic refresh may run now.
-    pub fn allows_cosmetic_work(self, user_visible: bool, explicit_diagnostic: bool) -> bool {
-        match self.profile {
-            BatteryProfile::AlwaysAvailable | BatteryProfile::Diagnostics => {
-                user_visible || explicit_diagnostic
-            }
-            BatteryProfile::Balanced => user_visible || explicit_diagnostic,
-            BatteryProfile::BatterySaver => explicit_diagnostic,
-        }
-    }
-
-    /// Durable work is never suppressed by battery policy.
-    pub fn allows_reliable_work(self) -> bool {
-        true
-    }
 }
 
 /// One redaction-safe transition in the in-memory battery ledger.

@@ -264,6 +264,73 @@ impl BatteryPreferences {
     }
 }
 
+/// Admission result for an optional attachment transfer. Reliable text and
+/// control delivery deliberately do not use this decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferDecision {
+    Allow,
+    PauseMetered,
+    PauseBatterySaver,
+}
+
+/// Small policy facade consumed by feature executors. It contains no timers,
+/// sockets or storage and therefore belongs with the policy reducer rather
+/// than a diagnostics compatibility crate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BatteryPolicy {
+    profile: BatteryProfile,
+    metered_transfers: MeteredTransferPolicy,
+}
+
+impl BatteryPolicy {
+    pub const fn new(profile: BatteryProfile) -> Self {
+        Self { profile, metered_transfers: MeteredTransferPolicy::PauseLarge }
+    }
+
+    pub const fn profile(self) -> BatteryProfile {
+        self.profile
+    }
+
+    pub fn set_profile(&mut self, profile: BatteryProfile) {
+        self.profile = profile;
+    }
+
+    pub const fn with_metered_transfers(mut self, policy: MeteredTransferPolicy) -> Self {
+        self.metered_transfers = policy;
+        self
+    }
+
+    pub fn attachment_decision(self, bytes: u64, metered: bool) -> TransferDecision {
+        if self.profile == BatteryProfile::BatterySaver && bytes > 256 * 1024 {
+            return TransferDecision::PauseBatterySaver;
+        }
+        if !metered {
+            return TransferDecision::Allow;
+        }
+        match self.metered_transfers {
+            MeteredTransferPolicy::AllowAll => TransferDecision::Allow,
+            MeteredTransferPolicy::PauseLarge if bytes > 5 * 1024 * 1024 => {
+                TransferDecision::PauseMetered
+            }
+            MeteredTransferPolicy::PauseAll => TransferDecision::PauseMetered,
+            MeteredTransferPolicy::PauseLarge => TransferDecision::Allow,
+        }
+    }
+
+    pub const fn allows_cosmetic_work(self, user_visible: bool, explicit_diagnostic: bool) -> bool {
+        match self.profile {
+            BatteryProfile::AlwaysAvailable
+            | BatteryProfile::Diagnostics
+            | BatteryProfile::Balanced => user_visible || explicit_diagnostic,
+            BatteryProfile::BatterySaver => explicit_diagnostic,
+        }
+    }
+
+    pub const fn allows_reliable_work(self) -> bool {
+        true
+    }
+}
+
 impl VisualActivityPolicy {
     pub fn from_wire(value: &str) -> Self {
         match value {
