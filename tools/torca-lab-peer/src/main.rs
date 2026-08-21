@@ -41,6 +41,13 @@ fn run() -> Result<(), String> {
             let response = invoke(&mut runtime, "lab-diagnostics")?;
             let status =
                 response.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+            if status != "succeeded" {
+                let code = response
+                    .pointer("/error/code")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("UNKNOWN");
+                return Err(format!("native runtime is not ready ({code})"));
+            }
             let revision =
                 response.get("revision").and_then(serde_json::Value::as_u64).unwrap_or(0);
             println!("lab-peer root={} status={status} revision={revision}", cli.root.display());

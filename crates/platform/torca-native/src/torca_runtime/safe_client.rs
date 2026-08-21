@@ -15,6 +15,7 @@ impl NativeRuntimeClient {
         // This process is a dedicated lab peer. No other thread is started
         // before this call, so mutating its process environment is safe.
         unsafe { std::env::set_var("TORCA_APP_ROOT", root) };
+        unsafe { std::env::set_var("TORCA_LOG_ROOT", root.join("logs")) };
         let handle = torca_runtime_acquire();
         if handle.is_null() {
             return Err("native runtime acquisition failed".into());

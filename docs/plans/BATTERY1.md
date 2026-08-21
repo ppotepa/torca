@@ -68,6 +68,10 @@ The native host accepts a process-scoped `TORCA_APP_ROOT` override for that
 runner. It isolates the lab peer's identity, database and Tor state while
 leaving the normal desktop storage root unchanged.
 
+`cargo run -p torca-lab-peer -- --root <path>` starts one such production
+runtime and reads diagnostics through the same contract ABI as Flutter. A
+two-peer scenario will orchestrate two independent invocations.
+
 The deterministic soak now includes both `torca-runtime` and
 `torca-diagnostics`, so policy scheduling and observation/export regressions
 are exercised together on every requested iteration.
