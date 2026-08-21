@@ -186,15 +186,6 @@ impl ConnectionLease {
     }
 }
 
-/// A scheduled work permit returned by the governor.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WorkPermit {
-    pub scope: ResourceScope,
-    pub class: WorkClass,
-    pub due_at: Instant,
-    pub cost: u32,
-}
-
 /// A work request supplied to the scheduler.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkDemand {
@@ -220,46 +211,12 @@ pub enum PolicyEvent {
 pub struct PolicyDelta {
     pub attention_changed: bool,
     pub network_changed: bool,
-    pub permits_due: Vec<WorkPermit>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct TokenBucket {
-    capacity: u32,
-    tokens: u32,
-    refill_every: Duration,
-    last_refill: Instant,
-}
-
-impl TokenBucket {
-    fn new(now: Instant, capacity: u32, refill_every: Duration) -> Self {
-        Self { capacity, tokens: capacity, refill_every, last_refill: now }
-    }
-
-    fn consume(&mut self, now: Instant, cost: u32) -> bool {
-        let elapsed = now.saturating_duration_since(self.last_refill);
-        if elapsed >= self.refill_every {
-            let units = elapsed.as_nanos() / self.refill_every.as_nanos().max(1);
-            let refill = u32::try_from(units).unwrap_or(u32::MAX);
-            self.tokens = self.tokens.saturating_add(refill).min(self.capacity);
-            self.last_refill = now;
-        }
-        if self.tokens < cost {
-            return false;
-        }
-        self.tokens -= cost;
-        true
-    }
 }
 
 /// Cheap runtime counters used by diagnostics and idle regression tests.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RuntimeStats {
-    pub scheduler_wakeups: u64,
-    pub permits_issued: u64,
     pub evidence_events: u64,
-    pub peer_probes: u64,
-    pub relay_probes: u64,
     pub snapshot_builds: u64,
 }
 
@@ -272,14 +229,12 @@ pub struct RuntimeGovernor {
     focus: Option<FocusLease>,
     demands: HashMap<OpaqueId, WorkDemand>,
     evidence: HashMap<ResourceScope, HealthEvidence>,
-    deadlines: BTreeMap<Instant, Vec<WorkPermit>>,
-    budgets: HashMap<WorkClass, TokenBucket>,
     stats: RuntimeStats,
 }
 
 impl RuntimeGovernor {
     /// Creates an idle governor with no scheduled work.
-    pub fn new(now: Instant) -> Self {
+    pub fn new(_now: Instant) -> Self {
         Self {
             attention: AttentionContext::default(),
             network_generation: 0,
@@ -288,8 +243,6 @@ impl RuntimeGovernor {
             focus: None,
             demands: HashMap::new(),
             evidence: HashMap::new(),
-            deadlines: BTreeMap::new(),
-            budgets: default_budgets(now),
             stats: RuntimeStats::default(),
         }
     }
@@ -329,7 +282,6 @@ impl RuntimeGovernor {
                 self.persistent_lease_owners.remove(&owner);
             }
         }
-        delta.permits_due = self.take_due(now);
         delta
     }
 
@@ -467,16 +419,6 @@ impl RuntimeGovernor {
             .map_or(Freshness::Unknown, |item| item.freshness(now, self.network_generation))
     }
 
-    /// Schedules a permit for a later deadline.
-    pub fn schedule(&mut self, permit: WorkPermit) {
-        self.deadlines.entry(permit.due_at).or_default().push(permit);
-    }
-
-    /// Returns the next scheduled wakeup, if any.
-    pub fn next_deadline(&self) -> Option<Instant> {
-        self.deadlines.keys().next().copied()
-    }
-
     /// Returns the earliest lease expiry so the host scheduler can retire
     /// demand without relying on a periodic maintenance tick.
     pub fn next_lease_expiry(&self) -> Option<Instant> {
@@ -491,39 +433,6 @@ impl RuntimeGovernor {
             .min()
     }
 
-    /// Takes due permits, applying the per-class budget and active-lease rule.
-    pub fn take_due(&mut self, now: Instant) -> Vec<WorkPermit> {
-        self.expire(now);
-        let due_keys = self.deadlines.range(..=now).map(|(key, _)| *key).collect::<Vec<_>>();
-        let mut permits = Vec::new();
-        for key in due_keys {
-            let Some(items) = self.deadlines.remove(&key) else { continue };
-            for permit in items {
-                if !self.has_active_lease(permit.scope, now) {
-                    continue;
-                }
-                let budget = self
-                    .budgets
-                    .entry(permit.class)
-                    .or_insert_with(|| TokenBucket::new(now, 2, Duration::from_secs(3)));
-                if budget.consume(now, permit.cost.max(1)) {
-                    if permit.class == WorkClass::PeerProbe {
-                        self.stats.peer_probes = self.stats.peer_probes.saturating_add(1);
-                    }
-                    if permit.class == WorkClass::RelayProbe {
-                        self.stats.relay_probes = self.stats.relay_probes.saturating_add(1);
-                    }
-                    self.stats.permits_issued = self.stats.permits_issued.saturating_add(1);
-                    permits.push(permit);
-                }
-            }
-        }
-        if !permits.is_empty() {
-            self.stats.scheduler_wakeups = self.stats.scheduler_wakeups.saturating_add(1);
-        }
-        permits
-    }
-
     /// Returns a snapshot suitable for diagnostics and tests.
     pub fn snapshot(&mut self, now: Instant) -> RuntimePolicySnapshot {
         self.expire(now);
@@ -531,23 +440,17 @@ impl RuntimeGovernor {
         for lease in self.leases.values() {
             *lease_reasons.entry(lease.reason).or_insert(0_usize) += 1;
         }
-        let mut scheduled_classes = BTreeMap::new();
-        for permits in self.deadlines.values() {
-            for permit in permits {
-                *scheduled_classes.entry(permit.class).or_insert(0_usize) += 1;
-            }
-        }
         RuntimePolicySnapshot {
             attention: self.attention.clone(),
             network_generation: self.network_generation,
             active_leases: self.leases.len(),
             active_demands: self.demands.len(),
-            scheduled_deadlines: self.deadlines.len(),
+            // RuntimeOwner owns the only deadline registry. The governor is
+            // policy state only: attention, leases and evidence.
+            scheduled_deadlines: 0,
             active_lease_reasons: lease_reasons,
-            scheduled_work_classes: scheduled_classes,
-            next_deadline_in_ms: self.next_deadline().map(|deadline| {
-                deadline.saturating_duration_since(now).as_millis().min(u128::from(u64::MAX)) as u64
-            }),
+            scheduled_work_classes: BTreeMap::new(),
+            next_deadline_in_ms: None,
             stats: self.stats,
             focus_active: self.focus.is_some(),
             focus_remaining_ms: self.focus.map(|focus| {
@@ -590,14 +493,6 @@ pub struct RuntimePolicySnapshot {
     pub stats: RuntimeStats,
     pub focus_active: bool,
     pub focus_remaining_ms: Option<u64>,
-}
-
-fn default_budgets(now: Instant) -> HashMap<WorkClass, TokenBucket> {
-    let mut budgets = HashMap::new();
-    for class in [WorkClass::PeerProbe, WorkClass::RelayProbe] {
-        budgets.insert(class, TokenBucket::new(now, 2, Duration::from_secs(3)));
-    }
-    budgets
 }
 
 /// A process-local revision hub for replacing timer-driven polling.
@@ -750,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn permits_require_active_lease_and_consume_budget() {
+    fn lease_expiry_is_owned_by_the_runtime_scheduler() {
         let now = Instant::now();
         let mut governor = RuntimeGovernor::new(now);
         let owner = id(4);
@@ -763,11 +658,8 @@ mod tests {
             expires_at: now + Duration::from_secs(10),
         });
         assert!(governor.next_lease_expiry().is_some());
-        governor.schedule(WorkPermit { scope, class: WorkClass::PeerProbe, due_at: now, cost: 1 });
-        assert_eq!(governor.take_due(now).len(), 1);
         governor.release_lease(owner);
-        governor.schedule(WorkPermit { scope, class: WorkClass::PeerProbe, due_at: now, cost: 1 });
-        assert!(governor.take_due(now).is_empty());
+        assert!(!governor.has_active_lease(scope, now));
     }
 
     #[test]
@@ -840,9 +732,7 @@ mod tests {
     fn idle_governor_has_no_scheduled_work_or_active_leases() {
         let now = Instant::now();
         let mut governor = RuntimeGovernor::new(now);
-        assert_eq!(governor.next_deadline(), None);
         assert_eq!(governor.snapshot(now).active_leases, 0);
-        assert!(governor.take_due(now).is_empty());
     }
 
     #[test]
@@ -851,12 +741,10 @@ mod tests {
         let mut governor = RuntimeGovernor::new(start);
         for step in 0..=360 {
             let now = start + Duration::from_secs(step * 5);
-            assert!(governor.take_due(now).is_empty());
             let snapshot = governor.snapshot(now);
             assert_eq!(snapshot.active_leases, 0);
             assert_eq!(snapshot.active_demands, 0);
             assert_eq!(snapshot.scheduled_deadlines, 0);
-            assert_eq!(snapshot.stats.scheduler_wakeups, 0);
         }
     }
 
