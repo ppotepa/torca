@@ -163,12 +163,23 @@ mod tests {
     }
 
     #[test]
-    fn read_only_commands_do_not_request_runtime_reconciliation() {
+    fn read_only_commands_do_not_request_runtime_maintenance() {
         let (diagnostics, _response) = mpsc::channel();
         let (attachments, _response) = mpsc::channel();
-        assert!(!RuntimeCommand::Diagnostics(diagnostics).requires_reconciliation());
-        assert!(!RuntimeCommand::AttachmentSnapshot(attachments).requires_reconciliation());
-        assert!(RuntimeCommand::SetForeground(false).requires_reconciliation());
+        assert!(!RuntimeCommand::Diagnostics(diagnostics).requires_health_maintenance());
+        assert!(!RuntimeCommand::AttachmentSnapshot(attachments).requires_delivery_maintenance());
+        assert!(RuntimeCommand::SetForeground(false).requires_health_maintenance());
+    }
+
+    #[test]
+    fn battery_input_does_not_start_network_or_delivery_maintenance() {
+        let command = RuntimeCommand::SetBatteryPolicyInputs(
+            BatteryPreferences::default(),
+            SystemEnergyState::default(),
+        );
+        assert!(!command.requires_health_maintenance());
+        assert!(!command.requires_delivery_maintenance());
+        assert!(!command.requires_peer_maintenance());
     }
 
     #[test]

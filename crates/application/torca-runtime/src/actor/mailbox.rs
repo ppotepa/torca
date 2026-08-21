@@ -51,22 +51,52 @@ enum RuntimeCommand {
 }
 
 impl RuntimeCommand {
-    /// A query must not accidentally become a network/persistence maintenance
-    /// pass.  Executor wakes carry their own source and are handled by the
-    /// scheduler in `RuntimeOwner`.
-    fn requires_reconciliation(&self) -> bool {
-        !matches!(
+    /// Commands that need Tor/pairing/relay reconciliation. Presentation and
+    /// power-policy mutations deliberately do not enter this lane.
+    fn requires_health_maintenance(&self) -> bool {
+        matches!(
             self,
-            Self::AttachmentSnapshot(_)
-                | Self::NetworkSnapshot(_)
-                | Self::Diagnostics(_)
-                | Self::StartBatteryObservation(_)
-                | Self::StopBatteryObservation(_)
-                | Self::ResetBatteryObservation(_)
-                | Self::ExportAttachment(_, _, _)
-                | Self::ExportAttachmentPreview(_, _, _)
-                | Self::Wake(_)
-                | Self::Shutdown(_)
+            Self::SetAttention(_)
+                | Self::CreatePairing(..)
+                | Self::JoinPairing(..)
+                | Self::ApprovePairing(..)
+                | Self::RejectPairing(..)
+                | Self::CancelPairing(..)
+                | Self::NetworkChanged
+                | Self::SetForeground(_)
+                | Self::WakeDelivery(_)
+        )
+    }
+
+    /// Delivery maintenance is restricted to actual delivery/attachment work
+    /// or an explicit delivery wake. This keeps settings and local contact
+    /// edits from walking a potentially large contact list.
+    fn requires_delivery_maintenance(&self) -> bool {
+        matches!(
+            self,
+            Self::QueueAttachment(..)
+                | Self::RetryAttachment(..)
+                | Self::CancelAttachment(..)
+                | Self::QueueReaction(..)
+                | Self::MarkConversationRead(..)
+                | Self::WakeDelivery(_)
+                | Self::ReleaseDelivery(_)
+        )
+    }
+
+    /// Peer state is reconciled only when a peer-facing command changes
+    /// demand, an attention route names a peer, or delivery explicitly wakes
+    /// the peer lane.
+    fn requires_peer_maintenance(&self) -> bool {
+        matches!(
+            self,
+            Self::SetAttention(_)
+                | Self::SetRadioDemand(..)
+                | Self::SetInstantContactDemand(..)
+                | Self::SetRadioTransmission(..)
+                | Self::WakeDelivery(_)
+                | Self::ReleaseDelivery(_)
+                | Self::NetworkChanged
         )
     }
 }

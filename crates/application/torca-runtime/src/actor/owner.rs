@@ -158,9 +158,17 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
 
     loop {
         let runtime_wait = wait_for_runtime_command(&receiver, scheduling.next_deadline());
-        let command_wake = matches!(
+        let command_health = matches!(
             &runtime_wait,
-            RuntimeWait::Command(command) if command.requires_reconciliation()
+            RuntimeWait::Command(command) if command.requires_health_maintenance()
+        );
+        let command_delivery = matches!(
+            &runtime_wait,
+            RuntimeWait::Command(command) if command.requires_delivery_maintenance()
+        );
+        let command_peer = matches!(
+            &runtime_wait,
+            RuntimeWait::Command(command) if command.requires_peer_maintenance()
         );
         let mut due_sources = matches!(&runtime_wait, RuntimeWait::Timeout)
             .then(|| scheduling.take_due(std::time::Instant::now()))
@@ -428,15 +436,15 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         // Deadline wakes, however, execute only the owning subsystem.  This
         // prevents an unrelated Tor deadline from scanning contacts, probing
         // peers or driving attachment state in the background.
-        let run_health = command_wake
+        let run_health = command_health
             || work.refresh_contacts
             || due_sources.contains(&RuntimeWakeSource::TorDeadline)
             || due_sources.contains(&RuntimeWakeSource::PairingDeadline)
             || due_sources.contains(&RuntimeWakeSource::RelayDeadline)
             || due_sources.contains(&RuntimeWakeSource::LeaseExpiry);
-        let run_delivery = command_wake
+        let run_delivery = command_delivery
             || due_sources.contains(&RuntimeWakeSource::DeliveryDeadline);
-        let run_peer = command_wake || due_sources.contains(&RuntimeWakeSource::PeerDeadline);
+        let run_peer = command_peer || due_sources.contains(&RuntimeWakeSource::PeerDeadline);
         if run_health {
             maintain_runtime_health(
                 engine,
