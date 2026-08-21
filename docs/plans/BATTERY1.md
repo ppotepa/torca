@@ -44,13 +44,12 @@ incoming work can still hold a durable lease independently of the UI.
 
 The remaining implementation work is:
 
-1. Migrate user preferences to Automatic, Always
-   reachable and Battery saver while accepting legacy persisted values.
-2. Finish dirty-peer maintenance so delivery routes only active contacts rather
-   than using the current transitional contact projection.
-3. Finish the Debug-only Battery, Runtime, Logs and Incident console; bounded sanitized
+1. Finish dirty-peer maintenance for restart recovery and attachments, so every
+   delivery path routes only active contacts rather than using the remaining
+   transitional contact projection fallback.
+2. Finish the Debug-only Battery, Runtime, Logs and Incident console; bounded sanitized
    incident bundles and optional dev-only ingest.
-4. Add the lab peer and deterministic/real
+3. Add the lab peer and deterministic/real
    device validation.
 
 ## Acceptance checks
