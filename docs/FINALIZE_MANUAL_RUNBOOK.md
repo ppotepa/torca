@@ -2,7 +2,9 @@
 
 This runbook covers real Windows/Android acceptance evidence that cannot be replaced by source checks alone. It is intentionally manual and should be executed on the exact artifacts being evaluated.
 
-The detailed implementation checklist lives in [`../FINALIZE.md`](../FINALIZE.md). This runbook records evidence; it does not turn unchecked implementation notes into completed release gates.
+The current implementation and validation status lives in [`STATUS.md`](STATUS.md).
+This runbook records manual evidence; it does not turn unchecked notes into
+completed release gates.
 
 ## Before the run
 

@@ -2,7 +2,7 @@
 
 **Document type:** focused engineering record.  
 **Evergreen architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md).  
-**Current status:** [`docs/STATUS.md`](docs/STATUS.md) and [`0.3_PROGRESS.md`](0.3_PROGRESS.md).
+**Current status:** [`docs/STATUS.md`](docs/STATUS.md).
 
 This document records the connectivity invariants that motivated the current supervision/runtime-policy work. Exact retry constants and worker names are implementation details; the durable rules below are the part that should survive refactors.
 
@@ -98,4 +98,4 @@ Connectivity confidence requires more than source checks. Useful gates include:
 - supported-platform builds; and
 - real Windows ↔ Android scenarios covering Tor warm-up, pairing, peer messaging, attachments, relay/network interruption and Radio recovery.
 
-Do not describe a target property in this file as device-validated unless the corresponding real-device scenario was actually run. Record detailed dated evidence in [`0.3_PROGRESS.md`](0.3_PROGRESS.md) or the manual acceptance record rather than adding permanent test counts/constants here.
+Do not describe a target property in this file as device-validated unless the corresponding real-device scenario was actually run. Record detailed dated evidence in the manual acceptance record rather than adding permanent test counts/constants here.

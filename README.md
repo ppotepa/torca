@@ -118,9 +118,9 @@ The main maintained documents are:
 - [`ROADMAP.md`](ROADMAP.md) — long-lived product and engineering direction;
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contributor workflow and documentation rules;
 - [`0.3.md`](0.3.md) — current architecture-track plan; and
-- [`0.3_PROGRESS.md`](0.3_PROGRESS.md) — detailed engineering ledger for the current track.
+- [`docs/STATUS.md`](docs/STATUS.md) — current engineering and validation status.
 
-Files such as `BATTERY.MD`, `CONNECTIVITY_HARDENING.md` and `FINALIZE.md` are focused engineering records and acceptance plans. They provide useful context, but they do not override the evergreen architecture/security documents or actual source/validation evidence.
+Focused plans such as [`docs/plans/BATTERY1.md`](docs/plans/BATTERY1.md) provide current implementation intent, but they do not override evergreen architecture/security documents or actual source/validation evidence.
 
 Planning labels such as “0.3” and the Cargo package version serve different purposes and can move at different times. Do not infer release maturity from either label alone.
 

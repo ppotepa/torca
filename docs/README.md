@@ -25,7 +25,7 @@ When an evergreen document disagrees with the current source, treat the source a
 ## Current engineering handoff
 
 - [`../0.3.md`](../0.3.md) — current architecture-track plan and invariants.
-- [`../0.3_PROGRESS.md`](../0.3_PROGRESS.md) — detailed implementation and validation ledger for the current track.
+- [`STATUS.md`](STATUS.md) — detailed implementation and validation status.
 
 The `0.3` label is a planning/work-track label. The package version in `Cargo.toml` is separate build metadata; neither label by itself establishes release maturity.
 
@@ -36,7 +36,7 @@ These are useful design/acceptance records, but they are not evergreen product s
 - [`architecture/runtime-control.md`](architecture/runtime-control.md) — canonical attention/demand/evidence/deadline runtime contract.
 - [`validation/runtime-power.md`](validation/runtime-power.md) — runtime power validation and soak protocol.
 - [`../CONNECTIVITY_HARDENING.md`](../CONNECTIVITY_HARDENING.md) — connectivity supervision invariants and implementation notes.
-- [`../FINALIZE.md`](../FINALIZE.md) — detailed 0.3 implementation/release-gate checklist.
+- [`plans/BATTERY1.md`](plans/BATTERY1.md) — current runtime/power implementation plan.
 - [`FINALIZE_MANUAL_RUNBOOK.md`](FINALIZE_MANUAL_RUNBOOK.md) — real-device manual acceptance procedure.
 
 These files may contain dated checkpoints or historical implementation detail. Once a principle becomes stable, move the durable conclusion into the appropriate evergreen document instead of treating the working record as a permanent specification.

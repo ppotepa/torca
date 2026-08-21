@@ -1,6 +1,6 @@
 # Torca roadmap
 
-This roadmap describes long-lived product and engineering direction. It is deliberately not a release checklist: detailed current implementation/validation handoff lives in [`0.3_PROGRESS.md`](0.3_PROGRESS.md), while [`docs/STATUS.md`](docs/STATUS.md) summarizes maturity.
+This roadmap describes long-lived product and engineering direction. It is deliberately not a release checklist: current implementation and validation handoff lives in [`docs/STATUS.md`](docs/STATUS.md).
 
 ## Direction
 

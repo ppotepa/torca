@@ -10,7 +10,7 @@ Read:
 2. [`docs/STATUS.md`](docs/STATUS.md) for current maturity and outstanding validation;
 3. [`ARCHITECTURE.md`](ARCHITECTURE.md) for ownership/dependency rules;
 4. [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) for security-sensitive work; and
-5. [`0.3_PROGRESS.md`](0.3_PROGRESS.md) when you need the detailed current engineering handoff.
+5. [`docs/STATUS.md`](docs/STATUS.md) for the current engineering handoff.
 
 Use [`docs/README.md`](docs/README.md) to decide whether a documentation change belongs in an evergreen document or a working ledger.
 
