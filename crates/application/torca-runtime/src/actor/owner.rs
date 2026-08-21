@@ -176,22 +176,14 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
                 work.attention_generation = context.generation;
                 let now = std::time::Instant::now();
-                if let Some(owner) = work.attention_owner.take() {
-                    policy.release_lease(owner);
-                }
-                for owner in work.visible_contact_leases.values().copied() {
-                    policy.release_lease(owner);
-                }
-                work.visible_contact_leases.clear();
-                let visible_expiry = now + Duration::from_secs(3 * 60);
+                release_attention_leases(policy, &mut work);
                 for opaque_id in context.visible_contact_ids.iter().copied() {
                     let contact_id = ContactId::from_opaque(opaque_id);
                     let owner = visible_contact_lease_owner(contact_id, context.generation);
-                    acquire_visible_contact_lease(policy, contact_id, owner, visible_expiry);
+                    acquire_visible_contact_lease(policy, contact_id, owner);
                     work.visible_contact_leases.insert(contact_id, owner);
                 }
                 let owner = OpaqueId::from_u128(u128::from(context.generation.max(1)));
-                let expires_at = now + Duration::from_secs(5 * 60);
                 let demand = match context.surface {
                     torca_battery::AttentionSurface::Conversation(peer)
                     | torca_battery::AttentionSurface::Radio(peer) => Some(WorkDemand {
@@ -213,22 +205,22 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                             DemandReason::FocusedConversation
                         },
                         owner,
-                        expires_at,
+                        expires_at: now,
                     }),
                     torca_battery::AttentionSurface::Pairing(_relay) => Some(WorkDemand {
                         scope: ResourceScope::Relay,
                         class: WorkClass::RelayProbe,
                         reason: DemandReason::ActivePairing,
                         owner,
-                        expires_at,
+                        expires_at: now,
                     }),
                     _ => None,
                 };
                 if let Some(demand) = demand {
                     if let torca_battery::AttentionSurface::Conversation(peer) = context.surface {
-                        policy.acquire_focus(peer, owner, expires_at, now);
+                        policy.acquire_persistent_focus(peer, owner, now);
                     } else {
-                        policy.acquire_lease(demand);
+                        policy.acquire_persistent_lease(demand);
                     }
                     work.attention_owner = Some(owner);
                 }
@@ -292,6 +284,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     scheduling.background_grace_deadline = None;
                     let _ = tor.set_dormant(false);
                 } else {
+                    release_attention_leases(policy, &mut work);
                     scheduling.background_grace_deadline =
                         Some(std::time::Instant::now() + Duration::from_secs(30));
                 }

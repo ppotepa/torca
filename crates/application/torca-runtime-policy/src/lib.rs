@@ -345,9 +345,34 @@ impl RuntimeGovernor {
         focus
     }
 
+    /// Installs UI focus that remains valid until the host explicitly changes
+    /// attention or backgrounds.  It intentionally creates no renewal timer.
+    pub fn acquire_persistent_focus(
+        &mut self,
+        contact: OpaqueId,
+        owner: OpaqueId,
+        now: Instant,
+    ) -> FocusLease {
+        if let Some(previous) = self.focus.take() {
+            self.release_lease(previous.owner);
+        }
+        let focus = FocusLease { contact, owner, expires_at: now };
+        self.focus = Some(focus);
+        self.acquire_persistent_lease(WorkDemand {
+            scope: ResourceScope::Peer(contact),
+            class: WorkClass::PeerDial,
+            reason: DemandReason::FocusedConversation,
+            owner,
+            expires_at: now,
+        });
+        focus
+    }
+
     pub fn focus(&mut self, now: Instant) -> Option<FocusLease> {
         self.expire(now);
-        self.focus
+        self.focus.filter(|focus| {
+            self.persistent_lease_owners.contains(&focus.owner) || focus.active_at(now)
+        })
     }
 
     pub fn is_focused(&mut self, contact: OpaqueId, now: Instant) -> bool {
@@ -471,7 +496,9 @@ impl RuntimeGovernor {
             }
             active
         });
-        if self.focus.is_some_and(|focus| !focus.active_at(now)) {
+        if self.focus.is_some_and(|focus| {
+            !self.persistent_lease_owners.contains(&focus.owner) && !focus.active_at(now)
+        }) {
             self.focus = None;
         }
     }
@@ -726,6 +753,18 @@ mod tests {
         let later = now + Duration::from_millis(2);
         assert_eq!(governor.focus(later), None);
         assert!(!governor.snapshot(later).focus_active);
+    }
+
+    #[test]
+    fn persistent_focus_requires_explicit_release_not_a_timer() {
+        let now = Instant::now();
+        let mut governor = RuntimeGovernor::new(now);
+        let owner = id(81);
+        governor.acquire_persistent_focus(id(80), owner, now);
+        assert!(governor.is_focused(id(80), now + Duration::from_secs(60 * 60)));
+        assert_eq!(governor.next_lease_expiry(), None);
+        governor.release_lease(owner);
+        assert!(!governor.is_focused(id(80), now + Duration::from_secs(60 * 60)));
     }
 
     #[test]

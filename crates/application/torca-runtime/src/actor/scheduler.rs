@@ -137,15 +137,26 @@ fn acquire_visible_contact_lease(
     policy: &mut RuntimeGovernor,
     contact_id: ContactId,
     owner: OpaqueId,
-    expires_at: std::time::Instant,
 ) {
-    policy.acquire_lease(WorkDemand {
+    policy.acquire_persistent_lease(WorkDemand {
         scope: ResourceScope::Peer(contact_id.to_opaque()),
         class: WorkClass::PeerProbe,
         reason: DemandReason::VisibleContact,
         owner,
-        expires_at,
+        // UI attention is released explicitly on navigation/background, so
+        // it must not manufacture a synthetic expiry wake.
+        expires_at: std::time::Instant::now(),
     });
+}
+
+fn release_attention_leases(policy: &mut RuntimeGovernor, work: &mut RuntimeWorkState) {
+    if let Some(owner) = work.attention_owner.take() {
+        policy.release_lease(owner);
+    }
+    for owner in work.visible_contact_leases.values().copied() {
+        policy.release_lease(owner);
+    }
+    work.visible_contact_leases.clear();
 }
 
 fn acquire_instant_contact_lease(policy: &mut RuntimeGovernor, contact_id: ContactId) {
