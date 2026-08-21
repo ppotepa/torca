@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory = $false)][string]$DeviceId,
     [Parameter(Mandatory = $false)][string]$OutputRoot,
     [Parameter(Mandatory = $false)][switch]$RequireUnplugged,
-    [Parameter(Mandatory = $false)][switch]$RequireScreenOff
+    [Parameter(Mandatory = $false)][switch]$RequireScreenOff,
+    [Parameter(Mandatory = $false)][switch]$CollectNativeDiagnostics,
+    [Parameter(Mandatory = $false)][string]$NativeLogRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +15,9 @@ if ($DurationMinutes -lt 1) { throw 'DurationMinutes must be at least 1.' }
 if (-not $OutputRoot) {
     $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     $OutputRoot = Join-Path $scriptRoot '../artifacts/soak'
+}
+if (-not $NativeLogRoot) {
+    $NativeLogRoot = "/sdcard/Android/data/$Package/files/torca/logs"
 }
 
 $deviceLines = @(& adb devices 2>&1)
@@ -41,6 +46,16 @@ function Capture-Adb([string]$Name, [string[]]$Arguments) {
     Invoke-SelectedAdb $Arguments 2>&1 | Out-File -Encoding utf8 $path
 }
 
+function Capture-NativeDiagnostics([string]$Destination) {
+    $nativeOutput = Join-Path $output $Destination
+    New-Item -ItemType Directory -Force -Path $nativeOutput | Out-Null
+    $listing = Invoke-SelectedAdb @('shell', 'find', $NativeLogRoot, '-type', 'f', '-name', '*.json', '-o', '-name', '*.log') 2>&1 | Out-String
+    $listing | Out-File -Encoding utf8 (Join-Path $nativeOutput 'listing.txt')
+    $pull = Invoke-SelectedAdb @('pull', $NativeLogRoot, $nativeOutput) 2>&1 | Out-String
+    $pull | Out-File -Encoding utf8 (Join-Path $nativeOutput 'pull.txt')
+    return (($LASTEXITCODE -eq 0) -and ($listing -notmatch '(?im)(No such file|Permission denied|not found)'))
+}
+
 function Get-PowerSource([string]$BatteryText) {
     $sources = @('AC', 'USB', 'Wireless') | Where-Object {
         $BatteryText -match "(?im)^\s*$($_) powered:\s*true\s*$"
@@ -64,6 +79,10 @@ if ($RequireUnplugged -and $powerSourceBefore -ne 'battery') {
     throw "Battery soak requires an unplugged device, but '$DeviceId' reports power source '$powerSourceBefore'."
 }
 Capture-Adb 'power-before.txt' @('shell', 'dumpsys', 'power')
+$nativeDiagnosticsBefore = $false
+if ($CollectNativeDiagnostics) {
+    $nativeDiagnosticsBefore = Capture-NativeDiagnostics 'native-before'
+}
 
 Invoke-SelectedAdb @('shell', 'dumpsys', 'batterystats', '--reset') | Out-Null
 Invoke-SelectedAdb @('shell', 'logcat', '-c') | Out-Null
@@ -98,6 +117,8 @@ $started = Get-Date
     screenStateAtStart = if ($RequireScreenOff) { 'dozing_or_asleep' } else { 'unspecified' }
     startedAt = $started.ToString('o')
     scenario = 'warm-start then background idle'
+    nativeLogRoot = $NativeLogRoot
+    nativeDiagnosticsBeforeCollected = [bool]$nativeDiagnosticsBefore
 } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $output 'scenario.json')
 
 Start-Sleep -Seconds ($DurationMinutes * 60)
@@ -111,6 +132,10 @@ Capture-Adb 'services-after.txt' @('shell', 'dumpsys', 'activity', 'services', $
 $processAfterText = Invoke-SelectedAdb @('shell', 'ps', '-A') 2>&1 | Out-String
 $processAfterText | Out-File -Encoding utf8 (Join-Path $output 'process-after.txt')
 Capture-Adb 'logcat.txt' @('logcat', '-d', '-v', 'threadtime')
+$nativeDiagnosticsAfter = $false
+if ($CollectNativeDiagnostics) {
+    $nativeDiagnosticsAfter = Capture-NativeDiagnostics 'native-after'
+}
 $batteryAfterText = Get-Content (Join-Path $output 'battery-after.txt') -Raw
 $powerSourceAfter = Get-PowerSource $batteryAfterText
 $batteryLevelAfter = Get-BatteryLevel $batteryAfterText
@@ -132,6 +157,9 @@ $appRunningAtEnd = $processAfterText -match "(?m)\s$([regex]::Escape($Package))\
     startedAt = $started.ToString('o')
     finishedAt = (Get-Date).ToString('o')
     output = (Resolve-Path $output).Path
+    nativeLogRoot = $NativeLogRoot
+    nativeDiagnosticsBeforeCollected = [bool]$nativeDiagnosticsBefore
+    nativeDiagnosticsAfterCollected = [bool]$nativeDiagnosticsAfter
 } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $output 'result.json')
 
 Write-Host "Battery soak capture complete: $output"

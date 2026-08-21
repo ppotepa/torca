@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $false)][int]$MinimumMinutes = 60
+    [Parameter(Mandatory = $false)][int]$MinimumMinutes = 60,
+    [Parameter(Mandatory = $false)][switch]$RequireNativeDiagnostics
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,11 +36,30 @@ if ($result.screenStateAtStart -ne 'dozing_or_asleep') {
     $failures.Add("screenStateAtStart=$($result.screenStateAtStart)")
 }
 
+if ($RequireNativeDiagnostics -and -not [bool]$result.nativeDiagnosticsAfterCollected) {
+    $failures.Add('native diagnostics were not collected after the soak')
+}
+
 $powerStartPath = Join-Path $resolved 'power-start.txt'
 if (-not (Test-Path -LiteralPath $powerStartPath -PathType Leaf)) {
     $failures.Add('power-start.txt is missing')
 } elseif ((Get-Content -LiteralPath $powerStartPath -Raw) -notmatch '(?im)mWakefulness=(Dozing|Asleep)') {
     $failures.Add('power-start.txt does not prove Dozing/Asleep')
+}
+
+if ($failures.Count -gt 0) {
+    throw "Battery soak validation failed:`n - $($failures -join "`n - ")"
+}
+
+if ($RequireNativeDiagnostics -and [bool]$result.nativeDiagnosticsAfterCollected) {
+    $nativeLogs = Get-ChildItem -LiteralPath (Join-Path $resolved 'native-after') -Recurse -File -Include '*.log','*.json' -ErrorAction SilentlyContinue
+    $nativeText = ($nativeLogs | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -ErrorAction SilentlyContinue }) -join "`n"
+    if ($nativeText -match 'BACKGROUND_RENDEZVOUS|BACKGROUND_SYNC_LEASE') {
+        $failures.Add('native diagnostics contain a periodic background rendezvous/lease marker')
+    }
+    if ($nativeText -notmatch 'BACKGROUND_GRACE_EXPIRED') {
+        $failures.Add('native diagnostics do not prove background grace expiry')
+    }
 }
 
 if ($failures.Count -gt 0) {

@@ -21,14 +21,14 @@ pairing, Radio session, outgoing message, attachment, or transfer.
 Run the Android harness from the repository root for a longer physical soak:
 
 ```powershell
-./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 -RequireUnplugged
+./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 -RequireUnplugged -CollectNativeDiagnostics
 ```
 
 For a strict screen-off window:
 
 ```powershell
 ./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 360 `
-  -RequireUnplugged -RequireScreenOff
+  -RequireUnplugged -RequireScreenOff -CollectNativeDiagnostics
 ```
 
 Validate the resulting evidence before treating it as a release gate:
@@ -36,7 +36,7 @@ Validate the resulting evidence before treating it as a release gate:
 ```powershell
 ./scripts/Validate-TorcaBatterySoak.ps1 `
   -Path artifacts/soak/battery-YYYYMMDD-HHMMSS `
-  -MinimumMinutes 360
+  -MinimumMinutes 360 -RequireNativeDiagnostics
 ```
 
 ## Required comparison matrix
@@ -63,4 +63,3 @@ Use Android Studio Power Profiler / Perfetto for a release-profile measurement
 when available. Correlate CPU, WLAN/cellular, UFS and wake-lock activity with
 the diagnostics observation timeline. The in-app energy score is a regression
 indicator, not a physical mWh measurement.
-
