@@ -251,29 +251,45 @@ class FfiEngineGateway
 
   @override
   Future<String> diagnosticsJson() async {
-    final response = await _worker.invoke(RuntimeRequestDto.diagnostics);
+    return _decodeDiagnosticsQuery(
+      await _worker.invoke(RuntimeRequestDto.diagnostics),
+      responseName: 'Native diagnostics response',
+      fallbackSnapshot: const <String, Object?>{'events': []},
+    );
+  }
+
+  String _decodeDiagnosticsQuery(
+    String response, {
+    required String responseName,
+    required Map<String, Object?> fallbackSnapshot,
+  }) {
     try {
       final value = jsonDecode(response);
       if (value is! Map<String, dynamic> || value['status'] != 'succeeded') {
-        throw const ContractDecodeException(
-          'Native diagnostics response was not successful',
-        );
+        throw ContractDecodeException('$responseName was not successful');
       }
       final snapshot = value['snapshot'];
       if (snapshot != null && snapshot is! Map<String, dynamic>) {
-        throw const ContractDecodeException(
-          'Native diagnostics snapshot is not an object',
+        throw ContractDecodeException(
+          '$responseName snapshot is not an object',
         );
       }
-      return jsonEncode(snapshot ?? const <String, Object?>{'events': []});
+      return jsonEncode(snapshot ?? fallbackSnapshot);
     } on ContractDecodeException {
       rethrow;
     } on FormatException catch (error) {
-      throw ContractDecodeException('Invalid diagnostics response: $error');
+      throw ContractDecodeException('Invalid $responseName: $error');
     } on TypeError catch (error) {
-      throw ContractDecodeException('Invalid diagnostics field type: $error');
+      throw ContractDecodeException('Invalid $responseName field type: $error');
     }
   }
+
+  @override
+  Future<String> diagnosticsLogTailsJson() async => _decodeDiagnosticsQuery(
+    await _worker.invoke(RuntimeRequestDto.diagnosticsLogTails),
+    responseName: 'Native diagnostics log tail response',
+    fallbackSnapshot: const <String, Object?>{'logs': []},
+  );
 
   @override
   Future<AvatarGenomeEnvelope?> loadAvatarGenome({String? identityId}) async {
@@ -524,7 +540,8 @@ class NativeRuntimeWorker {
     if (_pumping) return;
     _pumping = true;
     try {
-      while (!_disposed && (_interactiveQueue.isNotEmpty || _queryQueue.isNotEmpty)) {
+      while (!_disposed &&
+          (_interactiveQueue.isNotEmpty || _queryQueue.isNotEmpty)) {
         final queued = _interactiveQueue.isNotEmpty
             ? _interactiveQueue.removeAt(0)
             : _queryQueue.removeAt(0);
@@ -536,7 +553,8 @@ class NativeRuntimeWorker {
             // mutation.
             response = await _invokeNow(queued.request, queued.requestId);
           }
-          if (!queued.completer.isCompleted) queued.completer.complete(response);
+          if (!queued.completer.isCompleted)
+            queued.completer.complete(response);
         } on Object catch (error, stackTrace) {
           if (!queued.completer.isCompleted) {
             queued.completer.completeError(error, stackTrace);
@@ -545,7 +563,8 @@ class NativeRuntimeWorker {
       }
     } finally {
       _pumping = false;
-      if (!_disposed && (_interactiveQueue.isNotEmpty || _queryQueue.isNotEmpty)) {
+      if (!_disposed &&
+          (_interactiveQueue.isNotEmpty || _queryQueue.isNotEmpty)) {
         unawaited(_pumpRequests());
       }
     }
@@ -580,9 +599,7 @@ class NativeRuntimeWorker {
 
   Future<void> shutdown() async {
     if (_disposed) return;
-    while (_pumping ||
-        _interactiveQueue.isNotEmpty ||
-        _queryQueue.isNotEmpty) {
+    while (_pumping || _interactiveQueue.isNotEmpty || _queryQueue.isNotEmpty) {
       await Future<void>.delayed(const Duration(milliseconds: 1));
     }
     final reply = ReceivePort();

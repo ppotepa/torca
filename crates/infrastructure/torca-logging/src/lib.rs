@@ -17,6 +17,7 @@ const MAX_LOCAL_RUNS: usize = 5;
 const MAX_LOCAL_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_INCIDENT_LOG_BYTES_PER_FILE: usize = 64 * 1024;
 const MAX_INCIDENT_LOG_FILES: usize = 12;
+const MAX_DEBUG_LOG_TAIL_BYTES_PER_FILE: usize = 16 * 1024;
 const LOG_DOMAINS: [&str; 9] =
     ["runtime", "bootstrap", "tor", "relay", "storage", "profile", "messaging", "ffi", "ui"];
 
@@ -261,6 +262,43 @@ impl Logger {
         Ok(bundle)
     }
 
+    /// Returns a bounded, redacted tail for each structured log in this run.
+    ///
+    /// This is intentionally an explicit diagnostic operation. It never scans
+    /// older runs, schedules work, or keeps a file watcher alive. The caller
+    /// receives at most `MAX_DEBUG_LOG_TAIL_BYTES_PER_FILE` per domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error only when an existing current-run log cannot be
+    /// read. Missing domain logs are omitted from the result.
+    pub fn debug_log_tails_json(&self) -> std::io::Result<String> {
+        if let Ok(mut files) = self.files.lock() {
+            for (_, file) in &mut *files {
+                let _ = file.flush();
+            }
+        }
+        let mut logs = Vec::new();
+        for domain in LOG_DOMAINS {
+            let source = self.directory().join(format!("{domain}.log"));
+            if !source.is_file() {
+                continue;
+            }
+            let tail = read_redacted_log_tail(&source, MAX_DEBUG_LOG_TAIL_BYTES_PER_FILE)?;
+            logs.push(format!(
+                "{{\"domain\":\"{}\",\"tail\":\"{}\"}}",
+                escape(domain),
+                escape(&tail),
+            ));
+        }
+        Ok(format!(
+            "{{\"schema\":1,\"kind\":\"torca_debug_log_tails\",\"runId\":\"{}\",\"bytesPerFile\":{},\"logs\":[{}]}}",
+            escape(&self.run_id),
+            MAX_DEBUG_LOG_TAIL_BYTES_PER_FILE,
+            logs.join(","),
+        ))
+    }
+
     /// Marks the run as completed or interrupted and writes `run.end.json`.
     ///
     /// # Errors
@@ -481,12 +519,16 @@ fn write_redacted(path: &Path, content: &str) -> std::io::Result<()> {
 }
 
 fn copy_redacted_log_tail(source: &Path, target: &Path) -> std::io::Result<()> {
+    let content = read_redacted_log_tail(source, MAX_INCIDENT_LOG_BYTES_PER_FILE)?;
+    write_redacted(target, &content)
+}
+
+fn read_redacted_log_tail(source: &Path, limit: usize) -> std::io::Result<String> {
     let mut input = File::open(source)?;
     let length = input.metadata()?.len();
-    let tail_len = length.min(u64::try_from(MAX_INCIDENT_LOG_BYTES_PER_FILE).unwrap_or(u64::MAX));
+    let tail_len = length.min(u64::try_from(limit).unwrap_or(u64::MAX));
     input.seek(SeekFrom::Start(length.saturating_sub(tail_len)))?;
-    let mut raw =
-        Vec::with_capacity(usize::try_from(tail_len).unwrap_or(MAX_INCIDENT_LOG_BYTES_PER_FILE));
+    let mut raw = Vec::with_capacity(usize::try_from(tail_len).unwrap_or(limit));
     input.read_to_end(&mut raw)?;
     let tail = String::from_utf8_lossy(&raw);
     let complete_lines = if length > tail_len {
@@ -494,8 +536,7 @@ fn copy_redacted_log_tail(source: &Path, target: &Path) -> std::io::Result<()> {
     } else {
         tail.as_ref()
     };
-    let content = complete_lines.lines().map(redact_limited).collect::<Vec<_>>().join("\n");
-    write_redacted(target, &content)
+    Ok(complete_lines.lines().map(redact_limited).collect::<Vec<_>>().join("\n"))
 }
 
 trait EmptyString {
@@ -548,6 +589,21 @@ mod tests {
         let log = std::fs::read_to_string(bundle.join("logs/runtime.log")).expect("runtime tail");
         assert!(log.contains("[REDACTED]"));
         assert!(!log.contains("do-not-export"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn debug_tail_is_bounded_to_the_current_run_and_redacted() {
+        let root = std::env::temp_dir().join(format!("torca-debug-tail-{}", std::process::id()));
+        let logger = Logger::new(&root, "test-device", "build").expect("logger");
+        logger
+            .event("runtime", Level::Warn, "runtime", "TEST", "token=do-not-show")
+            .expect("event");
+        let tail = logger.debug_log_tails_json().expect("tail");
+        assert!(tail.contains("runtime"));
+        assert!(tail.contains("[REDACTED]"));
+        assert!(!tail.contains("do-not-show"));
+        assert!(!tail.contains("run-000000"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

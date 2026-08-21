@@ -110,6 +110,7 @@ impl ActorState {
                 }
             }
             ("query", "diagnostics.get") => self.runtime.diagnostics_json(),
+            ("query", "diagnostics.logs.tail") => self.runtime.diagnostics_log_tails_json(),
             ("query", "avatars.get") => {
                 self.runtime.avatar_genome_json(payload.get("identityId").and_then(Value::as_str))
             }
@@ -153,6 +154,7 @@ impl ActorState {
             || name == "notifications.poll"
             || name == "runtime.poll"
             || name == "diagnostics.get"
+            || name == "diagnostics.logs.tail"
             || name == "pairing.parse"
             || name == "pairing.encode"
         {
@@ -165,6 +167,7 @@ impl ActorState {
             && name != "notifications.poll"
             && name != "runtime.poll"
             && name != "diagnostics.get"
+            && name != "diagnostics.logs.tail"
             && let Value::Object(object) = &mut snapshot
         {
             object.insert("runtimeId".into(), Value::String(self.runtime_id.clone()));

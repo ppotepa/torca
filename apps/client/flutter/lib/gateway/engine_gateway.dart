@@ -59,6 +59,7 @@ abstract interface class EngineGateway {
   Future<void> sendLifecycle(String event);
   Future<BridgeResultDto> execute(BridgeCommandDto command);
   Future<String> diagnosticsJson();
+  Future<String> diagnosticsLogTailsJson();
   Future<void> dispose();
 }
 
@@ -272,6 +273,9 @@ class StartupFailureGateway
 
   @override
   Future<String> diagnosticsJson() async => '{"events":[]}';
+
+  @override
+  Future<String> diagnosticsLogTailsJson() async => '{"logs":[]}';
 
   @override
   Future<AvatarGenomeEnvelope?> loadAvatarGenome({String? identityId}) async =>

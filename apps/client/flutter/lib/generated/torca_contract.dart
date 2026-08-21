@@ -3,7 +3,7 @@
 
 import 'dart:convert';
 
-const int torcaContractVersion = 22;
+const int torcaContractVersion = 23;
 const int torcaNativeAbiVersion = 1;
 
 class ContractDecodeException extends FormatException {
@@ -1452,6 +1452,12 @@ class RuntimeRequestDto {
   static const RuntimeRequestDto diagnostics = RuntimeRequestDto._(
     kind: 'query',
     name: 'diagnostics.get',
+    payload: <String, Object?>{},
+  );
+
+  static const RuntimeRequestDto diagnosticsLogTails = RuntimeRequestDto._(
+    kind: 'query',
+    name: 'diagnostics.logs.tail',
     payload: <String, Object?>{},
   );
 

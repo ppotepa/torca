@@ -20,8 +20,10 @@ class DiagnosticsScreen extends StatefulWidget {
 
 class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   String? _json;
+  String? _logTailsJson;
   String? _error;
   bool _loading = false;
+  bool _loadingLogTails = false;
 
   @override
   void initState() {
@@ -41,6 +43,21 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       if (mounted) setState(() => _error = '$error');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _refreshLogTails() async {
+    setState(() {
+      _loadingLogTails = true;
+      _error = null;
+    });
+    try {
+      final value = await widget.gateway.diagnosticsLogTailsJson();
+      if (mounted) setState(() => _logTailsJson = value);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _loadingLogTails = false);
     }
   }
 
@@ -242,12 +259,26 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   Widget _logsTab(BuildContext context) => ListView(
     padding: const EdgeInsets.all(16),
     children: <Widget>[
-      Text(
-        context.strings.rawDiagnostics,
-        style: Theme.of(context).textTheme.titleLarge,
-      ),
+      Text('Native log tails', style: Theme.of(context).textTheme.titleLarge),
       const SizedBox(height: 6),
-      Text(context.strings.redactedDeveloperEventStream),
+      const Text(
+        'Loads a bounded, redacted tail from current-run native logs only. '
+        'This is an explicit diagnostic read and does not poll or keep a watcher alive.',
+      ),
+      const SizedBox(height: 12),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: _loadingLogTails ? null : _refreshLogTails,
+          icon: _loadingLogTails
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(context.torcaIcons.retry),
+          label: const Text('Load current run logs'),
+        ),
+      ),
       const SizedBox(height: 12),
       Container(
         width: double.infinity,
@@ -256,7 +287,9 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           color: Theme.of(context).colorScheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(context.torcaTokens.radiusMedium),
         ),
-        child: SelectableText(_pretty(_json ?? '{"events":[]}')),
+        child: SelectableText(
+          _pretty(_logTailsJson ?? '{"logs":[],"hint":"Not loaded"}'),
+        ),
       ),
     ],
   );

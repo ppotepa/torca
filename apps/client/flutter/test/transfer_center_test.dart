@@ -28,6 +28,9 @@ class _Gateway implements EngineGateway {
   Future<String> diagnosticsJson() async => '{"events":[]}';
 
   @override
+  Future<String> diagnosticsLogTailsJson() async => '{"logs":[]}';
+
+  @override
   Future<void> dispose() async => _snapshots.dispose();
 }
 

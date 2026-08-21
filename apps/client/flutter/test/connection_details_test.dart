@@ -21,6 +21,9 @@ class _SnapshotGateway implements EngineGateway {
       const BridgeResultDto(ok: true, kind: 'noop');
   @override
   Future<String> diagnosticsJson() async => '{"events":[]}';
+
+  @override
+  Future<String> diagnosticsLogTailsJson() async => '{"logs":[]}';
   @override
   Future<void> dispose() async => _snapshot.dispose();
 }

@@ -1455,6 +1455,12 @@ class RuntimeRequestDto {
     payload: <String, Object?>{},
   );
 
+  static const RuntimeRequestDto diagnosticsLogTails = RuntimeRequestDto._(
+    kind: 'query',
+    name: 'diagnostics.logs.tail',
+    payload: <String, Object?>{},
+  );
+
   static const RuntimeRequestDto snapshot = RuntimeRequestDto._(
     kind: 'query',
     name: 'snapshot.get',

@@ -91,6 +91,28 @@ pub(crate) fn diagnostics_json(&mut self) -> i32 {
     }
 }
 
+/// Returns explicitly requested, bounded and redacted current-run log tails.
+///
+/// Reading logs is kept separate from the normal diagnostics projection so a
+/// routine Debug refresh never performs file I/O. The logger owns retention,
+/// redaction and per-domain bounds.
+pub(crate) fn diagnostics_log_tails_json(&mut self) -> i32 {
+    let Some(logger) = &self.logger else {
+        self.query_json = "{\"schema\":1,\"kind\":\"torca_debug_log_tails\",\"logs\":[]}".into();
+        return ABI_OK;
+    };
+    match logger.debug_log_tails_json() {
+        Ok(logs) => {
+            self.query_json = logs;
+            ABI_OK
+        }
+        Err(error) => {
+            self.last_result_json = error_result(&format!("diagnostics log tail unavailable: {error}"));
+            ABI_ERROR
+        }
+    }
+}
+
 /// Persists one explicitly user-requested, redacted diagnostics snapshot.
 ///
 /// Incident capture is deliberately command-driven: it does not create a

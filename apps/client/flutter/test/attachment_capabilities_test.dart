@@ -32,6 +32,9 @@ class _Gateway implements EngineGateway, AttachmentCapabilitiesProvider {
   Future<String> diagnosticsJson() async => '{}';
 
   @override
+  Future<String> diagnosticsLogTailsJson() async => '{"logs":[]}';
+
+  @override
   Future<void> dispose() async => _snapshots.dispose();
 }
 

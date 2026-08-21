@@ -65,6 +65,9 @@ class FakeEngineGateway implements EngineGateway, PairingUriParser {
   Future<String> diagnosticsJson() async => diagnostics;
 
   @override
+  Future<String> diagnosticsLogTailsJson() async => '{"logs":[]}';
+
+  @override
   Future<void> dispose() async {
     _snapshots.dispose();
   }
