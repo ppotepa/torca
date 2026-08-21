@@ -2,11 +2,11 @@ use core::fmt;
 use std::path::Path;
 
 use rusqlite::OptionalExtension;
-use torca_battery::{
-    BackgroundSyncCadence, BatteryPreferences, RequestedBatteryMode, VisualActivityPolicy,
-};
+use torca_battery::{BackgroundSyncCadence, BatteryPreferences};
 use torca_contacts::ContactId;
-use torca_runtime_policy::{ContactAvailabilityMode, MeteredTransferPolicy};
+use torca_runtime_policy::{
+    ContactAvailabilityMode, MeteredTransferPolicy, RequestedBatteryMode, VisualActivityPolicy,
+};
 
 const BATTERY_PREFERENCES_SQL: &str =
     include_str!("../sql/queries/runtime_battery_preferences.sql");
@@ -207,21 +207,11 @@ impl SqlCipherSettingsStore {
 }
 
 fn parse_mode(value: &str) -> RequestedBatteryMode {
-    match value {
-        "always_available" => RequestedBatteryMode::AlwaysAvailable,
-        "balanced" => RequestedBatteryMode::Balanced,
-        "battery_saver" => RequestedBatteryMode::BatterySaver,
-        _ => RequestedBatteryMode::Automatic,
-    }
+    RequestedBatteryMode::from_wire(value)
 }
 
 fn mode_value(value: RequestedBatteryMode) -> &'static str {
-    match value {
-        RequestedBatteryMode::Automatic => "automatic",
-        RequestedBatteryMode::AlwaysAvailable => "always_available",
-        RequestedBatteryMode::Balanced => "balanced",
-        RequestedBatteryMode::BatterySaver => "battery_saver",
-    }
+    value.wire()
 }
 
 fn parse_sync(_value: &str) -> BackgroundSyncCadence {
@@ -251,21 +241,11 @@ fn metered_value(value: MeteredTransferPolicy) -> &'static str {
 }
 
 fn parse_visual(value: &str) -> VisualActivityPolicy {
-    match value {
-        "full" => VisualActivityPolicy::Full,
-        "focused_only" => VisualActivityPolicy::FocusedOnly,
-        "static" => VisualActivityPolicy::Static,
-        _ => VisualActivityPolicy::FollowSystem,
-    }
+    VisualActivityPolicy::from_wire(value)
 }
 
 fn visual_value(value: VisualActivityPolicy) -> &'static str {
-    match value {
-        VisualActivityPolicy::Full => "full",
-        VisualActivityPolicy::FocusedOnly => "focused_only",
-        VisualActivityPolicy::Static => "static",
-        VisualActivityPolicy::FollowSystem => "follow_system",
-    }
+    value.wire()
 }
 
 #[cfg(test)]
@@ -305,9 +285,8 @@ mod tests {
 
     #[test]
     fn battery_preferences_are_durable_for_the_connection() {
-        use torca_battery::{
-            BackgroundSyncCadence, BatteryPreferences, RequestedBatteryMode, VisualActivityPolicy,
-        };
+        use torca_battery::{BackgroundSyncCadence, BatteryPreferences};
+        use torca_runtime_policy::{RequestedBatteryMode, VisualActivityPolicy};
         let key = DatabaseKey::new([0x21; 32]);
         let store = SqlCipherSettingsStore::open_in_memory(&key).expect("settings store");
         let preferences = BatteryPreferences {

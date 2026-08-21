@@ -40,6 +40,7 @@ incoming work can still hold a durable lease independently of the UI.
 | 1a | Implemented | `ContactAvailabilityMode` moved to `torca-runtime-policy`; native, application and SQLite now consume that owner directly. |
 | 1b | Implemented | `BatteryProfile` moved to `torca-runtime-policy`; runtime communication and attachment executors consume the policy owner directly. |
 | 1c | Implemented | `MeteredTransferPolicy` moved to `torca-runtime-policy`; SQLite and transfer executors consume the policy owner directly. |
+| 1d | Implemented | `RequestedBatteryMode` and `VisualActivityPolicy` moved to `torca-runtime-policy`; SQLite uses their canonical wire mapping. |
 | 2 | Implemented core | RuntimeOwner receives atomic host-policy inputs and consumes `torca-runtime-policy` directly; legacy values normalize safely. Policy leases use explicit `Until`/`UntilRelease` lifetimes rather than a parallel persistent-owner side table. |
 | 3 | Implemented core | One deadline registry with source-selective maintenance. |
 | 4 | Implemented core | One-shot background grace and soft dormancy; no recurring rendezvous. Legacy persisted cadence values normalize to `on_open` and no runtime policy type exposes a periodic interval. |

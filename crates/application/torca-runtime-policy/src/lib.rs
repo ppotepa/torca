@@ -35,6 +35,69 @@ pub enum MeteredTransferPolicy {
     PauseAll,
 }
 
+/// User-facing availability preference. `Diagnostics` is a temporary runtime
+/// override and therefore deliberately not representable here.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RequestedBatteryMode {
+    #[default]
+    Automatic,
+    AlwaysAvailable,
+    Balanced,
+    BatterySaver,
+}
+
+impl RequestedBatteryMode {
+    pub fn from_wire(value: &str) -> Self {
+        match value {
+            "always_available" => Self::AlwaysAvailable,
+            "battery_saver" => Self::BatterySaver,
+            // `balanced` remains decodable from old settings, but Automatic
+            // is the BATTERY1 user-facing policy.
+            "balanced" => Self::Automatic,
+            _ => Self::Automatic,
+        }
+    }
+
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Automatic => "automatic",
+            Self::AlwaysAvailable => "always_available",
+            Self::Balanced => "balanced",
+            Self::BatterySaver => "battery_saver",
+        }
+    }
+}
+
+/// UI animation/adornment policy derived from user preference and host state.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum VisualActivityPolicy {
+    Full,
+    FocusedOnly,
+    Static,
+    #[default]
+    FollowSystem,
+}
+
+impl VisualActivityPolicy {
+    pub fn from_wire(value: &str) -> Self {
+        match value {
+            "full" => Self::Full,
+            "focused_only" => Self::FocusedOnly,
+            "static" => Self::Static,
+            _ => Self::FollowSystem,
+        }
+    }
+
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::FocusedOnly => "focused_only",
+            Self::Static => "static",
+            Self::FollowSystem => "follow_system",
+        }
+    }
+}
+
 impl MeteredTransferPolicy {
     pub fn from_wire(value: &str) -> Self {
         match value {

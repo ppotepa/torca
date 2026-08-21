@@ -12,8 +12,8 @@ pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
     AttentionContext, AttentionSurface, BatteryProfile, ConnectionLease, ContactAvailabilityMode,
     DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime, MeteredTransferPolicy,
-    PolicyEvent, ResourceScope, RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor,
-    RuntimePolicySnapshot, WorkClass, WorkDemand,
+    PolicyEvent, RequestedBatteryMode, ResourceScope, RuntimeEventHub, RuntimeEventHubStats,
+    RuntimeGovernor, RuntimePolicySnapshot, VisualActivityPolicy, WorkClass, WorkDemand,
 };
 
 /// A bounded, abstract work metric. Values are counts, not physical energy.
@@ -117,18 +117,6 @@ impl BatterySnapshot {
     }
 }
 
-/// User-facing availability preference.  This is deliberately separate from
-/// [`BatteryProfile`]: `Diagnostics` is a temporary runtime override, while
-/// this enum is safe to persist and expose in settings.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum RequestedBatteryMode {
-    #[default]
-    Automatic,
-    AlwaysAvailable,
-    Balanced,
-    BatterySaver,
-}
-
 /// User-visible promise for background delivery.  The durations are hints;
 /// BATTERY1 retains only the migration-safe `OnOpen` representation: durable
 /// work owns an explicit lease and background behavior is grace/idle based,
@@ -137,15 +125,6 @@ pub enum RequestedBatteryMode {
 pub enum BackgroundSyncCadence {
     #[default]
     OnOpen,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum VisualActivityPolicy {
-    Full,
-    FocusedOnly,
-    Static,
-    #[default]
-    FollowSystem,
 }
 
 /// Durable user preference.  It contains intent, not executor-specific
@@ -333,29 +312,6 @@ impl BatteryPreferences {
     }
 }
 
-impl RequestedBatteryMode {
-    pub fn from_wire(value: &str) -> Self {
-        match value {
-            "always_available" => Self::AlwaysAvailable,
-            "battery_saver" => Self::BatterySaver,
-            // `balanced` was a previous public choice.  Its intended
-            // semantics now belong to Automatic, without carrying a hidden
-            // periodic scheduler policy forward.
-            "balanced" => Self::Automatic,
-            _ => Self::Automatic,
-        }
-    }
-
-    pub fn wire(self) -> &'static str {
-        match self {
-            Self::Automatic => "automatic",
-            Self::AlwaysAvailable => "always_available",
-            Self::Balanced => "balanced",
-            Self::BatterySaver => "battery_saver",
-        }
-    }
-}
-
 impl BackgroundSyncCadence {
     pub fn from_wire(_value: &str) -> Self {
         Self::OnOpen
@@ -363,26 +319,6 @@ impl BackgroundSyncCadence {
 
     pub fn wire(self) -> &'static str {
         "on_open"
-    }
-}
-
-impl VisualActivityPolicy {
-    pub fn from_wire(value: &str) -> Self {
-        match value {
-            "full" => Self::Full,
-            "focused_only" => Self::FocusedOnly,
-            "static" => Self::Static,
-            _ => Self::FollowSystem,
-        }
-    }
-
-    pub fn wire(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::FocusedOnly => "focused_only",
-            Self::Static => "static",
-            Self::FollowSystem => "follow_system",
-        }
     }
 }
 
