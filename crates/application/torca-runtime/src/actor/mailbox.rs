@@ -41,7 +41,7 @@ enum RuntimeCommand {
     /// An executor event.  Unlike a user command this is not permission to run
     /// every maintenance path; it names the lanes that actually need service.
     Wake(Vec<RuntimeWakeSource>),
-    WakeDelivery(OpaqueId),
+    WakeDelivery(OpaqueId, Option<ContactId>),
     ReleaseDelivery(OpaqueId),
     Shutdown(Sender<()>),
 }
@@ -60,7 +60,7 @@ impl RuntimeCommand {
                 | Self::CancelPairing(..)
                 | Self::NetworkChanged
                 | Self::SetForeground(_)
-                | Self::WakeDelivery(_)
+                | Self::WakeDelivery(..)
         )
     }
 
@@ -75,7 +75,7 @@ impl RuntimeCommand {
                 | Self::CancelAttachment(..)
                 | Self::QueueReaction(..)
                 | Self::MarkConversationRead(..)
-                | Self::WakeDelivery(_)
+                | Self::WakeDelivery(..)
                 | Self::ReleaseDelivery(_)
         )
     }
@@ -90,7 +90,7 @@ impl RuntimeCommand {
                 | Self::SetRadioDemand(..)
                 | Self::SetInstantContactDemand(..)
                 | Self::SetRadioTransmission(..)
-                | Self::WakeDelivery(_)
+                | Self::WakeDelivery(..)
                 | Self::ReleaseDelivery(_)
                 | Self::NetworkChanged
         )
@@ -247,7 +247,17 @@ impl RuntimeHandle {
     /// Wakes durable delivery and grants a temporary lease for this message.
     /// The lease is independent of the currently visible Flutter route.
     pub fn wake_delivery_for(&self, message_id: OpaqueId) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::WakeDelivery(message_id));
+        let _ = send_with_timeout(&self.sender, RuntimeCommand::WakeDelivery(message_id, None));
+    }
+
+    /// Wakes a durable message for a known recipient. Callers should prefer
+    /// this route: it avoids turning a new message into a contact-wide peer
+    /// reconciliation pass.
+    pub fn wake_delivery_for_contact(&self, message_id: OpaqueId, contact_id: ContactId) {
+        let _ = send_with_timeout(
+            &self.sender,
+            RuntimeCommand::WakeDelivery(message_id, Some(contact_id)),
+        );
     }
 
     pub fn release_delivery(&self, message_id: OpaqueId) {

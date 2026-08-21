@@ -193,6 +193,18 @@ mod tests {
     }
 
     #[test]
+    fn targeted_delivery_wake_services_only_delivery_and_peer_lanes() {
+        let command = RuntimeCommand::WakeDelivery(
+            OpaqueId::from_u128(1),
+            Some(ContactId::from_opaque(OpaqueId::from_u128(2))),
+        );
+        assert!(command.requires_delivery_maintenance());
+        assert!(command.requires_peer_maintenance());
+        assert!(command.requires_health_maintenance());
+        assert!(!command.requires_contact_refresh());
+    }
+
+    #[test]
     fn scheduler_records_the_source_for_an_executor_deadline() {
         let now = std::time::Instant::now();
         let mut scheduler = RuntimeSchedulingState::new();

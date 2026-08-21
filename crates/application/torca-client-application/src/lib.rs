@@ -117,6 +117,12 @@ impl ClientApplicationHandle {
         self.engine.avatar_genome_for_identity(identity_id)
     }
 
+    /// Resolves the recipient of a durable message without reading all
+    /// contacts. It is used only to grant a scoped runtime delivery lease.
+    pub fn message_contact(&self, message_id: OpaqueId) -> Result<Option<ContactId>, EngineError> {
+        self.engine.message_contact(torca_messaging::MessageId::from_opaque(message_id))
+    }
+
     /// Returns the actor handle for composition of infrastructure workers.
     pub fn engine_handle(&self) -> EngineHandle {
         self.engine.clone()

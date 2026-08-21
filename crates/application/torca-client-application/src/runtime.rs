@@ -955,7 +955,7 @@ impl ClientApplicationRuntime {
                 // network runtime must not reject or lose the user's message; the durable
                 // delivery store will be drained when the runtime becomes available.
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.wake_delivery_for(message_id);
+                    wake_delivery_for_message(runtime, &self.application, message_id);
                 }
                 result_kind(&value)
             }
@@ -968,7 +968,7 @@ impl ClientApplicationRuntime {
                     })
                     .map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.wake_delivery_for(message_id);
+                    wake_delivery_for_message(runtime, &self.application, message_id);
                 }
                 result_kind(&value)
             }
@@ -996,7 +996,7 @@ impl ClientApplicationRuntime {
                     })
                     .map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.wake_delivery_for(message_id);
+                    wake_delivery_for_message(runtime, &self.application, message_id);
                 }
                 result_kind(&value)
             }
@@ -1554,6 +1554,21 @@ fn result_kind(result: &EngineResult) -> &'static str {
         EngineResult::MessageUpdated { .. } => "message_updated",
         EngineResult::ReactionUpdated { .. } => "reaction_updated",
         EngineResult::ReceiptApplied { .. } => "receipt_applied",
+    }
+}
+
+/// Carries the recipient identity alongside a durable delivery wake whenever
+/// the engine can resolve it cheaply. A missing or legacy record keeps the
+/// compatibility wake so correctness never depends on this optimisation.
+fn wake_delivery_for_message(
+    runtime: &RuntimeHandle,
+    application: &ClientApplicationHandle,
+    message_id: OpaqueId,
+) {
+    if let Ok(Some(contact_id)) = application.message_contact(message_id) {
+        runtime.wake_delivery_for_contact(message_id, contact_id);
+    } else {
+        runtime.wake_delivery_for(message_id);
     }
 }
 

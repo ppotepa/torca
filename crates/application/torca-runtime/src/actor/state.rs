@@ -37,6 +37,9 @@ struct RuntimeWorkState {
     visible_contact_leases: BTreeMap<ContactId, OpaqueId>,
     active_attachment_leases: BTreeSet<OpaqueId>,
     active_delivery_leases: BTreeSet<OpaqueId>,
+    /// Recipient routing for live durable delivery. This is ephemeral: the
+    /// durable message/outbox remains authoritative after a process restart.
+    active_delivery_contacts: BTreeMap<OpaqueId, ContactId>,
     bootstrap_relay_probe_started: bool,
     bootstrap_relay_probe_finished: bool,
 }
@@ -62,6 +65,7 @@ impl RuntimeWorkState {
             visible_contact_leases: BTreeMap::new(),
             active_attachment_leases: BTreeSet::new(),
             active_delivery_leases: BTreeSet::new(),
+            active_delivery_contacts: BTreeMap::new(),
             bootstrap_relay_probe_started: false,
             bootstrap_relay_probe_finished: false,
         }

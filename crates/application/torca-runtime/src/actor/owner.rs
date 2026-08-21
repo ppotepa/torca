@@ -342,14 +342,22 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                         Some(std::time::Instant::now() + Duration::from_secs(30));
                 }
             }
-            RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id)) => {
+            RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id, contact_id)) => {
                 let _ = tor.set_dormant(false);
                 work.active_delivery_leases.insert(message_id);
+                if let Some(contact_id) = contact_id {
+                    work.active_delivery_contacts.insert(message_id, contact_id);
+                } else {
+                    // Recovery from an older caller has no recipient hint.
+                    // Keep the durable fallback bounded to this explicit
+                    // delivery wake, never an unrelated runtime command.
+                    work.refresh_contacts = true;
+                }
                 acquire_delivery_lease(policy, message_id);
-                work.refresh_contacts = true;
             }
             RuntimeWait::Command(RuntimeCommand::ReleaseDelivery(message_id)) => {
                 work.active_delivery_leases.remove(&message_id);
+                work.active_delivery_contacts.remove(&message_id);
                 policy.release_lease(delivery_lease_owner(message_id));
             }
             RuntimeWait::Command(command) => {

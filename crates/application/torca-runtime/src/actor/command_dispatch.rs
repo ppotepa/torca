@@ -199,7 +199,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         RuntimeCommand::StartBatteryObservation(_)
         | RuntimeCommand::StopBatteryObservation(_)
         | RuntimeCommand::ResetBatteryObservation(_) => unreachable!(),
-        RuntimeCommand::WakeDelivery(_) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
+        RuntimeCommand::WakeDelivery(..) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
         RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),
         RuntimeCommand::SetRadioDemand(_, _)

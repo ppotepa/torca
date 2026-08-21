@@ -108,6 +108,25 @@ where
             .map_err(|_| EngineError::Repository)
     }
 
+    /// Resolves the peer that owns a durable message without materializing the
+    /// complete overview projection. Runtime delivery uses this narrow query
+    /// to create a peer demand only for the message recipient.
+    pub fn message_contact(
+        &self,
+        message_id: MessageId,
+    ) -> Result<Option<ContactId>, EngineError> {
+        let Some(message) = self
+            .messages
+            .get(message_id)
+            .map_err(|_| EngineError::Repository)?
+        else {
+            return Ok(None);
+        };
+        ConversationRepository::get(&self.relationships, message.conversation_id())
+            .map_err(|_| EngineError::Repository)
+            .map(|conversation| conversation.map(|value| value.contact_id()))
+    }
+
     fn load_pairing(&self, id: PairingSessionId) -> Result<PairingSession, EngineError> {
         self.pairings
             .get(id)

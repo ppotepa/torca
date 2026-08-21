@@ -158,7 +158,23 @@ fn maintain_delivery_state<C: CommunicationDriver>(
     diagnostics: &mut DiagnosticBuffer,
     now: Timestamp,
 ) -> Result<(), RuntimeDriverError> {
-    let maintenance_result = communication.maintenance(&work.contacts, now);
+    // The regular path contains only recipients with durable pending work.
+    // `work.contacts` is retained as a restart/legacy fallback when an older
+    // caller cannot supply routing; it is never consulted for ordinary UI or
+    // diagnostics work.
+    let scoped_delivery_contacts = work
+        .active_delivery_contacts
+        .values()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let delivery_contacts = if scoped_delivery_contacts.is_empty() {
+        work.contacts.as_slice()
+    } else {
+        scoped_delivery_contacts.as_slice()
+    };
+    let maintenance_result = communication.maintenance(delivery_contacts, now);
     if work.active_attachment_leases.is_empty() && work.active_delivery_leases.is_empty() {
         let retained = work
             .contacts
@@ -247,6 +263,7 @@ fn maintain_delivery_state<C: CommunicationDriver>(
                 )
             {
                 work.active_delivery_leases.remove(&message_id);
+                work.active_delivery_contacts.remove(&message_id);
                 policy.release_lease(delivery_lease_owner(message_id));
             }
         }
