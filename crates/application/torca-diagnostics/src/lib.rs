@@ -367,9 +367,21 @@ impl DiagnosticBuffer {
             .map(|(source, count)| format!("\"{source:?}\":{count}"))
             .collect::<Vec<_>>()
             .join(",");
+        let observation_counters = format!(
+            "\"schedulerWakeups\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"peerDials\":{},\"torDials\":{},\"relayDials\":{}",
+            observation.counters.scheduler_wakeups,
+            observation.counters.peer_probes,
+            observation.counters.relay_probes,
+            observation.counters.ffi_wakes,
+            observation.counters.db_reads,
+            observation.counters.db_writes,
+            observation.counters.peer_dials,
+            observation.counters.tor_dials,
+            observation.counters.relay_dials,
+        );
         let _ = write!(
             output,
-            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"observation\":{{\"active\":{},\"wakeSources\":{{{}}},\"totalWork\":{},\"energyScore\":{}}},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
+            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"observation\":{{\"active\":{},\"wakeSources\":{{{}}},\"counters\":{{{}}},\"totalWork\":{},\"energyScore\":{}}},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"relayProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"torDials\":{},\"relayDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
             self.profile,
             optional_json_u8(platform.battery_percent),
             optional_json_bool(platform.charging),
@@ -381,6 +393,7 @@ impl DiagnosticBuffer {
             why_awake,
             observation.active,
             wake_sources,
+            observation_counters,
             observation.counters.total_work(),
             observation.counters.energy_score(),
             counters.scheduler_wakeups,
@@ -526,6 +539,7 @@ mod tests {
         diagnostics.stop_battery_observation();
         assert!(!diagnostics.battery_observation().active);
         assert!(diagnostics.export_json().contains("\"wakeSources\""));
+        assert!(diagnostics.export_json().contains("\"counters\":{\"schedulerWakeups\":0"));
         assert!(diagnostics.export_json().contains("\"totalWork\":2"));
     }
 

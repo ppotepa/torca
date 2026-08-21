@@ -13,7 +13,7 @@ pairing, Radio session, outgoing message, attachment, or transfer.
 1. Start a diagnostics observation session.
 2. Background Torca and turn the screen off.
 3. Wait 15–30 minutes, exceeding the 30-second background grace.
-4. Stop the observation and collect an incident bundle.
+4. Stop the observation and mark an incident bundle in the Debug console.
 5. Confirm that application-controlled background rendezvous, peer/relay
    probes, polling DB work, FFI polling, contact scans and reconnect attempts
    are zero; the scheduler must report no app-controlled next deadline.
@@ -42,7 +42,7 @@ Validate the resulting evidence before treating it as a release gate:
 ```powershell
 ./scripts/Validate-TorcaBatterySoak.ps1 `
   -Path artifacts/soak/battery-YYYYMMDD-HHMMSS `
-  -MinimumMinutes 360 -RequireNativeDiagnostics
+  -MinimumMinutes 360 -RequireNativeDiagnostics -RequireObservation
 ```
 
 ## Required comparison matrix
