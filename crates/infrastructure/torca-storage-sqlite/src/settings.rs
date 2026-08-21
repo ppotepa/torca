@@ -224,28 +224,14 @@ fn mode_value(value: RequestedBatteryMode) -> &'static str {
     }
 }
 
-fn parse_sync(value: &str) -> BackgroundSyncCadence {
-    match value {
-        "five_minutes" => BackgroundSyncCadence::FiveMinutes,
-        "fifteen_minutes" => BackgroundSyncCadence::FifteenMinutes,
-        "thirty_minutes" => BackgroundSyncCadence::ThirtyMinutes,
-        "hourly" => BackgroundSyncCadence::Hourly,
-        "two_hours" => BackgroundSyncCadence::TwoHours,
-        "on_open" => BackgroundSyncCadence::OnOpen,
-        _ => BackgroundSyncCadence::Instant,
-    }
+fn parse_sync(_value: &str) -> BackgroundSyncCadence {
+    // Old persisted cadence values are intentionally read as the BATTERY1
+    // compatibility value. They cannot reactivate a periodic background wake.
+    BackgroundSyncCadence::OnOpen
 }
 
-fn sync_value(value: BackgroundSyncCadence) -> &'static str {
-    match value {
-        BackgroundSyncCadence::Instant => "instant",
-        BackgroundSyncCadence::FiveMinutes => "five_minutes",
-        BackgroundSyncCadence::FifteenMinutes => "fifteen_minutes",
-        BackgroundSyncCadence::ThirtyMinutes => "thirty_minutes",
-        BackgroundSyncCadence::Hourly => "hourly",
-        BackgroundSyncCadence::TwoHours => "two_hours",
-        BackgroundSyncCadence::OnOpen => "on_open",
-    }
+fn sync_value(_value: BackgroundSyncCadence) -> &'static str {
+    "on_open"
 }
 
 fn parse_metered(value: &str) -> MeteredTransferPolicy {
@@ -327,7 +313,7 @@ mod tests {
         let store = SqlCipherSettingsStore::open_in_memory(&key).expect("settings store");
         let preferences = BatteryPreferences {
             mode: RequestedBatteryMode::BatterySaver,
-            background_sync: BackgroundSyncCadence::Hourly,
+            background_sync: BackgroundSyncCadence::OnOpen,
             allow_delayed_background_delivery: true,
             metered_transfers: MeteredTransferPolicy::PauseAll,
             visual_activity: VisualActivityPolicy::FocusedOnly,

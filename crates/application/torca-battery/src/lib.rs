@@ -161,31 +161,13 @@ pub enum RequestedBatteryMode {
 }
 
 /// User-visible promise for background delivery.  The durations are hints;
-/// Android Doze and Windows power policy may defer a wake beyond them.
+/// BATTERY1 retains only the migration-safe `OnOpen` representation: durable
+/// work owns an explicit lease and background behavior is grace/idle based,
+/// never a periodic rendezvous cadence.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BackgroundSyncCadence {
-    Instant,
     #[default]
-    FiveMinutes,
-    FifteenMinutes,
-    ThirtyMinutes,
-    Hourly,
-    TwoHours,
     OnOpen,
-}
-
-impl BackgroundSyncCadence {
-    pub fn approximate_interval(self) -> Option<Duration> {
-        match self {
-            Self::Instant => None,
-            Self::FiveMinutes => Some(Duration::from_secs(5 * 60)),
-            Self::FifteenMinutes => Some(Duration::from_secs(15 * 60)),
-            Self::ThirtyMinutes => Some(Duration::from_secs(30 * 60)),
-            Self::Hourly => Some(Duration::from_secs(60 * 60)),
-            Self::TwoHours => Some(Duration::from_secs(2 * 60 * 60)),
-            Self::OnOpen => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -414,28 +396,12 @@ impl RequestedBatteryMode {
 }
 
 impl BackgroundSyncCadence {
-    pub fn from_wire(value: &str) -> Self {
-        match value {
-            "five_minutes" => Self::FiveMinutes,
-            "fifteen_minutes" => Self::FifteenMinutes,
-            "thirty_minutes" => Self::ThirtyMinutes,
-            "hourly" => Self::Hourly,
-            "two_hours" => Self::TwoHours,
-            "on_open" => Self::OnOpen,
-            _ => Self::Instant,
-        }
+    pub fn from_wire(_value: &str) -> Self {
+        Self::OnOpen
     }
 
     pub fn wire(self) -> &'static str {
-        match self {
-            Self::Instant => "instant",
-            Self::FiveMinutes => "five_minutes",
-            Self::FifteenMinutes => "fifteen_minutes",
-            Self::ThirtyMinutes => "thirty_minutes",
-            Self::Hourly => "hourly",
-            Self::TwoHours => "two_hours",
-            Self::OnOpen => "on_open",
-        }
+        "on_open"
     }
 }
 
@@ -835,19 +801,16 @@ mod tests {
     }
 
     #[test]
-    fn delayed_background_delivery_allows_dormancy_without_active_work() {
+    fn delayed_background_delivery_allows_dormancy_without_periodic_cadence() {
         let preferences = BatteryPreferences {
             mode: RequestedBatteryMode::Balanced,
-            background_sync: BackgroundSyncCadence::ThirtyMinutes,
+            background_sync: BackgroundSyncCadence::OnOpen,
             allow_delayed_background_delivery: true,
             ..BatteryPreferences::default()
         };
         let effective = preferences.effective(SystemEnergyState::default(), false);
         assert!(effective.tor_dormancy_allowed);
-        assert_eq!(
-            effective.background_sync.approximate_interval(),
-            Some(Duration::from_secs(1800))
-        );
+        assert_eq!(effective.background_sync, BackgroundSyncCadence::OnOpen);
     }
 
     #[test]
@@ -868,7 +831,7 @@ mod tests {
     fn preferences_wire_round_trip_is_stable() {
         let original = BatteryPreferences {
             mode: RequestedBatteryMode::BatterySaver,
-            background_sync: BackgroundSyncCadence::Hourly,
+            background_sync: BackgroundSyncCadence::OnOpen,
             allow_delayed_background_delivery: true,
             metered_transfers: MeteredTransferPolicy::PauseAll,
             visual_activity: VisualActivityPolicy::FocusedOnly,
