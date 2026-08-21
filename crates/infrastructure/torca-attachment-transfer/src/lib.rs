@@ -21,7 +21,7 @@ use torca_attachment_sqlite::SqlCipherAttachmentStore;
 use torca_attachments::{
     Attachment, AttachmentError, AttachmentId, AttachmentRepository, AttachmentStatus,
 };
-use torca_battery::{BatteryPolicy, BatteryProfile, MeteredTransferPolicy, TransferDecision};
+use torca_battery::{BatteryPolicy, MeteredTransferPolicy, TransferDecision};
 use torca_contacts::{
     Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
 };
@@ -33,6 +33,7 @@ use torca_messaging::{MessageDirection, MessageId, MessageRepository};
 use torca_peer_link::{InboundPeerEnvelope, PeerLinkError};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
+use torca_runtime_policy::BatteryProfile;
 
 pub const ATTACHMENT_MESSAGE_KIND: u16 = 3;
 const NONCE_BYTES: usize = 24;

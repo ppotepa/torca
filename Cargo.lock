@@ -5641,6 +5641,7 @@ dependencies = [
  "torca-peer-link",
  "torca-peer-protocol",
  "torca-peer-shared",
+ "torca-runtime-policy",
 ]
 
 [[package]]
@@ -5736,6 +5737,7 @@ dependencies = [
  "torca-radio-protocol",
  "torca-receipts",
  "torca-runtime",
+ "torca-runtime-policy",
  "torca-storage-sqlite",
  "torca-tor",
 ]
@@ -5756,6 +5758,7 @@ dependencies = [
  "torca-presence",
  "torca-receipts",
  "torca-runtime",
+ "torca-runtime-policy",
 ]
 
 [[package]]

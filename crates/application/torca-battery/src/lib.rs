@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 pub use torca_foundation::OpaqueId;
 pub use torca_runtime_policy::{
-    AttentionContext, AttentionSurface, ConnectionLease, ContactAvailabilityMode, DemandReason,
-    EvidenceKind, FocusLease, Freshness, LeaseLifetime, PolicyEvent, ResourceScope,
+    AttentionContext, AttentionSurface, BatteryProfile, ConnectionLease, ContactAvailabilityMode,
+    DemandReason, EvidenceKind, FocusLease, Freshness, LeaseLifetime, PolicyEvent, ResourceScope,
     RuntimeEventHub, RuntimeEventHubStats, RuntimeGovernor, RuntimePolicySnapshot, WorkClass,
     WorkDemand,
 };
@@ -115,16 +115,6 @@ impl BatterySnapshot {
             .saturating_add(self.attachment_chunks_rx)
             .saturating_add(self.suppressed_work)
     }
-}
-
-/// Runtime behavior profile. Policy profiles never weaken durable delivery.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum BatteryProfile {
-    #[default]
-    AlwaysAvailable,
-    Balanced,
-    BatterySaver,
-    Diagnostics,
 }
 
 /// User-facing availability preference.  This is deliberately separate from

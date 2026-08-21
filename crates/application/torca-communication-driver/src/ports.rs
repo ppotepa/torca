@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use torca_attachments::AttachmentId;
-use torca_battery::{BatteryProfile, MeteredTransferPolicy};
+use torca_battery::MeteredTransferPolicy;
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
@@ -14,6 +14,7 @@ use torca_runtime::{
     AttachmentSendRequest, AttachmentView, ContactVerificationSnapshot, PeerActivityEvidence,
     PeerConnectionStatus, PeerHealthSnapshot,
 };
+use torca_runtime_policy::BatteryProfile;
 
 use crate::CommunicationError;
 

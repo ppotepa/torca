@@ -28,7 +28,7 @@ pub use ports::{
 };
 
 use torca_attachments::AttachmentId;
-use torca_battery::{BatteryProfile, MeteredTransferPolicy};
+use torca_battery::MeteredTransferPolicy;
 use torca_client_engine::EngineHandle;
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
@@ -41,6 +41,7 @@ use torca_runtime::{
 };
 pub use torca_runtime::{PeerActivityEvidence, PeerConnectionStatus};
 pub use torca_runtime::{PeerHealthQuality, PeerHealthSnapshot};
+use torca_runtime_policy::BatteryProfile;
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 type WakeSlot = Arc<Mutex<Option<WakeCallback>>>;

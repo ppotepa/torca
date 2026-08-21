@@ -14,6 +14,18 @@ use torca_foundation::OpaqueId;
 const DEFAULT_LIVE_WINDOW: Duration = Duration::from_secs(15);
 const DEFAULT_RECENT_WINDOW: Duration = Duration::from_secs(120);
 
+/// Effective runtime behavior selected from user preference and host facts.
+/// Profiles never weaken reliable delivery; they only constrain discretionary
+/// work admitted by RuntimeOwner and feature executors.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BatteryProfile {
+    #[default]
+    AlwaysAvailable,
+    Balanced,
+    BatterySaver,
+    Diagnostics,
+}
+
 /// A UI surface currently receiving user attention.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AttentionSurface {
