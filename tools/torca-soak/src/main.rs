@@ -55,7 +55,7 @@ struct Cli {
     #[arg(long, default_value = ".torca/soak")]
     output: PathBuf,
     /// Path to the already-built lab peer executable.
-    #[arg(long, default_value = "target/lab/torca-lab-peer.exe")]
+    #[arg(long, default_value = "target/debug/torca-lab-peer.exe")]
     lab_peer: PathBuf,
     #[arg(long, default_value = ".")]
     repo_root: PathBuf,
@@ -557,7 +557,7 @@ fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), Strin
 
 fn build_lab_peer(repo_root: &Path, endpoint: &str) -> Result<PathBuf, String> {
     let status = Command::new("cargo")
-        .args(["build", "-p", "torca-lab-peer", "--profile", "lab"])
+        .args(["build", "-p", "torca-lab-peer"])
         .env("TORCA_RELAY_ENDPOINT", endpoint)
         .current_dir(repo_root)
         .status()
@@ -566,9 +566,9 @@ fn build_lab_peer(repo_root: &Path, endpoint: &str) -> Result<PathBuf, String> {
         return Err("lab peer build failed".into());
     }
     Ok(repo_root.join(if cfg!(windows) {
-        "target/lab/torca-lab-peer.exe"
+        "target/debug/torca-lab-peer.exe"
     } else {
-        "target/lab/torca-lab-peer"
+        "target/debug/torca-lab-peer"
     }))
 }
 
