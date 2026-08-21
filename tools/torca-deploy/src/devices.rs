@@ -30,6 +30,21 @@ pub struct DeviceController<'a> {
     paths: &'a RuntimePaths,
     runner: &'a dyn CommandRunner,
 }
+
+/// Restrict discovered devices to an exact user-requested id.
+pub fn select_device(
+    devices: Vec<Device>,
+    requested: Option<&str>,
+) -> Result<Vec<Device>, DeviceError> {
+    let Some(requested) = requested else {
+        return Ok(devices);
+    };
+    let selected = devices.into_iter().filter(|device| device.id == requested).collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Err(DeviceError::RequestedDeviceUnavailable(requested.to_owned()));
+    }
+    Ok(selected)
+}
 impl<'a> DeviceController<'a> {
     pub fn new(paths: &'a RuntimePaths, runner: &'a dyn CommandRunner) -> Self {
         Self { paths, runner }
@@ -154,13 +169,16 @@ pub enum DeviceError {
     Process(#[from] ProcessError),
     #[error("requested {0} deployment target is unavailable")]
     RequestedTargetUnavailable(Target),
+    #[error("requested device `{0}` is unavailable")]
+    RequestedDeviceUnavailable(String),
     #[error("Android device {device} uses unsupported ABI `{abi}`")]
     UnsupportedAndroidAbi { device: String, abi: String },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_adb_devices;
+    use super::{AndroidAbi, Device, parse_adb_devices, select_device};
+    use crate::domain::Target;
 
     #[test]
     fn parser_accepts_ready_transports_only() {
@@ -178,6 +196,27 @@ mod tests {
         assert_eq!(
             parse_adb_devices("prefix\nList of devices attached\nserial\tdevice\n"),
             vec!["serial"]
+        );
+    }
+
+    #[test]
+    fn exact_device_selection_is_opt_in() {
+        let devices = vec![
+            Device {
+                target: Target::Android,
+                id: "phone-a".into(),
+                android_abi: Some(AndroidAbi::Arm64),
+            },
+            Device {
+                target: Target::Android,
+                id: "phone-b".into(),
+                android_abi: Some(AndroidAbi::X86_64),
+            },
+        ];
+        assert_eq!(select_device(devices.clone(), None).expect("all devices").len(), 2);
+        assert_eq!(
+            select_device(devices, Some("phone-b")).expect("selected device")[0].id,
+            "phone-b"
         );
     }
 }

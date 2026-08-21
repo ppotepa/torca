@@ -170,8 +170,10 @@ impl DeployExecutor {
         let devices = if matches!(run.plan.action, crate::domain::DeployAction::BuildArtifacts) {
             Vec::new()
         } else {
-            DeviceController::new(&paths, self.runner.as_ref())
+            let discovered = DeviceController::new(&paths, self.runner.as_ref())
                 .discover_with_retry(&run.plan.targets)
+                .map_err(DeployError::Devices)?;
+            crate::devices::select_device(discovered, run.plan.device.as_deref())
                 .map_err(DeployError::Devices)?
         };
         if matches!(run.plan.action, crate::domain::DeployAction::CollectLogs) {

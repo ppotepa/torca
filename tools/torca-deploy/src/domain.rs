@@ -119,6 +119,9 @@ pub enum PrivacyPolicy {
 pub struct DeployPlan {
     pub action: DeployAction,
     pub targets: Vec<Target>,
+    /// Optional exact host/device id for deterministic deployments.
+    #[serde(default)]
+    pub device: Option<String>,
     pub configuration: Configuration,
     pub client_build: BuildPolicy,
     pub relay_build: BuildPolicy,
@@ -139,6 +142,7 @@ impl DeployPlan {
         Self {
             action,
             targets,
+            device: None,
             configuration,
             client_build: BuildPolicy::IfRequired,
             relay_build: BuildPolicy::IfRequired,

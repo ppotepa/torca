@@ -43,6 +43,9 @@ pub enum Command {
 pub struct PlanArgs {
     #[arg(long, value_enum, default_value = "all")]
     pub target: TargetArg,
+    /// Exact device id to deploy; without it all ready devices are selected.
+    #[arg(long)]
+    pub device: Option<String>,
     #[arg(long, value_enum, default_value = "debug")]
     pub configuration: ConfigurationArg,
     #[arg(long, value_enum, default_value = "if-required")]
@@ -148,6 +151,7 @@ impl PlanArgs {
                 TargetArg::Android => vec![Target::Android],
                 TargetArg::All => vec![Target::Windows, Target::Android],
             },
+            device: self.device.clone(),
             configuration: match self.configuration {
                 ConfigurationArg::Debug => Configuration::Debug,
                 ConfigurationArg::Release => Configuration::Release,

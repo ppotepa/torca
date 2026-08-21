@@ -105,7 +105,7 @@ function Ensure-PackageInstalled {
     Write-Host "Package '$Package' is not installed; running Android deploy before the battery soak."
     for ($attempt = 1; $attempt -le $AutoDeployAttempts; $attempt++) {
         $deploy = Start-Process -FilePath 'cargo' -WorkingDirectory $repoRoot -NoNewWindow -Wait -PassThru `
-            -ArgumentList @('run', '-p', 'torca-deploy', '--', 'deploy', '--target', 'android', '--configuration', 'debug', '--client-build', 'if-required', '--relay-build', 'if-required', '--onion', 'ensure', '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart') `
+            -ArgumentList @('run', '-p', 'torca-deploy', '--', 'deploy', '--target', 'android', '--device', $DeviceId, '--configuration', 'debug', '--client-build', 'if-required', '--relay-build', 'if-required', '--onion', 'ensure', '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart') `
             -RedirectStandardOutput $deployStdout -RedirectStandardError $deployStderr
         @(
             "--- auto-deploy attempt $attempt/$AutoDeployAttempts ---"

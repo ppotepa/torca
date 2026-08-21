@@ -151,9 +151,10 @@ fn show_and_execute(
     let plan = planner::normalize(plan);
     plan.validate()?;
     println!(
-        "Plan: {}\n  targets: {:?}\n  configuration: {}\n  client build: {:?}\n  relay build: {:?}\n  onion: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  mode: {:?}",
+        "Plan: {}\n  targets: {:?}\n  device: {:?}\n  configuration: {}\n  client build: {:?}\n  relay build: {:?}\n  onion: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  mode: {:?}",
         plan.action,
         plan.targets,
+        plan.device,
         plan.configuration,
         plan.client_build,
         plan.relay_build,
