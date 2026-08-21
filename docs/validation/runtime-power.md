@@ -18,6 +18,12 @@ pairing, Radio session, outgoing message, attachment, or transfer.
    probes, polling DB work, FFI polling, contact scans and reconnect attempts
    are zero; the scheduler must report no app-controlled next deadline.
 
+The in-app observation/incident marker is the proof for runtime counters and
+the grace event. The ADB soak harness independently verifies process, screen,
+power state and captures the native JSONL tree; it must not infer a missing
+structured event merely because an older build did not mirror every in-memory
+diagnostic event to JSONL.
+
 Run the Android harness from the repository root for a longer physical soak:
 
 ```powershell

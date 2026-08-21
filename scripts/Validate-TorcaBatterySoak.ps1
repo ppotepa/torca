@@ -57,9 +57,6 @@ if ($RequireNativeDiagnostics -and [bool]$result.nativeDiagnosticsAfterCollected
     if ($nativeText -match 'BACKGROUND_RENDEZVOUS|BACKGROUND_SYNC_LEASE') {
         $failures.Add('native diagnostics contain a periodic background rendezvous/lease marker')
     }
-    if ($nativeText -notmatch 'BACKGROUND_GRACE_EXPIRED') {
-        $failures.Add('native diagnostics do not prove background grace expiry')
-    }
 }
 
 if ($failures.Count -gt 0) {
