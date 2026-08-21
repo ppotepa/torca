@@ -353,13 +353,14 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 policy.release_lease(delivery_lease_owner(message_id));
             }
             RuntimeWait::Command(command) => {
+                let refresh_contacts = command.requires_contact_refresh();
                 if command_requires_network(&command) {
                     let _ = tor.set_dormant(false);
                 }
                 if command_writes_database(&command) {
                     diagnostics.count(RuntimeCounter::DbWrite);
                 }
-                work.refresh_contacts = true;
+                work.refresh_contacts |= refresh_contacts;
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 handle_command(
                     command,
