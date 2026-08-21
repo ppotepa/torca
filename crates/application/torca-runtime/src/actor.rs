@@ -10,7 +10,6 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
-use torca_battery::{BatteryMetric, WakeReason};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_connectivity::{
     ConnectivityObserver, ConnectivitySnapshot, PeerProbeCandidate, PeerProbeSupervisor,
@@ -20,8 +19,8 @@ use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
 use torca_diagnostics::{
-    Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState, RuntimeCounter,
-    RuntimeWakeSource,
+    BatteryMetric, Component, DiagnosticBuffer, DiagnosticCode, DiagnosticEvent, HealthState,
+    RuntimeCounter, RuntimeWakeSource, WakeReason,
 };
 use torca_foundation::{
     ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,

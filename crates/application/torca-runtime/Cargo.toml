@@ -10,7 +10,6 @@ publish = false
 
 [dependencies]
 torca-attachments = { path = "../../domains/torca-attachments" }
-torca-battery = { path = "../torca-battery" }
 torca-client-engine = { path = "../torca-client-engine" }
 torca-connectivity = { path = "../torca-connectivity" }
 torca-contacts = { path = "../../domains/torca-contacts" }

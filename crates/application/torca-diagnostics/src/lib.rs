@@ -1,14 +1,17 @@
 //! Bounded redacted diagnostics, health snapshots and deterministic fault injection.
 
+mod battery;
+pub use battery::{
+    BatteryDiagnosticSnapshot, BatteryEvent, BatteryLedger, BatteryMetric, BatterySnapshot,
+    BatterySpan, PlatformEnergyProvider, PlatformEnergySample, WakeReason,
+};
+
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 
-use torca_battery::{
-    BatteryLedger, BatteryMetric, BatteryProfile, BatterySnapshot, PlatformEnergySample,
-    RuntimePolicySnapshot, WakeReason,
-};
 use torca_foundation::{OpaqueId, Timestamp};
+use torca_runtime_policy::{BatteryProfile, RuntimePolicySnapshot};
 
 /// Backwards-compatible name for the unified battery ledger snapshot.
 pub type RuntimeCounters = BatterySnapshot;
@@ -529,12 +532,12 @@ mod tests {
     #[test]
     fn why_awake_projection_is_redacted_and_exported() {
         let now = std::time::Instant::now();
-        let mut governor = torca_battery::RuntimeGovernor::new(now);
-        governor.acquire_lease(torca_battery::WorkDemand {
-            scope: torca_battery::ResourceScope::Relay,
-            class: torca_battery::WorkClass::RelayProbe,
-            reason: torca_battery::DemandReason::ActivePairing,
-            owner: torca_battery::OpaqueId::from_u128(9_999),
+        let mut governor = torca_runtime_policy::RuntimeGovernor::new(now);
+        governor.acquire_lease(torca_runtime_policy::WorkDemand {
+            scope: torca_runtime_policy::ResourceScope::Relay,
+            class: torca_runtime_policy::WorkClass::RelayProbe,
+            reason: torca_runtime_policy::DemandReason::ActivePairing,
+            owner: OpaqueId::from_u128(9_999),
             expires_at: now + std::time::Duration::from_secs(30),
         });
         let mut diagnostics = DiagnosticBuffer::new(4);

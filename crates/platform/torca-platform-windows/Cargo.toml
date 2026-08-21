@@ -12,7 +12,7 @@ publish = false
 torca-crypto = { path = "../../infrastructure/torca-crypto" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-platform = { path = "../torca-platform" }
-torca-battery = { path = "../../application/torca-battery" }
+torca-diagnostics = { path = "../../application/torca-diagnostics" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [

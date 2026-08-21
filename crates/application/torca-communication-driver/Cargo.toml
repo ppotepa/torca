@@ -7,7 +7,6 @@ license = "AGPL-3.0-or-later"
 publish = false
 
 [dependencies]
-torca-battery = { path = "../torca-battery" }
 torca-runtime-policy = { path = "../torca-runtime-policy" }
 torca-attachments = { path = "../../domains/torca-attachments" }
 torca-client-engine = { path = "../torca-client-engine" }

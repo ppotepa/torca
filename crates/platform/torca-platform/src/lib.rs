@@ -1,7 +1,7 @@
 //! Platform lifecycle policy shared by Windows and Android hosts.
 
 use std::path::PathBuf;
-use torca_battery::PlatformEnergySample;
+use torca_diagnostics::PlatformEnergySample;
 
 pub use torca_crypto::{ProtectedSecretStore, ProtectedSecretStoreError};
 use torca_identity::KeyId;

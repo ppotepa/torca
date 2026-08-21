@@ -10,7 +10,7 @@ mod dpapi;
 pub use dpapi::DpapiFileSecretStore;
 
 use std::path::PathBuf;
-use torca_battery::{PlatformEnergyProvider, PlatformEnergySample};
+use torca_diagnostics::{PlatformEnergyProvider, PlatformEnergySample};
 use torca_platform::{
     AppPaths, DeviceDescriptor, LifecycleCapabilities, PlatformServices, ProtectedSecretStore,
     RelayEndpoint, SecretNamespace,

@@ -11,7 +11,7 @@ publish = false
 [dependencies]
 torca-crypto = { path = "../../infrastructure/torca-crypto" }
 torca-identity = { path = "../../domains/torca-identity" }
-torca-battery = { path = "../../application/torca-battery" }
+torca-diagnostics = { path = "../../application/torca-diagnostics" }
 
 [lints]
 workspace = true
