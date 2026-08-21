@@ -509,6 +509,7 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDrive
             (RuntimeWakeSource::TorDeadline, tor.next_maintenance_delay(now)),
             (RuntimeWakeSource::PairingDeadline, pairing.next_maintenance_delay(now)),
             (RuntimeWakeSource::DeliveryDeadline, communication.next_maintenance_delay(now)),
+            (RuntimeWakeSource::RadioDeadline, communication.next_radio_maintenance_delay(now)),
             (RuntimeWakeSource::LeaseExpiry, lease_delay),
             (RuntimeWakeSource::PeerDeadline, peer_delay),
             (RuntimeWakeSource::BackgroundGrace, background_delay),

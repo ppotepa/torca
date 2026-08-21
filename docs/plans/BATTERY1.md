@@ -38,7 +38,7 @@ incoming work can still hold a durable lease independently of the UI.
 | 2 | Implemented core | RuntimeOwner receives atomic host-policy inputs; legacy values normalize safely. |
 | 3 | Implemented core | One deadline registry with source-selective maintenance. |
 | 4 | Implemented core | One-shot background grace and soft dormancy; no recurring rendezvous. |
-| 5 | In progress | Demand/dirty-peer maintenance and unified platform visibility. |
+| 5 | In progress | Demand/dirty-peer maintenance and unified platform visibility. Radio now owns a separate deadline lane. |
 | 6 | In progress | Debug-only Battery/Runtime/Logs/Incident console and bounded support bundle. |
 | 7 | In progress | Canonical docs, lab peer and deterministic/device validation. |
 

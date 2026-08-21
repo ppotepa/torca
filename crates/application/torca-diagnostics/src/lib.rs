@@ -24,6 +24,7 @@ pub enum RuntimeWakeSource {
     TorDeadline,
     PairingDeadline,
     DeliveryDeadline,
+    RadioDeadline,
     PeerDeadline,
     RelayDeadline,
     LeaseExpiry,

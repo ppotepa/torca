@@ -433,6 +433,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             || due_sources.contains(&RuntimeWakeSource::LeaseExpiry);
         let run_delivery = command_delivery
             || due_sources.contains(&RuntimeWakeSource::DeliveryDeadline);
+        let run_radio = due_sources.contains(&RuntimeWakeSource::RadioDeadline);
         let run_peer = command_peer || due_sources.contains(&RuntimeWakeSource::PeerDeadline);
         if run_health {
             maintain_runtime_health(
@@ -479,6 +480,19 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         } else {
             false
         };
+        if run_radio {
+            if let Err(error) = communication.maintain_radio(now) {
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Peer,
+                    HealthState::Degraded,
+                    "RADIO_MAINTENANCE_FAILED",
+                );
+                eprintln!("torca-runtime: radio maintenance failed: {error}");
+            }
+        }
         update_runtime_schedule(
             tor,
             pairing,

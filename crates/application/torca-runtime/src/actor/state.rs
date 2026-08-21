@@ -103,6 +103,7 @@ impl RuntimeSchedulingState {
             RuntimeWakeSource::TorDeadline,
             RuntimeWakeSource::PairingDeadline,
             RuntimeWakeSource::DeliveryDeadline,
+            RuntimeWakeSource::RadioDeadline,
             RuntimeWakeSource::PeerDeadline,
         ]);
         Self {

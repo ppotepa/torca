@@ -190,6 +190,16 @@ pub trait CommunicationDriver:
     + AttachmentTransferPort
     + AttachmentExportPort
 {
+    /// Runs only Radio control/media housekeeping. RuntimeOwner calls this
+    /// from `RadioDeadline`; delivery work must not wake an idle Radio lane.
+    fn maintain_radio(&mut self, _now: Timestamp) -> Result<(), RuntimeDriverError> {
+        Ok(())
+    }
+    /// Returns a Radio-owned deadline separately from delivery/attachment
+    /// deadlines. `None` means Radio can remain event-driven and asleep.
+    fn next_radio_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
+        None
+    }
     fn peer_activity(&self) -> Vec<PeerActivityEvidence> {
         PeerSessionPort::peer_activity(self)
     }

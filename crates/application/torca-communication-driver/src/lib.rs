@@ -279,11 +279,6 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         self.drain_inbound(now).map_err(map_runtime)?;
         self.text.maintenance(now, TEXT_BATCH).map_err(map_runtime)?;
         self.control.maintenance(now, CONTROL_BATCH).map_err(map_runtime)?;
-        if let Some(radio) = self.radio.as_mut()
-            && let Err(error) = radio.maintenance(now)
-        {
-            eprintln!("torca-radio: background maintenance failed code={error}");
-        }
         if self.attachment_scheduler.due(now)
             && !self.attachment_job_active.swap(true, Ordering::AcqRel)
         {
@@ -304,7 +299,6 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             self.text.next_maintenance_delay(now),
             self.control.next_maintenance_delay(now),
             self.attachment_scheduler.next_delay(now),
-            self.radio.as_ref().and_then(|radio| radio.next_maintenance_delay(now)),
         ]
         .into_iter()
         .flatten()
@@ -380,6 +374,19 @@ impl PeerSessionPort for TorcaCommunicationDriver {
 }
 
 impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
+    fn maintain_radio(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        if let Some(radio) = self.radio.as_mut()
+            && let Err(error) = radio.maintenance(now)
+        {
+            eprintln!("torca-radio: maintenance failed code={error}");
+        }
+        Ok(())
+    }
+
+    fn next_radio_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        self.radio.as_ref().and_then(|radio| radio.next_maintenance_delay(now))
+    }
+
     fn database_write_count(&self) -> u64 {
         let attachment_writes = self
             .attachments
