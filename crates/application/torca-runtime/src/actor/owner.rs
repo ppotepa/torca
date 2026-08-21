@@ -321,6 +321,14 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 diagnostics.set_battery_profile(effective.profile);
                 if !effective.tor_dormancy_allowed {
                     let _ = tor.set_dormant(false);
+                } else if !work.foreground
+                    && scheduling.background_grace_deadline.is_none()
+                    && !policy.has_durable_lease(std::time::Instant::now())
+                {
+                    // A user can change policy after the one-shot grace has
+                    // already elapsed. Apply that new permission immediately
+                    // without manufacturing another wake window.
+                    let _ = tor.set_dormant(true);
                 }
             }
             RuntimeWait::Command(RuntimeCommand::SetForeground(foreground)) => {
