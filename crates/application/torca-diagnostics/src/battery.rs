@@ -279,3 +279,44 @@ fn increment(snapshot: &mut BatterySnapshot, metric: BatteryMetric, amount: u64)
     };
     *target = target.saturating_add(amount);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_ledger_has_no_work() {
+        let snapshot = BatteryLedger::new().snapshot();
+        assert_eq!(snapshot.total_work(), 0);
+        assert_eq!(snapshot.energy_score(), 0);
+    }
+
+    #[test]
+    fn dropped_and_finished_spans_record_once() {
+        let ledger = BatteryLedger::new();
+        {
+            let _span = ledger.begin(BatteryMetric::PeerDial, WakeReason::DurableDelivery);
+        }
+        let span = ledger.begin(BatteryMetric::TxFrame, WakeReason::Radio);
+        let _ = span.finish();
+        let snapshot = ledger.snapshot();
+        assert_eq!(snapshot.peer_dials, 1);
+        assert_eq!(snapshot.tx_frames, 1);
+    }
+
+    #[test]
+    fn recent_events_are_bounded() {
+        let ledger = BatteryLedger::new();
+        for _ in 0..256 {
+            ledger.record(BatteryMetric::FfiWake, 1, WakeReason::Scheduler);
+        }
+        assert_eq!(ledger.recent().len(), 128);
+    }
+
+    #[test]
+    fn suppressed_work_is_separate_in_the_ledger() {
+        let ledger = BatteryLedger::new();
+        ledger.record_suppressed(3);
+        assert_eq!(ledger.snapshot().suppressed_work, 3);
+    }
+}
