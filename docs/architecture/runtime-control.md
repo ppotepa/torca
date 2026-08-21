@@ -6,6 +6,10 @@ validated unless that scenario is recorded in validation evidence.
 
 ## Ownership
 
+`torca-runtime-policy` is the policy kernel consumed directly by
+`RuntimeOwner`. `torca-battery` is transitional compatibility/telemetry
+surface only; it must not become a second scheduler or executor owner.
+
 `RuntimeOwner` is the sole owner of application-controlled runtime wake-ups and
 effective executor policy. The native hosts report facts only: application
 visibility, power/network state and persisted user preference. Flutter
