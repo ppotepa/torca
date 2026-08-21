@@ -10,7 +10,7 @@ Use an endpoint compiled into the lab peer binary:
 
 ```powershell
 $env:TORCA_RELAY_ENDPOINT = '<v3-onion>.onion:443'
-cargo build -p torca-lab-peer
+cargo build -p torca-lab-peer --profile lab
 cargo run -p torca-soak -- --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT --duration-seconds 300
 ```
 
@@ -21,6 +21,11 @@ rebuilds `torca-lab-peer` with that endpoint before starting peers:
 
 ```powershell
 cargo run -p torca-soak -- --relay managed --duration-seconds 1800
+
+The orchestrator uses the opt-in `lab` Cargo profile automatically. This
+keeps the headless peer's debug artifacts smaller while preserving incremental
+compilation; production client profiles are unchanged. Override the binary
+with `--lab-peer` when using a separately built executable.
 ```
 
 The relay is stopped when the run exits, including when a peer or assertion
