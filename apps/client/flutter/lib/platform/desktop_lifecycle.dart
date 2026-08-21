@@ -21,7 +21,6 @@ class DesktopLifecycle with WindowListener, TrayListener {
 
   Future<void> initialize() async {
     if (!Platform.isWindows || _disposed) return;
-    await gateway.sendLifecycle('host_started');
     await windowManager.ensureInitialized();
     await windowManager.setPreventClose(true);
     windowManager.addListener(this);
@@ -151,6 +150,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
   }
 
   Future<void> _showWindow() async {
+    // Flutter's desktop lifecycle does not reliably emit `resumed` for a
+    // window restored from the tray. This is a host visibility fact, not a
+    // second lifecycle owner; it complements RuntimeLifecycleObserver.
+    await gateway.sendLifecycle('foregrounded');
     await windowManager.show();
     await windowManager.restore();
     await windowManager.focus();
