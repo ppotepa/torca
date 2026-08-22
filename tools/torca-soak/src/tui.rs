@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -42,10 +43,20 @@ struct UiContext {
     logs: Mutex<VecDeque<String>>,
     run_root: Mutex<Option<PathBuf>>,
     artifact_path: Mutex<String>,
+    android_telemetry: Mutex<AndroidTelemetry>,
     message_count: std::sync::atomic::AtomicUsize,
     attachment_count: std::sync::atomic::AtomicUsize,
     radio_count: std::sync::atomic::AtomicUsize,
     ready_peers: std::sync::atomic::AtomicUsize,
+}
+
+#[derive(Default)]
+struct AndroidTelemetry {
+    power_source: String,
+    battery_level: String,
+    wakefulness: String,
+    pid: String,
+    installed: String,
 }
 
 static ACTIVE: OnceLock<Mutex<Option<Arc<UiContext>>>> = OnceLock::new();
@@ -244,6 +255,7 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
         logs: Mutex::new(VecDeque::new()),
         run_root: Mutex::new(None),
         artifact_path: Mutex::new("pending".to_owned()),
+        android_telemetry: Mutex::new(AndroidTelemetry::default()),
         message_count: std::sync::atomic::AtomicUsize::new(0),
         attachment_count: std::sync::atomic::AtomicUsize::new(0),
         radio_count: std::sync::atomic::AtomicUsize::new(0),
@@ -270,6 +282,8 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
     };
     let mut show_logs = false;
     let mut scroll = 0usize;
+    let mut last_android_sample =
+        Instant::now().checked_sub(Duration::from_secs(2)).unwrap_or_else(Instant::now);
     let loop_result: Result<Result<(), String>, String> = (|| {
         loop {
             if let Ok(result) = result_rx.try_recv() {
@@ -323,6 +337,14 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
                         _ => {}
                     }
                 }
+            }
+            if let Some(serial) = cli.android.as_deref()
+                && last_android_sample.elapsed() >= Duration::from_secs(2)
+            {
+                if let Ok(mut telemetry) = ctx.android_telemetry.lock() {
+                    *telemetry = sample_android(serial);
+                }
+                last_android_sample = Instant::now();
             }
             terminal
                 .draw(|frame| draw(frame, &ctx, &cli, show_logs, scroll))
@@ -433,6 +455,24 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
             ctx.artifact_path.lock().map(|value| value.clone()).unwrap_or_default()
         )),
     ];
+    let telemetry = ctx
+        .android_telemetry
+        .lock()
+        .map(|value| {
+            format!(
+                "ADB: package={} pid={} power={} level={} screen={}",
+                empty_as_unknown(&value.installed),
+                empty_as_unknown(&value.pid),
+                empty_as_unknown(&value.power_source),
+                empty_as_unknown(&value.battery_level),
+                empty_as_unknown(&value.wakefulness),
+            )
+        })
+        .unwrap_or_else(|_| "ADB: unavailable".to_owned());
+    let mut devices = devices;
+    if cli.android.is_some() {
+        devices.push(ListItem::new(telemetry));
+    }
     frame.render_widget(
         List::new(devices).block(Block::default().borders(Borders::ALL).title("Devices")),
         columns[0],
@@ -468,6 +508,58 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
             .style(Style::default().fg(Color::DarkGray)),
         vertical[2],
     );
+}
+
+fn sample_android(serial: &str) -> AndroidTelemetry {
+    let battery = adb(serial, &["shell", "dumpsys", "battery"]);
+    let power = adb(serial, &["shell", "dumpsys", "power"]);
+    let pid = adb(serial, &["shell", "pidof", "com.torca.torca_app"]);
+    let installed = adb(serial, &["shell", "pm", "path", "com.torca.torca_app"]);
+    AndroidTelemetry {
+        power_source: power_source(&battery).to_owned(),
+        battery_level: battery
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("level: "))
+            .unwrap_or("?")
+            .to_owned(),
+        wakefulness: power
+            .lines()
+            .find(|line| line.contains("mWakefulness="))
+            .map(str::trim)
+            .unwrap_or("unknown")
+            .to_owned(),
+        pid: if pid.trim().is_empty() { "not running".to_owned() } else { pid.trim().to_owned() },
+        installed: if installed.contains("package:") {
+            "installed".to_owned()
+        } else {
+            "missing".to_owned()
+        },
+    }
+}
+
+fn adb(serial: &str, args: &[&str]) -> String {
+    Command::new("adb")
+        .args(["-s", serial])
+        .args(args)
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_else(|_| "unavailable".to_owned())
+}
+
+fn power_source(text: &str) -> &'static str {
+    if text.contains("AC powered: true") {
+        "ac"
+    } else if text.contains("USB powered: true") {
+        "usb"
+    } else if text.contains("Wireless powered: true") {
+        "wireless"
+    } else {
+        "battery"
+    }
+}
+
+fn empty_as_unknown(value: &str) -> &str {
+    if value.is_empty() { "unknown" } else { value }
 }
 
 fn draw_logs(frame: &mut ratatui::Frame, area: Rect, ctx: &UiContext, scroll: usize) {
