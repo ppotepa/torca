@@ -6,7 +6,7 @@
 //! logging and Tor ownership boundaries.
 
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -14,6 +14,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
+
+mod tui;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum RelayMode {
@@ -34,9 +36,9 @@ enum FaultProfile {
     None,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Clone, Parser, Debug)]
 #[command(name = "torca-soak")]
-struct Cli {
+pub(crate) struct Cli {
     /// Android serial. Omit to run the fake-peer-only laboratory scenario.
     #[arg(long)]
     android: Option<String>,
@@ -65,6 +67,9 @@ struct Cli {
     lab_peer: Option<PathBuf>,
     #[arg(long, default_value = ".")]
     repo_root: PathBuf,
+    /// Disable the interactive terminal dashboard (for CI and redirected output).
+    #[arg(long)]
+    plain: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -273,6 +278,18 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let cli = Cli::parse();
+    if !cli.plain {
+        if std::io::stdout().is_terminal() && std::io::stderr().is_terminal() {
+            return tui::run(cli);
+        }
+        eprintln!(
+            "torca-soak: non-interactive output detected; using plain mode (pass --plain to silence this message)"
+        );
+    }
+    run_scenario(cli)
+}
+
+pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
     if cli.fake_peers < 1 {
         return Err("fake-peers must be at least 1".into());
     }
@@ -372,7 +389,7 @@ fn run() -> Result<(), String> {
     let mut android_network_fault_injected = false;
     let mut peer_restart_injected = false;
     let mut sequence = 0u64;
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !tui::cancel_requested() {
         if !fault_injected
             && !matches!(cli.fault_profile, FaultProfile::None)
             && run_started.elapsed() >= Duration::from_secs(cli.duration_seconds / 3)
@@ -385,7 +402,7 @@ fn run() -> Result<(), String> {
                     serde_json::json!({"durationSeconds": 15}),
                 )?;
                 relay.pause()?;
-                std::thread::sleep(Duration::from_secs(15));
+                tui::controlled_sleep(Duration::from_secs(15));
                 relay.resume()?;
                 record(&mut timeline, "relay_fault_recovered", serde_json::json!({}))?;
             } else if matches!(cli.fault_profile, FaultProfile::Controlled) {
@@ -411,7 +428,7 @@ fn run() -> Result<(), String> {
                     serde_json::json!({"serial": serial, "durationSeconds": 10}),
                 )?;
                 peers[index].set_network(false)?;
-                std::thread::sleep(Duration::from_secs(10));
+                tui::controlled_sleep(Duration::from_secs(10));
                 peers[index].set_network(true)?;
                 record(
                     &mut timeline,
@@ -501,7 +518,7 @@ fn run() -> Result<(), String> {
                         "radio.begin",
                         serde_json::json!({"contactIdHex": contact_id}),
                     )?;
-                    std::thread::sleep(Duration::from_millis(750));
+                    tui::controlled_sleep(Duration::from_millis(750));
                     let end = peer.request(
                         &format!("radio-end-{sequence}"),
                         "radio.end",
@@ -516,7 +533,7 @@ fn run() -> Result<(), String> {
             }
             wait_for_message(&mut peers, peer_index, &body)?;
         }
-        std::thread::sleep(Duration::from_secs(match cli.workload {
+        tui::controlled_sleep(Duration::from_secs(match cli.workload {
             Workload::Moderate => 10,
             Workload::Minimal => 2,
         }));
@@ -525,14 +542,20 @@ fn run() -> Result<(), String> {
     for peer in &mut peers {
         peer.stop();
     }
-    record(&mut timeline, "run_completed", serde_json::json!({"sequence": sequence}))?;
+    let cancelled = tui::cancel_requested();
+    let status = if cancelled { "cancelled" } else { "completed" };
+    record(
+        &mut timeline,
+        if cancelled { "run_cancelled" } else { "run_completed" },
+        serde_json::json!({"sequence": sequence}),
+    )?;
     let completed =
         SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?;
     write_json(
         &root.join("summary.json"),
         &Summary {
             run_id,
-            status: "completed",
+            status,
             sequence,
             participants: peers.len(),
             completed_at_ms: completed.as_millis(),
@@ -556,7 +579,7 @@ fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), Strin
     let endpoint_file = repo_root.join(".torca/stack/relay_endpoint.txt");
     let ready_file = repo_root.join(".torca/stack/relay_ready.txt");
     let deadline = Instant::now() + Duration::from_secs(180);
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !tui::cancel_requested() {
         if let Ok(endpoint) = fs::read_to_string(&endpoint_file) {
             let endpoint = endpoint.trim().to_owned();
             let ready = fs::read_to_string(&ready_file)
@@ -566,7 +589,7 @@ fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), Strin
                 return Ok((endpoint, ManagedRelay { repo_root: repo_root.to_owned() }));
             }
         }
-        std::thread::sleep(Duration::from_secs(2));
+        tui::controlled_sleep(Duration::from_secs(2));
     }
     Err(format!(
         "managed relay did not publish a valid endpoint within 180s: {}",
@@ -651,13 +674,13 @@ fn retry_operation(
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut attempt = 0u32;
     let mut last_error = String::new();
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !tui::cancel_requested() {
         attempt = attempt.saturating_add(1);
         match peer.request(&format!("{request_prefix}-{attempt}"), operation, payload.clone()) {
             Ok(response) => return Ok(response),
             Err(error) => last_error = error,
         }
-        std::thread::sleep(Duration::from_secs(2));
+        tui::controlled_sleep(Duration::from_secs(2));
     }
     Err(format!("{} {operation} did not succeed within 120s: {last_error}", peer.name()))
 }
@@ -682,14 +705,14 @@ fn wait_for_pairing_invitation(
                 peer.name()
             ));
         }
-        std::thread::sleep(Duration::from_secs(2));
+        tui::controlled_sleep(Duration::from_secs(2));
         latest = peer.request("pair-create-wait", "snapshot", serde_json::json!({}))?;
     }
 }
 
 fn wait_for_conversation(left: &mut Participant, right: &mut Participant) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(90);
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !tui::cancel_requested() {
         let left_snapshot = snapshot_with_retry(left, "pair-check-left")?;
         let right_snapshot = snapshot_with_retry(right, "pair-check-right")?;
         if first_conversation_id(&left_snapshot).is_some()
@@ -697,7 +720,7 @@ fn wait_for_conversation(left: &mut Participant, right: &mut Participant) -> Res
         {
             return Ok(());
         }
-        std::thread::sleep(Duration::from_secs(2));
+        tui::controlled_sleep(Duration::from_secs(2));
     }
     Err(format!("pairing did not create conversations for {} and {}", left.name(), right.name()))
 }
@@ -709,7 +732,7 @@ fn snapshot_with_retry(
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut attempt = 0u32;
     let mut last_error = String::new();
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !tui::cancel_requested() {
         attempt = attempt.saturating_add(1);
         match peer.request(
             &format!("{request_prefix}-{attempt}"),
@@ -719,7 +742,7 @@ fn snapshot_with_retry(
             Ok(snapshot) => return Ok(snapshot),
             Err(error) => last_error = error,
         }
-        std::thread::sleep(Duration::from_secs(2));
+        tui::controlled_sleep(Duration::from_secs(2));
     }
     Err(format!("{} snapshot did not succeed within 60s: {last_error}", peer.name()))
 }
@@ -751,7 +774,7 @@ impl AndroidBridge {
             if Instant::now() >= deadline {
                 return Err(format!("Android scenario bridge did not start on {serial}"));
             }
-            std::thread::sleep(Duration::from_secs(1));
+            tui::controlled_sleep(Duration::from_secs(1));
         };
         let token = discovery
             .get("token")
@@ -989,7 +1012,7 @@ fn wait_for_message(
     body: &str,
 ) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !tui::cancel_requested() {
         for (index, peer) in peers.iter_mut().enumerate() {
             if index == sender_index {
                 continue;
@@ -1007,7 +1030,7 @@ fn wait_for_message(
                 return Ok(());
             }
         }
-        std::thread::sleep(Duration::from_secs(2));
+        tui::controlled_sleep(Duration::from_secs(2));
     }
     Err(format!("message was not observed by a remote peer: {body}"))
 }
@@ -1055,7 +1078,9 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 
 fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), String> {
     let line = serde_json::json!({"tsMs": SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_millis(), "event": event, "data": data});
-    writeln!(file, "{line}").map_err(|error| format!("write timeline: {error}"))
+    writeln!(file, "{line}").map_err(|error| format!("write timeline: {error}"))?;
+    tui::publish_event(event, &line);
+    Ok(())
 }
 
 #[cfg(test)]
