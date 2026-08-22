@@ -127,7 +127,18 @@ function Ensure-PackageInstalled {
             if (Test-Path $deployStderr) { Get-Content $deployStderr }
         ) | Out-File -Append -Encoding utf8 $deployLog
         Remove-Item $deployStdout, $deployStderr -Force -ErrorAction SilentlyContinue
-        if ($deploy.ExitCode -eq 0 -and (Test-PackageInstalled) -and (Test-PackageLaunchable)) { return }
+        if ($deploy.ExitCode -eq 0) {
+            # PackageManager can lag behind the installer by a few seconds,
+            # especially for streamed split APK installation. Poll the same
+            # device before deciding that deploy failed.
+            for ($verifyAttempt = 1; $verifyAttempt -le 5; $verifyAttempt++) {
+                if ((Test-PackageInstalled) -and (Test-PackageLaunchable)) {
+                    Write-Host "Android package '$Package' is installed and launchable on '$DeviceId' (deploy attempt $attempt)."
+                    return
+                }
+                if ($verifyAttempt -lt 5) { Start-Sleep -Seconds 2 }
+            }
+        }
 
         $tail = (Get-Content $deployLog -Tail 30 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
         if ($tail -match 'INSTALL_FAILED_USER_RESTRICTED|Install canceled by user' -and $attempt -lt $AutoDeployAttempts) {
@@ -135,7 +146,9 @@ function Ensure-PackageInstalled {
             Start-Sleep -Seconds 5
             continue
         }
-        throw "Android auto-deploy failed (attempt=$attempt, exit=$($deploy.ExitCode)). See '$deployLog'.`n$tail"
+        $packageState = (Invoke-SelectedAdb @('shell', 'pm', 'path', $Package) 2>&1 | Out-String).Trim()
+        $activityState = (Invoke-SelectedAdb @('shell', 'cmd', 'package', 'resolve-activity', '--brief', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', $Package) 2>&1 | Out-String).Trim()
+        throw "Android auto-deploy failed (attempt=$attempt, exit=$($deploy.ExitCode)); packagePath='$packageState'; launchActivity='$activityState'. See '$deployLog'.`n$tail"
     }
     throw "Android deploy completed without a launchable '$Package' activity on '$DeviceId'. Check '$deployLog' and approve the installation prompt on the device."
 }
