@@ -23,7 +23,7 @@ pub struct DeployExecutor {
 
 impl DeployExecutor {
     pub fn new(store: StateStore) -> Self {
-        Self { store, runner: Arc::new(SystemCommandRunner) }
+        Self { store, runner: Arc::new(SystemCommandRunner::default()) }
     }
     pub fn with_runner(store: StateStore, runner: Arc<dyn CommandRunner>) -> Self {
         Self { store, runner }

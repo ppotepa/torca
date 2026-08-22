@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,20 +32,44 @@ pub trait CommandRunner: Send + Sync {
     }
 }
 
-#[derive(Default)]
-pub struct SystemCommandRunner;
+pub type OutputSink = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
-impl CommandRunner for SystemCommandRunner {
-    fn run(&self, command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
-        run_command(command, true)
-    }
+pub struct SystemCommandRunner {
+    echo: bool,
+    sink: Option<OutputSink>,
+}
 
-    fn run_quiet(&self, command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
-        run_command(command, false)
+impl Default for SystemCommandRunner {
+    fn default() -> Self {
+        Self { echo: true, sink: None }
     }
 }
 
-fn run_command(command: &CommandSpec, echo: bool) -> Result<CommandOutput, ProcessError> {
+impl SystemCommandRunner {
+    pub fn quiet() -> Self {
+        Self { echo: false, sink: None }
+    }
+
+    pub fn with_sink(sink: OutputSink) -> Self {
+        Self { echo: false, sink: Some(sink) }
+    }
+}
+
+impl CommandRunner for SystemCommandRunner {
+    fn run(&self, command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
+        run_command(command, self.echo, self.sink.as_ref())
+    }
+
+    fn run_quiet(&self, command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
+        run_command(command, false, self.sink.as_ref())
+    }
+}
+
+fn run_command(
+    command: &CommandSpec,
+    echo: bool,
+    sink: Option<&OutputSink>,
+) -> Result<CommandOutput, ProcessError> {
     let mut child = Command::new(&command.program)
         .args(&command.arguments)
         .envs(&command.environment)
@@ -56,8 +81,10 @@ fn run_command(command: &CommandSpec, echo: bool) -> Result<CommandOutput, Proce
         .map_err(|source| ProcessError::Start { program: command.program.clone(), source })?;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    let out_thread = thread::spawn(move || read_stream(stdout, false, echo));
-    let err_thread = thread::spawn(move || read_stream(stderr, true, echo));
+    let out_sink = sink.cloned();
+    let err_sink = sink.cloned();
+    let out_thread = thread::spawn(move || read_stream(stdout, false, echo, out_sink.as_ref()));
+    let err_thread = thread::spawn(move || read_stream(stderr, true, echo, err_sink.as_ref()));
     let started = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().map_err(ProcessError::Wait)? {
@@ -78,9 +105,17 @@ fn run_command(command: &CommandSpec, echo: bool) -> Result<CommandOutput, Proce
     Ok(CommandOutput { success: status.success(), status: status.code(), text })
 }
 
-fn read_stream<R: std::io::Read + Send + 'static>(reader: R, stderr: bool, echo: bool) -> String {
+fn read_stream<R: std::io::Read + Send + 'static>(
+    reader: R,
+    stderr: bool,
+    echo: bool,
+    sink: Option<&OutputSink>,
+) -> String {
     let mut collected = String::new();
     for line in BufReader::new(reader).lines().map_while(Result::ok) {
+        if let Some(sink) = sink {
+            sink(&line, stderr);
+        }
         if echo && stderr {
             eprintln!("{line}");
         } else if echo {

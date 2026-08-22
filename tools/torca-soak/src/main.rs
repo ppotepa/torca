@@ -10,6 +10,7 @@ use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1540,16 +1541,7 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String>
             String::from_utf8_lossy(&state.stdout).trim()
         ));
     }
-    let arguments = android_deploy_arguments(serial);
-    let mut command = Command::new("cargo");
-    command.current_dir(repo_root).args(&arguments);
-    let status = run_external_command(&mut command, "Android auto-deploy")?;
-    if !status.success() {
-        return Err(format!(
-            "Android auto-deploy failed on '{serial}' (exit={:?}); see cockpit Logs",
-            status.code()
-        ));
-    }
+    run_typed_android_deploy(repo_root, serial)?;
     android_launchable_activity(serial).map(|_| ()).map_err(|error| {
         format!(
             "Android auto-deploy completed but the client is still not launchable on '{serial}': {error}"
@@ -1557,36 +1549,52 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String>
     })
 }
 
-fn android_deploy_arguments(serial: &str) -> Vec<String> {
-    [
-        "run",
-        "-p",
-        "torca-deploy",
-        "--locked",
-        "--",
-        "deploy",
-        "--target",
-        "android",
-        "--device",
-        serial,
-        "--configuration",
-        "debug",
-        "--client-build",
-        "rebuild",
-        "--relay-build",
-        "if-required",
-        "--onion",
-        "ensure",
-        "--client-data",
-        "preserve",
-        "--validation",
-        "skip",
-        "--launch",
-        "restart",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
+fn run_typed_android_deploy(repo_root: &Path, serial: &str) -> Result<(), String> {
+    let paths = torca_deploy::persistence::DeployPaths {
+        repo_root: repo_root.to_owned(),
+        state_root: repo_root.join(".torca/deploy"),
+    };
+    let sink: torca_deploy::process::OutputSink = Arc::new(|line, stderr| {
+        tui::publish_backend_line(line, stderr);
+    });
+    let executor = torca_deploy::DeployExecutor::with_runner(
+        torca_deploy::persistence::StateStore::new(paths),
+        Arc::new(torca_deploy::process::SystemCommandRunner::with_sink(sink)),
+    );
+    let mut build_plan = torca_deploy::domain::DeployPlan::normal(
+        torca_deploy::domain::DeployAction::BuildArtifacts,
+        vec![torca_deploy::domain::Target::Android],
+        torca_deploy::domain::Configuration::Debug,
+    );
+    build_plan.client_build = torca_deploy::domain::BuildPolicy::Rebuild;
+    build_plan.relay_build = torca_deploy::domain::BuildPolicy::Reuse;
+    build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
+    build_plan.launch = torca_deploy::domain::LaunchPolicy::Skip;
+    let build_run = executor
+        .create_run(build_plan)
+        .map_err(|error| format!("create typed Android build plan: {error}"))?;
+    executor
+        .execute(build_run, torca_deploy::ExecutionMode::Execute)
+        .map_err(|error| format!("typed Android artifact build failed: {error}"))?;
+
+    let mut install_plan = torca_deploy::domain::DeployPlan::normal(
+        torca_deploy::domain::DeployAction::RedeployCurrent,
+        vec![torca_deploy::domain::Target::Android],
+        torca_deploy::domain::Configuration::Debug,
+    );
+    install_plan.device = Some(serial.to_owned());
+    install_plan.client_build = torca_deploy::domain::BuildPolicy::Reuse;
+    install_plan.relay_build = torca_deploy::domain::BuildPolicy::Reuse;
+    install_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
+    install_plan.client_data = torca_deploy::domain::ClientDataPolicy::Preserve;
+    install_plan.launch = torca_deploy::domain::LaunchPolicy::Restart;
+    let install_run = executor
+        .create_run(install_plan)
+        .map_err(|error| format!("create typed Android install plan: {error}"))?;
+    executor
+        .execute(install_run, torca_deploy::ExecutionMode::Execute)
+        .map_err(|error| format!("typed Android install/launch failed: {error}"))?;
+    Ok(())
 }
 
 fn parse_launchable_activity(package: &str, output: &str) -> Option<String> {
@@ -1702,10 +1710,7 @@ fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        android_deploy_arguments, contact_count, conversation_count, parse_launchable_activity,
-        valid_endpoint,
-    };
+    use super::{contact_count, conversation_count, parse_launchable_activity, valid_endpoint};
     use serde_json::json;
 
     #[test]
@@ -1723,14 +1728,6 @@ mod tests {
             Some("com.torca.torca_app/com.torca.MainActivity")
         );
         assert!(parse_launchable_activity("com.torca.torca_app", "No activity found").is_none());
-    }
-
-    #[test]
-    fn auto_deploy_is_scoped_to_the_requested_android_device() {
-        let arguments = android_deploy_arguments("device-123");
-        assert!(arguments.windows(2).any(|pair| pair[0] == "--device" && pair[1] == "device-123"));
-        assert!(arguments.windows(2).any(|pair| pair[0] == "--target" && pair[1] == "android"));
-        assert!(!arguments.contains(&"windows".to_owned()));
     }
 
     #[test]
