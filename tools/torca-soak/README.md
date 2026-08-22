@@ -98,8 +98,9 @@ scenario through its normal peer/ADB/relay cleanup path and records
 
 ## Android participant
 
-Build/install a debug APK containing the debug-only ScenarioBridge, then pass
-the authorized ADB serial:
+The canonical launcher builds the isolated `soak` flavor containing the
+ScenarioBridge (`com.torca.torca_app.soak`), then passes the authorized ADB
+serial:
 
 ```powershell
 cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fake-peers 5 --relay managed
@@ -115,8 +116,8 @@ cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fa
 
 The bridge binds only to Android loopback. The runner reads its random token
 through `adb run-as`, creates an `adb forward`, and sends the same typed
-pairing/message/attachment/radio operations used by fake peers. Release builds
-do not start the bridge.
+pairing/message/attachment/radio operations used by fake peers. Ordinary app
+builds do not start the bridge; only the SOAK2 flavor enables it.
 
 An absent or unauthorized ADB device is a preflight failure, never a passing
 soak result.

@@ -25,6 +25,18 @@ android {
         versionName = flutter.versionName
     }
 
+    flavorDimensions += "environment"
+    productFlavors {
+        create("normal") {
+            dimension = "environment"
+        }
+        create("soak") {
+            dimension = "environment"
+            applicationIdSuffix = ".soak"
+            versionNameSuffix = "-soak"
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

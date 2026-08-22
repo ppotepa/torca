@@ -521,10 +521,17 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
 }
 
 fn sample_android(serial: &str) -> AndroidTelemetry {
+    let package = if std::env::var("TORCA_SOAK_FLAVOR")
+        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        "com.torca.torca_app.soak"
+    } else {
+        "com.torca.torca_app"
+    };
     let battery = adb(serial, &["shell", "dumpsys", "battery"]);
     let power = adb(serial, &["shell", "dumpsys", "power"]);
-    let pid = adb(serial, &["shell", "pidof", "com.torca.torca_app"]);
-    let installed = adb(serial, &["shell", "pm", "path", "com.torca.torca_app"]);
+    let pid = adb(serial, &["shell", "pidof", package]);
+    let installed = adb(serial, &["shell", "pm", "path", package]);
     AndroidTelemetry {
         power_source: power_source(&battery).to_owned(),
         battery_level: battery

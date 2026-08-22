@@ -7,8 +7,29 @@ use serde_json::Value;
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
 
-const ANDROID_PACKAGE: &str = "com.torca.torca_app";
-const ANDROID_ACTIVITY: &str = "com.torca.torca_app/com.torca.app.MainActivity";
+fn android_package() -> &'static str {
+    if crate::build::soak_flavor_enabled() {
+        "com.torca.torca_app.soak"
+    } else {
+        "com.torca.torca_app"
+    }
+}
+
+fn android_activity() -> &'static str {
+    if crate::build::soak_flavor_enabled() {
+        "com.torca.torca_app.soak/com.torca.app.MainActivity"
+    } else {
+        "com.torca.torca_app/com.torca.app.MainActivity"
+    }
+}
+
+fn android_logs_root() -> &'static str {
+    if crate::build::soak_flavor_enabled() {
+        "/sdcard/Android/data/com.torca.torca_app.soak/files/torca/logs"
+    } else {
+        "/sdcard/Android/data/com.torca.torca_app/files/torca/logs"
+    }
+}
 
 pub struct LaunchController<'a> {
     paths: &'a RuntimePaths,
@@ -71,7 +92,7 @@ impl<'a> LaunchController<'a> {
                             "shell".into(),
                             "am".into(),
                             "force-stop".into(),
-                            ANDROID_PACKAGE.into(),
+                            android_package().into(),
                         ],
                         working_directory: self.paths.repo_root.clone(),
                         timeout: Duration::from_secs(15),
@@ -91,7 +112,7 @@ impl<'a> LaunchController<'a> {
                         "start".into(),
                         "-W".into(),
                         "-n".into(),
-                        ANDROID_ACTIVITY.into(),
+                        android_activity().into(),
                         "-a".into(),
                         "android.intent.action.MAIN".into(),
                         "-c".into(),
@@ -134,7 +155,7 @@ impl<'a> LaunchController<'a> {
                         device.id.clone(),
                         "shell".into(),
                         "pidof".into(),
-                        "com.torca.torca_app".into(),
+                        android_package().into(),
                     ],
                 ),
             };
@@ -251,7 +272,7 @@ impl<'a> LaunchController<'a> {
                 "start",
                 "-W",
                 "-n",
-                ANDROID_ACTIVITY,
+                android_activity(),
                 "-a",
                 "android.intent.action.MAIN",
                 "-c",
@@ -275,7 +296,7 @@ impl<'a> LaunchController<'a> {
                     device.id.clone(),
                     "shell".into(),
                     "pidof".into(),
-                    ANDROID_PACKAGE.into(),
+                    android_package().into(),
                 ],
             ),
         };
@@ -315,18 +336,8 @@ impl<'a> LaunchController<'a> {
         launched_at: SystemTime,
         require_tor: bool,
     ) -> Result<bool, LaunchError> {
-        let files = self.command(
-            "adb",
-            &[
-                "-s",
-                device,
-                "shell",
-                "find",
-                "/sdcard/Android/data/com.torca.torca_app/files/torca/logs",
-                "-type",
-                "f",
-            ],
-        )?;
+        let files = self
+            .command("adb", &["-s", device, "shell", "find", android_logs_root(), "-type", "f"])?;
         let paths = latest_android_health_logs(&files.text);
         if paths.is_empty() {
             return Ok(false);
@@ -369,7 +380,7 @@ impl<'a> LaunchController<'a> {
                 (line.contains("mResumedActivity")
                     || line.contains("ResumedActivity:")
                     || line.contains("mCurrentFocus"))
-                    && line.contains(ANDROID_PACKAGE)
+                    && line.contains(android_package())
             }))
     }
 }

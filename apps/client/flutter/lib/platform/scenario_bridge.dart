@@ -24,7 +24,8 @@ class ScenarioBridge {
   bool get isRunning => _server != null;
 
   Future<void> start() async {
-    if (!kDebugMode || !Platform.isAndroid || _server != null) return;
+    const soakMode = bool.fromEnvironment('TORCA_SOAK_MODE');
+    if ((!kDebugMode && !soakMode) || !Platform.isAndroid || _server != null) return;
     final token = _randomToken();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     await Directory.systemTemp.create(recursive: true);

@@ -22,10 +22,7 @@ pub fn verify_artifact_manifest(
     configuration: Configuration,
     artifact: &Path,
 ) -> Result<(), String> {
-    let mode = match configuration {
-        Configuration::Debug => "debug",
-        Configuration::Release => "release",
-    };
+    let mode = artifact_mode(configuration);
     let manifest_path = paths.manifests.join(format!("clients-{mode}.json"));
     let target_name = target.to_string();
     let content = std::fs::read_to_string(&manifest_path)
@@ -102,6 +99,25 @@ fn artifact_paths_match(recorded: &Path, requested: &Path, target: Target) -> bo
         recorded.eq_ignore_ascii_case(&requested)
     } else {
         recorded == requested
+    }
+}
+
+/// SOAK2 uses a separate Android application id and data namespace while
+/// retaining the debug native profile. The environment is set only by the
+/// soak launcher and is intentionally not part of ordinary deploy plans.
+pub fn soak_flavor_enabled() -> bool {
+    env::var("TORCA_SOAK_FLAVOR")
+        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+fn artifact_mode(configuration: Configuration) -> &'static str {
+    if soak_flavor_enabled() && matches!(configuration, Configuration::Debug) {
+        "soak"
+    } else {
+        match configuration {
+            Configuration::Debug => "debug",
+            Configuration::Release => "release",
+        }
     }
 }
 impl<'a> BuildController<'a> {
@@ -195,18 +211,33 @@ impl<'a> BuildController<'a> {
             let flutter = flutter_program()?;
             let target_platforms =
                 flutter_target_platforms(&selected_android_abis(devices)).to_owned();
+            let mut flutter_args = vec![
+                "build".to_owned(),
+                "apk".to_owned(),
+                format!("--{mode}"),
+                "--split-per-abi".to_owned(),
+                "--target-platform".to_owned(),
+                target_platforms,
+                "--dart-define".to_owned(),
+                define,
+            ];
+            if soak_flavor_enabled() && matches!(configuration, Configuration::Debug) {
+                flutter_args.extend([
+                    "--flavor".to_owned(),
+                    "soak".to_owned(),
+                    "--dart-define".to_owned(),
+                    "TORCA_SOAK_MODE=true".to_owned(),
+                ]);
+            } else {
+                // Explicitly select the normal flavor so introducing the
+                // isolated soak flavor never changes normal artifact paths or
+                // package identity implicitly.
+                flutter_args.extend(["--flavor".to_owned(), "normal".to_owned()]);
+            }
+            let references = flutter_args.iter().map(String::as_str).collect::<Vec<_>>();
             self.command_with_env(
                 &flutter,
-                &[
-                    "build",
-                    "apk",
-                    &format!("--{mode}"),
-                    "--split-per-abi",
-                    "--target-platform",
-                    &target_platforms,
-                    "--dart-define",
-                    &define,
-                ],
+                &references,
                 endpoint,
                 &self.paths.repo_root.join("apps/client/flutter"),
             )?;
@@ -220,10 +251,17 @@ impl<'a> BuildController<'a> {
                 Target::Android => selected_android_abis(devices)
                     .into_iter()
                     .map(|abi| {
-                        self.paths.repo_root.join(format!(
-                            "apps/client/flutter/build/app/outputs/flutter-apk/app-{}-{mode}.apk",
-                            abi.package_name()
-                        ))
+                        if soak_flavor_enabled() && matches!(configuration, Configuration::Debug) {
+                            self.paths.repo_root.join(format!(
+                                "apps/client/flutter/build/app/outputs/flutter-apk/app-{}-soak-debug.apk",
+                                abi.package_name()
+                            ))
+                        } else {
+                            self.paths.repo_root.join(format!(
+                                "apps/client/flutter/build/app/outputs/flutter-apk/app-{}-normal-{mode}.apk",
+                                abi.package_name()
+                            ))
+                        }
                     })
                     .collect(),
             };
@@ -247,7 +285,7 @@ impl<'a> BuildController<'a> {
             "builtAt": format!("{:?}", std::time::SystemTime::now()),
         });
         std::fs::write(
-            self.paths.manifests.join(format!("clients-{mode}.json")),
+            self.paths.manifests.join(format!("clients-{}.json", artifact_mode(configuration))),
             serde_json::to_vec_pretty(&manifest).map_err(BuildError::Serialize)?,
         )
         .map_err(BuildError::Io)?;

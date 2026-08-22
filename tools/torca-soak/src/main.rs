@@ -180,6 +180,16 @@ struct ActiveBatteryCapture {
     root: PathBuf,
 }
 
+fn android_package() -> &'static str {
+    if std::env::var("TORCA_SOAK_FLAVOR")
+        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        "com.torca.torca_app.soak"
+    } else {
+        "com.torca.torca_app"
+    }
+}
+
 impl Drop for ActiveBatteryCapture {
     fn drop(&mut self) {
         let _ = capture_adb_file(
@@ -189,7 +199,7 @@ impl Drop for ActiveBatteryCapture {
         );
         let _ = capture_adb_file(
             &self.serial,
-            &["shell", "dumpsys", "batterystats", "com.torca.torca_app"],
+            &["shell", "dumpsys", "batterystats", android_package()],
             &self.root.join("batterystats.txt"),
         );
     }
@@ -1352,7 +1362,7 @@ impl AndroidBridge {
         let discovery = 'discovery: loop {
             for path in discovery_paths {
                 let output = Command::new("adb")
-                    .args(["-s", serial, "exec-out", "run-as", "com.torca.torca_app", "cat", path])
+                    .args(["-s", serial, "exec-out", "run-as", android_package(), "cat", path])
                     .output()
                     .map_err(|error| format!("read Android scenario discovery: {error}"))?;
                 if output.status.success() {
@@ -1490,7 +1500,7 @@ fn android_launchable_activity(serial: &str) -> Result<String, String> {
         ));
     }
 
-    let package = "com.torca.torca_app";
+    let package = android_package();
     let installed = Command::new("adb")
         .args(["-s", serial, "shell", "pm", "path", package])
         .output()

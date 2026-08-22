@@ -28,6 +28,9 @@ try {
     }
 
     Write-Host "SOAK2 bootstrap: cockpit ready; starting run"
+    # The Android deployer and ScenarioBridge use this flag to select the
+    # isolated com.torca.torca_app.soak flavor. Ordinary deploys never inherit it.
+    $env:TORCA_SOAK_FLAVOR = '1'
     if ($Mode -eq 'plain') {
         & $exe --plain @Arguments
     } elseif ($Arguments.Count -eq 0) {

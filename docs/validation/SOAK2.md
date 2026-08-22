@@ -17,7 +17,8 @@ ADB and linker output is routed to `Logs`; the bootstrap build is kept at
 .\scripts\soak.ps1 cockpit
 ```
 
-The default active-messaging plan uses Android and five persistent bots. Bot
+The default active-messaging plan uses the isolated Android soak flavor
+(`com.torca.torca_app.soak`) and five persistent bots. Bot
 profiles live below `.torca/soak/bots/` and are never copied into the normal
 Torca profile. A fresh pairing is only a provisioning event; subsequent runs
 reuse existing contacts when the Android snapshot already contains the bot
@@ -43,7 +44,8 @@ change the relay container or store messages on the relay.
 4. Battery artifacts contain `battery-start.txt`, `battery-end.txt`, and
    `batterystats.txt` from the measured window.
 5. A cancelled run stops peers/relay and writes `run_cancelled`.
-6. A normal app profile is never reset or reused as a bot profile.
+6. A normal app profile is never reset or reused as a bot profile, and the soak
+   APK uses the isolated `.soak` application id.
 7. `cargo test -p torca-soak -p torca-soak-bot-host --locked` is green.
 
 The old `torca-battery-soak-tui` command is intentionally not a second entry

@@ -29,9 +29,17 @@ impl<'a> InstallController<'a> {
                     .android_abi
                     .ok_or_else(|| InstallError::MissingAndroidAbi(device.id.clone()))?
                     .package_name();
-                let apk = self.paths.repo_root.join(format!(
-                    "apps/client/flutter/build/app/outputs/flutter-apk/app-{abi}-{mode}.apk"
-                ));
+                let apk = if crate::build::soak_flavor_enabled()
+                    && matches!(configuration, Configuration::Debug)
+                {
+                    self.paths.repo_root.join(format!(
+                        "apps/client/flutter/build/app/outputs/flutter-apk/app-{abi}-soak-debug.apk"
+                    ))
+                } else {
+                    self.paths.repo_root.join(format!(
+                        "apps/client/flutter/build/app/outputs/flutter-apk/app-{abi}-normal-{mode}.apk"
+                    ))
+                };
                 if !apk.is_file() {
                     return Err(InstallError::Artifact(apk));
                 }
