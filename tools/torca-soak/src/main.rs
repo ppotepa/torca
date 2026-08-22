@@ -633,6 +633,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
     let managed_relay;
     let endpoint = match cli.relay {
         RelayMode::Managed => {
+            tui::publish_event("relay_starting", &serde_json::json!({"mode": "managed"}));
             let (endpoint, guard) = start_managed_relay(&cli.repo_root)?;
             managed_relay = Some(guard);
             Some(endpoint)

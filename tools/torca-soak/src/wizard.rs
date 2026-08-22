@@ -191,7 +191,12 @@ fn edit_plan(
                 }
             }
             KeyCode::Enter => {
-                let android = devices.get(device_index).cloned();
+                let android = matches!(
+                    scenario,
+                    Scenario::ActiveMessaging | Scenario::IdleBattery | Scenario::Connectivity
+                )
+                .then(|| devices.get(device_index).cloned())
+                .flatten();
                 if matches!(
                     scenario,
                     Scenario::ActiveMessaging | Scenario::IdleBattery | Scenario::Connectivity

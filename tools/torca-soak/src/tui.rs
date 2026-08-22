@@ -19,7 +19,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use serde_json::Value;
 
 use crate::Cli;
@@ -121,7 +121,12 @@ pub(crate) fn controlled_sleep(duration: Duration) {
 
 pub(crate) fn publish_event(event: &str, line: &Value) {
     let Some(ctx) = active() else { return };
-    let summary = if let Some(data) = line.get("data") {
+    let summary = if matches!(event, "backend_stdout" | "backend_stderr") {
+        line.get("line")
+            .and_then(Value::as_str)
+            .map(|value| format!("build: {value}"))
+            .unwrap_or_else(|| event.to_owned())
+    } else if let Some(data) = line.get("data") {
         format!("{event} {}", compact(data))
     } else {
         event.to_owned()
@@ -129,8 +134,10 @@ pub(crate) fn publish_event(event: &str, line: &Value) {
     if let Ok(mut last_event) = ctx.last_event.lock() {
         event.clone_into(&mut last_event);
     }
-    if let Ok(mut phase) = ctx.phase.lock() {
-        event_phase(event).clone_into(&mut phase);
+    if let Some(next_phase) = event_phase(event)
+        && let Ok(mut phase) = ctx.phase.lock()
+    {
+        next_phase.clone_into(&mut phase);
     }
     if let Some(data) = line.get("data") {
         if let Some(serial) = data.get("serial").and_then(Value::as_str) {
@@ -164,13 +171,17 @@ pub(crate) fn publish_event(event: &str, line: &Value) {
         }
     }
     if let Ok(mut events) = ctx.events.lock() {
-        events.push_back(summary);
+        events.push_back(summary.clone());
         while events.len() > MAX_EVENTS {
             events.pop_front();
         }
     }
     if let Ok(mut logs) = ctx.logs.lock() {
-        logs.push_back(line.to_string());
+        logs.push_back(if matches!(event, "backend_stdout" | "backend_stderr") {
+            summary
+        } else {
+            line.to_string()
+        });
         while logs.len() > MAX_EVENTS {
             logs.pop_front();
         }
@@ -211,20 +222,25 @@ fn mark_incident(ctx: &UiContext) {
     publish_event("incident_marked", &serde_json::json!({"source":"tui", "tsMs": ts_ms}));
 }
 
-fn event_phase(event: &str) -> &'static str {
+fn event_phase(event: &str) -> Option<&'static str> {
     match event {
-        "run_started" => "starting",
-        "android_preflight_started" | "android_ready" | "android_bridge_starting" => "preflight",
-        "android_permission_required" | "android_action_required" => {
-            "awaiting Android action (approve, then r)"
+        "run_started" => Some("starting"),
+        "relay_starting" => Some("relay startup"),
+        "relay_ready" => Some("relay ready"),
+        "android_preflight_started" | "android_ready" | "android_bridge_starting" => {
+            Some("Android preflight")
         }
-        "peer_ready" | "pairing_completed" => "pairing",
-        "measurement_started" => "measurement",
-        "message_queued" | "attachment_queued" | "radio_burst" => "workload",
-        "run_completed" => "completed",
-        "run_cancelled" => "cancelled",
-        value if value.contains("fault") => "fault recovery",
-        _ => "running",
+        "android_permission_required" | "android_action_required" => {
+            Some("awaiting Android action (approve, then r)")
+        }
+        "peer_ready" | "pairing_completed" => Some("contact provisioning"),
+        "active_preflight_passed" => Some("contacts ready"),
+        "measurement_started" => Some("measurement"),
+        "message_queued" | "attachment_queued" | "radio_burst" => Some("workload"),
+        "run_completed" => Some("completed"),
+        "run_cancelled" => Some("cancelled"),
+        value if value.contains("fault") => Some("fault recovery"),
+        _ => None,
     }
 }
 
@@ -415,7 +431,8 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
     let header = Paragraph::new(Line::from(vec![
         Span::styled(" TORCA SOAK ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(format!(
-            " {status}  phase={phase}  run={run_id}  peers={}  elapsed={elapsed}s/{duration}s",
+            " {status}  scenario={:?}  phase={phase}  run={run_id}  bots={}  elapsed={elapsed}s/{duration}s",
+            cli.scenario,
             cli.fake_peers,
             duration = cli.duration_seconds
         )),
@@ -440,12 +457,15 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
     };
     let devices = vec![
         ListItem::new(format!(
-            "Android: {} [{}]",
-            cli.android.as_deref().unwrap_or("none"),
+            "Android: {}",
             ctx.android_status.lock().map(|value| value.clone()).unwrap_or_default()
         )),
         ListItem::new(format!(
-            "Fake peers: {}/{} ready",
+            "ADB: {}",
+            cli.android.as_deref().map(short_device_id).unwrap_or("none")
+        )),
+        ListItem::new(format!(
+            "Participants: {}/{} ready",
             ctx.ready_peers.load(Ordering::Relaxed),
             cli.fake_peers + usize::from(cli.android.is_some())
         )),
@@ -505,21 +525,30 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
     let workload =
         List::new(activity).block(Block::default().borders(Borders::ALL).title("Recent activity"));
     frame.render_widget(workload, columns[1]);
-    let progress = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title("Controls"))
-        .gauge_style(Style::default().fg(if ctx.incident.load(Ordering::Acquire) {
-            Color::Yellow
-        } else {
-            Color::Green
-        }))
-        .ratio(if ctx.paused.load(Ordering::Acquire) { 0.0 } else { 1.0 })
-        .label("p pause  r retry  m mark  l logs  q quit");
-    frame.render_widget(progress, columns[2]);
+    let controls = Paragraph::new(vec![
+        Line::from("p / Space   pause or resume"),
+        Line::from("r           retry Android preflight"),
+        Line::from("m           mark incident"),
+        Line::from("l           open detailed logs"),
+        Line::from("q / Esc     cancel and clean up"),
+    ])
+    .style(Style::default().fg(if ctx.incident.load(Ordering::Acquire) {
+        Color::Yellow
+    } else {
+        Color::Green
+    }))
+    .block(Block::default().borders(Borders::ALL).title("Controls"));
+    frame.render_widget(controls, columns[2]);
     frame.render_widget(
         Paragraph::new("TUI is observational; q requests controlled cancellation and cleanup.")
             .style(Style::default().fg(Color::DarkGray)),
         vertical[2],
     );
+}
+
+fn short_device_id(value: &str) -> &str {
+    const MAX: usize = 32;
+    if value.len() <= MAX { value } else { &value[..MAX] }
 }
 
 fn sample_android(serial: &str) -> AndroidTelemetry {
@@ -606,9 +635,9 @@ mod tests {
 
     #[test]
     fn event_phase_groups_workload_and_recovery_events() {
-        assert_eq!(event_phase("run_started"), "starting");
-        assert_eq!(event_phase("message_queued"), "workload");
-        assert_eq!(event_phase("relay_fault_recovered"), "fault recovery");
-        assert_eq!(event_phase("unknown_event"), "running");
+        assert_eq!(event_phase("run_started"), Some("starting"));
+        assert_eq!(event_phase("message_queued"), Some("workload"));
+        assert_eq!(event_phase("relay_fault_recovered"), Some("fault recovery"));
+        assert_eq!(event_phase("backend_stderr"), None);
     }
 }
