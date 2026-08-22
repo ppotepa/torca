@@ -43,6 +43,8 @@ enum RelayMode {
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
 enum Workload {
+    /// Balanced battery profile: one message roughly every two minutes.
+    Balanced,
     Moderate,
     Minimal,
 }
@@ -76,8 +78,12 @@ pub(crate) struct Cli {
     relay: RelayMode,
     #[arg(long)]
     relay_endpoint: Option<String>,
-    #[arg(long, value_enum, default_value_t = Workload::Moderate)]
+    #[arg(long, value_enum, default_value_t = Workload::Balanced)]
     workload: Workload,
+    /// Include the high-cost Radio path in the workload. Disabled by default
+    /// so a normal battery soak measures messaging/attachments only.
+    #[arg(long)]
+    radio: bool,
     #[arg(long, value_enum, default_value_t = FaultProfile::Controlled)]
     fault_profile: FaultProfile,
     #[arg(long, default_value = ".torca/soak")]
@@ -87,6 +93,12 @@ pub(crate) struct Cli {
     /// binary produced by `cargo build -p torca-lab-peer`.
     #[arg(long)]
     lab_peer: Option<PathBuf>,
+    /// Optional persistent bot host address (for example 127.0.0.1:47890).
+    /// When omitted, the runner keeps the local process-isolated fallback.
+    #[arg(long)]
+    bot_host: Option<String>,
+    #[arg(long)]
+    bot_token: Option<String>,
     #[arg(long, default_value = ".")]
     repo_root: PathBuf,
     /// Disable the interactive terminal dashboard (for CI and redirected output).
@@ -121,6 +133,7 @@ struct Manifest {
     android_serial: Option<String>,
     duration_seconds: u64,
     workload: String,
+    radio: bool,
     fault_profile: String,
     relay_mode: String,
     started_at_ms: u128,
@@ -151,6 +164,12 @@ struct AndroidBridge {
     host_port: u16,
 }
 
+struct BotHostClient {
+    name: String,
+    address: String,
+    token: String,
+}
+
 struct ManagedRelay {
     repo_root: PathBuf,
 }
@@ -179,13 +198,16 @@ impl Drop for AndroidBridge {
     fn drop(&mut self) {
         let _ = Command::new("adb")
             .args(["-s", &self.serial, "forward", "--remove", &format!("tcp:{}", self.host_port)])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status();
     }
 }
 
 impl Drop for ManagedRelay {
     fn drop(&mut self) {
-        let _ = Command::new("docker")
+        let mut command = Command::new("docker");
+        command
             .args([
                 "compose",
                 "-f",
@@ -195,33 +217,34 @@ impl Drop for ManagedRelay {
                 "30",
                 "--remove-orphans",
             ])
-            .current_dir(&self.repo_root)
-            .status();
+            .current_dir(&self.repo_root);
+        let _ = run_external_command(&mut command, "relay cleanup");
     }
 }
 
 impl ManagedRelay {
     fn pause(&self) -> Result<(), String> {
-        let status = Command::new("docker")
+        let mut command = Command::new("docker");
+        command
             .args(["compose", "-f", "infra/docker/compose.yml", "stop", "relay"])
-            .current_dir(&self.repo_root)
-            .status()
-            .map_err(|error| format!("pause managed relay: {error}"))?;
+            .current_dir(&self.repo_root);
+        let status = run_external_command(&mut command, "pause managed relay")?;
         status.success().then_some(()).ok_or_else(|| "managed relay pause failed".into())
     }
 
     fn resume(&self) -> Result<(), String> {
-        let status = Command::new("docker")
+        let mut command = Command::new("docker");
+        command
             .args(["compose", "-f", "infra/docker/compose.yml", "start", "relay"])
-            .current_dir(&self.repo_root)
-            .status()
-            .map_err(|error| format!("resume managed relay: {error}"))?;
+            .current_dir(&self.repo_root);
+        let status = run_external_command(&mut command, "resume managed relay")?;
         status.success().then_some(()).ok_or_else(|| "managed relay resume failed".into())
     }
 }
 
 enum Participant {
     Fake(PeerProcess),
+    Remote(BotHostClient),
     Android(AndroidBridge),
 }
 
@@ -229,6 +252,7 @@ impl Participant {
     fn name(&self) -> &str {
         match self {
             Self::Fake(peer) => &peer.name,
+            Self::Remote(bot) => &bot.name,
             Self::Android(android) => &android.serial,
         }
     }
@@ -241,6 +265,7 @@ impl Participant {
     ) -> Result<serde_json::Value, String> {
         match self {
             Self::Fake(peer) => peer.request(id, operation, extra),
+            Self::Remote(bot) => bot.request(id, operation, extra),
             Self::Android(android) => android.request(id, operation, extra),
         }
     }
@@ -254,6 +279,7 @@ impl Participant {
     fn restart(&mut self) -> Result<(), String> {
         match self {
             Self::Fake(peer) => peer.restart(),
+            Self::Remote(_) => Err("remote soak bot is supervised by bot host".into()),
             Self::Android(_) => {
                 Err("Android process restart is controlled by adb separately".into())
             }
@@ -263,7 +289,9 @@ impl Participant {
     fn set_network(&self, enabled: bool) -> Result<(), String> {
         match self {
             Self::Android(android) => android.set_wifi(enabled),
-            Self::Fake(_) => Err("network fault injection is only supported for Android".into()),
+            Self::Fake(_) | Self::Remote(_) => {
+                Err("network fault injection is only supported for Android".into())
+            }
         }
     }
 }
@@ -322,6 +350,52 @@ impl PeerProcess {
     }
 }
 
+impl BotHostClient {
+    fn request(
+        &self,
+        id: &str,
+        operation: &str,
+        extra: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let mut request = serde_json::Map::new();
+        request.insert("id".into(), serde_json::Value::String(id.into()));
+        request.insert("op".into(), serde_json::Value::String(operation.into()));
+        if let serde_json::Value::Object(fields) = extra {
+            request.extend(fields);
+        }
+        let body = serde_json::Value::Object(request).to_string();
+        let mut stream = TcpStream::connect(&self.address)
+            .map_err(|error| format!("{} connect bot host: {error}", self.name))?;
+        write!(
+            stream,
+            "POST /bot/{} HTTP/1.1\r\nHost: {}\r\nX-Torca-Soak-Token: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            self.name,
+            self.address,
+            self.token,
+            body.len(),
+            body
+        )
+        .map_err(|error| format!("{} write bot host request: {error}", self.name))?;
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .map_err(|error| format!("{} read bot host response: {error}", self.name))?;
+        let (_, body) = response
+            .split_once("\r\n\r\n")
+            .ok_or_else(|| format!("{} malformed bot host response", self.name))?;
+        let value: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("{} decode bot host response: {error}", self.name))?;
+        if value.get("status").and_then(serde_json::Value::as_str) != Some("succeeded") {
+            return Err(format!(
+                "{} operation {operation} failed: {}",
+                self.name,
+                value.get("error").unwrap_or(&serde_json::Value::Null)
+            ));
+        }
+        Ok(value.get("result").cloned().unwrap_or(value))
+    }
+}
+
 impl Drop for PeerProcess {
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
@@ -340,7 +414,7 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let explicit_args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    let cli = if explicit_args.is_empty() || explicit_args.iter().all(|arg| arg == "--tui") {
+    let mut cli = if explicit_args.is_empty() || explicit_args.iter().all(|arg| arg == "--tui") {
         if !std::io::stdout().is_terminal() || !std::io::stderr().is_terminal() {
             return Err("no soak scenario supplied and no interactive terminal is available; pass --scenario <name> --plain".into());
         }
@@ -348,6 +422,12 @@ fn run() -> Result<(), String> {
     } else {
         Cli::parse()
     };
+    if cli.bot_host.is_none() {
+        cli.bot_host = std::env::var("TORCA_SOAK_BOT_HOST").ok();
+    }
+    if cli.bot_token.is_none() {
+        cli.bot_token = std::env::var("TORCA_SOAK_BOT_TOKEN").ok();
+    }
     if !cli.plain {
         let terminal = std::io::stdout().is_terminal() && std::io::stderr().is_terminal();
         if terminal {
@@ -504,23 +584,17 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         android_serial: cli.android.clone(),
         duration_seconds: cli.duration_seconds,
         workload: format!("{:?}", cli.workload),
+        radio: cli.radio,
         fault_profile: format!("{:?}", cli.fault_profile),
         relay_mode: format!("{:?}", cli.relay),
         started_at_ms: started.as_millis(),
     };
     write_json(&root.join("manifest.json"), &manifest)?;
     write_json(&root.join("plan.json"), &cli)?;
-    let _battery_capture = if cli.scenario == Scenario::ActiveMessaging {
-        let serial = cli.android.as_deref().ok_or("active-messaging requires --android")?;
-        Some(start_active_battery_capture(
-            serial,
-            &root,
-            cli.require_unplugged,
-            cli.require_screen_off,
-        )?)
-    } else {
-        None
-    };
+    // Battery measurement starts only after setup/pairing. Build, relay warmup,
+    // permission prompts and provisioning belong to preflight, not the user
+    // workload being measured.
+    let mut _battery_capture: Option<ActiveBatteryCapture> = None;
     let mut timeline = File::create(root.join("timeline.jsonl"))
         .map_err(|error| format!("create timeline: {error}"))?;
     record(
@@ -554,7 +628,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         }),
     )?;
 
-    let peer_executable = if managed_relay.is_some() {
+    let peer_executable = if cli.bot_host.is_none() && managed_relay.is_some() {
         build_lab_peer(&cli.repo_root, endpoint.as_deref().unwrap())?
     } else {
         cli.lab_peer.clone().unwrap_or_else(default_lab_peer_path)
@@ -591,11 +665,30 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         record(&mut timeline, "android_ready", serde_json::json!({"serial": serial}))?;
         peers.push(Participant::Android(android));
     }
+    // Bot profiles are deliberately outside the per-run artifact directory.
+    // Their identities and databases survive a measurement and can therefore
+    // be provisioned once instead of being re-paired during every soak.
+    let bot_root = cli.repo_root.join(".torca/soak/bots");
+    fs::create_dir_all(&bot_root)
+        .map_err(|error| format!("create persistent bot root: {error}"))?;
     for index in 0..cli.fake_peers {
         let name = format!("peer-{}", (b'a' + index as u8) as char);
-        let peer_root = root.join(&name);
-        fs::create_dir_all(&peer_root).map_err(|error| format!("create {name} root: {error}"))?;
-        peers.push(Participant::Fake(spawn_peer(&peer_executable, &peer_root, &name)?));
+        if let Some(address) = &cli.bot_host {
+            let token = cli
+                .bot_token
+                .as_deref()
+                .ok_or("--bot-token or TORCA_SOAK_BOT_TOKEN is required with --bot-host")?;
+            peers.push(Participant::Remote(BotHostClient {
+                name,
+                address: address.clone(),
+                token: token.to_owned(),
+            }));
+        } else {
+            let peer_root = bot_root.join(&name);
+            fs::create_dir_all(&peer_root)
+                .map_err(|error| format!("create {name} root: {error}"))?;
+            peers.push(Participant::Fake(spawn_peer(&peer_executable, &peer_root, &name)?));
+        }
     }
 
     for peer in &mut peers {
@@ -641,6 +734,21 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         )?;
     } else {
         pair_mesh(&mut peers, &mut timeline)?;
+    }
+
+    if cli.scenario == Scenario::ActiveMessaging {
+        let serial = cli.android.as_deref().ok_or("active-messaging requires --android")?;
+        record(
+            &mut timeline,
+            "measurement_started",
+            serde_json::json!({"serial": serial, "reason": "preflight_complete"}),
+        )?;
+        _battery_capture = Some(start_active_battery_capture(
+            serial,
+            &root,
+            cli.require_unplugged,
+            cli.require_screen_off,
+        )?);
     }
 
     let deadline = Instant::now() + Duration::from_secs(cli.duration_seconds);
@@ -737,7 +845,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
                     "message_queued",
                     serde_json::json!({"peer": peer.name(), "sequence": sequence, "response": response}),
                 )?;
-                if sequence.is_multiple_of(6) {
+                if sequence.is_multiple_of(30) {
                     let fixture = peer.request(
                         &format!("fixture-{sequence}"),
                         "attachment.fixture",
@@ -765,7 +873,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
                         serde_json::json!({"peer": peer.name(), "sequence": sequence, "response": attachment}),
                     )?;
                 }
-                if sequence.is_multiple_of(12) {
+                if cli.radio && sequence.is_multiple_of(12) {
                     let contact_id = first_contact_id(&snapshot)
                         .ok_or_else(|| format!("{} has no contact for radio", peer.name()))?;
                     peer.request(
@@ -794,6 +902,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
             wait_for_message(&mut peers, peer_index, &body)?;
         }
         tui::controlled_sleep(Duration::from_secs(match cli.workload {
+            Workload::Balanced => 120,
             Workload::Moderate => 10,
             Workload::Minimal => 2,
         }));
@@ -829,11 +938,11 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
 fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), String> {
     let stack_root = repo_root.join(".torca/stack");
     let _ = fs::remove_file(stack_root.join("relay_ready.txt"));
-    let status = Command::new("docker")
+    let mut command = Command::new("docker");
+    command
         .args(["compose", "-f", "infra/docker/compose.yml", "up", "-d", "--build", "relay"])
-        .current_dir(repo_root)
-        .status()
-        .map_err(|error| format!("start managed relay: {error}"))?;
+        .current_dir(repo_root);
+    let status = run_external_command(&mut command, "relay build/start")?;
     if !status.success() {
         return Err("managed relay compose start failed".into());
     }
@@ -859,12 +968,12 @@ fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), Strin
 }
 
 fn build_lab_peer(repo_root: &Path, endpoint: &str) -> Result<PathBuf, String> {
-    let status = Command::new("cargo")
-        .args(["build", "-p", "torca-lab-peer"])
+    let mut command = Command::new("cargo");
+    command
+        .args(["build", "-p", "torca-lab-peer", "--locked"])
         .env("TORCA_RELAY_ENDPOINT", endpoint)
-        .current_dir(repo_root)
-        .status()
-        .map_err(|error| format!("build lab peer: {error}"))?;
+        .current_dir(repo_root);
+    let status = run_external_command(&mut command, "lab peer build")?;
     if !status.success() {
         return Err("lab peer build failed".into());
     }
@@ -873,6 +982,39 @@ fn build_lab_peer(repo_root: &Path, endpoint: &str) -> Result<PathBuf, String> {
     } else {
         "target/debug/torca-lab-peer"
     }))
+}
+
+/// Keep noisy build/deploy tools inside the cockpit. In TUI mode each line is
+/// routed to the Logs view; plain mode preserves the normal terminal output.
+fn run_external_command(
+    command: &mut Command,
+    label: &str,
+) -> Result<std::process::ExitStatus, String> {
+    if !tui::is_active() {
+        return command.status().map_err(|error| format!("{label}: {error}"));
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| format!("start {label}: {error}"))?;
+    let stdout = child.stdout.take().ok_or_else(|| format!("{label} stdout unavailable"))?;
+    let stderr = child.stderr.take().ok_or_else(|| format!("{label} stderr unavailable"))?;
+    let (sender, receiver) = mpsc::channel();
+    spawn_backend_reader(stdout, sender.clone(), false);
+    spawn_backend_reader(stderr, sender, true);
+    loop {
+        while let Ok((is_stderr, line)) = receiver.try_recv() {
+            tui::publish_backend_line(&line, is_stderr);
+        }
+        if tui::cancel_requested() {
+            let _ = child.kill();
+        }
+        if let Some(status) = child.try_wait().map_err(|error| format!("wait {label}: {error}"))? {
+            while let Ok((is_stderr, line)) = receiver.try_recv() {
+                tui::publish_backend_line(&line, is_stderr);
+            }
+            return Ok(status);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn default_lab_peer_path() -> PathBuf {
@@ -907,6 +1049,8 @@ fn start_active_battery_capture(
         .map_err(|error| format!("write active power baseline: {error}"))?;
     let status = Command::new("adb")
         .args(["-s", serial, "shell", "dumpsys", "batterystats", "--reset"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|error| format!("reset Android batterystats: {error}"))?;
     if !status.success() {
@@ -986,8 +1130,27 @@ fn pair_android_star(peers: &mut [Participant], timeline: &mut File) -> Result<(
         .iter()
         .position(|peer| matches!(peer, Participant::Android(_)))
         .ok_or("Android participant missing from active-messaging scenario")?;
+    let fake_count = peers
+        .iter()
+        .filter(|peer| matches!(peer, Participant::Fake(_) | Participant::Remote(_)))
+        .count();
+    let existing = {
+        let android = &mut peers[android_index];
+        snapshot_with_retry(android, "pairing-reuse-check")
+            .map(|snapshot| contact_count(&snapshot))?
+    };
+    if existing >= fake_count {
+        record(
+            timeline,
+            "pairing_reused",
+            serde_json::json!({"android": peers[android_index].name(), "contacts": existing, "bots": fake_count}),
+        )?;
+        return Ok(());
+    }
     for fake_index in 0..peers.len() {
-        if fake_index == android_index || !matches!(peers[fake_index], Participant::Fake(_)) {
+        if fake_index == android_index
+            || !matches!(peers[fake_index], Participant::Fake(_) | Participant::Remote(_))
+        {
             continue;
         }
         let (android, fake) = two_participants_mut(peers, android_index, fake_index);
@@ -1378,17 +1541,13 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String>
         ));
     }
     let arguments = android_deploy_arguments(serial);
-    let output = Command::new("cargo")
-        .current_dir(repo_root)
-        .args(&arguments)
-        .output()
-        .map_err(|error| format!("start Android auto-deploy: {error}"))?;
-    if !output.status.success() {
+    let mut command = Command::new("cargo");
+    command.current_dir(repo_root).args(&arguments);
+    let status = run_external_command(&mut command, "Android auto-deploy")?;
+    if !status.success() {
         return Err(format!(
-            "Android auto-deploy failed on '{serial}' (exit={:?}).\n{}{}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            "Android auto-deploy failed on '{serial}' (exit={:?}); see cockpit Logs",
+            status.code()
         ));
     }
     android_launchable_activity(serial).map(|_| ()).map_err(|error| {
@@ -1507,9 +1666,18 @@ fn spawn_peer_parts(
         .arg("--control-stdio")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("spawn {name}: {error}"))?;
+    if let Some(stderr) = child.stderr.take() {
+        let peer_name = name.to_owned();
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                tui::publish_backend_line(&format!("{peer_name}: {line}"), true);
+            }
+        });
+    }
     let input = child.stdin.take().ok_or_else(|| format!("{name} stdin unavailable"))?;
     let output = child.stdout.take().ok_or_else(|| format!("{name} stdout unavailable"))?;
     Ok((child, input, output))

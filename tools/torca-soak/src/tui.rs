@@ -217,6 +217,7 @@ fn event_phase(event: &str) -> &'static str {
         "android_preflight_started" | "android_ready" | "android_bridge_starting" => "preflight",
         "android_permission_required" => "awaiting Android permission",
         "peer_ready" | "pairing_completed" => "pairing",
+        "measurement_started" => "measurement",
         "message_queued" | "attachment_queued" | "radio_burst" => "workload",
         "run_completed" => "completed",
         "run_cancelled" => "cancelled",
@@ -339,8 +340,16 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
                     }
                 }
             }
+            let phase = ctx.phase.lock().map(|value| value.clone()).unwrap_or_default();
+            let telemetry_interval = if matches!(phase.as_str(), "measurement" | "workload") {
+                // ADB polling itself wakes the device. Keep the cockpit live
+                // during setup, then sample slowly during the measured window.
+                Duration::from_secs(30)
+            } else {
+                Duration::from_secs(2)
+            };
             if let Some(serial) = cli.android.as_deref()
-                && last_android_sample.elapsed() >= Duration::from_secs(2)
+                && last_android_sample.elapsed() >= telemetry_interval
             {
                 if let Ok(mut telemetry) = ctx.android_telemetry.lock() {
                     *telemetry = sample_android(serial);

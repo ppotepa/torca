@@ -207,7 +207,8 @@ fn edit_plan(
                     duration_seconds: duration_minutes * 60,
                     relay: RelayMode::Managed,
                     relay_endpoint: None,
-                    workload: Workload::Moderate,
+                    workload: Workload::Balanced,
+                    radio: false,
                     fault_profile: if scenario == Scenario::ActiveMessaging {
                         FaultProfile::None
                     } else {
@@ -215,6 +216,8 @@ fn edit_plan(
                     },
                     output: PathBuf::from(".torca/soak"),
                     lab_peer: None,
+                    bot_host: None,
+                    bot_token: None,
                     repo_root: PathBuf::from("."),
                     plain: false,
                     tui: true,

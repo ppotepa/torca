@@ -1,10 +1,22 @@
 # Torca soak wizard
 
-All developer soak tests have one entry point:
+All developer soak tests have one entry point. Use the PowerShell bootstrap
+when starting from a checkout; it keeps Cargo/build/linker output in a bounded
+bootstrap log and opens the Ratatui cockpit only after the binary is ready:
+
+```powershell
+.\scripts\soak.ps1 cockpit
+```
+
+The Rust command remains useful for CI or an already-built checkout:
 
 ```powershell
 cargo run -p torca-soak
 ```
+
+Do not use the removed `torca-battery-soak-tui` binary name. The canonical
+binary is `torca-soak`; legacy PowerShell scenario scripts are compatibility
+backends, not interactive entry points.
 
 With no arguments it opens a Ratatui wizard, discovers ready ADB devices and
 offers five explicit scenarios:
@@ -36,7 +48,7 @@ The managed mode starts the Docker relay, waits for its current endpoint, and
 rebuilds `torca-lab-peer` with that endpoint before starting peers:
 
 ```powershell
-cargo run -p torca-soak -- --scenario runtime-lab --relay managed --duration-seconds 1800
+.\scripts\soak.ps1 cockpit --scenario runtime-lab --relay managed --duration-seconds 1800
 ```
 
 The workspace uses a compact shared developer profile so the headless peer
@@ -72,7 +84,7 @@ cargo run -p torca-soak -- --scenario runtime-lab --plain --relay external --rel
 CI and scripted runs select the same backend explicitly:
 
 ```powershell
-cargo run -p torca-soak -- --scenario idle-battery --plain `
+.\scripts\soak.ps1 plain --scenario idle-battery `
   --android "adb-85Z5AIGU79XSLZMZ-RUuyXh._adb-tls-connect._tcp" `
   --duration-seconds 3600 `
   --require-unplugged `
@@ -108,3 +120,25 @@ do not start the bridge.
 
 An absent or unauthorized ADB device is a preflight failure, never a passing
 soak result.
+
+## Persistent server bots
+
+For repeated Android measurements, run the dev-only bot host beside the relay
+so five bot identities and their pairings survive between runs:
+
+```powershell
+$env:TORCA_RELAY_ENDPOINT = '<current-onion>.onion:443'
+$env:TORCA_SOAK_BOT_TOKEN = '<random-token-with-at-least-16-characters>'
+docker compose -f infra/docker/compose.yml -f infra/docker/compose.soak.yml up --build soak-bot-host
+```
+
+Then point the cockpit at its loopback control endpoint:
+
+```powershell
+.\scripts\soak.ps1 cockpit --scenario active-messaging `
+  --android <adb-serial> --android-auto-deploy `
+  --bot-host 127.0.0.1:47890 --bot-token $env:TORCA_SOAK_BOT_TOKEN
+```
+
+Without `--bot-host`, the runner uses the same production `torca-lab-peer`
+processes locally, but still keeps their roots under `.torca/soak/bots/`.
