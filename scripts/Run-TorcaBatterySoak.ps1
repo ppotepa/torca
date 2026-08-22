@@ -110,24 +110,34 @@ function Ensure-PackageInstalled {
 
     $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
     $deployLog = Join-Path $output 'auto-deploy.log'
-    $deployStdout = "$deployLog.stdout"
-    $deployStderr = "$deployLog.stderr"
+    Write-Host "Android auto-deploy details will be saved to '$deployLog'."
     if ($installed) {
         Write-Host "Package '$Package' is installed but has no resolvable MAIN/LAUNCHER activity; running Android deploy before the battery soak."
     } else {
         Write-Host "Package '$Package' is not installed; running Android deploy before the battery soak."
     }
     for ($attempt = 1; $attempt -le $AutoDeployAttempts; $attempt++) {
-        $deploy = Start-Process -FilePath 'cargo' -WorkingDirectory $repoRoot -NoNewWindow -Wait -PassThru `
-            -ArgumentList @('run', '-p', 'torca-deploy', '--', 'deploy', '--target', 'android', '--device', $DeviceId, '--configuration', 'debug', '--client-build', 'if-required', '--relay-build', 'if-required', '--onion', 'ensure', '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart') `
-            -RedirectStandardOutput $deployStdout -RedirectStandardError $deployStderr
+        $deployArguments = @(
+            'run', '-p', 'torca-deploy', '--',
+            'deploy', '--target', 'android', '--device', $DeviceId,
+            '--configuration', 'debug', '--client-build', 'if-required',
+            '--relay-build', 'if-required', '--onion', 'ensure',
+            '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart'
+        )
+        Write-Host "--- Android auto-deploy attempt $attempt/$AutoDeployAttempts (live output) ---"
+        Push-Location $repoRoot
+        try {
+            # Keep the output visible for an interactive run while preserving
+            # the exact merged stdout/stderr stream for postmortem analysis.
+            & cargo @deployArguments 2>&1 | Tee-Object -FilePath $deployLog -Append
+            $deployExitCode = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
         @(
             "--- auto-deploy attempt $attempt/$AutoDeployAttempts ---"
-            if (Test-Path $deployStdout) { Get-Content $deployStdout }
-            if (Test-Path $deployStderr) { Get-Content $deployStderr }
         ) | Out-File -Append -Encoding utf8 $deployLog
-        Remove-Item $deployStdout, $deployStderr -Force -ErrorAction SilentlyContinue
-        if ($deploy.ExitCode -eq 0) {
+        if ($deployExitCode -eq 0) {
             # PackageManager can lag behind the installer by a few seconds,
             # especially for streamed split APK installation. Poll the same
             # device before deciding that deploy failed.
@@ -148,7 +158,7 @@ function Ensure-PackageInstalled {
         }
         $packageState = (Invoke-SelectedAdb @('shell', 'pm', 'path', $Package) 2>&1 | Out-String).Trim()
         $activityState = (Invoke-SelectedAdb @('shell', 'cmd', 'package', 'resolve-activity', '--brief', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', $Package) 2>&1 | Out-String).Trim()
-        throw "Android auto-deploy failed (attempt=$attempt, exit=$($deploy.ExitCode)); packagePath='$packageState'; launchActivity='$activityState'. See '$deployLog'.`n$tail"
+        throw "Android auto-deploy failed (attempt=$attempt, exit=$deployExitCode); packagePath='$packageState'; launchActivity='$activityState'. See '$deployLog'.`n$tail"
     }
     throw "Android deploy completed without a launchable '$Package' activity on '$DeviceId'. Check '$deployLog' and approve the installation prompt on the device."
 }
