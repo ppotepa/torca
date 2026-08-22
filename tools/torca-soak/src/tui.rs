@@ -41,6 +41,7 @@ struct UiContext {
     events: Mutex<VecDeque<String>>,
     logs: Mutex<VecDeque<String>>,
     run_root: Mutex<Option<PathBuf>>,
+    artifact_path: Mutex<String>,
     message_count: std::sync::atomic::AtomicUsize,
     attachment_count: std::sync::atomic::AtomicUsize,
     radio_count: std::sync::atomic::AtomicUsize,
@@ -51,6 +52,23 @@ static ACTIVE: OnceLock<Mutex<Option<Arc<UiContext>>>> = OnceLock::new();
 
 fn active() -> Option<Arc<UiContext>> {
     ACTIVE.get()?.lock().ok()?.clone()
+}
+
+pub(crate) fn is_active() -> bool {
+    active().is_some()
+}
+
+pub(crate) fn publish_backend_line(line: &str, stderr: bool) {
+    if let Some(path) = line.strip_prefix("Battery soak capture complete: ")
+        && let Some(ctx) = active()
+        && let Ok(mut artifact) = ctx.artifact_path.lock()
+    {
+        path.trim().clone_into(&mut artifact);
+    }
+    publish_event(
+        if stderr { "backend_stderr" } else { "backend_stdout" },
+        &serde_json::json!({"line": line}),
+    );
 }
 
 pub(crate) fn cancel_requested() -> bool {
@@ -68,6 +86,9 @@ pub(crate) fn set_run_root(root: &Path) {
     }
     if let Ok(mut run_id) = ctx.run_id.lock() {
         *run_id = root.file_name().map(|value| value.to_string_lossy().into_owned());
+    }
+    if let Ok(mut artifact) = ctx.artifact_path.lock() {
+        *artifact = root.display().to_string();
     }
 }
 
@@ -222,6 +243,7 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
         events: Mutex::new(VecDeque::new()),
         logs: Mutex::new(VecDeque::new()),
         run_root: Mutex::new(None),
+        artifact_path: Mutex::new("pending".to_owned()),
         message_count: std::sync::atomic::AtomicUsize::new(0),
         attachment_count: std::sync::atomic::AtomicUsize::new(0),
         radio_count: std::sync::atomic::AtomicUsize::new(0),
@@ -233,7 +255,7 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
     let (result_tx, result_rx) = std::sync::mpsc::channel();
     let worker_cli = cli.clone();
     let worker = thread::spawn(move || {
-        let result = crate::run_scenario(worker_cli);
+        let result = crate::run_plan(worker_cli);
         let _ = result_tx.send(result);
     });
 
@@ -405,6 +427,10 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
         ListItem::new(format!(
             "Endpoint: {}",
             ctx.relay_endpoint.lock().map(|value| value.clone()).unwrap_or_default()
+        )),
+        ListItem::new(format!(
+            "Artifact: {}",
+            ctx.artifact_path.lock().map(|value| value.clone()).unwrap_or_default()
         )),
     ];
     frame.render_widget(

@@ -24,35 +24,45 @@ power state and captures the native JSONL tree; it must not infer a missing
 structured event merely because an older build did not mirror every in-memory
 diagnostic event to JSONL.
 
-Run the Android harness from the repository root for a longer physical soak:
+Use the single soak entry point. With no arguments it opens the scenario wizard:
 
 ```powershell
-./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 -RequireUnplugged -CollectNativeDiagnostics
+cargo run -p torca-soak
 ```
 
-For an interactive live view of the physical Android run, use the Ratatui
-supervisor (it launches the same PowerShell harness and adds `-ValidateAfter`):
+For a non-interactive idle battery gate:
 
 ```powershell
-cargo run -p torca-soak --bin torca-battery-soak-tui -- `
-  --device-id "<adb-serial>" --duration-minutes 60 `
+cargo run -p torca-soak -- --scenario idle-battery --plain `
+  --android "<adb-serial>" --duration-seconds 3600 `
   --require-unplugged --require-screen-off --collect-native-diagnostics
 ```
 
-To fail the command automatically when the captured evidence does not satisfy
-the requested duration, power, screen, process or diagnostics gates, append
-`-ValidateAfter`:
+## Active Android messaging measurement
+
+Choose **Active messaging battery** in the wizard to run Android plus five
+process-isolated bots. It uses a star topology: every bot pairs with Android,
+so the phone must expose at least five contacts and conversations before the
+measurement begins. Bots then send real messages through the production
+runtime; this is the comparison run for an actively used client.
 
 ```powershell
-./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 `
-  -RequireUnplugged -RequireScreenOff -CollectNativeDiagnostics -ValidateAfter
+cargo run -p torca-soak -- --scenario active-messaging --plain `
+  --android "<adb-serial>" --android-auto-deploy --fake-peers 5 `
+  --duration-seconds 3600 --require-unplugged
 ```
 
-For a strict screen-off window:
+The run writes `plan.json`, `manifest.json`, message timeline and Android
+battery start/end evidence under `.torca/soak/<run-id>/`. It fails before the
+measurement if Android cannot expose the five expected bot relationships.
+
+Validation runs by default. The legacy PowerShell harness remains an internal
+backend and CI compatibility shim.
 
 ```powershell
-./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 360 `
-  -RequireUnplugged -RequireScreenOff -CollectNativeDiagnostics
+cargo run -p torca-soak -- --scenario idle-battery --plain `
+  --android "<adb-serial>" --duration-seconds 21600 `
+  --require-unplugged --require-screen-off --collect-native-diagnostics
 ```
 
 Validate the resulting evidence before treating it as a release gate:

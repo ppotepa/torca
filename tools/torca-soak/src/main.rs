@@ -10,35 +10,57 @@ use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 
 mod tui;
+mod wizard;
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, ValueEnum)]
+enum Scenario {
+    /// Android plus fake peers exchanging real messages through the production runtime.
+    ActiveMessaging,
+    /// Physical Android idle battery measurement.
+    IdleBattery,
+    /// Android network loss and recovery loop.
+    Connectivity,
+    /// Multi-process fake-peer runtime laboratory.
+    #[default]
+    RuntimeLab,
+    /// Repeated deterministic Rust test suite.
+    Deterministic,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
 enum RelayMode {
     Managed,
     External,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
 enum Workload {
     Moderate,
     Minimal,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
 enum FaultProfile {
     Controlled,
     RelayOnly,
     None,
 }
 
-#[derive(Clone, Parser, Debug)]
+#[derive(Clone, Parser, Debug, Serialize)]
 #[command(name = "torca-soak")]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Cli {
+    /// Soak scenario. Omit all arguments to open the interactive wizard.
+    #[arg(long, value_enum, default_value_t = Scenario::RuntimeLab)]
+    scenario: Scenario,
     /// Android serial. Omit to run the fake-peer-only laboratory scenario.
     #[arg(long)]
     android: Option<String>,
@@ -46,7 +68,7 @@ pub(crate) struct Cli {
     /// deploy is scoped to `--android` only and preserves client data.
     #[arg(long)]
     android_auto_deploy: bool,
-    #[arg(long, default_value_t = 3)]
+    #[arg(long, default_value_t = 5)]
     fake_peers: usize,
     #[arg(long, default_value_t = 1800)]
     duration_seconds: u64,
@@ -73,11 +95,27 @@ pub(crate) struct Cli {
     /// Explicitly request the interactive dashboard.
     #[arg(long)]
     tui: bool,
+    /// Require the Android device to report battery power rather than AC/USB/wireless.
+    #[arg(long)]
+    require_unplugged: bool,
+    /// Require the Android display to be off during a physical battery measurement.
+    #[arg(long)]
+    require_screen_off: bool,
+    /// Include native application diagnostics in the physical battery artifact.
+    #[arg(long)]
+    collect_native_diagnostics: bool,
+    /// Validate a physical battery artifact immediately after capture.
+    #[arg(long, default_value_t = true)]
+    validate_after: bool,
+    /// Connectivity recovery loop count.
+    #[arg(long, default_value_t = 20)]
+    iterations: u32,
 }
 
 #[derive(Debug, Serialize)]
 struct Manifest {
     run_id: String,
+    scenario: String,
     seed: u64,
     fake_peers: usize,
     android_serial: Option<String>,
@@ -91,6 +129,7 @@ struct Manifest {
 #[derive(Debug, Serialize)]
 struct Summary {
     run_id: String,
+    scenario: String,
     status: &'static str,
     sequence: u64,
     participants: usize,
@@ -114,6 +153,26 @@ struct AndroidBridge {
 
 struct ManagedRelay {
     repo_root: PathBuf,
+}
+
+struct ActiveBatteryCapture {
+    serial: String,
+    root: PathBuf,
+}
+
+impl Drop for ActiveBatteryCapture {
+    fn drop(&mut self) {
+        let _ = capture_adb_file(
+            &self.serial,
+            &["shell", "dumpsys", "battery"],
+            &self.root.join("battery-end.txt"),
+        );
+        let _ = capture_adb_file(
+            &self.serial,
+            &["shell", "dumpsys", "batterystats", "com.torca.torca_app"],
+            &self.root.join("batterystats.txt"),
+        );
+    }
 }
 
 impl Drop for AndroidBridge {
@@ -280,7 +339,15 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let cli = Cli::parse();
+    let explicit_args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let cli = if explicit_args.is_empty() || explicit_args.iter().all(|arg| arg == "--tui") {
+        if !std::io::stdout().is_terminal() || !std::io::stderr().is_terminal() {
+            return Err("no soak scenario supplied and no interactive terminal is available; pass --scenario <name> --plain".into());
+        }
+        wizard::choose_plan()?.ok_or_else(|| "soak cancelled".to_owned())?
+    } else {
+        Cli::parse()
+    };
     if !cli.plain {
         let terminal = std::io::stdout().is_terminal() && std::io::stderr().is_terminal();
         if terminal {
@@ -290,7 +357,127 @@ fn run() -> Result<(), String> {
             "torca-soak: non-interactive output detected; using plain mode (pass --plain to silence this message)"
         );
     }
-    run_scenario(cli)
+    run_plan(cli)
+}
+
+pub(crate) fn run_plan(cli: Cli) -> Result<(), String> {
+    match cli.scenario {
+        Scenario::IdleBattery => run_battery_harness(&cli),
+        Scenario::Connectivity => run_connectivity_harness(&cli),
+        Scenario::Deterministic => run_deterministic_harness(&cli),
+        Scenario::ActiveMessaging | Scenario::RuntimeLab => run_scenario(cli),
+    }
+}
+
+fn run_battery_harness(cli: &Cli) -> Result<(), String> {
+    let device = cli.android.as_deref().ok_or("idle-battery requires --android <adb-serial>")?;
+    let mut args = vec![
+        "-DurationMinutes".to_owned(),
+        cli.duration_seconds.div_ceil(60).to_string(),
+        "-DeviceId".to_owned(),
+        device.to_owned(),
+    ];
+    if cli.require_unplugged {
+        args.push("-RequireUnplugged".to_owned());
+    }
+    if cli.require_screen_off {
+        args.push("-RequireScreenOff".to_owned());
+    }
+    if cli.collect_native_diagnostics {
+        args.push("-CollectNativeDiagnostics".to_owned());
+    }
+    if cli.validate_after {
+        args.push("-ValidateAfter".to_owned());
+    }
+    run_powershell_backend(cli, "Run-TorcaBatterySoak.ps1", &args)
+}
+
+fn run_connectivity_harness(cli: &Cli) -> Result<(), String> {
+    let device = cli.android.as_deref().ok_or("connectivity requires --android <adb-serial>")?;
+    run_powershell_backend(
+        cli,
+        "Run-TorcaConnectivitySoak.ps1",
+        &[
+            "-Iterations".to_owned(),
+            cli.iterations.to_string(),
+            "-DeviceId".to_owned(),
+            device.to_owned(),
+        ],
+    )
+}
+
+fn run_deterministic_harness(cli: &Cli) -> Result<(), String> {
+    run_powershell_backend(
+        cli,
+        "Run-TorcaDeterministicSoak.ps1",
+        &[
+            "-Iterations".to_owned(),
+            cli.iterations.to_string(),
+            "-RepoRoot".to_owned(),
+            cli.repo_root.to_string_lossy().into_owned(),
+        ],
+    )
+}
+
+fn run_powershell_backend(cli: &Cli, script: &str, arguments: &[String]) -> Result<(), String> {
+    let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
+    let script_path = cli.repo_root.join("scripts").join(script);
+    let mut command = Command::new(shell);
+    command
+        .args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&script_path)
+        .args(arguments)
+        .current_dir(&cli.repo_root);
+    if !tui::is_active() {
+        let status = command
+            .status()
+            .map_err(|error| format!("start {}: {error}", script_path.display()))?;
+        return status
+            .success()
+            .then_some(())
+            .ok_or_else(|| format!("{} failed with {status}", script_path.display()));
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child =
+        command.spawn().map_err(|error| format!("start {}: {error}", script_path.display()))?;
+    let stdout = child.stdout.take().ok_or("PowerShell stdout unavailable")?;
+    let stderr = child.stderr.take().ok_or("PowerShell stderr unavailable")?;
+    let (sender, receiver) = mpsc::channel();
+    spawn_backend_reader(stdout, sender.clone(), false);
+    spawn_backend_reader(stderr, sender, true);
+    loop {
+        while let Ok((stderr, line)) = receiver.try_recv() {
+            tui::publish_backend_line(&line, stderr);
+        }
+        if tui::cancel_requested() {
+            let _ = child.kill();
+        }
+        if let Some(status) =
+            child.try_wait().map_err(|error| format!("wait {}: {error}", script_path.display()))?
+        {
+            while let Ok((stderr, line)) = receiver.try_recv() {
+                tui::publish_backend_line(&line, stderr);
+            }
+            return status
+                .success()
+                .then_some(())
+                .ok_or_else(|| format!("{} failed with {status}", script_path.display()));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn spawn_backend_reader<R: std::io::Read + Send + 'static>(
+    reader: R,
+    sender: mpsc::Sender<(bool, String)>,
+    stderr: bool,
+) {
+    thread::spawn(move || {
+        let reader = BufReader::new(reader);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = sender.send((stderr, line));
+        }
+    });
 }
 
 pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
@@ -311,6 +498,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
     tui::set_run_root(&root);
     let manifest = Manifest {
         run_id: run_id.clone(),
+        scenario: format!("{:?}", cli.scenario),
         seed: started.as_nanos() as u64,
         fake_peers: cli.fake_peers,
         android_serial: cli.android.clone(),
@@ -321,6 +509,18 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         started_at_ms: started.as_millis(),
     };
     write_json(&root.join("manifest.json"), &manifest)?;
+    write_json(&root.join("plan.json"), &cli)?;
+    let _battery_capture = if cli.scenario == Scenario::ActiveMessaging {
+        let serial = cli.android.as_deref().ok_or("active-messaging requires --android")?;
+        Some(start_active_battery_capture(
+            serial,
+            &root,
+            cli.require_unplugged,
+            cli.require_screen_off,
+        )?)
+    } else {
+        None
+    };
     let mut timeline = File::create(root.join("timeline.jsonl"))
         .map_err(|error| format!("create timeline: {error}"))?;
     record(
@@ -407,7 +607,41 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         )?;
     }
 
-    pair_mesh(&mut peers, &mut timeline)?;
+    let (initial_android_contacts, initial_android_conversations) = if cli.scenario
+        == Scenario::ActiveMessaging
+    {
+        let android = peers
+            .iter_mut()
+            .find(|peer| matches!(peer, Participant::Android(_)))
+            .ok_or("Android participant missing from active-messaging scenario")?;
+        let snapshot = snapshot_with_retry(android, "active-contacts-before")?;
+        let count = contact_count(&snapshot);
+        let conversations = conversation_count(&snapshot);
+        record(
+            &mut timeline,
+            "active_preflight_baseline",
+            serde_json::json!({"android": android.name(), "contacts": count, "conversations": conversations}),
+        )?;
+        (count, conversations)
+    } else {
+        (0, 0)
+    };
+
+    if cli.scenario == Scenario::ActiveMessaging {
+        if cli.android.is_none() {
+            return Err("active-messaging requires --android <adb-serial>".into());
+        }
+        pair_android_star(&mut peers, &mut timeline)?;
+        validate_active_messaging_preflight(
+            &mut peers,
+            initial_android_contacts.saturating_add(cli.fake_peers),
+            initial_android_conversations.saturating_add(cli.fake_peers),
+            cli.fake_peers,
+            &mut timeline,
+        )?;
+    } else {
+        pair_mesh(&mut peers, &mut timeline)?;
+    }
 
     let deadline = Instant::now() + Duration::from_secs(cli.duration_seconds);
     let run_started = Instant::now();
@@ -581,6 +815,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         &root.join("summary.json"),
         &Summary {
             run_id,
+            scenario: format!("{:?}", cli.scenario),
             status,
             sequence,
             participants: peers.len(),
@@ -648,6 +883,58 @@ fn default_lab_peer_path() -> PathBuf {
     })
 }
 
+fn start_active_battery_capture(
+    serial: &str,
+    root: &Path,
+    require_unplugged: bool,
+    require_screen_off: bool,
+) -> Result<ActiveBatteryCapture, String> {
+    let battery = adb_output(serial, &["shell", "dumpsys", "battery"])?;
+    if require_unplugged
+        && ["AC powered: true", "USB powered: true", "Wireless powered: true"]
+            .iter()
+            .any(|marker| battery.contains(marker))
+    {
+        return Err(format!("active battery soak requires unplugged Android device '{serial}'"));
+    }
+    let power = adb_output(serial, &["shell", "dumpsys", "power"])?;
+    if require_screen_off && !power.contains("mWakefulness=Asleep") {
+        return Err(format!("active battery soak requires screen-off Android device '{serial}'"));
+    }
+    fs::write(root.join("battery-start.txt"), battery)
+        .map_err(|error| format!("write active battery baseline: {error}"))?;
+    fs::write(root.join("power-start.txt"), power)
+        .map_err(|error| format!("write active power baseline: {error}"))?;
+    let status = Command::new("adb")
+        .args(["-s", serial, "shell", "dumpsys", "batterystats", "--reset"])
+        .status()
+        .map_err(|error| format!("reset Android batterystats: {error}"))?;
+    if !status.success() {
+        return Err(format!("reset Android batterystats failed with {status}"));
+    }
+    Ok(ActiveBatteryCapture { serial: serial.to_owned(), root: root.to_owned() })
+}
+
+fn adb_output(serial: &str, arguments: &[&str]) -> Result<String, String> {
+    let output = Command::new("adb")
+        .args(["-s", serial])
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("run adb for {serial}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "adb command failed for {serial}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn capture_adb_file(serial: &str, arguments: &[&str], path: &Path) -> Result<(), String> {
+    let output = adb_output(serial, arguments)?;
+    fs::write(path, output).map_err(|error| format!("write {}: {error}", path.display()))
+}
+
 fn pair_mesh(peers: &mut [Participant], timeline: &mut File) -> Result<(), String> {
     for left in 0..peers.len() {
         for right in (left + 1)..peers.len() {
@@ -689,6 +976,111 @@ fn pair_mesh(peers: &mut [Participant], timeline: &mut File) -> Result<(), Strin
         }
     }
     Ok(())
+}
+
+/// Pair every fake peer directly with Android. This gives the physical device
+/// exactly `fake_peers` contacts and prevents bot-to-bot traffic from diluting
+/// an active Android battery scenario.
+fn pair_android_star(peers: &mut [Participant], timeline: &mut File) -> Result<(), String> {
+    let android_index = peers
+        .iter()
+        .position(|peer| matches!(peer, Participant::Android(_)))
+        .ok_or("Android participant missing from active-messaging scenario")?;
+    for fake_index in 0..peers.len() {
+        if fake_index == android_index || !matches!(peers[fake_index], Participant::Fake(_)) {
+            continue;
+        }
+        let (android, fake) = two_participants_mut(peers, android_index, fake_index);
+        pair_participants(android, fake, timeline)?;
+    }
+    Ok(())
+}
+
+fn validate_active_messaging_preflight(
+    peers: &mut [Participant],
+    expected_contacts: usize,
+    expected_conversations: usize,
+    expected_fake_peers: usize,
+    timeline: &mut File,
+) -> Result<(), String> {
+    let android = peers
+        .iter_mut()
+        .find(|peer| matches!(peer, Participant::Android(_)))
+        .ok_or("Android participant missing from active-messaging preflight")?;
+    let snapshot = snapshot_with_retry(android, "active-contacts")?;
+    let contacts = contact_count(&snapshot);
+    let conversations = conversation_count(&snapshot);
+    if contacts < expected_contacts || conversations < expected_conversations {
+        return Err(format!(
+            "active-messaging preflight failed: Android has {contacts} contacts and {conversations} conversations; expected at least {expected_contacts} contacts and {expected_conversations} conversations from {expected_fake_peers} soak bots"
+        ));
+    }
+    record(
+        timeline,
+        "active_preflight_passed",
+        serde_json::json!({
+            "android": android.name(),
+            "contacts": contacts,
+            "conversations": conversations,
+            "expectedContacts": expected_contacts,
+            "expectedConversations": expected_conversations,
+            "expectedBots": expected_fake_peers,
+        }),
+    )
+}
+
+fn contact_count(response: &serde_json::Value) -> usize {
+    response.pointer("/snapshot/contacts").and_then(serde_json::Value::as_array).map_or(0, Vec::len)
+}
+
+fn conversation_count(response: &serde_json::Value) -> usize {
+    response
+        .pointer("/snapshot/conversations")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len)
+}
+
+fn two_participants_mut(
+    peers: &mut [Participant],
+    left: usize,
+    right: usize,
+) -> (&mut Participant, &mut Participant) {
+    debug_assert_ne!(left, right);
+    if left < right {
+        let (before, after) = peers.split_at_mut(right);
+        (&mut before[left], &mut after[0])
+    } else {
+        let (before, after) = peers.split_at_mut(left);
+        (&mut after[0], &mut before[right])
+    }
+}
+
+fn pair_participants(
+    inviter: &mut Participant,
+    joiner: &mut Participant,
+    timeline: &mut File,
+) -> Result<(), String> {
+    let invitation = inviter.request("pair-create", "pairing.create", serde_json::json!({}))?;
+    let pairing = wait_for_pairing_invitation(inviter, invitation)?;
+    let code =
+        pairing.get("code").and_then(serde_json::Value::as_str).ok_or("pairing code missing")?;
+    let session_id = pairing
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("pairing session id missing")?;
+    retry_operation(joiner, "pairing.join", serde_json::json!({"code": code}), "pair-join")?;
+    retry_operation(
+        inviter,
+        "pairing.approve",
+        serde_json::json!({"sessionIdHex": session_id}),
+        "pair-approve",
+    )?;
+    wait_for_conversation(inviter, joiner)?;
+    record(
+        timeline,
+        "pairing_completed",
+        serde_json::json!({"left": inviter.name(), "right": joiner.name(), "topology": "android-star"}),
+    )
 }
 
 fn retry_operation(
@@ -1111,7 +1503,11 @@ fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::{android_deploy_arguments, parse_launchable_activity, valid_endpoint};
+    use super::{
+        android_deploy_arguments, contact_count, conversation_count, parse_launchable_activity,
+        valid_endpoint,
+    };
+    use serde_json::json;
 
     #[test]
     fn endpoint_validation_requires_v3_onion_and_port() {
@@ -1136,5 +1532,19 @@ mod tests {
         assert!(arguments.windows(2).any(|pair| pair[0] == "--device" && pair[1] == "device-123"));
         assert!(arguments.windows(2).any(|pair| pair[0] == "--target" && pair[1] == "android"));
         assert!(!arguments.contains(&"windows".to_owned()));
+    }
+
+    #[test]
+    fn active_preflight_counts_contacts_and_conversations_independently() {
+        let snapshot = json!({
+            "snapshot": {
+                "contacts": [{"id": "a"}, {"id": "b"}],
+                "conversations": [{"id": "a"}]
+            }
+        });
+        assert_eq!(contact_count(&snapshot), 2);
+        assert_eq!(conversation_count(&snapshot), 1);
+        assert_eq!(contact_count(&json!({})), 0);
+        assert_eq!(conversation_count(&json!({})), 0);
     }
 }

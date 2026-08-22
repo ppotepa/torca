@@ -2,28 +2,27 @@
 
 This is a physical-device validation. Use USB ADB so toggling Wi-Fi does not disconnect the test controller.
 
-Run:
+Run the unified soak entry point; without arguments it opens the Ratatui
+wizard and detects ready Android devices:
 
 ```powershell
-./scripts/Run-TorcaConnectivitySoak.ps1 -Iterations 10 -SettleSeconds 15
+cargo run -p torca-soak
 ```
 
-When multiple devices are connected, select one explicitly with the exact
-serial from `adb devices`:
+For CI or a scripted run, select the scenario and device explicitly:
 
 ```powershell
-./scripts/Run-TorcaConnectivitySoak.ps1 -Iterations 10 -SettleSeconds 15 `
-  -DeviceId 'adb-<device-id>-<transport>._adb-tls-connect._tcp'
+cargo run -p torca-soak -- --scenario connectivity --plain `
+  --android 'adb-<device-id>-<transport>._adb-tls-connect._tcp' `
+  --iterations 10
 ```
 
 The harness fails before changing network state if the selected device is not
 ready, and verifies that the Torca process started on that same device.
 
-Optionally include mobile-data transitions:
-
-```powershell
-./scripts/Run-TorcaConnectivitySoak.ps1 -Iterations 10 -ToggleMobileData
-```
+`Run-TorcaConnectivitySoak.ps1` remains the internal backend and CI
+compatibility shim. Mobile-data fault injection stays intentionally internal
+until it is represented by a typed option in `SoakPlan`.
 
 The harness records a timestamped route-change timeline plus `dumpsys connectivity`, Torca service state, process state and logcat evidence under `artifacts/soak/`.
 

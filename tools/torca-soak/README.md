@@ -1,8 +1,24 @@
-# Torca multi-peer soak
+# Torca soak wizard
 
-`torca-soak` drives real, process-isolated Torca runtimes. It is not a mock
-transport test: every fake peer owns a native runtime, identity, SQLCipher
-profile, Tor cache and structured log tree.
+All developer soak tests have one entry point:
+
+```powershell
+cargo run -p torca-soak
+```
+
+With no arguments it opens a Ratatui wizard, discovers ready ADB devices and
+offers five explicit scenarios:
+
+| Scenario | Purpose |
+| --- | --- |
+| Active messaging battery | Android plus five bots in a star topology; contacts are visible on Android and bots send real messages |
+| Idle battery baseline | Physical Android measurement with deliberately no synthetic traffic |
+| Connectivity recovery | Repeated Android route loss/recovery |
+| Multi-peer runtime lab | Process-isolated peers, attachments, Radio and controlled faults |
+| Deterministic code soak | Repeated policy/runtime Rust suites |
+
+The PowerShell files under `scripts/` are implementation backends and CI
+compatibility shims. They are not separate developer entry points.
 
 ## Fake-peer-only run
 
@@ -11,7 +27,7 @@ Use an endpoint compiled into the lab peer binary:
 ```powershell
 $env:TORCA_RELAY_ENDPOINT = '<v3-onion>.onion:443'
 cargo build -p torca-lab-peer
-cargo run -p torca-soak -- --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT --duration-seconds 300
+cargo run -p torca-soak -- --scenario runtime-lab --plain --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT --duration-seconds 300
 ```
 
 ## Managed relay run
@@ -20,7 +36,7 @@ The managed mode starts the Docker relay, waits for its current endpoint, and
 rebuilds `torca-lab-peer` with that endpoint before starting peers:
 
 ```powershell
-cargo run -p torca-soak -- --relay managed --duration-seconds 1800
+cargo run -p torca-soak -- --scenario runtime-lab --relay managed --duration-seconds 1800
 ```
 
 The workspace uses a compact shared developer profile so the headless peer
@@ -48,28 +64,21 @@ For CI, redirected output or scripts, explicitly use `--plain`; this keeps the
 same manifest, timeline and summary artifacts without terminal control codes:
 
 ```powershell
-cargo run -p torca-soak -- --plain --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT
+cargo run -p torca-soak -- --scenario runtime-lab --plain --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT
 ```
 
-## Physical Android battery soak TUI
+## Non-interactive physical Android battery soak
 
-The physical battery measurement uses the PowerShell harness, while the
-following binary supervises it with a Ratatui dashboard. It samples ADB power,
-screen, installation and process state every two seconds and streams the
-deploy/harness output into the dashboard:
+CI and scripted runs select the same backend explicitly:
 
 ```powershell
-cargo run -p torca-soak --bin torca-battery-soak-tui -- `
-  --device-id "adb-85Z5AIGU79XSLZMZ-RUuyXh._adb-tls-connect._tcp" `
-  --duration-minutes 60 `
+cargo run -p torca-soak -- --scenario idle-battery --plain `
+  --android "adb-85Z5AIGU79XSLZMZ-RUuyXh._adb-tls-connect._tcp" `
+  --duration-seconds 3600 `
   --require-unplugged `
   --require-screen-off `
   --collect-native-diagnostics
 ```
-
-The wrapper automatically adds `-ValidateAfter` to the PowerShell harness.
-Press `q` or `Esc` to stop the harness and wake the device. Use `--plain` to
-run the same physical measurement without the dashboard.
 
 Interactive controls never mutate relay or client data directly. `q` stops the
 scenario through its normal peer/ADB/relay cleanup path and records
@@ -81,7 +90,7 @@ Build/install a debug APK containing the debug-only ScenarioBridge, then pass
 the authorized ADB serial:
 
 ```powershell
-cargo run -p torca-soak -- --android 2406APNFAG --relay managed
+cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fake-peers 5 --relay managed
 ```
 
 To let the orchestrator install/restart the current debug client (including the
@@ -89,7 +98,7 @@ debug-only ScenarioBridge), add `--android-auto-deploy`. The deploy is
 restricted to that serial and preserves client data:
 
 ```powershell
-cargo run -p torca-soak -- --android 2406APNFAG --android-auto-deploy --relay managed
+cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fake-peers 5 --android-auto-deploy --relay managed
 ```
 
 The bridge binds only to Android loopback. The runner reads its random token
