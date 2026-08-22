@@ -304,6 +304,7 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
     let run_id = format!("soak-{}-{}", started.as_secs(), uuid::Uuid::new_v4().simple());
     let root = cli.output.join(&run_id);
     fs::create_dir_all(&root).map_err(|error| format!("create soak root: {error}"))?;
+    tui::set_run_root(&root);
     let manifest = Manifest {
         run_id: run_id.clone(),
         seed: started.as_nanos() as u64,
@@ -339,6 +340,15 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
     if endpoint.as_deref().is_none_or(|value| !valid_endpoint(value)) {
         return Err("a valid relay endpoint is required; start the managed relay or pass --relay-endpoint host.onion:port".into());
     }
+    record(
+        &mut timeline,
+        "relay_ready",
+        serde_json::json!({
+            "endpoint": endpoint.as_deref().unwrap_or_default(),
+            "health": "ready",
+            "onion": "published"
+        }),
+    )?;
 
     let peer_executable = if managed_relay.is_some() {
         build_lab_peer(&cli.repo_root, endpoint.as_deref().unwrap())?
@@ -354,7 +364,19 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
                 "android_preflight_started",
                 serde_json::json!({"serial": serial, "autoDeploy": true}),
             )?;
-            ensure_android_deployed(&cli.repo_root, serial)?;
+            loop {
+                match ensure_android_deployed(&cli.repo_root, serial) {
+                    Ok(()) => break,
+                    Err(error) if tui::take_retry_requested() => {
+                        record(
+                            &mut timeline,
+                            "android_preflight_retrying",
+                            serde_json::json!({"serial": serial, "error": error}),
+                        )?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
             record(
                 &mut timeline,
                 "android_preflight_ready",

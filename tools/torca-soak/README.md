@@ -32,6 +32,29 @@ The relay is stopped when the run exits, including when a peer or assertion
 fails. Each run is written to `.torca/soak/<run-id>/` with a manifest and
 JSONL timeline.
 
+When stdout and stderr are interactive, the runner opens a Ratatui dashboard.
+It shows relay/onion state, Android/peer readiness, workload counters and the
+bounded event timeline. Controls are deliberately limited to safe operations:
+
+```text
+p or Space  pause/resume controlled waits
+r           retry a failed Android preflight
+m           write an incident marker under <run>/incidents/
+l           open the bounded full JSONL event view
+q or Esc    request cancellation and run normal cleanup
+```
+
+For CI, redirected output or scripts, explicitly use `--plain`; this keeps the
+same manifest, timeline and summary artifacts without terminal control codes:
+
+```powershell
+cargo run -p torca-soak -- --plain --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT
+```
+
+Interactive controls never mutate relay or client data directly. `q` stops the
+scenario through its normal peer/ADB/relay cleanup path and records
+`run_cancelled` in `summary.json`.
+
 ## Android participant
 
 Build/install a debug APK containing the debug-only ScenarioBridge, then pass
