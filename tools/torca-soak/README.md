@@ -51,6 +51,26 @@ same manifest, timeline and summary artifacts without terminal control codes:
 cargo run -p torca-soak -- --plain --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT
 ```
 
+## Physical Android battery soak TUI
+
+The physical battery measurement uses the PowerShell harness, while the
+following binary supervises it with a Ratatui dashboard. It samples ADB power,
+screen, installation and process state every two seconds and streams the
+deploy/harness output into the dashboard:
+
+```powershell
+cargo run -p torca-soak --bin torca-battery-soak-tui -- `
+  --device-id "adb-85Z5AIGU79XSLZMZ-RUuyXh._adb-tls-connect._tcp" `
+  --duration-minutes 60 `
+  --require-unplugged `
+  --require-screen-off `
+  --collect-native-diagnostics
+```
+
+The wrapper automatically adds `-ValidateAfter` to the PowerShell harness.
+Press `q` or `Esc` to stop the harness and wake the device. Use `--plain` to
+run the same physical measurement without the dashboard.
+
 Interactive controls never mutate relay or client data directly. `q` stops the
 scenario through its normal peer/ADB/relay cleanup path and records
 `run_cancelled` in `summary.json`.

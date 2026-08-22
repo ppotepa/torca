@@ -30,6 +30,15 @@ Run the Android harness from the repository root for a longer physical soak:
 ./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 -RequireUnplugged -CollectNativeDiagnostics
 ```
 
+For an interactive live view of the physical Android run, use the Ratatui
+supervisor (it launches the same PowerShell harness and adds `-ValidateAfter`):
+
+```powershell
+cargo run -p torca-soak --bin torca-battery-soak-tui -- `
+  --device-id "<adb-serial>" --duration-minutes 60 `
+  --require-unplugged --require-screen-off --collect-native-diagnostics
+```
+
 To fail the command automatically when the captured evidence does not satisfy
 the requested duration, power, screen, process or diagnostics gates, append
 `-ValidateAfter`:
