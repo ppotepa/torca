@@ -8,7 +8,8 @@ param(
     [Parameter(Mandatory = $false)][switch]$RequireScreenOff,
     [Parameter(Mandatory = $false)][switch]$CollectNativeDiagnostics,
     [Parameter(Mandatory = $false)][string]$NativeLogRoot,
-    [Parameter(Mandatory = $false)][ValidateRange(1, 3)][int]$AutoDeployAttempts = 2
+    [Parameter(Mandatory = $false)][ValidateRange(1, 3)][int]$AutoDeployAttempts = 2,
+    [Parameter(Mandatory = $false)][switch]$ValidateAfter
 )
 
 $ErrorActionPreference = 'Stop'
@@ -266,3 +267,18 @@ $appRunningAtEnd = $processAfterText -match "(?m)\s$([regex]::Escape($Package))\
 } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $output 'result.json')
 
 Write-Host "Battery soak capture complete: $output"
+if ($ValidateAfter) {
+    $validator = Join-Path $PSScriptRoot 'Validate-TorcaBatterySoak.ps1'
+    $validationArguments = @(
+        '-Path', $output,
+        '-MinimumMinutes', $DurationMinutes
+    )
+    if ($CollectNativeDiagnostics) {
+        $validationArguments += '-RequireNativeDiagnostics'
+    }
+    Write-Host "Validating battery soak evidence..."
+    & $validator @validationArguments
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        throw "Battery soak evidence validation failed for '$output'."
+    }
+}

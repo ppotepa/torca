@@ -30,6 +30,15 @@ Run the Android harness from the repository root for a longer physical soak:
 ./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 -RequireUnplugged -CollectNativeDiagnostics
 ```
 
+To fail the command automatically when the captured evidence does not satisfy
+the requested duration, power, screen, process or diagnostics gates, append
+`-ValidateAfter`:
+
+```powershell
+./scripts/Run-TorcaBatterySoak.ps1 -DurationMinutes 60 `
+  -RequireUnplugged -RequireScreenOff -CollectNativeDiagnostics -ValidateAfter
+```
+
 For a strict screen-off window:
 
 ```powershell
