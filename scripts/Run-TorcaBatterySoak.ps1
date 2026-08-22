@@ -168,7 +168,9 @@ $batteryBeforeText = Invoke-SelectedAdb @('shell', 'dumpsys', 'battery') 2>&1 | 
 $batteryBeforeText | Out-File -Encoding utf8 (Join-Path $output 'battery-before.txt')
 $powerSourceBefore = Get-PowerSource $batteryBeforeText
 $batteryLevelBefore = Get-BatteryLevel $batteryBeforeText
+Write-Host "Battery preflight: source=$powerSourceBefore level=$batteryLevelBefore output='$output'"
 if ($RequireUnplugged -and $powerSourceBefore -ne 'battery') {
+    Write-Host "Unplug the Android device, wait for dumpsys battery to report AC/USB/Wireless=false, then rerun the soak."
     throw "Battery soak requires an unplugged device, but '$DeviceId' reports power source '$powerSourceBefore'."
 }
 Capture-Adb 'power-before.txt' @('shell', 'dumpsys', 'power')
