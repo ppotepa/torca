@@ -70,6 +70,9 @@ pub(crate) struct Cli {
     /// Disable the interactive terminal dashboard (for CI and redirected output).
     #[arg(long)]
     plain: bool,
+    /// Explicitly request the interactive dashboard.
+    #[arg(long)]
+    tui: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -279,7 +282,8 @@ fn main() {
 fn run() -> Result<(), String> {
     let cli = Cli::parse();
     if !cli.plain {
-        if std::io::stdout().is_terminal() && std::io::stderr().is_terminal() {
+        let terminal = std::io::stdout().is_terminal() && std::io::stderr().is_terminal();
+        if terminal {
             return tui::run(cli);
         }
         eprintln!(

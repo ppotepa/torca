@@ -1,5 +1,6 @@
 [package]
 name = "torca-soak"
+default-run = "torca-soak"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
