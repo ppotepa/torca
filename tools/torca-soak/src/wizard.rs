@@ -204,6 +204,7 @@ fn edit_plan(
                     android,
                     legacy_device_id: None,
                     android_auto_deploy: matches!(scenario, Scenario::ActiveMessaging),
+                    preserve_profiles: false,
                     fake_peers: peers,
                     duration_seconds: duration_minutes * 60,
                     legacy_duration_minutes: None,

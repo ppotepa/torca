@@ -18,11 +18,13 @@ ADB and linker output is routed to `Logs`; the bootstrap build is kept at
 ```
 
 The default active-messaging plan uses the isolated Android soak flavor
-(`com.torca.torca_app.soak`) and five persistent bots. Bot
-profiles live below `.torca/soak/bots/` and are never copied into the normal
-Torca profile. A fresh pairing is only a provisioning event; subsequent runs
-reuse existing contacts when the Android snapshot already contains the bot
-set. The default workload is intentionally conservative:
+(`com.torca.torca_app.soak`) and five bots. Every default Active Messaging run
+starts clean: it rebuilds and installs only the selected device ABI, resets
+only the isolated soak application profile, resets the five selected bot
+profiles, and then pairs Android with every bot through the production pairing
+protocol. The normal Torca profile is never touched. `--preserve-profiles` is
+an explicit diagnostic opt-out from this clean default. The default workload
+is intentionally conservative:
 
 * text activity is spaced at roughly two minutes;
 * a 1 MiB attachment is queued infrequently;
@@ -48,5 +50,11 @@ change the relay container or store messages on the relay.
    APK uses the isolated `.soak` application id.
 7. `cargo test -p torca-soak -p torca-soak-bot-host --locked` is green.
 
-The old `torca-battery-soak-tui` command is intentionally not a second entry
-point. Use `torca-soak` or the PowerShell bootstrap.
+Before `measurement_started`, the runner must prove that Android exposes the
+expected five contacts and five conversations. Build, installation, Tor
+warm-up, pairing and any Android permission prompt are setup costs and are
+deliberately excluded from the battery window.
+
+The old `torca-battery-soak-tui` name remains a compatibility alias over the
+same implementation. New documentation and automation use `torca-soak` or the
+PowerShell bootstrap.

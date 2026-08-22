@@ -14,9 +14,9 @@ The Rust command remains useful for CI or an already-built checkout:
 cargo run -p torca-soak
 ```
 
-Do not use the removed `torca-battery-soak-tui` binary name. The canonical
-binary is `torca-soak`; legacy PowerShell scenario scripts are compatibility
-backends, not interactive entry points.
+The canonical binary is `torca-soak`. `torca-battery-soak-tui` remains only as
+a compatibility alias; legacy PowerShell scenario scripts are implementation
+backends, not additional interactive entry points.
 
 With no arguments it opens a Ratatui wizard, discovers ready ADB devices and
 offers five explicit scenarios:
@@ -106,12 +106,12 @@ serial:
 cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fake-peers 5 --relay managed
 ```
 
-To let the orchestrator install/restart the current debug client (including the
-debug-only ScenarioBridge), add `--android-auto-deploy`. The deploy is
-restricted to that serial and preserves client data:
+Active Messaging automatically performs a clean deploy of the isolated debug
+client (including ScenarioBridge), restricted to the selected serial and its
+reported ABI. It then provisions five fresh bot contacts before measurement:
 
 ```powershell
-cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fake-peers 5 --android-auto-deploy --relay managed
+cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fake-peers 5 --relay managed
 ```
 
 The bridge binds only to Android loopback. The runner reads its random token
@@ -141,5 +141,7 @@ Then point the cockpit at its loopback control endpoint:
   --bot-host 127.0.0.1:47890 --bot-token $env:TORCA_SOAK_BOT_TOKEN
 ```
 
-Without `--bot-host`, the runner uses the same production `torca-lab-peer`
-processes locally, but still keeps their roots under `.torca/soak/bots/`.
+Without `--bot-host`, the runner uses production `torca-lab-peer` processes
+locally. Their roots remain under `.torca/soak/bots/`, but the five selected
+profiles are reset by default for Active Messaging. Pass `--preserve-profiles`
+only when deliberately investigating an already-provisioned environment.

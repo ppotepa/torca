@@ -106,8 +106,7 @@ fn artifact_paths_match(recorded: &Path, requested: &Path, target: Target) -> bo
 /// retaining the debug native profile. The environment is set only by the
 /// soak launcher and is intentionally not part of ordinary deploy plans.
 pub fn soak_flavor_enabled() -> bool {
-    env::var("TORCA_SOAK_FLAVOR")
-        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    crate::android_target::is_soak()
 }
 
 fn artifact_mode(configuration: Configuration) -> &'static str {

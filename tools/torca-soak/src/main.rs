@@ -1,9 +1,9 @@
-//! Multi-process production-runtime soak orchestrator.
-//!
-//! The orchestrator deliberately talks to `torca-lab-peer` over JSONL instead
-//! of linking a second copy of the runtime into this process.  Each peer is a
-//! real process with an isolated profile, which exercises lifecycle, storage,
-//! logging and Tor ownership boundaries.
+// Multi-process production-runtime soak orchestrator.
+//
+// The orchestrator deliberately talks to `torca-lab-peer` over JSONL instead
+// of linking a second copy of the runtime into this process. Each peer is a
+// real process with an isolated profile, which exercises lifecycle, storage,
+// logging and Tor ownership boundaries.
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
@@ -70,10 +70,14 @@ pub(crate) struct Cli {
     /// Legacy spelling accepted by torca-battery-soak-tui.
     #[arg(long = "device-id", hide = true)]
     legacy_device_id: Option<String>,
-    /// Install/restart the current debug Android client before the run. The
-    /// deploy is scoped to `--android` only and preserves client data.
+    /// Install/restart the current debug Android client before the run. Active
+    /// Messaging enables this automatically and starts from a clean profile.
     #[arg(long)]
     android_auto_deploy: bool,
+    /// Reuse Android and bot profiles instead of the clean Active Messaging
+    /// default. Intended only for investigating a previous provisioned run.
+    #[arg(long)]
+    preserve_profiles: bool,
     #[arg(long, default_value_t = 5)]
     fake_peers: usize,
     #[arg(long, default_value_t = 1800)]
@@ -187,13 +191,7 @@ struct ActiveBatteryCapture {
 }
 
 fn android_package() -> &'static str {
-    if std::env::var("TORCA_SOAK_FLAVOR")
-        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    {
-        "com.torca.torca_app.soak"
-    } else {
-        "com.torca.torca_app"
-    }
+    torca_deploy::android_target::package()
 }
 
 impl Drop for ActiveBatteryCapture {
@@ -448,6 +446,9 @@ fn run() -> Result<(), String> {
         cli.scenario = Scenario::IdleBattery;
         cli.duration_seconds = minutes.saturating_mul(60);
     }
+    if cli.scenario == Scenario::ActiveMessaging && cli.android.is_some() {
+        cli.android_auto_deploy = true;
+    }
     if cli.bot_host.is_none() {
         cli.bot_host = std::env::var("TORCA_SOAK_BOT_HOST").ok();
     }
@@ -669,9 +670,9 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
                 serde_json::json!({"serial": serial, "autoDeploy": true}),
             )?;
             loop {
-                match ensure_android_deployed(&cli.repo_root, serial) {
+                match ensure_android_deployed(&cli.repo_root, serial, !cli.preserve_profiles) {
                     Ok(()) => break,
-                    Err(error) if tui::take_retry_requested() => {
+                    Err(error) if wait_for_android_preflight_retry(serial, &error) => {
                         record(
                             &mut timeline,
                             "android_preflight_retrying",
@@ -692,8 +693,8 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
         peers.push(Participant::Android(android));
     }
     // Bot profiles are deliberately outside the per-run artifact directory.
-    // Their identities and databases survive a measurement and can therefore
-    // be provisioned once instead of being re-paired during every soak.
+    // Active Messaging resets the selected roots by default for reproducible
+    // provisioning; --preserve-profiles keeps them for incident investigation.
     let bot_root = cli.repo_root.join(".torca/soak/bots");
     fs::create_dir_all(&bot_root)
         .map_err(|error| format!("create persistent bot root: {error}"))?;
@@ -711,6 +712,14 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
             }));
         } else {
             let peer_root = bot_root.join(&name);
+            if cli.scenario == Scenario::ActiveMessaging
+                && !cli.preserve_profiles
+                && peer_root.exists()
+            {
+                fs::remove_dir_all(&peer_root).map_err(|error| {
+                    format!("reset clean bot profile {}: {error}", peer_root.display())
+                })?;
+            }
             fs::create_dir_all(&peer_root)
                 .map_err(|error| format!("create {name} root: {error}"))?;
             peers.push(Participant::Fake(spawn_peer(&peer_executable, &peer_root, &name)?));
@@ -959,6 +968,35 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
     )?;
     drop(managed_relay);
     Ok(())
+}
+
+fn wait_for_android_preflight_retry(serial: &str, error: &str) -> bool {
+    if !tui::is_active()
+        || !(error.contains("INSTALL_FAILED_USER_RESTRICTED")
+            || error.contains("requested android deployment target is unavailable")
+            || error.contains("not ready"))
+    {
+        return false;
+    }
+    tui::publish_event(
+        "android_action_required",
+        &serde_json::json!({
+            "serial": serial,
+            "action": if error.contains("INSTALL_FAILED_USER_RESTRICTED") {
+                "Approve installation on Android, then press r to retry"
+            } else {
+                "Reconnect or unlock Android, then press r to retry"
+            },
+            "error": error,
+        }),
+    );
+    while !tui::cancel_requested() {
+        if tui::take_retry_requested() {
+            return true;
+        }
+        tui::controlled_sleep(Duration::from_millis(200));
+    }
+    false
 }
 
 fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), String> {
@@ -1628,7 +1666,7 @@ fn android_launchable_activity(serial: &str) -> Result<String, String> {
     })
 }
 
-fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String> {
+fn ensure_android_deployed(repo_root: &Path, serial: &str, clean: bool) -> Result<(), String> {
     let state = Command::new("adb")
         .args(["-s", serial, "get-state"])
         .output()
@@ -1639,7 +1677,7 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String>
             String::from_utf8_lossy(&state.stdout).trim()
         ));
     }
-    run_typed_android_deploy(repo_root, serial)?;
+    run_typed_android_deploy(repo_root, serial, clean)?;
     android_launchable_activity(serial).map(|_| ()).map_err(|error| {
         format!(
             "Android auto-deploy completed but the client is still not launchable on '{serial}': {error}"
@@ -1647,7 +1685,7 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str) -> Result<(), String>
     })
 }
 
-fn run_typed_android_deploy(repo_root: &Path, serial: &str) -> Result<(), String> {
+fn run_typed_android_deploy(repo_root: &Path, serial: &str, clean: bool) -> Result<(), String> {
     let paths = torca_deploy::persistence::DeployPaths {
         repo_root: repo_root.to_owned(),
         state_root: repo_root.join(".torca/deploy"),
@@ -1664,6 +1702,10 @@ fn run_typed_android_deploy(repo_root: &Path, serial: &str) -> Result<(), String
         vec![torca_deploy::domain::Target::Android],
         torca_deploy::domain::Configuration::Debug,
     );
+    // Build only the ABI reported by the selected physical device. Without
+    // the exact device the generic deploy plan intentionally builds every
+    // supported Android ABI, which is unnecessary for an interactive soak.
+    build_plan.device = Some(serial.to_owned());
     build_plan.client_build = torca_deploy::domain::BuildPolicy::Rebuild;
     build_plan.relay_build = torca_deploy::domain::BuildPolicy::Reuse;
     build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
@@ -1684,7 +1726,11 @@ fn run_typed_android_deploy(repo_root: &Path, serial: &str) -> Result<(), String
     install_plan.client_build = torca_deploy::domain::BuildPolicy::Reuse;
     install_plan.relay_build = torca_deploy::domain::BuildPolicy::Reuse;
     install_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
-    install_plan.client_data = torca_deploy::domain::ClientDataPolicy::Preserve;
+    install_plan.client_data = if clean {
+        torca_deploy::domain::ClientDataPolicy::ResetAll
+    } else {
+        torca_deploy::domain::ClientDataPolicy::Preserve
+    };
     install_plan.launch = torca_deploy::domain::LaunchPolicy::Restart;
     let install_run = executor
         .create_run(install_plan)

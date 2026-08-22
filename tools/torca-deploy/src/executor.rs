@@ -165,9 +165,13 @@ impl DeployExecutor {
                 .or_else(|| paths.endpoint())
                 .or_else(|| std::env::var("TORCA_RELAY_ENDPOINT").ok())
         };
-        // Artifact builds are intentionally host-only: a disconnected phone
-        // must never prevent CI or a developer from producing an APK.
-        let devices = if matches!(run.plan.action, crate::domain::DeployAction::BuildArtifacts) {
+        // Generic artifact builds are intentionally host-only: a disconnected
+        // phone must never prevent CI from producing portable APKs. An exact
+        // device opt-in (used by the soak cockpit) is different: discover it
+        // so native/Flutter builds can be restricted to its actual ABI.
+        let devices = if matches!(run.plan.action, crate::domain::DeployAction::BuildArtifacts)
+            && run.plan.device.is_none()
+        {
             Vec::new()
         } else {
             let discovered = DeviceController::new(&paths, self.runner.as_ref())

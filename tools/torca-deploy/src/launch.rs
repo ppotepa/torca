@@ -8,27 +8,15 @@ use std::time::{Duration, SystemTime};
 use thiserror::Error;
 
 fn android_package() -> &'static str {
-    if crate::build::soak_flavor_enabled() {
-        "com.torca.torca_app.soak"
-    } else {
-        "com.torca.torca_app"
-    }
+    crate::android_target::package()
 }
 
 fn android_activity() -> &'static str {
-    if crate::build::soak_flavor_enabled() {
-        "com.torca.torca_app.soak/com.torca.app.MainActivity"
-    } else {
-        "com.torca.torca_app/com.torca.app.MainActivity"
-    }
+    crate::android_target::activity()
 }
 
 fn android_logs_root() -> &'static str {
-    if crate::build::soak_flavor_enabled() {
-        "/sdcard/Android/data/com.torca.torca_app.soak/files/torca/logs"
-    } else {
-        "/sdcard/Android/data/com.torca.torca_app/files/torca/logs"
-    }
+    crate::android_target::logs_root()
 }
 
 pub struct LaunchController<'a> {

@@ -4,6 +4,7 @@
 //! commands to narrow adapters. This makes an interrupted deployment resumable and
 //! keeps the Ratatui interface and non-interactive CLI on the same execution path.
 
+pub mod android_target;
 pub mod build;
 pub mod cli;
 pub mod data;

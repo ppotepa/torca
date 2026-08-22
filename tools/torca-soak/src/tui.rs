@@ -215,7 +215,9 @@ fn event_phase(event: &str) -> &'static str {
     match event {
         "run_started" => "starting",
         "android_preflight_started" | "android_ready" | "android_bridge_starting" => "preflight",
-        "android_permission_required" => "awaiting Android permission",
+        "android_permission_required" | "android_action_required" => {
+            "awaiting Android action (approve, then r)"
+        }
         "peer_ready" | "pairing_completed" => "pairing",
         "measurement_started" => "measurement",
         "message_queued" | "attachment_queued" | "radio_burst" => "workload",
@@ -521,13 +523,7 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
 }
 
 fn sample_android(serial: &str) -> AndroidTelemetry {
-    let package = if std::env::var("TORCA_SOAK_FLAVOR")
-        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    {
-        "com.torca.torca_app.soak"
-    } else {
-        "com.torca.torca_app"
-    };
+    let package = torca_deploy::android_target::package();
     let battery = adb(serial, &["shell", "dumpsys", "battery"]);
     let power = adb(serial, &["shell", "dumpsys", "power"]);
     let pid = adb(serial, &["shell", "pidof", package]);

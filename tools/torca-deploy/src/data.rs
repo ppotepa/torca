@@ -47,8 +47,10 @@ impl<'a> DataController<'a> {
                     .map_err(DataError::WindowsClient)
             }
             crate::domain::Target::Android => {
-                let output = self
-                    .command(&device.id, &["shell", "am", "force-stop", "com.torca.torca_app"])?;
+                let output = self.command(
+                    &device.id,
+                    &["shell", "am", "force-stop", crate::android_target::package()],
+                )?;
                 if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
             }
         }
@@ -79,6 +81,7 @@ impl<'a> DataController<'a> {
     }
 
     fn reset_android(&self, device: &Device, policy: ClientDataPolicy) -> Result<(), DataError> {
+        let package_name = crate::android_target::package();
         // Resets run before installation in a fresh deployment.  In that
         // case the package legitimately does not exist yet; there is no
         // profile to clear and `run-as` would fail with "unknown package".
@@ -86,7 +89,7 @@ impl<'a> DataController<'a> {
         // already-reset profile.  Other adb/package-manager failures remain
         // hard errors so a disconnected device is never reported as reset.
         let package =
-            self.command(&device.id, &["shell", "pm", "list", "packages", "com.torca.torca_app"])?;
+            self.command(&device.id, &["shell", "pm", "list", "packages", package_name])?;
         if !package.success {
             return Err(DataError::Command(package.text));
         }
@@ -105,7 +108,7 @@ impl<'a> DataController<'a> {
                     &[
                         "shell",
                         "run-as",
-                        "com.torca.torca_app",
+                        package_name,
                         "rm",
                         "-rf",
                         "no_backup/torca/data",
@@ -115,8 +118,7 @@ impl<'a> DataController<'a> {
                 if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
             }
             ClientDataPolicy::ResetAll => {
-                let output =
-                    self.command(&device.id, &["shell", "pm", "clear", "com.torca.torca_app"])?;
+                let output = self.command(&device.id, &["shell", "pm", "clear", package_name])?;
                 if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
             }
             ClientDataPolicy::Preserve => Ok(()),
