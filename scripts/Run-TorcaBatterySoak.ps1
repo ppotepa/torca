@@ -77,18 +77,27 @@ function Test-PackageInstalled {
 }
 
 function Get-PackageLaunchableActivity {
-    $resolved = Invoke-SelectedAdb @(
-        'shell', 'cmd', 'package', 'resolve-activity', '--brief',
-        '-a', 'android.intent.action.MAIN',
-        '-c', 'android.intent.category.LAUNCHER',
-        $Package
-    ) 2>$null | Out-String
-    if ($LASTEXITCODE -ne 0) { return $null }
-    $component = $resolved -split '\r?\n' |
-        Where-Object { $_ -match "^$([regex]::Escape($Package))/[^\s]+$" } |
-        Select-Object -Last 1
-    if ([string]::IsNullOrWhiteSpace($component)) { return $null }
-    return $component.Trim()
+    # PackageManager can briefly return an empty resolution immediately after
+    # an APK install/force-stop. Retry without treating that transient state
+    # as a missing installation.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $resolved = Invoke-SelectedAdb @(
+            'shell', 'cmd', 'package', 'resolve-activity', '--brief',
+            '-a', 'android.intent.action.MAIN',
+            '-c', 'android.intent.category.LAUNCHER',
+            $Package
+        ) 2>$null | Out-String
+        if ($LASTEXITCODE -eq 0) {
+            $component = $resolved -split '\r?\n' |
+                Where-Object { $_.Trim() -match "^$([regex]::Escape($Package))/[^\s]+$" } |
+                Select-Object -Last 1
+            if (-not [string]::IsNullOrWhiteSpace($component)) {
+                return $component.Trim()
+            }
+        }
+        if ($attempt -lt 3) { Start-Sleep -Seconds 1 }
+    }
+    return $null
 }
 
 function Test-PackageLaunchable {
@@ -96,13 +105,18 @@ function Test-PackageLaunchable {
 }
 
 function Ensure-PackageInstalled {
-    if ((Test-PackageInstalled) -and (Test-PackageLaunchable)) { return }
+    $installed = Test-PackageInstalled
+    if ($installed -and (Test-PackageLaunchable)) { return }
 
     $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
     $deployLog = Join-Path $output 'auto-deploy.log'
     $deployStdout = "$deployLog.stdout"
     $deployStderr = "$deployLog.stderr"
-    Write-Host "Package '$Package' is not installed; running Android deploy before the battery soak."
+    if ($installed) {
+        Write-Host "Package '$Package' is installed but has no resolvable MAIN/LAUNCHER activity; running Android deploy before the battery soak."
+    } else {
+        Write-Host "Package '$Package' is not installed; running Android deploy before the battery soak."
+    }
     for ($attempt = 1; $attempt -le $AutoDeployAttempts; $attempt++) {
         $deploy = Start-Process -FilePath 'cargo' -WorkingDirectory $repoRoot -NoNewWindow -Wait -PassThru `
             -ArgumentList @('run', '-p', 'torca-deploy', '--', 'deploy', '--target', 'android', '--device', $DeviceId, '--configuration', 'debug', '--client-build', 'if-required', '--relay-build', 'if-required', '--onion', 'ensure', '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart') `
