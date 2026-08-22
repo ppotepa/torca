@@ -670,10 +670,17 @@ pub(crate) fn run_scenario(cli: Cli) -> Result<(), String> {
                 "android_preflight_started",
                 serde_json::json!({"serial": serial, "autoDeploy": true}),
             )?;
+            let mut reuse_built_artifact = false;
             loop {
-                match ensure_android_deployed(&cli.repo_root, serial, !cli.preserve_profiles) {
+                match ensure_android_deployed(
+                    &cli.repo_root,
+                    serial,
+                    !cli.preserve_profiles,
+                    reuse_built_artifact,
+                ) {
                     Ok(()) => break,
                     Err(error) if wait_for_android_preflight_retry(serial, &error) => {
+                        reuse_built_artifact = error.contains("INSTALL_FAILED_USER_RESTRICTED");
                         record(
                             &mut timeline,
                             "android_preflight_retrying",
@@ -984,7 +991,7 @@ fn wait_for_android_preflight_retry(serial: &str, error: &str) -> bool {
         &serde_json::json!({
             "serial": serial,
             "action": if error.contains("INSTALL_FAILED_USER_RESTRICTED") {
-                "Approve installation on Android, then press r to retry"
+                "Unlock Android; enable Developer options > Install via USB / USB debugging (Security settings), approve the installation, then press r"
             } else {
                 "Reconnect or unlock Android, then press r to retry"
             },
@@ -1667,7 +1674,12 @@ fn android_launchable_activity(serial: &str) -> Result<String, String> {
     })
 }
 
-fn ensure_android_deployed(repo_root: &Path, serial: &str, clean: bool) -> Result<(), String> {
+fn ensure_android_deployed(
+    repo_root: &Path,
+    serial: &str,
+    clean: bool,
+    reuse_built_artifact: bool,
+) -> Result<(), String> {
     let state = Command::new("adb")
         .args(["-s", serial, "get-state"])
         .output()
@@ -1678,7 +1690,7 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str, clean: bool) -> Resul
             String::from_utf8_lossy(&state.stdout).trim()
         ));
     }
-    run_typed_android_deploy(repo_root, serial, clean)?;
+    run_typed_android_deploy(repo_root, serial, clean, reuse_built_artifact)?;
     android_launchable_activity(serial).map(|_| ()).map_err(|error| {
         format!(
             "Android auto-deploy completed but the client is still not launchable on '{serial}': {error}"
@@ -1686,7 +1698,12 @@ fn ensure_android_deployed(repo_root: &Path, serial: &str, clean: bool) -> Resul
     })
 }
 
-fn run_typed_android_deploy(repo_root: &Path, serial: &str, clean: bool) -> Result<(), String> {
+fn run_typed_android_deploy(
+    repo_root: &Path,
+    serial: &str,
+    clean: bool,
+    reuse_built_artifact: bool,
+) -> Result<(), String> {
     let paths = torca_deploy::persistence::DeployPaths {
         repo_root: repo_root.to_owned(),
         state_root: repo_root.join(".torca/deploy"),
@@ -1698,25 +1715,27 @@ fn run_typed_android_deploy(repo_root: &Path, serial: &str, clean: bool) -> Resu
         torca_deploy::persistence::StateStore::new(paths),
         Arc::new(torca_deploy::process::SystemCommandRunner::with_sink(sink)),
     );
-    let mut build_plan = torca_deploy::domain::DeployPlan::normal(
-        torca_deploy::domain::DeployAction::BuildArtifacts,
-        vec![torca_deploy::domain::Target::Android],
-        torca_deploy::domain::Configuration::Debug,
-    );
-    // Build only the ABI reported by the selected physical device. Without
-    // the exact device the generic deploy plan intentionally builds every
-    // supported Android ABI, which is unnecessary for an interactive soak.
-    build_plan.device = Some(serial.to_owned());
-    build_plan.client_build = torca_deploy::domain::BuildPolicy::Rebuild;
-    build_plan.relay_build = torca_deploy::domain::BuildPolicy::Reuse;
-    build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
-    build_plan.launch = torca_deploy::domain::LaunchPolicy::Skip;
-    let build_run = executor
-        .create_run(build_plan)
-        .map_err(|error| format!("create typed Android build plan: {error}"))?;
-    executor
-        .execute(build_run, torca_deploy::ExecutionMode::Execute)
-        .map_err(|error| format!("typed Android artifact build failed: {error}"))?;
+    if !reuse_built_artifact {
+        let mut build_plan = torca_deploy::domain::DeployPlan::normal(
+            torca_deploy::domain::DeployAction::BuildArtifacts,
+            vec![torca_deploy::domain::Target::Android],
+            torca_deploy::domain::Configuration::Debug,
+        );
+        // Build only the ABI reported by the selected physical device. Without
+        // the exact device the generic deploy plan intentionally builds every
+        // supported Android ABI, which is unnecessary for an interactive soak.
+        build_plan.device = Some(serial.to_owned());
+        build_plan.client_build = torca_deploy::domain::BuildPolicy::Rebuild;
+        build_plan.relay_build = torca_deploy::domain::BuildPolicy::Reuse;
+        build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
+        build_plan.launch = torca_deploy::domain::LaunchPolicy::Skip;
+        let build_run = executor
+            .create_run(build_plan)
+            .map_err(|error| format!("create typed Android build plan: {error}"))?;
+        executor
+            .execute(build_run, torca_deploy::ExecutionMode::Execute)
+            .map_err(|error| format!("typed Android artifact build failed: {error}"))?;
+    }
 
     let mut install_plan = torca_deploy::domain::DeployPlan::normal(
         torca_deploy::domain::DeployAction::RedeployCurrent,
