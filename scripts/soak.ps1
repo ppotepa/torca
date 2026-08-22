@@ -14,6 +14,7 @@ $artifactRoot = Join-Path $repo '.torca\soak\bootstrap'
 $null = New-Item -ItemType Directory -Force -Path $artifactRoot
 $bootstrapLog = Join-Path $artifactRoot 'latest.log'
 $exe = Join-Path $repo 'target\debug\torca-soak.exe'
+$previousSoakFlavor = $env:TORCA_SOAK_FLAVOR
 
 Push-Location $repo
 try {
@@ -40,5 +41,10 @@ try {
     }
     exit $LASTEXITCODE
 } finally {
+    if ($null -eq $previousSoakFlavor) {
+        Remove-Item Env:TORCA_SOAK_FLAVOR -ErrorAction SilentlyContinue
+    } else {
+        $env:TORCA_SOAK_FLAVOR = $previousSoakFlavor
+    }
     Pop-Location
 }
