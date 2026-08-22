@@ -1168,15 +1168,23 @@ fn snapshot_with_retry(
 impl AndroidBridge {
     fn connect(serial: &str) -> Result<Self, String> {
         let activity = android_launchable_activity(serial)?;
-        let status = Command::new("adb")
+        tui::publish_event(
+            "android_bridge_starting",
+            &serde_json::json!({"serial": serial, "activity": activity}),
+        );
+        let launch = Command::new("adb")
             .args(["-s", serial, "shell", "am", "start", "-W", "-n", &activity])
-            .status()
+            .output()
             .map_err(|error| format!("start Android activity: {error}"))?;
-        if !status.success() {
-            return Err(format!("Android activity '{activity}' failed to start on {serial}"));
+        if !launch.status.success() {
+            return Err(format!(
+                "Android activity '{activity}' failed to start on {serial}: {}",
+                String::from_utf8_lossy(&launch.stderr).trim()
+            ));
         }
         let deadline = Instant::now() + Duration::from_secs(120);
         let discovery_paths = ["cache/torca-scenario.json", "cache/torca/torca-scenario.json"];
+        let mut permission_reported = false;
         let discovery = 'discovery: loop {
             for path in discovery_paths {
                 let output = Command::new("adb")
@@ -1189,8 +1197,20 @@ impl AndroidBridge {
                     }
                 }
             }
+            if !permission_reported && android_permission_prompt_visible(serial) {
+                permission_reported = true;
+                tui::publish_event(
+                    "android_permission_required",
+                    &serde_json::json!({"serial": serial}),
+                );
+            }
             if Instant::now() >= deadline {
-                return Err(format!("Android scenario bridge did not start on {serial}"));
+                let hint = if permission_reported {
+                    " Android is showing a permission prompt; approve it, then restart the soak."
+                } else {
+                    " Confirm that this is a debug build and that the ScenarioBridge is enabled."
+                };
+                return Err(format!("Android scenario bridge did not start on {serial}.{hint}"));
             }
             tui::controlled_sleep(Duration::from_secs(1));
         };
@@ -1281,6 +1301,17 @@ impl AndroidBridge {
             .then_some(())
             .ok_or_else(|| format!("Android Wi-Fi {state} failed on {}", self.serial))
     }
+}
+
+fn android_permission_prompt_visible(serial: &str) -> bool {
+    Command::new("adb")
+        .args(["-s", serial, "shell", "dumpsys", "activity", "activities"])
+        .output()
+        .map(|output| {
+            let state = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+            state.contains("permissioncontroller") || state.contains("grantpermissionsactivity")
+        })
+        .unwrap_or(false)
 }
 
 fn android_launchable_activity(serial: &str) -> Result<String, String> {

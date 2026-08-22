@@ -214,7 +214,8 @@ fn mark_incident(ctx: &UiContext) {
 fn event_phase(event: &str) -> &'static str {
     match event {
         "run_started" => "starting",
-        "android_preflight_started" | "android_ready" => "preflight",
+        "android_preflight_started" | "android_ready" | "android_bridge_starting" => "preflight",
+        "android_permission_required" => "awaiting Android permission",
         "peer_ready" | "pairing_completed" => "pairing",
         "message_queued" | "attachment_queued" | "radio_burst" => "workload",
         "run_completed" => "completed",
