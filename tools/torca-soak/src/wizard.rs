@@ -202,9 +202,11 @@ fn edit_plan(
                 let plan = Cli {
                     scenario,
                     android,
+                    legacy_device_id: None,
                     android_auto_deploy: matches!(scenario, Scenario::ActiveMessaging),
                     fake_peers: peers,
                     duration_seconds: duration_minutes * 60,
+                    legacy_duration_minutes: None,
                     relay: RelayMode::Managed,
                     relay_endpoint: None,
                     workload: Workload::Balanced,

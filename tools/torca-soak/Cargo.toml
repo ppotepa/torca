@@ -8,6 +8,17 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[bin]]
+name = "torca-soak"
+path = "src/main.rs"
+
+# Compatibility name retained for existing battery-soak instructions.  Both
+# names intentionally execute the same cockpit; the canonical entry point is
+# still `torca-soak` (or `scripts/soak.ps1`).
+[[bin]]
+name = "torca-battery-soak-tui"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"

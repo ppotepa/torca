@@ -67,6 +67,9 @@ pub(crate) struct Cli {
     /// Android serial. Omit to run the fake-peer-only laboratory scenario.
     #[arg(long)]
     android: Option<String>,
+    /// Legacy spelling accepted by torca-battery-soak-tui.
+    #[arg(long = "device-id", hide = true)]
+    legacy_device_id: Option<String>,
     /// Install/restart the current debug Android client before the run. The
     /// deploy is scoped to `--android` only and preserves client data.
     #[arg(long)]
@@ -75,6 +78,9 @@ pub(crate) struct Cli {
     fake_peers: usize,
     #[arg(long, default_value_t = 1800)]
     duration_seconds: u64,
+    /// Legacy battery-soak duration in minutes.
+    #[arg(long = "duration-minutes", hide = true)]
+    legacy_duration_minutes: Option<u64>,
     #[arg(long, value_enum, default_value_t = RelayMode::Managed)]
     relay: RelayMode,
     #[arg(long)]
@@ -239,8 +245,8 @@ impl ManagedRelay {
         command
             .args(["compose", "-f", "infra/docker/compose.yml", "stop", "relay"])
             .current_dir(&self.repo_root);
-        let status = run_external_command(&mut command, "pause managed relay")?;
-        status.success().then_some(()).ok_or_else(|| "managed relay pause failed".into())
+        let result = run_external_command(&mut command, "pause managed relay")?;
+        result.status.success().then_some(()).ok_or_else(|| "managed relay pause failed".into())
     }
 
     fn resume(&self) -> Result<(), String> {
@@ -248,8 +254,8 @@ impl ManagedRelay {
         command
             .args(["compose", "-f", "infra/docker/compose.yml", "start", "relay"])
             .current_dir(&self.repo_root);
-        let status = run_external_command(&mut command, "resume managed relay")?;
-        status.success().then_some(()).ok_or_else(|| "managed relay resume failed".into())
+        let result = run_external_command(&mut command, "resume managed relay")?;
+        result.status.success().then_some(()).ok_or_else(|| "managed relay resume failed".into())
     }
 }
 
@@ -433,6 +439,15 @@ fn run() -> Result<(), String> {
     } else {
         Cli::parse()
     };
+    // Keep the old binary/PowerShell documentation usable while all new
+    // scenarios go through the same cockpit and typed CLI.
+    if cli.android.is_none() {
+        cli.android = cli.legacy_device_id.take();
+    }
+    if let Some(minutes) = cli.legacy_duration_minutes.take() {
+        cli.scenario = Scenario::IdleBattery;
+        cli.duration_seconds = minutes.saturating_mul(60);
+    }
     if cli.bot_host.is_none() {
         cli.bot_host = std::env::var("TORCA_SOAK_BOT_HOST").ok();
     }
@@ -953,9 +968,29 @@ fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), Strin
     command
         .args(["compose", "-f", "infra/docker/compose.yml", "up", "-d", "--build", "relay"])
         .current_dir(repo_root);
-    let status = run_external_command(&mut command, "relay build/start")?;
-    if !status.success() {
-        return Err("managed relay compose start failed".into());
+    let result = if tui::is_active() {
+        run_external_command(&mut command, "relay build/start")?
+    } else {
+        let output = command.output().map_err(|error| format!("relay build/start: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "managed relay compose start failed (exit={}): {}",
+                output.status.code().map_or_else(|| "unknown".into(), |code| code.to_string()),
+                command_output_tail(&output.stdout, &output.stderr),
+            ));
+        }
+        ExternalCommandResult {
+            status: output.status,
+            tail: command_output_tail(&output.stdout, &output.stderr),
+        }
+    };
+    if !result.status.success() {
+        let detail = if result.tail.is_empty() {
+            "see the cockpit Logs view for Docker output".to_owned()
+        } else {
+            result.tail
+        };
+        return Err(format!("managed relay compose start failed: {detail}"));
     }
     let endpoint_file = repo_root.join(".torca/stack/relay_endpoint.txt");
     let ready_file = repo_root.join(".torca/stack/relay_ready.txt");
@@ -978,14 +1013,29 @@ fn start_managed_relay(repo_root: &Path) -> Result<(String, ManagedRelay), Strin
     ))
 }
 
+fn command_output_tail(stdout: &[u8], stderr: &[u8]) -> String {
+    let mut lines = String::from_utf8_lossy(stdout)
+        .lines()
+        .chain(String::from_utf8_lossy(stderr).lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    const MAX_LINES: usize = 20;
+    if lines.len() > MAX_LINES {
+        lines.drain(..lines.len() - MAX_LINES);
+    }
+    if lines.is_empty() { String::new() } else { lines.join(" | ") }
+}
+
 fn build_lab_peer(repo_root: &Path, endpoint: &str) -> Result<PathBuf, String> {
     let mut command = Command::new("cargo");
     command
         .args(["build", "-p", "torca-lab-peer", "--locked"])
         .env("TORCA_RELAY_ENDPOINT", endpoint)
         .current_dir(repo_root);
-    let status = run_external_command(&mut command, "lab peer build")?;
-    if !status.success() {
+    let result = run_external_command(&mut command, "lab peer build")?;
+    if !result.status.success() {
         return Err("lab peer build failed".into());
     }
     Ok(repo_root.join(if cfg!(windows) {
@@ -997,12 +1047,21 @@ fn build_lab_peer(repo_root: &Path, endpoint: &str) -> Result<PathBuf, String> {
 
 /// Keep noisy build/deploy tools inside the cockpit. In TUI mode each line is
 /// routed to the Logs view; plain mode preserves the normal terminal output.
+struct ExternalCommandResult {
+    status: std::process::ExitStatus,
+    tail: String,
+}
+
 fn run_external_command(
     command: &mut Command,
     label: &str,
-) -> Result<std::process::ExitStatus, String> {
+) -> Result<ExternalCommandResult, String> {
     if !tui::is_active() {
-        return command.status().map_err(|error| format!("{label}: {error}"));
+        let output = command.output().map_err(|error| format!("{label}: {error}"))?;
+        return Ok(ExternalCommandResult {
+            status: output.status,
+            tail: command_output_tail(&output.stdout, &output.stderr),
+        });
     }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("start {label}: {error}"))?;
@@ -1011,9 +1070,14 @@ fn run_external_command(
     let (sender, receiver) = mpsc::channel();
     spawn_backend_reader(stdout, sender.clone(), false);
     spawn_backend_reader(stderr, sender, true);
+    let mut captured = Vec::new();
     loop {
         while let Ok((is_stderr, line)) = receiver.try_recv() {
             tui::publish_backend_line(&line, is_stderr);
+            captured.push(line);
+            if captured.len() > 20 {
+                captured.remove(0);
+            }
         }
         if tui::cancel_requested() {
             let _ = child.kill();
@@ -1022,7 +1086,7 @@ fn run_external_command(
             while let Ok((is_stderr, line)) = receiver.try_recv() {
                 tui::publish_backend_line(&line, is_stderr);
             }
-            return Ok(status);
+            return Ok(ExternalCommandResult { status, tail: captured.join(" | ") });
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -1341,6 +1405,23 @@ fn snapshot_with_retry(
 
 impl AndroidBridge {
     fn connect(serial: &str) -> Result<Self, String> {
+        let package = android_package();
+        let package_check = Command::new("adb")
+            .args(["-s", serial, "shell", "pm", "path", package])
+            .output()
+            .map_err(|error| format!("check Android package {package}: {error}"))?;
+        if !package_check.status.success()
+            || String::from_utf8_lossy(&package_check.stdout).trim().is_empty()
+        {
+            let hint = if package.ends_with(".soak") {
+                "Run .\\scripts\\soak.ps1 cockpit --android <adb-serial> to build/install the SOAK2 flavor."
+            } else {
+                "Run the Android deploy first, or use .\\scripts\\soak.ps1 cockpit for an Android SOAK2 run."
+            };
+            return Err(format!(
+                "Android package '{package}' is not installed on {serial}. {hint}"
+            ));
+        }
         let activity = android_launchable_activity(serial)?;
         tui::publish_event(
             "android_bridge_starting",
@@ -1384,7 +1465,14 @@ impl AndroidBridge {
                 } else {
                     " Confirm that this is a debug build and that the ScenarioBridge is enabled."
                 };
-                return Err(format!("Android scenario bridge did not start on {serial}.{hint}"));
+                let flavor_hint = if package.ends_with(".soak") {
+                    " The SOAK2 package is installed, but its debug ScenarioBridge did not publish discovery; verify the app is foregrounded and built with TORCA_SOAK_MODE=true."
+                } else {
+                    " This is the normal package. SOAK2 requires the .soak flavor; run .\\scripts\\soak.ps1 cockpit instead of cargo run directly."
+                };
+                return Err(format!(
+                    "Android scenario bridge did not start on {serial} (package={package}).{hint}{flavor_hint}"
+                ));
             }
             tui::controlled_sleep(Duration::from_secs(1));
         };
