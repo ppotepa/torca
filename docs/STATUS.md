@@ -1,66 +1,76 @@
-# Torca project status
+# Torca current status
 
-Last reviewed against the repository: **2026-08-21**.
+Last reviewed against `main`: **2026-08-25** (`a2ef0a7a29d41bee083aada3b99656d19d1f0780`).
 
-This page is the concise project-status entry point. It summarizes maturity and validation state; checked-in source and executed evidence remain authoritative.
+Torca is security-sensitive **alpha** software. This page describes what is composed in the current source; it does not claim that every path has equivalent real-device validation or an independent security audit.
 
-## Maturity
+## Current product baseline
 
-Torca is **security-sensitive alpha software**. The current source is an actively hardened one-to-one messenger, not a production security claim. There is no independent production security audit, no published stable release in this repository, and the current peer message-key design does not provide Signal-style forward secrecy or post-compromise security.
+- Shared Flutter client for Windows and Android.
+- Rust application/runtime owns durable state, security rules and networking.
+- SQLCipher-backed structured storage plus platform-protected secret stores.
+- One-to-one contacts, conversations, receipts, replies and searchable/paged history.
+- Encrypted/resumable attachments.
+- Explicit pairing and contact verification.
+- Provider-neutral peer communication.
+- Notifications, diagnostics and background/runtime policy.
+- Mutual-consent half-duplex Radio Mode.
+- Typed deployer and multi-process/device soak tooling.
 
-Use [`../SECURITY.md`](../SECURITY.md) and [`security/threat-model.md`](security/threat-model.md) as the authoritative security documents.
+Not in the supported baseline: groups, conventional calls, multi-device sync, public discovery, cloud backup or a supported Linux production client.
 
-## Current product shape
+## Communication providers
 
-The active implementation has:
+| Provider | Deployment profile | Notes |
+| --- | --- | --- |
+| Tor | validated/selectable | default; managed onion rendezvous for pairing; onion peer transport; Radio supported |
+| Iroh | validated/selectable | QUIC/direct path; direct QR/full-link bootstrap; Radio supported |
+| WebRTC | hidden | adapter and native composition boundary exist; host session/signaling implementation is still the deployment blocker |
+| Memory | hidden/test | deterministic/simulated runtime only |
 
-- one responsive Flutter client for Windows and Android;
-- one Rust application/runtime shared by both hosts;
-- local identities and SQLCipher-backed structured storage;
-- explicit pairing through an untrusted ephemeral rendezvous relay;
-- direct authenticated peer communication through Tor onion services;
-- durable message retry, receipts, searchable/paged history and attachments;
-- Safety Number-style contact verification;
-- redaction-conscious diagnostics and privacy-aware notification handling;
-- experimental mutual-consent Radio Mode with session-specific media keys; and
-- an event/deadline-driven runtime baseline with a one-shot background grace and no default periodic rendezvous wake.
+`validated` above is the provider deployment-profile state in source. It means the provider can pass the normal composition/deploy gate; it is **not** an external security audit and does not imply identical privacy properties or identical device-soak evidence.
 
-Groups, calls, multi-device sync, public discovery, cloud backup and a Linux production client are not part of the current supported baseline.
+## Current maturity limits
 
-## Validation state
+- No independent production security audit is published for the project.
+- The relationship-secret message design does not claim Signal-style forward secrecy or post-compromise security.
+- Provider privacy differs: Tor uses onion routing; direct-path providers expose a different network-metadata surface.
+- Availability remains subject to network/provider reachability, remote-peer availability and OS lifecycle/background limits.
+- Alpha storage/protocol migrations should not be treated as long-term archival guarantees unless a release explicitly states otherwise.
 
-The repository contains automated source, Rust, Flutter/contract and Windows/Android build gates. The detailed engineering ledger records many locally completed checks, but a documentation claim is valid only for the exact command/build/device scenario that was actually executed.
+## Validation model
 
-The remaining confidence work is primarily platform and end-to-end validation:
+The repository contains automated gates for:
 
-- repeated Windows ↔ Android pairing and messaging journeys;
-- relay/Tor/network interruption and recovery on real devices;
-- attachment resume/cancel/export across reconnects and restarts;
-- Radio Mode permission, backgrounding, route-change and recovery soak tests;
-- deployment resume/interruption behavior; and
-- longer-running battery/runtime traces before enabling more aggressive communication-provider dormancy policy.
+- source architecture policy;
+- Rust format/check/clippy/tests;
+- runtime idle-scheduler/power regression tests;
+- deploy planner dry-run smoke validation;
+- generated Rust/Dart contract drift;
+- Flutter formatting, analysis and tests; and
+- Windows and Android debug builds.
 
-The GitHub Actions workflow is configured to run the automated matrix, but the existence of the workflow is not proof that the current commit is green. Check the actual Actions result before citing CI as evidence.
+The soak tool additionally supports runtime-lab, deterministic, active-messaging, idle-battery and connectivity scenarios, with Tor or Iroh as the selectable communication provider where the scenario supports it.
 
-## Security limits that must remain visible
+A workflow definition is not proof that the current branch passed CI. A source-level test is not evidence of real-device behavior. See [`testing.md`](testing.md) for evidence language.
 
-- No independent production security audit has been completed.
-- The long-lived pairwise relationship secret is not a Double Ratchet/MLS-style message-key schedule.
-- Forward secrecy and post-compromise security are therefore not claimed.
-- Tor reduces direct network-location exposure but cannot eliminate timing correlation, censorship or denial of service.
-- A compromised endpoint/OS can access plaintext and secrets available to that endpoint.
-- The intended recipient can copy, record, export or screenshot content outside Torca's control.
-- The pairing relay is deliberately untrusted but can observe the operational metadata required to run rendezvous slots.
+## Most important remaining confidence work
 
-## Current engineering sources
+Current risk is primarily confidence/evidence rather than missing core one-to-one product composition:
 
-Use the documents in this order when they disagree:
+- repeat cross-platform pairing/messaging/attachment journeys for both selectable providers;
+- longer Android lifecycle, network-loss/recovery and battery traces;
+- Radio permission/background/recovery soak on supported provider/platform combinations;
+- deployment interruption/resume and artifact-reuse testing; and
+- independent review before stronger security claims.
 
-1. the checked-in source, generated contracts and tests;
-2. [`../ARCHITECTURE.md`](../ARCHITECTURE.md), [`../SECURITY.md`](../SECURITY.md), [`../PRIVACY.md`](../PRIVACY.md) and the threat model for maintained guarantees/boundaries;
-3. this status page for a concise maturity summary;
-4. [`architecture/runtime-control.md`](architecture/runtime-control.md) for runtime/power invariants;
-5. [`validation/runtime-power.md`](validation/runtime-power.md) and [`diagnostics.md`](diagnostics.md) for evidence and collection;
-6. historical working records only as historical context.
+## Canonical references
 
-Planning documents and progress ledgers may contain historical checkpoints. They should never be used to claim that a current binary, platform or release passed a gate that was not actually run.
+- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — current system ownership.
+- [`transport.md`](transport.md) — provider model/status.
+- [`app-flows.md`](app-flows.md) — current product/runtime flows.
+- [`operations.md`](operations.md) — runtime/deployer behavior.
+- [`testing.md`](testing.md) — validation gates.
+- [`../SECURITY.md`](../SECURITY.md) and [`security/threat-model.md`](security/threat-model.md) — security boundaries and limits.
+
+Historical plans/checklists have intentionally been removed from the maintained tree. Use Git history if an old implementation decision needs to be reconstructed.
