@@ -568,6 +568,14 @@ impl RadioCoordinator {
                     .get_mut(&contact_id)
                     .ok_or(RadioApplicationError::ContactUnavailable)?
                     .session_ready(session_id, at)?;
+                // A successful provider handshake supersedes the last
+                // transport failure for this contact.  Keeping the old
+                // failure in the projection makes a recovered channel look
+                // permanently degraded to every client.
+                if self.last_transport_failure_contact_id == Some(contact_id) {
+                    self.last_transport_failure = None;
+                    self.last_transport_failure_contact_id = None;
+                }
                 let correlation = self.entropy.opaque_id()?;
                 let record = RadioTimelineRecord {
                     event_id: self.entropy.opaque_id()?,
