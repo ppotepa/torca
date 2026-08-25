@@ -4,6 +4,8 @@ part of 'conversation_screen.dart';
 // they still execute on the State instance and therefore legitimately use
 // Flutter's protected State APIs.
 // ignore_for_file: invalid_use_of_protected_member
+const _attachmentStagingGrace = Duration(minutes: 15);
+
 extension on _ConversationPaneState {
   Future<void> _restoreInstantContact() async {
     final value =
@@ -236,9 +238,14 @@ extension on _ConversationPaneState {
           _showError(
             '${item.originalName}: ${BridgeErrorPresenter.localized(context, response, fallback: context.strings.couldNotQueueAttachment)}',
           );
+          unawaited(prepared.disposeAfter(_attachmentStagingGrace));
           continue;
         }
-        await prepared.dispose();
+        // Queue admission is intentionally asynchronous: native has accepted
+        // the job, but its worker may not have opened the source yet. Retain
+        // the staging file for a bounded lease instead of deleting it in the
+        // same frame as the command response.
+        unawaited(prepared.disposeAfter(_attachmentStagingGrace));
         if (!mounted) return;
         setState(() => _pendingAttachments.remove(item));
         queued++;

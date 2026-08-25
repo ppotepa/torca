@@ -143,6 +143,10 @@ pub trait RadioMediaPort: Send {
     /// application actor.
     fn take_event(&mut self) -> Option<RadioSessionEvent>;
 
+    /// Media workers wake the runtime owner when a session transition is
+    /// available; the coordinator itself must not be polled on a timer.
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
+
     /// Number of inbound listener wakeups observed by the media executor.
     /// Implementations that do not expose instrumentation return zero.
     fn wake_count(&self) -> u64 {
@@ -357,6 +361,10 @@ impl RadioCoordinator {
         output_device_id: Option<&str>,
     ) -> Result<(), RadioApplicationError> {
         self.audio.configure_devices(input_device_id, output_device_id)
+    }
+
+    pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.media.set_waker(waker);
     }
 
     pub fn set_enabled(
@@ -934,6 +942,13 @@ impl SharedRadioCoordinator {
         self.with_mut(|coordinator| {
             coordinator.configure_audio_devices(input_device_id, output_device_id)
         })
+    }
+
+    pub fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) {
+        let _ = self.with_mut(|coordinator| {
+            coordinator.set_waker(waker);
+            Ok(())
+        });
     }
 
     pub fn set_enabled(

@@ -296,6 +296,13 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
             read_timeout: Mutex::new(None),
         })))
     }
+
+    fn keep_alive_interval(&self) -> Duration {
+        // Iroh/QUIC has a shorter transport idle window than the legacy
+        // stream providers. Keep the application lane alive before that
+        // window can expire while floor/audio negotiation is quiet.
+        Duration::from_secs(10)
+    }
 }
 
 impl torca_radio_adapters::RadioMediaSystemFactory for IrohRadioMediaSystemFactory {

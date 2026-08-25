@@ -324,6 +324,9 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         }
         self.peer.set_waker(Arc::clone(&waker));
         self.text.set_waker(Arc::clone(&waker));
+        if let Some(radio) = self.radio.as_mut() {
+            radio.set_waker(Arc::clone(&waker));
+        }
         self.control.set_waker(waker);
     }
 
@@ -973,21 +976,23 @@ fn spawn_attachment_worker(
                     AttachmentWork::Prepare { request, now } => {
                         runtime.prepare_outgoing(&request, now)?;
                         refresh_attachment_cache(&projection_cache, &**runtime);
-                        Ok(None)
+                        // Preparation creates a durable outbound job.  Publish
+                        // that fact through the same completion lane as a
+                        // maintenance turn so the actor arms the transfer
+                        // scheduler immediately instead of waiting for an
+                        // unrelated timer or lifecycle event.
+                        Ok(Some(AttachmentMaintenanceResult {
+                            more_work: true,
+                            policy_blocked: false,
+                            retry_after_ms: Some(0),
+                        }))
                     }
                 },
             );
-            if let Ok(None) = result {
-                active.store(false, Ordering::Release);
-                if let Some(callback) = waker.lock().ok().and_then(|target| target.clone()) {
-                    callback();
-                }
-                continue;
-            }
             let outcome = match result {
                 Ok(Some(outcome)) => outcome,
                 Err(error) => {
-                    eprintln!("torca-attachment: maintenance failed code={error}");
+                    eprintln!("torca-attachment: worker failed code={error}");
                     if let Ok(mut slot) = error_slot.lock() {
                         *slot = Some(error);
                     }

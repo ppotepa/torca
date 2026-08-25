@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rand_core::{OsRng, RngCore};
@@ -209,6 +210,10 @@ where
 
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
         self.coordinator.next_maintenance_delay(now)
+    }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.coordinator.set_waker(waker);
     }
 
     fn shutdown(&mut self) {

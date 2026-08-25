@@ -100,6 +100,15 @@ class PreparedAttachment {
       if (await file.exists()) await file.delete();
     }
   }
+
+  /// The native command acknowledges queue admission before its attachment
+  /// worker has opened the source. Keep the app-owned staging lease alive for
+  /// the maximum normal job start window; deleting it immediately races the
+  /// worker and leaves a durable job stuck at offset 0.
+  Future<void> disposeAfter(Duration grace) async {
+    await Future<void>.delayed(grace);
+    await dispose();
+  }
 }
 
 class AttachmentProcessor {

@@ -1,9 +1,9 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -32,6 +32,7 @@ const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
 // few seconds. The 10-second interval remains comfortably below the
 // connection idle budget, while halving idle radio traffic during a session.
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const FLOOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const KEEP_ALIVE_MAX_INTERVAL: Duration = Duration::from_secs(120);
 const AUDIO_RETRANSMIT_AFTER: Duration = Duration::from_millis(250);
 const AUDIO_FRAME_INTERVAL: Duration = Duration::from_millis(20);
@@ -81,6 +82,14 @@ pub trait RadioMediaConnector: Send {
     ) -> Result<Box<dyn RadioMediaStream>, RadioApplicationError>;
 
     fn try_accept(&mut self) -> Result<Option<Box<dyn RadioMediaStream>>, RadioApplicationError>;
+
+    /// Provider-specific idle keep-alive.  QUIC providers already have an
+    /// internal heartbeat and need a shorter application deadline than the
+    /// legacy stream transports, otherwise the provider can close an idle
+    /// media stream before the next application frame is sent.
+    fn keep_alive_interval(&self) -> Duration {
+        KEEP_ALIVE_INTERVAL
+    }
 }
 
 /// Erased session cipher used by the socket worker. Implementations retain
@@ -317,6 +326,7 @@ pub struct RadioMediaAdapter {
     events: Receiver<RadioSessionEvent>,
     wakeups: Arc<AtomicU64>,
     worker_alive: Arc<std::sync::atomic::AtomicBool>,
+    waker: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
 }
 
 impl RadioMediaAdapter {
@@ -329,6 +339,7 @@ impl RadioMediaAdapter {
             events: event_rx,
             wakeups: Arc::new(AtomicU64::new(0)),
             worker_alive: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            waker: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -341,7 +352,9 @@ impl RadioMediaAdapter {
         let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
         let wakeups = Arc::new(AtomicU64::new(0));
         let worker_alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let waker = Arc::new(Mutex::new(None));
         let worker_alive_flag = Arc::clone(&worker_alive);
+        let worker_waker = Arc::clone(&waker);
         thread::Builder::new()
             .name("torca-radio-media".into())
             .spawn(move || {
@@ -352,6 +365,7 @@ impl RadioMediaAdapter {
                     command_rx,
                     event_tx,
                     Arc::clone(&worker_alive_flag),
+                    worker_waker,
                 );
                 let result =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker.run()));
@@ -361,7 +375,7 @@ impl RadioMediaAdapter {
                 }
             })
             .map_err(|_| RadioApplicationError::MediaTransport)?;
-        Ok(Self { commands: command_tx, events: event_rx, wakeups, worker_alive })
+        Ok(Self { commands: command_tx, events: event_rx, wakeups, worker_alive, waker })
     }
 
     fn submit(&self, command: MediaCommand) -> Result<(), RadioApplicationError> {
@@ -442,6 +456,12 @@ impl RadioMediaPort for RadioMediaAdapter {
     fn take_event(&mut self) -> Option<RadioSessionEvent> {
         self.events.try_recv().ok()
     }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut slot) = self.waker.lock() {
+            *slot = Some(waker);
+        }
+    }
 }
 
 enum MediaCommand {
@@ -497,6 +517,7 @@ struct LiveSession {
     hello_sent: bool,
     local_is_coordinator: bool,
     pending_floor: Option<RadioOperationId>,
+    pending_floor_at: Option<Instant>,
     local_burst: Option<RadioOperationId>,
     local_end_requested: Option<BurstEndReason>,
     local_floor_request: Option<RadioOperationId>,
@@ -516,6 +537,7 @@ struct LiveSession {
     last_received_at: Instant,
     last_media_activity_at: Instant,
     last_keep_alive_at: Instant,
+    keep_alive_interval: Duration,
     keep_alive_sequence: u64,
     idle_keep_alives: u8,
     unacked_audio: VecDeque<(u32, Vec<u8>, Instant)>,
@@ -527,6 +549,7 @@ impl LiveSession {
         pending: PendingSession,
         stream: Box<dyn RadioMediaStream>,
         cipher: Box<dyn RadioMediaCipher>,
+        keep_alive_interval: Duration,
     ) -> Result<Self, RadioApplicationError> {
         stream.configure(ACTIVE_READ_TIMEOUT, Duration::from_secs(2))?;
         let now = Instant::now();
@@ -539,6 +562,7 @@ impl LiveSession {
             authenticated: false,
             hello_sent: false,
             pending_floor: None,
+            pending_floor_at: None,
             local_burst: None,
             local_end_requested: None,
             local_floor_request: None,
@@ -558,6 +582,7 @@ impl LiveSession {
             last_received_at: now,
             last_media_activity_at: now,
             last_keep_alive_at: now,
+            keep_alive_interval,
             keep_alive_sequence: 0,
             idle_keep_alives: 0,
             unacked_audio: VecDeque::new(),
@@ -575,7 +600,7 @@ struct MediaWorker {
     directory: Box<dyn RadioMediaDirectory>,
     audio: AudioPipeline,
     commands: Receiver<MediaCommand>,
-    events: SyncSender<RadioSessionEvent>,
+    events: EventSink,
     pending: Option<PendingSession>,
     live: Option<LiveSession>,
     worker_alive: Arc<std::sync::atomic::AtomicBool>,
@@ -589,13 +614,14 @@ impl MediaWorker {
         commands: Receiver<MediaCommand>,
         events: SyncSender<RadioSessionEvent>,
         worker_alive: Arc<std::sync::atomic::AtomicBool>,
+        waker: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
     ) -> Self {
         Self {
             connector,
             directory,
             audio,
             commands,
-            events,
+            events: EventSink { sender: events, waker: Arc::clone(&waker) },
             pending: None,
             live: None,
             worker_alive,
@@ -676,7 +702,7 @@ impl MediaWorker {
                 live.local_burst_started_at,
                 live.last_media_activity_at,
                 live.last_keep_alive_at,
-                radio_keep_alive_interval(live.idle_keep_alives),
+                radio_keep_alive_interval(live.keep_alive_interval, live.idle_keep_alives),
             );
             // Align the next socket read timeout with the selected deadline;
             // otherwise a 20-ms stale timeout could postpone an ACK or burst
@@ -753,6 +779,7 @@ impl MediaWorker {
                     return Ok(());
                 }
                 live.pending_floor = Some(request_id);
+                live.pending_floor_at = Some(Instant::now());
                 if live.local_is_coordinator {
                     let burst_id = random_operation_id()?;
                     send_frame(
@@ -764,6 +791,7 @@ impl MediaWorker {
                         },
                     )?;
                     live.pending_floor = None;
+                    live.pending_floor_at = None;
                     live.local_burst = Some(burst_id);
                     live.local_end_requested = None;
                     live.local_floor_request = Some(request_id);
@@ -815,6 +843,7 @@ impl MediaWorker {
                         },
                     )?;
                     live.pending_floor = None;
+                    live.pending_floor_at = None;
                 } else if live.remote_floor_reservation.map(|(id, _)| id) == Some(request_id) {
                     live.remote_floor_reservation = None;
                     live.remote_floor_request = None;
@@ -894,7 +923,8 @@ impl MediaWorker {
         ) else {
             return;
         };
-        match LiveSession::new(pending, stream, cipher) {
+        let keep_alive_interval = self.connector.keep_alive_interval();
+        match LiveSession::new(pending, stream, cipher, keep_alive_interval) {
             Ok(live) => self.live = Some(live),
             Err(_) => self.interrupt_live(),
         }
@@ -911,15 +941,28 @@ impl MediaWorker {
             handle_incoming(live, &self.events, &self.audio, frame)?;
         }
         let now = Instant::now();
+        if let (Some(request_id), Some(started_at)) = (live.pending_floor, live.pending_floor_at)
+            && now.duration_since(started_at) >= FLOOR_REQUEST_TIMEOUT
+        {
+            // A lost grant must not leave the UI in `requesting` forever.
+            // Clear the local reservation and publish a terminal transition;
+            // the coordinator may retry explicitly with a new operation id.
+            live.pending_floor = None;
+            live.pending_floor_at = None;
+            self.events.emit(RadioSessionEvent::FloorDenied {
+                contact_id: live.pending.contact_id,
+                request_id,
+            });
+        }
         if live.authenticated && now.duration_since(live.last_received_at) >= CONNECTION_IDLE_LIMIT
         {
             return Err(());
         }
         if live.authenticated
             && now.duration_since(live.last_media_activity_at)
-                >= radio_keep_alive_interval(live.idle_keep_alives)
+                >= radio_keep_alive_interval(live.keep_alive_interval, live.idle_keep_alives)
             && now.duration_since(live.last_keep_alive_at)
-                >= radio_keep_alive_interval(live.idle_keep_alives)
+                >= radio_keep_alive_interval(live.keep_alive_interval, live.idle_keep_alives)
         {
             live.keep_alive_sequence = live.keep_alive_sequence.saturating_add(1);
             send_frame(live, &RadioMediaFrame::KeepAlive { sequence: live.keep_alive_sequence })?;
@@ -951,7 +994,7 @@ impl MediaWorker {
         }
         self.audio.clear();
         if let Some(contact_id) = contact_id {
-            emit(&self.events, RadioSessionEvent::Interrupted { contact_id, at: now_timestamp() });
+            self.events.emit(RadioSessionEvent::Interrupted { contact_id, at: now_timestamp() });
         }
     }
 
@@ -961,6 +1004,24 @@ impl MediaWorker {
             let _ = live.stream.close_stream();
         }
         self.audio.clear();
+    }
+}
+
+#[derive(Clone)]
+struct EventSink {
+    sender: SyncSender<RadioSessionEvent>,
+    waker: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+}
+
+impl EventSink {
+    fn emit(&self, event: RadioSessionEvent) {
+        if self.sender.try_send(event).is_ok() {
+            if let Some(callback) = self.waker.lock().ok().and_then(|slot| slot.clone()) {
+                callback();
+            }
+        } else {
+            eprintln!("torca-radio: media event queue full; transition dropped");
+        }
     }
 }
 
@@ -998,11 +1059,11 @@ fn active_media_wait(
     deadline.saturating_duration_since(now)
 }
 
-fn radio_keep_alive_interval(idle_keep_alives: u8) -> Duration {
+fn radio_keep_alive_interval(base: Duration, idle_keep_alives: u8) -> Duration {
     match idle_keep_alives {
-        0 => KEEP_ALIVE_INTERVAL,
-        1 => Duration::from_secs(60),
-        _ => KEEP_ALIVE_MAX_INTERVAL,
+        0 => base,
+        1 => (base * 2).min(KEEP_ALIVE_MAX_INTERVAL),
+        _ => (base * 4).min(KEEP_ALIVE_MAX_INTERVAL),
     }
 }
 
@@ -1019,7 +1080,7 @@ fn fill_playback_queue(jitter: &mut JitterBuffer, audio: &AudioPipeline) {
 
 fn finish_local_burst_if_drained(
     live: &mut LiveSession,
-    events: &SyncSender<RadioSessionEvent>,
+    events: &EventSink,
     audio: &AudioPipeline,
 ) -> Result<(), ()> {
     let Some(reason) = live.local_end_requested else {
@@ -1050,13 +1111,14 @@ fn finish_local_burst_if_drained(
     live.local_floor_request = None;
     live.local_burst_started_at = None;
     live.pending_floor = None;
+    live.pending_floor_at = None;
     emit(events, RadioSessionEvent::BurstEnded { contact_id: live.pending.contact_id });
     Ok(())
 }
 
 fn finish_remote_burst_if_drained(
     live: &mut LiveSession,
-    events: &SyncSender<RadioSessionEvent>,
+    events: &EventSink,
     audio: &AudioPipeline,
 ) {
     if !live.remote_end_received || !live.jitter.is_empty() {
@@ -1106,7 +1168,7 @@ fn send_hello(live: &mut LiveSession) -> Result<(), ()> {
 
 fn handle_incoming(
     live: &mut LiveSession,
-    events: &SyncSender<RadioSessionEvent>,
+    events: &EventSink,
     audio: &AudioPipeline,
     frame: RadioMediaFrame,
 ) -> Result<(), ()> {
@@ -1189,6 +1251,7 @@ fn handle_incoming(
             let burst_id = RadioOperationId::from_opaque(burst_id);
             if live.pending_floor == Some(request_id) {
                 live.pending_floor = None;
+                live.pending_floor_at = None;
                 send_frame(
                     live,
                     &RadioMediaFrame::BurstStart {
@@ -1263,6 +1326,7 @@ fn handle_incoming(
             let request_id = RadioOperationId::from_opaque(request_id);
             if live.pending_floor == Some(request_id) {
                 live.pending_floor = None;
+                live.pending_floor_at = None;
                 emit(
                     events,
                     RadioSessionEvent::FloorDenied {
@@ -1363,6 +1427,7 @@ fn handle_incoming(
                 live.local_floor_request = None;
                 live.local_burst_started_at = None;
                 live.pending_floor = None;
+                live.pending_floor_at = None;
                 live.unacked_audio.clear();
                 live.oldest_unacked_at = None;
                 live.remote_final_sequence_exclusive = None;
@@ -1467,7 +1532,7 @@ fn resend_unacked_audio(live: &mut LiveSession) -> Result<(), ()> {
 
 fn enforce_burst_deadlines(
     live: &mut LiveSession,
-    events: &SyncSender<RadioSessionEvent>,
+    events: &EventSink,
     audio: &AudioPipeline,
 ) -> Result<(), ()> {
     let limit = Duration::from_millis(u64::from(MAX_RADIO_BURST_MS));
@@ -1626,8 +1691,8 @@ fn schedule_reconnect(pending: &mut PendingSession) {
     pending.reconnect_attempt = pending.reconnect_attempt.saturating_add(1);
 }
 
-fn emit(sender: &SyncSender<RadioSessionEvent>, event: RadioSessionEvent) {
-    let _ = sender.try_send(event);
+fn emit(sender: &EventSink, event: RadioSessionEvent) {
+    sender.emit(event);
 }
 
 fn remember_completed_burst(history: &mut VecDeque<RadioOperationId>, burst_id: RadioOperationId) {
