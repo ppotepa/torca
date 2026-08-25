@@ -485,6 +485,33 @@ pub struct TransportCapabilities {
     pub energy: EnergyClass,
 }
 
+/// Provider-neutral capabilities of a realtime lane such as Radio.  These
+/// facts are deliberately transport-level: the Radio coordinator still owns
+/// floor arbitration and audio semantics, while the selected provider owns
+/// connection lifecycle and its idle budget.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealtimeCapabilities {
+    pub reliable: bool,
+    pub ordered: bool,
+    pub supports_datagrams: bool,
+    pub max_frame_size: usize,
+    /// Maximum safe application silence in milliseconds.  A provider must not
+    /// be forced to use a longer heartbeat gap than its transport can sustain.
+    pub max_idle_interval_ms: u64,
+}
+
+impl Default for RealtimeCapabilities {
+    fn default() -> Self {
+        Self {
+            reliable: true,
+            ordered: true,
+            supports_datagrams: false,
+            max_frame_size: 64 * 1024,
+            max_idle_interval_ms: 30_000,
+        }
+    }
+}
+
 pub trait ProviderTransport: PeerTransport + Send {
     fn kind(&self) -> TransportKind;
     fn path(&self) -> TransportPath;

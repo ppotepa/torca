@@ -245,6 +245,16 @@ impl torca_radio_adapters::RadioMediaStream for IrohRadioMediaStream {
 }
 
 impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
+    fn capabilities(&self) -> torca_transport_api::RealtimeCapabilities {
+        torca_transport_api::RealtimeCapabilities {
+            reliable: true,
+            ordered: true,
+            supports_datagrams: true,
+            max_frame_size: 64 * 1024,
+            max_idle_interval_ms: 10_000,
+        }
+    }
+
     fn connect(
         &mut self,
         route: &torca_radio_adapters::RadioMediaRoute,
@@ -314,10 +324,7 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
     }
 
     fn keep_alive_interval(&self) -> Duration {
-        // Iroh/QUIC has a shorter transport idle window than the legacy
-        // stream providers. Keep the application lane alive before that
-        // window can expire while floor/audio negotiation is quiet.
-        Duration::from_secs(10)
+        Duration::from_millis(self.capabilities().max_idle_interval_ms)
     }
 }
 

@@ -19,6 +19,7 @@ use torca_radio_protocol::{
     SessionCloseReason,
 };
 use torca_tor::{PeerListener, TOR_RADIO_VIRTUAL_PORT, TorServiceHandle};
+use torca_transport_api::RealtimeCapabilities;
 
 use crate::{AudioPipeline, JitterBuffer};
 
@@ -79,6 +80,13 @@ pub trait RadioMediaStream: Read + Write + Send {
 /// worker boundary so audio cadence and retransmit deadlines stay bounded;
 /// provider implementations may block on their own async runtime internally.
 pub trait RadioMediaConnector: Send {
+    /// Transport facts shared by all communication providers.  The media
+    /// worker uses the idle budget to schedule heartbeats; product semantics
+    /// remain in `RadioCoordinator`.
+    fn capabilities(&self) -> RealtimeCapabilities {
+        RealtimeCapabilities::default()
+    }
+
     fn connect(
         &mut self,
         route: &RadioMediaRoute,
@@ -92,7 +100,7 @@ pub trait RadioMediaConnector: Send {
     /// legacy stream transports, otherwise the provider can close an idle
     /// media stream before the next application frame is sent.
     fn keep_alive_interval(&self) -> Duration {
-        KEEP_ALIVE_INTERVAL
+        Duration::from_millis(self.capabilities().max_idle_interval_ms).min(KEEP_ALIVE_INTERVAL)
     }
 }
 
