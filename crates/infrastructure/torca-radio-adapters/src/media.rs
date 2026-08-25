@@ -23,6 +23,9 @@ use torca_radio_protocol::{
 use torca_tor::{PeerListener, TOR_RADIO_VIRTUAL_PORT, TorServiceHandle};
 use torca_transport_api::RealtimeCapabilities;
 
+type WakeCallback = Arc<dyn Fn() + Send + Sync>;
+type WakeSlot = Arc<Mutex<Option<WakeCallback>>>;
+
 use crate::{AudioPipeline, JitterBuffer};
 
 const COMMAND_CAPACITY: usize = 32;
@@ -354,7 +357,7 @@ pub struct RadioMediaAdapter {
     events: Receiver<RadioSessionEvent>,
     wakeups: Arc<AtomicU64>,
     worker_alive: Arc<std::sync::atomic::AtomicBool>,
-    waker: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+    waker: WakeSlot,
 }
 
 impl RadioMediaAdapter {
@@ -656,7 +659,7 @@ impl MediaWorker {
         commands: Receiver<MediaCommand>,
         events: SyncSender<RadioSessionEvent>,
         worker_alive: Arc<std::sync::atomic::AtomicBool>,
-        waker: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+        waker: WakeSlot,
     ) -> Self {
         Self {
             connector,
@@ -1137,7 +1140,7 @@ impl MediaWorker {
 #[derive(Clone)]
 struct EventSink {
     sender: SyncSender<RadioSessionEvent>,
-    waker: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+    waker: WakeSlot,
 }
 
 impl EventSink {

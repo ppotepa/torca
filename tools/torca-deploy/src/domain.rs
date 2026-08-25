@@ -73,7 +73,7 @@ pub enum BuildPolicy {
     Rebuild,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 /// Provider-owned maintenance requested for a managed commissioning service.
 ///
@@ -81,16 +81,11 @@ pub enum BuildPolicy {
 /// maps to relay/onion maintenance; direct providers may reject unsupported
 /// operations instead of inheriting Tor semantics.
 pub enum ProviderMaintenancePolicy {
+    #[default]
     Ensure,
     Restart,
     RepairDirectoryCache,
     RotateIdentity,
-}
-
-impl Default for ProviderMaintenancePolicy {
-    fn default() -> Self {
-        Self::Ensure
-    }
 }
 
 /// Source-compatible name for older PowerShell adapters. New Rust code must

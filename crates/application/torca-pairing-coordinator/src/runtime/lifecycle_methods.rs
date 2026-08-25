@@ -195,9 +195,9 @@ where
         session_id: PairingSessionId,
         code: PairingCode,
         ticket: Option<[u8; 16]>,
-        _bootstrap: Option<&PairingBootstrapDescriptor>,
+        bootstrap: Option<&PairingBootstrapDescriptor>,
     ) -> Result<(), PairingRuntimeError> {
-        let (_, expires_at) = self.coordinator.join(session_id, &code, ticket, _bootstrap)?;
+        let (_, expires_at) = self.coordinator.join(session_id, &code, ticket, bootstrap)?;
         if self
             .engine
             .dispatch(EngineCommand::JoinPairing { session_id, code, expires_at })

@@ -469,7 +469,9 @@ impl IrohPairingServiceTransport {
 
 impl PairingServiceTransport for IrohPairingServiceTransport {
     fn invalidate(&mut self) {
-        self.connection.take().map(|connection| connection.close(0_u32.into(), b"pairing reset"));
+        if let Some(connection) = self.connection.take() {
+            connection.close(0_u32.into(), b"pairing reset");
+        }
     }
 
     fn reconnect(&mut self) -> Result<(), RelayTransportError> {

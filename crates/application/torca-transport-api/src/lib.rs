@@ -75,10 +75,21 @@ where
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    serde::Deserialize,
+    serde::Serialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum TransportKind {
+    #[default]
     Tor,
     Iroh,
     WebRtc,
@@ -183,12 +194,6 @@ impl TransportKind {
     }
 }
 
-impl Default for TransportKind {
-    fn default() -> Self {
-        Self::Tor
-    }
-}
-
 impl core::fmt::Display for TransportKind {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str(self.wire_value())
@@ -212,6 +217,7 @@ pub struct ProviderDeploymentProfile {
 /// data, not provider-name branching in application/UI code. A feature must be
 /// advertised here before it may be enabled in a deployment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ProviderFeatures {
     pub pairing_qr: bool,
     pub pairing_full_link: bool,

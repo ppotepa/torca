@@ -138,7 +138,7 @@ pub fn decode_invite_uri_with_bootstrap(
             "ticket" if ticket.is_none() => ticket = Some(parse_ticket(value)?),
             "provider" if supports_bootstrap && provider.is_none() => provider = Some(value),
             "bootstrap" if supports_bootstrap && payload.is_none() => {
-                payload = Some(parse_hex_payload(value)?)
+                payload = Some(parse_hex_payload(value)?);
             }
             _ => return Err(InviteUriError::InvalidFormat),
         }
@@ -167,7 +167,10 @@ fn parse_ticket(value: &str) -> Result<PairingInviteTicket, InviteUriError> {
 }
 
 fn parse_hex_payload(value: &str) -> Result<Vec<u8>, InviteUriError> {
-    if value.is_empty() || value.len() % 2 != 0 || value.len() / 2 > MAX_BOOTSTRAP_PAYLOAD_LEN {
+    if value.is_empty()
+        || !value.len().is_multiple_of(2)
+        || value.len() / 2 > MAX_BOOTSTRAP_PAYLOAD_LEN
+    {
         return Err(InviteUriError::InvalidBootstrapPayload);
     }
     let mut payload = Vec::with_capacity(value.len() / 2);

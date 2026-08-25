@@ -254,10 +254,10 @@ impl ConnectivityObserver {
         if let Ok(mut ledger) = self.inner.lock() {
             match layer {
                 TransportLayer::Communication | TransportLayer::Tor => {
-                    ledger.communication.queued = queued
+                    ledger.communication.queued = queued;
                 }
                 TransportLayer::PairingService | TransportLayer::Relay => {
-                    ledger.pairing_service.queued = queued
+                    ledger.pairing_service.queued = queued;
                 }
                 TransportLayer::Peer(_) => ledger.peer.queued = queued,
             }

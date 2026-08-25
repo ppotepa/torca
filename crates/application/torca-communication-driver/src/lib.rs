@@ -334,7 +334,7 @@ impl PeerSessionPort for TorcaCommunicationDriver {
     }
 
     fn prime_contact(&mut self, contact_id: ContactId) {
-        let _ = self.peer.prime_contact(contact_id);
+        self.peer.prime_contact(contact_id);
     }
 
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {

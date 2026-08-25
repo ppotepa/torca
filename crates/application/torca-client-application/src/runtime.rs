@@ -657,19 +657,7 @@ impl ClientApplicationRuntime {
                             }
                         }
                     }
-                    if network.communication.provider != torca_transport_api::TransportKind::Tor {
-                        // Direct providers have no managed rendezvous probe.
-                        // Keep the legacy compatibility step satisfied so it
-                        // cannot hold the UI in a provider-specific warm-up
-                        // state; provider-owned commissioning remains the
-                        // source of truth for actual readiness.
-                        if step_state(&bootstrap, BootstrapStepId::Rendezvous)
-                            != Some(BootstrapStepState::Ready)
-                        {
-                            bootstrap.begin(BootstrapStepId::Rendezvous);
-                            bootstrap.complete(BootstrapStepId::Rendezvous);
-                        }
-                    } else {
+                    if network.communication.provider == torca_transport_api::TransportKind::Tor {
                         match relay_status.unwrap_or(ProbeStatus::Unknown) {
                             ProbeStatus::Healthy => {
                                 if step_state(&bootstrap, BootstrapStepId::Rendezvous)
@@ -701,6 +689,18 @@ impl ClientApplicationRuntime {
                                     bootstrap.verify(BootstrapStepId::Rendezvous);
                                 }
                             }
+                        }
+                    } else {
+                        // Direct providers have no managed rendezvous probe.
+                        // Keep the legacy compatibility step satisfied so it
+                        // cannot hold the UI in a provider-specific warm-up
+                        // state; provider-owned commissioning remains the
+                        // source of truth for actual readiness.
+                        if step_state(&bootstrap, BootstrapStepId::Rendezvous)
+                            != Some(BootstrapStepState::Ready)
+                        {
+                            bootstrap.begin(BootstrapStepId::Rendezvous);
+                            bootstrap.complete(BootstrapStepId::Rendezvous);
                         }
                     }
                 }

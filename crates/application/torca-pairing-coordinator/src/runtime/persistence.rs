@@ -128,7 +128,7 @@ fn encode_persisted_state(
             let length = u16::try_from(blob.len()).map_err(|_| PairingRuntimeError::InvalidOffer)?;
             output.push(1);
             output.extend_from_slice(&length.to_be_bytes());
-            output.extend_from_slice(&blob);
+            output.extend_from_slice(blob);
         }
         None => output.push(0),
     }
