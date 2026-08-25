@@ -43,6 +43,8 @@ pub const PAIRING_ALPN: &[u8] = b"torca/pairing/1";
 /// Reserved provider-owned ALPN for optional Radio media streams.
 pub const RADIO_ALPN: &[u8] = b"torca/radio/1";
 const MAX_FRAME: usize = MAX_PEER_DATA_LEN;
+const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const PEER_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Provider-owned endpoint handle used only by the native composition layer
 /// to lazily encode current route/bootstrap metadata. It never crosses the
@@ -889,10 +891,21 @@ impl PeerTransport for IrohTransport {
             .remote
             .clone()
             .ok_or_else(|| PeerTransportError("Iroh remote address is missing".into()))?;
-        let connection =
-            self.runtime.block_on(self.endpoint.connect(remote, ALPN)).map_err(Self::map_error)?;
-        let (sender, receiver) =
-            self.runtime.block_on(connection.open_bi()).map_err(Self::map_error)?;
+        let connection = self
+            .runtime
+            .block_on(async {
+                tokio::time::timeout(PEER_CONNECT_TIMEOUT, self.endpoint.connect(remote, ALPN))
+                    .await
+            })
+            .map_err(|_| PeerTransportError("Iroh peer connect timed out".into()))?
+            .map_err(Self::map_error)?;
+        let (sender, receiver) = self
+            .runtime
+            .block_on(async {
+                tokio::time::timeout(PEER_CONNECT_TIMEOUT, connection.open_bi()).await
+            })
+            .map_err(|_| PeerTransportError("Iroh peer stream open timed out".into()))?
+            .map_err(Self::map_error)?;
         self.connection = Some(connection);
         self.install_stream(sender, receiver);
         self.connected = true;
@@ -907,12 +920,24 @@ impl PeerTransport for IrohTransport {
             .sender
             .clone()
             .ok_or_else(|| PeerTransportError("Iroh transport is not connected".into()))?;
-        self.runtime.block_on(async move {
+        let result = self.runtime.block_on(async move {
             let mut sender = sender.lock().await;
-            sender.write_u32(payload.len() as u32).await.map_err(Self::map_error)?;
-            sender.write_all(&payload).await.map_err(Self::map_error)?;
-            sender.flush().await.map_err(Self::map_error)
-        })
+            tokio::time::timeout(PEER_WRITE_TIMEOUT, async {
+                sender.write_u32(payload.len() as u32).await.map_err(Self::map_error)?;
+                sender.write_all(&payload).await.map_err(Self::map_error)?;
+                sender.flush().await.map_err(Self::map_error)
+            })
+            .await
+            .map_err(|_| PeerTransportError("Iroh peer write timed out".into()))?
+        });
+        if result.is_err() {
+            // A timed-out QUIC write is no longer a usable stream. Force the
+            // next delivery attempt through the reconnect path.
+            self.connected = false;
+            self.sender = None;
+            self.connection = None;
+        }
+        result
     }
 
     fn try_receive(&mut self) -> Result<Option<Vec<u8>>, PeerTransportError> {

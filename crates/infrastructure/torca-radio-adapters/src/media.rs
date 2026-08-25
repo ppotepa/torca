@@ -35,7 +35,11 @@ const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
 // few seconds. The 10-second interval remains comfortably below the
 // connection idle budget, while halving idle radio traffic during a session.
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
-const FLOOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+// A cold provider dial plus authentication can exceed five seconds. Keep a
+// bounded timeout so a dead peer cannot leave the UI requesting forever, while
+// allowing a normal Iroh reconnect to finish.
+const FLOOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const FLOOR_REQUEST_RETRY: Duration = Duration::from_secs(1);
 // This is a safety ceiling for providers which do not expose a more precise
 // transport idle budget.  It must never be used to back off past the
 // provider's advertised interval: QUIC/TURN/onion implementations may close
@@ -534,6 +538,8 @@ struct PendingSession {
     initiate_connection: bool,
     next_connect_at: Instant,
     reconnect_attempt: u8,
+    floor_request: Option<RadioOperationId>,
+    floor_requested_at: Option<Instant>,
 }
 
 // These flags describe independent wire-level phases (authentication,
@@ -550,6 +556,7 @@ struct LiveSession {
     local_is_coordinator: bool,
     pending_floor: Option<RadioOperationId>,
     pending_floor_at: Option<Instant>,
+    pending_floor_sent_at: Option<Instant>,
     local_burst: Option<RadioOperationId>,
     local_end_requested: Option<BurstEndReason>,
     local_floor_request: Option<RadioOperationId>,
@@ -585,6 +592,8 @@ impl LiveSession {
     ) -> Result<Self, RadioApplicationError> {
         stream.configure(ACTIVE_READ_TIMEOUT, Duration::from_secs(2))?;
         let now = Instant::now();
+        let pending_floor = pending.floor_request;
+        let pending_floor_at = pending.floor_requested_at;
         Ok(Self {
             local_is_coordinator: pending.route.local_identity < pending.route.remote_identity,
             pending,
@@ -593,8 +602,9 @@ impl LiveSession {
             read_buffer: Vec::with_capacity(MAX_RADIO_MEDIA_FRAME * 2),
             authenticated: false,
             hello_sent: false,
-            pending_floor: None,
-            pending_floor_at: None,
+            pending_floor,
+            pending_floor_at,
+            pending_floor_sent_at: None,
             local_burst: None,
             local_end_requested: None,
             local_floor_request: None,
@@ -672,6 +682,7 @@ impl MediaWorker {
                 }
             }
             if self.live.is_none() {
+                self.expire_pending_floor();
                 self.try_attach();
             }
             if self.live.is_some() && self.pump_live().is_err() {
@@ -800,6 +811,8 @@ impl MediaWorker {
                     initiate_connection,
                     next_connect_at: Instant::now(),
                     reconnect_attempt: 0,
+                    floor_request: None,
+                    floor_requested_at: None,
                 });
             }
             MediaCommand::Close { contact_id, session_id } => {
@@ -813,55 +826,57 @@ impl MediaWorker {
                 }
             }
             MediaCommand::RequestFloor { contact_id, session_id, request_id } => {
-                let Some(live) =
+                if let Some(live) =
                     self.live.as_mut().filter(|live| live.matches(contact_id, session_id))
-                else {
-                    emit(&self.events, RadioSessionEvent::FloorDenied { contact_id, request_id });
-                    return Ok(());
-                };
-                if !live.authenticated
-                    || live.local_burst.is_some()
-                    || live.remote_burst.is_some()
-                    || live.remote_floor_reservation.is_some()
                 {
-                    emit(&self.events, RadioSessionEvent::FloorDenied { contact_id, request_id });
+                    // SessionOpen and the provider handshake are asynchronous.
+                    // Keep a floor request queued until Ready instead of
+                    // turning that normal race into a denial.
+                    if !live.authenticated {
+                        if live.pending_floor.is_some() {
+                            emit(
+                                &self.events,
+                                RadioSessionEvent::FloorDenied { contact_id, request_id },
+                            );
+                        } else {
+                            live.pending_floor = Some(request_id);
+                            live.pending_floor_at = Some(Instant::now());
+                            live.pending_floor_sent_at = None;
+                        }
+                        return Ok(());
+                    }
+                    if live.local_burst.is_some()
+                        || live.remote_burst.is_some()
+                        || live.remote_floor_reservation.is_some()
+                        || live.pending_floor.is_some()
+                    {
+                        emit(
+                            &self.events,
+                            RadioSessionEvent::FloorDenied { contact_id, request_id },
+                        );
+                        return Ok(());
+                    }
+                    live.pending_floor = Some(request_id);
+                    live.pending_floor_at = Some(Instant::now());
+                    live.pending_floor_sent_at = None;
+                    dispatch_floor_request(live, &self.events)?;
                     return Ok(());
                 }
-                live.pending_floor = Some(request_id);
-                live.pending_floor_at = Some(Instant::now());
-                if live.local_is_coordinator {
-                    let burst_id = random_operation_id()?;
-                    send_frame(
-                        live,
-                        &RadioMediaFrame::BurstStart {
-                            request_id: request_id.to_opaque(),
-                            burst_id: burst_id.to_opaque(),
-                            max_duration_ms: MAX_RADIO_BURST_MS,
-                        },
-                    )?;
-                    live.pending_floor = None;
-                    live.pending_floor_at = None;
-                    live.local_burst = Some(burst_id);
-                    live.local_end_requested = None;
-                    live.local_floor_request = Some(request_id);
-                    live.local_burst_started_at = Some(Instant::now());
-                    live.transmit_sequence = 0;
-                    live.next_audio_send_at = Instant::now();
-                    emit(
-                        &self.events,
-                        RadioSessionEvent::FloorGranted {
-                            contact_id,
-                            request_id,
-                            burst_id,
-                            at: now_timestamp(),
-                        },
-                    );
-                } else {
-                    send_frame(
-                        live,
-                        &RadioMediaFrame::FloorRequest { request_id: request_id.to_opaque() },
-                    )?;
+                if let Some(pending) = self.pending.as_mut().filter(|pending| {
+                    pending.contact_id == contact_id && pending.session_id == session_id
+                }) {
+                    if pending.floor_request.is_some() {
+                        emit(
+                            &self.events,
+                            RadioSessionEvent::FloorDenied { contact_id, request_id },
+                        );
+                    } else {
+                        pending.floor_request = Some(request_id);
+                        pending.floor_requested_at = Some(Instant::now());
+                    }
+                    return Ok(());
                 }
+                emit(&self.events, RadioSessionEvent::FloorDenied { contact_id, request_id });
             }
             MediaCommand::EndBurst { contact_id, session_id, burst_id } => {
                 let Some(live) =
@@ -878,21 +893,34 @@ impl MediaWorker {
                 }
             }
             MediaCommand::CancelFloor { contact_id, session_id, request_id } => {
+                if let Some(pending) = self.pending.as_mut().filter(|pending| {
+                    pending.contact_id == contact_id && pending.session_id == session_id
+                }) && pending.floor_request == Some(request_id)
+                {
+                    pending.floor_request = None;
+                    pending.floor_requested_at = None;
+                    return Ok(());
+                }
                 let Some(live) =
                     self.live.as_mut().filter(|live| live.matches(contact_id, session_id))
                 else {
                     return Ok(());
                 };
                 if live.pending_floor == Some(request_id) {
-                    send_frame(
-                        live,
-                        &RadioMediaFrame::FloorDenied {
-                            request_id: request_id.to_opaque(),
-                            reason: FloorDeniedReason::Cancelled,
-                        },
-                    )?;
+                    if live.authenticated {
+                        send_frame(
+                            live,
+                            &RadioMediaFrame::FloorDenied {
+                                request_id: request_id.to_opaque(),
+                                reason: FloorDeniedReason::Cancelled,
+                            },
+                        )?;
+                    }
                     live.pending_floor = None;
                     live.pending_floor_at = None;
+                    live.pending_floor_sent_at = None;
+                    live.pending.floor_request = None;
+                    live.pending.floor_requested_at = None;
                 } else if live.remote_floor_reservation.map(|(id, _)| id) == Some(request_id) {
                     live.remote_floor_reservation = None;
                     live.remote_floor_request = None;
@@ -974,7 +1002,10 @@ impl MediaWorker {
         };
         let keep_alive_interval = self.connector.keep_alive_interval();
         match LiveSession::new(pending, stream, cipher, keep_alive_interval) {
-            Ok(live) => self.live = Some(live),
+            Ok(live) => {
+                self.pending = None;
+                self.live = Some(live);
+            }
             Err(_) => self.interrupt_live(RadioTransportFailure::Protocol),
         }
     }
@@ -990,6 +1021,21 @@ impl MediaWorker {
             handle_incoming(live, &self.events, &self.audio, frame)?;
         }
         let now = Instant::now();
+        if live.authenticated
+            && !live.local_is_coordinator
+            && let (Some(request_id), Some(sent_at)) =
+                (live.pending_floor, live.pending_floor_sent_at)
+            && now.duration_since(sent_at) >= FLOOR_REQUEST_RETRY
+        {
+            // FloorRequest is idempotent on the receiver. Repeating it while
+            // waiting for a grant covers a lost control frame without opening
+            // a second burst or resetting the session.
+            send_frame(
+                live,
+                &RadioMediaFrame::FloorRequest { request_id: request_id.to_opaque() },
+            )?;
+            live.pending_floor_sent_at = Some(now);
+        }
         if let (Some(request_id), Some(started_at)) = (live.pending_floor, live.pending_floor_at)
             && now.duration_since(started_at) >= FLOOR_REQUEST_TIMEOUT
         {
@@ -998,6 +1044,9 @@ impl MediaWorker {
             // the coordinator may retry explicitly with a new operation id.
             live.pending_floor = None;
             live.pending_floor_at = None;
+            live.pending_floor_sent_at = None;
+            live.pending.floor_request = None;
+            live.pending.floor_requested_at = None;
             self.events.emit(RadioSessionEvent::FloorDenied {
                 contact_id: live.pending.contact_id,
                 request_id,
@@ -1027,6 +1076,25 @@ impl MediaWorker {
             finish_remote_burst_if_drained(live, &self.events, &self.audio);
         }
         Ok(())
+    }
+
+    fn expire_pending_floor(&mut self) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        let Some(request_id) = pending.floor_request else {
+            return;
+        };
+        let Some(requested_at) = pending.floor_requested_at else {
+            return;
+        };
+        if Instant::now().duration_since(requested_at) < FLOOR_REQUEST_TIMEOUT {
+            return;
+        }
+        pending.floor_request = None;
+        pending.floor_requested_at = None;
+        self.events
+            .emit(RadioSessionEvent::FloorDenied { contact_id: pending.contact_id, request_id });
     }
 
     fn interrupt_live(&mut self, cause: RadioTransportFailure) {
@@ -1173,6 +1241,7 @@ fn finish_local_burst_if_drained(
     live.local_burst_started_at = None;
     live.pending_floor = None;
     live.pending_floor_at = None;
+    live.pending_floor_sent_at = None;
     emit(events, RadioSessionEvent::BurstEnded { contact_id: live.pending.contact_id });
     Ok(())
 }
@@ -1259,6 +1328,7 @@ fn handle_incoming(
                 at: now_timestamp(),
             },
         );
+        dispatch_floor_request(live, events)?;
         return Ok(());
     }
     if !matches!(&frame, RadioMediaFrame::KeepAlive { .. }) {
@@ -1313,6 +1383,9 @@ fn handle_incoming(
             if live.pending_floor == Some(request_id) {
                 live.pending_floor = None;
                 live.pending_floor_at = None;
+                live.pending_floor_sent_at = None;
+                live.pending.floor_request = None;
+                live.pending.floor_requested_at = None;
                 send_frame(
                     live,
                     &RadioMediaFrame::BurstStart {
@@ -1388,6 +1461,9 @@ fn handle_incoming(
             if live.pending_floor == Some(request_id) {
                 live.pending_floor = None;
                 live.pending_floor_at = None;
+                live.pending_floor_sent_at = None;
+                live.pending.floor_request = None;
+                live.pending.floor_requested_at = None;
                 emit(
                     events,
                     RadioSessionEvent::FloorDenied {
@@ -1489,6 +1565,7 @@ fn handle_incoming(
                 live.local_burst_started_at = None;
                 live.pending_floor = None;
                 live.pending_floor_at = None;
+                live.pending_floor_sent_at = None;
                 live.unacked_audio.clear();
                 live.oldest_unacked_at = None;
                 live.remote_final_sequence_exclusive = None;
@@ -1511,6 +1588,58 @@ fn handle_incoming(
         }
         RadioMediaFrame::KeepAlive { .. } => {}
         RadioMediaFrame::Close { .. } => return Err(()),
+    }
+    Ok(())
+}
+
+/// Dispatches a queued floor request after the provider stream is
+/// authenticated. Requests may arrive during the SessionOpen -> Ready race;
+/// keeping them here makes the race provider-independent and avoids a false
+/// `FloorDenied` on slow Iroh handshakes.
+fn dispatch_floor_request(live: &mut LiveSession, events: &EventSink) -> Result<(), ()> {
+    let Some(request_id) = live.pending_floor else {
+        return Ok(());
+    };
+    if !live.authenticated
+        || live.local_burst.is_some()
+        || live.remote_burst.is_some()
+        || live.remote_floor_reservation.is_some()
+    {
+        return Ok(());
+    }
+    if live.local_is_coordinator {
+        let burst_id = random_operation_id()?;
+        send_frame(
+            live,
+            &RadioMediaFrame::BurstStart {
+                request_id: request_id.to_opaque(),
+                burst_id: burst_id.to_opaque(),
+                max_duration_ms: MAX_RADIO_BURST_MS,
+            },
+        )?;
+        live.pending_floor = None;
+        live.pending_floor_at = None;
+        live.pending_floor_sent_at = None;
+        live.pending.floor_request = None;
+        live.pending.floor_requested_at = None;
+        live.local_burst = Some(burst_id);
+        live.local_end_requested = None;
+        live.local_floor_request = Some(request_id);
+        live.local_burst_started_at = Some(Instant::now());
+        live.transmit_sequence = 0;
+        live.next_audio_send_at = Instant::now();
+        emit(
+            events,
+            RadioSessionEvent::FloorGranted {
+                contact_id: live.pending.contact_id,
+                request_id,
+                burst_id,
+                at: now_timestamp(),
+            },
+        );
+    } else {
+        send_frame(live, &RadioMediaFrame::FloorRequest { request_id: request_id.to_opaque() })?;
+        live.pending_floor_sent_at = Some(Instant::now());
     }
     Ok(())
 }
