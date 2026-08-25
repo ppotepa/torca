@@ -151,6 +151,7 @@ pub(crate) struct IrohIncomingRouter {
     pairing: Mutex<VecDeque<Connection>>,
     radio: Mutex<VecDeque<Connection>>,
     peer_wake: Wake,
+    radio_wake: Wake,
     notify: Arc<tokio::sync::Notify>,
 }
 
@@ -323,6 +324,10 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
         })))
     }
 
+    fn set_incoming_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.incoming.set_radio_waker(waker);
+    }
+
     fn keep_alive_interval(&self) -> Duration {
         Duration::from_millis(self.capabilities().max_idle_interval_ms)
     }
@@ -347,6 +352,7 @@ impl IrohIncomingRouter {
             pairing: Mutex::new(VecDeque::new()),
             radio: Mutex::new(VecDeque::new()),
             peer_wake: Arc::new(Mutex::new(None)),
+            radio_wake: Arc::new(Mutex::new(None)),
             notify: Arc::new(tokio::sync::Notify::new()),
         });
         let task_router = Arc::clone(&router);
@@ -354,6 +360,7 @@ impl IrohIncomingRouter {
             while let Some(incoming) = endpoint.accept().await {
                 let Ok(accepted) = incoming.accept() else { continue };
                 let Ok(connection) = accepted.await else { continue };
+                let is_radio = connection.alpn() == RADIO_ALPN;
                 let queue = match connection.alpn() {
                     value if value == ALPN => &task_router.peer,
                     value if value == PAIRING_ALPN => &task_router.pairing,
@@ -364,7 +371,11 @@ impl IrohIncomingRouter {
                     entries.push_back(connection);
                 }
                 task_router.notify.notify_one();
-                notify(&task_router.peer_wake);
+                if is_radio {
+                    notify(&task_router.radio_wake);
+                } else {
+                    notify(&task_router.peer_wake);
+                }
             }
         });
         router
@@ -385,6 +396,12 @@ impl IrohIncomingRouter {
     #[allow(dead_code)]
     pub(crate) fn take_radio(&self) -> Option<Connection> {
         self.radio.lock().ok()?.pop_front()
+    }
+
+    pub(crate) fn set_radio_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut slot) = self.radio_wake.lock() {
+            *slot = Some(waker);
+        }
     }
 
     fn set_peer_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) {

@@ -97,6 +97,11 @@ pub trait RadioMediaConnector: Send {
 
     fn try_accept(&mut self) -> Result<Option<Box<dyn RadioMediaStream>>, RadioApplicationError>;
 
+    /// Registers a provider callback for an incoming media connection.  The
+    /// callback only wakes the bounded media worker; it never performs I/O or
+    /// touches coordinator state on the provider's listener task.
+    fn set_incoming_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
+
     /// Provider-specific idle keep-alive.  QUIC providers already have an
     /// internal heartbeat and need a shorter application deadline than the
     /// legacy stream transports, otherwise the provider can close an idle
@@ -358,7 +363,7 @@ impl RadioMediaAdapter {
     }
 
     fn start(
-        connector: Box<dyn RadioMediaConnector>,
+        mut connector: Box<dyn RadioMediaConnector>,
         directory: Box<dyn RadioMediaDirectory>,
         audio: AudioPipeline,
     ) -> Result<Self, RadioApplicationError> {
@@ -367,6 +372,13 @@ impl RadioMediaAdapter {
         let wakeups = Arc::new(AtomicU64::new(0));
         let worker_alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let waker = Arc::new(Mutex::new(None));
+        let incoming_wake_sender = command_tx.clone();
+        connector.set_incoming_waker(Arc::new(move || {
+            // A listener callback can race worker teardown.  This is only a
+            // wake hint, so a full/disconnected queue is intentionally
+            // ignored; the worker will still service its normal deadline.
+            let _ = incoming_wake_sender.try_send(MediaCommand::Wake);
+        }));
         let worker_alive_flag = Arc::clone(&worker_alive);
         let worker_waker = Arc::clone(&waker);
         thread::Builder::new()
@@ -479,6 +491,7 @@ impl RadioMediaPort for RadioMediaAdapter {
 }
 
 enum MediaCommand {
+    Wake,
     Open {
         contact_id: ContactId,
         session_id: RadioSessionId,
@@ -758,6 +771,7 @@ impl MediaWorker {
 
     fn handle_command(&mut self, command: MediaCommand) -> Result<(), ()> {
         match command {
+            MediaCommand::Wake => {}
             MediaCommand::Open { contact_id, session_id, media_token, initiate_connection } => {
                 self.shutdown_live(SessionCloseReason::Replaced);
                 let Some(route) = self.directory.route(contact_id) else {
