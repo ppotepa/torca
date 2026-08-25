@@ -1036,6 +1036,9 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     .to_owned();
     let endpoint_summary = network.communication.endpoint_summary.clone();
     let is_tor = network.communication.provider == torca_transport_api::TransportKind::Tor;
+    let requires_managed_rendezvous =
+        network.communication.provider.deployment_profile().commissioning_service
+            == torca_transport_api::ProviderCommissioningService::ManagedRendezvous;
     // Compatibility projections are intentionally empty/unsupported for a
     // direct provider. Generic consumers must use communication above; this
     // prevents Iroh snapshots from masquerading as a Tor relay being degraded.
@@ -1044,7 +1047,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     } else {
         "unsupported".to_owned()
     };
-    let relay_probe = is_tor
+    let relay_probe = requires_managed_rendezvous
         .then(|| {
             network.probes.iter().find(|probe| {
                 matches!(probe.target, ProbeTarget::PairingService | ProbeTarget::Relay)

@@ -581,21 +581,25 @@ impl ClientApplicationRuntime {
         let incoming_reachability_state = network
             .communication
             .step(torca_transport_api::CommissioningStage::IncomingReachability);
-        // A provider-neutral bootstrap must never interpret an arbitrary
-        // probe as a Tor relay result. Direct providers (Iroh/WebRTC) own
-        // their commissioning state and do not have a relay probe here.
-        let relay_status = (network.communication.provider
-            == torca_transport_api::TransportKind::Tor)
-            .then(|| {
-                network
-                    .probes
-                    .iter()
-                    .find(|probe| {
-                        matches!(probe.target, ProbeTarget::PairingService | ProbeTarget::Relay)
-                    })
-                    .map(|probe| probe.status)
-                    .unwrap_or(ProbeStatus::Unknown)
-            });
+        // A provider-neutral bootstrap must only consult a managed
+        // rendezvous probe when the selected provider profile requires one.
+        // Direct providers (Iroh/WebRTC) own their commissioning state and do
+        // not have a relay probe here.  This keeps the gate polymorphic: a
+        // future provider can use a managed rendezvous service without being
+        // hard-coded as Tor.
+        let managed_rendezvous =
+            network.communication.provider.deployment_profile().commissioning_service
+                == torca_transport_api::ProviderCommissioningService::ManagedRendezvous;
+        let relay_status = managed_rendezvous.then(|| {
+            network
+                .probes
+                .iter()
+                .find(|probe| {
+                    matches!(probe.target, ProbeTarget::PairingService | ProbeTarget::Relay)
+                })
+                .map(|probe| probe.status)
+                .unwrap_or(ProbeStatus::Unknown)
+        });
         let Ok(mut bootstrap) = self.bootstrap.lock() else {
             return Err(EngineError("bootstrap state unavailable".into()));
         };
@@ -657,7 +661,7 @@ impl ClientApplicationRuntime {
                             }
                         }
                     }
-                    if network.communication.provider == torca_transport_api::TransportKind::Tor {
+                    if managed_rendezvous {
                         match relay_status.unwrap_or(ProbeStatus::Unknown) {
                             ProbeStatus::Healthy => {
                                 if step_state(&bootstrap, BootstrapStepId::Rendezvous)
