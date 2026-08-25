@@ -202,8 +202,12 @@ impl TorcaRuntime {
             || "none".to_owned(),
             |session| {
                 format!(
-                    "contact={} state={} floor={} burst_elapsed_ms={}",
-                    session.contact_id, session.state, session.floor, session.burst_elapsed_ms
+                    "contact={} state={} floor={} burst_elapsed_ms={} transport_failure={}",
+                    session.contact_id,
+                    session.state,
+                    session.floor,
+                    session.burst_elapsed_ms,
+                    snapshot.radio.last_transport_failure.as_deref().unwrap_or("none")
                 )
             },
         );
