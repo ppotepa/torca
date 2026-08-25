@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Torca message delivery ownership</title>
+  <desc id="desc">An outbound composer intent crosses the typed bridge into Rust, is persisted before provider delivery, travels over an authenticated encrypted peer session, and returns receipt/snapshot state to Flutter. Retry remains Rust-owned.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#475569"/></marker>
+    <style>
+      .bg{fill:#f8fafc}.ui{fill:#eef2ff;stroke:#475569;stroke-width:2}.rust{fill:#fefce8;stroke:#a16207;stroke-width:2}.net{fill:#ecfeff;stroke:#0f766e;stroke-width:2}.peer{fill:#fff;stroke:#334155;stroke-width:2}.title{font:700 28px system-ui,sans-serif;fill:#0f172a}.h{font:700 16px system-ui,sans-serif;fill:#0f172a}.t{font:13px system-ui,sans-serif;fill:#334155}.small{font:12px system-ui,sans-serif;fill:#475569}.line{stroke:#475569;stroke-width:2.3;fill:none;marker-end:url(#a)}.back{stroke:#64748b;stroke-width:2;stroke-dasharray:7 6;fill:none;marker-end:url(#a)}
+    </style>
+  </defs>
+  <rect class="bg" width="1200" height="620" rx="24"/>
+  <text class="title" x="48" y="55">Torca — message delivery ownership</text>
+
+  <rect class="ui" x="55" y="130" width="175" height="90" rx="14"/>
+  <text class="h" x="78" y="166">Flutter composer</text>
+  <text class="t" x="78" y="190">user intent only</text>
+
+  <rect class="ui" x="275" y="130" width="175" height="90" rx="14"/>
+  <text class="h" x="298" y="166">EngineGateway</text>
+  <text class="t" x="298" y="190">typed command</text>
+
+  <rect class="rust" x="495" y="105" width="210" height="140" rx="14"/>
+  <text class="h" x="520" y="143">Rust application/engine</text>
+  <text class="t" x="520" y="169">validate intent</text>
+  <text class="t" x="520" y="191">assign durable state</text>
+  <text class="t" x="520" y="213">persist outbox/message</text>
+
+  <rect class="rust" x="750" y="130" width="175" height="90" rx="14"/>
+  <text class="h" x="773" y="166">Delivery worker</text>
+  <text class="t" x="773" y="190">retry + peer session</text>
+
+  <rect class="net" x="970" y="130" width="175" height="90" rx="14"/>
+  <text class="h" x="993" y="166">Selected provider</text>
+  <text class="t" x="993" y="190">Tor or Iroh bytes</text>
+
+  <path class="line" d="M230 175 H275"/><path class="line" d="M450 175 H495"/><path class="line" d="M705 175 H750"/><path class="line" d="M925 175 H970"/>
+
+  <rect class="peer" x="790" y="330" width="355" height="128" rx="16"/>
+  <text class="h" x="815" y="365">Remote authenticated peer</text>
+  <text class="t" x="815" y="390">validate framing + authenticate/decrypt</text>
+  <text class="t" x="815" y="414">deduplicate + persist durable inbound state</text>
+  <text class="t" x="815" y="438">acknowledgement / receipt flow</text>
+  <path class="line" d="M1058 220 V330"/>
+
+  <rect class="rust" x="495" y="350" width="230" height="108" rx="14"/>
+  <text class="h" x="520" y="383">Local durable feedback</text>
+  <text class="t" x="520" y="407">ack / delivered / read state</text>
+  <text class="t" x="520" y="431">snapshot + runtime event update</text>
+  <path class="back" d="M790 404 H725"/>
+
+  <rect class="ui" x="165" y="350" width="245" height="108" rx="14"/>
+  <text class="h" x="190" y="383">Flutter render</text>
+  <text class="t" x="190" y="407">message status/read projection</text>
+  <text class="t" x="190" y="431">no durable retry ownership</text>
+  <path class="back" d="M495 404 H410"/>
+
+  <rect class="rust" x="480" y="510" width="320" height="58" rx="14"/>
+  <text class="t" x="505" y="544">Network failure: durable work stays in Rust and is retried by runtime policy.</text>
+  <path class="back" d="M838 220 C838 285 690 280 640 510"/>
+</svg>
