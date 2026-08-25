@@ -30,7 +30,12 @@ use crate::{AudioPipeline, JitterBuffer};
 
 const COMMAND_CAPACITY: usize = 32;
 const EVENT_CAPACITY: usize = 64;
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+// A cold Iroh endpoint may still be discovering a relay or punching through
+// a mobile NAT when the user presses PTT.  The previous 15-second budget was
+// identical to the floor timeout, so a successful first dial could arrive
+// just after the request had already been denied.  Keep this bounded, but
+// give the provider one complete discovery window.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(8);
 const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
@@ -41,7 +46,7 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
 // A cold provider dial plus authentication can exceed five seconds. Keep a
 // bounded timeout so a dead peer cannot leave the UI requesting forever, while
 // allowing a normal Iroh reconnect to finish.
-const FLOOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const FLOOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const FLOOR_REQUEST_RETRY: Duration = Duration::from_secs(1);
 // This is a safety ceiling for providers which do not expose a more precise
 // transport idle budget.  It must never be used to back off past the
