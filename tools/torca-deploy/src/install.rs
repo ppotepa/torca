@@ -1,5 +1,5 @@
 use crate::devices::Device;
-use crate::domain::Configuration;
+use crate::domain::{CommunicationProvider, Configuration};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 use std::time::Duration;
@@ -17,6 +17,7 @@ impl<'a> InstallController<'a> {
         &self,
         device: &Device,
         configuration: Configuration,
+        communication_provider: CommunicationProvider,
     ) -> Result<(), InstallError> {
         match device.target {
             crate::domain::Target::Windows => Ok(()),
@@ -48,6 +49,7 @@ impl<'a> InstallController<'a> {
                     crate::domain::Target::Android,
                     configuration,
                     &apk,
+                    communication_provider,
                 )
                 .map_err(InstallError::ArtifactVerification)?;
                 let args = vec![

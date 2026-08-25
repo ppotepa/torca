@@ -97,8 +97,10 @@ class RuntimeAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-/// Process-wide Tor, relay and P2P monitor. Payloads never enter this widget;
-/// only monotonic TX/RX counters and health projections cross the ABI.
+/// Process-wide provider and P2P monitor. Payloads never enter this widget;
+/// only monotonic TX/RX counters and health projections cross the ABI. Tor and
+/// relay lights are retained as compatibility diagnostics for the Tor
+/// provider; direct providers expose one generic communication light instead.
 class RuntimeNetworkStatus extends StatefulWidget {
   const RuntimeNetworkStatus({
     required this.snapshot,
@@ -152,9 +154,22 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
   Widget build(BuildContext context) {
     final wide = !widget.compact && MediaQuery.sizeOf(context).width >= 700;
     final stale = _ticksSinceObservation >= _staleAfterTicks;
+    final provider = widget.snapshot.communicationProvider.isEmpty
+        ? 'tor'
+        : widget.snapshot.communicationProvider;
+    final providerLabel = provider.toUpperCase();
+    // Schema-1 snapshots only populated `transport.tor`; preserve that
+    // compatibility projection while schema-2/direct providers use the
+    // provider-neutral communication indicator.
+    final legacyTorIndicator =
+        provider == 'tor' &&
+        widget.snapshot.transport.tor.typedState != TransportState.unknown;
+    final communicationIndicator = legacyTorIndicator
+        ? widget.snapshot.transport.tor
+        : widget.snapshot.transport.communication;
     return Semantics(
       label:
-          'Network status: Tor ${widget.snapshot.transport.tor.state}, relay ${widget.snapshot.transport.relay.state}, P2P ${widget.snapshot.transport.peer.state}${stale ? ', monitoring stale' : ''}',
+          'Network status: $providerLabel ${widget.snapshot.transport.communication.state}, P2P ${widget.snapshot.transport.peer.state}${stale ? ', monitoring stale' : ''}',
       child: Padding(
         padding: const EdgeInsets.only(right: 4),
         child: Row(
@@ -176,10 +191,14 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
               const SizedBox(width: 7),
             ],
             _TransportLight(
-              key: const ValueKey<String>('tor-status-light'),
-              label: 'Tor',
-              icon: context.torcaIcons.identity,
-              indicator: widget.snapshot.transport.tor,
+              key: ValueKey<String>(
+                legacyTorIndicator
+                    ? 'tor-status-light'
+                    : 'communication-status-light',
+              ),
+              label: providerLabel,
+              icon: context.torcaIcons.link,
+              indicator: communicationIndicator,
               showLabel: wide,
               stale: stale,
             ),
@@ -192,15 +211,26 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
               showLabel: wide,
               stale: stale,
             ),
-            const SizedBox(width: 4),
-            _TransportLight(
-              key: const ValueKey<String>('relay-status-light'),
-              label: 'Relay',
-              icon: context.torcaIcons.link,
-              indicator: widget.snapshot.transport.relay,
-              showLabel: wide,
-              stale: stale,
-            ),
+            // Keep the legacy service light mounted for Tor so TX/RX
+            // animations survive a state transition. Direct providers only
+            // mount it when they explicitly populate the compatibility
+            // indicator.
+            if (provider == 'tor' ||
+                widget.snapshot.transport.relay.typedState !=
+                    TransportState.unknown) ...<Widget>[
+              const SizedBox(width: 4),
+              _TransportLight(
+                // The key remains stable for existing diagnostics/tests; the
+                // visible label is now provider-neutral.
+                key: const ValueKey<String>('relay-status-light'),
+                label: 'Service',
+                keyPrefix: 'Relay',
+                icon: context.torcaIcons.link,
+                indicator: widget.snapshot.transport.relay,
+                showLabel: wide,
+                stale: stale,
+              ),
+            ],
           ],
         ),
       ),
@@ -236,6 +266,7 @@ class _TransportLight extends StatefulWidget {
     required this.indicator,
     required this.showLabel,
     required this.stale,
+    this.keyPrefix,
     super.key,
   });
 
@@ -244,6 +275,7 @@ class _TransportLight extends StatefulWidget {
   final TransportIndicatorDto indicator;
   final bool showLabel;
   final bool stale;
+  final String? keyPrefix;
 
   @override
   State<_TransportLight> createState() => _TransportLightState();
@@ -360,6 +392,7 @@ class _TransportLightState extends State<_TransportLight>
                 !widget.stale && _isAlarmState(widget.indicator.typedState);
             final linkActive =
                 !widget.stale && _linkActive(widget.indicator.typedState);
+            final keyPrefix = widget.keyPrefix ?? widget.label;
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
               child: Row(
@@ -375,7 +408,7 @@ class _TransportLightState extends State<_TransportLight>
                   ],
                   const SizedBox(width: 5),
                   _EthernetLed(
-                    key: ValueKey<String>('${widget.label}-link-led'),
+                    key: ValueKey<String>('$keyPrefix-link-led'),
                     label: 'LINK',
                     active:
                         linkActive ||
@@ -385,14 +418,14 @@ class _TransportLightState extends State<_TransportLight>
                   ),
                   const SizedBox(width: 3),
                   _EthernetLed(
-                    key: ValueKey<String>('${widget.label}-tx-led'),
+                    key: ValueKey<String>('$keyPrefix-tx-led'),
                     label: 'TX',
                     active: _txPulse.isAnimating,
                     color: context.semanticColors.activityTransmit,
                   ),
                   const SizedBox(width: 3),
                   _EthernetLed(
-                    key: ValueKey<String>('${widget.label}-rx-led'),
+                    key: ValueKey<String>('$keyPrefix-rx-led'),
                     label: 'RX',
                     active: _rxPulse.isAnimating,
                     color: context.semanticColors.activityReceive,

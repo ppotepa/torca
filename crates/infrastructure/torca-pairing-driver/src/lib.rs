@@ -12,16 +12,64 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_pairing_coordinator::{
     LocalPairingContext, PairingApprovalPort, PairingCryptoPort, PairingPeerSecretStore,
-    PairingPollReport, PairingRendezvousPort, PairingRuntime, PairingRuntimeError,
+    PairingPollReport, PairingRuntime, PairingRuntimeError, PairingSessionServicePort,
 };
-use torca_pairing_protocol::AvatarEnvelope;
+use torca_pairing_protocol::{AvatarEnvelope, PairingBootstrapDescriptor};
 use torca_runtime::{PairingDriver, PairingInvitationView, RuntimeDriverError};
-use torca_tor::SharedTorEndpoint;
+
+/// Provider-owned local endpoint advertised in a pairing offer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingTransportRoute {
+    pub transport_provider: String,
+    pub transport_endpoint: Vec<u8>,
+}
+
+impl PairingTransportRoute {
+    pub fn new(provider: impl Into<String>, endpoint: Vec<u8>) -> Self {
+        Self { transport_provider: provider.into(), transport_endpoint: endpoint }
+    }
+}
+
+/// Reads the endpoint from the currently selected provider. Returning `None`
+/// means commissioning has not produced a routable endpoint yet.
+pub trait PairingTransportRouteSource: Send + Sync {
+    fn local_route(&self) -> Option<PairingTransportRoute>;
+}
+
+impl<F> PairingTransportRouteSource for F
+where
+    F: Fn() -> Option<PairingTransportRoute> + Send + Sync,
+{
+    fn local_route(&self) -> Option<PairingTransportRoute> {
+        self()
+    }
+}
+
+/// Supplies optional provider-specific data embedded in a newly-created QR
+/// invitation. It is only discovery/signaling material; a completed contact
+/// always takes its durable route from the authenticated pairing offer.
+pub trait PairingBootstrapSource: Send + Sync {
+    fn invitation_bootstrap(
+        &self,
+    ) -> Result<Option<PairingBootstrapDescriptor>, RuntimeDriverError>;
+}
+
+impl<F> PairingBootstrapSource for F
+where
+    F: Fn() -> Result<Option<PairingBootstrapDescriptor>, RuntimeDriverError> + Send + Sync,
+{
+    fn invitation_bootstrap(
+        &self,
+    ) -> Result<Option<PairingBootstrapDescriptor>, RuntimeDriverError> {
+        self()
+    }
+}
 
 pub struct RuntimePairingDriver<R, C, A, S> {
     runtime: PairingRuntime<R, C, A, S>,
     engine: EngineHandle,
-    tor_endpoint: SharedTorEndpoint,
+    route_source: Box<dyn PairingTransportRouteSource>,
+    bootstrap_source: Option<Box<dyn PairingBootstrapSource>>,
     random: RustCryptoProvider,
     poll_schedule: BTreeMap<PairingSessionId, PairingPollSchedule>,
 }
@@ -38,39 +86,43 @@ const MAX_POLL_BACKOFF: Duration = Duration::from_secs(30);
 
 impl<R, C, A, S> RuntimePairingDriver<R, C, A, S>
 where
-    R: PairingRendezvousPort,
+    R: PairingSessionServicePort,
     C: PairingCryptoPort,
     A: PairingApprovalPort,
     S: PairingPeerSecretStore,
 {
-    pub const fn new(
+    pub fn new(
         runtime: PairingRuntime<R, C, A, S>,
         engine: EngineHandle,
-        tor_endpoint: SharedTorEndpoint,
+        route_source: Box<dyn PairingTransportRouteSource>,
     ) -> Self {
         Self {
             runtime,
             engine,
-            tor_endpoint,
+            route_source,
+            bootstrap_source: None,
             random: RustCryptoProvider,
             poll_schedule: BTreeMap::new(),
         }
     }
 
-    fn context(&mut self) -> Result<LocalPairingContext, RuntimeDriverError> {
+    pub fn with_bootstrap_source(mut self, source: Box<dyn PairingBootstrapSource>) -> Self {
+        self.bootstrap_source = Some(source);
+        self
+    }
+
+    fn context(&mut self) -> Result<Option<LocalPairingContext>, RuntimeDriverError> {
         let snapshot = self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         let identity = snapshot.identity.ok_or(RuntimeDriverError::Pairing)?;
-        // The local onion endpoint is a readiness dependency, not a protocol
-        // rejection. Keep it retryable so a cold Android Tor bootstrap does
-        // not create a permanent pairing failure.
-        let onion_address = self.tor_endpoint.get().ok_or(RuntimeDriverError::Tor)?;
-        Ok(LocalPairingContext {
+        let Some(route) = self.route_source.local_route() else {
+            return Ok(None);
+        };
+        Ok(Some(LocalPairingContext {
             display_name: identity.profile().map_or_else(
                 || "Torca".to_owned(),
                 |profile| profile.display_name().as_str().to_owned(),
             ),
             public_identity: identity.public().clone(),
-            onion_address,
             capability_id: self.random_id()?,
             avatar: snapshot.avatar_genome.map(|record| AvatarEnvelope {
                 schema: record.schema_version,
@@ -79,17 +131,17 @@ where
                 genome_hash: record.genome_hash,
                 compressed_genome: record.compressed_genome,
             }),
-        })
+            transport_provider: route.transport_provider,
+            transport_endpoint: route.transport_endpoint,
+        }))
     }
 
     fn publish_local_offer_if_ready(
         &mut self,
         session_id: PairingSessionId,
     ) -> Result<bool, RuntimeDriverError> {
-        let context = match self.context() {
-            Ok(context) => context,
-            Err(RuntimeDriverError::Tor) => return Ok(false),
-            Err(error) => return Err(error),
+        let Some(context) = self.context()? else {
+            return Ok(false);
         };
         self.runtime.publish_local_offer(session_id, context).map_err(map_pairing_error)?;
         Ok(true)
@@ -126,7 +178,7 @@ where
 
 impl<R, C, A, S> PairingDriver for RuntimePairingDriver<R, C, A, S>
 where
-    R: PairingRendezvousPort + Send + 'static,
+    R: PairingSessionServicePort + Send + 'static,
     C: PairingCryptoPort + Send + 'static,
     A: PairingApprovalPort + Send + 'static,
     S: PairingPeerSecretStore + Send + 'static,
@@ -136,9 +188,25 @@ where
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<PairingInvitationView, RuntimeDriverError> {
+        // A creator can open and persist the provider-owned pairing slot
+        // before its advertised route is available.  This is important for
+        // direct providers such as Iroh: endpoint discovery may complete a
+        // moment after the local runtime is ready.  Keep the invitation alive
+        // with its code/ticket and let maintenance publish the local offer;
+        // the contract projection will add the provider bootstrap as soon as
+        // it becomes available.  A real provider error still fails the
+        // command, while `Pending` is deliberately non-fatal for creators.
+        let bootstrap = match self.bootstrap_source.as_ref() {
+            Some(source) => match source.invitation_bootstrap() {
+                Ok(value) => value,
+                Err(RuntimeDriverError::Pending) => None,
+                Err(error) => return Err(error),
+            },
+            None => None,
+        };
         let invitation = self
             .runtime
-            .create_invitation_pending_route(session_id, now)
+            .create_invitation_pending_route_with_bootstrap(session_id, now, bootstrap.as_ref())
             .map_err(map_pairing_error)?;
         let _ = self.publish_local_offer_if_ready(session_id)?;
         self.schedule_now(session_id, now);
@@ -155,10 +223,16 @@ where
         session_id: PairingSessionId,
         code: PairingCode,
         ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
         self.runtime
-            .join_invitation_pending_route(session_id, code, ticket)
+            .join_invitation_pending_route_with_bootstrap(
+                session_id,
+                code,
+                ticket,
+                bootstrap.as_ref(),
+            )
             .map_err(map_pairing_error)?;
         let _ = self.publish_local_offer_if_ready(session_id)?;
         self.schedule_now(session_id, now);
@@ -260,11 +334,32 @@ impl<R, C, A, S> RuntimePairingDriver<R, C, A, S> {
 
 fn map_pairing_error(error: PairingRuntimeError) -> RuntimeDriverError {
     match error {
+        PairingRuntimeError::Coordinator(
+            torca_pairing_coordinator::PairingCoordinatorError::BootstrapMissing,
+        ) => RuntimeDriverError::Classified(torca_foundation::ErrorDescriptor::new(
+            torca_foundation::ErrorCode::new("pairing.bootstrap_missing"),
+            torca_foundation::ErrorCategory::InvalidInput,
+            torca_foundation::RetryAdvice::Never,
+        )),
+        PairingRuntimeError::Coordinator(
+            torca_pairing_coordinator::PairingCoordinatorError::BootstrapProviderMismatch,
+        ) => RuntimeDriverError::Classified(torca_foundation::ErrorDescriptor::new(
+            torca_foundation::ErrorCode::new("pairing.provider_mismatch"),
+            torca_foundation::ErrorCategory::Conflict,
+            torca_foundation::RetryAdvice::Never,
+        )),
+        PairingRuntimeError::Coordinator(
+            torca_pairing_coordinator::PairingCoordinatorError::BootstrapInvalid,
+        ) => RuntimeDriverError::Classified(torca_foundation::ErrorDescriptor::new(
+            torca_foundation::ErrorCode::new("pairing.bootstrap_invalid"),
+            torca_foundation::ErrorCategory::InvalidInput,
+            torca_foundation::RetryAdvice::Never,
+        )),
         // A rendezvous transport failure is transient and must participate in
         // the supervisor backoff loop. Protocol/session errors are terminal
         // for the current invitation and must not be retried forever.
         PairingRuntimeError::Coordinator(
-            torca_pairing_coordinator::PairingCoordinatorError::Rendezvous,
+            torca_pairing_coordinator::PairingCoordinatorError::SessionService,
         ) => RuntimeDriverError::Communication,
         PairingRuntimeError::SessionNotFound => RuntimeDriverError::Pairing,
         _ => RuntimeDriverError::Pairing,

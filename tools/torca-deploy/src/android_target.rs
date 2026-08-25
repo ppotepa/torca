@@ -2,7 +2,7 @@
 
 use std::env;
 
-/// SOAK2 is selected explicitly by the launcher or implicitly when the
+/// SOAK1 is selected explicitly by the launcher or implicitly when the
 /// deployment library is hosted by a soak executable. The latter keeps
 /// `cargo run -p torca-soak` a complete, single entry point.
 pub fn is_soak() -> bool {

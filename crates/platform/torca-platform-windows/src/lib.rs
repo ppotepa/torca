@@ -10,19 +10,21 @@ mod dpapi;
 pub use dpapi::DpapiFileSecretStore;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use torca_diagnostics::{PlatformEnergyProvider, PlatformEnergySample};
 use torca_platform::{
     AppPaths, DeviceDescriptor, LifecycleCapabilities, PlatformServices, ProtectedSecretStore,
-    RelayEndpoint, SecretNamespace,
+    SecretNamespace, WebRtcSessionProvider, WebRtcSignalingProvider,
 };
 
 /// Windows system services; runtime composition is shared with Android.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WindowsPlatformServices {
     pub paths: AppPaths,
     pub device_id: String,
     pub installation_id: String,
-    pub relay: RelayEndpoint,
+    webrtc_provider: Option<Arc<dyn WebRtcSessionProvider>>,
+    webrtc_signaling_provider: Option<Arc<dyn WebRtcSignalingProvider>>,
 }
 
 /// Event-triggered Windows energy sample. The caller chooses when to sample
@@ -69,17 +71,32 @@ fn sample_energy() -> PlatformEnergySample {
 }
 
 impl WindowsPlatformServices {
-    pub fn new(data: PathBuf, cache: PathBuf, logs: PathBuf, relay: RelayEndpoint) -> Self {
+    pub fn new(data: PathBuf, cache: PathBuf, logs: PathBuf) -> Self {
         Self {
             paths: AppPaths { data, cache, logs },
             device_id: "windows-device".into(),
             installation_id: "windows-install".into(),
-            relay,
+            webrtc_provider: None,
+            webrtc_signaling_provider: None,
         }
     }
 
     pub fn energy_provider(&self) -> WindowsEnergyProvider {
         WindowsEnergyProvider
+    }
+
+    /// Injects the host-owned WebRTC signalling/DataChannel bridge.
+    pub fn with_webrtc_provider(mut self, provider: Arc<dyn WebRtcSessionProvider>) -> Self {
+        self.webrtc_provider = Some(provider);
+        self
+    }
+
+    pub fn with_webrtc_signaling_provider(
+        mut self,
+        provider: Arc<dyn WebRtcSignalingProvider>,
+    ) -> Self {
+        self.webrtc_signaling_provider = Some(provider);
+        self
     }
 }
 
@@ -101,9 +118,6 @@ impl PlatformServices for WindowsPlatformServices {
             Box::new(torca_platform::FileSecretStore::new(root))
         }
     }
-    fn relay_endpoint(&self) -> Result<RelayEndpoint, String> {
-        Ok(self.relay.clone())
-    }
     fn device_descriptor(&self) -> DeviceDescriptor {
         DeviceDescriptor {
             device_id: self.device_id.clone(),
@@ -115,6 +129,12 @@ impl PlatformServices for WindowsPlatformServices {
     }
     fn energy_sample(&self) -> PlatformEnergySample {
         self.energy_provider().sample()
+    }
+    fn webrtc_session_provider(&self) -> Option<Arc<dyn WebRtcSessionProvider>> {
+        self.webrtc_provider.clone()
+    }
+    fn webrtc_signaling_provider(&self) -> Option<Arc<dyn WebRtcSignalingProvider>> {
+        self.webrtc_signaling_provider.clone()
     }
 }
 

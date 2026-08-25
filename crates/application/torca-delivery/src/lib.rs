@@ -259,12 +259,17 @@ pub trait InboundAcknowledger {
 }
 
 #[must_use]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DeliveryBatchReport {
     pub claimed: usize,
     pub completed: usize,
     pub rescheduled: usize,
     pub dead_lettered: usize,
+    /// Message ids whose durable outbox state reached a terminal result in
+    /// this batch. Adapters use these ids to reconcile the domain message
+    /// status without coupling the generic worker to the client engine.
+    pub completed_message_ids: Vec<MessageId>,
+    pub dead_lettered_message_ids: Vec<MessageId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -307,6 +312,16 @@ where
         self.store.recover_stale_claims(claimed_before).map_err(Into::into)
     }
 
+    /// Adds a newly-created outbound message to the durable delivery outbox.
+    pub fn queue_outbound(
+        &mut self,
+        message: Message,
+        command_id: CommandId,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), DeliveryWorkerError> {
+        self.store.queue_outbound(message, command_id, next_attempt_at).map_err(Into::into)
+    }
+
     pub fn next_due(&self) -> Result<Option<Timestamp>, DeliveryWorkerError> {
         self.store.next_due().map_err(Into::into)
     }
@@ -317,16 +332,34 @@ where
         now: Timestamp,
         limit: usize,
     ) -> Result<DeliveryBatchReport, DeliveryWorkerError> {
+        self.run_once_with_observer(now, limit, |_| {})
+    }
+
+    /// Runs one batch and invokes `before_send` immediately after claiming a
+    /// message but before bytes leave the process. This lets an adapter
+    /// reconcile the domain `Queued -> Sending` transition before an inbound
+    /// Delivered receipt can race the transport result.
+    pub fn run_once_with_observer<F>(
+        &mut self,
+        now: Timestamp,
+        limit: usize,
+        mut before_send: F,
+    ) -> Result<DeliveryBatchReport, DeliveryWorkerError>
+    where
+        F: FnMut(&Message),
+    {
         let records = self.store.claim_due(now, limit)?;
         let mut report = DeliveryBatchReport { claimed: records.len(), ..Default::default() };
         for record in records {
             let message_id = record.message.id();
             let attempts =
                 record.attempts.checked_add(1).ok_or(DeliveryWorkerError::AttemptOverflow)?;
+            before_send(&record.message);
             match self.transport.send(&record.message) {
                 Ok(DeliveryAck::Accepted | DeliveryAck::Duplicate) => {
                     self.store.complete(message_id)?;
                     report.completed += 1;
+                    report.completed_message_ids.push(message_id);
                 }
                 Err(_) => match self.retry_policy.delay_after(attempts) {
                     Some(delay) => {
@@ -338,6 +371,7 @@ where
                     None => {
                         self.store.dead_letter(message_id)?;
                         report.dead_lettered += 1;
+                        report.dead_lettered_message_ids.push(message_id);
                     }
                 },
             }

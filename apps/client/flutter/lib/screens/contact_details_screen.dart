@@ -166,7 +166,7 @@ class ContactDetailsContent extends StatelessWidget {
             subtitle: Text(
               contact.typedStatus == ContactStatus.blocked
                   ? context.strings.blocked
-                  : context.strings.directTorContact,
+                  : 'Direct ${contact.transportProvider.toUpperCase()} contact',
             ),
             trailing: ConnectionIndicator(
               state: contact.connectionState,
@@ -211,10 +211,21 @@ class ContactDetailsContent extends StatelessWidget {
               label: context.strings.quality,
               value: contact.peerHealth.quality,
             ),
+            if (contact.onionAddress != null && contact.onionAddress!.isNotEmpty)
+              _ValueRow(
+                label: context.strings.onionAddress,
+                value: contact.onionAddress!,
+                selectable: true,
+              ),
             _ValueRow(
-              label: context.strings.onionAddress,
-              value: contact.onionAddress,
-              selectable: true,
+              label: context.strings.transport,
+              value: contact.transportProvider.toUpperCase(),
+            ),
+            _ValueRow(
+              label: context.strings.providerEndpoint,
+              value: contact.endpointAvailable
+                  ? context.strings.providerEndpointAvailable
+                  : context.strings.providerEndpointUnavailable,
             ),
             if (onOpenConnectionDetails != null)
               Align(
@@ -328,14 +339,19 @@ class IdentityDetailsScreen extends StatelessWidget {
                   snapshot.identity?.displayName ?? context.strings.unavailable,
             ),
             _ValueRow(
-              label: context.strings.torState,
-              value: snapshot.torState,
+              label: 'Communication provider',
+              value: snapshot.communicationProvider.toUpperCase(),
             ),
             _ValueRow(
-              label: context.strings.onionAddress,
-              value: snapshot.onionAddress ?? context.strings.unavailable,
-              selectable: true,
+              label: 'Communication state',
+              value: snapshot.communicationState,
             ),
+            if (snapshot.endpointSummary != null)
+              _ValueRow(
+                label: 'Endpoint',
+                value: snapshot.endpointSummary!,
+                selectable: true,
+              ),
           ],
         ),
       ],

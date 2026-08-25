@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use torca_relay_protocol::{RelayRequest, RelayResponse};
 
+use crate::RelayTransportError;
 use crate::stream::{before_send, exchange_stream};
-use crate::{RelayTransport, RelayTransportError};
 
 pub struct TcpRelayTransport {
     endpoint: SocketAddr,
@@ -26,7 +26,7 @@ impl TcpRelayTransport {
     }
 }
 
-impl RelayTransport for TcpRelayTransport {
+impl crate::PairingServiceTransport for TcpRelayTransport {
     fn invalidate(&mut self) {
         self.disconnect();
     }

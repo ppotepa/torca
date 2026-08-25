@@ -98,6 +98,7 @@ fn bridge_command(
             session_id_hex: generated()?,
             code: text("code")?,
             ticket: payload.get("ticket").and_then(Value::as_str).map(str::to_owned),
+            bootstrap_json: payload.get("bootstrap").filter(|value| value.is_object()).map(Value::to_string),
         }),
         "pairing.approve" => {
             Ok(BridgeCommand::ApprovePairing { session_id_hex: text("sessionIdHex")? })

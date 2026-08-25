@@ -70,6 +70,7 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_avatar_catalog_version,
                     values.remote_avatar_hash,
                     values.remote_avatar_payload,
+                    values.remote_transport_endpoints_json,
                 ],
             )
             .map_err(|error| {
@@ -116,6 +117,7 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_avatar_catalog_version,
                     values.remote_avatar_hash,
                     values.remote_avatar_payload,
+                    values.remote_transport_endpoints_json,
                 ],
             )
             .map_err(|_| PairingError::Storage)?;
@@ -162,6 +164,7 @@ struct Encoded {
     remote_avatar_catalog_version: Option<String>,
     remote_avatar_hash: Option<Vec<u8>>,
     remote_avatar_payload: Option<Vec<u8>>,
+    remote_transport_endpoints_json: Option<String>,
 }
 
 fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
@@ -180,6 +183,7 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_avatar_catalog_version,
         remote_avatar_hash,
         remote_avatar_payload,
+        remote_transport_endpoints_json,
     ) = if let Some(proposal) = proposal {
         let key_algorithm = match proposal.public_identity.key().algorithm() {
             KeyAlgorithm::Ed25519 => 0,
@@ -215,9 +219,13 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
             avatar.2,
             avatar.3,
             avatar.4,
+            Some(
+                serde_json::to_string(proposal.route.provider_endpoints())
+                    .map_err(|_| PairingError::Storage)?,
+            ),
         )
     } else {
-        (None, None, None, None, None, None, None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None)
     };
     Ok(Encoded {
         id: session.id().to_opaque().into_bytes().to_vec(),
@@ -240,6 +248,7 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_avatar_catalog_version,
         remote_avatar_hash,
         remote_avatar_payload,
+        remote_transport_endpoints_json,
     })
 }
 
@@ -267,6 +276,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
         row.get::<_, Option<String>>(17)?,
         row.get::<_, Option<Vec<u8>>>(18)?,
         row.get::<_, Option<Vec<u8>>>(19)?,
+        row.get::<_, Option<String>>(20)?,
     ) {
         (
             Some(identity_id),
@@ -282,6 +292,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
             avatar_catalog_version,
             avatar_hash,
             avatar_payload,
+            transport_endpoints_json,
         ) => {
             let algorithm = match algorithm {
                 0 => KeyAlgorithm::Ed25519,
@@ -297,8 +308,21 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
                 .map_err(|_| rusqlite::Error::InvalidQuery)?,
                 u32::try_from(generation).map_err(|_| rusqlite::Error::InvalidQuery)?,
             );
-            let route = ContactRoute::new(onion, OpaqueId::from_bytes(blob16(capability)?))
-                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let capability_id = OpaqueId::from_bytes(blob16(capability)?);
+            let route = match transport_endpoints_json
+                .as_deref()
+                .and_then(|json| {
+                    serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(json).ok()
+                })
+                .and_then(|endpoints| endpoints.into_iter().next())
+            {
+                Some((provider, endpoint)) => {
+                    ContactRoute::with_provider_endpoint(onion, capability_id, provider, endpoint)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?
+                }
+                None => ContactRoute::new(onion, capability_id)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
+            };
             let avatar = match (
                 avatar_schema,
                 avatar_generator_version,
@@ -341,7 +365,9 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
                 avatar,
             })
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None) => None,
+        (None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
+            None
+        }
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     PairingSession::restore(
@@ -440,8 +466,13 @@ mod tests {
                 2,
             ),
             display_name: "Remote Alice".to_owned(),
-            route: ContactRoute::new("a".repeat(56) + ".onion", OpaqueId::from_u128(13))
-                .expect("route"),
+            route: ContactRoute::with_provider_endpoint(
+                "",
+                OpaqueId::from_u128(13),
+                "iroh",
+                b"endpoint-address".to_vec(),
+            )
+            .expect("route"),
             avatar: None,
         };
         let session = PairingSession::joiner(
@@ -455,7 +486,11 @@ mod tests {
             repository.insert(session.clone()).expect("insert");
         }
         let repository = SqlCipherPairingRepository::open(&path, &key).expect("reopen");
-        assert_eq!(repository.get(session.id()).expect("load"), Some(session));
+        let loaded = repository.get(session.id()).expect("load").expect("session");
+        assert_eq!(
+            loaded.remote_proposal().and_then(|proposal| proposal.route.provider_endpoint("iroh")),
+            Some(b"endpoint-address".as_slice())
+        );
         let _ = std::fs::remove_file(path);
     }
 

@@ -116,6 +116,7 @@ fn pending_pairing_operation_survives_file_backed_restart() {
                 kind: PendingOperationKind::JoinPairing {
                     code: "ABC123".into(),
                     ticket: Some([9; 16]),
+                    bootstrap: None,
                 },
                 attempts: 0,
                 next_attempt_at_ms: 10,

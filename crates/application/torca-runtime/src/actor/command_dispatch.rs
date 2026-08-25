@@ -1,14 +1,14 @@
 // Responsibility: runtime command dispatch into engine and narrow communication ports.
 
-fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
+fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>(
     command: RuntimeCommand,
     engine: &EngineHandle,
     pairing: &mut P,
     communication: &mut C,
-    tor: &T,
+    communication_lifecycle: &T,
     probes: &ProbeSupervisor,
-    relay_info: Option<&Arc<dyn RelayProbe>>,
-    relay_health: Option<&RelayHealthHandle>,
+    rendezvous_info: Option<&Arc<dyn RendezvousProbe>>,
+    rendezvous_health: Option<&RendezvousHealthHandle>,
     transport_activity: &mut TransportActivityLedger,
     connectivity: &ConnectivityObserver,
     policy: &mut RuntimeGovernor,
@@ -21,15 +21,15 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     match command {
         RuntimeCommand::CreatePairing(id, r) => {
             acquire_pairing_lease(policy, id);
-            wake_relay(relay_health);
+            wake_rendezvous(rendezvous_health);
             let result = pairing.create(id, now);
             record_pairing_result(&result, "CREATE", diagnostics, sequence, now);
             let _ = r.send(result);
         }
-        RuntimeCommand::JoinPairing(id, code, ticket, r) => {
+        RuntimeCommand::JoinPairing(id, code, ticket, bootstrap, r) => {
             acquire_pairing_lease(policy, id);
-            wake_relay(relay_health);
-            let result = pairing.join(id, code, ticket, now);
+            wake_rendezvous(rendezvous_health);
+            let result = pairing.join(id, code, ticket, bootstrap, now);
             if result.is_ok() {
                 communication.prime_connections();
             }
@@ -38,7 +38,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         }
         RuntimeCommand::ApprovePairing(id, r) => {
             acquire_pairing_lease(policy, id);
-            wake_relay(relay_health);
+            wake_rendezvous(rendezvous_health);
             let result = pairing.approve(id, now);
             if result.is_ok() {
                 policy.release_lease(pairing_lease_owner(id));
@@ -48,7 +48,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(result);
         }
         RuntimeCommand::RejectPairing(id, r) => {
-            wake_relay(relay_health);
+            wake_rendezvous(rendezvous_health);
             let result = pairing.reject(id);
             if result.is_ok() {
                 policy.release_lease(pairing_lease_owner(id));
@@ -57,7 +57,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(result);
         }
         RuntimeCommand::CancelPairing(id, r) => {
-            wake_relay(relay_health);
+            wake_rendezvous(rendezvous_health);
             let result = pairing.cancel(id);
             if result.is_ok() {
                 policy.release_lease(pairing_lease_owner(id));
@@ -93,7 +93,11 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             let _ = r.send(communication.clear_conversation_history(id));
         }
         RuntimeCommand::MarkConversationRead(id, r) => {
-            let _ = r.send(communication.mark_conversation_read(id, now));
+            let result = communication.mark_conversation_read(id, now);
+            if result.is_ok() {
+                communication.wake_delivery();
+            }
+            let _ = r.send(result);
         }
         RuntimeCommand::QueueAttachment(request_value, r) => {
             let message_id = MessageId::from_opaque(request_value.message_id);
@@ -116,6 +120,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 Ok(())
             });
             if result.is_ok() {
+                communication.wake_delivery();
                 acquire_attachment_lease(
                     policy,
                     active_attachment_leases,
@@ -127,8 +132,27 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             let _ = r.send(result);
         }
+        RuntimeCommand::QueueOutbound(message_id, command_id, at, r) => {
+            let result = engine
+                .message(message_id)
+                .map_err(RuntimeDriverError::from)
+                .and_then(|message| {
+                    let Some(message) = message else {
+                        return Err(RuntimeDriverError::Communication);
+                    };
+                    communication.queue_outbound(message, command_id, at)
+                });
+            if result.is_ok() {
+                communication.wake_delivery();
+            }
+            let _ = r.send(result);
+        }
         RuntimeCommand::QueueReaction(contact_id, reaction, at, r) => {
-            let _ = r.send(communication.queue_reaction(contact_id, reaction, at));
+            let result = communication.queue_reaction(contact_id, reaction, at);
+            if result.is_ok() {
+                communication.wake_delivery();
+            }
+            let _ = r.send(result);
         }
         RuntimeCommand::RetryAttachment(id, r) => {
             let result = communication.retry_attachment(id, now);
@@ -136,7 +160,8 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 acquire_attachment_lease(policy, active_attachment_leases, id);
                 if let Ok(views) = communication.attachment_snapshot()
                     && let Some(view) = views.iter().find(|view| view.id == id)
-                    && let Ok(Some(contact_id)) = engine.message_contact(MessageId::from_opaque(view.message_id))
+                    && let Ok(Some(contact_id)) =
+                        engine.message_contact(MessageId::from_opaque(view.message_id))
                 {
                     active_attachment_contacts.insert(id, contact_id);
                 }
@@ -189,8 +214,16 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 let contact_names = communication.contact_names()?;
                 let contact_verifications = communication.contact_verifications()?;
                 Ok(NetworkSnapshot {
-                    tor: tor.state(),
-                    onion_address: tor.onion_address(),
+                    communication: communication_lifecycle.commissioning(),
+                    tor: communication_lifecycle.state(),
+                    // Preserve the legacy onion field only for Tor.  Direct
+                    // providers expose their route through the generic
+                    // commissioning endpoint and must never be serialized as
+                    // an onion address.
+                    onion_address: (communication_lifecycle.provider()
+                        == torca_transport_api::TransportKind::Tor)
+                        .then(|| communication_lifecycle.local_endpoint_summary())
+                        .flatten(),
                     peers,
                     peer_health,
                     contact_names,
@@ -198,7 +231,8 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     peer_activity: transport_activity.peers.clone(),
                     probes: probes.latest(),
                     connectivity: connectivity.snapshot(),
-                    relay_info: relay_info.and_then(|source| source.service_info()),
+                    rendezvous_info: rendezvous_info.and_then(|source| source.service_info()),
+                    relay_info: rendezvous_info.and_then(|source| source.service_info()),
                 })
             })();
             let _ = r.send(result);
@@ -225,8 +259,8 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
     }
 }
 
-fn wake_relay(relay_health: Option<&RelayHealthHandle>) {
-    if let Some(relay_health) = relay_health {
-        relay_health.wake();
+fn wake_rendezvous(rendezvous_health: Option<&RendezvousHealthHandle>) {
+    if let Some(rendezvous_health) = rendezvous_health {
+        rendezvous_health.wake();
     }
 }

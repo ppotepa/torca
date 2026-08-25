@@ -1,13 +1,13 @@
 use torca_pairing::PairingCode;
 use torca_pairing_coordinator::{
-    PairingCoordinatorError, PairingRelayDelivery, PairingRendezvousPort, PairingSideToken,
+    PairingCoordinatorError, PairingSessionDelivery, PairingSessionServicePort, PairingSideToken,
     PairingSlotCapability, PairingSlotId,
 };
 use torca_relay_protocol::{RelayCode, RelaySequence, RelaySideToken, RelaySlotCapability};
 
-use crate::{RelayTransport, RendezvousClient};
+use crate::RendezvousClient;
 
-impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
+impl<T: crate::PairingServiceTransport> PairingSessionServicePort for RendezvousClient<T> {
     fn network_changed(&mut self) {
         RendezvousClient::network_changed(self);
     }
@@ -32,7 +32,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
             ticket,
         )
         .map(|(slot, expires_at)| (PairingSlotId(slot.0), expires_at))
-        .map_err(|_| PairingCoordinatorError::Rendezvous)
+        .map_err(|_| PairingCoordinatorError::SessionService)
     }
 
     fn join(
@@ -41,6 +41,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         joiner_blob: Vec<u8>,
         joiner_token: PairingSideToken,
         ticket: Option<[u8; 16]>,
+        _bootstrap: Option<&torca_pairing_protocol::PairingBootstrapDescriptor>,
     ) -> Result<(PairingSlotId, torca_foundation::Timestamp, Vec<u8>), PairingCoordinatorError>
     {
         let relay_code =
@@ -53,7 +54,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
             ticket,
         )
         .map(|(slot, expires_at, creator_blob)| (PairingSlotId(slot.0), expires_at, creator_blob))
-        .map_err(|_| PairingCoordinatorError::Rendezvous)
+        .map_err(|_| PairingCoordinatorError::SessionService)
     }
 
     fn push(
@@ -70,7 +71,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
             RelaySideToken(token.0),
             blob,
         )
-        .map_err(|_| PairingCoordinatorError::Rendezvous)
+        .map_err(|_| PairingCoordinatorError::SessionService)
     }
 
     fn poll(
@@ -78,7 +79,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         slot: PairingSlotId,
         token: PairingSideToken,
         after: u64,
-    ) -> Result<Vec<PairingRelayDelivery>, PairingCoordinatorError> {
+    ) -> Result<Vec<PairingSessionDelivery>, PairingCoordinatorError> {
         RendezvousClient::poll(
             self,
             torca_relay_protocol::RelaySlotId(slot.0),
@@ -88,13 +89,13 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
         .map(|deliveries| {
             deliveries
                 .into_iter()
-                .map(|delivery| PairingRelayDelivery {
+                .map(|delivery| PairingSessionDelivery {
                     sequence: delivery.sequence.0,
                     blob: delivery.blob,
                 })
                 .collect()
         })
-        .map_err(|_| PairingCoordinatorError::Rendezvous)
+        .map_err(|_| PairingCoordinatorError::SessionService)
     }
 
     fn ack(
@@ -109,7 +110,7 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
             RelaySideToken(token.0),
             RelaySequence(up_to),
         )
-        .map_err(|_| PairingCoordinatorError::Rendezvous)
+        .map_err(|_| PairingCoordinatorError::SessionService)
     }
 
     fn close(
@@ -122,6 +123,6 @@ impl<T: RelayTransport> PairingRendezvousPort for RendezvousClient<T> {
             torca_relay_protocol::RelaySlotId(slot.0),
             RelaySlotCapability(capability.0),
         )
-        .map_err(|_| PairingCoordinatorError::Rendezvous)
+        .map_err(|_| PairingCoordinatorError::SessionService)
     }
 }

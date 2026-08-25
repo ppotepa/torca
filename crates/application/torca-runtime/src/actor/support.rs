@@ -80,7 +80,7 @@ fn record_pairing_result<T>(
     let (state, suffix) = match result {
         Ok(_) => (HealthState::Ready, "ACCEPTED"),
         Err(RuntimeDriverError::Pending) => (HealthState::Degraded, "QUEUED"),
-        Err(RuntimeDriverError::Communication | RuntimeDriverError::Tor) => {
+        Err(RuntimeDriverError::Communication) => {
             (HealthState::Degraded, "RETRYING")
         }
         Err(_) => (HealthState::Failed, "FAILED"),
@@ -89,32 +89,34 @@ fn record_pairing_result<T>(
     record(diagnostics, sequence, now, Component::Engine, state, &code);
 }
 
-const fn map_health(state: TorState) -> HealthState {
+const fn map_communication_health(state: CommunicationState) -> HealthState {
     match state {
-        TorState::Stopped => HealthState::Stopped,
-        TorState::Starting => HealthState::Starting,
-        TorState::Ready => HealthState::Ready,
-        TorState::Degraded => HealthState::Degraded,
-        TorState::Failed => HealthState::Failed,
+        CommunicationState::Stopped => HealthState::Stopped,
+        CommunicationState::Starting => HealthState::Starting,
+        CommunicationState::Ready => HealthState::Ready,
+        CommunicationState::Degraded => HealthState::Degraded,
+        CommunicationState::Failed => HealthState::Failed,
     }
 }
-const fn map_onion_health(state: OnionServiceState) -> HealthState {
+const fn map_incoming_reachability_health(state: IncomingReachabilityState) -> HealthState {
     match state {
-        OnionServiceState::Reachable => HealthState::Ready,
-        OnionServiceState::Degraded => HealthState::Degraded,
-        OnionServiceState::Failed => HealthState::Failed,
-        OnionServiceState::Stopped => HealthState::Stopped,
-        OnionServiceState::Unknown | OnionServiceState::Publishing => HealthState::Starting,
+        IncomingReachabilityState::Reachable => HealthState::Ready,
+        IncomingReachabilityState::Degraded => HealthState::Degraded,
+        IncomingReachabilityState::Failed => HealthState::Failed,
+        IncomingReachabilityState::Stopped => HealthState::Stopped,
+        IncomingReachabilityState::Unknown | IncomingReachabilityState::Publishing => {
+            HealthState::Starting
+        }
     }
 }
-const fn onion_event_code(state: OnionServiceState) -> &'static str {
+const fn incoming_reachability_event_code(state: IncomingReachabilityState) -> &'static str {
     match state {
-        OnionServiceState::Unknown => "ONION_UNKNOWN",
-        OnionServiceState::Publishing => "ONION_PUBLISHING",
-        OnionServiceState::Reachable => "ONION_REACHABLE",
-        OnionServiceState::Degraded => "ONION_DEGRADED",
-        OnionServiceState::Failed => "ONION_FAILED",
-        OnionServiceState::Stopped => "ONION_STOPPED",
+        IncomingReachabilityState::Unknown => "INCOMING_REACHABILITY_UNKNOWN",
+        IncomingReachabilityState::Publishing => "INCOMING_REACHABILITY_PENDING",
+        IncomingReachabilityState::Reachable => "INCOMING_REACHABILITY_READY",
+        IncomingReachabilityState::Degraded => "INCOMING_REACHABILITY_DEGRADED",
+        IncomingReachabilityState::Failed => "INCOMING_REACHABILITY_FAILED",
+        IncomingReachabilityState::Stopped => "INCOMING_REACHABILITY_STOPPED",
     }
 }
 const fn map_peer_health(state: PeerConnectionStatus) -> HealthState {
@@ -211,7 +213,7 @@ mod tests {
         scheduler.replace_deadlines(
             now,
             [
-                (RuntimeWakeSource::TorDeadline, Some(Duration::from_secs(5))),
+                (RuntimeWakeSource::ProviderDeadline, Some(Duration::from_secs(5))),
                 (RuntimeWakeSource::PairingDeadline, Some(Duration::from_secs(3))),
                 (RuntimeWakeSource::LeaseExpiry, Some(Duration::from_secs(2))),
             ],

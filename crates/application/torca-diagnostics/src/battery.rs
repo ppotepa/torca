@@ -16,15 +16,15 @@ pub enum BatteryMetric {
     SchedulerWakeup,
     SnapshotBuild,
     PeerProbe,
-    RelayProbe,
+    RendezvousProbe,
     FfiWake,
     DbRead,
     DbWrite,
     BlobWrite,
     ProjectionEvent,
     RadioWake,
-    TorDial,
-    RelayDial,
+    ProviderDial,
+    RendezvousDial,
     PeerDial,
     Handshake,
     TxFrame,
@@ -40,15 +40,15 @@ pub struct BatterySnapshot {
     pub scheduler_wakeups: u64,
     pub snapshot_builds: u64,
     pub peer_probes: u64,
-    pub relay_probes: u64,
+    pub rendezvous_probes: u64,
     pub ffi_wakes: u64,
     pub db_reads: u64,
     pub db_writes: u64,
     pub blob_writes: u64,
     pub projection_events: u64,
     pub radio_wakeups: u64,
-    pub tor_dials: u64,
-    pub relay_dials: u64,
+    pub provider_dials: u64,
+    pub rendezvous_dials: u64,
     pub peer_dials: u64,
     pub handshakes: u64,
     pub tx_frames: u64,
@@ -64,15 +64,15 @@ impl BatterySnapshot {
             self.scheduler_wakeups,
             self.snapshot_builds,
             self.peer_probes,
-            self.relay_probes,
+            self.rendezvous_probes,
             self.ffi_wakes,
             self.db_reads,
             self.db_writes,
             self.blob_writes,
             self.projection_events,
             self.radio_wakeups,
-            self.tor_dials,
-            self.relay_dials,
+            self.provider_dials,
+            self.rendezvous_dials,
             self.peer_dials,
             self.handshakes,
             self.tx_frames,
@@ -90,15 +90,15 @@ impl BatterySnapshot {
         self.scheduler_wakeups
             .saturating_add(self.snapshot_builds.saturating_mul(2))
             .saturating_add(self.peer_probes.saturating_mul(20))
-            .saturating_add(self.relay_probes.saturating_mul(25))
+            .saturating_add(self.rendezvous_probes.saturating_mul(25))
             .saturating_add(self.ffi_wakes)
             .saturating_add(self.db_reads.saturating_mul(3))
             .saturating_add(self.db_writes.saturating_mul(4))
             .saturating_add(self.blob_writes.saturating_mul(5))
             .saturating_add(self.projection_events.saturating_mul(2))
             .saturating_add(self.radio_wakeups.saturating_mul(20))
-            .saturating_add(self.tor_dials.saturating_mul(100))
-            .saturating_add(self.relay_dials.saturating_mul(25))
+            .saturating_add(self.provider_dials.saturating_mul(100))
+            .saturating_add(self.rendezvous_dials.saturating_mul(25))
             .saturating_add(self.peer_dials.saturating_mul(50))
             .saturating_add(self.handshakes.saturating_mul(20))
             .saturating_add(self.tx_frames.saturating_mul(2))
@@ -260,15 +260,15 @@ fn increment(snapshot: &mut BatterySnapshot, metric: BatteryMetric, amount: u64)
         BatteryMetric::SchedulerWakeup => &mut snapshot.scheduler_wakeups,
         BatteryMetric::SnapshotBuild => &mut snapshot.snapshot_builds,
         BatteryMetric::PeerProbe => &mut snapshot.peer_probes,
-        BatteryMetric::RelayProbe => &mut snapshot.relay_probes,
+        BatteryMetric::RendezvousProbe => &mut snapshot.rendezvous_probes,
         BatteryMetric::FfiWake => &mut snapshot.ffi_wakes,
         BatteryMetric::DbRead => &mut snapshot.db_reads,
         BatteryMetric::DbWrite => &mut snapshot.db_writes,
         BatteryMetric::BlobWrite => &mut snapshot.blob_writes,
         BatteryMetric::ProjectionEvent => &mut snapshot.projection_events,
         BatteryMetric::RadioWake => &mut snapshot.radio_wakeups,
-        BatteryMetric::TorDial => &mut snapshot.tor_dials,
-        BatteryMetric::RelayDial => &mut snapshot.relay_dials,
+        BatteryMetric::ProviderDial => &mut snapshot.provider_dials,
+        BatteryMetric::RendezvousDial => &mut snapshot.rendezvous_dials,
         BatteryMetric::PeerDial => &mut snapshot.peer_dials,
         BatteryMetric::Handshake => &mut snapshot.handshakes,
         BatteryMetric::TxFrame => &mut snapshot.tx_frames,

@@ -7,7 +7,7 @@ use torca_attachments::AttachmentId;
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{CommandId, OpaqueId, Timestamp};
 use torca_messaging::Message;
 use torca_runtime::{
     AttachmentSendRequest, AttachmentView, ContactVerificationSnapshot, PeerActivityEvidence,
@@ -42,6 +42,7 @@ pub trait PeerLinkRuntime: Send {
     /// just created or restored. This is intentionally event-driven and is
     /// not a permanent keep-alive policy.
     fn prime_connections(&mut self) {}
+    fn prime_contact(&mut self, _contact_id: ContactId) {}
 
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
 
@@ -99,9 +100,23 @@ pub trait PeerLinkRuntime: Send {
 }
 
 pub trait TextDeliveryRuntime: Send {
+    fn queue_outbound(
+        &mut self,
+        _message: Message,
+        _command_id: CommandId,
+        _next_attempt_at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        Err(CommunicationError::Text)
+    }
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
+
+    /// Marks the durable outbox as explicitly due.  A command wake must be
+    /// able to kick a worker whose previous run reported `None` for its next
+    /// deadline; otherwise a newly queued message can remain invisible until
+    /// an unrelated timer or lifecycle event occurs.
+    fn wake(&mut self) {}
 
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None
@@ -116,6 +131,8 @@ pub trait ControlDeliveryRuntime: Send {
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError>;
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError>;
+
+    fn wake(&mut self) {}
 
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None

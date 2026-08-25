@@ -1,0 +1,18 @@
+[package]
+name = "torca-transport-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+
+[lints]
+workspace = true

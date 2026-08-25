@@ -17,7 +17,7 @@ class AdaptiveAppShell extends StatefulWidget {
     this.actions = const <Widget>[],
     this.floatingActionButton,
     this.buildLabel = 'dev',
-    this.relayLabel = 'rel —',
+    this.serviceLabel = 'svc —',
     this.showRuntimeStatus = true,
     this.onBuildInfo,
     super.key,
@@ -31,7 +31,7 @@ class AdaptiveAppShell extends StatefulWidget {
   final List<Widget> actions;
   final Widget? floatingActionButton;
   final String buildLabel;
-  final String relayLabel;
+  final String serviceLabel;
   /// Hides the global monitor when the active surface already renders the
   /// same monitor in its contextual header (for example a conversation).
   final bool showRuntimeStatus;
@@ -78,7 +78,7 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
               child: _BuildFooter(
                 expanded: railExtended,
                 buildLabel: widget.buildLabel,
-                relayLabel: widget.relayLabel,
+                serviceLabel: widget.serviceLabel,
                 onTap: widget.onBuildInfo,
               ),
             ),
@@ -111,7 +111,7 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
                     child: InkWell(
                       onTap: widget.onBuildInfo,
                       child: Text(
-                        'build ${widget.buildLabel}  ·  ${widget.relayLabel}',
+                        'build ${widget.buildLabel}  ·  ${widget.serviceLabel}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.labelSmall,
@@ -157,18 +157,18 @@ class _BuildFooter extends StatelessWidget {
   const _BuildFooter({
     required this.expanded,
     required this.buildLabel,
-    required this.relayLabel,
+    required this.serviceLabel,
     this.onTap,
   });
 
   final bool expanded;
   final String buildLabel;
-  final String relayLabel;
+  final String serviceLabel;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => Tooltip(
-    message: context.strings.buildTooltip(buildLabel, relayLabel),
+    message: context.strings.buildTooltip(buildLabel, serviceLabel),
     child: InkWell(
       onTap: onTap,
       child: expanded
@@ -182,7 +182,7 @@ class _BuildFooter extends StatelessWidget {
                   context.strings.buildLabel(buildLabel),
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
-                Text(relayLabel, style: Theme.of(context).textTheme.labelSmall),
+                Text(serviceLabel, style: Theme.of(context).textTheme.labelSmall),
               ],
             )
           : Icon(context.torcaIcons.identity, size: 22),

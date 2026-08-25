@@ -1,15 +1,22 @@
 use std::collections::BTreeMap;
 
 use torca_foundation::OpaqueId;
+use torca_pairing_protocol::PairingBootstrapDescriptor;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PendingOperationKind {
     CreatePairing,
-    JoinPairing { code: String, ticket: Option<[u8; 16]> },
+    JoinPairing {
+        code: String,
+        ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
+    },
     ApprovePairing,
     RejectPairing,
     CancelPairing,
-    RenameContact { display_name: String },
+    RenameContact {
+        display_name: String,
+    },
     VerifyContact,
     ResetContactVerification,
     BlockContact,

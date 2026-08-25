@@ -52,6 +52,14 @@ android {
     }
 }
 
+// The soak agent is intentionally a development/profile-only artifact. A
+// release APK must never contain the test control plane.
+androidComponents {
+    beforeVariants(selector().withFlavor("environment" to "soak")) { variant ->
+        if (variant.buildType == "release") variant.enable = false
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

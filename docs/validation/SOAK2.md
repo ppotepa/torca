@@ -1,7 +1,9 @@
-# SOAK2 cockpit and balanced battery scenario
+# SOAK2 (legacy name)
 
-SOAK2 is the canonical end-to-end soak workflow. It deliberately separates
-preflight from measurement:
+The former SOAK2 name is retained only for links from older runbooks. The
+canonical workflow is now **SOAK1** and is documented in
+[`docs/validation/SOAK1.md`](SOAK1.md). It deliberately separates preflight
+from measurement:
 
 ```text
 bootstrap/build → relay warm-up → Android deploy/permission → bot readiness
@@ -11,7 +13,7 @@ bootstrap/build → relay warm-up → Android deploy/permission → bot readines
 
 Only the Ratatui cockpit is shown during an interactive run. Cargo, Docker,
 ADB and linker output is routed to `Logs`; the bootstrap build is kept at
-`.torca/soak/bootstrap/latest.log`. Use:
+`.torca/soak/bootstrap/latest.log`. Use the canonical entrypoint:
 
 ```powershell
 .\scripts\soak.ps1 cockpit
@@ -38,7 +40,13 @@ roots, and exposes only a loopback/token-authenticated JSON control surface.
 The optional compose overlay is `infra/docker/compose.soak.yml`; it does not
 change the relay container or store messages on the relay.
 
-## Acceptance criteria
+## Legacy compatibility
+
+The implementation and acceptance criteria moved to SOAK1. Existing
+`torca-battery-soak-tui` invocations remain a compatibility alias, but new
+automation must use `torca-soak` or the PowerShell bootstrap.
+
+The SOAK1 acceptance criteria are:
 
 1. No build/compiler/Docker trace appears outside cockpit Logs.
 2. `measurement_started` is recorded after all setup and before workload.
@@ -54,7 +62,3 @@ Before `measurement_started`, the runner must prove that Android exposes the
 expected five contacts and five conversations. Build, installation, Tor
 warm-up, pairing and any Android permission prompt are setup costs and are
 deliberately excluded from the battery window.
-
-The old `torca-battery-soak-tui` name remains a compatibility alias over the
-same implementation. New documentation and automation use `torca-soak` or the
-PowerShell bootstrap.

@@ -17,6 +17,7 @@ use torca_radio_coordinator::{
     SharedRadioCoordinator,
 };
 use torca_radio_protocol::{RadioControlCodec, RadioControlFrame};
+use torca_transport_api::TransportKind;
 
 use crate::SharedPeerCrypto;
 use crate::adapters::{load_contact, load_credential, open, seal};
@@ -254,11 +255,17 @@ pub struct RelationshipRadioMedia<R, C, P> {
     relationships: R,
     crypto: SharedPeerCrypto<C, P>,
     local_identity: OpaqueId,
+    provider: TransportKind,
 }
 
 impl<R, C, P> RelationshipRadioMedia<R, C, P> {
-    pub fn new(relationships: R, crypto: SharedPeerCrypto<C, P>, local_identity: OpaqueId) -> Self {
-        Self { relationships, crypto, local_identity }
+    pub fn new(
+        relationships: R,
+        crypto: SharedPeerCrypto<C, P>,
+        local_identity: OpaqueId,
+        provider: TransportKind,
+    ) -> Self {
+        Self { relationships, crypto, local_identity, provider }
     }
 }
 
@@ -274,10 +281,15 @@ where
             .ok()
             .flatten()
             .filter(|contact| contact.status() == ContactStatus::Active)
-            .map(|contact| RadioMediaRoute {
-                onion_address: contact.route().onion_address().to_owned(),
-                local_identity: self.local_identity,
-                remote_identity: contact.remote_identity().identity_id().to_opaque(),
+            .and_then(|contact| {
+                let provider_name = self.provider.wire_value().to_owned();
+                let endpoint = contact.route().provider_endpoint(&provider_name)?.to_vec();
+                Some(RadioMediaRoute {
+                    provider: provider_name,
+                    endpoint,
+                    local_identity: self.local_identity,
+                    remote_identity: contact.remote_identity().identity_id().to_opaque(),
+                })
             })
     }
 

@@ -1,20 +1,23 @@
+//! Tor/Arti adapter for the provider-neutral pairing rendezvous client.
+//!
+//! The generic rendezvous client owns relay protocol semantics. This crate
+//! owns only opening its byte stream through the selected Tor provider.
+
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use torca_relay_protocol::{RelayInfo, RelayRequest, RelayResponse};
+use torca_rendezvous_client::{
+    RelayTransport, RelayTransportError, RelayTransportFailureKind, exchange_tcp_stream,
+};
 use torca_tor::TorServiceHandle;
 
-use crate::stream::exchange_stream;
-use crate::{RelayTransport, RelayTransportError, RelayTransportFailureKind};
-
-// Building an onion circuit is materially slower than a direct TCP connect,
-// especially immediately after a cold client bootstrap. Keep this bounded,
-// but do not classify an otherwise healthy relay as unavailable at the old
-// eight-second boundary.
 const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Relay transport whose TCP stream is opened through the in-process Arti client.
+/// Relay transport whose TCP stream is opened through the in-process Arti
+/// client. It belongs to the Tor provider and is deliberately absent from the
+/// generic rendezvous crate.
 pub struct TorRelayTransport {
     client: TorServiceHandle,
     hostname: String,
@@ -23,8 +26,7 @@ pub struct TorRelayTransport {
 }
 
 /// Cloneable access to one durable Tor relay stream. Pairing operations and
-/// the application-owned health worker share this transport, so health is an
-/// observation of the real operation path rather than a second onion dial.
+/// the health worker share this transport, so health samples the real path.
 #[derive(Clone)]
 pub struct SharedTorRelayTransport {
     inner: Arc<Mutex<TorRelayTransport>>,
@@ -35,23 +37,11 @@ impl SharedTorRelayTransport {
         Self { inner: Arc::new(Mutex::new(TorRelayTransport::new(client, hostname, port))) }
     }
 
-    /// Sends a bounded health request through the same serialized connection
-    /// owner used by pairing. A fresh profile has no stream yet, so the first
-    /// health request is also allowed to establish it.
     pub fn check_health(&self, timeout: Duration) -> Result<(), RelayTransportError> {
         self.relay_info(timeout).map(|_| ())
     }
 
-    /// Non-blocking-with-respect-to-ownership health/info sample for the
-    /// background supervisor. It never waits behind a foreground exchange,
-    /// but the owner that acquires an idle disconnected transport performs the
-    /// initial bounded dial. Without that first dial a fresh profile could
-    /// remain disconnected until a user operation tried to use the relay.
     pub fn try_relay_info(&self, timeout: Duration) -> Result<RelayInfo, RelayTransportError> {
-        // Health is background work. It must never wait behind a user-facing
-        // pairing or delivery exchange, nor start a second reconnect while
-        // that exchange owns the transport. The next scheduled probe will
-        // observe the stream after the foreground operation completes.
         let mut transport = self.inner.try_lock().map_err(|_| RelayTransportError {
             kind: RelayTransportFailureKind::Busy,
             request_was_sent: false,
@@ -70,17 +60,12 @@ impl SharedTorRelayTransport {
                 request_was_sent: true,
             }),
             Err(error) => {
-                // A failed exchange invalidates the stream. The next health or
-                // foreground operation owns a single serialized reconnect.
                 transport.invalidate();
                 Err(error)
             }
         }
     }
 
-    /// Reads build and protocol identity through the same persistent stream
-    /// used by pairing. A successful response is also an authoritative health
-    /// sample for that connection.
     pub fn relay_info(&self, timeout: Duration) -> Result<RelayInfo, RelayTransportError> {
         let mut transport = self.inner.lock().map_err(|_| RelayTransportError {
             kind: RelayTransportFailureKind::Unavailable,
@@ -149,7 +134,7 @@ impl RelayTransport for TorRelayTransport {
             kind: RelayTransportFailureKind::Disconnected,
             request_was_sent: false,
         })?;
-        exchange_stream(stream, request, timeout)
+        exchange_tcp_stream(stream, request, timeout)
     }
 }
 

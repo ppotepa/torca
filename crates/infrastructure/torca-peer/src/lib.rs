@@ -26,34 +26,7 @@ pub enum PeerSessionState {
     Failed,
 }
 
-/// Redaction-safe concrete transport failure.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PeerTransportError(pub String);
-impl fmt::Display for PeerTransportError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-impl std::error::Error for PeerTransportError {}
-
-/// Byte transport used by an authenticated peer session.
-pub trait PeerTransport {
-    fn connect(&mut self) -> Result<(), PeerTransportError>;
-    fn send(&mut self, payload: Vec<u8>) -> Result<(), PeerTransportError>;
-    fn try_receive(&mut self) -> Result<Option<Vec<u8>>, PeerTransportError>;
-    fn receive_timeout(
-        &mut self,
-        _timeout: Duration,
-    ) -> Result<Option<Vec<u8>>, PeerTransportError> {
-        self.try_receive()
-    }
-    fn close(&mut self) -> Result<(), PeerTransportError>;
-
-    /// Installs a non-blocking wake callback for data arriving on a reader
-    /// owned by the transport. Transports without an evented reader may keep
-    /// the default no-op implementation.
-    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
-}
+pub use torca_transport_api::{PeerTransport, PeerTransportError};
 
 /// Peer-session failure.
 #[derive(Clone, Debug, Eq, PartialEq)]

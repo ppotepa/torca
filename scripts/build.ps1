@@ -6,11 +6,17 @@ param(
     [string]$Configuration = 'debug',
     [ValidateSet('Full', 'Quick', 'Skip')]
     [string]$Validation = 'Full',
+    [ValidateSet('tor', 'iroh', 'webrtc')]
+    [string]$CommunicationProvider,
     [switch]$CI
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+
+if ($PSBoundParameters.ContainsKey('CommunicationProvider')) {
+    $env:TORCA_COMMUNICATION_PROVIDER = $CommunicationProvider
+}
 
 & (Join-Path $root 'scripts/modules/Torca.SourcePolicy.ps1') -RepoRoot $root
 
@@ -45,18 +51,25 @@ foreach ($requiredCommand in @('Get-TorcaBuildId', 'Get-TorcaBuildSourceFingerpr
 if ($Target -ne 'check' -and
     ($env:TORCA_ORCHESTRATED -ne '1' -or [string]::IsNullOrWhiteSpace($env:TORCA_BUILD_ID))) {
     $release = Get-Content (Join-Path $root 'release/version.json') -Raw | ConvertFrom-Json
-    $endpoint = [string]$env:TORCA_RELAY_ENDPOINT
-    if ([string]::IsNullOrWhiteSpace($endpoint)) {
+    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    $endpoint = [string]$env:TORCA_PROVIDER_ENDPOINT
+    if ([string]::IsNullOrWhiteSpace($endpoint) -and $provider -eq 'tor') {
+        # Temporary compatibility for direct Tor builds. New provider-aware
+        # callers pass TORCA_PROVIDER_ENDPOINT instead.
+        $endpoint = [string]$env:TORCA_RELAY_ENDPOINT
+    }
+    if ([string]::IsNullOrWhiteSpace($endpoint) -and $provider -eq 'tor') {
         $endpointFile = Join-Path $root '.torca/stack/relay_endpoint.txt'
         if (Test-Path -LiteralPath $endpointFile) { $endpoint = (Get-Content $endpointFile -Raw).Trim() }
     }
-    if ([string]::IsNullOrWhiteSpace($endpoint)) {
-        throw 'Relay endpoint is required for a native build. Start the relay stack or set TORCA_RELAY_ENDPOINT.'
+    if ([string]::IsNullOrWhiteSpace($endpoint) -and $provider -eq 'tor') {
+        throw 'The selected Tor provider requires TORCA_PROVIDER_ENDPOINT. Start the managed rendezvous stack or set the provider endpoint.'
     }
-    # The native crate embeds the exact endpoint used for this build. Keep the
-    # environment value populated even when the build was invoked directly
-    # instead of through the deploy orchestrator.
-    $env:TORCA_RELAY_ENDPOINT = $endpoint
+    # The selected provider owns endpoint interpretation. The shared build
+    # path embeds only a generic provider endpoint and configuration hash.
+    $env:TORCA_COMMUNICATION_PROVIDER = $provider
+    $env:TORCA_PROVIDER_ENDPOINT = $endpoint
     $env:TORCA_BUILD_ID = Get-TorcaBuildId -RepoRoot $root -Endpoint $endpoint -Target $Target -Configuration $Configuration
     $env:TORCA_PRODUCT_VERSION = [string]$release.version
     $env:TORCA_SOURCE_FINGERPRINT = Get-TorcaBuildSourceFingerprint -RepoRoot $root
@@ -64,7 +77,7 @@ if ($Target -ne 'check' -and
     if ([string]::IsNullOrWhiteSpace($env:TORCA_SOURCE_COMMIT)) { $env:TORCA_SOURCE_COMMIT = 'working-tree' }
     $endpointSha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $env:TORCA_RELAY_ENDPOINT_HASH = [BitConverter]::ToString(
+        $env:TORCA_PROVIDER_ENDPOINT_HASH = [BitConverter]::ToString(
             $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($endpoint))
         ).Replace('-', '').ToLowerInvariant()
     } finally { $endpointSha.Dispose() }
@@ -91,6 +104,6 @@ if ($Target -ne 'check') {
     $resolvedTarget = if ($Target -eq 'auto') {
         if ($env:OS -eq 'Windows_NT') { 'windows' } else { 'android' }
     } else { $Target }
-    Write-TorcaBuildManifest -Paths $paths -Endpoint $env:TORCA_RELAY_ENDPOINT -Targets @($resolvedTarget) -Configuration $Configuration -BuildId $env:TORCA_BUILD_ID -SourceFingerprint $env:TORCA_SOURCE_FINGERPRINT
+    Write-TorcaBuildManifest -Paths $paths -Endpoint $env:TORCA_PROVIDER_ENDPOINT -Targets @($resolvedTarget) -Configuration $Configuration -BuildId $env:TORCA_BUILD_ID -SourceFingerprint $env:TORCA_SOURCE_FINGERPRINT
     Write-Host "Torca build manifest recorded: target=$resolvedTarget configuration=$Configuration" -ForegroundColor Green
 }

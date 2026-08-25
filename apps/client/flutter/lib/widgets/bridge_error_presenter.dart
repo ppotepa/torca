@@ -25,6 +25,9 @@ abstract final class BridgeErrorPresenter {
       'profile_not_ready' => strings.profileNotReady,
       'identity_changed' => strings.identityChanged,
       'pairing_expired' => strings.pairingExpired,
+      'pairing_bootstrap_missing' => strings.pairingBootstrapRequired,
+      'pairing_provider_mismatch' => strings.pairingProviderMismatch,
+      'pairing_bootstrap_invalid' => strings.invalidInput,
       'already_exists' => strings.itemAlreadyExists,
       'not_found' => strings.itemNotFound,
       'invalid_input' => strings.invalidInput,
@@ -49,6 +52,7 @@ abstract final class BridgeErrorPresenter {
   static String message(
     BridgeResultDto result, {
     String fallback = 'The operation could not be completed.',
+    String provider = 'tor',
   }) {
     if (result.ok) return '';
     final code = (result.errorCode ?? result.messageKey ?? '')
@@ -65,6 +69,11 @@ abstract final class BridgeErrorPresenter {
       'identity_changed' =>
         'Contact identity changed. Verify the new Safety Number before sending.',
       'pairing_expired' => 'The pairing invitation has expired.',
+      'pairing_bootstrap_missing' =>
+        'This provider requires the QR code or the full invitation link.',
+      'pairing_provider_mismatch' =>
+        'This invitation belongs to a different communication provider.',
+      'pairing_bootstrap_invalid' => 'The invitation bootstrap is invalid.',
       'already_exists' => 'This item already exists.',
       'not_found' => 'The requested item is no longer available.',
       'invalid_input' => 'The supplied value is not valid.',
@@ -96,8 +105,7 @@ abstract final class BridgeErrorPresenter {
         'The attachment is waiting for the conversation message to arrive.',
       'communication_attachment_unavailable' =>
         'The attachment transfer is temporarily unavailable.',
-      'network_unavailable' =>
-        'The secure Tor peer connection is currently unavailable.',
+      'network_unavailable' => _networkUnavailableMessage(provider),
       'runtime_unavailable' =>
         'The secure Torca runtime is currently unavailable.',
       'contract_decode_failed' =>
@@ -111,5 +119,20 @@ abstract final class BridgeErrorPresenter {
     // it here leaked backend wording and made the UI depend on error text.
     // New codes must be mapped above (or localized through messageKey).
     return fallback;
+  }
+
+  static String _networkUnavailableMessage(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'tor') {
+      // Keep the legacy wording for callers that do not yet have a provider
+      // snapshot. It is also the stable message used by older clients.
+      return 'The secure Tor peer connection is currently unavailable.';
+    }
+    final label = switch (normalized) {
+      'iroh' => 'Iroh',
+      'webrtc' => 'WebRTC',
+      _ => provider.trim(),
+    };
+    return 'The $label peer connection is currently unavailable.';
   }
 }

@@ -95,14 +95,17 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             : 'Identity loaded',
       ),
       _Check(
-        'Embedded Tor',
-        snapshot.transport.tor.typedState == TransportState.ready,
-        'Tor state: ${snapshot.torState}',
+        'Communication provider',
+        snapshot.communicationState == 'ready' ||
+            snapshot.communicationState == 'starting',
+        '${snapshot.communicationProvider.toUpperCase()} state: ${snapshot.communicationState}',
       ),
       _Check(
-        'Onion service',
-        (snapshot.onionAddress ?? '').endsWith('.onion'),
-        snapshot.onionAddress ?? 'No onion address',
+        'Provider endpoint',
+        snapshot.endpointSummary != null ||
+            snapshot.communicationState == 'ready' ||
+            snapshot.communicationState == 'starting',
+        snapshot.endpointSummary ?? 'Provider owns endpoint discovery',
       ),
       _Check(
         context.strings.diagnosticsStream,

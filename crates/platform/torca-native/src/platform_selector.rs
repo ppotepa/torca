@@ -7,9 +7,9 @@
 #[cfg(windows)]
 use crate::app_paths::windows_app_root;
 use crate::composition::NativeCompositionError;
+use torca_platform::PlatformServices;
 #[cfg(target_os = "android")]
 use torca_platform::SecretNamespace;
-use torca_platform::{PlatformServices, RelayEndpoint};
 
 pub(crate) fn platform_services() -> Result<Box<dyn PlatformServices>, NativeCompositionError> {
     #[cfg(windows)]
@@ -17,12 +17,10 @@ pub(crate) fn platform_services() -> Result<Box<dyn PlatformServices>, NativeCom
         use torca_platform_windows::WindowsPlatformServices;
 
         let root = windows_app_root()?;
-        let relay = relay_endpoint()?;
         Ok(Box::new(WindowsPlatformServices::new(
             root.join("data"),
             root.join("cache"),
             root.join("logs"),
-            relay,
         )))
     }
 
@@ -36,12 +34,10 @@ pub(crate) fn platform_services() -> Result<Box<dyn PlatformServices>, NativeCom
         let database = database_path()
             .map_err(|_| NativeCompositionError::new("resolve Android database path failed"))?;
         let data = database.parent().map_or_else(|| database.clone(), std::path::Path::to_path_buf);
-        let relay = relay_endpoint()?;
         let platform = AndroidPlatformServices::new(
             data.clone(),
             data.join("cache"),
             log_root_path().unwrap_or_else(|_| data.join("logs")),
-            relay,
         )
         .with_secret_store_factory(|namespace| {
             let name = match namespace {
@@ -60,9 +56,4 @@ pub(crate) fn platform_services() -> Result<Box<dyn PlatformServices>, NativeCom
             "production native composition is not implemented for this platform",
         ))
     }
-}
-
-fn relay_endpoint() -> Result<RelayEndpoint, NativeCompositionError> {
-    let (host, port) = crate::runtime_composition::compiled_relay_endpoint()?;
-    Ok(RelayEndpoint { host, port })
 }

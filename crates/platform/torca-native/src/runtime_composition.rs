@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
@@ -9,34 +9,112 @@ use torca_communication_adapters::{
 use torca_connectivity::ConnectivityObserver;
 use torca_crypto::{
     ManagedIdentityKeys, ManagedPeerSecrets, OwnedHandshakeSigner, RustCryptoProvider,
-    RustPairingCrypto,
 };
-use torca_pairing_coordinator::{
-    PairingApprovalPort, PairingCoordinator, PairingPeerSecretStore, PairingRuntime,
-};
-use torca_pairing_driver::{PairingWorkerDriver, RuntimePairingDriver};
+use torca_pairing_driver::PairingWorkerDriver;
 use torca_platform::{PlatformServices, SecretNamespace};
 use torca_radio_coordinator::SharedRadioCoordinator;
-use torca_rendezvous_client::{RendezvousClient, SharedTorRelayTransport};
 use torca_runtime::{RuntimeHandle, RuntimeOwner};
-use torca_tor::{OwnedTorDriver, PeerListener, SharedTorEndpoint, TorBootstrapObserver};
+use torca_transport_api::CommissioningObserver;
+use torca_transport_api::WebRtcSessionProvider;
+use torca_transport_api::WebRtcSignalingProvider;
+use torca_transport_api::{CommissioningEvent, CommissioningStage};
+use torca_transport_webrtc::WebRtcHostBridge;
 
 use crate::composition::{NativeCompositionError, load_or_create_database_key};
-pub(crate) use crate::relay_endpoint::compiled_relay_endpoint;
-use crate::relay_probe::build_relay_probe;
-
-// Keep interactive requests below the application command deadline. Long-lived
-// recovery is handled by the pairing supervisor instead of one blocking call.
-const NETWORK_TIMEOUT: Duration = Duration::from_secs(8);
-// Onion circuits routinely need several seconds even after directory
-// bootstrap. Use the same bounded request budget as foreground pairing; the
-// durable relay transport still serializes the reconnect lane.
-const RELAY_HEALTH_TIMEOUT: Duration = NETWORK_TIMEOUT;
+use crate::provider_composition::{
+    ProviderCompositionInputs, ProviderPairingInputs, compose_selected_provider,
+};
 const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+// The host may recreate its WebRTC bridge after a runtime teardown (for
+// example after an Android activity/process restart). A one-shot OnceLock
+// would retain a dead bridge forever, so the lock protects a replaceable slot.
+static WEBRTC_PROVIDER: OnceLock<RwLock<Option<Arc<dyn WebRtcSessionProvider>>>> = OnceLock::new();
+static WEBRTC_SIGNALING_PROVIDER: OnceLock<RwLock<Option<Arc<dyn WebRtcSignalingProvider>>>> =
+    OnceLock::new();
+
+fn webrtc_provider_slot() -> &'static RwLock<Option<Arc<dyn WebRtcSessionProvider>>> {
+    WEBRTC_PROVIDER.get_or_init(|| RwLock::new(None))
+}
+
+fn webrtc_signaling_provider_slot() -> &'static RwLock<Option<Arc<dyn WebRtcSignalingProvider>>> {
+    WEBRTC_SIGNALING_PROVIDER.get_or_init(|| RwLock::new(None))
+}
+
+pub(crate) fn clear_registered_webrtc_providers() {
+    if let Ok(mut slot) = webrtc_provider_slot().write() {
+        *slot = None;
+    }
+    if let Ok(mut slot) = webrtc_signaling_provider_slot().write() {
+        *slot = None;
+    }
+}
+
+/// Registers the platform-owned WebRTC signalling/DataChannel bridge.
+///
+/// Registration is intentionally explicit and scoped to one runtime
+/// generation: a deployment has one selected transport provider, and WebRTC
+/// must never silently fall back to a different implementation. Android and
+/// desktop hosts should call this before starting native composition when
+/// `TORCA_COMMUNICATION_PROVIDER=webrtc`. A later generation may replace a
+/// bridge after the previous runtime has been torn down.
+pub fn register_webrtc_session_provider(
+    provider: Arc<dyn WebRtcSessionProvider>,
+) -> Result<(), Arc<dyn WebRtcSessionProvider>> {
+    let replacement = provider.clone();
+    webrtc_provider_slot()
+        .write()
+        .map(|mut slot| {
+            *slot = Some(provider);
+        })
+        .map_err(|_| replacement)
+}
+
+pub fn register_webrtc_signaling_provider(
+    provider: Arc<dyn WebRtcSignalingProvider>,
+) -> Result<(), Arc<dyn WebRtcSignalingProvider>> {
+    let replacement = provider.clone();
+    webrtc_signaling_provider_slot()
+        .write()
+        .map(|mut slot| {
+            *slot = Some(provider);
+        })
+        .map_err(|_| replacement)
+}
+
+/// Registers one host bridge for both negotiated sessions and pairing
+/// signaling. This is the preferred platform entry point when the SDK uses a
+/// single owner for its WebRTC lifecycle.
+pub fn register_webrtc_host_bridge(
+    bridge: Arc<WebRtcHostBridge>,
+) -> Result<(), Arc<WebRtcHostBridge>> {
+    let session = Arc::clone(&bridge);
+    let signaling = Arc::clone(&bridge);
+    register_webrtc_session_provider(session).map_err(|_| Arc::clone(&bridge))?;
+    register_webrtc_signaling_provider(signaling).map_err(|_| bridge)
+}
+
+pub(crate) fn registered_webrtc_session_provider()
+-> Result<Arc<dyn WebRtcSessionProvider>, NativeCompositionError> {
+    webrtc_provider_slot()
+        .read()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .ok_or_else(|| NativeCompositionError::new("WebRTC session provider is not registered"))
+}
+
+pub(crate) fn registered_webrtc_signaling_provider()
+-> Result<Arc<dyn WebRtcSignalingProvider>, NativeCompositionError> {
+    webrtc_signaling_provider_slot()
+        .read()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .ok_or_else(|| NativeCompositionError::new("WebRTC signaling provider is not registered"))
+}
 
 pub(crate) fn spawn_production_runtime(
     engine: EngineHandle,
-    bootstrap_observer: TorBootstrapObserver,
+    bootstrap_observer: CommissioningObserver,
     read_receipt_policy: ReadReceiptPolicy,
 ) -> Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError> {
     let platform = crate::platform_selector::platform_services()?;
@@ -46,9 +124,40 @@ pub(crate) fn spawn_production_runtime(
 fn spawn_runtime_for(
     platform: &dyn PlatformServices,
     engine: EngineHandle,
-    bootstrap_observer: TorBootstrapObserver,
+    bootstrap_observer: CommissioningObserver,
     read_receipt_policy: ReadReceiptPolicy,
 ) -> Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError> {
+    let report_observer = Arc::clone(&bootstrap_observer);
+    let report = move |progress: u8, code: &str, summary: &str| {
+        report_observer(CommissioningEvent {
+            stage: CommissioningStage::LocalRuntime,
+            progress,
+            attempt: 1,
+            retry_after_ms: None,
+            code: code.to_owned(),
+            summary: summary.to_owned(),
+        });
+    };
+    // A failed/retried startup must not inherit a bridge owned by the previous
+    // runtime generation when the host no longer provides one.
+    clear_registered_webrtc_providers();
+    if let Some(provider) = platform.webrtc_session_provider() {
+        let _ = register_webrtc_session_provider(provider);
+    }
+    if let Some(provider) = platform.webrtc_signaling_provider() {
+        let _ = register_webrtc_signaling_provider(provider);
+    }
+    let configured_provider = crate::transport_config::compiled_provider().map_err(|error| {
+        NativeCompositionError::new(format!("invalid communication provider: {error:?}"))
+    })?;
+    // Provider adapters may compile while their complete commissioning,
+    // rendezvous and platform lifecycle are still under construction. Do not
+    // silently start Tor in that case: the artifact must fail before it
+    // creates an identity or network side effect under the wrong provider
+    // assumption. `torca-deploy` keeps these providers hidden until this gate
+    // is removed alongside their real composition.
+    crate::transport_config::ensure_deployment_ready(configured_provider)
+        .map_err(NativeCompositionError::new)?;
     let paths = platform.app_paths();
     let database_path = paths.data.join("torca.db");
     let mut database_store = platform.open_secret_store(SecretNamespace::Storage);
@@ -61,24 +170,29 @@ fn spawn_runtime_for(
     let key_id = identity.public().key().key_id();
     let identity_id = identity.public().identity_id().to_opaque();
 
-    let listener = bind_peer_listener()?;
-    let endpoint = SharedTorEndpoint::default();
-    let tor = OwnedTorDriver::bootstrap_observed(
-        paths.data.join("tor"),
-        listener.local_addr(),
-        endpoint.clone(),
-        TOR_STARTUP_TIMEOUT,
-        current_timestamp()?,
-        Some(bootstrap_observer),
-    )
-    .map_err(|(error, diagnostic)| {
-        NativeCompositionError::new(format!(
-            "start Tor runtime failed: {error}; diagnostic: {diagnostic}"
-        ))
-    })?;
-    let tor_client = tor
-        .client_handle()
-        .ok_or_else(|| NativeCompositionError::new("Arti Tor client is unavailable"))?;
+    let rendezvous_endpoint =
+        crate::provider_composition::compiled_rendezvous_endpoint(configured_provider)?;
+    let provider = compose_selected_provider(
+        configured_provider,
+        ProviderCompositionInputs {
+            data_dir: paths.data.clone(),
+            provider_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
+            rendezvous_endpoint,
+            startup_timeout: TOR_STARTUP_TIMEOUT,
+            now: current_timestamp()?,
+            bootstrap_observer,
+        },
+    )?;
+    report(35, "PROVIDER_COMPOSED", "Selected communication provider composed");
+    let crate::provider_composition::ProviderComponents {
+        provider: composed_provider,
+        lifecycle: communication_lifecycle,
+        peer_transport_factory: transport_factory,
+        pairing_factory,
+        rendezvous_probe,
+        radio_media_factory,
+    } = provider;
+    debug_assert_eq!(composed_provider, configured_provider);
     let signer = OwnedHandshakeSigner::new(
         ManagedIdentityKeys::new(
             RustCryptoProvider,
@@ -95,81 +209,48 @@ fn spawn_runtime_for(
             &paths.cache.join("attachments"),
             &paths.data.join("attachments").join("staging"),
             ProductionCommunicationInputs {
+                communication_provider: configured_provider,
                 signer,
                 peer_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
                 attachment_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
                 export_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
                 relationship_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
-                listener,
-                tor_client: tor_client.clone(),
+                transport_factory,
+                radio_media_factory,
                 local_identity_id: identity_id,
                 connectivity: connectivity.clone(),
                 read_receipt_policy,
             },
         )
         .map_err(|_| NativeCompositionError::new("compose communication runtime failed"))?;
+    report(60, "COMMUNICATION_COMPOSED", "Communication and attachment workers composed");
 
-    let relay = platform
-        .relay_endpoint()
-        .map_err(NativeCompositionError::new)
-        .map(|endpoint| (endpoint.host, endpoint.port))?;
-    let relay_transport = SharedTorRelayTransport::new(tor_client.clone(), relay.0, relay.1);
-    let relay_probe = build_relay_probe(relay_transport.clone(), RELAY_HEALTH_TIMEOUT);
-    let pairing = build_pairing_driver(
-        engine.clone(),
-        endpoint,
-        relay_transport,
-        ManagedIdentityKeys::new(
+    let pairing = pairing_factory.build(ProviderPairingInputs {
+        engine: engine.clone(),
+        approval: Box::new(ManagedIdentityKeys::new(
             RustCryptoProvider,
             platform.open_secret_store(SecretNamespace::Identity),
-        ),
-        ManagedPeerSecrets::new(
+        )),
+        peer_secrets: Box::new(ManagedPeerSecrets::new(
             RustCryptoProvider,
             platform.open_secret_store(SecretNamespace::Runtime),
-        ),
-        connectivity.clone(),
-    )?;
+        )),
+        connectivity: connectivity.clone(),
+    })?;
+    report(80, "PAIRING_COMPOSED", "Pairing driver composed");
     let pairing = PairingWorkerDriver::spawn(pairing)
         .map_err(|_| NativeCompositionError::new("spawn pairing supervisor failed"))?;
+    report(90, "PAIRING_STARTED", "Pairing supervisor started");
     let (handle, owner) = RuntimeOwner::spawn_with_connectivity(
         engine,
         pairing,
         communication,
-        tor,
-        Some(relay_probe),
+        communication_lifecycle,
+        rendezvous_probe,
         connectivity,
     );
+    report(100, "RUNTIME_COMPOSED", "Selected communication runtime is ready");
     Ok((handle, owner, radio))
-}
-
-fn bind_peer_listener() -> Result<PeerListener, NativeCompositionError> {
-    PeerListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .map_err(|_| NativeCompositionError::new("bind local peer listener failed"))
-}
-
-fn build_pairing_driver<A, S>(
-    engine: EngineHandle,
-    endpoint: SharedTorEndpoint,
-    relay_transport: SharedTorRelayTransport,
-    approval: A,
-    peer_secrets: S,
-    connectivity: ConnectivityObserver,
-) -> Result<
-    RuntimePairingDriver<RendezvousClient<SharedTorRelayTransport>, RustPairingCrypto, A, S>,
-    NativeCompositionError,
->
-where
-    A: PairingApprovalPort + Send + 'static,
-    S: PairingPeerSecretStore + Send + 'static,
-{
-    let rendezvous =
-        RendezvousClient::new(relay_transport, NETWORK_TIMEOUT).with_connectivity(connectivity);
-    let coordinator = PairingCoordinator::new(rendezvous, RustPairingCrypto::new());
-    let mut runtime = PairingRuntime::new(coordinator, engine.clone(), approval, peer_secrets);
-    runtime
-        .restore_active_sessions()
-        .map_err(|_| NativeCompositionError::new("restore active pairing sessions failed"))?;
-    Ok(RuntimePairingDriver::new(runtime, engine, endpoint))
 }
 
 fn engine_identity(

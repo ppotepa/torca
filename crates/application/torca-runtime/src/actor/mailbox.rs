@@ -5,6 +5,7 @@ enum RuntimeCommand {
         PairingSessionId,
         PairingCode,
         Option<[u8; 16]>,
+        Option<PairingBootstrapDescriptor>,
         Sender<Result<(), RuntimeDriverError>>,
     ),
     ApprovePairing(PairingSessionId, Sender<Result<(), RuntimeDriverError>>),
@@ -19,6 +20,7 @@ enum RuntimeCommand {
     ClearConversationHistory(ConversationId, Sender<Result<(), RuntimeDriverError>>),
     MarkConversationRead(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>),
+    QueueOutbound(MessageId, CommandId, Timestamp, Sender<Result<(), RuntimeDriverError>>),
     QueueReaction(ContactId, ReactionPayload, Timestamp, Sender<Result<(), RuntimeDriverError>>),
     RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
@@ -61,6 +63,7 @@ impl RuntimeCommand {
                 | Self::NetworkChanged
                 | Self::SetForeground(_)
                 | Self::WakeDelivery(..)
+                | Self::QueueOutbound(..)
         )
     }
 
@@ -77,6 +80,7 @@ impl RuntimeCommand {
                 | Self::MarkConversationRead(..)
                 | Self::WakeDelivery(..)
                 | Self::ReleaseDelivery(_)
+                | Self::QueueOutbound(..)
         )
     }
 
@@ -92,6 +96,7 @@ impl RuntimeCommand {
                 | Self::SetRadioTransmission(..)
                 | Self::WakeDelivery(..)
                 | Self::ReleaseDelivery(_)
+                | Self::QueueOutbound(..)
                 | Self::NetworkChanged
         )
     }
@@ -121,7 +126,7 @@ impl RuntimeHandle {
         id: PairingSessionId,
         code: PairingCode,
     ) -> Result<(), RuntimeDriverError> {
-        request_command(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, None, r))
+        request_command(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, None, None, r))
     }
 
     pub fn join_pairing_with_ticket(
@@ -130,7 +135,19 @@ impl RuntimeHandle {
         code: PairingCode,
         ticket: Option<[u8; 16]>,
     ) -> Result<(), RuntimeDriverError> {
-        request_command(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, ticket, r))
+        request_command(&self.sender, |r| RuntimeCommand::JoinPairing(id, code, ticket, None, r))
+    }
+
+    pub fn join_pairing_with_bootstrap(
+        &self,
+        id: PairingSessionId,
+        code: PairingCode,
+        ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
+    ) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |r| {
+            RuntimeCommand::JoinPairing(id, code, ticket, bootstrap, r)
+        })
     }
     pub fn approve_pairing(&self, id: PairingSessionId) -> Result<(), RuntimeDriverError> {
         request_command(&self.sender, |r| RuntimeCommand::ApprovePairing(id, r))
@@ -230,6 +247,17 @@ impl RuntimeHandle {
         );
     }
 
+    pub fn queue_outbound(
+        &self,
+        message_id: MessageId,
+        command_id: CommandId,
+        at: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |response| {
+            RuntimeCommand::QueueOutbound(message_id, command_id, at, response)
+        })
+    }
+
     /// Wakes durable delivery and grants a temporary lease for this message.
     /// The lease is independent of the currently visible Flutter route.
     pub fn wake_delivery_for(&self, message_id: OpaqueId) {
@@ -300,7 +328,7 @@ impl RuntimeHandle {
 pub struct RuntimeOwner {
     sender: SyncSender<RuntimeCommand>,
     join: Option<JoinHandle<()>>,
-    relay_worker: Option<RelayHealthWorker>,
+    rendezvous_worker: Option<RendezvousHealthWorker>,
 }
 
 enum RuntimeWait {

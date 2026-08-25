@@ -123,6 +123,7 @@ fn control_request(
     root: &std::path::Path,
     request: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    let request_id = control_request_id(request)?;
     let operation = request.get("op").and_then(serde_json::Value::as_str).unwrap_or_default();
     if operation == "shutdown" {
         return Ok(serde_json::json!({"stopping": true}));
@@ -150,18 +151,40 @@ fn control_request(
         "snapshot" => ("query", "snapshot.get", serde_json::json!({})),
         "diagnostics" => ("query", "diagnostics.get", serde_json::json!({})),
         "pairing.create" => ("command", "pairing.create", serde_json::json!({})),
-        "pairing.join" => (
-            "command",
-            "pairing.join",
-            serde_json::json!({
+        "pairing.join" => ("command", "pairing.join", {
+            let mut payload = serde_json::json!({
                 "code": request.get("code").and_then(serde_json::Value::as_str).ok_or("code is required")?
-            }),
-        ),
+            });
+            // Direct providers (Iroh/WebRTC) carry the creator endpoint
+            // in the invitation bootstrap descriptor.  Keeping this
+            // field optional preserves the Tor rendezvous payload while
+            // allowing the lab peer to exercise the same generic command
+            // contract as the real client.
+            if let Some(bootstrap) = request.get("bootstrap") {
+                payload["bootstrap"] = bootstrap.clone();
+            }
+            payload
+        }),
         "pairing.approve" | "pairing.reject" | "pairing.cancel" => (
             "command",
             operation,
             serde_json::json!({
                 "sessionIdHex": request.get("sessionIdHex").and_then(serde_json::Value::as_str).ok_or("sessionIdHex is required")?
+            }),
+        ),
+        "profile.set" => (
+            "command",
+            "profile.set",
+            serde_json::json!({
+                "displayName": request.get("displayName").and_then(serde_json::Value::as_str).ok_or("displayName is required")?
+            }),
+        ),
+        "contact.rename" => (
+            "command",
+            "contact.rename",
+            serde_json::json!({
+                "contactIdHex": request.get("contactIdHex").and_then(serde_json::Value::as_str).ok_or("contactIdHex is required")?,
+                "displayName": request.get("displayName").and_then(serde_json::Value::as_str).ok_or("displayName is required")?
             }),
         ),
         "message.send" => (
@@ -207,16 +230,37 @@ fn control_request(
         ),
         _ => return Err(format!("unsupported control operation: {operation}")),
     };
-    let response = invoke_request(runtime, "lab-control", kind, name, payload)?;
+    // Preserve the orchestrator's correlation ID all the way to the production
+    // runtime. Commands are idempotent by request ID; replacing every ID with
+    // one constant makes a later approve look like a replay of create.
+    let response = invoke_request(runtime, request_id, kind, name, payload)?;
     let status = response.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
-    if status == "failed" {
+    let result = response.get("result").cloned().unwrap_or_else(|| response.clone());
+    let result_kind = result
+        .get("resultKind")
+        .or_else(|| result.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if status == "failed"
+        || result.get("ok").and_then(serde_json::Value::as_bool) == Some(false)
+        || result_kind.starts_with("error")
+    {
         return Err(response
             .pointer("/error/code")
             .and_then(serde_json::Value::as_str)
+            .or_else(|| result.get("errorCode").and_then(serde_json::Value::as_str))
             .unwrap_or("runtime operation failed")
             .to_owned());
     }
-    Ok(response.get("result").cloned().unwrap_or(response))
+    Ok(result)
+}
+
+fn control_request_id(request: &serde_json::Value) -> Result<&str, String> {
+    request
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "control request id is required".to_owned())
 }
 
 fn wait_until_ready(
@@ -339,7 +383,7 @@ fn invoke_request(
 
 #[cfg(test)]
 mod tests {
-    use super::is_production_root;
+    use super::{control_request_id, is_production_root};
     use std::path::Path;
 
     #[test]
@@ -354,5 +398,17 @@ mod tests {
         let root = Path::new("G:/lab/peer-a");
         let production = Path::new("C:/Users/example/AppData/Local/Torca");
         assert!(!is_production_root(root, production));
+    }
+
+    #[test]
+    fn control_request_preserves_the_orchestrator_id() {
+        let request = serde_json::json!({"id": "pair-approve-a-b", "op": "pairing.approve"});
+        assert_eq!(control_request_id(&request), Ok("pair-approve-a-b"));
+    }
+
+    #[test]
+    fn control_request_rejects_a_missing_or_empty_id() {
+        assert!(control_request_id(&serde_json::json!({"op": "snapshot"})).is_err());
+        assert!(control_request_id(&serde_json::json!({"id": "", "op": "snapshot"})).is_err());
     }
 }

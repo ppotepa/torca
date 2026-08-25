@@ -41,6 +41,41 @@ pub trait PairingPeerSecretStore {
     }
 }
 
+impl PairingPeerSecretStore for Box<dyn PairingPeerSecretStore + Send> {
+    fn store_peer_secret(
+        &mut self,
+        secret: PairingDerivedSecret,
+    ) -> Result<OpaqueId, PairingCredentialError> {
+        (**self).store_peer_secret(secret)
+    }
+
+    fn delete_peer_secret(&mut self, handle: OpaqueId) -> Result<bool, PairingCredentialError> {
+        (**self).delete_peer_secret(handle)
+    }
+
+    fn store_pairing_state(
+        &mut self,
+        session_id: PairingSessionId,
+        state: &[u8],
+    ) -> Result<(), PairingCredentialError> {
+        (**self).store_pairing_state(session_id, state)
+    }
+
+    fn load_pairing_state(
+        &self,
+        session_id: PairingSessionId,
+    ) -> Result<Option<Vec<u8>>, PairingCredentialError> {
+        (**self).load_pairing_state(session_id)
+    }
+
+    fn delete_pairing_state(
+        &mut self,
+        session_id: PairingSessionId,
+    ) -> Result<bool, PairingCredentialError> {
+        (**self).delete_pairing_state(session_id)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PairingCredentialError {
     Storage,

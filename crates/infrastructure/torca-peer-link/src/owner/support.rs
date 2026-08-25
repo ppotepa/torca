@@ -30,14 +30,19 @@ fn map_contact(_: ContactError) -> PeerLinkError {
 fn map_session(_: PeerSessionError) -> PeerLinkError {
     PeerLinkError::Protocol
 }
-fn map_tor(_: TransportError) -> PeerLinkError {
-    PeerLinkError::Listener
+fn map_transport_factory(error: torca_transport_api::TransportFactoryError) -> PeerLinkError {
+    match error {
+        torca_transport_api::TransportFactoryError::Listener => PeerLinkError::Listener,
+        torca_transport_api::TransportFactoryError::ContactNotFound => {
+            PeerLinkError::ContactNotFound
+        }
+        torca_transport_api::TransportFactoryError::Protocol => PeerLinkError::Protocol,
+    }
 }
 
 fn system_timestamp() -> Result<Timestamp, PeerLinkError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| PeerLinkError::Clock)?;
+    let duration =
+        SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| PeerLinkError::Clock)?;
     let millis = i64::try_from(duration.as_millis()).map_err(|_| PeerLinkError::Clock)?;
     Timestamp::from_unix_millis(millis).map_err(|_| PeerLinkError::Clock)
 }

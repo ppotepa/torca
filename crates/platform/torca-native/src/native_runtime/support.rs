@@ -28,8 +28,12 @@ fn canonical_bootstrap_wire_state(state: &str) -> bool {
     )
 }
 
-const fn projected_host_bootstrap_phase(host_state: TorState) -> &'static str {
-    if matches!(host_state, TorState::Degraded | TorState::Failed) { "degraded" } else { "running" }
+const fn projected_host_bootstrap_phase(host_state: CommunicationState) -> &'static str {
+    if matches!(host_state, CommunicationState::Degraded | CommunicationState::Failed) {
+        "degraded"
+    } else {
+        "running"
+    }
 }
 
 fn notification_event_json(event: &torca_contract::NotificationEvent) -> serde_json::Value {
@@ -88,15 +92,15 @@ impl Drop for TorcaRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        TorState, canonical_bootstrap_wire_state, notification_event_json,
+        CommunicationState, canonical_bootstrap_wire_state, notification_event_json,
         projected_host_bootstrap_phase,
     };
 
     #[test]
     fn host_projection_cannot_unlock_profile_before_runtime_bootstrap_finishes() {
-        assert_eq!(projected_host_bootstrap_phase(TorState::Starting), "running");
-        assert_eq!(projected_host_bootstrap_phase(TorState::Ready), "running");
-        assert_eq!(projected_host_bootstrap_phase(TorState::Failed), "degraded");
+        assert_eq!(projected_host_bootstrap_phase(CommunicationState::Starting), "running");
+        assert_eq!(projected_host_bootstrap_phase(CommunicationState::Ready), "running");
+        assert_eq!(projected_host_bootstrap_phase(CommunicationState::Failed), "degraded");
     }
 
     #[test]

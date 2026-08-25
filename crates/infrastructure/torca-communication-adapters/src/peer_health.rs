@@ -219,6 +219,10 @@ where
         let _ = self.link.prime_connections();
     }
 
+    fn prime_contact(&mut self, contact_id: ContactId) {
+        let _ = self.link.prime_contact(contact_id);
+    }
+
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<std::time::Duration> {
         self.link.next_maintenance_delay(now)
     }

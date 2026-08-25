@@ -60,8 +60,11 @@ impl DeployExecutor {
         }
         let _lock = self.store.acquire_lock().map_err(DeployError::State)?;
         self.validate_endpoint(&run)?;
-        if run.plan.needs_relay() {
-            run.advance(DeployStage::RelayPrepared, "starting typed deployment transaction");
+        if run.plan.needs_provider_service() {
+            run.advance(
+                DeployStage::ProviderServicePrepared,
+                "starting typed deployment transaction",
+            );
             self.checkpoint(&run)?;
         }
         if let Err(error) = self.run_native_orchestrator(&mut run) {
@@ -70,7 +73,11 @@ impl DeployExecutor {
             let _ = self.checkpoint(&run);
             return Err(error);
         }
-        run.relay_endpoint = self.read_relay_endpoint();
+        if run.plan.communication_provider.deployment_profile().commissioning_service.is_managed() {
+            run.provider_endpoint = self.read_relay_endpoint();
+        } else {
+            run.provider_endpoint = None;
+        }
         if !matches!(run.plan.action, crate::domain::DeployAction::CollectLogs)
             && !matches!(run.plan.launch, crate::domain::LaunchPolicy::Skip)
         {
@@ -79,14 +86,14 @@ impl DeployExecutor {
                 crate::domain::ValidationLevel::Quick => {
                     run.advance(
                         DeployStage::RuntimeReady,
-                        "all selected clients reached fresh LOCAL_READY evidence",
+                        "all selected clients reached fresh provider local-ready evidence",
                     );
                     self.checkpoint(&run)?;
                 }
                 crate::domain::ValidationLevel::Full => {
                     run.advance(
                         DeployStage::NetworkReady,
-                        "all selected clients reached fresh TOR_BOOTSTRAP_READY evidence",
+                        "all selected clients reached fresh provider network-ready evidence",
                     );
                     self.checkpoint(&run)?;
                 }
@@ -114,7 +121,11 @@ impl DeployExecutor {
     }
 
     fn validate_endpoint(&self, run: &DeployRun) -> Result<(), DeployError> {
-        if let (Some(expected), Some(actual)) = (&run.relay_endpoint, self.read_relay_endpoint())
+        if !run.plan.communication_provider.deployment_profile().commissioning_service.is_managed()
+        {
+            return Ok(());
+        }
+        if let (Some(expected), Some(actual)) = (&run.provider_endpoint, self.read_relay_endpoint())
             && expected != &actual
         {
             return Err(DeployError::EndpointMismatch { expected: expected.clone(), actual });
@@ -125,27 +136,30 @@ impl DeployExecutor {
     fn run_native_orchestrator(&self, run: &mut DeployRun) -> Result<(), DeployError> {
         let paths = RuntimePaths::from_repo(self.store.paths().repo_root.clone());
         paths.ensure().map_err(DeployError::Paths)?;
-        let endpoint = if run.plan.needs_relay()
-            && !run.completed.contains(&DeployStage::EndpointVerified)
+        let endpoint = if run.plan.needs_provider_service()
+            && !run.completed.contains(&DeployStage::ProviderEndpointVerified)
         {
             let previous = paths.endpoint();
             let relay = RelayController::new(&paths, self.runner.as_ref());
-            let status =
-                relay.ensure(run.plan.onion, run.plan.relay_build).map_err(DeployError::Relay)?;
+            let status = relay
+                .ensure(run.plan.provider_maintenance, run.plan.provider_service_build)
+                .map_err(DeployError::Relay)?;
             if !status.healthy {
                 return Err(DeployError::RelayNotHealthy);
             }
-            if matches!(run.plan.onion, crate::domain::OnionPolicy::RotateIdentity)
-                && previous == status.endpoint
+            if matches!(
+                run.plan.provider_maintenance,
+                crate::domain::ProviderMaintenancePolicy::RotateIdentity
+            ) && previous == status.endpoint
             {
                 return Err(DeployError::EndpointMismatch {
                     expected: "new onion endpoint".into(),
                     actual: status.endpoint.unwrap_or_default(),
                 });
             }
-            run.relay_endpoint.clone_from(&status.endpoint);
+            run.provider_endpoint.clone_from(&status.endpoint);
             run.advance(
-                DeployStage::RelayReachable,
+                DeployStage::ProviderServiceReachable,
                 if status.onion_ready {
                     "relay protocol healthy and onion publication confirmed"
                 } else {
@@ -154,16 +168,25 @@ impl DeployExecutor {
             );
             self.checkpoint(run)?;
             run.advance(
-                DeployStage::EndpointVerified,
+                DeployStage::ProviderEndpointVerified,
                 "relay endpoint validated before client build",
             );
             self.checkpoint(run)?;
             status.endpoint
-        } else {
-            run.relay_endpoint
+        } else if run
+            .plan
+            .communication_provider
+            .deployment_profile()
+            .commissioning_service
+            .is_managed()
+        {
+            run.provider_endpoint
                 .clone()
                 .or_else(|| paths.endpoint())
+                .or_else(|| std::env::var("TORCA_PROVIDER_ENDPOINT").ok())
                 .or_else(|| std::env::var("TORCA_RELAY_ENDPOINT").ok())
+        } else {
+            None
         };
         // Generic artifact builds are intentionally host-only: a disconnected
         // phone must never prevent CI from producing portable APKs. An exact
@@ -207,6 +230,7 @@ impl DeployExecutor {
                     run.plan.configuration,
                     run.plan.client_build,
                     endpoint.as_deref(),
+                    run.plan.communication_provider,
                 )
                 .map_err(DeployError::Build)?;
             run.advance(DeployStage::ArtifactsBuilt, "native Rust/Flutter artifacts built");
@@ -233,7 +257,7 @@ impl DeployExecutor {
         {
             for device in &devices {
                 InstallController::new(&paths, self.runner.as_ref())
-                    .install(device, run.plan.configuration)
+                    .install(device, run.plan.configuration, run.plan.communication_provider)
                     .map_err(DeployError::Install)?;
             }
             run.advance(DeployStage::ClientsInstalled, "selected client artifacts installed");
@@ -265,6 +289,7 @@ impl DeployExecutor {
                                 device,
                                 run.plan.configuration,
                                 run.plan.privacy,
+                                run.plan.communication_provider,
                                 matches!(run.plan.launch, crate::domain::LaunchPolicy::Restart),
                             )
                             .map(|receipt| (device, receipt))
@@ -284,14 +309,35 @@ impl DeployExecutor {
             };
             for (device, receipt) in receipts {
                 launch
-                    .wait_network_ready(device, receipt, run.plan.validation)
+                    .wait_network_ready(
+                        device,
+                        receipt,
+                        run.plan.validation,
+                        run.plan.communication_provider,
+                    )
                     .map_err(DeployError::Launch)?;
             }
         }
         if !matches!(run.plan.action, crate::domain::DeployAction::CollectLogs) {
-            let endpoint = endpoint.as_deref().ok_or(DeployError::MissingEndpoint)?;
-            crate::manifests::synchronize(&paths, &devices, run.plan.configuration, endpoint)
-                .map_err(DeployError::Manifest)?;
+            let endpoint = endpoint.as_deref();
+            if run
+                .plan
+                .communication_provider
+                .deployment_profile()
+                .commissioning_service
+                .is_managed()
+                && endpoint.is_none()
+            {
+                return Err(DeployError::MissingEndpoint);
+            }
+            crate::manifests::synchronize(
+                &paths,
+                &devices,
+                run.plan.configuration,
+                run.plan.communication_provider,
+                endpoint,
+            )
+            .map_err(DeployError::Manifest)?;
         }
         Ok(())
     }

@@ -96,13 +96,18 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme;
-    const steps = <String>[
-      'local_storage',
-      'device_identity',
-      'tor_network',
-      'onion_service',
-      'secure_relay',
-    ];
+    // The active provider owns its commissioning stages. Keep the legacy
+    // list only as a migration fallback for snapshots produced by older
+    // native binaries; never make onion/reachability a Flutter requirement.
+    final steps = widget.snapshot.bootstrapSteps.isEmpty
+        ? const <String>[
+            'local_storage',
+            'device_identity',
+            'communication_runtime',
+          ]
+        : widget.snapshot.bootstrapSteps
+              .map((step) => step.id)
+              .toList(growable: false);
     final projectedSteps = steps
         .map((id) => _stepFor(widget.snapshot, id))
         .toList(growable: false);
@@ -113,13 +118,11 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
         projectedSteps.fold<int>(0, (sum, step) => sum + step.progress) /
         (steps.length * 100);
     // The headline clock measures the complete warm-up and must not reset
-    // when Tor or onion publication starts another attempt. Individual step
+    // when the selected provider starts another attempt. Individual step
     // clocks below intentionally use each step's startedAtMs.
     final elapsed = _elapsed;
     final restartRequired = projectedSteps.any(
-      (step) =>
-          step.code == 'TOR_RESTART_REQUIRED' ||
-          step.code == 'ONION_SERVICE_RESTART_REQUIRED',
+      (step) => step.code == 'COMMUNICATION_RESTART_REQUIRED',
     );
     return Scaffold(
       body: DecoratedBox(
@@ -168,7 +171,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Setting up encrypted storage and a private Tor connection. You can safely leave this screen open.',
+                                  'Setting up encrypted storage and secure communication. You can safely leave this screen open.',
                                   style: Theme.of(context).textTheme.bodyMedium,
                                   textAlign: TextAlign.center,
                                 ),
@@ -285,9 +288,9 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
   String _bootstrapLabel(String id) => switch (id) {
     'local_storage' => 'Local storage',
     'device_identity' => 'Device identity',
-    'tor_network' => 'Tor network',
-    'onion_service' => 'Onion service',
-    'secure_relay' => 'Secure relay',
+    'communication_runtime' => 'Communication runtime',
+    'incoming_reachability' => 'Incoming reachability',
+    'rendezvous' => 'Pairing rendezvous',
     _ => id,
   };
 
@@ -347,9 +350,9 @@ class _BootstrapStepTile extends StatelessWidget {
         ),
         title: Text(
           step.attempt > 0 &&
-                  (step.id == 'tor_network' ||
-                      step.id == 'onion_service' ||
-                      step.id == 'secure_relay')
+                  (step.id == 'communication_runtime' ||
+                      step.id == 'incoming_reachability' ||
+                      step.id == 'rendezvous')
               ? '$label · attempt ${step.attempt}'
               : label,
         ),
@@ -386,29 +389,28 @@ class _BootstrapStepTile extends StatelessWidget {
     final code = step.code;
     if (value == BootstrapStepState.running ||
         value == BootstrapStepState.verifying) {
-      if (id == 'tor_network') {
+      if (id == 'communication_runtime') {
         return switch (code) {
-          'TOR_CONNECTING_DIRECTORY' =>
-            'Opening secure channels to the Tor directory…',
-          'TOR_DIRECTORY_CONSENSUS' =>
-            'Channels are ready; waiting for Tor directory consensus…',
-          'TOR_BOOTSTRAP_BLOCKED' =>
-            'Arti reports that directory bootstrap is blocked…',
-          _ => 'Preparing the embedded Tor client…',
+          'COMMUNICATION_RETRYING' =>
+            'The communication provider is reconnecting…',
+          'COMMUNICATION_FAILED' =>
+            'The communication provider needs attention…',
+          _ => 'Preparing the selected communication provider…',
         };
       }
-      if (id == 'onion_service') {
+      if (id == 'incoming_reachability') {
         return switch (code) {
-          'ONION_SERVICE_PUBLISHING' =>
-            'Publishing this device’s private onion service…',
-          _ => 'Preparing the private onion service…',
+          'INCOMING_REACHABILITY_PENDING' =>
+            'Preparing this device for incoming communication…',
+          _ => 'Preparing incoming reachability…',
         };
       }
       return switch (id) {
         'local_storage' => 'Opening encrypted storage and checking its schema…',
         'device_identity' => 'Loading device keys and calculating fingerprint…',
-        'onion_service' => 'Publishing this device’s private onion service…',
-        'secure_relay' => 'Testing the embedded relay endpoint through Tor…',
+        'incoming_reachability' =>
+          'Preparing a route for incoming communication…',
+        'rendezvous' => 'Testing the pairing rendezvous…',
         _ => 'Working securely…',
       };
     }
@@ -416,20 +418,17 @@ class _BootstrapStepTile extends StatelessWidget {
       BootstrapStepState.ready => switch (id) {
         'local_storage' => 'Encrypted database is open',
         'device_identity' => 'Device identity is protected and ready',
-        'tor_network' => 'Tor circuits are available',
-        'onion_service' => 'Private onion service is published',
-        'secure_relay' => 'Secure relay is reachable',
+        'communication_runtime' => 'Communication runtime is ready',
+        'incoming_reachability' => 'This device can receive communication',
+        'rendezvous' => 'Pairing rendezvous is reachable',
         _ => 'Protected and ready',
       },
       BootstrapStepState.degraded => 'Temporarily unavailable; retrying',
-      BootstrapStepState.failed
-          when code == 'TOR_RESTART_REQUIRED' ||
-              code == 'ONION_SERVICE_RESTART_REQUIRED' =>
-        'Tor did not stop safely; restart the application before retrying',
-      BootstrapStepState.blocked =>
-        'Waiting for the Tor network to become ready',
+      BootstrapStepState.failed when code == 'COMMUNICATION_RESTART_REQUIRED' =>
+        'The communication provider did not stop safely; restart the application before retrying',
+      BootstrapStepState.blocked => 'Waiting for communication to become ready',
       BootstrapStepState.failed =>
-        'Needs attention: ${code ?? 'TOR_RUNTIME_FAILED'}',
+        'Needs attention: ${code ?? 'COMMUNICATION_RUNTIME_FAILED'}',
       _ => 'Waiting for the previous secure check',
     };
   }

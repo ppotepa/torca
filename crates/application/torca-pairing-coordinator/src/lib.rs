@@ -15,11 +15,14 @@ pub use approval::{PairingApprovalError, PairingApprovalPort};
 pub use core::{
     EncryptedPairingPayload, PairingContextId, PairingCoordinator, PairingCoordinatorError,
     PairingCryptoHandle, PairingCryptoPort, PairingDerivedSecret, PairingEphemeralKey,
-    PairingPollBatch, PairingRelayDelivery, PairingRendezvousPort, PairingSideToken,
-    PairingSlotCapability, PairingSlotId, PairingTransportSnapshot,
+    PairingPollBatch, PairingRelayDelivery, PairingSessionDelivery, PairingSessionServicePort,
+    PairingSideToken, PairingSlotCapability, PairingSlotId, PairingTransportSnapshot,
 };
 pub use credential::{PairingCredentialError, PairingPeerSecretStore};
-pub use invite_uri::{decode_invite_uri, encode_invite_uri};
+pub use invite_uri::{
+    decode_invite_uri, decode_invite_uri_with_bootstrap, encode_invite_uri,
+    encode_invite_uri_with_bootstrap,
+};
 pub use policy::{PAIRING_INVITATION_TTL, invitation_expires_at};
 pub use runtime::{
     LocalPairingContext, PairingCompletedContact, PairingInvitation, PairingPollReport,

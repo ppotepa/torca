@@ -22,6 +22,8 @@ torca-pairing = { path = "../../domains/torca-pairing" }
 torca-probing = { path = "../torca-probing" }
 torca-presence = { path = "../../domains/torca-presence" }
 torca-runtime-policy = { path = "../torca-runtime-policy" }
+torca-transport-api = { path = "../torca-transport-api" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
 
 [lints]
 workspace = true

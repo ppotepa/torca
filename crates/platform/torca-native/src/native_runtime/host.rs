@@ -25,10 +25,10 @@ use torca_logging::{Level, Logger, default_root};
 use torca_messaging::MessageDirection;
 use torca_messaging::MessageId;
 use torca_radio_coordinator::SharedRadioCoordinator;
-use torca_runtime::{RuntimeHandle, RuntimeOwner, TorState};
+use torca_runtime::{CommunicationState, RuntimeHandle, RuntimeOwner};
 use torca_runtime_policy::RuntimeEventHub;
 use torca_runtime_policy::{BatteryPreferences, EffectiveBatteryPolicy, SystemEnergyState};
-use torca_tor::{TorBootstrapEvent, TorBootstrapObserver, TorBootstrapStage};
+use torca_transport_api::{CommissioningEvent, CommissioningObserver, CommissioningStage};
 
 use crate::battery_policy::BatteryPolicyState;
 use crate::composition::{NativeCompositionError, spawn_production_engine};
@@ -45,13 +45,13 @@ pub(crate) const ABI_CLOSED: i32 = -2;
 const NETWORK_RETRY_DELAY: Duration = Duration::from_secs(5);
 const NETWORK_START_OBSERVE_TIMEOUT: Duration = Duration::from_secs(120);
 const NETWORK_MAX_ATTEMPTS: u32 = 3;
-const ONION_PROGRESS_STALL_AFTER: Duration = Duration::from_secs(120);
+const INCOMING_REACHABILITY_PROGRESS_STALL_AFTER: Duration = Duration::from_secs(120);
 
 type HostStartResult =
     Result<(RuntimeHandle, RuntimeOwner, SharedRadioCoordinator), NativeCompositionError>;
 
 enum HostStartEvent {
-    Progress(TorBootstrapEvent),
+    Progress(CommissioningEvent),
     Finished(HostStartResult),
 }
 
@@ -89,17 +89,17 @@ pub struct TorcaRuntime {
     host_attempt: u32,
     host_status_code: Option<String>,
     host_status_summary: Option<String>,
-    host_onion_started_at_ms: Option<i64>,
-    host_onion_last_progress_at_ms: Option<i64>,
-    host_onion_progress: u8,
-    host_onion_attempt: u32,
-    host_onion_status_code: Option<String>,
-    host_onion_status_summary: Option<String>,
-    host_onion_retry_at: Option<Instant>,
+    host_incoming_started_at_ms: Option<i64>,
+    host_incoming_last_progress_at_ms: Option<i64>,
+    host_incoming_progress: u8,
+    host_incoming_attempt: u32,
+    host_incoming_status_code: Option<String>,
+    host_incoming_status_summary: Option<String>,
+    host_incoming_retry_at: Option<Instant>,
     host_start_deadline: Option<Instant>,
     host_retry_at: Option<Instant>,
     host_failures: u32,
-    host_state_hint: TorState,
+    host_state_hint: CommunicationState,
     network_changed_pending: bool,
     last_onion_log_state: Option<(String, Option<String>)>,
     last_relay_log_state: Option<(String, Option<String>)>,

@@ -162,9 +162,11 @@ impl PendingOperationStore for SqlCipherPendingOperationStore {
 fn encode_kind(kind: &PendingOperationKind) -> (&'static str, Option<String>, Option<Vec<u8>>) {
     match kind {
         PendingOperationKind::CreatePairing => ("pairing.create", None, None),
-        PendingOperationKind::JoinPairing { code, ticket } => {
-            ("pairing.join", Some(code.clone()), ticket.map(|value| value.to_vec()))
-        }
+        PendingOperationKind::JoinPairing { code, ticket, bootstrap } => (
+            "pairing.join",
+            Some(code.clone()),
+            Some(encode_join_binary(*ticket, bootstrap.as_ref())),
+        ),
         PendingOperationKind::ApprovePairing => ("pairing.approve", None, None),
         PendingOperationKind::RejectPairing => ("pairing.reject", None, None),
         PendingOperationKind::CancelPairing => ("pairing.cancel", None, None),
@@ -193,13 +195,11 @@ fn decode_kind(
     match kind {
         "pairing.create" => Ok(PendingOperationKind::CreatePairing),
         "pairing.join" => {
-            let ticket = binary
-                .map(|bytes| <[u8; 16]>::try_from(bytes.as_slice()))
-                .transpose()
-                .map_err(|_| PendingOperationStoreError::Unavailable)?;
+            let (ticket, bootstrap) = decode_join_binary(binary)?;
             Ok(PendingOperationKind::JoinPairing {
                 code: text.ok_or(PendingOperationStoreError::Unavailable)?,
                 ticket,
+                bootstrap,
             })
         }
         "pairing.approve" => Ok(PendingOperationKind::ApprovePairing),
@@ -217,6 +217,86 @@ fn decode_kind(
         "conversation.mark_read" => Ok(PendingOperationKind::MarkConversationRead),
         _ => Err(PendingOperationStoreError::Unavailable),
     }
+}
+
+fn encode_join_binary(
+    ticket: Option<[u8; 16]>,
+    bootstrap: Option<&torca_pairing_protocol::PairingBootstrapDescriptor>,
+) -> Vec<u8> {
+    if bootstrap.is_none() {
+        return ticket.map_or_else(Vec::new, |value| value.to_vec());
+    }
+    let descriptor = bootstrap.expect("checked above");
+    let provider = descriptor.provider().as_bytes();
+    let payload = descriptor.payload();
+    let mut bytes = Vec::with_capacity(1 + 1 + 16 + 1 + provider.len() + 2 + payload.len());
+    bytes.extend_from_slice(b"TBS1");
+    bytes.push(u8::from(ticket.is_some()));
+    if let Some(ticket) = ticket {
+        bytes.extend_from_slice(&ticket);
+    }
+    bytes.push(u8::try_from(provider.len()).unwrap_or(u8::MAX));
+    bytes.extend_from_slice(provider);
+    bytes.extend_from_slice(&u16::try_from(payload.len()).unwrap_or(u16::MAX).to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+fn decode_join_binary(
+    binary: Option<Vec<u8>>,
+) -> Result<
+    (Option<[u8; 16]>, Option<torca_pairing_protocol::PairingBootstrapDescriptor>),
+    PendingOperationStoreError,
+> {
+    let Some(bytes) = binary else { return Ok((None, None)) };
+    if bytes.len() == 16 {
+        return Ok((
+            Some(
+                <[u8; 16]>::try_from(bytes.as_slice())
+                    .map_err(|_| PendingOperationStoreError::Unavailable)?,
+            ),
+            None,
+        ));
+    }
+    if bytes.len() < 7 || &bytes[..4] != b"TBS1" {
+        return Err(PendingOperationStoreError::Unavailable);
+    }
+    let has_ticket = bytes[4] != 0;
+    let mut offset = 5;
+    let ticket = if has_ticket {
+        let end = offset + 16;
+        let value = <[u8; 16]>::try_from(
+            bytes.get(offset..end).ok_or(PendingOperationStoreError::Unavailable)?,
+        )
+        .map_err(|_| PendingOperationStoreError::Unavailable)?;
+        offset = end;
+        Some(value)
+    } else {
+        None
+    };
+    let provider_len =
+        usize::from(*bytes.get(offset).ok_or(PendingOperationStoreError::Unavailable)?);
+    offset += 1;
+    let provider = String::from_utf8(
+        bytes
+            .get(offset..offset + provider_len)
+            .ok_or(PendingOperationStoreError::Unavailable)?
+            .to_vec(),
+    )
+    .map_err(|_| PendingOperationStoreError::Unavailable)?;
+    offset += provider_len;
+    let payload_len = usize::from(u16::from_be_bytes([
+        *bytes.get(offset).ok_or(PendingOperationStoreError::Unavailable)?,
+        *bytes.get(offset + 1).ok_or(PendingOperationStoreError::Unavailable)?,
+    ]));
+    offset += 2;
+    let payload = bytes
+        .get(offset..offset + payload_len)
+        .ok_or(PendingOperationStoreError::Unavailable)?
+        .to_vec();
+    let bootstrap = torca_pairing_protocol::PairingBootstrapDescriptor::new(provider, payload)
+        .map_err(|_| PendingOperationStoreError::Unavailable)?;
+    Ok((ticket, Some(bootstrap)))
 }
 
 #[cfg(test)]
@@ -238,6 +318,7 @@ mod tests {
                 kind: PendingOperationKind::JoinPairing {
                     code: "ABC123".into(),
                     ticket: Some([7; 16]),
+                    bootstrap: None,
                 },
                 attempts: 0,
                 next_attempt_at_ms: 10,

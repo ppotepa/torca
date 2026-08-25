@@ -47,6 +47,7 @@ struct UiContext {
     message_count: std::sync::atomic::AtomicUsize,
     attachment_count: std::sync::atomic::AtomicUsize,
     radio_count: std::sync::atomic::AtomicUsize,
+    notification_count: std::sync::atomic::AtomicUsize,
     ready_peers: std::sync::atomic::AtomicUsize,
 }
 
@@ -152,7 +153,7 @@ pub(crate) fn publish_event(event: &str, line: &Value) {
                 }
             }
         }
-        if event == "relay_ready" {
+        if matches!(event, "provider_ready" | "relay_ready") {
             if let Some(endpoint) = data.get("endpoint").and_then(Value::as_str) {
                 if let Ok(mut value) = ctx.relay_endpoint.lock() {
                     endpoint.clone_into(&mut value);
@@ -166,6 +167,11 @@ pub(crate) fn publish_event(event: &str, line: &Value) {
             if let Some(onion) = data.get("onion").and_then(Value::as_str) {
                 if let Ok(mut value) = ctx.onion_state.lock() {
                     onion.clone_into(&mut value);
+                }
+            }
+            if let Some(incoming) = data.get("incoming").and_then(Value::as_str) {
+                if let Ok(mut value) = ctx.onion_state.lock() {
+                    incoming.clone_into(&mut value);
                 }
             }
         }
@@ -190,6 +196,7 @@ pub(crate) fn publish_event(event: &str, line: &Value) {
         "message_queued" => Some(&ctx.message_count),
         "attachment_queued" => Some(&ctx.attachment_count),
         "radio_burst" => Some(&ctx.radio_count),
+        "notification_assertion_passed" => Some(&ctx.notification_count),
         _ => None,
     } {
         counter.fetch_add(1, Ordering::Relaxed);
@@ -226,7 +233,7 @@ fn event_phase(event: &str) -> Option<&'static str> {
     match event {
         "run_started" => Some("starting"),
         "relay_starting" => Some("relay startup"),
-        "relay_ready" => Some("relay ready"),
+        "provider_ready" | "relay_ready" => Some("provider ready"),
         "android_preflight_started" | "android_ready" | "android_bridge_starting" => {
             Some("Android preflight")
         }
@@ -237,7 +244,12 @@ fn event_phase(event: &str) -> Option<&'static str> {
         "active_preflight_passed" => Some("contacts ready"),
         "measurement_started" => Some("measurement"),
         "message_queued" | "attachment_queued" | "radio_burst" => Some("workload"),
+        "notification_assertion_passed" => Some("notification probe"),
+        "notification_assertion_failed" => Some("notification failure"),
+        "run_verdict" => Some("verdict"),
+        "run_failed" => Some("failed"),
         "run_completed" => Some("completed"),
+        "cockpit_finished" => Some("completed"),
         "run_cancelled" => Some("cancelled"),
         value if value.contains("fault") => Some("fault recovery"),
         _ => None,
@@ -279,6 +291,7 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
         message_count: std::sync::atomic::AtomicUsize::new(0),
         attachment_count: std::sync::atomic::AtomicUsize::new(0),
         radio_count: std::sync::atomic::AtomicUsize::new(0),
+        notification_count: std::sync::atomic::AtomicUsize::new(0),
         ready_peers: std::sync::atomic::AtomicUsize::new(0),
     });
     let slot = ACTIVE.get_or_init(|| Mutex::new(None));
@@ -339,6 +352,11 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
                                 &serde_json::json!({"source":"tui"}),
                             );
                         }
+                        KeyEvent { code: KeyCode::Char('o'), .. } => {
+                            if let Some(serial) = cli.android.as_deref() {
+                                open_android_developer_settings(serial);
+                            }
+                        }
                         KeyEvent { code: KeyCode::Char('l'), .. } => {
                             show_logs = !show_logs;
                             scroll = 0;
@@ -380,6 +398,25 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
         }
     })();
     let _ = worker.join();
+    // Keep the final verdict visible long enough for a human operator to
+    // read the artifact path. Plain/CI runs are unaffected because they do
+    // not enter this module.
+    if let Ok(result) = &loop_result {
+        let status = if result.is_ok() { "completed" } else { "failed" };
+        publish_event("cockpit_finished", &serde_json::json!({"status": status}));
+        let final_deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < final_deadline {
+            terminal
+                .draw(|frame| draw(frame, &ctx, &cli, show_logs, scroll))
+                .map_err(|error| format!("draw final TUI: {error}"))?;
+            if event::poll(Duration::from_millis(100))
+                .map_err(|error| format!("read final TUI input: {error}"))?
+                && matches!(event::read(), Ok(Event::Key(key)) if matches!(key.code, KeyCode::Enter | KeyCode::Char('q') | KeyCode::Esc))
+            {
+                break;
+            }
+        }
+    }
     let teardown =
         teardown_terminal(&mut terminal).map_err(|error| format!("teardown TUI: {error}"));
     *slot.lock().map_err(|_| "TUI state lock poisoned".to_owned())? = None;
@@ -470,17 +507,39 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
             cli.fake_peers + usize::from(cli.android.is_some())
         )),
         ListItem::new(format!(
-            "Relay: {:?} [{}]",
-            cli.relay,
-            ctx.relay_health.lock().map(|value| value.clone()).unwrap_or_default()
+            "Provider: {} [{}]",
+            cli.communication_provider.wire(),
+            ctx.relay_health
+                .lock()
+                .map(|value| {
+                    if cli.communication_provider.requires_managed_relay() {
+                        value.clone()
+                    } else {
+                        "provider-owned".to_owned()
+                    }
+                })
+                .unwrap_or_else(|_| "unknown".to_owned())
         )),
         ListItem::new(format!(
-            "Onion: {}",
+            "Incoming: {}",
             ctx.onion_state.lock().map(|value| value.clone()).unwrap_or_default()
         )),
         ListItem::new(format!(
-            "Endpoint: {}",
-            ctx.relay_endpoint.lock().map(|value| value.clone()).unwrap_or_default()
+            "Provider endpoint: {}",
+            ctx.relay_endpoint
+                .lock()
+                .map(|value| {
+                    if value.is_empty() {
+                        if cli.communication_provider.requires_managed_relay() {
+                            "pending".to_owned()
+                        } else {
+                            "provider-owned".to_owned()
+                        }
+                    } else {
+                        value.clone()
+                    }
+                })
+                .unwrap_or_else(|_| "unknown".to_owned())
         )),
         ListItem::new(format!(
             "Artifact: {}",
@@ -510,10 +569,11 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
         columns[0],
     );
     let counts = format!(
-        "counters: msg={} attach={} radio={}",
+        "counters: msg={} attach={} radio={} notifications={}",
         ctx.message_count.load(Ordering::Relaxed),
         ctx.attachment_count.load(Ordering::Relaxed),
-        ctx.radio_count.load(Ordering::Relaxed)
+        ctx.radio_count.load(Ordering::Relaxed),
+        ctx.notification_count.load(Ordering::Relaxed)
     );
     let mut activity = vec![ListItem::new(counts)];
     let events = ctx
@@ -527,6 +587,7 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
     frame.render_widget(workload, columns[1]);
     let controls = Paragraph::new(vec![
         Line::from("p / Space   pause or resume"),
+        Line::from("o           open Android Developer options"),
         Line::from("r           retry Android preflight"),
         Line::from("m           mark incident"),
         Line::from("l           open detailed logs"),
@@ -543,6 +604,20 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
         Paragraph::new("TUI is observational; q requests controlled cancellation and cleanup.")
             .style(Style::default().fg(Color::DarkGray)),
         vertical[2],
+    );
+}
+
+fn open_android_developer_settings(serial: &str) {
+    let result = Command::new("adb")
+        .args(["-s", serial, "shell", "am", "start", "-a", "android.settings.DEVELOPMENT_SETTINGS"])
+        .output();
+    publish_event(
+        if result.as_ref().is_ok_and(|output| output.status.success()) {
+            "android_settings_opened"
+        } else {
+            "android_settings_open_failed"
+        },
+        &serde_json::json!({"serial": serial}),
     );
 }
 
@@ -638,6 +713,7 @@ mod tests {
         assert_eq!(event_phase("run_started"), Some("starting"));
         assert_eq!(event_phase("message_queued"), Some("workload"));
         assert_eq!(event_phase("relay_fault_recovered"), Some("fault recovery"));
+        assert_eq!(event_phase("cockpit_finished"), Some("completed"));
         assert_eq!(event_phase("backend_stderr"), None);
     }
 }

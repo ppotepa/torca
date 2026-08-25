@@ -1,9 +1,9 @@
 // Responsibility: one runtime maintenance turn split into explicit phases.
 
-fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
+fn maintain_runtime_health<P: PairingDriver, T: CommunicationLifecycle>(
     pairing: &mut P,
-    tor: &mut T,
-    relay_health: Option<&RelayHealthHandle>,
+    communication_lifecycle: &mut T,
+    rendezvous_health: Option<&RendezvousHealthHandle>,
     policy: &mut RuntimeGovernor,
     health: &mut RuntimeHealthState,
     work: &mut RuntimeWorkState,
@@ -13,20 +13,18 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     connectivity: &ConnectivityObserver,
     now: Timestamp,
 ) {
-    if let Some(relay) = relay_health {
-        let demanded = policy.has_active_lease(ResourceScope::Relay, std::time::Instant::now());
-        relay.set_demand(demanded);
+    if let Some(rendezvous) = rendezvous_health {
+        let demanded = policy.has_active_lease(ResourceScope::Rendezvous, std::time::Instant::now());
+        rendezvous.set_demand(demanded);
     }
 
-    let relay_snapshot = relay_health
-        .map_or_else(RelayHealthSnapshot::default, RelayHealthHandle::snapshot);
+    let relay_snapshot = rendezvous_health
+        .map_or_else(RendezvousHealthSnapshot::default, RendezvousHealthHandle::snapshot);
     let relay_probe_completed = relay_snapshot.probe_count > counters.last_relay_probe_count;
     if relay_probe_completed {
         diagnostics.count_by(
-            RuntimeCounter::RelayProbe,
-            relay_snapshot
-                .probe_count
-                .saturating_sub(counters.last_relay_probe_count),
+            RuntimeCounter::RendezvousProbe,
+            relay_snapshot.probe_count.saturating_sub(counters.last_relay_probe_count),
         );
         counters.last_relay_probe_count = relay_snapshot.probe_count;
     }
@@ -34,7 +32,7 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     if relay_probe_completed && relay_snapshot.status == ProbeStatus::Healthy {
         policy.apply(
             PolicyEvent::Evidence {
-                scope: ResourceScope::Relay,
+                scope: ResourceScope::Rendezvous,
                 kind: EvidenceKind::Probe,
             },
             std::time::Instant::now(),
@@ -67,14 +65,14 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     }
 
     observe_maintenance(
-        tor.maintenance(now),
-        &mut health.tor_failed,
+        communication_lifecycle.maintenance(now),
+        &mut health.communication_lifecycle_failed,
         diagnostics,
         sequence,
         now,
-        Component::Tor,
-        "TOR_MAINTENANCE_FAILED",
-        "TOR_MAINTENANCE_RECOVERED",
+        Component::Communication,
+        "COMMUNICATION_MAINTENANCE_FAILED",
+        "COMMUNICATION_MAINTENANCE_RECOVERED",
     );
     observe_maintenance(
         pairing.maintenance(now),
@@ -82,27 +80,32 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
         diagnostics,
         sequence,
         now,
-        Component::Relay,
+        // Pairing is implemented by the selected communication provider.
+        // It is not inherently a relay operation (Iroh and WebRTC use direct
+        // or externally signalled routes), so keep provider-specific relay
+        // terminology out of generic runtime diagnostics.
+        Component::Communication,
         "PAIRING_MAINTENANCE_FAILED",
         "PAIRING_MAINTENANCE_RECOVERED",
     );
 
-    let tor_state = tor.state();
-    let onion_state = tor.onion_service_state();
-    if tor_state == TorState::Ready
+    let communication_state = communication_lifecycle.state();
+    let incoming_reachability_state = communication_lifecycle.incoming_reachability_state();
+    if rendezvous_health.is_some()
+        && communication_state == CommunicationState::Ready
         && !work.bootstrap_relay_probe_started
         && !work.bootstrap_relay_probe_finished
     {
         acquire_bootstrap_relay_lease(policy);
-        if let Some(relay) = relay_health {
-            relay.set_demand(true);
+        if let Some(rendezvous) = rendezvous_health {
+            rendezvous.set_demand(true);
         }
         work.bootstrap_relay_probe_started = true;
     }
     record_runtime_probes(
         &mut health.probes,
-        tor_state,
-        onion_state,
+        communication_state,
+        incoming_reachability_state,
         health.communication_failed,
         relay_probe_result(relay_snapshot, now),
         now,
@@ -110,26 +113,26 @@ fn maintain_runtime_health<P: PairingDriver, T: TorDriver>(
     for probe in health.probes.latest() {
         connectivity.record_probe(&probe);
     }
-    if health.last_tor_state != Some(tor_state) {
-        health.last_tor_state = Some(tor_state);
+    if health.last_communication_state != Some(communication_state) {
+        health.last_communication_state = Some(communication_state);
         record(
             diagnostics,
             sequence,
             now,
-            Component::Tor,
-            map_health(tor_state),
-            "TOR_STATE_CHANGED",
+            Component::Communication,
+            map_communication_health(communication_state),
+            "COMMUNICATION_STATE_CHANGED",
         );
     }
-    if health.last_onion_state != Some(onion_state) {
-        health.last_onion_state = Some(onion_state);
+    if health.last_incoming_reachability_state != Some(incoming_reachability_state) {
+        health.last_incoming_reachability_state = Some(incoming_reachability_state);
         record(
             diagnostics,
             sequence,
             now,
-            Component::Tor,
-            map_onion_health(onion_state),
-            onion_event_code(onion_state),
+            Component::Communication,
+            map_incoming_reachability_health(incoming_reachability_state),
+            incoming_reachability_event_code(incoming_reachability_state),
         );
     }
 }
@@ -215,11 +218,8 @@ fn maintain_delivery_state<C: CommunicationDriver>(
     }
     counters.last_projection_events = projection_events;
 
-    work.pending_delivery_contacts = engine
-        .pending_delivery_contacts()
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    work.pending_delivery_contacts =
+        engine.pending_delivery_contacts().unwrap_or_default().into_iter().collect();
 
     if !work.active_attachment_leases.is_empty()
         && let Ok(views) = communication.attachment_snapshot()
@@ -235,12 +235,7 @@ fn maintain_delivery_state<C: CommunicationDriver>(
         }
     }
     if projection_changed && !work.active_delivery_leases.is_empty() {
-        for message_id in work
-            .active_delivery_leases
-            .iter()
-            .copied()
-            .collect::<Vec<_>>()
-        {
+        for message_id in work.active_delivery_leases.iter().copied().collect::<Vec<_>>() {
             let message_key = torca_messaging::MessageId::from_opaque(message_id);
             if let Ok(Some(status)) = engine.message_status(message_key)
                 && matches!(
@@ -286,21 +281,16 @@ fn maintain_peer_state<C: CommunicationDriver>(
         .active_peer_ids(std::time::Instant::now())
         .into_iter()
         .map(ContactId::from_opaque)
-        .chain(
-            health
-                .last_peer_states
-                .iter()
-                .filter_map(|(contact_id, state)| {
-                    matches!(
-                        state,
-                        PeerConnectionStatus::Ready
-                            | PeerConnectionStatus::Connecting
-                            | PeerConnectionStatus::Handshaking
-                            | PeerConnectionStatus::Reconnecting
-                    )
-                    .then_some(*contact_id)
-                }),
-        )
+        .chain(health.last_peer_states.iter().filter_map(|(contact_id, state)| {
+            matches!(
+                state,
+                PeerConnectionStatus::Ready
+                    | PeerConnectionStatus::Connecting
+                    | PeerConnectionStatus::Handshaking
+                    | PeerConnectionStatus::Reconnecting
+            )
+            .then_some(*contact_id)
+        }))
         .chain(activity.keys().copied())
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -370,15 +360,12 @@ fn maintain_peer_state<C: CommunicationDriver>(
             let handshake_changed =
                 evidence.handshakes > previous.map_or(0, |value| value.handshakes);
             let failure_changed = evidence.failures > previous.map_or(0, |value| value.failures);
-            let tx_delta = evidence
-                .tx_frames
-                .saturating_sub(previous.map_or(0, |value| value.tx_frames));
-            let rx_delta = evidence
-                .rx_frames
-                .saturating_sub(previous.map_or(0, |value| value.rx_frames));
-            let handshake_delta = evidence
-                .handshakes
-                .saturating_sub(previous.map_or(0, |value| value.handshakes));
+            let tx_delta =
+                evidence.tx_frames.saturating_sub(previous.map_or(0, |value| value.tx_frames));
+            let rx_delta =
+                evidence.rx_frames.saturating_sub(previous.map_or(0, |value| value.rx_frames));
+            let handshake_delta =
+                evidence.handshakes.saturating_sub(previous.map_or(0, |value| value.handshakes));
 
             if tx_delta > 0 {
                 diagnostics.record_battery(
@@ -438,7 +425,12 @@ fn maintain_peer_state<C: CommunicationDriver>(
     health.last_peer_successes = current_successes;
     health.last_peer_activity = current_activity;
 
-    if maintenance_result.is_ok() {
+    if maintenance_result.is_ok() && observed_contacts.is_empty() {
+        // A probe supervisor may retain a due timestamp after the last peer
+        // was released.  Do not carry that stale deadline into the central
+        // scheduler: it would create a zero-delay wake spin with no work.
+        scheduling.peer_probe_deadline = None;
+    } else if maintenance_result.is_ok() {
         maintenance_result = maintain_peer_probes(
             communication,
             &observed_contacts,
@@ -468,8 +460,8 @@ fn maintain_peer_state<C: CommunicationDriver>(
     active_transport
 }
 
-fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
-    tor: &T,
+fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>(
+    communication_lifecycle: &T,
     pairing: &P,
     communication: &C,
     policy: &mut RuntimeGovernor,
@@ -484,14 +476,26 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: TorDrive
     let lease_delay = policy
         .next_lease_expiry()
         .map(|expiry| expiry.saturating_duration_since(std::time::Instant::now()));
-    let peer_delay = (!active_transport)
-        .then_some(scheduling.peer_probe_deadline)
-        .flatten()
-        .and_then(|deadline| deadline.duration_since(now));
+    // A handshaking/connecting peer must keep a bounded polling deadline even
+    // when its transport wake raced with session creation.  Relying solely on
+    // the transport callback can strand a session forever if the first ACK
+    // arrives before the callback is installed.  Ready peers remain fully
+    // event-driven; only active connection establishment gets this cheap
+    // recovery tick.
+    let peer_delay = if active_transport {
+        Some(Duration::from_millis(250))
+    } else {
+        scheduling
+            .peer_probe_deadline
+            .and_then(|deadline| deadline.duration_since(now))
+    };
     scheduling.replace_deadlines(
         std::time::Instant::now(),
         [
-            (RuntimeWakeSource::TorDeadline, tor.next_maintenance_delay(now)),
+            (
+                RuntimeWakeSource::ProviderDeadline,
+                communication_lifecycle.next_maintenance_delay(now),
+            ),
             (RuntimeWakeSource::PairingDeadline, pairing.next_maintenance_delay(now)),
             (RuntimeWakeSource::DeliveryDeadline, communication.next_maintenance_delay(now)),
             (RuntimeWakeSource::RadioDeadline, communication.next_radio_maintenance_delay(now)),

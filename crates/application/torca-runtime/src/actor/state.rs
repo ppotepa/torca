@@ -2,13 +2,13 @@
 
 #[derive(Default)]
 struct RuntimeHealthState {
-    last_tor_state: Option<TorState>,
-    last_onion_state: Option<OnionServiceState>,
+    last_communication_state: Option<CommunicationState>,
+    last_incoming_reachability_state: Option<IncomingReachabilityState>,
     last_relay_state: Option<(ProbeStatus, ErrorCode)>,
     last_peer_states: BTreeMap<ContactId, PeerConnectionStatus>,
     last_peer_successes: BTreeMap<ContactId, Option<Timestamp>>,
     last_peer_activity: BTreeMap<ContactId, PeerActivityEvidence>,
-    tor_failed: bool,
+    communication_lifecycle_failed: bool,
     pairing_failed: bool,
     communication_failed: bool,
     probes: ProbeSupervisor,
@@ -26,8 +26,9 @@ struct RuntimeWorkState {
     system_energy: SystemEnergyState,
     foreground: bool,
     /// A policy permission, not an imperative. RuntimeOwner applies it only
-    /// after background grace and only when no durable work owns Tor.
-    tor_dormancy_allowed: bool,
+    /// after background grace and only when no durable work owns the selected
+    /// communication provider.
+    communication_dormancy_allowed: bool,
     metered_transfers: MeteredTransferPolicy,
     metered_network: bool,
     /// Recipients reconstructed from the durable outbox at startup and after
@@ -60,7 +61,7 @@ impl RuntimeWorkState {
             battery_preferences: BatteryPreferences::default(),
             system_energy: SystemEnergyState::default().with_foreground(true),
             foreground: true,
-            tor_dormancy_allowed: false,
+            communication_dormancy_allowed: false,
             metered_transfers: MeteredTransferPolicy::PauseLarge,
             metered_network: false,
             pending_delivery_contacts: BTreeSet::new(),
@@ -99,7 +100,7 @@ impl RuntimeSchedulingState {
         let now = std::time::Instant::now();
         let mut initial = BTreeSet::new();
         initial.extend([
-            RuntimeWakeSource::TorDeadline,
+            RuntimeWakeSource::ProviderDeadline,
             RuntimeWakeSource::PairingDeadline,
             RuntimeWakeSource::DeliveryDeadline,
             RuntimeWakeSource::RadioDeadline,

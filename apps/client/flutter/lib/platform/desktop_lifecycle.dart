@@ -76,7 +76,8 @@ class DesktopLifecycle with WindowListener, TrayListener {
           MenuItem(key: 'show', label: 'Show Torca'),
           MenuItem(
             key: 'tor-status',
-            label: 'Tor: ${_torLabel(snapshot.torState)}',
+            label:
+                '${snapshot.communicationProvider.toUpperCase()}: ${_communicationLabel(snapshot.communicationState)}',
           ),
           MenuItem(key: 'peer-status', label: 'Peers: $readyPeers connected'),
           MenuItem.separator(),
@@ -182,7 +183,7 @@ class DesktopLifecycle with WindowListener, TrayListener {
     }
   }
 
-  String _torLabel(String state) => switch (state) {
+  String _communicationLabel(String state) => switch (state) {
     'ready' => 'Connected',
     'starting' => 'Starting',
     'reconnecting' => 'Reconnecting',

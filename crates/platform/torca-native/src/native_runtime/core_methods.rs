@@ -6,6 +6,54 @@ fn read_models(&self) -> &ApplicationReadModels {
         .expect("production composition always installs application read-model ports")
 }
 
+fn bridge_operation_name(command: &torca_contract::BridgeCommand) -> &'static str {
+    use torca_contract::BridgeCommand::*;
+    match command {
+        SetAttention { .. } => "runtime.attention.set",
+        SetNotifications { .. } => "notifications.set",
+        SetReadReceipts { .. } => "privacy.read_receipts.set",
+        SetBatteryPreferences { .. } => "battery.preferences.set",
+        SetContactAvailability { .. } => "contact.availability.set",
+        AcknowledgeNewContacts => "contacts.acknowledge_new",
+        StartBatteryObservation => "diagnostics.observation.start",
+        StopBatteryObservation => "diagnostics.observation.stop",
+        ResetBatteryObservation => "diagnostics.observation.reset",
+        MarkIncident => "diagnostics.incident.mark",
+        UpdateProfile { .. } => "profile.set",
+        CreatePairing { .. } => "pairing.create",
+        JoinPairing { .. } => "pairing.join",
+        ApprovePairing { .. } => "pairing.approve",
+        RejectPairing { .. } => "pairing.reject",
+        CancelPairing { .. } => "pairing.cancel",
+        RenameContact { .. } => "contact.rename",
+        VerifyContact { .. } => "contact.verify",
+        ResetContactVerification { .. } => "contact.verification.reset",
+        BlockContact { .. } => "contact.block",
+        UnblockContact { .. } => "contact.unblock",
+        RemoveContact { .. } => "contact.remove",
+        StartConversation { .. } => "conversation.start",
+        ClearConversationHistory { .. } => "conversation.clear",
+        ArchiveConversation { .. } => "conversation.archive",
+        RestoreConversation { .. } => "conversation.restore",
+        QueueMessage { .. } => "message.send",
+        RetryMessage { .. } => "message.retry",
+        CancelMessage { .. } => "message.cancel",
+        EditMessage { .. } => "message.edit",
+        SetMessageReaction { .. } => "message.reaction",
+        MarkConversationRead { .. } => "conversation.read",
+        QueueAttachment { .. } => "attachment.queue",
+        RetryAttachment { .. } => "attachment.retry",
+        CancelAttachment { .. } => "attachment.cancel",
+        ExportAttachment { .. } => "attachment.export",
+        ExportAttachmentPreview { .. } => "attachment.preview.export",
+        SetRadioEnabled { .. } => "radio.set_enabled",
+        ConfigureRadioAudio { .. } => "radio.audio.configure",
+        BeginRadioTransmission { .. } => "radio.transmission.begin",
+        EndRadioTransmission { .. } => "radio.transmission.end",
+        RefreshSnapshot => "snapshot.get",
+    }
+}
+
 pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
     let logger = open_startup_logger();
     let parts = match spawn_production_engine() {
@@ -58,17 +106,17 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         host_attempt: 0,
         host_status_code: None,
         host_status_summary: None,
-        host_onion_started_at_ms: None,
-        host_onion_last_progress_at_ms: None,
-        host_onion_progress: 0,
-        host_onion_attempt: 0,
-        host_onion_status_code: None,
-        host_onion_status_summary: None,
-        host_onion_retry_at: None,
+        host_incoming_started_at_ms: None,
+        host_incoming_last_progress_at_ms: None,
+        host_incoming_progress: 0,
+        host_incoming_attempt: 0,
+        host_incoming_status_code: None,
+        host_incoming_status_summary: None,
+        host_incoming_retry_at: None,
         host_start_deadline: None,
         host_retry_at: None,
         host_failures: 0,
-        host_state_hint: TorState::Stopped,
+        host_state_hint: CommunicationState::Stopped,
         network_changed_pending: false,
         last_onion_log_state: None,
         last_relay_log_state: None,
@@ -356,6 +404,7 @@ pub(crate) fn execute_with_request_id(
         );
     }
 
+    let operation_name = Self::bridge_operation_name(&command);
     let application_result = match decode_application_command(command) {
         Ok(command) => self.application_runtime.execute(command),
         Err(error) => Err(ApplicationError::invalid_input(error)),
@@ -368,7 +417,26 @@ pub(crate) fn execute_with_request_id(
     let result = bridge_result_from_application(application_result);
     if !result.ok {
         if is_profile {
-            self.log_profile(request_id, "PROFILE_STORAGE_FAILED");
+            if let Some(logger) = &self.logger {
+                let context = json!({
+                    "requestId": request_id,
+                    "operation": "profile.set",
+                    "stage": "PROFILE_STORAGE_FAILED",
+                    "errorCode": result.error_code,
+                    "diagnostic": diagnostic_error,
+                })
+                .to_string();
+                let _ = logger.event_with_context(
+                    "profile",
+                    Level::Error,
+                    "profile",
+                    "PROFILE_STORAGE_FAILED",
+                    "profile operation rejected by native engine",
+                    Some(&context),
+                );
+            } else {
+                self.log_profile(request_id, "PROFILE_STORAGE_FAILED");
+            }
         }
         if let (Some(logger), Some((operation, contact_id))) = (&self.logger, radio_operation.as_ref()) {
             let context = json!({
@@ -387,13 +455,29 @@ pub(crate) fn execute_with_request_id(
                 "Radio command rejected by native engine",
                 Some(&context),
             );
+        } else if let Some(logger) = &self.logger {
+            let context = json!({
+                "requestId": request_id,
+                "operation": operation_name,
+                "errorCode": &result.error_code,
+                "diagnostic": diagnostic_error,
+            })
+            .to_string();
+            let _ = logger.event_with_context(
+                "bridge",
+                Level::Error,
+                "command",
+                "BRIDGE_COMMAND_FAILED",
+                "Bridge command rejected by native engine",
+                Some(&context),
+            );
         } else {
             self.log(
                 "bridge",
                 Level::Error,
                 "command",
                 "BRIDGE_COMMAND_FAILED",
-                "Bridge command rejected by native engine",
+                &format!("operation={operation_name} requestId={request_id}"),
             );
         }
         if let Some((operation, session_id)) = &pairing_operation {

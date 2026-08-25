@@ -10,7 +10,11 @@ pub extern "C" fn torca_runtime_metadata_len() -> usize {
 
 fn metadata() -> &'static [u8] {
     METADATA.get_or_init(|| {
+        let provider = torca_transport_api::TransportKind::from_wire(COMMUNICATION_PROVIDER)
+            .unwrap_or_default();
+        let features = provider.deployment_profile().features;
         serde_json::to_vec(&json!({
+            "metadataSchema": 2,
             "productVersion": PRODUCT_VERSION,
             "buildNumber": 1,
             "buildId": BUILD_ID,
@@ -21,7 +25,11 @@ fn metadata() -> &'static [u8] {
             "storageEpoch": STORAGE_EPOCH,
             "schemaVersion": 1,
             "wireVersion": 1,
-            "relayEndpointHash": RELAY_ENDPOINT_HASH,
+            "communicationProvider": COMMUNICATION_PROVIDER,
+            "providerEndpointHash": PROVIDER_ENDPOINT_HASH,
+            // Temporary compatibility alias for older Flutter binaries. It
+            // is intentionally nullable for direct providers such as Iroh.
+            "relayEndpointHash": PROVIDER_ENDPOINT_HASH,
             "targetPlatform": std::env::consts::OS,
             "targetArchitecture": std::env::consts::ARCH,
             "capabilities": {
@@ -29,6 +37,17 @@ fn metadata() -> &'static [u8] {
                 "maxVideoAttachmentBytes": 5 * 1024 * 1024,
                 "maxQueuedAttachments": 5,
                 "maxAttachmentSourceBytes": 64 * 1024 * 1024,
+                // A short code only works when the selected provider has a
+                // discovery/rendezvous mapping. Direct Iroh QR currently does
+                // not, so advertising this as true would recreate the
+                // terminal-code-as-retry bug in the UI.
+                "pairingQr": features.pairing_qr,
+                "pairingFullLink": features.pairing_full_link,
+                "pairingShortCode": features.pairing_short_code,
+                "supportsIncoming": features.incoming,
+                "supportsRadio": features.radio,
+                "supportsAttachments": features.attachments,
+                "providerDirectPath": features.direct_path,
             },
         }))
         .expect("static runtime metadata is serializable")
@@ -163,16 +182,32 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                 actor_alive.store(true, Ordering::Release);
                 let runtime_id = secure_id_hex().unwrap_or_else(|_| "runtime-unavailable".into());
                 let _ = ready_tx.send(Ok(()));
-                actor_loop(
-                    receiver,
-                    ActorState {
-                        runtime,
-                        runtime_id,
-                        revision: 1,
-                        completed: IdempotencyLedger::default(),
-                    },
-                    actor_event_hub,
-                );
+                let mut state = ActorState {
+                    runtime,
+                    runtime_id,
+                    revision: 1,
+                    completed: IdempotencyLedger::default(),
+                };
+                let actor_result = catch_unwind(AssertUnwindSafe(|| {
+                    actor_loop(receiver, &mut state, actor_event_hub);
+                }));
+                if let Err(payload) = actor_result {
+                    let detail = if let Some(message) = payload.downcast_ref::<&str>() {
+                        (*message).to_owned()
+                    } else if let Some(message) = payload.downcast_ref::<String>() {
+                        message.clone()
+                    } else {
+                        "non-string actor panic payload".to_owned()
+                    };
+                    state.runtime.log(
+                        "runtime",
+                        Level::Error,
+                        "actor",
+                        "RUNTIME_ACTOR_PANICKED",
+                        &detail,
+                    );
+                    eprintln!("Torca runtime actor panicked: {detail}");
+                }
                 actor_alive.store(false, Ordering::Release);
             }
             Err(error) => {
@@ -192,7 +227,7 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
 
 fn actor_loop(
     receiver: Receiver<ActorMessage>,
-    mut state: ActorState,
+    state: &mut ActorState,
     event_hub: Arc<RuntimeEventHub>,
 ) {
     loop {
@@ -206,11 +241,29 @@ fn actor_loop(
                     }
                     continue;
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    state.runtime.log(
+                        "runtime",
+                        Level::Warn,
+                        "actor",
+                        "RUNTIME_ACTOR_STOPPED",
+                        "actor mailbox disconnected",
+                    );
+                    break;
+                }
             },
             None => match receiver.recv() {
                 Ok(message) => message,
-                Err(_) => break,
+                Err(_) => {
+                    state.runtime.log(
+                        "runtime",
+                        Level::Warn,
+                        "actor",
+                        "RUNTIME_ACTOR_STOPPED",
+                        "actor mailbox disconnected",
+                    );
+                    break;
+                }
             },
         };
         match message {
@@ -235,7 +288,14 @@ fn actor_loop(
                 }
                 event_hub.publish(state.revision);
             }
-            ActorMessage::Shutdown { response } => {
+            ActorMessage::Shutdown { response, source } => {
+                state.runtime.log(
+                    "ffi",
+                    Level::Info,
+                    "shutdown",
+                    "RUNTIME_SHUTDOWN_REQUESTED",
+                    source,
+                );
                 let _ = state.runtime.close();
                 let _ = response.send(());
                 break;

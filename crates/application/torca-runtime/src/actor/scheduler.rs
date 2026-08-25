@@ -81,8 +81,8 @@ fn bootstrap_relay_lease_owner() -> OpaqueId {
 
 fn acquire_bootstrap_relay_lease(policy: &mut RuntimeGovernor) {
     policy.acquire_lease(WorkDemand {
-        scope: ResourceScope::Relay,
-        class: WorkClass::RelayProbe,
+        scope: ResourceScope::Rendezvous,
+        class: WorkClass::RendezvousProbe,
         reason: DemandReason::BootstrapValidation,
         owner: bootstrap_relay_lease_owner(),
         // Two bounded attempts (8 s each) plus jittered retry fit well inside
@@ -98,7 +98,7 @@ fn delivery_lease_owner(message_id: OpaqueId) -> OpaqueId {
 fn acquire_delivery_lease(policy: &mut RuntimeGovernor, message_id: OpaqueId) {
     // Durable delivery is released by its terminal job/status transition. A
     // synthetic ten-minute expiry would create an unnecessary deadline and
-    // can let Tor sleep while a slow peer still has queued work.
+    // can let the selected provider sleep while a slow peer still has queued work.
     policy.acquire_until_release(WorkDemand {
         scope: ResourceScope::Delivery(message_id),
         class: WorkClass::Delivery,
@@ -199,8 +199,8 @@ fn acquire_radio_transmission_lease(policy: &mut RuntimeGovernor, contact_id: Co
 
 fn acquire_pairing_lease(policy: &mut RuntimeGovernor, session_id: PairingSessionId) {
     policy.acquire_lease(WorkDemand {
-        scope: ResourceScope::Relay,
-        class: WorkClass::RelayConnect,
+        scope: ResourceScope::Rendezvous,
+        class: WorkClass::RendezvousConnect,
         reason: DemandReason::ActivePairing,
         owner: pairing_lease_owner(session_id),
         expires_at: std::time::Instant::now() + Duration::from_secs(5 * 60),
@@ -247,8 +247,8 @@ fn observe_maintenance(
 
 fn record_runtime_probes(
     probes: &mut ProbeSupervisor,
-    tor_state: TorState,
-    onion_state: OnionServiceState,
+    communication_state: CommunicationState,
+    incoming_reachability_state: IncomingReachabilityState,
     peer_failed: bool,
     relay_result: ProbeResult,
     now: Timestamp,
@@ -262,35 +262,43 @@ fn record_runtime_probes(
         probes.record(runtime_probe(target, ProbeKind::Readiness, ProbeStatus::Healthy, "OK", now));
     }
     probes.record(runtime_probe(
-        ProbeTarget::Tor,
+        ProbeTarget::Communication,
         ProbeKind::Readiness,
-        match tor_state {
-            TorState::Ready => ProbeStatus::Healthy,
-            TorState::Starting => ProbeStatus::Checking,
-            TorState::Degraded => ProbeStatus::Degraded,
-            TorState::Failed => ProbeStatus::Failed,
-            TorState::Stopped => ProbeStatus::Unknown,
+        match communication_state {
+            CommunicationState::Ready => ProbeStatus::Healthy,
+            CommunicationState::Starting => ProbeStatus::Checking,
+            CommunicationState::Degraded => ProbeStatus::Degraded,
+            CommunicationState::Failed => ProbeStatus::Failed,
+            CommunicationState::Stopped => ProbeStatus::Unknown,
         },
-        if matches!(tor_state, TorState::Ready) { "TOR_READY" } else { "TOR_NOT_READY" },
+        if matches!(communication_state, CommunicationState::Ready) {
+            "COMMUNICATION_READY"
+        } else {
+            "COMMUNICATION_NOT_READY"
+        },
         now,
     ));
     probes.record(relay_result);
     probes.record(runtime_probe(
-        ProbeTarget::OnionService,
+        ProbeTarget::IncomingReachability,
         ProbeKind::Readiness,
-        match onion_state {
-            OnionServiceState::Reachable => ProbeStatus::Healthy,
-            OnionServiceState::Publishing => ProbeStatus::Checking,
-            OnionServiceState::Degraded => ProbeStatus::Degraded,
-            OnionServiceState::Failed => ProbeStatus::Failed,
-            OnionServiceState::Unknown | OnionServiceState::Stopped => ProbeStatus::Unknown,
+        match incoming_reachability_state {
+            IncomingReachabilityState::Reachable => ProbeStatus::Healthy,
+            IncomingReachabilityState::Publishing => ProbeStatus::Checking,
+            IncomingReachabilityState::Degraded => ProbeStatus::Degraded,
+            IncomingReachabilityState::Failed => ProbeStatus::Failed,
+            IncomingReachabilityState::Unknown | IncomingReachabilityState::Stopped => {
+                ProbeStatus::Unknown
+            }
         },
-        match onion_state {
-            OnionServiceState::Reachable => "ONION_REACHABLE",
-            OnionServiceState::Publishing => "ONION_PUBLISHING",
-            OnionServiceState::Degraded => "ONION_DEGRADED",
-            OnionServiceState::Failed => "ONION_FAILED",
-            OnionServiceState::Unknown | OnionServiceState::Stopped => "ONION_UNAVAILABLE",
+        match incoming_reachability_state {
+            IncomingReachabilityState::Reachable => "INCOMING_REACHABILITY_READY",
+            IncomingReachabilityState::Publishing => "INCOMING_REACHABILITY_PENDING",
+            IncomingReachabilityState::Degraded => "INCOMING_REACHABILITY_DEGRADED",
+            IncomingReachabilityState::Failed => "INCOMING_REACHABILITY_FAILED",
+            IncomingReachabilityState::Unknown | IncomingReachabilityState::Stopped => {
+                "INCOMING_REACHABILITY_UNAVAILABLE"
+            }
         },
         now,
     ));
@@ -320,7 +328,7 @@ fn runtime_probe(
     }
 }
 
-fn relay_probe_result(snapshot: RelayHealthSnapshot, measured_at: Timestamp) -> ProbeResult {
+fn relay_probe_result(snapshot: RendezvousHealthSnapshot, measured_at: Timestamp) -> ProbeResult {
     ProbeResult {
         target: ProbeTarget::Relay,
         kind: ProbeKind::Connectivity,

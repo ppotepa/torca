@@ -73,6 +73,7 @@ class ConversationHeader extends StatelessWidget {
     this.leading,
     this.instantContact = false,
     this.instantContactBusy = false,
+    this.radioSupported = true,
     this.onInstantContactChanged,
     super.key,
   });
@@ -91,6 +92,7 @@ class ConversationHeader extends StatelessWidget {
   final bool instantContact;
   final bool instantContactBusy;
   final ValueChanged<bool>? onInstantContactChanged;
+  final bool radioSupported;
 
   @override
   Widget build(BuildContext context) {
@@ -113,7 +115,8 @@ class ConversationHeader extends StatelessWidget {
         error: radioState == RadioState.reconnecting,
       ),
     );
-    final radioAction = value != null && gateway != null && radio != null
+    final radioAction =
+        radioSupported && value != null && gateway != null && radio != null
         ? _RadioHeaderAction(
             gateway: gateway!,
             contact: value,

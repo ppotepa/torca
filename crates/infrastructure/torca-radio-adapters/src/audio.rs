@@ -12,8 +12,6 @@ use torca_radio_coordinator::RadioAudioDeviceProjection;
 use torca_radio_coordinator::{RadioApplicationError, RadioAudioPort, RadioAudioProjection};
 use torca_radio_protocol::{MAX_RADIO_BURST_FRAMES, RADIO_SAMPLES_PER_FRAME};
 
-#[cfg(all(feature = "audio", target_os = "android"))]
-use crate::codec::decode_mulaw;
 #[cfg(target_os = "android")]
 use crate::codec::encode_mulaw;
 
@@ -272,6 +270,22 @@ impl RadioAudioAdapter {
             completed_playback_burst: None,
         }
     }
+
+    /// Creates an audio adapter which never touches the host audio backend.
+    ///
+    /// Providers without a Radio media route still expose the common runtime
+    /// projection, but they must not enumerate CPAL devices on every snapshot
+    /// (on Android that becomes repeated AudioFlinger Binder traffic).
+    pub fn disabled() -> Self {
+        Self {
+            pipeline: AudioPipeline::default(),
+            platform: platform::PlatformAudio::disabled(),
+            capture_burst: None,
+            playback_burst: None,
+            completed_capture_burst: None,
+            completed_playback_burst: None,
+        }
+    }
 }
 
 impl RadioAudioPort for RadioAudioAdapter {
@@ -393,6 +407,7 @@ mod platform {
 
     pub struct PlatformAudio {
         pipeline: AudioPipeline,
+        enabled: bool,
         input: Option<cpal::Stream>,
         output: Option<cpal::Stream>,
         fault: Arc<AtomicU8>,
@@ -404,6 +419,19 @@ mod platform {
         pub fn new(pipeline: AudioPipeline) -> Self {
             Self {
                 pipeline,
+                enabled: true,
+                input: None,
+                output: None,
+                fault: Arc::new(AtomicU8::new(0)),
+                selected_input_id: None,
+                selected_output_id: None,
+            }
+        }
+
+        pub fn disabled() -> Self {
+            Self {
+                pipeline: AudioPipeline::default(),
+                enabled: false,
                 input: None,
                 output: None,
                 fault: Arc::new(AtomicU8::new(0)),
@@ -413,6 +441,13 @@ mod platform {
         }
 
         pub fn devices(&self) -> RadioAudioProjection {
+            // Direct providers (for example Iroh) deliberately expose no
+            // Radio media route.  Never ask CPAL for a host here: on Android
+            // that would enter ndk-context/AudioFlinger from a normal
+            // snapshot and can panic before the Android audio bridge exists.
+            if !self.enabled {
+                return RadioAudioProjection::default();
+            }
             let host = cpal::default_host();
             let default_input = host
                 .default_input_device()
@@ -459,6 +494,13 @@ mod platform {
             input_device_id: Option<&str>,
             output_device_id: Option<&str>,
         ) -> Result<(), RadioApplicationError> {
+            if !self.enabled {
+                // Providers without a native Radio backend may still receive
+                // the shared audio-preferences command during startup. Keep
+                // that command harmless; actual capture/playback remains
+                // capability-guarded below.
+                return Ok(());
+            }
             let devices = self.devices();
             if input_device_id
                 .is_some_and(|id| !devices.input_devices.iter().any(|item| item.id == id))
@@ -476,10 +518,16 @@ mod platform {
         }
 
         pub fn microphone_ready(&self) -> bool {
+            if !self.enabled {
+                return false;
+            }
             selected_input_device(self.selected_input_id.as_deref()).is_some()
         }
 
         pub fn begin_capture(&mut self) -> Result<(), RadioApplicationError> {
+            if !self.enabled {
+                return Err(RadioApplicationError::MicrophoneUnavailable);
+            }
             self.end_capture();
             let device = selected_input_device(self.selected_input_id.as_deref())
                 .ok_or(RadioApplicationError::MicrophoneUnavailable)?;
@@ -513,6 +561,9 @@ mod platform {
         }
 
         pub fn begin_playback(&mut self) -> Result<(), RadioApplicationError> {
+            if !self.enabled {
+                return Err(RadioApplicationError::AudioOutputUnavailable);
+            }
             // Keep one output stream for the lifetime of the active radio
             // session. Replacing it while the previous stream is still
             // draining can overlap callbacks and play start/end cues twice
@@ -943,6 +994,9 @@ mod platform {
         pub fn new(_pipeline: AudioPipeline) -> Self {
             Self
         }
+        pub const fn disabled() -> Self {
+            Self
+        }
         pub fn devices(&self) -> RadioAudioProjection {
             RadioAudioProjection::default()
         }
@@ -999,6 +1053,16 @@ mod tests {
         let pipeline = AudioPipeline::default();
         assert!(pipeline.request_end_cue());
         assert!(!pipeline.request_end_cue());
+    }
+
+    #[cfg(all(feature = "audio", any(target_os = "windows", target_os = "android")))]
+    #[test]
+    fn disabled_platform_audio_never_reports_host_devices() {
+        let platform = platform::PlatformAudio::disabled();
+        let projection = platform.devices();
+        assert!(projection.input_devices.is_empty());
+        assert!(projection.output_devices.is_empty());
+        assert!(!platform.microphone_ready());
     }
 
     #[cfg(any(target_os = "windows", target_os = "android"))]

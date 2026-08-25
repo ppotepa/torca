@@ -56,6 +56,39 @@ The run writes `plan.json`, `manifest.json`, message timeline and Android
 battery start/end evidence under `.torca/soak/<run-id>/`. It fails before the
 measurement if Android cannot expose the five expected bot relationships.
 
+### Provisioned active-messaging fixture
+
+Pairing is intentionally a two-step operation: the soak bot joins the
+invitation and the inviter explicitly approves it. To avoid repeating that
+interactive setup on every measurement, use the fixture lifecycle:
+
+The default `fixture=none` path also performs the complete one-shot setup
+(clean SOAK1 profile, deterministic nickname/avatar, pairing approval and
+contact naming), but does not persist a reusable manifest. Use `provision` when
+the resulting identities should be reused by later measurements.
+
+```powershell
+# One-time setup: clean SOAK1 profile, deterministic nicknames, real pairing
+cargo run -p torca-soak -- --scenario active-messaging --plain `
+  --android "<adb-serial>" --fake-peers 5 --fixture provision `
+  --fixture-name android-default --duration-seconds 1 --fault-profile none
+
+# Measurements: preserve the SOAK1 profile and validate contacts before traffic
+cargo run -p torca-soak -- --scenario active-messaging --plain `
+  --android "<adb-serial>" --fake-peers 5 --fixture reuse `
+  --fixture-name android-default --duration-seconds 3600 `
+  --require-unplugged
+```
+
+`provision` stores the device-bound manifest at
+`.torca/soak/fixtures/<name>.json` and also writes a copy into the run
+artifact. It contains only identity ids/fingerprints, display names and
+relationship counts; it never contains pairing codes, private keys, messages
+or attachment bytes. `reuse` refuses a different Android serial, a changed
+identity/nickname, or missing contacts/conversations. The SOAK1 package and
+profile are isolated from the normal Torca installation; ordinary deploys do
+not consume this fixture.
+
 Validation runs by default. The legacy PowerShell harness remains an internal
 backend and CI compatibility shim.
 

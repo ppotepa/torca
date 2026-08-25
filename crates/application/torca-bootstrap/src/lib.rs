@@ -13,9 +13,9 @@ pub enum BootstrapStepId {
     SecureStorage,
     Database,
     DeviceIdentity,
-    Tor,
-    OnionService,
-    Relay,
+    CommunicationRuntime,
+    IncomingReachability,
+    Rendezvous,
     UserProfile,
 }
 
@@ -82,9 +82,9 @@ impl BootstrapState {
             (BootstrapStepId::SecureStorage, BootstrapCriticality::Required),
             (BootstrapStepId::Database, BootstrapCriticality::Required),
             (BootstrapStepId::DeviceIdentity, BootstrapCriticality::Required),
-            (BootstrapStepId::Tor, BootstrapCriticality::Required),
-            (BootstrapStepId::OnionService, BootstrapCriticality::Required),
-            (BootstrapStepId::Relay, BootstrapCriticality::DegradedAllowed),
+            (BootstrapStepId::CommunicationRuntime, BootstrapCriticality::Required),
+            (BootstrapStepId::IncomingReachability, BootstrapCriticality::Required),
+            (BootstrapStepId::Rendezvous, BootstrapCriticality::DegradedAllowed),
             (BootstrapStepId::UserProfile, BootstrapCriticality::Required),
         ] {
             state.steps.insert(
@@ -99,6 +99,33 @@ impl BootstrapState {
             );
         }
         state
+    }
+
+    /// Applies provider-owned commissioning requirements to the generic
+    /// startup graph.  An onion publisher is one possible implementation of
+    /// incoming reachability, not a universal startup dependency.
+    pub fn configure_communication_requirements(
+        &mut self,
+        commissioning: &torca_transport_api::ProviderCommissioning,
+    ) {
+        if let Some(step) = self.steps.get_mut(&BootstrapStepId::IncomingReachability) {
+            step.criticality = if commissioning.requires_for_local_shell(
+                torca_transport_api::CommissioningStage::IncomingReachability,
+            ) {
+                BootstrapCriticality::Required
+            } else {
+                BootstrapCriticality::DegradedAllowed
+            };
+        }
+        if let Some(step) = self.steps.get_mut(&BootstrapStepId::Rendezvous) {
+            step.criticality = if commissioning.requires_for_local_shell(
+                torca_transport_api::CommissioningStage::PairingRendezvous,
+            ) {
+                BootstrapCriticality::Required
+            } else {
+                BootstrapCriticality::DegradedAllowed
+            };
+        }
     }
 
     pub fn begin(&mut self, id: BootstrapStepId) {
@@ -148,9 +175,9 @@ impl BootstrapState {
                 BootstrapStepId::SecureStorage,
                 BootstrapStepId::Database,
                 BootstrapStepId::DeviceIdentity,
-                BootstrapStepId::Tor,
-                BootstrapStepId::OnionService,
-                BootstrapStepId::Relay,
+                BootstrapStepId::CommunicationRuntime,
+                BootstrapStepId::IncomingReachability,
+                BootstrapStepId::Rendezvous,
                 BootstrapStepId::UserProfile,
             ]
             .into_iter()
@@ -159,9 +186,9 @@ impl BootstrapState {
                 BootstrapStepId::SecureStorage,
                 BootstrapStepId::Database,
                 BootstrapStepId::DeviceIdentity,
-                BootstrapStepId::Tor,
-                BootstrapStepId::OnionService,
-                BootstrapStepId::Relay,
+                BootstrapStepId::CommunicationRuntime,
+                BootstrapStepId::IncomingReachability,
+                BootstrapStepId::Rendezvous,
                 BootstrapStepId::UserProfile,
             ]
             .into_iter()
@@ -169,30 +196,36 @@ impl BootstrapState {
             BootstrapStepId::SecureStorage => [
                 BootstrapStepId::Database,
                 BootstrapStepId::DeviceIdentity,
-                BootstrapStepId::Tor,
-                BootstrapStepId::OnionService,
+                BootstrapStepId::CommunicationRuntime,
+                BootstrapStepId::IncomingReachability,
                 BootstrapStepId::UserProfile,
             ]
             .into_iter()
             .collect(),
             BootstrapStepId::Database => [
                 BootstrapStepId::DeviceIdentity,
-                BootstrapStepId::Tor,
-                BootstrapStepId::OnionService,
+                BootstrapStepId::CommunicationRuntime,
+                BootstrapStepId::IncomingReachability,
                 BootstrapStepId::UserProfile,
             ]
             .into_iter()
             .collect(),
-            BootstrapStepId::DeviceIdentity => {
-                [BootstrapStepId::Tor, BootstrapStepId::OnionService, BootstrapStepId::UserProfile]
+            BootstrapStepId::DeviceIdentity => [
+                BootstrapStepId::CommunicationRuntime,
+                BootstrapStepId::IncomingReachability,
+                BootstrapStepId::UserProfile,
+            ]
+            .into_iter()
+            .collect(),
+            BootstrapStepId::CommunicationRuntime => {
+                [BootstrapStepId::IncomingReachability, BootstrapStepId::UserProfile]
                     .into_iter()
                     .collect()
             }
-            BootstrapStepId::Tor => {
-                [BootstrapStepId::OnionService, BootstrapStepId::UserProfile].into_iter().collect()
+            BootstrapStepId::IncomingReachability => {
+                [BootstrapStepId::UserProfile].into_iter().collect()
             }
-            BootstrapStepId::OnionService => [BootstrapStepId::UserProfile].into_iter().collect(),
-            BootstrapStepId::Relay | BootstrapStepId::UserProfile => [].into_iter().collect(),
+            BootstrapStepId::Rendezvous | BootstrapStepId::UserProfile => [].into_iter().collect(),
         };
         for id in blocked {
             if let Some(step) = self.steps.get_mut(&id)
@@ -213,15 +246,16 @@ impl BootstrapState {
             .steps
             .get(&BootstrapStepId::DeviceIdentity)
             .is_some_and(|s| s.state == BootstrapStepState::Ready);
-        let transport_ready = self
-            .steps
-            .get(&BootstrapStepId::OnionService)
-            .is_some_and(|s| s.state == BootstrapStepState::Ready);
+        let transport_ready =
+            self.steps.get(&BootstrapStepId::IncomingReachability).is_some_and(|step| {
+                step.state == BootstrapStepState::Ready
+                    || step.criticality != BootstrapCriticality::Required
+            });
         let profile_ready = self
             .steps
             .get(&BootstrapStepId::UserProfile)
             .is_some_and(|s| s.state == BootstrapStepState::Ready);
-        let relay_degraded = self.steps.get(&BootstrapStepId::Relay).is_some_and(|s| {
+        let relay_degraded = self.steps.get(&BootstrapStepId::Rendezvous).is_some_and(|s| {
             matches!(s.state, BootstrapStepState::Failed | BootstrapStepState::Degraded)
         });
         let phase =
@@ -269,9 +303,9 @@ mod tests {
             BootstrapStepId::SecureStorage,
             BootstrapStepId::Database,
             BootstrapStepId::DeviceIdentity,
-            BootstrapStepId::Tor,
-            BootstrapStepId::OnionService,
-            BootstrapStepId::Relay,
+            BootstrapStepId::CommunicationRuntime,
+            BootstrapStepId::IncomingReachability,
+            BootstrapStepId::Rendezvous,
         ] {
             state.complete(step);
         }
@@ -279,9 +313,9 @@ mod tests {
     }
 
     #[test]
-    fn failed_tor_blocks_profile() {
+    fn failed_communication_runtime_blocks_profile() {
         let mut state = BootstrapState::new();
-        state.fail(BootstrapStepId::Tor, "TOR_RUNTIME_FAILED");
+        state.fail(BootstrapStepId::CommunicationRuntime, "COMMUNICATION_RUNTIME_FAILED");
         let snapshot = state.snapshot();
         assert_eq!(snapshot.phase, BootstrapPhase::Failed);
         assert!(snapshot.can_retry);
@@ -297,20 +331,20 @@ mod tests {
             BootstrapStepId::SecureStorage,
             BootstrapStepId::Database,
             BootstrapStepId::DeviceIdentity,
-            BootstrapStepId::Tor,
-            BootstrapStepId::OnionService,
+            BootstrapStepId::CommunicationRuntime,
+            BootstrapStepId::IncomingReachability,
         ] {
             state.complete(step);
         }
-        state.begin(BootstrapStepId::Relay);
-        state.degrade(BootstrapStepId::Relay, "RELAY_UNREACHABLE");
+        state.begin(BootstrapStepId::Rendezvous);
+        state.degrade(BootstrapStepId::Rendezvous, "RENDEZVOUS_UNREACHABLE");
         let snapshot = state.snapshot();
         assert_eq!(snapshot.phase, BootstrapPhase::ReadyForProfile);
         assert_eq!(
             snapshot
                 .steps
                 .iter()
-                .find(|step| step.id == BootstrapStepId::Relay)
+                .find(|step| step.id == BootstrapStepId::Rendezvous)
                 .map(|step| step.state),
             Some(BootstrapStepState::Degraded)
         );
@@ -326,14 +360,43 @@ mod tests {
             BootstrapStepId::SecureStorage,
             BootstrapStepId::Database,
             BootstrapStepId::DeviceIdentity,
-            BootstrapStepId::Tor,
-            BootstrapStepId::OnionService,
+            BootstrapStepId::CommunicationRuntime,
+            BootstrapStepId::IncomingReachability,
         ] {
             state.complete(step);
         }
-        state.begin(BootstrapStepId::Relay);
-        state.verify(BootstrapStepId::Relay);
+        state.begin(BootstrapStepId::Rendezvous);
+        state.verify(BootstrapStepId::Rendezvous);
 
+        assert_eq!(state.snapshot().phase, BootstrapPhase::ReadyForProfile);
+    }
+
+    #[test]
+    fn provider_without_incoming_requirement_can_unlock_local_profile() {
+        let mut state = BootstrapState::new();
+        let commissioning = torca_transport_api::ProviderCommissioning {
+            provider: torca_transport_api::TransportKind::Iroh,
+            steps: vec![torca_transport_api::CommissioningStep {
+                stage: torca_transport_api::CommissioningStage::LocalRuntime,
+                state: torca_transport_api::CommissioningState::Ready,
+                required_for_local_shell: true,
+                required_for_pairing: true,
+            }],
+            endpoint_summary: Some("iroh:test".into()),
+            pairing_bootstrap: None,
+        };
+        state.configure_communication_requirements(&commissioning);
+        for step in [
+            BootstrapStepId::Preferences,
+            BootstrapStepId::NativeBridge,
+            BootstrapStepId::Contract,
+            BootstrapStepId::SecureStorage,
+            BootstrapStepId::Database,
+            BootstrapStepId::DeviceIdentity,
+            BootstrapStepId::CommunicationRuntime,
+        ] {
+            state.complete(step);
+        }
         assert_eq!(state.snapshot().phase, BootstrapPhase::ReadyForProfile);
     }
 }

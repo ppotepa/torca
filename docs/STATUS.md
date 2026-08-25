@@ -38,7 +38,7 @@ The remaining confidence work is primarily platform and end-to-end validation:
 - attachment resume/cancel/export across reconnects and restarts;
 - Radio Mode permission, backgrounding, route-change and recovery soak tests;
 - deployment resume/interruption behavior; and
-- longer-running battery/runtime traces before enabling more aggressive Tor dormancy policy.
+- longer-running battery/runtime traces before enabling more aggressive communication-provider dormancy policy.
 
 The GitHub Actions workflow is configured to run the automated matrix, but the existence of the workflow is not proof that the current commit is green. Check the actual Actions result before citing CI as evidence.
 

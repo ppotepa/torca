@@ -32,7 +32,8 @@ use torca_client_engine::EngineHandle;
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
-use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
+use torca_foundation::{ClassifiedError, CommandId, OpaqueId, Timestamp};
+use torca_messaging::Message;
 use torca_runtime::{
     AttachmentExportPort, AttachmentSendRequest, AttachmentTransferPort, AttachmentView,
     ContactVerificationSnapshot, ConversationReadPort, PeerSessionPort, RelationshipAdminPort,
@@ -313,6 +314,10 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         self.peer.prime_connections();
     }
 
+    fn prime_contact(&mut self, contact_id: ContactId) {
+        let _ = self.peer.prime_contact(contact_id);
+    }
+
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
         if let Ok(mut target) = self.attachment_waker.lock() {
             *target = Some(Arc::clone(&waker));
@@ -374,6 +379,20 @@ impl PeerSessionPort for TorcaCommunicationDriver {
 }
 
 impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
+    fn queue_outbound(
+        &mut self,
+        message: Message,
+        command_id: CommandId,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        self.text.queue_outbound(message, command_id, next_attempt_at).map_err(map_runtime)
+    }
+
+    fn wake_delivery(&mut self) {
+        self.text.wake();
+        self.control.wake();
+    }
+
     fn maintain_radio(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
         if let Some(radio) = self.radio.as_mut()
             && let Err(error) = radio.maintenance(now)
@@ -598,6 +617,7 @@ struct ControlWorkerState {
     writes: u64,
     contacts: Vec<ContactId>,
     waker: Option<Arc<dyn Fn() + Send + Sync>>,
+    wake_pending: bool,
 }
 
 impl ControlDeliveryBridge {
@@ -610,6 +630,7 @@ impl ControlDeliveryBridge {
             writes: 0,
             contacts: Vec::new(),
             waker: None,
+            wake_pending: false,
         }));
         let worker_state = Arc::clone(&state);
         thread::spawn(move || {
@@ -630,7 +651,12 @@ impl ControlDeliveryBridge {
                 let waker = worker_state.lock().ok().and_then(|mut value| {
                     value.in_flight = false;
                     value.result = Some(result);
-                    value.next_delay = next_delay;
+                    value.next_delay = if value.wake_pending {
+                        value.wake_pending = false;
+                        Some(Duration::ZERO)
+                    } else {
+                        next_delay
+                    };
                     value.writes = writes;
                     value.contacts = contacts;
                     value.waker.clone()
@@ -676,10 +702,29 @@ impl ControlDeliveryRuntime for ControlDeliveryBridge {
         self.dispatch(ControlWork::Recover(now))
     }
 
+    fn wake(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.in_flight {
+                state.wake_pending = true;
+            } else {
+                state.wake_pending = false;
+                state.next_delay = Some(Duration::ZERO);
+            }
+        }
+    }
+
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
         self.take_result()?;
         if let Ok(mut state) = self.state.lock() {
             if state.in_flight {
+                return Ok(());
+            }
+            // A completion wake is also used to deliver the worker result
+            // back to the runtime actor.  Once that result has been consumed,
+            // do not immediately enqueue another empty maintenance pass: the
+            // next-due deadline is the authority for the next real run.
+            let due = state.next_delay.is_some_and(|delay| delay.is_zero());
+            if !due {
                 return Ok(());
             }
             state.in_flight = true;
@@ -721,6 +766,7 @@ impl ControlDeliveryRuntime for ControlDeliveryBridge {
 
 enum TextWork {
     Recover(Timestamp),
+    Queue { message: Message, command_id: CommandId, next_attempt_at: Timestamp },
     Maintenance { now: Timestamp, limit: usize },
 }
 
@@ -730,6 +776,8 @@ struct TextWorkerState {
     next_delay: Option<Duration>,
     writes: u64,
     waker: Option<Arc<dyn Fn() + Send + Sync>>,
+    wake_pending: bool,
+    queued: VecDeque<TextWork>,
 }
 
 struct TextDeliveryBridge {
@@ -746,24 +794,57 @@ impl TextDeliveryBridge {
             next_delay: None,
             writes: 0,
             waker: None,
+            wake_pending: false,
+            queued: VecDeque::new(),
         }));
         let worker_state = Arc::clone(&state);
+        let worker_sender = sender.clone();
         thread::spawn(move || {
             let mut runtime = runtime;
             while let Ok(work) = receiver.recv() {
                 let (result, now) = match work {
                     TextWork::Recover(now) => (runtime.recover(now), now),
+                    TextWork::Queue { message, command_id, next_attempt_at } => (
+                        runtime.queue_outbound(message, command_id, next_attempt_at),
+                        next_attempt_at,
+                    ),
                     TextWork::Maintenance { now, limit } => (runtime.maintenance(now, limit), now),
                 };
                 let next_delay = runtime.next_maintenance_delay(now);
                 let writes = runtime.database_write_count();
-                let waker = worker_state.lock().ok().and_then(|mut value| {
-                    value.in_flight = false;
-                    value.result = Some(result);
-                    value.next_delay = next_delay;
-                    value.writes = writes;
-                    value.waker.clone()
-                });
+                let (waker, next_work) = worker_state
+                    .lock()
+                    .ok()
+                    .map(|mut value| {
+                        value.in_flight = false;
+                        value.result = Some(result);
+                        let next_work = value.queued.pop_front();
+                        value.in_flight = next_work.is_some();
+                        value.next_delay = if next_work.is_some() {
+                            None
+                        } else if value.wake_pending {
+                            value.wake_pending = false;
+                            Some(Duration::ZERO)
+                        } else {
+                            next_delay
+                        };
+                        value.writes = writes;
+                        (value.waker.clone(), next_work)
+                    })
+                    .unwrap_or((None, None));
+                if let Some(next_work) = next_work {
+                    // The receiver is the same thread, so a blocking send
+                    // would deadlock when the bounded channel is full. The
+                    // completed item has just been removed; try_send is the
+                    // correct non-blocking hand-off here.
+                    if let Err(TrySendError::Full(work)) = worker_sender.try_send(next_work)
+                        && let Ok(mut value) = worker_state.lock()
+                    {
+                        value.queued.push_front(work);
+                        value.in_flight = false;
+                        value.next_delay = Some(Duration::ZERO);
+                    }
+                }
                 if let Some(waker) = waker {
                     waker();
                 }
@@ -778,6 +859,32 @@ impl TextDeliveryBridge {
 }
 
 impl TextDeliveryRuntime for TextDeliveryBridge {
+    fn queue_outbound(
+        &mut self,
+        message: Message,
+        command_id: CommandId,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.take_result()?;
+        if let Ok(mut state) = self.state.lock() {
+            if state.in_flight {
+                if state.queued.len() >= 64 {
+                    return Err(CommunicationError::Text);
+                }
+                state.queued.push_back(TextWork::Queue { message, command_id, next_attempt_at });
+                return Ok(());
+            }
+            state.in_flight = true;
+        }
+        if self.sender.try_send(TextWork::Queue { message, command_id, next_attempt_at }).is_err() {
+            if let Ok(mut state) = self.state.lock() {
+                state.in_flight = false;
+            }
+            return Err(CommunicationError::Text);
+        }
+        Ok(())
+    }
+
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
         if let Ok(mut state) = self.state.lock() {
             state.waker = Some(waker);
@@ -801,10 +908,27 @@ impl TextDeliveryRuntime for TextDeliveryBridge {
         Ok(())
     }
 
+    fn wake(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.in_flight {
+                state.wake_pending = true;
+            } else {
+                state.wake_pending = false;
+                state.next_delay = Some(Duration::ZERO);
+            }
+        }
+    }
+
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
         self.take_result()?;
         if let Ok(mut state) = self.state.lock() {
             if state.in_flight {
+                return Ok(());
+            }
+            // See the control worker above: a worker completion must not
+            // turn into an unbounded empty dispatch loop.
+            let due = state.next_delay.is_some_and(|delay| delay.is_zero());
+            if !due {
                 return Ok(());
             }
             state.in_flight = true;

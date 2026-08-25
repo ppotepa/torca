@@ -10,7 +10,7 @@ use torca_pairing::{PairingCode, PairingSessionId};
 use torca_pairing_coordinator::{
     LocalPairingContext, PairingApprovalError, PairingApprovalPort, PairingCoordinator,
     PairingCoordinatorError, PairingCredentialError, PairingDerivedSecret, PairingPeerSecretStore,
-    PairingRelayDelivery, PairingRendezvousPort, PairingRuntime, PairingSideToken,
+    PairingRuntime, PairingSessionDelivery, PairingSessionServicePort, PairingSideToken,
     PairingSlotCapability, PairingSlotId,
 };
 use torca_pairing_protocol::PairingEnvelope;
@@ -29,11 +29,11 @@ impl SharedRelay {
         self.0
             .borrow_mut()
             .handle(request, Timestamp::from_unix_millis(1_000).expect("time"))
-            .map_err(|_| PairingCoordinatorError::Rendezvous)
+            .map_err(|_| PairingCoordinatorError::SessionService)
     }
 }
 
-impl PairingRendezvousPort for SharedRelay {
+impl PairingSessionServicePort for SharedRelay {
     fn open(
         &mut self,
         code: &PairingCode,
@@ -57,7 +57,7 @@ impl PairingRendezvousPort for SharedRelay {
             RelayResponse::Opened { slot_id, expires_at } => {
                 Ok((PairingSlotId(slot_id.0), expires_at))
             }
-            _ => Err(PairingCoordinatorError::Rendezvous),
+            _ => Err(PairingCoordinatorError::SessionService),
         }
     }
 
@@ -67,6 +67,7 @@ impl PairingRendezvousPort for SharedRelay {
         joiner_blob: Vec<u8>,
         token: PairingSideToken,
         ticket: Option<[u8; 16]>,
+        _bootstrap: Option<&torca_pairing_protocol::PairingBootstrapDescriptor>,
     ) -> Result<(PairingSlotId, Timestamp, Vec<u8>), PairingCoordinatorError> {
         let relay_code =
             RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
@@ -80,7 +81,7 @@ impl PairingRendezvousPort for SharedRelay {
             RelayResponse::Joined { slot_id, expires_at, creator_blob } => {
                 Ok((PairingSlotId(slot_id.0), expires_at, creator_blob))
             }
-            _ => Err(PairingCoordinatorError::Rendezvous),
+            _ => Err(PairingCoordinatorError::SessionService),
         }
     }
 
@@ -99,7 +100,7 @@ impl PairingRendezvousPort for SharedRelay {
             blob,
         })? {
             RelayResponse::Accepted => Ok(()),
-            _ => Err(PairingCoordinatorError::Rendezvous),
+            _ => Err(PairingCoordinatorError::SessionService),
         }
     }
 
@@ -108,7 +109,7 @@ impl PairingRendezvousPort for SharedRelay {
         slot: PairingSlotId,
         token: PairingSideToken,
         after: u64,
-    ) -> Result<Vec<PairingRelayDelivery>, PairingCoordinatorError> {
+    ) -> Result<Vec<PairingSessionDelivery>, PairingCoordinatorError> {
         match self.call(RelayRequest::Poll {
             slot_id: WireRelaySlotId(slot.0),
             token: WireRelaySideToken(token.0),
@@ -116,12 +117,12 @@ impl PairingRendezvousPort for SharedRelay {
         })? {
             RelayResponse::Deliveries(deliveries) => Ok(deliveries
                 .into_iter()
-                .map(|delivery| PairingRelayDelivery {
+                .map(|delivery| PairingSessionDelivery {
                     sequence: delivery.sequence.0,
                     blob: delivery.blob,
                 })
                 .collect()),
-            _ => Err(PairingCoordinatorError::Rendezvous),
+            _ => Err(PairingCoordinatorError::SessionService),
         }
     }
 
@@ -137,7 +138,7 @@ impl PairingRendezvousPort for SharedRelay {
             up_to: RelaySequence(up_to),
         })? {
             RelayResponse::Acked(_) => Ok(()),
-            _ => Err(PairingCoordinatorError::Rendezvous),
+            _ => Err(PairingCoordinatorError::SessionService),
         }
     }
 
@@ -151,7 +152,7 @@ impl PairingRendezvousPort for SharedRelay {
             capability: WireRelaySlotCapability(capability.0),
         })? {
             RelayResponse::Closed => Ok(()),
-            _ => Err(PairingCoordinatorError::Rendezvous),
+            _ => Err(PairingCoordinatorError::SessionService),
         }
     }
 }
@@ -248,9 +249,10 @@ fn context(engine: &torca_client_engine::EngineHandle, name: &str) -> LocalPairi
     LocalPairingContext {
         public_identity: identity.public().clone(),
         display_name: name.into(),
-        onion_address: format!("{}.onion", "a".repeat(56)),
         capability_id: OpaqueId::from_u128(if name == "Alice" { 101 } else { 202 }),
         avatar: None,
+        transport_provider: "tor".into(),
+        transport_endpoint: format!("{}.onion", "a".repeat(56)).into_bytes(),
     }
 }
 

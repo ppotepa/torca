@@ -46,9 +46,41 @@ const COMPLETED_BURST_HISTORY: usize = 8;
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RadioMediaRoute {
-    pub onion_address: String,
+    /// Provider-owned route bytes. The common media protocol never assumes
+    /// that a route is an onion address; provider factories decode these
+    /// bytes according to their selected transport.
+    pub provider: String,
+    pub endpoint: Vec<u8>,
     pub local_identity: OpaqueId,
     pub remote_identity: OpaqueId,
+}
+
+/// Blocking byte stream used by the bounded radio worker. Providers may
+/// implement it over TCP, QUIC or a platform DataChannel; the coordinator
+/// never sees the concrete socket type.
+pub trait RadioMediaStream: Read + Write + Send {
+    fn configure(&self, _read: Duration, _write: Duration) -> Result<(), RadioApplicationError> {
+        Ok(())
+    }
+
+    fn set_read_deadline(&self, _timeout: Duration) -> Result<(), RadioApplicationError> {
+        Ok(())
+    }
+
+    fn close_stream(&self) -> Result<(), RadioApplicationError>;
+}
+
+/// Provider-owned media connector. It is deliberately synchronous at the
+/// worker boundary so audio cadence and retransmit deadlines stay bounded;
+/// provider implementations may block on their own async runtime internally.
+pub trait RadioMediaConnector: Send {
+    fn connect(
+        &mut self,
+        route: &RadioMediaRoute,
+        timeout: Duration,
+    ) -> Result<Box<dyn RadioMediaStream>, RadioApplicationError>;
+
+    fn try_accept(&mut self) -> Result<Option<Box<dyn RadioMediaStream>>, RadioApplicationError>;
 }
 
 /// Erased session cipher used by the socket worker. Implementations retain
@@ -113,6 +145,126 @@ pub trait RadioMediaDirectory: Send {
     ) -> Result<Box<dyn RadioMediaCipher>, RadioApplicationError>;
 }
 
+/// Provider-owned constructor for one radio media system.
+///
+/// The communication composition depends only on this boundary. A provider
+/// decides how media sessions are reached; it must not leak a Tor client,
+/// onion listener, WebRTC channel or Iroh endpoint into common delivery code.
+pub trait RadioMediaSystemFactory: Send {
+    fn start(
+        self: Box<Self>,
+        directory: Box<dyn RadioMediaDirectory>,
+    ) -> Result<RadioMediaSystem, RadioApplicationError>;
+}
+
+/// Tor-specific factory kept beside the existing TCP/onion media worker.
+/// Future providers implement `RadioMediaSystemFactory` in their own
+/// composition module without changing communication assembly.
+pub struct TorRadioMediaSystemFactory {
+    tor: TorServiceHandle,
+}
+
+struct TorRadioMediaStream(TcpStream);
+
+impl Read for TorRadioMediaStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buffer)
+    }
+}
+impl Write for TorRadioMediaStream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+impl RadioMediaStream for TorRadioMediaStream {
+    fn configure(&self, read: Duration, write: Duration) -> Result<(), RadioApplicationError> {
+        self.0
+            .set_read_timeout(Some(read))
+            .and_then(|_| self.0.set_write_timeout(Some(write)))
+            .and_then(|_| self.0.set_nodelay(true))
+            .map_err(|_| RadioApplicationError::MediaTransport)
+    }
+
+    fn close_stream(&self) -> Result<(), RadioApplicationError> {
+        self.0.shutdown(Shutdown::Both).map_err(|_| RadioApplicationError::MediaTransport)
+    }
+
+    fn set_read_deadline(&self, timeout: Duration) -> Result<(), RadioApplicationError> {
+        self.0.set_read_timeout(Some(timeout)).map_err(|_| RadioApplicationError::MediaTransport)
+    }
+}
+
+struct TorRadioMediaConnector {
+    tor: TorServiceHandle,
+    listener: PeerListener,
+}
+
+impl RadioMediaConnector for TorRadioMediaConnector {
+    fn connect(
+        &mut self,
+        route: &RadioMediaRoute,
+        timeout: Duration,
+    ) -> Result<Box<dyn RadioMediaStream>, RadioApplicationError> {
+        if route.provider != "tor" {
+            return Err(RadioApplicationError::MediaTransport);
+        }
+        let onion = std::str::from_utf8(&route.endpoint)
+            .map_err(|_| RadioApplicationError::MediaTransport)?;
+        self.tor
+            .connect_onion_with_timeout(onion, TOR_RADIO_VIRTUAL_PORT, timeout)
+            .map(|stream| Box::new(TorRadioMediaStream(stream)) as Box<dyn RadioMediaStream>)
+            .map_err(|_| RadioApplicationError::MediaTransport)
+    }
+
+    fn try_accept(&mut self) -> Result<Option<Box<dyn RadioMediaStream>>, RadioApplicationError> {
+        let stream =
+            self.listener.try_accept().map_err(|_| RadioApplicationError::MediaTransport)?.map(
+                |(stream, _)| Box::new(TorRadioMediaStream(stream)) as Box<dyn RadioMediaStream>,
+            );
+        Ok(stream)
+    }
+}
+
+impl TorRadioMediaSystemFactory {
+    #[must_use]
+    pub const fn new(tor: TorServiceHandle) -> Self {
+        Self { tor }
+    }
+}
+
+impl RadioMediaSystemFactory for TorRadioMediaSystemFactory {
+    fn start(
+        self: Box<Self>,
+        directory: Box<dyn RadioMediaDirectory>,
+    ) -> Result<RadioMediaSystem, RadioApplicationError> {
+        RadioMediaSystem::start_tor(self.tor, directory)
+    }
+}
+
+/// Explicit capability boundary for providers without a media route.
+pub struct UnsupportedRadioMediaSystemFactory {
+    provider: torca_transport_api::TransportKind,
+}
+
+impl UnsupportedRadioMediaSystemFactory {
+    pub const fn new(provider: torca_transport_api::TransportKind) -> Self {
+        Self { provider }
+    }
+}
+
+impl RadioMediaSystemFactory for UnsupportedRadioMediaSystemFactory {
+    fn start(
+        self: Box<Self>,
+        _directory: Box<dyn RadioMediaDirectory>,
+    ) -> Result<RadioMediaSystem, RadioApplicationError> {
+        let _ = self.provider;
+        Ok(RadioMediaSystem::disabled())
+    }
+}
+
 /// Both application-facing adapters created around one bounded media worker.
 pub struct RadioMediaSystem {
     pub media: RadioMediaAdapter,
@@ -120,7 +272,14 @@ pub struct RadioMediaSystem {
 }
 
 impl RadioMediaSystem {
-    pub fn start(
+    /// Provider-neutral disabled media endpoint used when a transport does
+    /// not expose a Radio route yet. Messaging startup remains independent of
+    /// optional media capability.
+    pub fn disabled() -> Self {
+        Self { media: RadioMediaAdapter::disabled(), audio: crate::RadioAudioAdapter::disabled() }
+    }
+
+    pub fn start_tor(
         tor: TorServiceHandle,
         directory: Box<dyn RadioMediaDirectory>,
     ) -> Result<Self, RadioApplicationError> {
@@ -132,7 +291,23 @@ impl RadioMediaSystem {
         #[cfg(target_os = "android")]
         crate::install_android_pipeline(pipeline.clone());
         let audio = crate::RadioAudioAdapter::new(pipeline.clone());
-        let media = RadioMediaAdapter::start(tor, listener, directory, pipeline)?;
+        let connector = TorRadioMediaConnector { tor, listener };
+        let media = RadioMediaAdapter::start(Box::new(connector), directory, pipeline)?;
+        Ok(Self { media, audio })
+    }
+
+    /// Starts media with a provider-owned connector. This is the extension
+    /// point used by direct transports such as Iroh; common framing, crypto,
+    /// jitter and audio queues remain shared.
+    pub fn start_with_connector(
+        connector: Box<dyn RadioMediaConnector>,
+        directory: Box<dyn RadioMediaDirectory>,
+    ) -> Result<Self, RadioApplicationError> {
+        let pipeline = AudioPipeline::default();
+        #[cfg(target_os = "android")]
+        crate::install_android_pipeline(pipeline.clone());
+        let audio = crate::RadioAudioAdapter::new(pipeline.clone());
+        let media = RadioMediaAdapter::start(connector, directory, pipeline)?;
         Ok(Self { media, audio })
     }
 }
@@ -145,31 +320,33 @@ pub struct RadioMediaAdapter {
 }
 
 impl RadioMediaAdapter {
+    pub fn disabled() -> Self {
+        let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
+        drop(command_rx);
+        let (_event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
+        Self {
+            commands: command_tx,
+            events: event_rx,
+            wakeups: Arc::new(AtomicU64::new(0)),
+            worker_alive: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
     fn start(
-        tor: TorServiceHandle,
-        listener: PeerListener,
+        connector: Box<dyn RadioMediaConnector>,
         directory: Box<dyn RadioMediaDirectory>,
         audio: AudioPipeline,
     ) -> Result<Self, RadioApplicationError> {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
-        let wake_sender = command_tx.clone();
         let wakeups = Arc::new(AtomicU64::new(0));
-        let wake_counter = Arc::clone(&wakeups);
         let worker_alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_alive_flag = Arc::clone(&worker_alive);
-        listener
-            .set_waker(std::sync::Arc::new(move || {
-                wake_counter.fetch_add(1, Ordering::Relaxed);
-                let _ = wake_sender.try_send(MediaCommand::Wake);
-            }))
-            .map_err(|_| RadioApplicationError::MediaTransport)?;
         thread::Builder::new()
             .name("torca-radio-media".into())
             .spawn(move || {
                 let worker = MediaWorker::new(
-                    tor,
-                    listener,
+                    connector,
                     directory,
                     audio,
                     command_rx,
@@ -293,7 +470,6 @@ enum MediaCommand {
         session_id: RadioSessionId,
         request_id: RadioOperationId,
     },
-    Wake,
     Shutdown,
 }
 
@@ -314,7 +490,7 @@ struct PendingSession {
 #[allow(clippy::struct_excessive_bools)]
 struct LiveSession {
     pending: PendingSession,
-    stream: TcpStream,
+    stream: Box<dyn RadioMediaStream>,
     cipher: Box<dyn RadioMediaCipher>,
     read_buffer: Vec<u8>,
     authenticated: bool,
@@ -349,16 +525,10 @@ struct LiveSession {
 impl LiveSession {
     fn new(
         pending: PendingSession,
-        stream: TcpStream,
+        stream: Box<dyn RadioMediaStream>,
         cipher: Box<dyn RadioMediaCipher>,
     ) -> Result<Self, RadioApplicationError> {
-        stream
-            .set_read_timeout(Some(ACTIVE_READ_TIMEOUT))
-            .map_err(|_| RadioApplicationError::MediaTransport)?;
-        stream
-            .set_write_timeout(Some(Duration::from_secs(2)))
-            .map_err(|_| RadioApplicationError::MediaTransport)?;
-        stream.set_nodelay(true).map_err(|_| RadioApplicationError::MediaTransport)?;
+        stream.configure(ACTIVE_READ_TIMEOUT, Duration::from_secs(2))?;
         let now = Instant::now();
         Ok(Self {
             local_is_coordinator: pending.route.local_identity < pending.route.remote_identity,
@@ -401,8 +571,7 @@ impl LiveSession {
 }
 
 struct MediaWorker {
-    tor: TorServiceHandle,
-    listener: PeerListener,
+    connector: Box<dyn RadioMediaConnector>,
     directory: Box<dyn RadioMediaDirectory>,
     audio: AudioPipeline,
     commands: Receiver<MediaCommand>,
@@ -414,8 +583,7 @@ struct MediaWorker {
 
 impl MediaWorker {
     fn new(
-        tor: TorServiceHandle,
-        listener: PeerListener,
+        connector: Box<dyn RadioMediaConnector>,
         directory: Box<dyn RadioMediaDirectory>,
         audio: AudioPipeline,
         commands: Receiver<MediaCommand>,
@@ -423,8 +591,7 @@ impl MediaWorker {
         worker_alive: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         Self {
-            tor,
-            listener,
+            connector,
             directory,
             audio,
             commands,
@@ -466,9 +633,10 @@ impl MediaWorker {
             let listener_only_wait = self.live.is_none()
                 && self.pending.as_ref().is_none_or(|pending| !pending.initiate_connection);
             let command = if listener_only_wait {
-                match self.commands.recv() {
+                match self.commands.recv_timeout(Duration::from_secs(1)) {
                     Ok(command) => Some(command),
-                    Err(_) => break,
+                    Err(RecvTimeoutError::Timeout) => None,
+                    Err(RecvTimeoutError::Disconnected) => break,
                 }
             } else {
                 match self.commands.recv_timeout(wait) {
@@ -513,7 +681,7 @@ impl MediaWorker {
             // Align the next socket read timeout with the selected deadline;
             // otherwise a 20-ms stale timeout could postpone an ACK or burst
             // boundary that is due sooner.
-            let _ = live.stream.set_read_timeout(Some(wait.max(Duration::from_millis(1))));
+            let _ = live.stream.set_read_deadline(wait.max(Duration::from_millis(1)));
             return wait;
         }
         if let Some(pending) = &self.pending {
@@ -539,7 +707,6 @@ impl MediaWorker {
 
     fn handle_command(&mut self, command: MediaCommand) -> Result<(), ()> {
         match command {
-            MediaCommand::Wake => {}
             MediaCommand::Open { contact_id, session_id, media_token, initiate_connection } => {
                 self.shutdown_live(SessionCloseReason::Replaced);
                 let Some(route) = self.directory.route(contact_id) else {
@@ -691,11 +858,7 @@ impl MediaWorker {
                 pending.reconnect_attempt.saturating_add(1),
                 TOR_RADIO_VIRTUAL_PORT,
             );
-            match self.tor.connect_onion_with_timeout(
-                &pending.route.onion_address,
-                TOR_RADIO_VIRTUAL_PORT,
-                CONNECT_TIMEOUT,
-            ) {
+            match self.connector.connect(&pending.route, CONNECT_TIMEOUT) {
                 Ok(stream) => {
                     eprintln!(
                         "torca-radio: media connect succeeded contact={} attempt={} elapsed_ms={}",
@@ -719,7 +882,7 @@ impl MediaWorker {
                 }
             }
         } else {
-            self.listener.try_accept().ok().flatten().map(|(stream, _)| stream)
+            self.connector.try_accept().ok().flatten()
         };
         let Some(stream) = stream else {
             return;
@@ -781,7 +944,7 @@ impl MediaWorker {
             .map(|live| live.pending.contact_id)
             .or_else(|| self.pending.as_ref().map(|pending| pending.contact_id));
         if let Some(live) = self.live.take() {
-            let _ = live.stream.shutdown(Shutdown::Both);
+            let _ = live.stream.close_stream();
             let mut pending = live.pending;
             schedule_reconnect(&mut pending);
             self.pending = Some(pending);
@@ -795,7 +958,7 @@ impl MediaWorker {
     fn shutdown_live(&mut self, reason: SessionCloseReason) {
         if let Some(mut live) = self.live.take() {
             let _ = send_frame(&mut live, &RadioMediaFrame::Close { reason });
-            let _ = live.stream.shutdown(Shutdown::Both);
+            let _ = live.stream.close_stream();
         }
         self.audio.clear();
     }

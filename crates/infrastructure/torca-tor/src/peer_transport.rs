@@ -10,6 +10,10 @@ use std::time::Duration;
 use torca_foundation::{CorrelationId, OpaqueId};
 use torca_peer::{PeerTransport, PeerTransportError};
 use torca_peer_protocol::MAX_PEER_DATA_LEN;
+use torca_transport_api::{
+    EnergyClass, LatencyClass, ProviderTransport, TransportCapabilities, TransportKind,
+    TransportPath,
+};
 use torca_wire::{
     EnvelopeId, FrameDecoder, FrameMetadata, MessageKind, ProtocolFamily, ProtocolVersion,
     VersionSupport, WireCodec, WireFlags, WireLimits,
@@ -216,6 +220,30 @@ impl PeerTransport for TorPeerTransport {
     fn set_waker(&mut self, waker: WakeCallback) {
         if let Ok(mut slot) = self.wake.lock() {
             *slot = Some(waker);
+        }
+    }
+}
+
+impl ProviderTransport for TorPeerTransport {
+    fn kind(&self) -> TransportKind {
+        TransportKind::Tor
+    }
+
+    fn path(&self) -> TransportPath {
+        TransportPath::TorOnion
+    }
+
+    fn capabilities(&self) -> TransportCapabilities {
+        TransportCapabilities {
+            reliable: true,
+            ordered: true,
+            supports_incoming: true,
+            supports_direct_path: false,
+            supports_relay_path: true,
+            hides_peer_ip: true,
+            max_frame_size: MAX_PEER_DATA_LEN,
+            latency: LatencyClass::High,
+            energy: EnergyClass::High,
         }
     }
 }

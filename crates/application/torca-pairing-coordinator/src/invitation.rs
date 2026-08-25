@@ -2,7 +2,7 @@ use torca_pairing::PairingCode;
 use torca_pairing_protocol::PairingInviteTicket;
 
 use crate::{
-    PairingCoordinator, PairingCoordinatorError, PairingCryptoPort, PairingRendezvousPort,
+    PairingCoordinator, PairingCoordinatorError, PairingCryptoPort, PairingSessionServicePort,
 };
 
 /// Crockford Base32 avoids visual ambiguity in a code that users may type.
@@ -11,7 +11,7 @@ const GENERATED_CODE_LEN: usize = 6;
 
 impl<R, C> PairingCoordinator<R, C>
 where
-    R: PairingRendezvousPort,
+    R: PairingSessionServicePort,
     C: PairingCryptoPort,
 {
     /// Generates a short invitation code without modulo bias. The UI never supplies creator

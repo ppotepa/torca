@@ -22,7 +22,9 @@ use crate::{
     TorBootstrapStage, TorService, TorServiceHandle,
 };
 use torca_foundation::{Timestamp, WakeSlot};
-use torca_runtime::{OnionServiceState, RuntimeDriverError, TorDriver, TorState};
+use torca_runtime::{
+    CommunicationLifecycle, CommunicationState, IncomingReachabilityState, RuntimeDriverError,
+};
 
 type TorWake = Arc<WakeSlot>;
 
@@ -41,7 +43,7 @@ pub struct OwnedTorDriver {
     startup_timeout: Duration,
     failures: u32,
     next_restart_at: Option<Timestamp>,
-    state: TorState,
+    state: CommunicationState,
     last_diagnostic: Option<String>,
     observer: Option<TorBootstrapObserver>,
     wake: TorWake,
@@ -89,7 +91,7 @@ impl OwnedTorDriver {
             startup_timeout,
             failures: 0,
             next_restart_at: None,
-            state: TorState::Starting,
+            state: CommunicationState::Starting,
             last_diagnostic: None,
             observer: observer.clone(),
             wake: Arc::new(WakeSlot::default()),
@@ -112,7 +114,7 @@ impl OwnedTorDriver {
     ) -> Result<(), RuntimeDriverError> {
         self.observer.clone_from(&observer);
         self.endpoint.set(None);
-        self.state = TorState::Starting;
+        self.state = CommunicationState::Starting;
         match TorService::bootstrap_observed(
             &self.state_root,
             self.startup_timeout,
@@ -123,7 +125,7 @@ impl OwnedTorDriver {
                 self.client = Some(TorServiceHandle::new(Arc::clone(&client)));
                 self.failures = 0;
                 self.next_restart_at = None;
-                self.state = TorState::Ready;
+                self.state = CommunicationState::Ready;
                 self.last_diagnostic = None;
                 notify_onion(&observer, 1, 5, None, "ONION_SERVICE_PUBLISHING");
                 self.start_onion_publisher(client, observer)?;
@@ -132,9 +134,9 @@ impl OwnedTorDriver {
             Err(error) => {
                 self.last_diagnostic = Some(format!("Arti bootstrap failed: {error}"));
                 self.client = None;
-                self.state = TorState::Degraded;
+                self.state = CommunicationState::Degraded;
                 self.schedule_restart(now)?;
-                Err(RuntimeDriverError::Tor)
+                Err(RuntimeDriverError::Communication)
             }
         }
     }
@@ -143,7 +145,7 @@ impl OwnedTorDriver {
         self.failures = self.failures.saturating_add(1);
         if self.failures >= MAX_BOOTSTRAP_ATTEMPTS {
             self.next_restart_at = None;
-            self.state = TorState::Failed;
+            self.state = CommunicationState::Failed;
             return Ok(());
         }
         let index = usize::try_from(self.failures.saturating_sub(1))
@@ -151,14 +153,14 @@ impl OwnedTorDriver {
             .min(RESTART_BACKOFF.len() - 1);
         self.next_restart_at = now.checked_add(RESTART_BACKOFF[index]);
         if self.next_restart_at.is_none() {
-            return Err(RuntimeDriverError::Tor);
+            return Err(RuntimeDriverError::Communication);
         }
         Ok(())
     }
 
     fn detect_process_state(&mut self, _now: Timestamp) -> Result<(), RuntimeDriverError> {
         if self.client.as_ref().is_some_and(|client| client.current().is_ok()) {
-            self.state = TorState::Ready;
+            self.state = CommunicationState::Ready;
         }
         Ok(())
     }
@@ -180,7 +182,7 @@ impl OwnedTorDriver {
                 observer,
                 Arc::clone(&self.wake),
             )
-            .map_err(|_| RuntimeDriverError::Tor)?,
+            .map_err(|_| RuntimeDriverError::Communication)?,
         );
         Ok(())
     }
@@ -190,7 +192,7 @@ impl OwnedTorDriver {
             worker.shutdown();
         }
         self.endpoint.set(None);
-        self.state = TorState::Starting;
+        self.state = CommunicationState::Starting;
         self.next_restart_at = None;
         let previous_client = self.client.as_ref().and_then(TorServiceHandle::clear);
         let epoch = self.recovery_epoch.advance();
@@ -201,7 +203,7 @@ impl OwnedTorDriver {
                 previous_client,
                 Arc::clone(&self.wake),
             )
-            .map_err(|_| RuntimeDriverError::Tor)?,
+            .map_err(|_| RuntimeDriverError::Communication)?,
         );
         Ok(())
     }
@@ -218,7 +220,7 @@ impl OwnedTorDriver {
             failure.attempts,
             failure.reason.code()
         ));
-        self.state = TorState::Degraded;
+        self.state = CommunicationState::Degraded;
         self.start_recovery()
     }
 
@@ -245,13 +247,13 @@ impl OwnedTorDriver {
                 }
                 self.failures = 0;
                 self.next_restart_at = None;
-                self.state = TorState::Ready;
+                self.state = CommunicationState::Ready;
                 self.last_diagnostic = None;
                 self.start_onion_publisher(client, self.observer.clone())
             }
             Err(error) => {
                 self.last_diagnostic = Some(format!("Arti recovery bootstrap failed: {error}"));
-                self.state = TorState::Degraded;
+                self.state = CommunicationState::Degraded;
                 self.schedule_restart(now)
             }
         }
@@ -287,7 +289,11 @@ fn notify_onion(
     }
 }
 
-impl TorDriver for OwnedTorDriver {
+impl CommunicationLifecycle for OwnedTorDriver {
+    fn provider(&self) -> torca_transport_api::TransportKind {
+        torca_transport_api::TransportKind::Tor
+    }
+
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.detect_process_state(now)?;
         self.reap_recovery(now)?;
@@ -297,7 +303,7 @@ impl TorDriver for OwnedTorDriver {
             && self.next_restart_at.is_some_and(|deadline| deadline <= now)
         {
             if let Err(error) = self.start_recovery() {
-                self.state = TorState::Degraded;
+                self.state = CommunicationState::Degraded;
                 self.schedule_restart(now)?;
                 return Err(error);
             }
@@ -312,13 +318,13 @@ impl TorDriver for OwnedTorDriver {
         if self.onion_publisher.is_some() {
             return None;
         }
-        match self.onion_service_state() {
-            OnionServiceState::Reachable => None,
-            OnionServiceState::Unknown
-            | OnionServiceState::Publishing
-            | OnionServiceState::Degraded
-            | OnionServiceState::Failed
-            | OnionServiceState::Stopped => Some(Duration::from_secs(1)),
+        match self.incoming_reachability_state() {
+            IncomingReachabilityState::Reachable => None,
+            IncomingReachabilityState::Unknown
+            | IncomingReachabilityState::Publishing
+            | IncomingReachabilityState::Degraded
+            | IncomingReachabilityState::Failed
+            | IncomingReachabilityState::Stopped => Some(Duration::from_secs(1)),
         }
     }
 
@@ -336,34 +342,34 @@ impl TorDriver for OwnedTorDriver {
             } else {
                 TorActivityMode::Active
             })
-            .map_err(|_| RuntimeDriverError::Tor)
+            .map_err(|_| RuntimeDriverError::Communication)
     }
 
-    fn state(&self) -> TorState {
+    fn state(&self) -> CommunicationState {
         self.state
     }
 
-    fn onion_address(&self) -> Option<String> {
+    fn local_endpoint_summary(&self) -> Option<String> {
         self.endpoint.get()
     }
 
-    fn onion_service_state(&self) -> OnionServiceState {
+    fn incoming_reachability_state(&self) -> IncomingReachabilityState {
         let Some(handle) = self.client.as_ref() else {
-            return if self.state == TorState::Stopped {
-                OnionServiceState::Stopped
+            return if self.state == CommunicationState::Stopped {
+                IncomingReachabilityState::Stopped
             } else {
-                OnionServiceState::Unknown
+                IncomingReachabilityState::Unknown
             };
         };
         let Ok(client) = handle.current() else {
-            return OnionServiceState::Unknown;
+            return IncomingReachabilityState::Unknown;
         };
         match client.onion_service_health() {
-            OnionServiceHealth::Stopped => OnionServiceState::Stopped,
-            OnionServiceHealth::Publishing => OnionServiceState::Publishing,
-            OnionServiceHealth::Reachable => OnionServiceState::Reachable,
-            OnionServiceHealth::Degraded => OnionServiceState::Degraded,
-            OnionServiceHealth::Failed => OnionServiceState::Failed,
+            OnionServiceHealth::Stopped => IncomingReachabilityState::Stopped,
+            OnionServiceHealth::Publishing => IncomingReachabilityState::Publishing,
+            OnionServiceHealth::Reachable => IncomingReachabilityState::Reachable,
+            OnionServiceHealth::Degraded => IncomingReachabilityState::Degraded,
+            OnionServiceHealth::Failed => IncomingReachabilityState::Failed,
         }
     }
 
@@ -380,6 +386,6 @@ impl TorDriver for OwnedTorDriver {
             let previous = client.clear();
             drop(previous);
         }
-        self.state = TorState::Stopped;
+        self.state = CommunicationState::Stopped;
     }
 }

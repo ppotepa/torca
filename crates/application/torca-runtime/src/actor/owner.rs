@@ -1,73 +1,102 @@
 // Responsibility: runtime owner and linear event loop.
 
 impl RuntimeOwner {
-    pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
+    pub fn spawn<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>(
         engine: EngineHandle,
         pairing: P,
         communication: C,
-        tor: T,
+        communication_lifecycle: T,
     ) -> (RuntimeHandle, Self) {
         Self::spawn_with_connectivity(
             engine,
             pairing,
             communication,
-            tor,
+            communication_lifecycle,
             None,
             ConnectivityObserver::default(),
         )
     }
 
-    pub fn spawn_with_relay_probe<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
+    pub fn spawn_with_rendezvous_probe<
+        P: PairingDriver,
+        C: CommunicationDriver,
+        T: CommunicationLifecycle,
+    >(
         engine: EngineHandle,
         pairing: P,
         communication: C,
-        tor: T,
-        relay_probe: Option<Arc<dyn RelayProbe>>,
+        communication_lifecycle: T,
+        rendezvous_probe: Option<Arc<dyn RendezvousProbe>>,
     ) -> (RuntimeHandle, Self) {
         Self::spawn_with_connectivity(
             engine,
             pairing,
             communication,
-            tor,
-            relay_probe,
+            communication_lifecycle,
+            rendezvous_probe,
             ConnectivityObserver::default(),
         )
     }
 
-    pub fn spawn_with_connectivity<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
+    pub fn spawn_with_connectivity<
+        P: PairingDriver,
+        C: CommunicationDriver,
+        T: CommunicationLifecycle,
+    >(
         engine: EngineHandle,
         mut pairing: P,
         mut communication: C,
-        mut tor: T,
-        relay_probe: Option<Arc<dyn RelayProbe>>,
+        mut communication_lifecycle: T,
+        rendezvous_probe: Option<Arc<dyn RendezvousProbe>>,
         connectivity: ConnectivityObserver,
     ) -> (RuntimeHandle, Self) {
-        let relay_info = relay_probe.clone();
-        let relay_worker = relay_probe.and_then(|probe| {
-            RelayHealthWorker::spawn_demand_driven(Arc::new(RuntimeRelayHealthPort(probe)))
+        let rendezvous_info = rendezvous_probe.clone();
+        let rendezvous_worker = rendezvous_probe.and_then(|probe| {
+            RendezvousHealthWorker::spawn_demand_driven(Arc::new(RuntimeRendezvousHealthPort(probe)))
                 .map_err(|error| {
-                    eprintln!("torca-runtime: relay supervisor unavailable: {error}");
+                    eprintln!("torca-runtime: rendezvous supervisor unavailable: {error}");
                     error
                 })
                 .ok()
         });
-        let relay_health = relay_worker.as_ref().map(RelayHealthWorker::handle);
+        let rendezvous_health =
+            rendezvous_worker.as_ref().map(RendezvousHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
         let communication_sender = sender.clone();
+        let communication_wake_pending = Arc::new(AtomicBool::new(false));
+        let communication_wake_gate = Arc::clone(&communication_wake_pending);
         let communication_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             // Transport activity can advance delivery and peer evidence, but
             // must not become an anonymous "maintain everything" wake.
-            let _ = communication_sender.try_send(RuntimeCommand::Wake(vec![
-                RuntimeWakeSource::DeliveryDeadline,
-                RuntimeWakeSource::PeerDeadline,
-            ]));
+            if communication_wake_gate.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            if communication_sender
+                .try_send(RuntimeCommand::Wake(vec![
+                    RuntimeWakeSource::DeliveryDeadline,
+                    RuntimeWakeSource::PeerDeadline,
+                ]))
+                .is_err()
+            {
+                communication_wake_gate.store(false, Ordering::Release);
+            }
         });
-        let tor_sender = sender.clone();
-        let tor_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            let _ = tor_sender.try_send(RuntimeCommand::Wake(vec![RuntimeWakeSource::TorDeadline]));
+        let lifecycle_sender = sender.clone();
+        let lifecycle_wake_pending = Arc::new(AtomicBool::new(false));
+        let lifecycle_wake_gate = Arc::clone(&lifecycle_wake_pending);
+        let lifecycle_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if lifecycle_wake_gate.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            if lifecycle_sender
+                .try_send(RuntimeCommand::Wake(vec![RuntimeWakeSource::ProviderDeadline]))
+                .is_err()
+            {
+                lifecycle_wake_gate.store(false, Ordering::Release);
+            }
         });
         communication.set_waker(communication_waker);
-        tor.set_waker(tor_waker);
+        communication_lifecycle.set_waker(lifecycle_waker);
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
             let mut diagnostics = DiagnosticBuffer::new(256);
@@ -105,19 +134,21 @@ impl RuntimeOwner {
                 &engine,
                 &mut pairing,
                 &mut communication,
-                &mut tor,
+                &mut communication_lifecycle,
                 &mut diagnostics,
                 &mut sequence,
                 &mut policy,
-                relay_health,
-                relay_info,
+                rendezvous_health,
+                rendezvous_info,
                 connectivity,
+                communication_wake_pending,
+                lifecycle_wake_pending,
             );
             communication.shutdown();
             pairing.shutdown();
-            tor.shutdown();
+            communication_lifecycle.shutdown();
         });
-        (handle, Self { sender, join: Some(join), relay_worker })
+        (handle, Self { sender, join: Some(join), rendezvous_worker })
     }
 
     pub fn shutdown(mut self) -> Result<(), RuntimeDriverError> {
@@ -127,7 +158,7 @@ impl RuntimeOwner {
         if let Some(join) = self.join.take() {
             join.join().map_err(|_| RuntimeDriverError::Communication)?;
         }
-        if let Some(worker) = self.relay_worker.take() {
+        if let Some(worker) = self.rendezvous_worker.take() {
             worker.shutdown();
         }
         Ok(())
@@ -138,31 +169,47 @@ impl RuntimeOwner {
     }
 }
 
-fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
+fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>(
     receiver: Receiver<RuntimeCommand>,
     engine: &EngineHandle,
     pairing: &mut P,
     communication: &mut C,
-    tor: &mut T,
+    communication_lifecycle: &mut T,
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
     policy: &mut RuntimeGovernor,
-    relay_health: Option<RelayHealthHandle>,
-    relay_info: Option<Arc<dyn RelayProbe>>,
+    rendezvous_health: Option<RendezvousHealthHandle>,
+    rendezvous_info: Option<Arc<dyn RendezvousProbe>>,
     connectivity: ConnectivityObserver,
+    communication_wake_pending: Arc<AtomicBool>,
+    lifecycle_wake_pending: Arc<AtomicBool>,
 ) {
     let mut health = RuntimeHealthState::default();
     let mut work = RuntimeWorkState::new();
-    work.pending_delivery_contacts = engine
-        .pending_delivery_contacts()
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    work.pending_delivery_contacts =
+        engine.pending_delivery_contacts().unwrap_or_default().into_iter().collect();
     let mut counters = RuntimeCounters::default();
     let mut scheduling = RuntimeSchedulingState::new();
+    let mut hot_loop = RuntimeHotLoopGuard::default();
 
     loop {
+        let wait_started = std::time::Instant::now();
         let runtime_wait = wait_for_runtime_command(&receiver, scheduling.next_deadline());
+        if matches!(runtime_wait, RuntimeWait::Command(RuntimeCommand::Wake(_))) {
+            communication_wake_pending.store(false, Ordering::Release);
+            lifecycle_wake_pending.store(false, Ordering::Release);
+            // A transport frame (notably a handshake ACK) is also a delivery
+            // wake.  The runtime command itself is intentionally lightweight,
+            // but the worker bridge must be told to revisit the durable
+            // outbox; otherwise a message that previously saw `NotReady` can
+            // remain parked even after the peer becomes ready.
+            if let RuntimeWait::Command(RuntimeCommand::Wake(sources)) = &runtime_wait
+                && sources.contains(&RuntimeWakeSource::DeliveryDeadline)
+            {
+                communication.wake_delivery();
+            }
+        }
+        hot_loop.observe_wait(wait_started.elapsed(), &runtime_wait, &scheduling);
         let command_health = matches!(
             &runtime_wait,
             RuntimeWait::Command(command) if command.requires_health_maintenance()
@@ -183,7 +230,9 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         }
         if due_sources.is_empty() {
             diagnostics.record_runtime_wake(match &runtime_wait {
-                RuntimeWait::Command(RuntimeCommand::NetworkChanged) => RuntimeWakeSource::NetworkChange,
+                RuntimeWait::Command(RuntimeCommand::NetworkChanged) => {
+                    RuntimeWakeSource::NetworkChange
+                }
                 RuntimeWait::Command(RuntimeCommand::Wake(_)) => RuntimeWakeSource::Platform,
                 RuntimeWait::Command(_) => RuntimeWakeSource::Command,
                 RuntimeWait::Timeout => RuntimeWakeSource::Platform,
@@ -214,30 +263,26 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
                 let owner = OpaqueId::from_u128(u128::from(context.generation.max(1)));
                 let demand = match context.surface {
-                    AttentionSurface::Conversation(peer) | AttentionSurface::Radio(peer) => Some(WorkDemand {
-                        scope: ResourceScope::Peer(peer),
-                        class: if matches!(
-                            context.surface,
-                            AttentionSurface::Conversation(_)
-                        ) {
-                            WorkClass::PeerDial
-                        } else {
-                            WorkClass::PeerProbe
-                        },
-                        reason: if matches!(
-                            context.surface,
-                            AttentionSurface::Radio(_)
-                        ) {
-                            DemandReason::RadioSession
-                        } else {
-                            DemandReason::FocusedConversation
-                        },
-                        owner,
-                        expires_at: now,
-                    }),
+                    AttentionSurface::Conversation(peer) | AttentionSurface::Radio(peer) => {
+                        Some(WorkDemand {
+                            scope: ResourceScope::Peer(peer),
+                            class: if matches!(context.surface, AttentionSurface::Conversation(_)) {
+                                WorkClass::PeerDial
+                            } else {
+                                WorkClass::PeerProbe
+                            },
+                            reason: if matches!(context.surface, AttentionSurface::Radio(_)) {
+                                DemandReason::RadioSession
+                            } else {
+                                DemandReason::FocusedConversation
+                            },
+                            owner,
+                            expires_at: now,
+                        })
+                    }
                     AttentionSurface::Pairing(_relay) => Some(WorkDemand {
-                        scope: ResourceScope::Relay,
-                        class: WorkClass::RelayProbe,
+                        scope: ResourceScope::Rendezvous,
+                        class: WorkClass::RendezvousProbe,
                         reason: DemandReason::ActivePairing,
                         owner,
                         expires_at: now,
@@ -267,8 +312,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 let _ = response.send(Ok(()));
             }
             RuntimeWait::Command(RuntimeCommand::NetworkChanged) => {
-                if let Some(relay) = &relay_health {
-                    relay.network_changed();
+                if let Some(rendezvous) = &rendezvous_health {
+                    rendezvous.network_changed();
                 }
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 pairing.network_changed(now);
@@ -284,7 +329,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             RuntimeWait::Command(RuntimeCommand::SetRadioDemand(contact_id, enabled)) => {
                 if enabled {
-                    let _ = tor.set_dormant(false);
+                    let _ = communication_lifecycle.set_dormant(false);
                     acquire_radio_lease(policy, contact_id);
                     diagnostics.record_battery(BatteryMetric::RadioWake, 1, WakeReason::Radio);
                 } else {
@@ -293,7 +338,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             RuntimeWait::Command(RuntimeCommand::SetInstantContactDemand(contact_id, enabled)) => {
                 if enabled {
-                    let _ = tor.set_dormant(false);
+                    let _ = communication_lifecycle.set_dormant(false);
                     acquire_instant_contact_lease(policy, contact_id);
                 } else {
                     policy.release_lease(instant_contact_lease_owner(contact_id));
@@ -301,7 +346,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             RuntimeWait::Command(RuntimeCommand::SetRadioTransmission(contact_id, active)) => {
                 if active {
-                    let _ = tor.set_dormant(false);
+                    let _ = communication_lifecycle.set_dormant(false);
                     acquire_radio_transmission_lease(policy, contact_id);
                     diagnostics.record_battery(BatteryMetric::RadioWake, 1, WakeReason::Radio);
                 } else {
@@ -313,7 +358,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 work.system_energy = system;
                 let effective = preferences.effective(system, false);
                 work.battery_policy.set_profile(effective.profile);
-                work.tor_dormancy_allowed = effective.tor_dormancy_allowed;
+                work.communication_dormancy_allowed = effective.communication_dormancy_allowed;
                 work.metered_transfers = effective.metered_transfers;
                 work.metered_network = system.metered_network == Some(true);
                 communication.set_battery_policy(
@@ -322,8 +367,8 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     work.metered_network,
                 );
                 diagnostics.set_battery_profile(effective.profile);
-                if !effective.tor_dormancy_allowed {
-                    let _ = tor.set_dormant(false);
+                if !effective.communication_dormancy_allowed {
+                    let _ = communication_lifecycle.set_dormant(false);
                 } else if !work.foreground
                     && scheduling.background_grace_deadline.is_none()
                     && !policy.has_durable_lease(std::time::Instant::now())
@@ -331,7 +376,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     // A user can change policy after the one-shot grace has
                     // already elapsed. Apply that new permission immediately
                     // without manufacturing another wake window.
-                    let _ = tor.set_dormant(true);
+                    let _ = communication_lifecycle.set_dormant(true);
                 }
             }
             RuntimeWait::Command(RuntimeCommand::SetForeground(foreground)) => {
@@ -339,7 +384,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 work.system_energy.foreground = foreground;
                 let effective = work.battery_preferences.effective(work.system_energy, false);
                 work.battery_policy.set_profile(effective.profile);
-                work.tor_dormancy_allowed = effective.tor_dormancy_allowed;
+                work.communication_dormancy_allowed = effective.communication_dormancy_allowed;
                 work.metered_transfers = effective.metered_transfers;
                 work.metered_network = work.system_energy.metered_network == Some(true);
                 communication.set_battery_policy(
@@ -350,7 +395,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 diagnostics.set_battery_profile(effective.profile);
                 if foreground {
                     scheduling.background_grace_deadline = None;
-                    let _ = tor.set_dormant(false);
+                    let _ = communication_lifecycle.set_dormant(false);
                 } else {
                     release_attention_leases(policy, &mut work);
                     scheduling.background_grace_deadline =
@@ -358,17 +403,27 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                 }
             }
             RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id, contact_id)) => {
-                let _ = tor.set_dormant(false);
+                let _ = communication_lifecycle.set_dormant(false);
+                communication.wake_delivery();
                 work.active_delivery_leases.insert(message_id);
-                if let Some(contact_id) = contact_id {
-                    work.active_delivery_contacts.insert(message_id, contact_id);
+                let resolved_contact = if let Some(contact_id) = contact_id {
+                    Some(contact_id)
                 } else if let Ok(Some(contact_id)) =
                     engine.message_contact(MessageId::from_opaque(message_id))
                 {
                     // Legacy callers may not have sent the recipient hint.
                     // Resolve only this durable message; do not refresh or
                     // scan the contact projection as a fallback.
+                    Some(contact_id)
+                } else {
+                    None
+                };
+                if let Some(contact_id) = resolved_contact {
                     work.active_delivery_contacts.insert(message_id, contact_id);
+                    // A durable message is an explicit peer demand. Prime
+                    // only its relationship; warming every known contact
+                    // would defeat the lazy connectivity policy.
+                    communication.prime_contact(contact_id);
                 }
                 acquire_delivery_lease(policy, message_id);
             }
@@ -379,7 +434,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
             RuntimeWait::Command(command) => {
                 if command_requires_network(&command) {
-                    let _ = tor.set_dormant(false);
+                    let _ = communication_lifecycle.set_dormant(false);
                 }
                 if command_writes_database(&command) {
                     diagnostics.count(RuntimeCounter::DbWrite);
@@ -390,10 +445,10 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
                     engine,
                     pairing,
                     communication,
-                    tor,
+                    communication_lifecycle,
                     &health.probes,
-                    relay_info.as_ref(),
-                    relay_health.as_ref(),
+                    rendezvous_info.as_ref(),
+                    rendezvous_health.as_ref(),
                     &mut health.transport_activity,
                     &connectivity,
                     policy,
@@ -417,15 +472,17 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         {
             scheduling.background_grace_deadline = None;
             // Viewport/focus leases are deliberately not sufficient here.
-            // Only durable feature work keeps Tor active beyond the short
+            // Only durable feature work keeps the selected provider active beyond the short
             // transition grace period.
-            if work.tor_dormancy_allowed && !policy.has_durable_lease(std::time::Instant::now()) {
-                let _ = tor.set_dormant(true);
+            if work.communication_dormancy_allowed
+                && !policy.has_durable_lease(std::time::Instant::now())
+            {
+                let _ = communication_lifecycle.set_dormant(true);
                 record(
                     diagnostics,
                     sequence,
                     now,
-                    Component::Tor,
+                    Component::Communication,
                     HealthState::Stopped,
                     "BACKGROUND_GRACE_EXPIRED",
                 );
@@ -433,22 +490,22 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
         }
         // A command is allowed to reconcile the immediately affected state.
         // Deadline wakes, however, execute only the owning subsystem.  This
-        // prevents an unrelated Tor deadline from scanning contacts, probing
+        // prevents an unrelated provider deadline from scanning contacts, probing
         // peers or driving attachment state in the background.
         let run_health = command_health
-            || due_sources.contains(&RuntimeWakeSource::TorDeadline)
+            || due_sources.contains(&RuntimeWakeSource::ProviderDeadline)
             || due_sources.contains(&RuntimeWakeSource::PairingDeadline)
             || due_sources.contains(&RuntimeWakeSource::RelayDeadline)
             || due_sources.contains(&RuntimeWakeSource::LeaseExpiry);
-        let run_delivery = command_delivery
-            || due_sources.contains(&RuntimeWakeSource::DeliveryDeadline);
+        let run_delivery =
+            command_delivery || due_sources.contains(&RuntimeWakeSource::DeliveryDeadline);
         let run_radio = due_sources.contains(&RuntimeWakeSource::RadioDeadline);
         let run_peer = command_peer || due_sources.contains(&RuntimeWakeSource::PeerDeadline);
         if run_health {
             maintain_runtime_health(
                 pairing,
-                tor,
-                relay_health.as_ref(),
+                communication_lifecycle,
+                rendezvous_health.as_ref(),
                 policy,
                 &mut health,
                 &mut work,
@@ -502,7 +559,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             }
         }
         update_runtime_schedule(
-            tor,
+            communication_lifecycle,
             pairing,
             communication,
             policy,
@@ -511,5 +568,64 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: TorDriver>(
             active_transport,
             now,
         );
+    }
+}
+
+/// Detects an accidental zero-deadline/runtime-mailbox spin without adding a
+/// periodic diagnostic timer.  It only emits a redaction-safe line after a
+/// sustained burst of sub-millisecond turns, so normal interactive traffic is
+/// unaffected.
+#[derive(Default)]
+struct RuntimeHotLoopGuard {
+    rapid_turns: u32,
+    last_reported_turns: u64,
+    total_turns: u64,
+}
+
+impl RuntimeHotLoopGuard {
+    fn observe_wait(
+        &mut self,
+        waited: std::time::Duration,
+        wait: &RuntimeWait,
+        scheduling: &RuntimeSchedulingState,
+    ) {
+        self.total_turns = self.total_turns.saturating_add(1);
+        if waited <= std::time::Duration::from_millis(2) {
+            self.rapid_turns = self.rapid_turns.saturating_add(1);
+        } else {
+            self.rapid_turns = 0;
+        }
+        if self.rapid_turns < 100 || self.total_turns.saturating_sub(self.last_reported_turns) < 100 {
+            return;
+        }
+        self.last_reported_turns = self.total_turns;
+        let wait_kind = match wait {
+            RuntimeWait::Command(command) => command_kind(command),
+            RuntimeWait::Timeout => "deadline",
+            RuntimeWait::Closed => "closed",
+        };
+        let next_deadline_ms = scheduling
+            .next_deadline()
+            .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_millis());
+        eprintln!(
+            "torca-runtime: hot-loop suspected turns={} rapid_turns={} wait={} next_deadline_ms={:?}",
+            self.total_turns, self.rapid_turns, wait_kind, next_deadline_ms
+        );
+    }
+}
+
+fn command_kind(command: &RuntimeCommand) -> &'static str {
+    match command {
+        RuntimeCommand::Wake(_) => "wake",
+        RuntimeCommand::WakeDelivery(..) => "wake_delivery",
+        RuntimeCommand::NetworkChanged => "network_changed",
+        RuntimeCommand::SetAttention(_) => "attention",
+        RuntimeCommand::SetForeground(_) => "foreground",
+        RuntimeCommand::SetBatteryPolicyInputs(..) => "battery_policy",
+        RuntimeCommand::SetRadioDemand(..) => "radio_demand",
+        RuntimeCommand::SetInstantContactDemand(..) => "instant_demand",
+        RuntimeCommand::SetRadioTransmission(..) => "radio_transmission",
+        RuntimeCommand::Shutdown(_) => "shutdown",
+        _ => "command",
     }
 }

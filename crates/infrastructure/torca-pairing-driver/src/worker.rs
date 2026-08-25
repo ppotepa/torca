@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_foundation::Timestamp;
 use torca_pairing::{PairingCode, PairingSessionId};
+use torca_pairing_protocol::PairingBootstrapDescriptor;
 use torca_runtime::{PairingDriver, PairingInvitationView, RuntimeDriverError};
 
 const INTERACTIVE_REPLY_WAIT: Duration = Duration::from_secs(8);
@@ -18,6 +19,7 @@ enum PairingWorkerCommand {
         session_id: PairingSessionId,
         code: PairingCode,
         ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
         now: Timestamp,
         reply: SyncSender<Result<(), RuntimeDriverError>>,
     },
@@ -38,8 +40,9 @@ enum PairingWorkerCommand {
     Shutdown,
 }
 
-/// Isolates relay I/O from the main runtime actor. Periodic polls are coalesced in a bounded
-/// mailbox, so a slow Tor circuit cannot freeze snapshots, message delivery, or the UI.
+/// Isolates provider pairing I/O from the main runtime actor. Periodic polls
+/// are coalesced in a bounded mailbox, so a slow rendezvous/direct/signalling
+/// route cannot freeze snapshots, message delivery, or the UI.
 pub struct PairingWorkerDriver {
     sender: SyncSender<PairingWorkerCommand>,
     worker: Option<JoinHandle<()>>,
@@ -86,9 +89,17 @@ impl PairingDriver for PairingWorkerDriver {
         session_id: PairingSessionId,
         code: PairingCode,
         ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.request(|reply| PairingWorkerCommand::Join { session_id, code, ticket, now, reply })
+        self.request(|reply| PairingWorkerCommand::Join {
+            session_id,
+            code,
+            ticket,
+            bootstrap,
+            now,
+            reply,
+        })
     }
 
     fn approve(
@@ -146,8 +157,8 @@ fn run_pairing_worker<D: PairingDriver>(driver: &mut D, receiver: &Receiver<Pair
             PairingWorkerCommand::Create { session_id, now, reply } => {
                 let _ = reply.send(driver.create(session_id, now));
             }
-            PairingWorkerCommand::Join { session_id, code, ticket, now, reply } => {
-                let _ = reply.send(driver.join(session_id, code, ticket, now));
+            PairingWorkerCommand::Join { session_id, code, ticket, bootstrap, now, reply } => {
+                let _ = reply.send(driver.join(session_id, code, ticket, bootstrap, now));
             }
             PairingWorkerCommand::Approve { session_id, now, reply } => {
                 let _ = reply.send(driver.approve(session_id, now));

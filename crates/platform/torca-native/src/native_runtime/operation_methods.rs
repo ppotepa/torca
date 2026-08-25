@@ -10,7 +10,7 @@ pub(crate) fn close(&mut self) -> i32 {
     );
     self.host_retry_at = None;
     self.host_failures = 0;
-    self.host_state_hint = TorState::Stopped;
+    self.host_state_hint = CommunicationState::Stopped;
     self.host_start = None;
     self.host_start_started_at = None;
     self.host_start_started_at_ms = None;
@@ -19,19 +19,20 @@ pub(crate) fn close(&mut self) -> i32 {
     self.host_attempt = 0;
     self.host_status_code = None;
     self.host_status_summary = None;
-    self.host_onion_started_at_ms = None;
-    self.host_onion_last_progress_at_ms = None;
-    self.host_onion_progress = 0;
-    self.host_onion_attempt = 0;
-    self.host_onion_status_code = None;
-    self.host_onion_status_summary = None;
-    self.host_onion_retry_at = None;
+    self.host_incoming_started_at_ms = None;
+    self.host_incoming_last_progress_at_ms = None;
+    self.host_incoming_progress = 0;
+    self.host_incoming_attempt = 0;
+    self.host_incoming_status_code = None;
+    self.host_incoming_status_summary = None;
+    self.host_incoming_retry_at = None;
     self.host_start_deadline = None;
     if let Some(host) = self.host.take()
         && host.shutdown().is_err()
     {
         self.last_result_json = error_result("secure runtime shutdown failed");
     }
+    crate::runtime_composition::clear_registered_webrtc_providers();
     let Some(actor) = self.actor.take() else {
         if let Some(logger) = &self.logger {
             let _ = logger.finish("completed", "runtime already stopped");
@@ -174,7 +175,7 @@ fn diagnostic_snapshot_json(&mut self) -> Result<String, String> {
     value["effectiveBatteryPolicy"] = json!({
         "profile": format!("{:?}", effective.profile),
         "reason": format!("{:?}", effective.reason),
-        "torDormancyAllowed": effective.tor_dormancy_allowed,
+        "communicationDormancyAllowed": effective.communication_dormancy_allowed,
         "backgroundSync": effective.background_sync.wire(),
         "meteredTransfers": effective.metered_transfers.wire(),
         "visualActivity": effective.visual_activity.wire(),
@@ -199,17 +200,24 @@ pub(crate) fn avatar_genome_json(&mut self, identity_id: Option<&str>) -> i32 {
 }
 
 pub(crate) fn parse_pairing_uri(&mut self, raw_uri: &str) -> i32 {
-    let parsed =
-        torca_pairing_coordinator::decode_invite_uri(raw_uri).map(Some).or_else(|_| {
-            torca_pairing::PairingCode::new(raw_uri).map(|code| (code, None)).map(Some)
+    let parsed = torca_pairing_coordinator::decode_invite_uri_with_bootstrap(raw_uri)
+        .map(Some)
+        .or_else(|_| {
+            torca_pairing::PairingCode::new(raw_uri)
+                .map(|code| (code, None, None))
+                .map(Some)
         });
-    let Ok(Some((code, ticket))) = parsed else {
+    let Ok(Some((code, ticket, bootstrap))) = parsed else {
         self.query_json = "{}".into();
         return ABI_ERROR;
     };
     self.query_json = serde_json::json!({
         "code": code.as_str(),
         "ticket": ticket.as_ref().map(|value| value.as_hex()),
+        "bootstrap": bootstrap.as_ref().map(|value| serde_json::json!({
+            "provider": value.provider(),
+            "payloadHex": value.payload().iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+        })),
     })
     .to_string();
     ABI_OK
@@ -220,8 +228,19 @@ pub(crate) fn encode_pairing_uri(&mut self, raw_code: &str) -> i32 {
         self.query_json = "{}".into();
         return ABI_ERROR;
     };
+    let bootstrap = self
+        .application_runtime
+        .network_snapshot()
+        .ok()
+        .flatten()
+        .and_then(|snapshot| snapshot.communication.pairing_bootstrap);
     self.query_json = serde_json::json!({
-        "uri": torca_pairing_coordinator::encode_invite_uri(&code, None),
+        "uri": torca_pairing_coordinator::encode_invite_uri_with_bootstrap(
+            &code,
+            None,
+            bootstrap.as_ref(),
+        )
+        .unwrap_or_default(),
     })
     .to_string();
     ABI_OK
@@ -363,12 +382,23 @@ pub(crate) fn lifecycle(&mut self, event: &str) -> i32 {
             | "network_unvalidated"
             | "data_stall_on"
             | "data_stall_off"
+            | "flutter_gateway_ready"
             | "terminating"
     ) {
         self.last_result_json = error_result("unknown lifecycle event");
         return ABI_ERROR;
     }
     self.log("runtime", Level::Info, "lifecycle", "LIFECYCLE_EVENT", event);
+    if event == "flutter_gateway_ready" {
+        self.log(
+            "bootstrap",
+            Level::Info,
+            "flutter_gateway",
+            "FLUTTER_GATEWAY_READY",
+            "Flutter FFI gateway completed the initial runtime handshake",
+        );
+        return ABI_OK;
+    }
     let radio_lifecycle = match event {
         "foregrounded" | "host_started" => {
             Some(torca_radio_coordinator::HostRadioLifecycle::Foreground)
@@ -394,7 +424,18 @@ pub(crate) fn lifecycle(&mut self, event: &str) -> i32 {
             self.network_changed_pending = true;
         }
     }
-    if event == "terminating" { self.close() } else { ABI_OK }
+    if event == "terminating" {
+        self.log(
+            "ffi",
+            Level::Info,
+            "shutdown",
+            "RUNTIME_SHUTDOWN_REQUESTED",
+            "lifecycle.terminating",
+        );
+        self.close()
+    } else {
+        ABI_OK
+    }
 }
 
 }

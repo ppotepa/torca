@@ -256,6 +256,7 @@ impl ContactRepository for SqlCipherStore {
                     status: row.get(7)?,
                     created_at_ms: row.get(8)?,
                     updated_at_ms: row.get(9)?,
+                    transport_endpoints_json: row.get(10)?,
                 })
             })
             .optional()
@@ -290,6 +291,7 @@ impl ContactRepository for SqlCipherStore {
                     status: row.get(8)?,
                     created_at_ms: row.get(9)?,
                     updated_at_ms: row.get(10)?,
+                    transport_endpoints_json: row.get(11)?,
                 })
             })
             .map_err(|_| ContactError::RepositoryFailure)?;
@@ -632,6 +634,7 @@ struct ContactRow {
     status: i64,
     created_at_ms: i64,
     updated_at_ms: i64,
+    transport_endpoints_json: String,
 }
 
 impl ContactRow {
@@ -653,8 +656,22 @@ impl ContactRow {
             .map_err(|_| ContactError::RepositoryFailure)?;
         let remote_identity = PublicIdentity::new(identity_id, key, generation);
         let capability_id = OpaqueId::from_bytes(fixed_16_contact(self.capability_id)?);
-        let route = ContactRoute::new(self.onion_address, capability_id)
-            .map_err(|_| ContactError::RepositoryFailure)?;
+        let endpoints = serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(
+            &self.transport_endpoints_json,
+        )
+        .map_err(|_| ContactError::RepositoryFailure)?;
+        let route = if let Some((provider, endpoint)) = endpoints.iter().next() {
+            ContactRoute::with_provider_endpoint(
+                self.onion_address,
+                capability_id,
+                provider.clone(),
+                endpoint.clone(),
+            )
+            .map_err(|_| ContactError::RepositoryFailure)?
+        } else {
+            ContactRoute::new(self.onion_address, capability_id)
+                .map_err(|_| ContactError::RepositoryFailure)?
+        };
         let status = match self.status {
             0 => ContactStatus::Active,
             1 => ContactStatus::Blocked,
@@ -706,6 +723,8 @@ fn execute_contact(
     let remote_identity_id = contact.remote_identity().identity_id().to_opaque().into_bytes();
     let remote_key_id = contact.remote_identity().key().key_id().to_opaque().into_bytes();
     let capability_id = contact.route().capability_id().into_bytes();
+    let transport_endpoints_json = serde_json::to_string(contact.route().provider_endpoints())
+        .map_err(|_| ContactError::RepositoryFailure)?;
     backend
         .connection()
         .execute(
@@ -722,6 +741,7 @@ fn execute_contact(
                 encode_contact_status(contact.status()),
                 contact.created_at().to_unix_millis(),
                 contact.updated_at().to_unix_millis(),
+                transport_endpoints_json,
             ],
         )
         .map_err(|_| ContactError::RepositoryFailure)?;

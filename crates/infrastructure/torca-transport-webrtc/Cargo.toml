@@ -1,0 +1,21 @@
+[package]
+name = "torca-transport-webrtc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-transport-api = { path = "../../application/torca-transport-api" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-runtime = { path = "../../application/torca-runtime" }
+torca-rendezvous-client = { path = "../torca-rendezvous-client" }
+torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
+
+[lints]
+workspace = true

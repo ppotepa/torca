@@ -16,14 +16,14 @@ import 'platform/deep_link_router.dart';
 import 'platform/desktop_lifecycle.dart';
 import 'platform/platform_capabilities.dart';
 import 'platform/runtime_lifecycle.dart';
-import 'platform/scenario_bridge.dart';
+import 'platform/scenario_bridge_controller.dart';
 import 'settings/battery_preferences.dart';
 import 'settings/local_preferences.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   _installUiDiagnostics();
-  runApp(const _TorcaBootstrap());
+  runApp(const TorcaBootstrap());
 }
 
 void _installUiDiagnostics() {
@@ -53,14 +53,16 @@ void _installUiDiagnostics() {
   };
 }
 
-class _TorcaBootstrap extends StatefulWidget {
-  const _TorcaBootstrap();
+class TorcaBootstrap extends StatefulWidget {
+  const TorcaBootstrap({this.scenarioBridgeFactory, super.key});
+
+  final ScenarioBridgeFactory? scenarioBridgeFactory;
 
   @override
-  State<_TorcaBootstrap> createState() => _TorcaBootstrapState();
+  State<TorcaBootstrap> createState() => _TorcaBootstrapState();
 }
 
-class _TorcaBootstrapState extends State<_TorcaBootstrap> {
+class _TorcaBootstrapState extends State<TorcaBootstrap> {
   Widget? _application;
   EngineGateway? _gateway;
   LocalPreferences? _preferences;
@@ -68,7 +70,7 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
   DesktopLifecycle? _desktopLifecycle;
   DeepLinkRouter? _deepLinkRouter;
   AndroidNotificationRouter? _androidNotificationRouter;
-  ScenarioBridge? _scenarioBridge;
+  ScenarioBridgeController? _scenarioBridge;
   bool _initializing = false;
   RuntimeLifecycleObserver? _runtimeLifecycleObserver;
   String? _startupFailure;
@@ -93,8 +95,9 @@ class _TorcaBootstrapState extends State<_TorcaBootstrap> {
       }
       final EngineGateway gateway = await _openNativeGateway(
         onOpened: (nativeGateway) async {
-          if (!isTorcaAndroid) return;
-          final bridge = ScenarioBridge(nativeGateway);
+          final factory = widget.scenarioBridgeFactory;
+          if (!isTorcaAndroid || factory == null) return;
+          final bridge = factory(nativeGateway);
           _scenarioBridge = bridge;
           await bridge.start();
         },
@@ -361,14 +364,34 @@ Future<EngineGateway> _openNativeGateway({
     final FfiEngineGateway nativeGateway = await FfiEngineGateway.open();
     await onOpened?.call(nativeGateway);
     final result = await nativeGateway.initialize();
-    if (result.ok) return nativeGateway;
+    if (result.ok) {
+      // This is the application-level readiness boundary. Native LOCAL_READY
+      // only proves that the actor can build a projection; the deployer and
+      // Android service must not claim the client is usable until Flutter has
+      // decoded the same response successfully.
+      await nativeGateway.sendLifecycle('flutter_gateway_ready');
+      return nativeGateway;
+    }
+    // Keep the provider/bootstrap failure visible in Android logcat.  The
+    // generic startup screen is intentionally user-friendly, but without the
+    // structured result here a failed first snapshot looked identical to a
+    // slow Tor/Iroh warm-up and the native runtime was shut down before the
+    // real cause could be diagnosed.
+    debugPrint(
+      'Torca native runtime initialization failed: '
+      '${result.error ?? result.kind}',
+    );
     // Keep a debug ScenarioBridge alive long enough for the soak harness to
     // retrieve the startup error.  The bridge is disposed by the bootstrap
     // composition teardown (retry/dispose), not before diagnostics can read
     // its discovery file.
-    // A failed native actor is cached process-wide. Clear it before exposing
-    // Retry, otherwise every retry only reacquires the same failed actor.
-    await nativeGateway.shutdown();
+    // Do not tear down a live actor merely because the first projection could
+    // not be decoded.  The old behaviour converted a contract/projection bug
+    // into `RUNTIME_STOPPING`, erased the native evidence, and made Retry race
+    // a brand-new runtime.  Keep the actor alive for diagnostics and let the
+    // next gateway reconcile against the same revision.  A genuinely dead
+    // actor is safe to release and will be respawned by the native registry.
+    if (!nativeGateway.isAvailable) await nativeGateway.shutdown();
     await nativeGateway.dispose();
     return StartupFailureGateway(
       result.error ?? 'native Torca engine failed to initialize',
@@ -384,7 +407,7 @@ String _formatNativeGatewayFailure(Object error) {
   if (detail.contains('lookup symbol') ||
       detail.contains('procedure could not be found') ||
       detail.contains('Error code 127')) {
-    return 'Native Torca runtime is incompatible with this application. '
+    return 'Native Torca communication runtime is incompatible with this application. '
         'The installed DLL/SO is from a different build. Reinstall the '
         'matching artifact; the deployment manifest will show the build id.\n\n'
         'Diagnostic: $detail';

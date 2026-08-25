@@ -1,5 +1,5 @@
 use crate::devices::Device;
-use crate::domain::{Configuration, PrivacyPolicy, ValidationLevel};
+use crate::domain::{CommunicationProvider, Configuration, PrivacyPolicy, ValidationLevel};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 use crate::windows_client::{WindowsClientError, WorkspaceWindowsClient};
@@ -44,6 +44,7 @@ impl<'a> LaunchController<'a> {
         device: &Device,
         configuration: Configuration,
         privacy: PrivacyPolicy,
+        communication_provider: CommunicationProvider,
         restart: bool,
     ) -> Result<LaunchReceipt, LaunchError> {
         let started_at = SystemTime::now();
@@ -64,6 +65,7 @@ impl<'a> LaunchController<'a> {
                     crate::domain::Target::Windows,
                     configuration,
                     &exe,
+                    communication_provider,
                 )
                 .map_err(LaunchError::ArtifactVerification)?;
                 WorkspaceWindowsClient::new(self.paths, self.runner).stop()?;
@@ -160,7 +162,10 @@ impl<'a> LaunchController<'a> {
             }
             std::thread::sleep(Duration::from_secs(1));
         }
-        Err(LaunchError::HealthTimeout(device.id.clone()))
+        Err(LaunchError::HealthTimeout {
+            device: device.id.clone(),
+            reason: "process did not become running".into(),
+        })
     }
 
     pub fn wait_network_ready(
@@ -168,16 +173,17 @@ impl<'a> LaunchController<'a> {
         device: &Device,
         receipt: LaunchReceipt,
         validation: ValidationLevel,
+        communication_provider: CommunicationProvider,
     ) -> Result<(), LaunchError> {
         if matches!(validation, ValidationLevel::Skip) {
             return Ok(());
         }
-        // Quick deploy validation proves that the newly launched app has a
-        // live local runtime.  It must not wait for onion publication or a
-        // remote relay circuit: those recover independently in the client.
-        // Full validation additionally waits for Tor bootstrap evidence.
-        let require_tor = matches!(validation, ValidationLevel::Full);
-        let timeout = if require_tor { 180 } else { 45 };
+        // Quick validation proves that the newly launched app has a live
+        // local runtime. It never waits for provider-specific remote work.
+        // Full validation waits for the selected provider's service-ready
+        // commissioning code, supplied by its deployment profile.
+        let require_service = matches!(validation, ValidationLevel::Full);
+        let timeout = if require_service { 180 } else { 45 };
         let deadline = std::time::Instant::now() + Duration::from_secs(timeout);
         let started = std::time::Instant::now();
         let mut next_heartbeat = started;
@@ -187,12 +193,17 @@ impl<'a> LaunchController<'a> {
                 return Err(LaunchError::ProcessExited(device.id.clone()));
             }
             let ready = match device.target {
-                crate::domain::Target::Windows => {
-                    Self::windows_network_ready(receipt.started_at, require_tor)
-                }
-                crate::domain::Target::Android => {
-                    self.android_network_ready(&device.id, receipt.started_at, require_tor)
-                }
+                crate::domain::Target::Windows => Self::windows_network_ready(
+                    receipt.started_at,
+                    communication_provider,
+                    require_service,
+                ),
+                crate::domain::Target::Android => self.android_network_ready(
+                    &device.id,
+                    receipt.started_at,
+                    communication_provider,
+                    require_service,
+                ),
             }?;
             if ready {
                 consecutive_ready += 1;
@@ -208,14 +219,34 @@ impl<'a> LaunchController<'a> {
                 eprintln!(
                     "torca-deploy: waiting for {} {} elapsed_s={}",
                     device.id,
-                    if require_tor { "TOR_BOOTSTRAP_READY" } else { "LOCAL_READY" },
+                    if require_service {
+                        communication_provider.protocol_label()
+                    } else {
+                        "LOCAL_READY"
+                    },
                     started.elapsed().as_secs()
                 );
                 next_heartbeat = std::time::Instant::now() + Duration::from_secs(10);
             }
             std::thread::sleep(Duration::from_secs(1));
         }
-        Err(LaunchError::HealthTimeout(device.id.clone()))
+        let reason = match device.target {
+            crate::domain::Target::Android => {
+                self.android_readiness_diagnostic(&device.id).unwrap_or_else(|_| {
+                    format!(
+                        "missing fresh Flutter gateway handshake (provider={}, required={})",
+                        communication_provider,
+                        if require_service { "provider service" } else { "local runtime" },
+                    )
+                })
+            }
+            crate::domain::Target::Windows => format!(
+                "missing fresh Flutter gateway handshake (provider={}, required={})",
+                communication_provider,
+                if require_service { "provider service" } else { "local runtime" },
+            ),
+        };
+        Err(LaunchError::HealthTimeout { device: device.id.clone(), reason })
     }
 
     /// Proves that launch made a user-visible surface, rather than merely
@@ -300,7 +331,8 @@ impl<'a> LaunchController<'a> {
 
     fn windows_network_ready(
         launched_at: SystemTime,
-        require_tor: bool,
+        provider: CommunicationProvider,
+        require_service: bool,
     ) -> Result<bool, LaunchError> {
         let Some(local) = std::env::var_os("LOCALAPPDATA") else {
             return Ok(false);
@@ -312,17 +344,18 @@ impl<'a> LaunchController<'a> {
         // built before LOCAL_READY was introduced.
         collect_named(&root, "tor.log", &mut logs);
         logs.sort_by_key(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
-        Ok(logs
-            .iter()
-            .rev()
-            .any(|path| file_is_fresh(path, launched_at) && read_network_ready(path, require_tor)))
+        Ok(logs.iter().rev().any(|path| {
+            file_is_fresh(path, launched_at)
+                && read_readiness_evidence(path, provider, require_service)
+        }))
     }
 
     fn android_network_ready(
         &self,
         device: &str,
         launched_at: SystemTime,
-        require_tor: bool,
+        provider: CommunicationProvider,
+        require_service: bool,
     ) -> Result<bool, LaunchError> {
         let files = self
             .command("adb", &["-s", device, "shell", "find", android_logs_root(), "-type", "f"])?;
@@ -335,11 +368,39 @@ impl<'a> LaunchController<'a> {
         let output = self.command("adb", &arguments)?;
         Ok(file_is_fresh_from_log(&output.text, launched_at)
             && output.success
-            && output
-                .text
-                .lines()
-                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-                .any(|value| ready_code(value.get("code").and_then(Value::as_str), require_tor)))
+            && read_readiness_evidence_from_content(&output.text, provider, require_service))
+    }
+
+    fn android_readiness_diagnostic(&self, device: &str) -> Result<String, LaunchError> {
+        let files = self
+            .command("adb", &["-s", device, "shell", "find", android_logs_root(), "-type", "f"])?;
+        let paths = latest_android_health_logs(&files.text);
+        if paths.is_empty() {
+            return Ok("no current Android runtime logs were found".into());
+        }
+        let mut arguments = vec!["-s", device, "shell", "tail", "-n", "160"];
+        arguments.extend(paths);
+        let output = self.command("adb", &arguments)?;
+        let codes = [
+            "RUNTIME_ACTOR_PANICKED",
+            "RUNTIME_START_FAILED",
+            "SNAPSHOT_REFRESH_FAILED",
+            "RUNTIME_SHUTDOWN_REQUESTED",
+            "TORCA_NATIVE_STARTUP_FAILED",
+        ];
+        for line in output.text.lines().rev() {
+            if let Ok(value) = serde_json::from_str::<Value>(line)
+                && value
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .is_some_and(|code| codes.contains(&code))
+            {
+                let code = value.get("code").and_then(Value::as_str).unwrap_or("unknown");
+                let message = value.get("message").and_then(Value::as_str).unwrap_or("");
+                return Ok(format!("{code}: {message}"));
+            }
+        }
+        Ok("fresh readiness evidence was not emitted; inspect the current runtime/ffi logs".into())
     }
 
     fn command(
@@ -383,8 +444,10 @@ fn latest_android_health_logs(content: &str) -> Vec<&str> {
     let latest =
         |suffix: &str| content.lines().map(str::trim).filter(|path| path.ends_with(suffix)).max();
     let mut paths = latest("/bootstrap.log").into_iter().collect::<Vec<_>>();
-    if let Some(path) = latest("/tor.log") {
-        paths.push(path);
+    for suffix in ["/tor.log", "/runtime.log", "/ffi.log", "/communication.log"] {
+        if let Some(path) = latest(suffix) {
+            paths.push(path);
+        }
     }
     paths
 }
@@ -416,33 +479,45 @@ fn collect_named(root: &std::path::Path, name: &str, out: &mut Vec<std::path::Pa
     }
 }
 
-fn read_network_ready(path: &std::path::Path, require_tor: bool) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    content
-        .lines()
-        .rev()
-        .take(120)
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .any(|value| ready_code(value.get("code").and_then(Value::as_str), require_tor))
+/// The deployer used to accept LOCAL_READY as the complete client health
+/// contract. That event is intentionally emitted before Flutter starts, so a
+/// crashed/mismatched gateway could still produce a green deployment. Require
+/// the application handshake as a separate piece of evidence; provider
+/// service readiness remains an additional condition for full validation.
+fn read_readiness_evidence(
+    path: &std::path::Path,
+    provider: CommunicationProvider,
+    require_service: bool,
+) -> bool {
+    std::fs::read_to_string(path).ok().is_some_and(|content| {
+        read_readiness_evidence_from_content(&content, provider, require_service)
+    })
 }
 
-fn ready_code(code: Option<&str>, require_tor: bool) -> bool {
-    if require_tor {
-        matches!(code, Some("TOR_BOOTSTRAP_READY" | "NETWORK_READY"))
-    } else {
-        matches!(
-            code,
-            // New clients emit LOCAL_READY after composing the local runtime.
-            // TOR_STARTING is the backward-compatible equivalent for an
-            // already-installed client built before that event existed. The
-            // process and visible surface are verified separately, so Quick
-            // validation must not wait for a cold Tor bootstrap merely to
-            // prove that installation and launch succeeded.
-            Some("TOR_STARTING" | "LOCAL_READY" | "TOR_BOOTSTRAP_READY" | "NETWORK_READY")
-        )
+fn read_readiness_evidence_from_content(
+    content: &str,
+    provider: CommunicationProvider,
+    require_service: bool,
+) -> bool {
+    let mut gateway_ready = false;
+    let mut local_ready = false;
+    let mut service_ready = false;
+    for value in
+        content.lines().rev().take(256).filter_map(|line| serde_json::from_str::<Value>(line).ok())
+    {
+        let code = value.get("code").and_then(Value::as_str);
+        gateway_ready |= code == Some("FLUTTER_GATEWAY_READY");
+        local_ready |= ready_code(code, provider, false);
+        service_ready |= ready_code(code, provider, true);
     }
+    gateway_ready && local_ready && (!require_service || service_ready)
+}
+
+fn ready_code(code: Option<&str>, provider: CommunicationProvider, require_service: bool) -> bool {
+    let profile = provider.deployment_profile();
+    let accepted =
+        if require_service { profile.service_ready_codes } else { profile.local_ready_codes };
+    code.is_some_and(|code| accepted.contains(&code))
 }
 
 #[cfg(windows)]
@@ -489,8 +564,8 @@ pub enum LaunchError {
     Io(std::io::Error),
     #[error("launch process error: {0}")]
     Process(#[from] ProcessError),
-    #[error("client process did not become healthy on {0}")]
-    HealthTimeout(String),
+    #[error("client process did not become healthy on {device}: {reason}")]
+    HealthTimeout { device: String, reason: String },
     #[error("client process exited before its fresh NETWORK_READY event on {0}")]
     ProcessExited(String),
     #[error("workspace Windows client operation failed: {0}")]
@@ -517,17 +592,40 @@ mod tests {
             vec![
                 "/logs/2026-08-14/run-000002/bootstrap.log",
                 "/logs/2026-08-14/run-000002/tor.log",
+                "/logs/2026-08-14/run-000002/runtime.log",
             ]
         );
     }
 
     #[test]
     fn quick_and_full_validation_have_distinct_readiness_contracts() {
-        assert!(ready_code(Some("LOCAL_READY"), false));
-        assert!(ready_code(Some("TOR_STARTING"), false));
-        assert!(!ready_code(Some("TOR_STARTING"), true));
-        assert!(!ready_code(Some("LOCAL_READY"), true));
-        assert!(ready_code(Some("TOR_BOOTSTRAP_READY"), true));
+        assert!(ready_code(Some("LOCAL_READY"), CommunicationProvider::Tor, false));
+        assert!(ready_code(Some("TOR_STARTING"), CommunicationProvider::Tor, false));
+        assert!(!ready_code(Some("TOR_STARTING"), CommunicationProvider::Tor, true));
+        assert!(!ready_code(Some("LOCAL_READY"), CommunicationProvider::Tor, true));
+        assert!(ready_code(Some("TOR_BOOTSTRAP_READY"), CommunicationProvider::Tor, true));
+        assert!(ready_code(Some("COMMUNICATION_READY"), CommunicationProvider::Iroh, true));
+        assert!(ready_code(Some("COMMUNICATION_READY"), CommunicationProvider::WebRtc, true));
+        assert!(!ready_code(Some("TOR_BOOTSTRAP_READY"), CommunicationProvider::WebRtc, true));
+    }
+
+    #[test]
+    fn client_readiness_requires_flutter_gateway_handshake() {
+        let local_only = r#"
+            {"code":"LOCAL_READY"}
+        "#;
+        assert!(!read_readiness_evidence_from_content(
+            local_only,
+            CommunicationProvider::Iroh,
+            false,
+        ));
+        let ready = r#"
+            {"code":"LOCAL_READY"}
+            {"code":"COMMUNICATION_READY"}
+            {"code":"FLUTTER_GATEWAY_READY"}
+        "#;
+        assert!(read_readiness_evidence_from_content(ready, CommunicationProvider::Iroh, false,));
+        assert!(read_readiness_evidence_from_content(ready, CommunicationProvider::Iroh, true,));
     }
 
     #[test]

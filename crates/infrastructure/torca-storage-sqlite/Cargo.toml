@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 rusqlite = { version = "0.38", features = ["bundled-sqlcipher-vendored-openssl"] }
+serde_json = "1"
 torca-client-application = { path = "../../application/torca-client-application" }
 torca-client-engine = { path = "../../application/torca-client-engine" }
 torca-contacts = { path = "../../domains/torca-contacts" }
@@ -20,6 +21,7 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing = { path = "../../domains/torca-pairing" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-receipts = { path = "../../domains/torca-receipts" }
 torca-radio = { path = "../../domains/torca-radio" }

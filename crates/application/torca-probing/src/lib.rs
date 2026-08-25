@@ -22,8 +22,18 @@ pub enum ProbeTarget {
     SecureStorage,
     Database,
     Engine,
+    /// Provider-neutral communication runtime. Legacy Tor observations remain
+    /// available only for compatibility with stored diagnostics.
+    Communication,
+    /// Provider-neutral inbound reachability (onion, ICE, QUIC endpoint, ...).
+    IncomingReachability,
+    /// Provider-owned short-lived service used to exchange pairing state.
+    /// It may be a rendezvous relay, discovery endpoint or signaling service.
+    PairingService,
+    /// Legacy Tor target retained while older diagnostics still emit it.
     Tor,
     OnionService,
+    /// Legacy relay target retained while older diagnostics still emit it.
     Relay,
     Peer,
 }
@@ -145,16 +155,16 @@ mod tests {
     fn adapter_observations_are_kept_in_the_shared_ledger() {
         let mut supervisor = ProbeSupervisor::default();
         supervisor.record(ProbeResult {
-            target: ProbeTarget::Relay,
+            target: ProbeTarget::PairingService,
             kind: ProbeKind::Connectivity,
             status: ProbeStatus::Healthy,
-            diagnostic_code: "RELAY_READY".into(),
+            diagnostic_code: "PAIRING_SERVICE_READY".into(),
             latency_ms: Some(12),
             measured_at: Timestamp::UNIX_EPOCH,
         });
 
         let latest = supervisor.latest();
         assert_eq!(latest.len(), 1);
-        assert_eq!(latest[0].diagnostic_code, "RELAY_READY");
+        assert_eq!(latest[0].diagnostic_code, "PAIRING_SERVICE_READY");
     }
 }

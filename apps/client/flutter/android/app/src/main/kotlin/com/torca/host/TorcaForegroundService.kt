@@ -130,9 +130,15 @@ class TorcaForegroundService : Service() {
             retryIndex = 0
             runtimeRevision = NativeRuntimeBridge.nativeRuntimeRevision().coerceAtLeast(runtimeRevision)
             pollMessageNotifications()
-            // A timeout simply re-enters the blocking wait. No periodic
-            // notification query is performed when the runtime is idle.
-            notificationHandler.post(this)
+            // Re-arm through a small bounded delay.  The native wait is
+            // normally blocking, but a revision/cursor that is already ahead
+            // (for example after a runtime restart) can legally return
+            // immediately.  Posting directly back to the handler in that
+            // case turns the notification thread into a 100% CPU spin while
+            // it repeatedly observes the same state.  A 100 ms re-arm keeps
+            // notification latency low without allowing a native state bug
+            // to become an unbounded hot loop.
+            notificationHandler.postDelayed(this, SUCCESS_REARM_DELAY_MS)
         }
     }
 
@@ -199,7 +205,7 @@ class TorcaForegroundService : Service() {
         val notification = builder
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle("Torca")
-            .setContentText("Private messaging over Tor is active")
+            .setContentText("Private messaging is active")
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(
@@ -433,7 +439,9 @@ class TorcaForegroundService : Service() {
         )
         val approveIntent = actionIntent(event, "approve")
         val rejectIntent = actionIntent(event, "reject")
-        val replyIntent = actionIntent(event, "reply")
+        // Android requires a mutable PendingIntent for actions carrying
+        // RemoteInput. Keep every other notification action immutable.
+        val replyIntent = actionIntent(event, "reply", mutable = true)
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, MESSAGE_CHANNEL_ID)
         } else {
@@ -488,7 +496,11 @@ class TorcaForegroundService : Service() {
             .notify(event.eventId.hashCode(), notification)
     }
 
-    private fun actionIntent(event: RuntimeNotificationEvent, action: String): PendingIntent =
+    private fun actionIntent(
+        event: RuntimeNotificationEvent,
+        action: String,
+        mutable: Boolean = false,
+    ): PendingIntent =
         PendingIntent.getActivity(
             this,
             (event.eventId.hashCode() xor action.hashCode()),
@@ -498,7 +510,8 @@ class TorcaForegroundService : Service() {
                 putExtra(MainActivity.EXTRA_PAIRING_ID, event.resourceId)
                 putExtra(MainActivity.EXTRA_CONVERSATION_ID, event.conversationId)
             },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            PendingIntent.FLAG_UPDATE_CURRENT or
+                if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE,
         )
 
     private fun createServiceChannel() {
@@ -506,10 +519,10 @@ class TorcaForegroundService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(
                 SERVICE_CHANNEL_ID,
-                "Torca background messaging",
+                "Torca background communication",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Keeps private Tor messaging active while Torca is in the background"
+                description = "Keeps private messaging active while Torca is in the background"
                 setShowBadge(false)
             },
         )
@@ -523,7 +536,7 @@ class TorcaForegroundService : Service() {
                 "Private messages",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = "New private Torca message notifications"
+                description = "New private message notifications"
                 setShowBadge(true)
             },
         )
@@ -541,6 +554,7 @@ class TorcaForegroundService : Service() {
         // A bounded wait gives shutdown a deterministic upper bound and
         // avoids releasing the native runtime while JNI is still blocked.
         const val EVENT_WAIT_TIMEOUT_MS = 0
+        const val SUCCESS_REARM_DELAY_MS = 100L
         // Runtime creation is an exceptional startup/restart path. Once the
         // native runtime exists, the service blocks on its revision hub and
         // does not use this fallback at all.

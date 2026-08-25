@@ -272,7 +272,7 @@ class _BatterySettingsCard extends StatelessWidget {
           secondary: Icon(context.torcaIcons.save),
           title: const Text('Allow delayed background delivery'),
           subtitle: const Text(
-            'Required before Automatic or Saver can suspend Tor while the app is idle.',
+            'Required before Automatic or Saver can suspend the communication runtime while the app is idle.',
           ),
           value: preferences.allowDelayedBackgroundDelivery,
           onChanged: preferences.setAllowDelayedBackgroundDelivery,

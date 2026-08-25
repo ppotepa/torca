@@ -116,19 +116,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   : '${client.contractSchema} / ${client.wireVersion}',
             ),
             _buildDetail(
-              'Endpoint hash',
-              client?.relayEndpointHash ?? 'unknown',
+              '${client?.communicationProvider.toUpperCase() ?? 'Provider'} endpoint hash',
+              client?.providerEndpointHash ?? 'not used by this provider',
             ),
             const Divider(),
             _buildDetail(
-              'Relay version',
+            'Provider service version',
               relay?.productVersion ?? 'unavailable',
             ),
-            _buildDetail('Relay build', relay?.buildId ?? 'unavailable'),
-            _buildDetail('Relay commit', relay?.sourceCommit ?? 'unavailable'),
+            _buildDetail('Provider service build', relay?.buildId ?? 'not used by this provider'),
+            _buildDetail('Provider service commit', relay?.sourceCommit ?? 'not used by this provider'),
             _buildDetail(
               'Relay protocol',
-              relay == null ? 'unavailable' : '${relay.protocolVersion}',
+              relay == null ? 'not used by this provider' : '${relay.protocolVersion}',
             ),
           ],
         ),
@@ -177,13 +177,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final relayInfo = snapshot.transport.relayInfo;
       return AdaptiveAppShell(
         title: snapshot.identity?.displayName ?? 'Torca',
-        showRuntimeStatus: !(_section == _HomeSection.chats &&
-            _selectedConversationId != null),
+        showRuntimeStatus:
+            !(_section == _HomeSection.chats &&
+                _selectedConversationId != null),
         buildLabel:
             'f ${_shortBuild(_buildId)} / '
             'r ${_shortBuild(buildInfo?.buildId ?? '—')}',
-        relayLabel: relayInfo == null
-            ? 'rel —'
+        serviceLabel: relayInfo == null
+            ? (snapshot.communicationProvider == 'tor' ? 'relay —' : 'svc —')
             : 'rel ${_shortBuild(relayInfo.buildId)}',
         onBuildInfo: () => _showBuildInfo(buildInfo, relayInfo),
         selectedIndex: _section.index,
@@ -495,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen> {
           context: context,
           applicationName: 'Torca',
           applicationVersion: buildInfo?.productVersion ?? 'development',
-          applicationLegalese: 'Private 1:1 messaging over Tor.',
+          applicationLegalese: 'Private 1:1 messaging over the selected communication provider.',
         );
     }
   }

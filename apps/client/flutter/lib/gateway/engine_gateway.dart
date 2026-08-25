@@ -76,11 +76,12 @@ abstract interface class GatewayAvailability {
 
 class ClientBuildInfo {
   const ClientBuildInfo({
+    required this.communicationProvider,
     required this.productVersion,
     required this.buildId,
     required this.sourceCommit,
     required this.sourceFingerprint,
-    required this.relayEndpointHash,
+    required this.providerEndpointHash,
     required this.targetPlatform,
     required this.targetArchitecture,
     required this.contractSchema,
@@ -101,16 +102,54 @@ class ClientBuildInfo {
       throw FormatException('Runtime metadata is missing $key');
     }
 
+    String? optionalString(String key) {
+      final field = value[key];
+      if (field == null) return null;
+      if (field is String && field.isNotEmpty) return field;
+      throw FormatException('Runtime metadata $key is invalid');
+    }
+
+    final metadataSchema = (value['metadataSchema'] as num?)?.toInt() ?? 1;
+    final providerValue = value['communicationProvider'];
+    if (metadataSchema >= 2 &&
+        (!(providerValue is String) || providerValue.trim().isEmpty)) {
+      throw const FormatException(
+        'Runtime metadata is missing communicationProvider',
+      );
+    }
+
     final capabilities = value['capabilities'];
     if (capabilities != null && capabilities is! Map<String, dynamic>) {
       throw const FormatException('Runtime metadata capabilities are invalid');
     }
+    final providerEndpointHash =
+        optionalString('providerEndpointHash') ??
+        // Metadata schema 1 used Tor-specific terminology. Keep reading it
+        // while old native binaries are still installable, but expose the
+        // value through the provider-neutral field to the rest of Flutter.
+        optionalString('relayEndpointHash');
+    final communicationProvider =
+        (providerValue is String && providerValue.trim().isNotEmpty)
+        ? providerValue.trim().toLowerCase()
+        : 'tor';
+    if (!const <String>{
+      'tor',
+      'iroh',
+      'webrtc',
+      'memory',
+    }.contains(communicationProvider)) {
+      throw FormatException(
+        'Runtime metadata has unsupported communicationProvider '
+        '$communicationProvider',
+      );
+    }
     return ClientBuildInfo(
+      communicationProvider: communicationProvider,
       productVersion: requiredString('productVersion'),
       buildId: requiredString('buildId'),
       sourceCommit: requiredString('sourceCommit'),
       sourceFingerprint: requiredString('sourceFingerprint'),
-      relayEndpointHash: requiredString('relayEndpointHash'),
+      providerEndpointHash: providerEndpointHash,
       targetPlatform: requiredString('targetPlatform'),
       targetArchitecture: requiredString('targetArchitecture'),
       contractSchema: requiredInt('contractSchema'),
@@ -122,15 +161,21 @@ class ClientBuildInfo {
   }
 
   final String productVersion;
+  final String communicationProvider;
   final String buildId;
   final String sourceCommit;
   final String sourceFingerprint;
-  final String relayEndpointHash;
+  final String? providerEndpointHash;
   final String targetPlatform;
   final String targetArchitecture;
   final int contractSchema;
   final int wireVersion;
   final ClientCapabilitiesDto capabilities;
+
+  /// Compatibility accessor for widgets compiled against the old Tor-only
+  /// naming. New UI must use [providerEndpointHash].
+  @Deprecated('Use providerEndpointHash')
+  String? get relayEndpointHash => providerEndpointHash;
 }
 
 abstract interface class BuildInfoProvider {
@@ -151,6 +196,13 @@ class ClientCapabilitiesDto {
     this.maxVideoAttachmentBytes = 5 * 1024 * 1024,
     this.maxQueuedAttachments = 5,
     this.maxAttachmentSourceBytes = 64 * 1024 * 1024,
+    this.pairingQr = true,
+    this.pairingFullLink = true,
+    this.pairingShortCode = true,
+    this.supportsIncoming = true,
+    this.supportsRadio = true,
+    this.supportsAttachments = true,
+    this.providerDirectPath = false,
   });
 
   factory ClientCapabilitiesDto.fromJson(Map<String, dynamic> value) =>
@@ -162,12 +214,26 @@ class ClientCapabilitiesDto {
         maxQueuedAttachments: value['maxQueuedAttachments'] as int? ?? 5,
         maxAttachmentSourceBytes:
             value['maxAttachmentSourceBytes'] as int? ?? 64 * 1024 * 1024,
+        pairingQr: value['pairingQr'] as bool? ?? true,
+        pairingFullLink: value['pairingFullLink'] as bool? ?? true,
+        pairingShortCode: value['pairingShortCode'] as bool? ?? true,
+        supportsIncoming: value['supportsIncoming'] as bool? ?? true,
+        supportsRadio: value['supportsRadio'] as bool? ?? true,
+        supportsAttachments: value['supportsAttachments'] as bool? ?? true,
+        providerDirectPath: value['providerDirectPath'] as bool? ?? false,
       );
 
   final int maxAttachmentBytes;
   final int maxVideoAttachmentBytes;
   final int maxQueuedAttachments;
   final int maxAttachmentSourceBytes;
+  final bool pairingQr;
+  final bool pairingFullLink;
+  final bool pairingShortCode;
+  final bool supportsIncoming;
+  final bool supportsRadio;
+  final bool supportsAttachments;
+  final bool providerDirectPath;
 }
 
 abstract interface class AttachmentCapabilitiesProvider {

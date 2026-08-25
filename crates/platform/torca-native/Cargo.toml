@@ -32,12 +32,19 @@ torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
 torca-pairing-driver = { path = "../../infrastructure/torca-pairing-driver" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
 torca-platform = { path = "../torca-platform" }
+torca-peer-link = { path = "../../infrastructure/torca-peer-link" }
 torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
+torca-rendezvous-tor = { path = "../../infrastructure/torca-rendezvous-tor" }
 torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
 torca-runtime = { path = "../../application/torca-runtime" }
+torca-transport-api = { path = "../../application/torca-transport-api" }
+torca-transport-tor = { path = "../../infrastructure/torca-transport-tor" }
+torca-transport-iroh = { path = "../../infrastructure/torca-transport-iroh" }
+torca-transport-webrtc = { path = "../../infrastructure/torca-transport-webrtc" }
 torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 torca-radio-adapters = { path = "../../infrastructure/torca-radio-adapters", default-features = false }
 torca-connectivity = { path = "../../application/torca-connectivity" }
@@ -46,6 +53,7 @@ torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor" }
 torca-notifications = { path = "../../domains/torca-notifications" }
 torca-logging = { path = "../../infrastructure/torca-logging" }
 serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
 torca-platform-windows = { path = "../torca-platform-windows" }

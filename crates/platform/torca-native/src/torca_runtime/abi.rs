@@ -34,6 +34,24 @@ pub unsafe extern "C" fn torca_runtime_invoke(
             .ok()
             .and_then(|value| value.get("requestId").and_then(Value::as_str).map(str::to_owned))
             .unwrap_or_default();
+        // Keep the ABI response useful when the actor cannot start.  The old
+        // response only contained a localization key, which made every
+        // provider failure look identical in Flutter ("runtime not ready")
+        // and forced us to guess from logcat.  Composition errors are already
+        // redacted at their source; expose the bounded diagnostic only in
+        // debug builds so release builds retain the generic contract.
+        let diagnostic = if cfg!(debug_assertions) {
+            handle
+                .inner
+                .startup_error
+                .as_deref()
+                .unwrap_or("runtime actor is no longer alive")
+                .chars()
+                .take(512)
+                .collect::<String>()
+        } else {
+            "runtime initialization failed".to_owned()
+        };
         let response = serde_json::to_vec(&json!({
             "schema": 1,
             "requestId": request_id,
@@ -48,6 +66,7 @@ pub unsafe extern "C" fn torca_runtime_invoke(
                 "severity": "error",
                 "retryable": true,
                 "messageKey": "runtime.startup.failed",
+                "message": diagnostic,
                 "diagnosticId": secure_id_hex().unwrap_or_default()
             },
             "timing": { "queuedMs": 0, "executionMs": 0 }
@@ -192,7 +211,7 @@ pub extern "C" fn torca_runtime_shutdown(timeout_ms: u32) -> i32 {
     let (tx, rx) = mpsc::sync_channel(1);
     if send_with_timeout(
         &inner.sender,
-        ActorMessage::Shutdown { response: tx },
+        ActorMessage::Shutdown { response: tx, source: "abi.shutdown" },
         Duration::from_secs(2),
     )
     .is_err()

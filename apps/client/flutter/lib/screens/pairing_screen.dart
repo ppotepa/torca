@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -135,7 +136,25 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     if (!mounted || widget.mode != _PairingComposerMode.create) return;
     final snapshot = widget.gateway.snapshots.value;
     final pairing = _currentCreated(snapshot);
-    if (pairing != null) _createdPairing = pairing;
+    if (pairing != null) {
+      // A create command can be durably queued while the selected provider is
+      // still commissioning. Once the runtime obtains a dialable endpoint,
+      // the pending operation materializes the pairing in the snapshot. Move
+      // the same modal out of its waiting state and render the authoritative
+      // URI instead of leaving the user on “saved locally” forever.
+      final becameReady = _queued || _createdPairing?.id != pairing.id;
+      final inviteUri = pairing.inviteUri.trim();
+      if (becameReady || (inviteUri.isNotEmpty && _inviteUri != inviteUri)) {
+        setState(() {
+          _queued = false;
+          _createdSessionId ??= pairing.id;
+          _createdPairing = pairing;
+          if (inviteUri.isNotEmpty) _inviteUri = inviteUri;
+        });
+      } else {
+        _createdPairing = pairing;
+      }
+    }
     final contactCreated = snapshot.contacts.any(
       (contact) => !_contactsBeforeCreation.contains(contact.id),
     );
@@ -291,9 +310,44 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     final ticket = RegExp(
       r'[?&]ticket=([0-9a-fA-F]{32})',
     ).firstMatch(raw)?.group(1)?.toLowerCase();
+    final provider = RegExp(
+      r'[?&]provider=([a-z0-9_-]{1,32})',
+    ).firstMatch(raw)?.group(1);
+    final bootstrapHex = RegExp(
+      r'[?&]bootstrap=([0-9a-fA-F]{2,4096})',
+    ).firstMatch(raw)?.group(1);
+    final bootstrapJson = provider != null && bootstrapHex != null
+        ? jsonEncode(<String, Object?>{
+            'provider': provider,
+            'payloadHex': bootstrapHex.toLowerCase(),
+          })
+        : null;
+    // Direct providers such as Iroh cannot locate the creator from a short
+    // code alone. The bootstrap descriptor is part of the QR/full invitation
+    // and is therefore a terminal input requirement, not a retryable network
+    // condition. Reject it before it reaches the durable pending queue.
+    final activeProvider = widget.gateway.snapshots.value.communicationProvider
+        .toLowerCase();
+    final capabilities = capabilitiesFor(widget.gateway);
+    if (!capabilities.pairingShortCode && bootstrapJson == null) {
+      if (mounted)
+        setState(() => _error = context.strings.pairingBootstrapRequired);
+      return;
+    }
+    if (provider != null &&
+        activeProvider.isNotEmpty &&
+        provider.toLowerCase() != activeProvider) {
+      if (mounted)
+        setState(() => _error = context.strings.pairingProviderMismatch);
+      return;
+    }
     final result = await _run(
       'pairing:join',
-      JoinPairingCommandDto(code: code, ticket: ticket),
+      JoinPairingCommandDto(
+        code: code,
+        ticket: ticket,
+        bootstrapJson: bootstrapJson,
+      ),
     );
     if (result?.ok != true || !mounted) return;
     _code.clear();
@@ -414,6 +468,9 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
             busy: _operations.isActive('pairing:join'),
             scanBusy: _operations.isActive('pairing:scan'),
             error: _error,
+            shortCodeSupported: capabilitiesFor(
+              widget.gateway,
+            ).pairingShortCode,
             onJoin: _join,
             onScan: _scan,
             // Recreate EditableText's Android IME connection on every tap.
@@ -619,6 +676,7 @@ class _JoinCard extends StatelessWidget {
     required this.busy,
     required this.scanBusy,
     required this.error,
+    required this.shortCodeSupported,
     required this.onJoin,
     required this.onScan,
     required this.onFocusInput,
@@ -626,6 +684,7 @@ class _JoinCard extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool enabled, scanEnabled, busy, scanBusy;
+  final bool shortCodeSupported;
   final String? error;
   final VoidCallback onJoin, onScan, onFocusInput;
 
@@ -642,9 +701,9 @@ class _JoinCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            scanEnabled || scanBusy
+            shortCodeSupported
                 ? context.strings.enterSixCharacterCode
-                : context.strings.enterSixCharacterCode,
+                : context.strings.pairingBootstrapRequired,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),

@@ -8,8 +8,8 @@ mod pairing;
 mod scripted;
 mod stream;
 mod tcp;
-mod tor;
 
+use std::net::TcpStream;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use torca_connectivity::{
@@ -25,9 +25,11 @@ use torca_relay_protocol::{
 pub use error::{RelayTransportError, RelayTransportFailureKind, RendezvousClientError};
 pub use scripted::ScriptedRelayTransport;
 pub use tcp::TcpRelayTransport;
-pub use tor::{SharedTorRelayTransport, TorRelayTransport};
 
-pub trait RelayTransport {
+/// Provider-neutral request/response transport for the short-lived pairing
+/// service. The historical `RelayTransport` name remains an alias for old
+/// Tor adapters.
+pub trait PairingServiceTransport {
     fn invalidate(&mut self);
     fn reconnect(&mut self) -> Result<(), RelayTransportError>;
     fn exchange(
@@ -35,6 +37,19 @@ pub trait RelayTransport {
         request: &RelayRequest,
         timeout: Duration,
     ) -> Result<RelayResponse, RelayTransportError>;
+}
+
+pub use PairingServiceTransport as RelayTransport;
+
+/// Exchanges one framed relay request over a connected byte stream. Provider
+/// adapters decide how the stream is opened; the shared client owns framing
+/// and protocol validation.
+pub fn exchange_tcp_stream(
+    stream: &mut TcpStream,
+    request: &RelayRequest,
+    timeout: Duration,
+) -> Result<RelayResponse, RelayTransportError> {
+    stream::exchange_stream(stream, request, timeout)
 }
 
 pub struct RendezvousClient<T> {
@@ -63,7 +78,7 @@ impl<T> RendezvousClient<T> {
     }
 }
 
-impl<T: RelayTransport> RendezvousClient<T> {
+impl<T: PairingServiceTransport> RendezvousClient<T> {
     pub fn network_changed(&mut self) {
         self.transport.invalidate();
     }
@@ -230,18 +245,16 @@ impl<T: RelayTransport> RendezvousClient<T> {
         else {
             return;
         };
-        for layer in [TransportLayer::Relay, TransportLayer::Tor] {
-            observer.record(
-                layer,
-                direction,
-                TransportOperation::Request,
-                phase,
-                None,
-                at,
-                None,
-                None,
-            );
-        }
+        observer.record(
+            TransportLayer::PairingService,
+            direction,
+            TransportOperation::Request,
+            phase,
+            None,
+            at,
+            None,
+            None,
+        );
     }
 }
 

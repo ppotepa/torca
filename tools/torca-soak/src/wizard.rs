@@ -16,7 +16,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
-use crate::{Cli, FaultProfile, RelayMode, Scenario, Workload};
+use crate::{Cli, CommunicationProvider, FaultProfile, FixtureMode, RelayMode, Scenario, Workload};
 
 const SCENARIOS: [(Scenario, &str, &str); 5] = [
     (
@@ -54,6 +54,8 @@ enum Field {
     RequireUnplugged,
     RequireScreenOff,
     NativeDiagnostics,
+    Fixture,
+    Provider,
 }
 
 pub(crate) fn choose_plan() -> Result<Option<Cli>, String> {
@@ -132,17 +134,23 @@ fn edit_plan(
     let mut peers: usize = if scenario == Scenario::ActiveMessaging { 5 } else { 3 };
     let mut require_unplugged =
         matches!(scenario, Scenario::IdleBattery | Scenario::ActiveMessaging);
-    let mut require_screen_off = scenario == Scenario::IdleBattery;
+    let mut require_screen_off =
+        matches!(scenario, Scenario::IdleBattery | Scenario::ActiveMessaging);
     let mut native_diagnostics = true;
+    let mut fixture =
+        if scenario == Scenario::ActiveMessaging { FixtureMode::Auto } else { FixtureMode::None };
+    let mut provider = CommunicationProvider::Tor;
     loop {
         let device = devices.get(device_index).map_or("none detected", String::as_str);
         terminal.draw(|frame| {
             let text = format!(
-                "Scenario: {}\n\n{} Android: {device}\n{} Duration: {duration_minutes} min\n{} Fake peers: {peers}\n{} Require unplugged: {require_unplugged}\n{} Require screen off: {require_screen_off}\n{} Native diagnostics: {native_diagnostics}\n\nLeft/Right change   Tab/Up/Down field   Enter start   Esc back",
+                "Scenario: {}\n\n{} Android: {device}\n{} Provider: {provider:?}\n{} Duration: {duration_minutes} min\n{} Fake peers: {peers}\n{} Fixture: {fixture:?}\n{} Require unplugged: {require_unplugged}\n{} Require screen off: {require_screen_off}\n{} Native diagnostics: {native_diagnostics}\n\nLeft/Right change   Tab/Up/Down field   Enter start   Esc back",
                 scenario_label(scenario),
                 marker(matches!(field, Field::Device)),
+                marker(matches!(field, Field::Provider)),
                 marker(matches!(field, Field::Duration)),
                 marker(matches!(field, Field::Peers)),
+                marker(matches!(field, Field::Fixture)),
                 marker(matches!(field, Field::RequireUnplugged)),
                 marker(matches!(field, Field::RequireScreenOff)),
                 marker(matches!(field, Field::NativeDiagnostics)),
@@ -184,6 +192,26 @@ fn edit_plan(
                             peers.saturating_sub(1).max(1)
                         };
                     }
+                    Field::Fixture => {
+                        fixture = match (fixture, increase) {
+                            (FixtureMode::Auto, true) => FixtureMode::Provision,
+                            (FixtureMode::None, true) => FixtureMode::Auto,
+                            (FixtureMode::Provision, true) => FixtureMode::Reuse,
+                            (FixtureMode::Reuse, true) => FixtureMode::Auto,
+                            (FixtureMode::Auto, false) => FixtureMode::Reuse,
+                            (FixtureMode::Provision, false) => FixtureMode::None,
+                            (FixtureMode::None, false) => FixtureMode::Provision,
+                            (FixtureMode::Reuse, false) => FixtureMode::Auto,
+                        };
+                    }
+                    Field::Provider => {
+                        provider = match (provider, increase) {
+                            (CommunicationProvider::Tor, true) => CommunicationProvider::Iroh,
+                            (CommunicationProvider::Iroh, false) => CommunicationProvider::Tor,
+                            (CommunicationProvider::Tor, false) => CommunicationProvider::Iroh,
+                            (CommunicationProvider::Iroh, true) => CommunicationProvider::Tor,
+                        };
+                    }
                     Field::RequireUnplugged => require_unplugged = !require_unplugged,
                     Field::RequireScreenOff => require_screen_off = !require_screen_off,
                     Field::NativeDiagnostics => native_diagnostics = !native_diagnostics,
@@ -214,6 +242,7 @@ fn edit_plan(
                     duration_seconds: duration_minutes * 60,
                     legacy_duration_minutes: None,
                     relay: RelayMode::Managed,
+                    communication_provider: provider,
                     relay_endpoint: None,
                     workload: Workload::Balanced,
                     radio: false,
@@ -222,6 +251,8 @@ fn edit_plan(
                     } else {
                         FaultProfile::Controlled
                     },
+                    fixture,
+                    fixture_name: "android-default".into(),
                     output: PathBuf::from(".torca/soak"),
                     lab_peer: None,
                     bot_host: None,
@@ -252,11 +283,13 @@ fn review_plan(
         terminal.draw(|frame| {
             let android = plan.android.as_deref().unwrap_or("not required");
             let text = format!(
-                "Scenario: {}\nAndroid: {android}\nDuration: {} min\nFake peers: {}\nRelay: {:?}\nAuto deploy: {}\nUnplugged required: {}\nScreen off required: {}\nNative diagnostics: {}\nValidation: {}\n\nEnter starts the soak. Esc returns to configuration.",
+                "Scenario: {}\nAndroid: {android}\nProvider: {:?}\nDuration: {} min\nFake peers: {}\nRelay: {:?}\nFixture: {:?}\nAuto deploy: {}\nUnplugged required: {}\nScreen off required: {}\nNative diagnostics: {}\nValidation: {}\n\nEnter starts the soak. Esc returns to configuration.",
                 scenario_label(plan.scenario),
+                plan.communication_provider,
                 plan.duration_seconds.div_ceil(60),
                 plan.fake_peers,
                 plan.relay,
+                plan.fixture,
                 plan.android_auto_deploy,
                 plan.require_unplugged,
                 plan.require_screen_off,
@@ -320,7 +353,9 @@ fn next_field(field: Field) -> Field {
     match field {
         Field::Device => Field::Duration,
         Field::Duration => Field::Peers,
-        Field::Peers => Field::RequireUnplugged,
+        Field::Peers => Field::Fixture,
+        Field::Fixture => Field::Provider,
+        Field::Provider => Field::RequireUnplugged,
         Field::RequireUnplugged => Field::RequireScreenOff,
         Field::RequireScreenOff => Field::NativeDiagnostics,
         Field::NativeDiagnostics => Field::Device,
@@ -332,7 +367,9 @@ fn previous_field(field: Field) -> Field {
         Field::Device => Field::NativeDiagnostics,
         Field::Duration => Field::Device,
         Field::Peers => Field::Duration,
-        Field::RequireUnplugged => Field::Peers,
+        Field::Fixture => Field::Peers,
+        Field::Provider => Field::Fixture,
+        Field::RequireUnplugged => Field::Provider,
         Field::RequireScreenOff => Field::RequireUnplugged,
         Field::NativeDiagnostics => Field::RequireScreenOff,
     }

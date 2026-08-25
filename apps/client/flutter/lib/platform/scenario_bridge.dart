@@ -4,16 +4,18 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import 'scenario_bridge_controller.dart';
 
 /// Local-only control surface for automated Android soak runs.
 ///
 /// This is deliberately enabled only in debug/profile builds and binds only
 /// to loopback. The random token is written to the app cache so the harness
 /// can retrieve it through `adb run-as` and then use `adb forward`.
-class ScenarioBridge {
+class ScenarioBridge implements ScenarioBridgeController {
   ScenarioBridge(this._gateway);
 
   final EngineGateway _gateway;
@@ -25,7 +27,9 @@ class ScenarioBridge {
 
   Future<void> start() async {
     const soakMode = bool.fromEnvironment('TORCA_SOAK_MODE');
-    if ((!kDebugMode && !soakMode) || !Platform.isAndroid || _server != null) return;
+    if ((!kDebugMode && !soakMode) || !Platform.isAndroid || _server != null) {
+      return;
+    }
     final token = _randomToken();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     await Directory.systemTemp.create(recursive: true);
@@ -74,22 +78,28 @@ class ScenarioBridge {
       if (value is! Map<String, dynamic>)
         throw const FormatException('request must be an object');
       final result = await _execute(value);
+      final payload = jsonEncode(<String, Object?>{
+        'status': 'succeeded',
+        'result': result,
+      });
       request.response
         ..headers.contentType = ContentType.json
         ..statusCode = HttpStatus.ok
-        ..write(
-          jsonEncode(<String, Object?>{
-            'status': 'succeeded',
-            'result': result,
-          }),
-        );
+        // Explicit content length keeps the small loopback protocol from
+        // falling back to HTTP chunked framing. The Rust harness consumes a
+        // single JSON document and must not receive chunk trailers.
+        ..contentLength = utf8.encode(payload).length
+        ..write(payload);
     } on Object catch (error) {
+      final payload = jsonEncode(<String, Object?>{
+        'status': 'failed',
+        'error': '$error',
+      });
       request.response
         ..headers.contentType = ContentType.json
         ..statusCode = HttpStatus.badRequest
-        ..write(
-          jsonEncode(<String, Object?>{'status': 'failed', 'error': '$error'}),
-        );
+        ..contentLength = utf8.encode(payload).length
+        ..write(payload);
     } finally {
       await request.response.close();
     }
@@ -143,6 +153,22 @@ class ScenarioBridge {
         command = CancelPairingCommandDto(
           sessionIdHex: _string(request, 'sessionIdHex'),
         );
+      case 'profile.set':
+        final identityId =
+            _gateway.snapshots.value.identity?.id ?? 'local-device';
+        final avatar = await AvatarRepository.instance.envelopeForDevice(
+          identityId,
+        );
+        command = UpdateProfileCommandDto(
+          displayName: _string(request, 'displayName'),
+          avatarEnvelope:
+              jsonDecode(jsonEncode(avatar.toJson())) as Map<String, Object?>,
+        );
+      case 'contact.rename':
+        command = RenameContactCommandDto(
+          contactIdHex: _string(request, 'contactIdHex'),
+          displayName: _string(request, 'displayName'),
+        );
       case 'message.send':
         command = QueueMessageCommandDto(
           conversationIdHex: _string(request, 'conversationIdHex'),
@@ -174,6 +200,9 @@ class ScenarioBridge {
         throw ArgumentError('unsupported scenario operation: $operation');
     }
     final result = await _gateway.execute(command);
+    if (!result.ok || result.kind.startsWith('error')) {
+      throw StateError(result.errorCode ?? result.kind);
+    }
     return <String, Object?>{
       'ok': result.ok,
       'kind': result.kind,
@@ -203,6 +232,27 @@ class ScenarioBridge {
         'revision': snapshot.revision,
         'bootstrapPhase': snapshot.bootstrapPhase,
         'torState': snapshot.torState,
+        'transport': <String, Object?>{
+          'tor': <String, Object?>{
+            'state': snapshot.transport.tor.state,
+            'code': snapshot.transport.tor.code,
+          },
+          'relay': <String, Object?>{
+            'state': snapshot.transport.relay.state,
+            'code': snapshot.transport.relay.code,
+          },
+          'peer': <String, Object?>{
+            'state': snapshot.transport.peer.state,
+            'code': snapshot.transport.peer.code,
+          },
+        },
+        'identity': snapshot.identity == null
+            ? null
+            : <String, Object?>{
+                'id': snapshot.identity!.id,
+                'displayName': snapshot.identity!.displayName,
+                'fingerprint': snapshot.identity!.fingerprint,
+              },
         'pairings': snapshot.pairings
             .map(
               (pairing) => <String, Object?>{
@@ -240,6 +290,8 @@ class ScenarioBridge {
                 'contactId': conversation.contactId,
                 'status': conversation.status,
                 'unreadCount': conversation.unreadCount,
+                'lastMessageBody': conversation.lastMessageBody,
+                'lastMessageDirection': conversation.lastMessageDirection,
                 'lastMessageStatus': conversation.lastMessageStatus,
               },
             )

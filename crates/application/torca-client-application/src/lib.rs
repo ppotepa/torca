@@ -33,8 +33,8 @@ pub use torca_radio_coordinator::{
     RadioTimelineRecord, SharedRadioCoordinator,
 };
 pub use torca_runtime::{
-    AttachmentSendRequest, AttachmentView, NetworkSnapshot, PeerConnectionStatus,
-    PeerHealthQuality, RelayServiceInfo, RuntimeDriverError, RuntimeHandle, TorState,
+    AttachmentSendRequest, AttachmentView, CommunicationState, NetworkSnapshot,
+    PeerConnectionStatus, PeerHealthQuality, RelayServiceInfo, RuntimeDriverError, RuntimeHandle,
     TransportActivitySnapshot,
 };
 
@@ -133,35 +133,23 @@ impl ClientApplicationHandle {
     /// real pairing transport can reconnect or queue the operation. The
     /// operation itself remains responsible for returning a retryable result.
     pub fn pairing_creation_allowed(network: &NetworkSnapshot) -> Result<(), &'static str> {
-        if network.tor == TorState::Ready { Ok(()) } else { Err("TOR_NOT_READY") }
+        if network.communication.pairing_ready() { Ok(()) } else { Err("COMMUNICATION_NOT_READY") }
     }
 
     /// Joining is an explicit connectivity attempt. An unknown or degraded
     /// relay probe must not prevent the user from submitting a valid code; the
-    /// command itself returns the authoritative transport error. Tor readiness
+    /// command itself returns the authoritative transport error. Provider readiness
     /// is the only safe local precondition.
     pub fn pairing_join_allowed(network: &NetworkSnapshot) -> Result<(), &'static str> {
-        if network.tor == TorState::Ready { Ok(()) } else { Err("TOR_NOT_READY") }
+        if network.communication.pairing_ready() { Ok(()) } else { Err("COMMUNICATION_NOT_READY") }
     }
 
     pub fn profile_setup_allowed(network: &NetworkSnapshot) -> Result<(), &'static str> {
-        if network.tor != TorState::Ready || network.onion_address.is_none() {
-            return Err("PROFILE_NOT_READY");
-        }
-        match network
-            .probes
-            .iter()
-            .find(|probe| probe.target == ProbeTarget::Relay)
-            .map(|probe| probe.status)
-        {
-            Some(
-                ProbeStatus::Healthy
-                | ProbeStatus::Degraded
-                | ProbeStatus::Failed
-                | ProbeStatus::Unreachable,
-            ) => Ok(()),
-            _ => Err("PROFILE_NOT_READY"),
-        }
+        // Profile creation is local application setup.  It must not wait for
+        // an optional incoming endpoint or a pairing/rendezvous service; those
+        // are provider-specific capabilities used after the local shell is
+        // available.  The provider declares the actual commissioning gate.
+        if network.communication.local_shell_ready() { Ok(()) } else { Err("PROFILE_NOT_READY") }
     }
 }
 

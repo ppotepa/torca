@@ -5,6 +5,10 @@ mod tests {
     #[test]
     fn metadata_has_compatibility_fields() {
         let value: Value = serde_json::from_slice(metadata()).expect("valid metadata");
+        assert_eq!(value["metadataSchema"], 2);
+        assert!(value["communicationProvider"].is_string());
+        assert!(value.get("providerEndpointHash").is_some());
+        assert!(value.get("relayEndpointHash").is_some());
         assert_eq!(value["nativeAbi"], NATIVE_ABI);
         assert_eq!(value["storageEpoch"], STORAGE_EPOCH);
         assert_eq!(value["contractSchema"], CONTRACT_VERSION);
@@ -13,6 +17,10 @@ mod tests {
             torca_attachments::MAX_ATTACHMENT_BYTES
         );
         assert_eq!(value["capabilities"]["maxQueuedAttachments"], 5);
+        assert!(value["capabilities"]["pairingQr"].is_boolean());
+        assert!(value["capabilities"]["pairingFullLink"].is_boolean());
+        assert!(value["capabilities"]["pairingShortCode"].is_boolean());
+        assert!(value["capabilities"]["supportsRadio"].is_boolean());
         assert!(value["buildId"].is_string());
         assert!(value["sourceFingerprint"].is_string());
     }

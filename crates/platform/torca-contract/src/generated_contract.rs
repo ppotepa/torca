@@ -68,6 +68,8 @@ pub fn contains(kind: &str, name: &str) -> bool {
                 | "foregrounded"
                 | "backgrounded"
                 | "network_changed"
+                | "network_validated"
+                | "flutter_gateway_ready"
                 | "low_memory"
                 | "terminating"
         ),

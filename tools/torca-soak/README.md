@@ -32,14 +32,24 @@ offers five explicit scenarios:
 The PowerShell files under `scripts/` are implementation backends and CI
 compatibility shims. They are not separate developer entry points.
 
-## Fake-peer-only run
+Active Messaging uses a fault-free baseline unless `--fault-profile` is passed
+explicitly; controlled fault injection remains available for RuntimeLab.
 
-Use an endpoint compiled into the lab peer binary:
+## Provider-specific fake-peer runs
+
+For a Tor run, use a managed or external onion rendezvous endpoint:
 
 ```powershell
 $env:TORCA_RELAY_ENDPOINT = '<v3-onion>.onion:443'
 cargo build -p torca-lab-peer
 cargo run -p torca-soak -- --scenario runtime-lab --plain --relay external --relay-endpoint $env:TORCA_RELAY_ENDPOINT --duration-seconds 300
+```
+
+Iroh does not use a managed relay or onion endpoint. Its peers exchange the
+provider-owned QUIC endpoint bootstrap directly:
+
+```powershell
+cargo run -p torca-soak -- --scenario runtime-lab --communication-provider iroh --fixture none --plain --duration-seconds 300
 ```
 
 ## Managed relay run
@@ -58,14 +68,18 @@ Production client profiles are unchanged. Override the binary with
 
 The relay is stopped when the run exits, including when a peer or assertion
 fails. Each run is written to `.torca/soak/<run-id>/` with a manifest and
-JSONL timeline.
+JSONL timeline. Only one SOAK1 run may mutate the shared fixture/bot roots at
+a time; `.torca/soak-state/active.lock` prevents concurrent runs and recovers
+stale owners.
 
 When stdout and stderr are interactive, the runner opens a Ratatui dashboard.
-It shows relay/onion state, Android/peer readiness, workload counters and the
-bounded event timeline. Controls are deliberately limited to safe operations:
+It shows the selected provider, provider-service/incoming reachability state,
+Android/peer readiness, workload counters and the bounded event timeline.
+Controls are deliberately limited to safe operations:
 
 ```text
 p or Space  pause/resume controlled waits
+o           open Android Developer options when install is restricted
 r           retry a failed Android preflight
 m           write an incident marker under <run>/incidents/
 l           open the bounded full JSONL event view
@@ -99,7 +113,7 @@ scenario through its normal peer/ADB/relay cleanup path and records
 ## Android participant
 
 The canonical launcher builds the isolated `soak` flavor containing the
-ScenarioBridge (`com.torca.torca_app.soak`), then passes the authorized ADB
+SOAK-only entrypoint and ScenarioBridge (`com.torca.torca_app.soak`), then passes the authorized ADB
 serial:
 
 ```powershell
@@ -117,7 +131,9 @@ cargo run -p torca-soak -- --scenario active-messaging --android 2406APNFAG --fa
 The bridge binds only to Android loopback. The runner reads its random token
 through `adb run-as`, creates an `adb forward`, and sends the same typed
 pairing/message/attachment/radio operations used by fake peers. Ordinary app
-builds do not start the bridge; only the SOAK2 flavor enables it.
+normal builds do not start or import the bridge; only `main_soak.dart` in the
+SOAK flavor enables it. The SOAK-only notification listener records system
+notification metadata for end-of-run assertions.
 
 An absent or unauthorized ADB device is a preflight failure, never a passing
 soak result.

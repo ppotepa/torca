@@ -442,6 +442,12 @@ function Wait-TorcaClientLaunch {
     $lastDetail = ''
     $lastReported = ''
     $processObserved = $false
+    # The legacy PowerShell runner must use the same provider-neutral readiness
+    # contract as torca-deploy.  NETWORK_READY/TOR_READY are compatibility
+    # evidence for Tor only; direct providers publish COMMUNICATION_READY.
+    $selectedProvider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($selectedProvider)) { $selectedProvider = 'tor' }
+    $providerReadyCode = if ($selectedProvider -eq 'tor') { 'NETWORK_READY' } else { 'COMMUNICATION_READY' }
     do {
         if ($Platform -eq 'windows') {
             if ($ExpectedWindowsProcessId) {
@@ -495,27 +501,17 @@ function Wait-TorcaClientLaunch {
                         $bootstrap = if (Test-Path -LiteralPath $bootstrapLog) { Get-Content -LiteralPath $bootstrapLog -Tail 80 -ErrorAction SilentlyContinue } else { @() }
                         $events = @($bootstrap | ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } | Where-Object { $_ })
                         $failure = $events | Where-Object { $_.code -eq 'RUNTIME_START_FAILED' } | Select-Object -Last 1
-                        $torReady = $events | Where-Object { $_.code -eq 'TOR_READY' } | Select-Object -Last 1
-                        $networkReady = $events | Where-Object { $_.code -eq 'NETWORK_READY' } | Select-Object -Last 1
-                        if ($networkReady) {
-                            Write-Host "Windows network health verified: PID $($process[0].Id), build=$($run.build_id), state=NETWORK_READY" -ForegroundColor Green
+                        $providerReady = $events | Where-Object { $_.code -eq $providerReadyCode } | Select-Object -Last 1
+                        $localReady = $events | Where-Object { $_.code -in @('LOCAL_READY', 'FLUTTER_GATEWAY_READY') } | Select-Object -Last 1
+                        if ($providerReady -or ($selectedProvider -ne 'tor' -and $localReady)) {
+                            Write-Host "Windows communication health verified: PID $($process[0].Id), provider=$selectedProvider, build=$($run.build_id), state=$providerReadyCode" -ForegroundColor Green
                             return
                         }
                         if ($failure -and [string]$failure.message -match 'bootstrap Arti client stalled') {
-                            throw "Windows Tor bootstrap reached a terminal stall. $($failure.message). Restart is required; incident log: $bootstrapLog"
+                            throw "Windows provider bootstrap reached a terminal stall. $($failure.message). Restart is required; incident log: $bootstrapLog"
                         }
-                        if ($failure -and -not $torReady) { $lastDetail = "Windows Tor startup: $($failure.message)" }
-                        elseif ($torReady) {
-                            $networkCodes = foreach ($name in @('tor.log','relay.log')) {
-                                $path = Join-Path $runStart.DirectoryName $name
-                                if (Test-Path -LiteralPath $path) {
-                                    Get-Content -LiteralPath $path -Tail 20 -ErrorAction SilentlyContinue |
-                                        ForEach-Object { try { ($_ | ConvertFrom-Json).code } catch { $null } } |
-                                        Where-Object { $_ } | Select-Object -Last 1
-                                }
-                            }
-                            $lastDetail = "Windows core runtime is ready; waiting for onion and relay ($(@($networkCodes) -join ', '))"
-                        }
+                        if ($failure -and -not $localReady) { $lastDetail = "Windows $selectedProvider startup: $($failure.message)" }
+                        elseif ($localReady) { $lastDetail = "Windows local runtime is ready; waiting for provider=$selectedProvider ($providerReadyCode)" }
                         else { $lastEvent = $events | Select-Object -Last 1; $lastDetail = if ($lastEvent) { "Windows runtime event: $($lastEvent.code)" } else { 'Windows runtime log is initializing' } }
                     } catch {
                         if ($_.Exception.Message -like 'Windows runtime build ID mismatch*' -or $_.Exception.Message -like 'Windows Tor bootstrap reached a terminal stall*') { throw }
@@ -524,9 +520,9 @@ function Wait-TorcaClientLaunch {
                 } else { $lastDetail = "Windows process PID $($process[0].Id) is running; waiting for a fresh runtime log" }
             }
             elseif ($processObserved) {
-                throw 'Windows torca_app exited before native runtime reached NETWORK_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident.'
+                throw "Windows torca_app exited before provider=$selectedProvider became ready. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident."
             } elseif ($ExpectedWindowsProcessId) {
-                throw "Windows release process PID $ExpectedWindowsProcessId exited before native runtime reached NETWORK_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident."
+                throw "Windows release process PID $ExpectedWindowsProcessId exited before provider=$selectedProvider became ready. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident."
             } else { $lastDetail = 'Windows torca_app process is not running yet' }
         } else {
             if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb is required for Android launch verification.' }
@@ -536,31 +532,23 @@ function Wait-TorcaClientLaunch {
                 $logFiles = (& adb -s $Device shell find /sdcard/Android/data/com.torca.torca_app/files/torca/logs -type f -name bootstrap.log 2>$null | Out-String).Trim() -split "`r?`n" | Where-Object { $_ }
                 $remoteLog = $logFiles | Select-Object -Last 1
                 $events = if ($remoteLog) { (& adb -s $Device shell tail -n 80 $remoteLog 2>$null | Out-String) } else { '' }
-                if ($events -match '"code"\s*:\s*"NETWORK_READY"') {
-                    Write-Host "Android network health verified on ${Device}: PID $pid, state=NETWORK_READY" -ForegroundColor Green
+                if ($events -match ('"code"\s*:\s*"' + [Regex]::Escape($providerReadyCode) + '"') -or
+                    ($selectedProvider -ne 'tor' -and $events -match '"code"\s*:\s*"(LOCAL_READY|FLUTTER_GATEWAY_READY)"')) {
+                    Write-Host "Android communication health verified on ${Device}: PID $pid, provider=$selectedProvider, state=$providerReadyCode" -ForegroundColor Green
                     return
                 }
                 $failure = [Regex]::Matches($events, '"code"\s*:\s*"RUNTIME_START_FAILED"[^\r\n]*') | Select-Object -Last 1
-                $torReady = $events -match '"code"\s*:\s*"TOR_READY"'
-                if ($failure -and -not $torReady) {
-                    $lastDetail = "Android Tor startup: $($failure.Value)"
-                } elseif ($torReady -and $remoteLog) {
-                    $remoteDirectory = $remoteLog.Substring(0, $remoteLog.LastIndexOf('/'))
-                    $networkCodes = foreach ($name in @('tor.log','relay.log')) {
-                        $content = (& adb -s $Device shell tail -n 20 "$remoteDirectory/$name" 2>$null | Out-String)
-                        [Regex]::Matches($content, '"code"\s*:\s*"([^"]+)"') |
-                            Select-Object -Last 1 |
-                            ForEach-Object { $_.Groups[1].Value }
-                    }
-                    $lastDetail = "Android core runtime is ready; waiting for onion and relay ($(@($networkCodes) -join ', '))"
-                } elseif ($remoteLog) {
-                    $lastDetail = "Android process PID $pid is running; waiting for TOR_READY"
+                $localReady = $events -match '"code"\s*:\s*"(LOCAL_READY|FLUTTER_GATEWAY_READY)"'
+                if ($failure -and -not $localReady) {
+                    $lastDetail = "Android $selectedProvider startup: $($failure.Value)"
+                } elseif ($localReady) {
+                    $lastDetail = "Android local runtime is ready; waiting for provider=$selectedProvider ($providerReadyCode)"
                 } else {
-                    $lastDetail = "Android process PID $pid is running; waiting for runtime bootstrap log"
+                    $lastDetail = "Android process PID $pid is running; waiting for provider=$selectedProvider readiness"
                 }
             }
             elseif ($processObserved) {
-                throw "Android package process exited on $Device before native runtime reached NETWORK_READY. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat."
+                throw "Android package process exited on $Device before provider=$selectedProvider became ready. Collect incident logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat."
             } else { $lastDetail = "Android package process is not running on $Device yet" }
         }
         if ($lastDetail -ne $lastReported) {
@@ -570,7 +558,7 @@ function Wait-TorcaClientLaunch {
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)
     $hint = if ($Platform -eq 'windows') { 'collect logs with scripts/torca.ps1 -Command collect -Profile incident' } else { 'collect logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat' }
-    throw "Runtime launch health check timed out after ${TimeoutSeconds}s: $lastDetail. $hint"
+    throw "Runtime launch health check timed out after ${TimeoutSeconds}s for provider=$selectedProvider: $lastDetail. $hint"
 }
 
 function Write-TorcaBuildManifest {

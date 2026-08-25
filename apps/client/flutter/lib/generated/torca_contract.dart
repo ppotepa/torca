@@ -448,6 +448,7 @@ class TransportIndicatorDto {
 
 class TransportStatusDto {
   const TransportStatusDto({
+    this.communication = const TransportIndicatorDto(state: 'stopped'),
     this.tor = const TransportIndicatorDto(state: 'stopped'),
     this.relay = const TransportIndicatorDto(),
     this.peer = const TransportIndicatorDto(state: 'disconnected'),
@@ -456,11 +457,15 @@ class TransportStatusDto {
     this.relayInfo,
   });
   factory TransportStatusDto.fromJson(Map<String, dynamic> value) {
+    final communication = value['communication'];
     final tor = value['tor'];
     final relay = value['relay'];
     final peer = value['peer'];
     final relayInfo = value['relayInfo'];
     return TransportStatusDto(
+      communication: communication is Map<String, dynamic>
+          ? TransportIndicatorDto.fromJson(communication, fallbackState: 'stopped')
+          : const TransportIndicatorDto(state: 'stopped'),
       tor: tor is Map<String, dynamic>
           ? TransportIndicatorDto.fromJson(tor, fallbackState: 'stopped')
           : const TransportIndicatorDto(state: 'stopped'),
@@ -477,7 +482,7 @@ class TransportStatusDto {
           : null,
     );
   }
-  final TransportIndicatorDto tor, relay, peer;
+  final TransportIndicatorDto communication, tor, relay, peer;
   final int peersReady, peersTotal;
   final RelayInfoDto? relayInfo;
 }
@@ -519,7 +524,9 @@ class ContactDto {
     required this.id,
     this.remoteIdentityId = '',
     required this.displayName,
-    required this.onionAddress,
+    this.transportProvider = 'tor',
+    this.endpointAvailable = false,
+    this.onionAddress,
     required this.status,
     required this.connectionState,
     this.presenceState = 'unknown',
@@ -535,7 +542,9 @@ class ContactDto {
       id: _requiredString(value, 'id'),
       remoteIdentityId: _requiredString(value, 'remoteIdentityId'),
       displayName: _requiredString(value, 'displayName'),
-      onionAddress: _requiredString(value, 'onionAddress'),
+      transportProvider: value['transportProvider'] as String? ?? 'tor',
+      endpointAvailable: value['endpointAvailable'] as bool? ?? false,
+      onionAddress: value['onionAddress'] as String?,
       status: _requiredString(value, 'status'),
       connectionState: _requiredString(value, 'connectionState'),
       presenceState: value['presenceState'] as String? ?? 'unknown',
@@ -552,12 +561,13 @@ class ContactDto {
   final String id,
       remoteIdentityId,
       displayName,
-      onionAddress,
+      transportProvider,
       status,
       connectionState,
       presenceState,
       verificationStatus;
-  final String? safetyNumber;
+  final String? onionAddress, safetyNumber;
+  final bool endpointAvailable;
   final PeerHealthDto peerHealth;
   final int? verifiedAtMs;
   final int? lastSeenAtMs;
@@ -951,6 +961,9 @@ class AppSnapshotDto {
     this.notificationsEnabled = true,
     this.readReceiptsEnabled = true,
     this.identity,
+    this.communicationProvider = 'tor',
+    this.communicationState = 'stopped',
+    this.endpointSummary,
     this.torState = 'stopped',
     this.transport = const TransportStatusDto(),
     this.navigationBadges = const NavigationBadgesDto(),
@@ -980,6 +993,9 @@ class AppSnapshotDto {
       identity: identity is Map<String, dynamic>
           ? IdentityDto.fromJson(identity)
           : null,
+      communicationProvider: value['communicationProvider'] as String? ?? 'tor',
+      communicationState: value['communicationState'] as String? ?? 'stopped',
+      endpointSummary: value['endpointSummary'] as String?,
       torState: value['torState'] as String? ?? 'stopped',
       transport: transport is Map<String, dynamic>
           ? TransportStatusDto.fromJson(transport)
@@ -1022,6 +1038,8 @@ class AppSnapshotDto {
   final int revision, notificationCursor;
   final bool notificationsEnabled, readReceiptsEnabled;
   final IdentityDto? identity;
+  final String communicationProvider, communicationState;
+  final String? endpointSummary;
   final String torState;
   final TransportStatusDto transport;
   final NavigationBadgesDto navigationBadges;
@@ -1129,9 +1147,10 @@ class CreatePairingCommandDto extends BridgeCommandDto {
 }
 
 class JoinPairingCommandDto extends BridgeCommandDto {
-  const JoinPairingCommandDto({required this.code, this.ticket});
+  const JoinPairingCommandDto({required this.code, this.ticket, this.bootstrapJson});
   final String code;
   final String? ticket;
+  final String? bootstrapJson;
 }
 
 class ApprovePairingCommandDto extends BridgeCommandDto {
@@ -1511,6 +1530,7 @@ class RuntimeRequestDto {
       return _command('pairing.join', <String, Object?>{
         'code': command.code,
         if (command.ticket != null) 'ticket': command.ticket,
+        if (command.bootstrapJson != null) 'bootstrap': jsonDecode(command.bootstrapJson!),
       });
     }
     if (command is ApprovePairingCommandDto) {

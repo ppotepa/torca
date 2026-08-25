@@ -16,7 +16,7 @@ void main() {
       expect(badges.newContacts, 1);
 
       const bootstrap = BootstrapStepDto(
-        id: 'tor_network',
+        id: 'communication_runtime',
         state: 'running',
         code: 'TOR_DIRECTORY_CONSENSUS',
         progress: 15,
@@ -78,4 +78,35 @@ void main() {
     expect(health.rttMs, isNull);
     expect(health.consecutiveFailures, 0);
   });
+
+  test(
+    'provider-neutral readiness and contact routes decode without onion data',
+    () {
+      final snapshot = AppSnapshotDto.fromJson(<String, dynamic>{
+        'communicationProvider': 'webrtc',
+        'communicationState': 'ready',
+        'endpointSummary': 'signalling ready',
+        'transport': <String, dynamic>{
+          'communication': <String, dynamic>{'state': 'ready'},
+        },
+        'contacts': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': '00000000000000000000000000000001',
+            'remoteIdentityId': '00000000000000000000000000000002',
+            'displayName': 'Peer',
+            'onionAddress': '',
+            'transportProvider': 'webrtc',
+            'endpointAvailable': true,
+            'status': 'active',
+            'connectionState': 'ready',
+          },
+        ],
+      });
+
+      expect(snapshot.communicationProvider, 'webrtc');
+      expect(snapshot.transport.communication.state, 'ready');
+      expect(snapshot.contacts.single.transportProvider, 'webrtc');
+      expect(snapshot.contacts.single.endpointAvailable, isTrue);
+    },
+  );
 }

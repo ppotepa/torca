@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
+torca-transport-api = { path = "../../application/torca-transport-api" }
 
 [lints]
 workspace = true

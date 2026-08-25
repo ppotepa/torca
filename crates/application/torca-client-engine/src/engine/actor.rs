@@ -6,6 +6,7 @@ enum ActorRequest {
     OverviewSnapshot(Sender<Result<ClientSnapshot, EngineError>>),
     AvatarGenomeForIdentity(IdentityId, Sender<Result<Option<AvatarGenomeRecord>, EngineError>>),
     MessageStatus(MessageId, Sender<Result<Option<MessageStatus>, EngineError>>),
+    Message(MessageId, Sender<Result<Option<Message>, EngineError>>),
     MessageContact(MessageId, Sender<Result<Option<ContactId>, EngineError>>),
     PendingDeliveryContacts(Sender<Result<Vec<ContactId>, EngineError>>),
     Shutdown,
@@ -51,6 +52,12 @@ impl EngineHandle {
         send_with_timeout(&self.sender, ActorRequest::MessageStatus(message_id, sender))?;
         receiver.recv_timeout(Duration::from_secs(5)).map_err(|_| EngineError::Unavailable)?
     }
+
+    pub fn message(&self, message_id: MessageId) -> Result<Option<Message>, EngineError> {
+        let (sender, receiver) = mpsc::channel();
+        send_with_timeout(&self.sender, ActorRequest::Message(message_id, sender))?;
+        receiver.recv_timeout(Duration::from_secs(5)).map_err(|_| EngineError::Unavailable)?
+    }
     pub fn message_contact(
         &self,
         message_id: MessageId,
@@ -90,11 +97,13 @@ impl ClientEngineActor {
         let join = thread::Builder::new()
             .name("torca-client-engine".into())
             .spawn(move || {
+                let mut activity = EngineActivityGuard::default();
                 loop {
                     let request = match receiver.recv() {
                         Ok(request) => request,
                         Err(_) => break,
                     };
+                    activity.observe();
                     match request {
                         ActorRequest::Dispatch(command, response) => {
                             let counts_projection = matches!(
@@ -120,6 +129,9 @@ impl ClientEngineActor {
                         ActorRequest::MessageStatus(message_id, response) => {
                             let _ = response.send(engine.message_status(message_id));
                         }
+                        ActorRequest::Message(message_id, response) => {
+                            let _ = response.send(engine.message(message_id));
+                        }
                         ActorRequest::MessageContact(message_id, response) => {
                             let _ = response.send(engine.message_contact(message_id));
                         }
@@ -140,6 +152,34 @@ impl ClientEngineActor {
             join.join().map_err(|_| EngineError::Unavailable)?;
         }
         Ok(())
+    }
+}
+
+/// Emits a bounded diagnostic when the engine mailbox is being driven at an
+/// unexpectedly high rate.  This is intentionally local to the actor and does
+/// not add a timer or retain any request payloads.
+#[derive(Default)]
+struct EngineActivityGuard {
+    window_started: Option<std::time::Instant>,
+    requests: u32,
+}
+
+impl EngineActivityGuard {
+    fn observe(&mut self) {
+        let now = std::time::Instant::now();
+        let started = *self.window_started.get_or_insert(now);
+        self.requests = self.requests.saturating_add(1);
+        if now.duration_since(started) < std::time::Duration::from_secs(1) {
+            return;
+        }
+        if self.requests > 100 {
+            eprintln!(
+                "torca-client-engine: high mailbox activity requests_per_second={}",
+                self.requests
+            );
+        }
+        self.window_started = Some(now);
+        self.requests = 0;
     }
 }
 

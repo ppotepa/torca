@@ -104,4 +104,32 @@ void main() {
     expect(ledLabel(tester, 'Relay-tx-led'), 'TX idle');
     expect(ledLabel(tester, 'Relay-rx-led'), 'RX idle');
   });
+
+  testWidgets('direct providers use one generic communication indicator', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      monitor(
+        const AppSnapshotDto(
+          communicationProvider: 'iroh',
+          transport: TransportStatusDto(
+            communication: TransportIndicatorDto(state: 'healthy'),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('communication-status-light')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('tor-status-light')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('relay-status-light')),
+      findsNothing,
+    );
+  });
 }

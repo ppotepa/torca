@@ -3,16 +3,16 @@
 use serde::Serialize;
 use torca_client_application::{
     ApplicationCommand, ApplicationError, ApplicationSnapshotContext, BootstrapPhase,
-    BootstrapStepId, BootstrapStepState, PeerConnectionStatus, PeerHealthQuality,
-    PendingOperationKind, ProbeStatus, ProbeTarget, RadioEventActor, RadioFloor, RadioState,
-    RadioTimelineEventKind, RemoteRadioState, TorState,
+    BootstrapStepId, BootstrapStepState, CommunicationState, PeerConnectionStatus,
+    PeerHealthQuality, PendingOperationKind, ProbeStatus, ProbeTarget, RadioEventActor, RadioFloor,
+    RadioState, RadioTimelineEventKind, RemoteRadioState,
 };
 use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationStatus;
 use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageDirection, MessageReaction, MessageStatus};
 use torca_pairing::{PairingRole, PairingState};
-use torca_pairing_protocol::encode_invite_uri;
+use torca_pairing_protocol::encode_invite_uri_with_bootstrap;
 use torca_runtime_policy::{AttentionContext, AttentionSurface};
 
 pub mod generated {
@@ -78,6 +78,7 @@ pub enum BridgeCommand {
         session_id_hex: String,
         code: String,
         ticket: Option<String>,
+        bootstrap_json: Option<String>,
     },
     ApprovePairing {
         session_id_hex: String,
@@ -217,6 +218,13 @@ pub struct BridgeSnapshot {
     pub identity_id: Option<String>,
     #[serde(skip)]
     pub identity_fingerprint: Option<String>,
+    /// Selected provider and its generic readiness state. New presentation
+    /// code must use these fields rather than the legacy Tor projection.
+    pub communication_provider: String,
+    pub communication_state: String,
+    pub endpoint_summary: Option<String>,
+    /// Legacy compatibility state. New presentation code must use
+    /// `communication_state`.
     pub tor_state: String,
     pub transport: BridgeTransportStatus,
     pub onion_address: Option<String>,
@@ -398,6 +406,9 @@ pub struct BridgeTransportIndicator {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BridgeTransportStatus {
+    /// Provider-neutral aggregate. `tor` is retained until older clients are
+    /// migrated to this field.
+    pub communication: BridgeTransportIndicator,
     pub tor: BridgeTransportIndicator,
     pub relay: BridgeTransportIndicator,
     pub peer: BridgeTransportIndicator,
@@ -422,7 +433,13 @@ pub struct BridgeContact {
     pub id: String,
     pub remote_identity_id: String,
     pub display_name: String,
-    pub onion_address: String,
+    /// The provider selected when this relationship was paired. Its endpoint
+    /// remains opaque and never crosses the UI boundary.
+    pub transport_provider: String,
+    pub endpoint_available: bool,
+    /// Legacy Tor-only field retained for old clients. Direct providers do
+    /// not expose their endpoint to the UI, so this is absent for Iroh/WebRTC.
+    pub onion_address: Option<String>,
     pub status: String,
     pub connection_state: String,
     pub presence_state: String,
@@ -565,11 +582,12 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         BridgeCommand::CreatePairing { session_id_hex } => {
             ApplicationCommand::CreatePairing { session_id: parse_id(&session_id_hex)? }
         }
-        BridgeCommand::JoinPairing { session_id_hex, code, ticket } => {
+        BridgeCommand::JoinPairing { session_id_hex, code, ticket, bootstrap_json } => {
             ApplicationCommand::JoinPairing {
                 session_id: parse_id(&session_id_hex)?,
                 code,
                 ticket: ticket.map(|value| parse_ticket(&value)).transpose()?,
+                bootstrap: bootstrap_json.as_deref().map(parse_bootstrap).transpose()?,
             }
         }
         BridgeCommand::ApprovePairing { session_id_hex } => {
@@ -725,6 +743,32 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
     })
 }
 
+fn parse_bootstrap(
+    value: &str,
+) -> Result<torca_pairing_protocol::PairingBootstrapDescriptor, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(value).map_err(|_| "invalid pairing bootstrap")?;
+    let provider = parsed
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("pairing bootstrap provider missing")?;
+    let hex = parsed
+        .get("payloadHex")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("pairing bootstrap payload missing")?;
+    if hex.len() % 2 != 0 || hex.len() > 4096 {
+        return Err("pairing bootstrap payload invalid".into());
+    }
+    let mut payload = Vec::with_capacity(hex.len() / 2);
+    for chunk in hex.as_bytes().chunks_exact(2) {
+        let high = (chunk[0] as char).to_digit(16).ok_or("pairing bootstrap payload invalid")?;
+        let low = (chunk[1] as char).to_digit(16).ok_or("pairing bootstrap payload invalid")?;
+        payload.push(((high << 4) | low) as u8);
+    }
+    torca_pairing_protocol::PairingBootstrapDescriptor::new(provider, payload)
+        .map_err(|_| "pairing bootstrap descriptor invalid".into())
+}
+
 pub fn bridge_result_from_application(
     result: Result<torca_client_application::ApplicationCommandResult, ApplicationError>,
 ) -> BridgeResult {
@@ -787,13 +831,23 @@ pub const fn message_status_name(value: MessageStatus) -> &'static str {
 }
 
 #[must_use]
-pub const fn tor_state_name(value: TorState) -> &'static str {
+pub const fn communication_state_name(value: CommunicationState) -> &'static str {
     match value {
-        TorState::Stopped => "stopped",
-        TorState::Starting => "starting",
-        TorState::Ready => "ready",
-        TorState::Degraded => "degraded",
-        TorState::Failed => "failed",
+        CommunicationState::Stopped => "stopped",
+        CommunicationState::Starting => "starting",
+        CommunicationState::Ready => "ready",
+        CommunicationState::Degraded => "degraded",
+        CommunicationState::Failed => "failed",
+    }
+}
+
+const fn commissioning_state_name(value: torca_transport_api::CommissioningState) -> &'static str {
+    match value {
+        torca_transport_api::CommissioningState::NotRequired => "not_required",
+        torca_transport_api::CommissioningState::Pending => "starting",
+        torca_transport_api::CommissioningState::Ready => "ready",
+        torca_transport_api::CommissioningState::Degraded => "degraded",
+        torca_transport_api::CommissioningState::Failed => "failed",
     }
 }
 
@@ -942,9 +996,9 @@ fn bootstrap_step_id(id: BootstrapStepId) -> &'static str {
         | BootstrapStepId::SecureStorage
         | BootstrapStepId::Database => "local_storage",
         BootstrapStepId::DeviceIdentity => "device_identity",
-        BootstrapStepId::Tor => "tor_network",
-        BootstrapStepId::OnionService => "onion_service",
-        BootstrapStepId::Relay => "secure_relay",
+        BootstrapStepId::CommunicationRuntime => "communication_runtime",
+        BootstrapStepId::IncomingReachability => "incoming_reachability",
+        BootstrapStepId::Rendezvous => "rendezvous",
         BootstrapStepId::UserProfile => "profile",
     }
 }
@@ -973,8 +1027,28 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     // search queries are the only history transport exposed to presentation.
     let messages = Vec::new();
     let reactions = snapshot.reactions.into_iter().map(bridge_reaction_from_domain).collect();
-    let tor_state = tor_state_name(network.tor).to_owned();
-    let relay_probe = network.probes.iter().find(|probe| probe.target == ProbeTarget::Relay);
+    let communication_provider = network.communication.provider.wire_value().to_owned();
+    let communication_state = commissioning_state_name(
+        network.communication.step(torca_transport_api::CommissioningStage::LocalRuntime),
+    )
+    .to_owned();
+    let endpoint_summary = network.communication.endpoint_summary.clone();
+    let is_tor = network.communication.provider == torca_transport_api::TransportKind::Tor;
+    // Compatibility projections are intentionally empty/unsupported for a
+    // direct provider. Generic consumers must use communication above; this
+    // prevents Iroh snapshots from masquerading as a Tor relay being degraded.
+    let tor_state = if is_tor {
+        communication_state_name(network.tor).to_owned()
+    } else {
+        "unsupported".to_owned()
+    };
+    let relay_probe = is_tor
+        .then(|| {
+            network.probes.iter().find(|probe| {
+                matches!(probe.target, ProbeTarget::PairingService | ProbeTarget::Relay)
+            })
+        })
+        .flatten();
     let relay_state = relay_probe
         .map(|probe| probe_status_name(probe.status).to_owned())
         .unwrap_or_else(|| "unknown".into());
@@ -989,11 +1063,38 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
         identity_name,
         identity_id,
         identity_fingerprint,
+        communication_provider,
+        communication_state: communication_state.clone(),
+        endpoint_summary,
         tor_state: tor_state.clone(),
         transport: BridgeTransportStatus {
+            communication: BridgeTransportIndicator {
+                state: communication_state.clone(),
+                code: format!("COMMUNICATION_{}", communication_state.to_ascii_uppercase()),
+                latency_ms: None,
+                last_activity_at_ms: network
+                    .connectivity
+                    .communication
+                    .last_tx_at
+                    .into_iter()
+                    .chain(network.connectivity.communication.last_rx_at)
+                    .max()
+                    .map(Timestamp::to_unix_millis),
+                activity_sequence: network
+                    .connectivity
+                    .communication
+                    .tx_sequence
+                    .saturating_add(network.connectivity.communication.rx_sequence),
+                tx_sequence: network.connectivity.communication.tx_sequence,
+                rx_sequence: network.connectivity.communication.rx_sequence,
+                in_flight: network.connectivity.communication.in_flight,
+                queued: network.connectivity.communication.queued,
+            },
             tor: BridgeTransportIndicator {
                 state: tor_state.clone(),
-                code: if tor_state == "ready" {
+                code: if !is_tor {
+                    "TOR_UNSUPPORTED".into()
+                } else if tor_state == "ready" {
                     "TOR_READY".into()
                 } else {
                     "TOR_NOT_READY".into()
@@ -1094,9 +1195,9 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     step.id,
                     BootstrapStepId::SecureStorage
                         | BootstrapStepId::DeviceIdentity
-                        | BootstrapStepId::Tor
-                        | BootstrapStepId::OnionService
-                        | BootstrapStepId::Relay
+                        | BootstrapStepId::CommunicationRuntime
+                        | BootstrapStepId::IncomingReachability
+                        | BootstrapStepId::Rendezvous
                 )
             })
             .map(|step| BridgeBootstrapStep {
@@ -1139,8 +1240,12 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 BridgePairing {
                     id: pairing.id().to_string(),
                     code: pairing.code().as_str().to_owned(),
-                    invite_uri: encode_invite_uri(pairing.code().as_str(), None)
-                        .unwrap_or_default(),
+                    invite_uri: encode_invite_uri_with_bootstrap(
+                        pairing.code().as_str(),
+                        None,
+                        network.communication.pairing_bootstrap.as_ref(),
+                    )
+                    .unwrap_or_default(),
                     role: pairing_role_name(pairing.role()).into(),
                     state: pairing_state_name(pairing.state()).into(),
                     expires_at_ms: pairing.expires_at().to_unix_millis(),
@@ -1215,7 +1320,14 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     id: contact.id().to_string(),
                     remote_identity_id: contact.remote_identity().identity_id().to_string(),
                     display_name,
-                    onion_address: contact.route().onion_address().to_owned(),
+                    transport_provider: network.communication.provider.wire_value().to_owned(),
+                    endpoint_available: contact
+                        .route()
+                        .provider_endpoint(network.communication.provider.wire_value())
+                        .is_some(),
+                    onion_address: (network.communication.provider
+                        == torca_transport_api::TransportKind::Tor)
+                        .then(|| contact.route().onion_address().to_owned()),
                     status: contact_status_name(contact.status()).into(),
                     connection_state: peer_health.state.clone(),
                     presence_state: if peer_health.state == "ready" {
@@ -1274,18 +1386,18 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             .into_iter()
             .map(|operation| {
                 let (kind, dependency) = match operation.kind {
-                    // Pairing envelopes contain the local onion endpoint and
-                    // must also reach the rendezvous relay. A single "relay"
-                    // label hid the Android wait for its own onion service.
+                    // A pairing envelope needs the provider's incoming route
+                    // and its selected rendezvous/signaling mechanism. The
+                    // dependency label is intentionally provider-neutral.
                     PendingOperationKind::CreatePairing => {
-                        ("pairing.create", "tor_onion_and_relay")
+                        ("pairing.create", "communication_and_rendezvous")
                     }
                     PendingOperationKind::JoinPairing { .. } => {
-                        ("pairing.join", "tor_onion_and_relay")
+                        ("pairing.join", "communication_and_rendezvous")
                     }
-                    PendingOperationKind::ApprovePairing => ("pairing.approve", "relay"),
-                    PendingOperationKind::RejectPairing => ("pairing.reject", "relay"),
-                    PendingOperationKind::CancelPairing => ("pairing.cancel", "relay"),
+                    PendingOperationKind::ApprovePairing => ("pairing.approve", "communication"),
+                    PendingOperationKind::RejectPairing => ("pairing.reject", "communication"),
+                    PendingOperationKind::CancelPairing => ("pairing.cancel", "communication"),
                     PendingOperationKind::RenameContact { .. } => ("contact.rename", "runtime"),
                     PendingOperationKind::VerifyContact => ("contact.verify", "runtime"),
                     PendingOperationKind::ResetContactVerification => {
@@ -1467,6 +1579,8 @@ mod tests {
         assert!(generated::contains("query", "snapshot.get"));
         assert!(generated::contains("query", "runtime.poll"));
         assert!(generated::contains("lifecycle", "foregrounded"));
+        assert!(generated::contains("lifecycle", "flutter_gateway_ready"));
+        assert!(generated::contains("lifecycle", "network_validated"));
         assert!(!generated::contains("command", "operation.unknown"));
         assert!(!generated::contains("query", "message.history.full"));
     }

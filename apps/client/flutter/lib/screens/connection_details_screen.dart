@@ -37,6 +37,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
         state: contact.peerHealth.state,
         blocked: blocked,
         icons: context.torcaIcons,
+        provider: contact.transportProvider,
         strings: context.strings,
       );
       return Scaffold(
@@ -81,8 +82,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 24),
-            if (presentation.label !=
-                context.strings.directP2pOverTor) ...<Widget>[
+            if (presentation.tone != ConnectionTone.ready) ...<Widget>[
               _DetailCard(
                 label: context.strings.status,
                 value: presentation.label,
@@ -91,7 +91,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
             ],
             _DetailCard(
               label: context.strings.transport,
-              value: context.strings.directP2pOverTor,
+              value: presentation.label,
             ),
             const SizedBox(height: 8),
             _DetailCard(
@@ -122,7 +122,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             Text(
-              'Quality describes the authenticated direct peer link through Tor. It is based on runtime probe history and reconnect health, not radio or internet signal strength.',
+              'Quality describes the authenticated direct peer link over ${_providerLabel(contact.transportProvider)}. It is based on runtime evidence and reconnect health, not radio or internet signal strength.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -145,6 +145,9 @@ class ConnectionDetailsScreen extends StatelessWidget {
     'poor' => context.strings.poor,
     _ => context.strings.unknown,
   };
+
+  String _providerLabel(String provider) =>
+      provider.isEmpty ? 'Provider' : provider.toUpperCase();
 
   String _timestamp(int? value, BuildContext context) {
     if (value == null || value <= 0) return context.strings.unavailable;

@@ -3,9 +3,10 @@
 pub struct LocalPairingContext {
     pub public_identity: PublicIdentity,
     pub display_name: String,
-    pub onion_address: String,
     pub capability_id: OpaqueId,
     pub avatar: Option<AvatarEnvelope>,
+    pub transport_provider: String,
+    pub transport_endpoint: Vec<u8>,
 }
 
 #[must_use]

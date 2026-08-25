@@ -45,11 +45,21 @@ pub(crate) fn bridge_result_json(result: &BridgeResult) -> String {
 }
 
 pub(crate) fn empty_snapshot_json() -> String {
+    // The first snapshot can be requested before the provider composition
+    // worker finishes. It must still identify the compiled provider; using
+    // `tor` here creates false rendezvous/relay diagnostics for Iroh.
+    let provider = crate::transport_config::compiled_provider()
+        .map(|value| value.wire_value())
+        .unwrap_or("tor");
     json!({
         "contractVersion": CONTRACT_VERSION,
         "identity": Value::Null,
+        "communicationProvider": provider,
+        "communicationState": "stopped",
+        "endpointSummary": Value::Null,
         "torState": "stopped",
         "transport": {
+            "communication": { "state": "stopped", "code": "COMMUNICATION_NOT_READY", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0, "txSequence": 0, "rxSequence": 0, "inFlight": 0, "queued": 0 },
             "tor": { "state": "stopped", "code": "TOR_NOT_READY", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0 },
             "relay": { "state": "unknown", "code": "RELAY_UNAVAILABLE", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0 }
         },

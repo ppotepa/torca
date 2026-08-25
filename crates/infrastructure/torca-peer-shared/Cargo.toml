@@ -10,4 +10,5 @@ publish = false
 torca-contacts = { path = "../../domains/torca-contacts" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-peer-link = { path = "../torca-peer-link" }
+torca-transport-api = { path = "../../application/torca-transport-api" }
 torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }

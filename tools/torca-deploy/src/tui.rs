@@ -15,8 +15,8 @@ use ratatui::{
 };
 
 use crate::domain::{
-    BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, LaunchPolicy,
-    OnionPolicy, PrivacyPolicy, Target, ValidationLevel,
+    BuildPolicy, ClientDataPolicy, CommunicationProvider, Configuration, DeployAction, DeployPlan,
+    LaunchPolicy, PrivacyPolicy, ProviderMaintenancePolicy, Target, ValidationLevel,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,7 +30,7 @@ const ACTIONS: [(&str, Option<DeployAction>); 7] = [
     ("Redeploy current artifacts", Some(DeployAction::RedeployCurrent)),
     ("Rebuild clients and relay", Some(DeployAction::Rebuild)),
     ("Full redeploy", Some(DeployAction::FullRedeploy)),
-    ("Relay maintenance", Some(DeployAction::RelayMaintenance)),
+    ("Provider maintenance", Some(DeployAction::ProviderMaintenance)),
     ("Collect logs", Some(DeployAction::CollectLogs)),
     ("Resume interrupted deployment", None),
 ];
@@ -111,8 +111,9 @@ enum Field {
     Target,
     Configuration,
     ClientData,
-    Onion,
+    ProviderMaintenance,
     Privacy,
+    CommunicationProvider,
 }
 
 fn edit_plan(
@@ -127,8 +128,9 @@ fn edit_plan(
     } else {
         ClientDataPolicy::Preserve
     };
-    let mut onion = OnionPolicy::Ensure;
+    let mut provider_maintenance = ProviderMaintenancePolicy::Ensure;
     let mut privacy = PrivacyPolicy::Strict;
+    let mut communication_provider = CommunicationProvider::Tor;
     let mut input = InputGuard::default();
     loop {
         terminal.draw(|frame| {
@@ -142,20 +144,22 @@ fn edit_plan(
                 ClientDataPolicy::ResetProfile => "Reset profile",
                 ClientDataPolicy::ResetAll => "Reset all client data",
             };
-            let onion_label = match onion {
-                OnionPolicy::Ensure => "Ensure existing onion",
-                OnionPolicy::Restart => "Restart relay, preserve onion",
-                OnionPolicy::RepairDirectoryCache => "Repair Tor directory cache",
-                OnionPolicy::RotateIdentity => "Rotate onion identity (rebuild all)",
+            let provider_maintenance_label = match provider_maintenance {
+                ProviderMaintenancePolicy::Ensure => "Ensure provider service",
+                ProviderMaintenancePolicy::Restart => "Restart provider service, preserve identity",
+                ProviderMaintenancePolicy::RepairDirectoryCache => "Repair provider local state",
+                ProviderMaintenancePolicy::RotateIdentity => "Rotate provider identity (rebuild all)",
             };
             let privacy_label = privacy_label(privacy);
+            let provider_label = communication_provider.protocol_label();
             let text = format!(
-                "Action: {action}\n\n{} Target: {target_label}\n{} Build: {configuration}\n{} Data: {data_label}\n{} Onion: {onion_label}\n{} Privacy: {privacy_label}\n\n←/→ change   Tab/↑/↓ field   Enter review   Esc back",
+                "Action: {action}\n\n{} Target: {target_label}\n{} Build: {configuration}\n{} Data: {data_label}\n{} Provider maintenance: {provider_maintenance_label}\n{} Privacy: {privacy_label}\n{} Communication protocol: {provider_label}\n\n←/→ change   Tab/↑/↓ field   Enter review   Esc back",
                 marker(matches!(field, Field::Target)),
                 marker(matches!(field, Field::Configuration)),
                 marker(matches!(field, Field::ClientData)),
-                marker(matches!(field, Field::Onion)),
+                marker(matches!(field, Field::ProviderMaintenance)),
                 marker(matches!(field, Field::Privacy)),
+                marker(matches!(field, Field::CommunicationProvider)),
             );
             frame.render_widget(
                 Paragraph::new(text)
@@ -184,8 +188,9 @@ fn edit_plan(
                         Field::ClientData => {
                             client_data = cycle_data(client_data, direction);
                         }
-                        Field::Onion => {
-                            onion = cycle_onion(onion, direction);
+                        Field::ProviderMaintenance => {
+                            provider_maintenance =
+                                cycle_provider_maintenance(provider_maintenance, direction);
                         }
                         Field::Privacy => {
                             privacy = if privacy == PrivacyPolicy::Strict {
@@ -193,6 +198,10 @@ fn edit_plan(
                             } else {
                                 PrivacyPolicy::Strict
                             };
+                        }
+                        Field::CommunicationProvider => {
+                            communication_provider =
+                                cycle_provider(communication_provider, direction);
                         }
                     }
                 }
@@ -204,17 +213,18 @@ fn edit_plan(
                     };
                     let mut plan = DeployPlan::normal(action, targets, configuration);
                     plan.client_data = client_data;
-                    plan.onion = onion;
+                    plan.provider_maintenance = provider_maintenance;
                     plan.privacy = privacy;
+                    plan.communication_provider = communication_provider;
                     plan.client_build = if action == DeployAction::RunInstalled {
                         BuildPolicy::Reuse
                     } else {
                         plan.client_build
                     };
-                    plan.relay_build = if action == DeployAction::RelayMaintenance {
+                    plan.provider_service_build = if action == DeployAction::ProviderMaintenance {
                         BuildPolicy::IfRequired
                     } else {
-                        plan.relay_build
+                        plan.provider_service_build
                     };
                     plan.validation = ValidationLevel::Quick;
                     plan.launch = if action == DeployAction::CollectLogs {
@@ -240,19 +250,21 @@ fn next_field(field: Field) -> Field {
     match field {
         Field::Target => Field::Configuration,
         Field::Configuration => Field::ClientData,
-        Field::ClientData => Field::Onion,
-        Field::Onion => Field::Privacy,
-        Field::Privacy => Field::Target,
+        Field::ClientData => Field::ProviderMaintenance,
+        Field::ProviderMaintenance => Field::Privacy,
+        Field::Privacy => Field::CommunicationProvider,
+        Field::CommunicationProvider => Field::Target,
     }
 }
 
 fn previous_field(field: Field) -> Field {
     match field {
-        Field::Target => Field::ClientData,
+        Field::Target => Field::CommunicationProvider,
         Field::Configuration => Field::Target,
         Field::ClientData => Field::Configuration,
-        Field::Onion => Field::ClientData,
-        Field::Privacy => Field::Onion,
+        Field::ProviderMaintenance => Field::ClientData,
+        Field::Privacy => Field::ProviderMaintenance,
+        Field::CommunicationProvider => Field::Privacy,
     }
 }
 
@@ -281,18 +293,28 @@ fn cycle_target(current: u8, direction: i8) -> u8 {
     }
 }
 
-fn cycle_onion(current: OnionPolicy, direction: i8) -> OnionPolicy {
+fn cycle_provider(current: CommunicationProvider, direction: i8) -> CommunicationProvider {
+    let providers = CommunicationProvider::selectable();
+    let index = providers.iter().position(|provider| *provider == current).unwrap_or(0);
+    let next = (index as i8 + direction).rem_euclid(providers.len() as i8) as usize;
+    providers[next]
+}
+
+fn cycle_provider_maintenance(
+    current: ProviderMaintenancePolicy,
+    direction: i8,
+) -> ProviderMaintenancePolicy {
     let index = match current {
-        OnionPolicy::Ensure => 0,
-        OnionPolicy::Restart => 1,
-        OnionPolicy::RepairDirectoryCache => 2,
-        OnionPolicy::RotateIdentity => 3,
+        ProviderMaintenancePolicy::Ensure => 0,
+        ProviderMaintenancePolicy::Restart => 1,
+        ProviderMaintenancePolicy::RepairDirectoryCache => 2,
+        ProviderMaintenancePolicy::RotateIdentity => 3,
     };
     match (index as i8 + direction).rem_euclid(4) {
-        1 => OnionPolicy::Restart,
-        2 => OnionPolicy::RepairDirectoryCache,
-        3 => OnionPolicy::RotateIdentity,
-        _ => OnionPolicy::Ensure,
+        1 => ProviderMaintenancePolicy::Restart,
+        2 => ProviderMaintenancePolicy::RepairDirectoryCache,
+        3 => ProviderMaintenancePolicy::RotateIdentity,
+        _ => ProviderMaintenancePolicy::Ensure,
     }
 }
 
@@ -366,10 +388,11 @@ fn confirm(
         terminal.draw(|frame| {
             let area = frame.area();
             let text = format!(
-                "Action: {}\nTargets: Windows, Android\nBuild: {}\nOnion: {:?}\nPrivacy: {}\n\nPress y to execute, n/Esc to cancel",
+                "Action: {}\nTargets: Windows, Android\nBuild: {}\nCommunication protocol: {}\nProvider maintenance: {:?}\nPrivacy: {}\n\nPress y to execute, n/Esc to cancel",
                 plan.action,
                 plan.configuration,
-                plan.onion,
+                plan.communication_provider.protocol_label(),
+                plan.provider_maintenance,
                 privacy_label(plan.privacy)
             );
             frame.render_widget(

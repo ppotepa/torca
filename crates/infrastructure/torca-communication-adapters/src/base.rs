@@ -28,7 +28,7 @@ use torca_delivery::{
     DeliveryTransport, DeliveryTransportError, DeliveryWorker, DurableDeliveryStore,
     InboundMessageStore, ReactionPayload, ReceiptPayload, TextPayload,
 };
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{CommandId, OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
@@ -82,6 +82,10 @@ where
 
     fn prime_connections(&mut self) {
         let _ = self.link.prime_connections();
+    }
+
+    fn prime_contact(&mut self, contact_id: ContactId) {
+        let _ = self.link.prime_contact(contact_id);
     }
 
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
@@ -139,10 +143,41 @@ where
 pub struct TextWorkerAdapter<S, T> {
     worker: DeliveryWorker<S, T>,
     database_writes: u64,
+    engine: Option<EngineHandle>,
 }
 impl<S, T> TextWorkerAdapter<S, T> {
     pub const fn new(worker: DeliveryWorker<S, T>) -> Self {
-        Self { worker, database_writes: 0 }
+        Self { worker, database_writes: 0, engine: None }
+    }
+
+    pub fn with_engine(worker: DeliveryWorker<S, T>, engine: EngineHandle) -> Self {
+        Self { worker, database_writes: 0, engine: Some(engine) }
+    }
+
+    fn reconcile_message_statuses(
+        &self,
+        report: &torca_delivery::DeliveryBatchReport,
+        now: Timestamp,
+    ) {
+        let Some(engine) = &self.engine else { return };
+        for message_id in &report.completed_message_ids {
+            // A retry can race with a projection refresh. Both transitions
+            // are idempotently attempted and an already-advanced status is
+            // deliberately ignored.
+            let _ = engine
+                .dispatch(EngineCommand::BeginMessageSend { message_id: *message_id, at: now });
+            let _ = engine
+                .dispatch(EngineCommand::MarkMessageSent { message_id: *message_id, at: now });
+        }
+        for message_id in &report.dead_lettered_message_ids {
+            let _ = engine
+                .dispatch(EngineCommand::BeginMessageSend { message_id: *message_id, at: now });
+            let _ = engine.dispatch(EngineCommand::MarkMessageFailed {
+                message_id: *message_id,
+                at: now,
+                error_code: torca_foundation::ErrorCode::new("delivery.dead_lettered"),
+            });
+        }
     }
 }
 impl<S, T> TextDeliveryRuntime for TextWorkerAdapter<S, T>
@@ -150,6 +185,17 @@ where
     S: DurableDeliveryStore + Send + 'static,
     T: DeliveryTransport + Send + 'static,
 {
+    fn queue_outbound(
+        &mut self,
+        message: Message,
+        command_id: CommandId,
+        next_attempt_at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.worker
+            .queue_outbound(message, command_id, next_attempt_at)
+            .map_err(|_| CommunicationError::Text)
+    }
+
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
         let before = now.checked_sub(STALE_CLAIM_AGE).unwrap_or(Timestamp::UNIX_EPOCH);
         let recovered =
@@ -159,7 +205,19 @@ where
     }
 
     fn maintenance(&mut self, now: Timestamp, limit: usize) -> Result<(), CommunicationError> {
-        let report = self.worker.run_once(now, limit).map_err(|_| CommunicationError::Text)?;
+        let engine = self.engine.clone();
+        let report = self
+            .worker
+            .run_once_with_observer(now, limit, |message| {
+                if let Some(engine) = &engine {
+                    let _ = engine.dispatch(EngineCommand::BeginMessageSend {
+                        message_id: message.id(),
+                        at: now,
+                    });
+                }
+            })
+            .map_err(|_| CommunicationError::Text)?;
+        self.reconcile_message_statuses(&report, now);
         // Claiming a job and recording its outcome are separate durable
         // writes. The worker report exposes both sides without estimating
         // SQL statements from a maintenance tick.

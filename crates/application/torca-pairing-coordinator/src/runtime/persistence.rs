@@ -24,8 +24,12 @@ fn peer_proposal(offer: &PairingOffer) -> Result<PeerProposal, PairingRuntimeErr
         key,
         offer.key_generation,
     );
-    let route = ContactRoute::new(offer.onion_address.clone(), offer.capability_id)
-        .map_err(|_| PairingRuntimeError::InvalidOffer)?;
+    let route = ContactRoute::for_provider_endpoint(
+        offer.capability_id,
+        offer.transport_provider.clone(),
+        offer.transport_endpoint.clone(),
+    )
+    .map_err(|_| PairingRuntimeError::InvalidOffer)?;
     Ok(PeerProposal {
         public_identity,
         display_name: offer.display_name.clone(),
@@ -57,15 +61,17 @@ fn encode_persisted_state(
     completion_applied: bool,
     completion_ack_sent: bool,
 ) -> Result<Vec<u8>, PairingRuntimeError> {
-    let PairingTransportSnapshot {
-        role,
-        context,
-        mut private_key,
-        slot,
-        token,
-        slot_capability,
-        remote_public_key,
-    } = transport;
+    let role = transport.role;
+    let context = transport.context;
+    let mut private_key = transport.private_key;
+    let slot = transport.slot;
+    let token = transport.token;
+    let slot_capability = transport.slot_capability;
+    let remote_public_key = transport.remote_public_key;
+    let invitation_code = transport.invitation_code.as_ref();
+    let invitation_expires_at = transport.invitation_expires_at;
+    let invitation_ticket = transport.invitation_ticket;
+    let creator_blob = transport.creator_blob.as_ref();
     let local = encode_optional_offer(local_offer)?;
     let remote = encode_optional_offer(remote_offer)?;
     let mut output = Vec::with_capacity(128 + local.len() + remote.len());
@@ -90,6 +96,39 @@ fn encode_persisted_state(
         Some(key) => {
             output.push(1);
             output.extend_from_slice(&key);
+        }
+        None => output.push(0),
+    }
+    match invitation_code {
+        Some(code) => {
+            let bytes = code.as_str().as_bytes().to_vec();
+            let length = u16::try_from(bytes.len()).map_err(|_| PairingRuntimeError::InvalidOffer)?;
+            output.push(1);
+            output.extend_from_slice(&length.to_be_bytes());
+            output.extend_from_slice(&bytes);
+        }
+        None => output.push(0),
+    }
+    match invitation_expires_at {
+        Some(expires_at) => {
+            output.push(1);
+            output.extend_from_slice(&expires_at.to_unix_millis().to_be_bytes());
+        }
+        None => output.push(0),
+    }
+    match invitation_ticket {
+        Some(ticket) => {
+            output.push(1);
+            output.extend_from_slice(&ticket);
+        }
+        None => output.push(0),
+    }
+    match creator_blob {
+        Some(blob) => {
+            let length = u16::try_from(blob.len()).map_err(|_| PairingRuntimeError::InvalidOffer)?;
+            output.push(1);
+            output.extend_from_slice(&length.to_be_bytes());
+            output.extend_from_slice(&blob);
         }
         None => output.push(0),
     }
@@ -118,7 +157,8 @@ fn decode_persisted_state(
     bytes: &[u8],
 ) -> Result<PersistedPairingState, PairingRuntimeError> {
     let mut input = bytes;
-    if take_u8(&mut input)? != PAIRING_STATE_VERSION {
+    let version = take_u8(&mut input)?;
+    if !(version == 2 || version == PAIRING_STATE_VERSION) {
         return Err(PairingRuntimeError::InvalidOffer);
     }
     let role = match take_u8(&mut input)? {
@@ -140,6 +180,40 @@ fn decode_persisted_state(
         1 => Some(take_array::<32>(&mut input)?),
         _ => return Err(PairingRuntimeError::InvalidOffer),
     };
+    let (invitation_code, invitation_expires_at, invitation_ticket, creator_blob) = if version >= 3 {
+        let invitation_code = match take_u8(&mut input)? {
+            0 => None,
+            1 => {
+                let length = usize::from(u16::from_be_bytes(take_array::<2>(&mut input)?));
+                let value = String::from_utf8(take(&mut input, length)?.to_vec())
+                    .map_err(|_| PairingRuntimeError::InvalidOffer)?;
+                Some(value)
+            }
+            _ => return Err(PairingRuntimeError::InvalidOffer),
+        };
+        let invitation_expires_at = match take_u8(&mut input)? {
+            0 => None,
+            1 => Some(Timestamp::from_unix_millis(i64::from_be_bytes(take_array::<8>(&mut input)?))
+                .map_err(|_| PairingRuntimeError::InvalidOffer)?),
+            _ => return Err(PairingRuntimeError::InvalidOffer),
+        };
+        let invitation_ticket = match take_u8(&mut input)? {
+            0 => None,
+            1 => Some(take_array::<16>(&mut input)?),
+            _ => return Err(PairingRuntimeError::InvalidOffer),
+        };
+        let creator_blob = match take_u8(&mut input)? {
+            0 => None,
+            1 => {
+                let length = usize::from(u16::from_be_bytes(take_array::<2>(&mut input)?));
+                Some(take(&mut input, length)?.to_vec())
+            }
+            _ => return Err(PairingRuntimeError::InvalidOffer),
+        };
+        (invitation_code, invitation_expires_at, invitation_ticket, creator_blob)
+    } else {
+        (None, None, None, None)
+    };
     let completion_sent = take_bool(&mut input)?;
     let completion_applied = take_bool(&mut input)?;
     let completion_ack_sent = take_bool(&mut input)?;
@@ -157,6 +231,10 @@ fn decode_persisted_state(
             token,
             slot_capability,
             remote_public_key,
+            invitation_code,
+            invitation_expires_at,
+            invitation_ticket,
+            creator_blob,
         },
         local_offer,
         remote_offer,

@@ -3,7 +3,7 @@ use clap::Parser;
 use torca_deploy::{
     DeployExecutor,
     cli::{Cli, Command, RelayAction},
-    domain::{BuildPolicy, ClientDataPolicy, DeployAction, OnionPolicy},
+    domain::{BuildPolicy, ClientDataPolicy, DeployAction, ProviderMaintenancePolicy},
     executor::ExecutionMode,
     persistence::{DeployPaths, StateStore},
     planner, tui,
@@ -41,7 +41,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "run={} stage={:?} endpoint={}",
                 run.run_id,
                 run.stage,
-                run.relay_endpoint.unwrap_or_else(|| "unknown".into())
+                run.provider_endpoint.unwrap_or_else(|| "unknown".into())
             ),
             Err(_) => println!("No resumable Torca deployment checkpoint found."),
         },
@@ -108,15 +108,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
                 let mut plan = torca_deploy::domain::DeployPlan::normal(
-                    DeployAction::RelayMaintenance,
+                    DeployAction::ProviderMaintenance,
                     Vec::new(),
                     configuration,
                 );
-                plan.relay_build = BuildPolicy::IfRequired;
-                plan.onion = match args.action {
-                    RelayAction::Ensure => OnionPolicy::Ensure,
-                    RelayAction::Restart => OnionPolicy::Restart,
-                    RelayAction::Repair => OnionPolicy::RepairDirectoryCache,
+                plan.provider_service_build = BuildPolicy::IfRequired;
+                plan.provider_maintenance = match args.action {
+                    RelayAction::Ensure => ProviderMaintenancePolicy::Ensure,
+                    RelayAction::Restart => ProviderMaintenancePolicy::Restart,
+                    RelayAction::Repair => ProviderMaintenancePolicy::RepairDirectoryCache,
                     RelayAction::Rotate { confirm_rotate: true } => {
                         plan.action = DeployAction::FullRedeploy;
                         plan.targets = vec![
@@ -124,8 +124,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             torca_deploy::domain::Target::Android,
                         ];
                         plan.client_build = BuildPolicy::Rebuild;
-                        plan.relay_build = BuildPolicy::Rebuild;
-                        OnionPolicy::RotateIdentity
+                        plan.provider_service_build = BuildPolicy::Rebuild;
+                        ProviderMaintenancePolicy::RotateIdentity
                     }
                     RelayAction::Rotate { confirm_rotate: false } => {
                         return Err("relay rotate requires --confirm-rotate".into());
@@ -151,18 +151,19 @@ fn show_and_execute(
     let plan = planner::normalize(plan);
     plan.validate()?;
     println!(
-        "Plan: {}\n  targets: {:?}\n  device: {:?}\n  configuration: {}\n  client build: {:?}\n  relay build: {:?}\n  onion: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  mode: {:?}",
+        "Plan: {}\n  targets: {:?}\n  device: {:?}\n  configuration: {}\n  client build: {:?}\n  provider service build: {:?}\n  provider maintenance: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  communication protocol: {}\n  mode: {:?}",
         plan.action,
         plan.targets,
         plan.device,
         plan.configuration,
         plan.client_build,
-        plan.relay_build,
-        plan.onion,
+        plan.provider_service_build,
+        plan.provider_maintenance,
         plan.client_data,
         plan.validation,
         plan.launch,
         plan.privacy,
+        plan.communication_provider,
         mode
     );
     if mode == ExecutionMode::DryRun {

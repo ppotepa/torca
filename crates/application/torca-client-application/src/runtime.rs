@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -10,11 +10,13 @@ use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_delivery::ReactionPayload;
 use torca_foundation::{
-    ClassifiedError, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice, Timestamp,
+    ClassifiedError, CommandId, ErrorCategory, ErrorCode, ErrorDescriptor, OpaqueId, RetryAdvice,
+    Timestamp,
 };
 use torca_identity::{IdentityId, ProfileName};
 use torca_messaging::{MessageBody, MessageId, MessageReaction, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId, PairingState};
+use torca_pairing_protocol::PairingBootstrapDescriptor;
 use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_radio_coordinator::{HostRadioLifecycle, RadioProjection, SharedRadioCoordinator};
 use torca_runtime_policy::AttentionContext;
@@ -22,9 +24,9 @@ use torca_runtime_policy::{BatteryPreferences, SystemEnergyState};
 
 use crate::{
     ApplicationReadModels, ApplicationSnapshotContext, AttachmentSendRequest,
-    ClientApplicationHandle, EngineCommand, EngineError, EngineResult,
+    ClientApplicationHandle, CommunicationState, EngineCommand, EngineError, EngineResult,
     InMemoryPendingOperationStore, NetworkSnapshot, PendingOperation, PendingOperationKind,
-    PendingOperationStore, RuntimeDriverError, RuntimeHandle, TorState, pending_operation_id,
+    PendingOperationStore, RuntimeDriverError, RuntimeHandle, pending_operation_id,
 };
 
 fn parse_avatar_envelope(json: &str) -> Result<torca_client_engine::AvatarGenomeRecord, String> {
@@ -104,6 +106,7 @@ pub enum ApplicationCommand {
         session_id: OpaqueId,
         code: String,
         ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
     },
     ApprovePairing {
         session_id: OpaqueId,
@@ -316,6 +319,11 @@ pub struct ClientApplicationRuntime {
     read_models: Option<ApplicationReadModels>,
     pending: Mutex<Box<dyn PendingOperationStore>>,
     message_rate_limiter: Mutex<MessageRateLimiter>,
+    /// Messages may be queued while the native provider is still being
+    /// composed. Keep the wake as desired state and replay it when the
+    /// runtime handle is attached; otherwise a fresh profile can remain
+    /// locally queued until an unrelated lifecycle event or restart.
+    pending_delivery_wakes: Mutex<BTreeSet<OpaqueId>>,
 }
 
 impl ClientApplicationRuntime {
@@ -354,11 +362,53 @@ impl ClientApplicationRuntime {
             read_models: None,
             pending: Mutex::new(Box::new(InMemoryPendingOperationStore::default())),
             message_rate_limiter: Mutex::new(MessageRateLimiter::default()),
+            pending_delivery_wakes: Mutex::new(BTreeSet::new()),
         }
     }
 
     pub fn attach_runtime(&mut self, runtime: RuntimeHandle) {
+        let replay = self
+            .pending_delivery_wakes
+            .lock()
+            .map(|mut pending| std::mem::take(&mut *pending).into_iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for message_id in replay {
+            let at = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+            let _ = runtime.queue_outbound(
+                MessageId::from_opaque(message_id),
+                CommandId::from_opaque(message_id),
+                at,
+            );
+            wake_delivery_for_message(&runtime, &self.application, message_id);
+        }
         self.runtime = Some(runtime);
+    }
+
+    fn wake_delivery_or_defer(&self, message_id: OpaqueId) {
+        if let Some(runtime) = self.runtime.as_ref() {
+            wake_delivery_for_message(runtime, &self.application, message_id);
+        } else if let Ok(mut pending) = self.pending_delivery_wakes.lock() {
+            pending.insert(message_id);
+        }
+    }
+
+    fn queue_outbound_or_defer(&self, message_id: OpaqueId, at: Timestamp) {
+        if let Some(runtime) = self.runtime.as_ref() {
+            if runtime
+                .queue_outbound(
+                    MessageId::from_opaque(message_id),
+                    CommandId::from_opaque(message_id),
+                    at,
+                )
+                .is_err()
+                && let Ok(mut pending) = self.pending_delivery_wakes.lock()
+            {
+                pending.insert(message_id);
+            }
+            wake_delivery_for_message(runtime, &self.application, message_id);
+        } else if let Ok(mut pending) = self.pending_delivery_wakes.lock() {
+            pending.insert(message_id);
+        }
     }
 
     pub fn attach_radio(&mut self, radio: SharedRadioCoordinator) {
@@ -478,7 +528,9 @@ impl ClientApplicationRuntime {
     }
 
     pub fn snapshot_context(&self) -> Result<ApplicationSnapshotContext, EngineError> {
-        let network = self.network_snapshot()?.unwrap_or_else(stopped_network_snapshot);
+        let network = self
+            .network_snapshot()?
+            .unwrap_or_else(|| stopped_network_snapshot(compiled_provider()));
         let attachments = self
             .runtime
             .as_ref()
@@ -516,22 +568,34 @@ impl ClientApplicationRuntime {
     /// Snapshot projection remains read-only and cannot advance attempts.
     pub fn advance_bootstrap(&self) -> Result<(), EngineError> {
         let app = self.application.overview()?;
-        let network = self.network_snapshot()?.unwrap_or_else(stopped_network_snapshot);
+        let network = self
+            .network_snapshot()?
+            .unwrap_or_else(|| stopped_network_snapshot(compiled_provider()));
         let has_identity = app.identity.is_some();
         let has_profile = app.identity.as_ref().and_then(|identity| identity.profile()).is_some();
-        let tor_state = tor_state_name(network.tor);
-        let onion_status = network
-            .probes
-            .iter()
-            .find(|probe| probe.target == ProbeTarget::OnionService)
-            .map(|probe| probe.status)
-            .unwrap_or(ProbeStatus::Unknown);
-        let relay_status = network
-            .probes
-            .iter()
-            .find(|probe| probe.target == ProbeTarget::Relay)
-            .map(|probe| probe.status)
-            .unwrap_or(ProbeStatus::Unknown);
+        let communication_state =
+            network.communication.step(torca_transport_api::CommissioningStage::LocalRuntime);
+        if let Ok(mut bootstrap) = self.bootstrap.lock() {
+            bootstrap.configure_communication_requirements(&network.communication);
+        }
+        let incoming_reachability_state = network
+            .communication
+            .step(torca_transport_api::CommissioningStage::IncomingReachability);
+        // A provider-neutral bootstrap must never interpret an arbitrary
+        // probe as a Tor relay result. Direct providers (Iroh/WebRTC) own
+        // their commissioning state and do not have a relay probe here.
+        let relay_status = (network.communication.provider
+            == torca_transport_api::TransportKind::Tor)
+            .then(|| {
+                network
+                    .probes
+                    .iter()
+                    .find(|probe| {
+                        matches!(probe.target, ProbeTarget::PairingService | ProbeTarget::Relay)
+                    })
+                    .map(|probe| probe.status)
+                    .unwrap_or(ProbeStatus::Unknown)
+            });
         let Ok(mut bootstrap) = self.bootstrap.lock() else {
             return Err(EngineError("bootstrap state unavailable".into()));
         };
@@ -556,85 +620,112 @@ impl ClientApplicationRuntime {
             bootstrap.complete(BootstrapStepId::DeviceIdentity);
         }
         if has_identity {
-            match tor_state {
-                "ready" => {
-                    if step_state(&bootstrap, BootstrapStepId::Tor)
+            match communication_state {
+                torca_transport_api::CommissioningState::Ready
+                | torca_transport_api::CommissioningState::NotRequired => {
+                    if step_state(&bootstrap, BootstrapStepId::CommunicationRuntime)
                         != Some(BootstrapStepState::Ready)
                     {
-                        bootstrap.begin(BootstrapStepId::Tor);
-                        bootstrap.complete(BootstrapStepId::Tor);
+                        bootstrap.begin(BootstrapStepId::CommunicationRuntime);
+                        bootstrap.complete(BootstrapStepId::CommunicationRuntime);
                     }
-                    match onion_status {
-                        ProbeStatus::Healthy => {
-                            if step_state(&bootstrap, BootstrapStepId::OnionService)
+                    match incoming_reachability_state {
+                        torca_transport_api::CommissioningState::Ready
+                        | torca_transport_api::CommissioningState::NotRequired => {
+                            if step_state(&bootstrap, BootstrapStepId::IncomingReachability)
                                 != Some(BootstrapStepState::Ready)
                             {
-                                bootstrap.begin(BootstrapStepId::OnionService);
-                                bootstrap.complete(BootstrapStepId::OnionService);
+                                bootstrap.begin(BootstrapStepId::IncomingReachability);
+                                bootstrap.complete(BootstrapStepId::IncomingReachability);
                             }
                         }
-                        ProbeStatus::Failed | ProbeStatus::Unreachable | ProbeStatus::Degraded => {
-                            bootstrap.begin(BootstrapStepId::OnionService);
-                            bootstrap.degrade(BootstrapStepId::OnionService, "ONION_UNREACHABLE");
+                        torca_transport_api::CommissioningState::Failed
+                        | torca_transport_api::CommissioningState::Degraded => {
+                            bootstrap.begin(BootstrapStepId::IncomingReachability);
+                            bootstrap.degrade(
+                                BootstrapStepId::IncomingReachability,
+                                "INCOMING_REACHABILITY_UNAVAILABLE",
+                            );
                         }
-                        ProbeStatus::Checking | ProbeStatus::Unknown | ProbeStatus::Disabled => {
+                        torca_transport_api::CommissioningState::Pending => {
                             if matches!(
-                                step_state(&bootstrap, BootstrapStepId::OnionService),
+                                step_state(&bootstrap, BootstrapStepId::IncomingReachability),
                                 Some(BootstrapStepState::Pending | BootstrapStepState::Blocked)
                             ) {
-                                bootstrap.begin(BootstrapStepId::OnionService);
-                                bootstrap.verify(BootstrapStepId::OnionService);
+                                bootstrap.begin(BootstrapStepId::IncomingReachability);
+                                bootstrap.verify(BootstrapStepId::IncomingReachability);
                             }
                         }
                     }
-                    match relay_status {
-                        ProbeStatus::Healthy => {
-                            if step_state(&bootstrap, BootstrapStepId::Relay)
-                                != Some(BootstrapStepState::Ready)
-                            {
-                                bootstrap.begin(BootstrapStepId::Relay);
-                                bootstrap.complete(BootstrapStepId::Relay);
-                            }
+                    if network.communication.provider != torca_transport_api::TransportKind::Tor {
+                        // Direct providers have no managed rendezvous probe.
+                        // Keep the legacy compatibility step satisfied so it
+                        // cannot hold the UI in a provider-specific warm-up
+                        // state; provider-owned commissioning remains the
+                        // source of truth for actual readiness.
+                        if step_state(&bootstrap, BootstrapStepId::Rendezvous)
+                            != Some(BootstrapStepState::Ready)
+                        {
+                            bootstrap.begin(BootstrapStepId::Rendezvous);
+                            bootstrap.complete(BootstrapStepId::Rendezvous);
                         }
-                        ProbeStatus::Failed | ProbeStatus::Unreachable | ProbeStatus::Degraded => {
-                            if step_state(&bootstrap, BootstrapStepId::Relay)
-                                != Some(BootstrapStepState::Degraded)
-                            {
-                                bootstrap.begin(BootstrapStepId::Relay);
+                    } else {
+                        match relay_status.unwrap_or(ProbeStatus::Unknown) {
+                            ProbeStatus::Healthy => {
+                                if step_state(&bootstrap, BootstrapStepId::Rendezvous)
+                                    != Some(BootstrapStepState::Ready)
+                                {
+                                    bootstrap.begin(BootstrapStepId::Rendezvous);
+                                    bootstrap.complete(BootstrapStepId::Rendezvous);
+                                }
                             }
-                            bootstrap.degrade(BootstrapStepId::Relay, "RELAY_UNREACHABLE");
-                        }
-                        ProbeStatus::Checking | ProbeStatus::Unknown | ProbeStatus::Disabled => {
-                            if matches!(
-                                step_state(&bootstrap, BootstrapStepId::Relay),
-                                Some(BootstrapStepState::Pending | BootstrapStepState::Blocked)
-                            ) {
-                                bootstrap.begin(BootstrapStepId::Relay);
-                                bootstrap.verify(BootstrapStepId::Relay);
+                            ProbeStatus::Failed
+                            | ProbeStatus::Unreachable
+                            | ProbeStatus::Degraded => {
+                                if step_state(&bootstrap, BootstrapStepId::Rendezvous)
+                                    != Some(BootstrapStepState::Degraded)
+                                {
+                                    bootstrap.begin(BootstrapStepId::Rendezvous);
+                                }
+                                bootstrap
+                                    .degrade(BootstrapStepId::Rendezvous, "RENDEZVOUS_UNREACHABLE");
+                            }
+                            ProbeStatus::Checking
+                            | ProbeStatus::Unknown
+                            | ProbeStatus::Disabled => {
+                                if matches!(
+                                    step_state(&bootstrap, BootstrapStepId::Rendezvous),
+                                    Some(BootstrapStepState::Pending | BootstrapStepState::Blocked)
+                                ) {
+                                    bootstrap.begin(BootstrapStepId::Rendezvous);
+                                    bootstrap.verify(BootstrapStepId::Rendezvous);
+                                }
                             }
                         }
                     }
                 }
-                "failed" | "degraded" => {
-                    let code = if tor_state == "failed" {
-                        "TOR_RUNTIME_FAILED"
-                    } else {
-                        "TOR_RUNTIME_DEGRADED"
-                    };
-                    if step_state(&bootstrap, BootstrapStepId::Tor)
+                torca_transport_api::CommissioningState::Failed
+                | torca_transport_api::CommissioningState::Degraded => {
+                    let code =
+                        if communication_state == torca_transport_api::CommissioningState::Failed {
+                            "COMMUNICATION_RUNTIME_FAILED"
+                        } else {
+                            "COMMUNICATION_RUNTIME_DEGRADED"
+                        };
+                    if step_state(&bootstrap, BootstrapStepId::CommunicationRuntime)
                         != Some(BootstrapStepState::Failed)
                     {
-                        bootstrap.begin(BootstrapStepId::Tor);
-                        bootstrap.fail(BootstrapStepId::Tor, code);
+                        bootstrap.begin(BootstrapStepId::CommunicationRuntime);
+                        bootstrap.fail(BootstrapStepId::CommunicationRuntime, code);
                     }
                 }
-                _ => {
+                torca_transport_api::CommissioningState::Pending => {
                     if matches!(
-                        step_state(&bootstrap, BootstrapStepId::Tor),
+                        step_state(&bootstrap, BootstrapStepId::CommunicationRuntime),
                         Some(BootstrapStepState::Pending | BootstrapStepState::Blocked)
                     ) {
-                        bootstrap.begin(BootstrapStepId::Tor);
-                        bootstrap.verify(BootstrapStepId::Tor);
+                        bootstrap.begin(BootstrapStepId::CommunicationRuntime);
+                        bootstrap.verify(BootstrapStepId::CommunicationRuntime);
                     }
                 }
             }
@@ -739,7 +830,7 @@ impl ClientApplicationRuntime {
             ApplicationCommand::CreatePairing { session_id } => {
                 // The operation's own transport result is authoritative.  A
                 // separate health sample may be stale or may have used a
-                // different Tor stream, so it must never prevent an explicit
+                // different provider session, so it must never prevent an explicit
                 // user pairing attempt from reaching the runtime.
                 match self.runtime.as_ref().map(|runtime| {
                     runtime.create_pairing(PairingSessionId::from_opaque(session_id))
@@ -759,13 +850,14 @@ impl ClientApplicationRuntime {
                     }
                 }
             }
-            ApplicationCommand::JoinPairing { session_id, code, ticket } => {
+            ApplicationCommand::JoinPairing { session_id, code, ticket, bootstrap } => {
                 let code = PairingCode::new(code).map_err(string_error)?;
                 match self.runtime.as_ref().map(|runtime| {
-                    runtime.join_pairing_with_ticket(
+                    runtime.join_pairing_with_bootstrap(
                         PairingSessionId::from_opaque(session_id),
                         code.clone(),
                         ticket,
+                        bootstrap.clone(),
                     )
                 }) {
                     Some(Ok(())) => "pairing_joined",
@@ -775,6 +867,7 @@ impl ClientApplicationRuntime {
                             PendingOperationKind::JoinPairing {
                                 code: code.as_str().into(),
                                 ticket,
+                                bootstrap: bootstrap.clone(),
                             },
                         )?;
                         "pairing_queued"
@@ -786,6 +879,7 @@ impl ClientApplicationRuntime {
                             PendingOperationKind::JoinPairing {
                                 code: code.as_str().into(),
                                 ticket,
+                                bootstrap,
                             },
                         )?;
                         "pairing_queued"
@@ -954,9 +1048,7 @@ impl ClientApplicationRuntime {
                 // Persisting a message is a local operation.  A temporarily unavailable
                 // network runtime must not reject or lose the user's message; the durable
                 // delivery store will be drained when the runtime becomes available.
-                if let Some(runtime) = self.runtime.as_ref() {
-                    wake_delivery_for_message(runtime, &self.application, message_id);
-                }
+                self.queue_outbound_or_defer(message_id, timestamp(at_ms)?);
                 result_kind(&value)
             }
             ApplicationCommand::RetryMessage { message_id, at_ms } => {
@@ -967,9 +1059,7 @@ impl ClientApplicationRuntime {
                         at: timestamp(at_ms)?,
                     })
                     .map_err(string_error)?;
-                if let Some(runtime) = self.runtime.as_ref() {
-                    wake_delivery_for_message(runtime, &self.application, message_id);
-                }
+                self.wake_delivery_or_defer(message_id);
                 result_kind(&value)
             }
             ApplicationCommand::CancelMessage { message_id, at_ms } => {
@@ -995,9 +1085,7 @@ impl ClientApplicationRuntime {
                         at: timestamp(at_ms)?,
                     })
                     .map_err(string_error)?;
-                if let Some(runtime) = self.runtime.as_ref() {
-                    wake_delivery_for_message(runtime, &self.application, message_id);
-                }
+                self.wake_delivery_or_defer(message_id);
                 result_kind(&value)
             }
             ApplicationCommand::SetMessageReaction {
@@ -1231,7 +1319,11 @@ impl ClientApplicationRuntime {
             self.pending.lock().map_err(|_| "pending operation store is unavailable")?;
         let kinds = [
             PendingOperationKind::CreatePairing,
-            PendingOperationKind::JoinPairing { code: String::new(), ticket: None },
+            PendingOperationKind::JoinPairing {
+                code: String::new(),
+                ticket: None,
+                bootstrap: None,
+            },
             PendingOperationKind::ApprovePairing,
             PendingOperationKind::RejectPairing,
             PendingOperationKind::CancelPairing,
@@ -1305,7 +1397,7 @@ impl ClientApplicationRuntime {
         };
         // A due durable operation executes through the same runtime transport
         // as an explicit command.  Health projection is observational only:
-        // it can be stale or use a different Tor stream and therefore cannot
+        // it can be stale or use a different provider session and therefore cannot
         // veto recovery of a queued pairing operation.
         let now_ms =
             current_timestamp().map_err(ApplicationError::operation_failed)?.to_unix_millis();
@@ -1331,10 +1423,17 @@ impl ClientApplicationRuntime {
                 .iter()
                 .find(|pairing| pairing.id().to_opaque() == operation.resource_id);
             let already_applied = match (&operation.kind, existing) {
-                (
-                    PendingOperationKind::CreatePairing | PendingOperationKind::JoinPairing { .. },
-                    Some(_),
-                ) => true,
+                (PendingOperationKind::CreatePairing, Some(_)) => true,
+                // A join command creates an empty `Open` session before the
+                // provider transport is available.  That session is not
+                // proof that the join was sent: treating it as already
+                // applied permanently drops the durable retry and leaves the
+                // pair stuck on both sides.  Only a state transition carrying
+                // the creator proposal proves that the join reached the
+                // provider.
+                (PendingOperationKind::JoinPairing { .. }, Some(pairing)) => {
+                    pairing.state() != PairingState::Open
+                }
                 (PendingOperationKind::ApprovePairing, Some(pairing)) => pairing.local_approved(),
                 (PendingOperationKind::RejectPairing, Some(pairing)) => {
                     pairing.state() == PairingState::Rejected
@@ -1365,14 +1464,15 @@ impl ClientApplicationRuntime {
                 PendingOperationKind::CreatePairing => runtime
                     .create_pairing(PairingSessionId::from_opaque(operation.resource_id))
                     .map(|_| ()),
-                PendingOperationKind::JoinPairing { code, ticket } => {
+                PendingOperationKind::JoinPairing { code, ticket, bootstrap } => {
                     PairingCode::new(code.clone())
                         .map_err(|_| RuntimeDriverError::Pairing)
                         .and_then(|code| {
-                            runtime.join_pairing_with_ticket(
+                            runtime.join_pairing_with_bootstrap(
                                 PairingSessionId::from_opaque(operation.resource_id),
                                 code,
                                 *ticket,
+                                bootstrap.clone(),
                             )
                         })
                 }
@@ -1491,19 +1591,29 @@ fn step_state(bootstrap: &BootstrapState, id: BootstrapStepId) -> Option<Bootstr
     bootstrap.snapshot().steps.into_iter().find(|step| step.id == id).map(|step| step.state)
 }
 
-fn tor_state_name(state: TorState) -> &'static str {
-    match state {
-        TorState::Stopped => "stopped",
-        TorState::Starting => "starting",
-        TorState::Ready => "ready",
-        TorState::Degraded => "degraded",
-        TorState::Failed => "failed",
-    }
-}
-
-fn stopped_network_snapshot() -> NetworkSnapshot {
+fn stopped_network_snapshot(provider: torca_transport_api::TransportKind) -> NetworkSnapshot {
+    let profile = provider.deployment_profile();
     NetworkSnapshot {
-        tor: TorState::Stopped,
+        communication: torca_transport_api::ProviderCommissioning {
+            provider,
+            steps: vec![
+                torca_transport_api::CommissioningStep {
+                    stage: torca_transport_api::CommissioningStage::LocalRuntime,
+                    state: torca_transport_api::CommissioningState::Pending,
+                    required_for_local_shell: true,
+                    required_for_pairing: profile.features.incoming,
+                },
+                torca_transport_api::CommissioningStep {
+                    stage: torca_transport_api::CommissioningStage::IncomingReachability,
+                    state: torca_transport_api::CommissioningState::NotRequired,
+                    required_for_local_shell: false,
+                    required_for_pairing: profile.features.incoming,
+                },
+            ],
+            endpoint_summary: None,
+            pairing_bootstrap: None,
+        },
+        tor: CommunicationState::Stopped,
         onion_address: None,
         peers: BTreeMap::new(),
         peer_health: BTreeMap::new(),
@@ -1512,8 +1622,16 @@ fn stopped_network_snapshot() -> NetworkSnapshot {
         peer_activity: BTreeMap::new(),
         probes: Vec::new(),
         connectivity: torca_connectivity::ConnectivitySnapshot::default(),
+        rendezvous_info: None,
         relay_info: None,
     }
+}
+
+fn compiled_provider() -> torca_transport_api::TransportKind {
+    torca_transport_api::TransportKind::from_wire(
+        option_env!("TORCA_COMMUNICATION_PROVIDER").unwrap_or("tor"),
+    )
+    .unwrap_or(torca_transport_api::TransportKind::Tor)
 }
 
 fn timestamp(value: i64) -> Result<Timestamp, String> {

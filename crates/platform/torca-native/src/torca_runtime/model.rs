@@ -14,6 +14,7 @@ enum ActorMessage {
     },
     Shutdown {
         response: SyncSender<()>,
+        source: &'static str,
     },
 }
 

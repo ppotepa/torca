@@ -17,7 +17,8 @@ SELECT
     remote_avatar_schema,
     remote_avatar_generator_version,
     remote_avatar_catalog_version,
-    remote_avatar_hash,
-    remote_avatar_payload
+remote_avatar_hash,
+remote_avatar_payload,
+remote_transport_endpoints_json
 FROM pairing_sessions
 WHERE session_id = ?1;

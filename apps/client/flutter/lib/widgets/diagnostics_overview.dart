@@ -42,19 +42,18 @@ class DiagnosticsOverview extends StatelessWidget {
         context.torcaIcons.identity,
       ),
       _OverviewItem(
-        'Tor',
-        snapshot.transport.tor.typedState == TransportState.ready,
-        'State: ${snapshot.torState}',
+        _providerDisplayName(snapshot.communicationProvider),
+        snapshot.transport.communication.typedState == TransportState.ready,
+        'State: ${snapshot.communicationState}',
         context.torcaIcons.identity,
       ),
-      _OverviewItem(
-        context.strings.onionService,
-        (snapshot.onionAddress ?? '').endsWith('.onion'),
-        snapshot.onionAddress == null
-            ? context.strings.noOnionAddress
-            : context.strings.published,
-        context.torcaIcons.link,
-      ),
+      if (snapshot.endpointSummary != null || snapshot.onionAddress != null)
+        _OverviewItem(
+          _endpointLabel(snapshot.communicationProvider),
+          true,
+          snapshot.endpointSummary ?? snapshot.onionAddress!,
+          context.torcaIcons.link,
+        ),
       _OverviewItem(
         context.strings.directPeers,
         totalPeers == 0 || readyPeers > 0,
@@ -93,6 +92,21 @@ class DiagnosticsOverview extends StatelessWidget {
         );
       },
     );
+  }
+
+  String _providerDisplayName(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'tor') return 'Tor';
+    if (normalized == 'iroh') return 'Iroh';
+    if (normalized == 'webrtc') return 'WebRTC';
+    return provider.trim().isEmpty ? 'Communication' : provider.trim();
+  }
+
+  String _endpointLabel(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    return normalized.isEmpty || normalized == 'tor'
+        ? 'Onion service'
+        : '${_providerDisplayName(provider)} endpoint';
   }
 }
 

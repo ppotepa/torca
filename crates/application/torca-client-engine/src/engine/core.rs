@@ -108,6 +108,10 @@ where
             .map_err(|_| EngineError::Repository)
     }
 
+    pub fn message(&self, message_id: MessageId) -> Result<Option<Message>, EngineError> {
+        self.messages.get(message_id).map_err(|_| EngineError::Repository)
+    }
+
     /// Resolves the peer that owns a durable message without materializing the
     /// complete overview projection. Runtime delivery uses this narrow query
     /// to create a peer demand only for the message recipient.

@@ -143,6 +143,12 @@ class AndroidKeystoreSecretStore(
 
 /** Narrow static JNI target. Product workflow remains in Rust. */
 object AndroidKeystoreBridge {
+    // The JNI library must be loaded before either the Activity or the
+    // process-level service initializes the platform bridge. Loading it here
+    // also makes service-first startup safe (for example after a notification
+    // action or process recreation).
+    init { System.loadLibrary("torca_native") }
+
     private lateinit var applicationContext: Context
     private lateinit var databaseSecrets: AndroidKeystoreSecretStore
     private lateinit var identitySecrets: AndroidKeystoreSecretStore
@@ -174,8 +180,11 @@ object AndroidKeystoreBridge {
             error("could not create Torca runtime directory")
         }
         check(nativeBindRuntime()) { "could not bind Android runtime bridge" }
+        // Install only the stable JNI/NDK context at process startup. This is
+        // not audio initialization: CPAL and AudioRecord remain lazy and are
+        // opened only when Radio capture/playback is actually requested.
         check(nativeInitializeAudioContext(appContext)) {
-            "could not initialize Android audio context"
+            "could not initialize Android native context"
         }
     }
 

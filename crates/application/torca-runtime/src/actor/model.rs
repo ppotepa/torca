@@ -1,7 +1,7 @@
 // Responsibility: runtime-facing state snapshots and classified driver errors.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TorState {
+pub enum CommunicationState {
     Stopped,
     Starting,
     Ready,
@@ -9,7 +9,7 @@ pub enum TorState {
     Failed,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OnionServiceState {
+pub enum IncomingReachabilityState {
     Unknown,
     Publishing,
     Reachable,
@@ -17,6 +17,7 @@ pub enum OnionServiceState {
     Failed,
     Stopped,
 }
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum PeerConnectionStatus {
     Disconnected,
@@ -110,7 +111,15 @@ pub struct PairingInvitationView {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NetworkSnapshot {
-    pub tor: TorState,
+    /// Provider-owned commissioning projection used by all new application
+    /// policy and presentation. The Tor fields below are retained only while
+    /// older native/Flutter contract consumers migrate.
+    pub communication: torca_transport_api::ProviderCommissioning,
+    /// Legacy compatibility state. The field name remains stable for one wire
+    /// migration; its type is provider-neutral.
+    pub tor: CommunicationState,
+    /// Legacy compatibility endpoint. New code must use
+    /// `communication.endpoint_summary`.
     pub onion_address: Option<String>,
     pub peers: BTreeMap<ContactId, PeerConnectionStatus>,
     pub peer_health: BTreeMap<ContactId, PeerHealthSnapshot>,
@@ -119,24 +128,30 @@ pub struct NetworkSnapshot {
     pub peer_activity: BTreeMap<ContactId, TransportActivitySnapshot>,
     pub probes: Vec<ProbeResult>,
     pub connectivity: ConnectivitySnapshot,
+    /// Provider-neutral metadata from the optional pairing rendezvous service.
+    pub rendezvous_info: Option<RendezvousServiceInfo>,
+    /// Legacy compatibility projection for existing bridge consumers.
     pub relay_info: Option<RelayServiceInfo>,
 }
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelayServiceInfo {
+pub struct RendezvousServiceInfo {
     pub product_version: String,
     pub build_id: String,
     pub source_commit: String,
     pub protocol_version: u16,
 }
 
+/// Compatibility alias for older bridge consumers. New provider-neutral code
+/// must use [`RendezvousServiceInfo`].
+pub type RelayServiceInfo = RendezvousServiceInfo;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeDriverError {
     Pairing,
     Communication,
     Classified(ErrorDescriptor),
-    Tor,
     Engine,
     Pending,
 }
@@ -165,9 +180,6 @@ impl ClassifiedError for RuntimeDriverError {
                 RetryAdvice::Backoff,
             ),
             Self::Classified(descriptor) => return *descriptor,
-            Self::Tor => {
-                ("runtime.tor_unavailable", ErrorCategory::Unavailable, RetryAdvice::Backoff)
-            }
             Self::Engine => ("runtime.engine_failed", ErrorCategory::Internal, RetryAdvice::Never),
             Self::Pending => {
                 ("runtime.pending", ErrorCategory::Unavailable, RetryAdvice::Immediate)

@@ -29,6 +29,35 @@ pub trait PairingApprovalPort {
     ) -> Result<(), PairingApprovalError>;
 }
 
+impl PairingApprovalPort for Box<dyn PairingApprovalPort + Send> {
+    fn transcript_digest(
+        &self,
+        creator_offer: &PairingEnvelope,
+        joiner_offer: &PairingEnvelope,
+    ) -> Result<[u8; 32], PairingApprovalError> {
+        (**self).transcript_digest(creator_offer, joiner_offer)
+    }
+
+    fn sign_approval(
+        &self,
+        key_id: KeyId,
+        context_id: OpaqueId,
+        transcript_digest: [u8; 32],
+    ) -> Result<Vec<u8>, PairingApprovalError> {
+        (**self).sign_approval(key_id, context_id, transcript_digest)
+    }
+
+    fn verify_approval(
+        &self,
+        remote_identity: &PublicIdentity,
+        context_id: OpaqueId,
+        transcript_digest: [u8; 32],
+        proof: &[u8],
+    ) -> Result<(), PairingApprovalError> {
+        (**self).verify_approval(remote_identity, context_id, transcript_digest, proof)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PairingApprovalError {
     InvalidTranscript,

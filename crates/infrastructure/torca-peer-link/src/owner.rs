@@ -23,9 +23,9 @@ use torca_peer_protocol::{
     AckStatus, HandshakeAck, HandshakeHello, HandshakePolicy, HandshakeSigner, PeerCodec,
     PeerMessage,
 };
-use torca_tor::{
-    PeerListener, TOR_PEER_VIRTUAL_PORT, TorPeerTransport, TorServiceHandle, TransportError,
-};
+use torca_transport_api::{TransportCapabilities, TransportKind};
+
+pub use torca_transport_api::PeerTransportFactory;
 
 const MAX_CLOCK_SKEW_MS: i64 = 2 * 60 * 1000;
 const MAX_PENDING_INCOMING: usize = 64;

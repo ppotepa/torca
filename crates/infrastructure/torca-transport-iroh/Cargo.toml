@@ -1,0 +1,31 @@
+[package]
+name = "torca-transport-iroh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+iroh = { version = "1.0.3", default-features = false, features = ["tls-ring"] }
+tokio = { version = "1", features = ["io-util", "rt-multi-thread", "sync", "time"] }
+serde_json = "1"
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-transport-api = { path = "../../application/torca-transport-api" }
+torca-runtime = { path = "../../application/torca-runtime" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-crypto = { path = "../torca-crypto" }
+torca-identity = { path = "../../domains/torca-identity" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
+torca-rendezvous-client = { path = "../torca-rendezvous-client" }
+torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
+torca-radio-adapters = { path = "../torca-radio-adapters" }
+torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
+
+[lints]
+workspace = true

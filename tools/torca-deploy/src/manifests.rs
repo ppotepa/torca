@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::devices::Device;
-use crate::domain::Configuration;
+use crate::domain::{CommunicationProvider, Configuration};
 use crate::paths::RuntimePaths;
 
 /// Projects the canonical client artifact manifest into the legacy build and
@@ -17,7 +17,8 @@ pub fn synchronize(
     paths: &RuntimePaths,
     devices: &[Device],
     configuration: Configuration,
-    endpoint: &str,
+    provider: CommunicationProvider,
+    endpoint: Option<&str>,
 ) -> Result<(), ManifestError> {
     let mode = configuration.to_string();
     let canonical_path = paths.manifests.join(format!("clients-{mode}.json"));
@@ -26,11 +27,22 @@ pub fn synchronize(
             .map_err(|source| ManifestError::Read { path: canonical_path.clone(), source })?,
     )
     .map_err(|source| ManifestError::Decode { path: canonical_path.clone(), source })?;
-    let manifest_endpoint = canonical["endpoint"].as_str().unwrap_or_default();
+    let recorded_provider = canonical["communicationProvider"]
+        .as_str()
+        // Schema 1 manifests predate provider selection and are treated as
+        // Tor only during the explicit compatibility window.
+        .unwrap_or("tor");
+    if recorded_provider != provider.wire_value() {
+        return Err(ManifestError::ProviderMismatch {
+            expected: provider.wire_value().to_owned(),
+            actual: recorded_provider.to_owned(),
+        });
+    }
+    let manifest_endpoint = canonical["endpoint"].as_str();
     if manifest_endpoint != endpoint {
         return Err(ManifestError::EndpointMismatch {
-            expected: endpoint.to_owned(),
-            actual: manifest_endpoint.to_owned(),
+            expected: endpoint.map(str::to_owned),
+            actual: manifest_endpoint.map(str::to_owned),
         });
     }
 
@@ -43,6 +55,7 @@ pub fn synchronize(
 
     let legacy_build = json!({
         "Schema": 2,
+        "CommunicationProvider": provider.wire_value(),
         "Endpoint": endpoint,
         "Targets": canonical["targets"],
         "Configuration": mode,
@@ -55,7 +68,7 @@ pub fn synchronize(
     atomic_json(&paths.runtime_root.join("build-manifest.json"), &legacy_build)?;
 
     for device in devices {
-        synchronize_device(paths, device, configuration, endpoint, &canonical, &release)?;
+        synchronize_device(paths, device, configuration, provider, endpoint, &canonical, &release)?;
     }
     Ok(())
 }
@@ -64,7 +77,8 @@ fn synchronize_device(
     paths: &RuntimePaths,
     device: &Device,
     configuration: Configuration,
-    endpoint: &str,
+    provider: CommunicationProvider,
+    endpoint: Option<&str>,
     canonical: &Value,
     release: &Value,
 ) -> Result<(), ManifestError> {
@@ -92,12 +106,20 @@ fn synchronize_device(
         object.insert("BuildNumber".into(), release["build"].clone());
         object.insert("BuildId".into(), canonical["buildId"].clone());
         object.insert("Configuration".into(), json!(configuration.to_string()));
+        object.insert("CommunicationProvider".into(), json!(provider.wire_value()));
         object.insert("StorageEpoch".into(), release["storageEpoch"].clone());
         object.insert("SchemaVersion".into(), release["schemaVersion"].clone());
         object.insert("ContractSchema".into(), release["contractSchema"].clone());
         object.insert("WireVersion".into(), release["wireVersion"].clone());
-        object.insert("RelayEndpoint".into(), json!(endpoint));
-        object.insert("RelayEndpointHash".into(), json!(format!("{:x}", Sha256::digest(endpoint))));
+        // Keep legacy keys for tooling, but make their absence explicit for
+        // direct providers such as Iroh instead of retaining a stale Tor URL.
+        object.insert("RelayEndpoint".into(), endpoint.map_or(Value::Null, |value| json!(value)));
+        object.insert(
+            "RelayEndpointHash".into(),
+            endpoint.map_or(Value::Null, |value| json!(format!("{:x}", Sha256::digest(value)))),
+        );
+        object
+            .insert("ProviderEndpoint".into(), endpoint.map_or(Value::Null, |value| json!(value)));
         object.insert(
             "DeployedAtMs".into(),
             json!(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()),
@@ -155,8 +177,10 @@ pub enum ManifestError {
     Encode(serde_json::Error),
     #[error("could not write manifest {path}: {source}")]
     Write { path: PathBuf, source: std::io::Error },
-    #[error("artifact endpoint mismatch; expected {expected}, found {actual}")]
-    EndpointMismatch { expected: String, actual: String },
+    #[error("artifact endpoint mismatch; expected {expected:?}, found {actual:?}")]
+    EndpointMismatch { expected: Option<String>, actual: Option<String> },
+    #[error("artifact provider mismatch; expected {expected}, found {actual}")]
+    ProviderMismatch { expected: String, actual: String },
 }
 
 #[cfg(test)]
@@ -195,7 +219,14 @@ mod tests {
         )
         .expect("old device manifest");
         let devices = [Device { target: Target::Windows, id: "desktop".into(), android_abi: None }];
-        synchronize(&paths, &devices, Configuration::Debug, &endpoint).expect("synchronize");
+        synchronize(
+            &paths,
+            &devices,
+            Configuration::Debug,
+            CommunicationProvider::Tor,
+            Some(&endpoint),
+        )
+        .expect("synchronize");
         let device: Value = serde_json::from_slice(
             &fs::read(paths.devices.join("windows.json")).expect("device manifest"),
         )
@@ -207,6 +238,49 @@ mod tests {
         assert_eq!(device["RelayEndpoint"], endpoint);
         assert_eq!(build["Endpoint"], endpoint);
         assert_eq!(device["BuildId"], "BUILD");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn direct_provider_clears_legacy_endpoint_fields() {
+        let root =
+            std::env::temp_dir().join(format!("torca-manifests-iroh-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = RuntimePaths::from_repo(root.clone());
+        paths.ensure().expect("runtime paths");
+        fs::create_dir_all(root.join("release")).expect("release directory");
+        fs::write(
+            root.join("release/version.json"),
+            r#"{"version":"1.0.0","build":2,"contractSchema":3,"wireVersion":4,"storageEpoch":5,"schemaVersion":6}"#,
+        )
+        .expect("release metadata");
+        fs::write(
+            paths.manifests.join("clients-debug.json"),
+            serde_json::to_vec(&json!({
+                "communicationProvider": "iroh",
+                "endpoint": null,
+                "targets": ["windows"],
+                "buildId": "BUILD",
+                "sourceCommit": "COMMIT",
+                "builtAt": "NOW"
+            }))
+            .expect("canonical manifest"),
+        )
+        .expect("manifest");
+        let devices = [Device { target: Target::Windows, id: "desktop".into(), android_abi: None }];
+        synchronize(&paths, &devices, Configuration::Debug, CommunicationProvider::Iroh, None)
+            .expect("synchronize direct provider");
+        let device: Value = serde_json::from_slice(
+            &fs::read(paths.devices.join("desktop.json")).expect("device manifest"),
+        )
+        .expect("device json");
+        let build: Value = serde_json::from_slice(
+            &fs::read(paths.runtime_root.join("build-manifest.json")).expect("build json"),
+        )
+        .expect("build json");
+        assert_eq!(device["CommunicationProvider"], "iroh");
+        assert!(device["RelayEndpoint"].is_null());
+        assert!(build["Endpoint"].is_null());
         let _ = fs::remove_dir_all(root);
     }
 }

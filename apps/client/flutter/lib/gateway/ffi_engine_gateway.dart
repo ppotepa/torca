@@ -340,12 +340,12 @@ class FfiEngineGateway
   BridgeResultDto _applyResponse(String raw) {
     try {
       return _applyResponseUnchecked(raw);
-    } on ContractDecodeException {
-      return _contractDecodeFailure();
-    } on FormatException {
-      return _contractDecodeFailure();
-    } on TypeError {
-      return _contractDecodeFailure();
+    } on ContractDecodeException catch (error) {
+      return _contractDecodeFailure(error);
+    } on FormatException catch (error) {
+      return _contractDecodeFailure(error);
+    } on TypeError catch (error) {
+      return _contractDecodeFailure(error);
     }
   }
 
@@ -406,9 +406,10 @@ class FfiEngineGateway
     );
   }
 
-  BridgeResultDto _contractDecodeFailure() => const BridgeResultDto(
+  BridgeResultDto _contractDecodeFailure([Object? cause]) => BridgeResultDto(
     ok: false,
     kind: 'error:contract.decode.failed',
+    error: cause == null ? 'native response contract decode failed' : '$cause',
     errorCode: 'CONTRACT_DECODE_FAILED',
     messageKey: 'contract.decode.failed',
     retryable: false,

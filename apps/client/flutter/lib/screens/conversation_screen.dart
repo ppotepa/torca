@@ -492,6 +492,7 @@ class _ConversationPaneState extends State<ConversationPane>
                   compact: widget.compactHeader,
                   instantContact: _instantContact,
                   instantContactBusy: _instantContactBusy,
+                  radioSupported: capabilitiesFor(widget.gateway).supportsRadio,
                   onInstantContactChanged: _setInstantContact,
                   leading: widget.showBackButton
                       ? BackButton(
@@ -506,7 +507,8 @@ class _ConversationPaneState extends State<ConversationPane>
             : null,
         content: Column(
           children: <Widget>[
-            if (contact != null &&
+            if (capabilitiesFor(widget.gateway).supportsRadio &&
+                contact != null &&
                 (radioContact?.localEnabled == true ||
                     radioTimeline.isNotEmpty))
               RadioConversationStatus(

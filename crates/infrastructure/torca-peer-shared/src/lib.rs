@@ -11,6 +11,7 @@ use torca_peer_link::{
     PeerLinkError, PeerLinkReport,
 };
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
+use torca_transport_api::{TransportCapabilities, TransportKind};
 
 pub struct SharedPeerLink<S, K> {
     inner: Arc<Mutex<PeerLink<S, K>>>,
@@ -33,6 +34,17 @@ where
 {
     pub fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), PeerLinkError> {
         self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.set_waker(waker)
+    }
+
+    pub fn transport_kind(&self) -> Result<TransportKind, PeerLinkError> {
+        self.inner.lock().map(|link| link.transport_kind()).map_err(|_| PeerLinkError::Protocol)
+    }
+
+    pub fn transport_capabilities(&self) -> Result<TransportCapabilities, PeerLinkError> {
+        self.inner
+            .lock()
+            .map(|link| link.transport_capabilities())
+            .map_err(|_| PeerLinkError::Protocol)
     }
 
     pub fn maintenance(
@@ -62,6 +74,10 @@ where
 
     pub fn prime_connections(&self) -> Result<usize, PeerLinkError> {
         self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.prime_connections()
+    }
+
+    pub fn prime_contact(&self, contact_id: ContactId) -> Result<bool, PeerLinkError> {
+        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.prime_contact(contact_id)
     }
 
     pub fn connection_state(&self, contact_id: ContactId) -> PeerConnectionState {

@@ -13,18 +13,17 @@ use torca_delivery::DeliveryWorker;
 use torca_file_storage::FileBlobStore;
 use torca_foundation::OpaqueId;
 use torca_messaging::RetryPolicy;
-use torca_peer_link::PeerLink;
+use torca_peer_link::{PeerLink, PeerTransportFactory};
 use torca_peer_protocol::HandshakeSigner;
 use torca_peer_shared::SharedPeerLink;
-use torca_radio_adapters::RadioMediaSystem;
+use torca_radio_adapters::RadioMediaSystemFactory;
 use torca_radio_coordinator::{RadioCoordinator, SharedRadioCoordinator};
 use torca_storage_sqlite::{
     DatabaseKey, SqlCipherControlOutbox, SqlCipherDurableStore, SqlCipherInboundStore,
     SqlCipherMessageStore, SqlCipherRelationshipAdmin, SqlCipherStore,
 };
 use torca_storage_sqlite::{SqlCipherRadioStore, SqlCipherReadState};
-use torca_tor::PeerListener;
-use torca_tor::TorServiceHandle;
+use torca_transport_api::TransportKind;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
@@ -49,6 +48,7 @@ pub enum CommunicationBuildError {
     Attachment,
     Cache,
     Radio,
+    ProviderUnavailable(TransportKind),
 }
 
 pub struct ProductionCommunicationOutput {
@@ -63,13 +63,17 @@ impl fmt::Display for CommunicationBuildError {
 impl std::error::Error for CommunicationBuildError {}
 
 pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
+    /// Exactly one provider is selected for this runtime composition.
+    pub communication_provider: TransportKind,
     pub signer: K,
     pub peer_secret_store: P,
     pub attachment_secret_store: AP,
     pub export_secret_store: EP,
     pub relationship_secret_store: RP,
-    pub listener: PeerListener,
-    pub tor_client: TorServiceHandle,
+    pub transport_factory: Box<dyn PeerTransportFactory>,
+    /// The selected provider owns radio media construction. Common
+    /// communication code never receives a provider client/endpoint.
+    pub radio_media_factory: Box<dyn RadioMediaSystemFactory>,
     pub local_identity_id: OpaqueId,
     pub connectivity: ConnectivityObserver,
     pub read_receipt_policy: ReadReceiptPolicy,
@@ -91,17 +95,23 @@ where
     EP: ProtectedSecretStore + Send + 'static,
     RP: ProtectedSecretStore + Send + 'static,
 {
+    if inputs.transport_factory.kind() != inputs.communication_provider {
+        return Err(CommunicationBuildError::ProviderUnavailable(inputs.communication_provider));
+    }
     let peer_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
     let health_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
     let link = SharedPeerLink::new(
-        PeerLink::new(
-            inputs.listener,
+        PeerLink::with_transport_factory(
+            // The factory is the only provider-specific boundary. The rest
+            // of this composition remains unchanged for every provider.
+            // `with_transport_factory` takes ownership so no second provider
+            // can be started for the same link.
+            inputs.transport_factory,
             ActiveRelationshipStore::new(peer_relationships),
             inputs.signer,
             inputs.local_identity_id,
-            inputs.tor_client.clone(),
         )
         .with_connectivity(inputs.connectivity),
     );
@@ -121,15 +131,18 @@ where
     );
     let text_store = SqlCipherDurableStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
-    let text = TextWorkerAdapter::new(DeliveryWorker::new(
-        text_store,
-        text_transport,
-        RetryPolicy {
-            max_attempts: RETRY_MAX_ATTEMPTS,
-            base_delay: RETRY_BASE,
-            max_delay: RETRY_MAX,
-        },
-    ));
+    let text = TextWorkerAdapter::with_engine(
+        DeliveryWorker::new(
+            text_store,
+            text_transport,
+            RetryPolicy {
+                max_attempts: RETRY_MAX_ATTEMPTS,
+                base_delay: RETRY_BASE,
+                max_delay: RETRY_MAX,
+            },
+        ),
+        engine.clone(),
+    );
 
     let control_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
@@ -239,10 +252,12 @@ where
         radio_media_relationships,
         shared_crypto.clone(),
         inputs.local_identity_id,
+        inputs.communication_provider,
     );
-    let RadioMediaSystem { media: radio_media, audio: radio_audio } =
-        RadioMediaSystem::start(inputs.tor_client, Box::new(radio_media_directory))
-            .map_err(|_| CommunicationBuildError::Radio)?;
+    let torca_radio_adapters::RadioMediaSystem { media: radio_media, audio: radio_audio } = inputs
+        .radio_media_factory
+        .start(Box::new(radio_media_directory))
+        .map_err(|_| CommunicationBuildError::Radio)?;
     let radio = SharedRadioCoordinator::new(
         RadioCoordinator::restore(
             Box::new(radio_state),

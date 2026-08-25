@@ -2,11 +2,16 @@
 param(
     [ValidateSet('auto', 'windows', 'android')]
     [string]$Target = 'auto',
-    [string]$Device
+    [string]$Device,
+    [ValidateSet('tor', 'iroh', 'webrtc')]
+    [string]$CommunicationProvider
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if ($PSBoundParameters.ContainsKey('CommunicationProvider')) {
+    $env:TORCA_COMMUNICATION_PROVIDER = $CommunicationProvider
+}
 
 if (-not $env:TORCA_ORCHESTRATED) {
     & (Join-Path $PSScriptRoot 'torca.ps1') -Command run -Target $Target -Device $Device

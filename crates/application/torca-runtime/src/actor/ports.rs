@@ -9,6 +9,7 @@ pub trait PairingDriver: Send + 'static {
         session_id: PairingSessionId,
         code: PairingCode,
         ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
     fn approve(
@@ -27,6 +28,59 @@ pub trait PairingDriver: Send + 'static {
     }
     fn network_changed(&mut self, _now: Timestamp) {}
     fn shutdown(&mut self);
+}
+
+impl PairingDriver for Box<dyn PairingDriver> {
+    fn create(
+        &mut self,
+        session_id: PairingSessionId,
+        now: Timestamp,
+    ) -> Result<PairingInvitationView, RuntimeDriverError> {
+        (**self).create(session_id, now)
+    }
+
+    fn join(
+        &mut self,
+        session_id: PairingSessionId,
+        code: PairingCode,
+        ticket: Option<[u8; 16]>,
+        bootstrap: Option<PairingBootstrapDescriptor>,
+        now: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        (**self).join(session_id, code, ticket, bootstrap, now)
+    }
+
+    fn approve(
+        &mut self,
+        session_id: PairingSessionId,
+        now: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        (**self).approve(session_id, now)
+    }
+
+    fn reject(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError> {
+        (**self).reject(session_id)
+    }
+
+    fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError> {
+        (**self).cancel(session_id)
+    }
+
+    fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        (**self).maintenance(now)
+    }
+
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        (**self).next_maintenance_delay(now)
+    }
+
+    fn network_changed(&mut self, now: Timestamp) {
+        (**self).network_changed(now);
+    }
+
+    fn shutdown(&mut self) {
+        (**self).shutdown();
+    }
 }
 /// Owns only background delivery/inbound maintenance and peer session state.
 pub trait PeerSessionPort: Send + 'static {
@@ -50,6 +104,11 @@ pub trait PeerSessionPort: Send + 'static {
     /// transports use this as an explicit, event-driven warm-up rather than
     /// waiting for the first user message to discover a disconnected peer.
     fn prime_connections(&mut self) {}
+    /// Primes only the peer that owns a durable user-visible operation.
+    /// Unlike relationship warm-up this is allowed to dial regardless of the
+    /// deterministic preferred-dialer role: a queued message must make
+    /// progress from the side that owns the outbox.
+    fn prime_contact(&mut self, _contact_id: ContactId) {}
     /// Installs a non-blocking wake path for inbound listener activity.
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn connection_state(&self, contact_id: ContactId) -> PeerConnectionStatus;
@@ -190,6 +249,20 @@ pub trait CommunicationDriver:
     + AttachmentTransferPort
     + AttachmentExportPort
 {
+    fn queue_outbound(
+        &mut self,
+        _message: Message,
+        _command_id: CommandId,
+        _next_attempt_at: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        Err(RuntimeDriverError::Communication)
+    }
+
+    /// Wakes text/control outbox workers after a local durable mutation.
+    /// This is separate from a scheduler deadline: a previously idle worker
+    /// may have reported `None` and still needs an explicit command wake.
+    fn wake_delivery(&mut self) {}
+
     /// Runs only Radio control/media housekeeping. RuntimeOwner calls this
     /// from `RadioDeadline`; delivery work must not wake an idle Radio lane.
     fn maintain_radio(&mut self, _now: Timestamp) -> Result<(), RuntimeDriverError> {
@@ -234,47 +307,143 @@ pub trait CommunicationDriver:
         at: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
 }
-pub trait TorDriver: Send + 'static {
+/// Provider-neutral lifecycle owned by the selected communication stack.
+///
+/// Tor maps its bootstrap and onion publisher to this port; Iroh and WebRTC
+/// map endpoint/discovery or signaling/ICE readiness to the same lifecycle.
+pub trait CommunicationLifecycle: Send + 'static {
+    /// Identity of the provider which owns this lifecycle.  Requiring this
+    /// instead of defaulting commissioning to Tor prevents a newly added
+    /// provider from accidentally exposing a Tor-shaped runtime snapshot.
+    fn provider(&self) -> torca_transport_api::TransportKind;
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
-    /// Returns the next Tor lifecycle deadline. A healthy, reachable and
-    /// idle Tor service has no application-owned deadline and must wait for a
-    /// command or an explicit network event instead of being polled.
+    /// Returns the next provider lifecycle deadline. A healthy, reachable and
+    /// idle provider has no application-owned deadline and waits for a command
+    /// or explicit network event instead of being polled.
     fn next_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {
         None
     }
-    /// Installs a non-blocking wake path for Tor/bootstrap/publisher events.
+    /// Installs a non-blocking wake path for provider lifecycle events.
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
-    /// Requests platform-neutral Tor background activity policy. The default
-    /// keeps test drivers compatible; production Arti drivers implement it.
+    /// Requests platform-neutral background activity policy.
     fn set_dormant(&mut self, _dormant: bool) -> Result<(), RuntimeDriverError> {
         Ok(())
     }
-    fn state(&self) -> TorState;
-    fn onion_address(&self) -> Option<String>;
-    fn onion_service_state(&self) -> OnionServiceState {
-        if self.onion_address().is_some() {
-            OnionServiceState::Publishing
+    fn state(&self) -> CommunicationState;
+    fn local_endpoint_summary(&self) -> Option<String>;
+    fn incoming_reachability_state(&self) -> IncomingReachabilityState {
+        if self.local_endpoint_summary().is_some() {
+            IncomingReachabilityState::Publishing
         } else {
-            OnionServiceState::Unknown
+            IncomingReachabilityState::Unknown
+        }
+    }
+    /// Provider-owned readiness projection. Runtime and UI consume this
+    /// neutral snapshot instead of inferring implementation details such as a
+    /// Tor onion service from a provider's endpoint string.
+    fn commissioning(&self) -> torca_transport_api::ProviderCommissioning {
+        use torca_transport_api::{
+            CommissioningStage, CommissioningState, CommissioningStep, ProviderCommissioning,
+        };
+
+        let runtime = match self.state() {
+            CommunicationState::Ready => CommissioningState::Ready,
+            CommunicationState::Starting => CommissioningState::Pending,
+            CommunicationState::Stopped => CommissioningState::Pending,
+            CommunicationState::Degraded => CommissioningState::Degraded,
+            CommunicationState::Failed => CommissioningState::Failed,
+        };
+        let incoming = match self.incoming_reachability_state() {
+            IncomingReachabilityState::Reachable => CommissioningState::Ready,
+            IncomingReachabilityState::Publishing | IncomingReachabilityState::Unknown => {
+                CommissioningState::Pending
+            }
+            IncomingReachabilityState::Degraded => CommissioningState::Degraded,
+            IncomingReachabilityState::Failed => CommissioningState::Failed,
+            IncomingReachabilityState::Stopped => CommissioningState::NotRequired,
+        };
+        ProviderCommissioning {
+            provider: self.provider(),
+            steps: vec![
+                CommissioningStep {
+                    stage: CommissioningStage::LocalRuntime,
+                    state: runtime,
+                    required_for_local_shell: true,
+                    required_for_pairing: true,
+                },
+                CommissioningStep {
+                    stage: CommissioningStage::IncomingReachability,
+                    state: incoming,
+                    required_for_local_shell: false,
+                    required_for_pairing: true,
+                },
+            ],
+            endpoint_summary: self.local_endpoint_summary(),
+            pairing_bootstrap: None,
         }
     }
     fn shutdown(&mut self);
 }
 
-/// Relay connectivity is supervised outside the actor's critical path. A
+impl CommunicationLifecycle for Box<dyn CommunicationLifecycle> {
+    fn provider(&self) -> torca_transport_api::TransportKind {
+        (**self).provider()
+    }
+
+    fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        (**self).maintenance(now)
+    }
+
+    fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
+        (**self).next_maintenance_delay(now)
+    }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        (**self).set_waker(waker);
+    }
+
+    fn set_dormant(&mut self, dormant: bool) -> Result<(), RuntimeDriverError> {
+        (**self).set_dormant(dormant)
+    }
+
+    fn state(&self) -> CommunicationState {
+        (**self).state()
+    }
+
+    fn local_endpoint_summary(&self) -> Option<String> {
+        (**self).local_endpoint_summary()
+    }
+
+    fn incoming_reachability_state(&self) -> IncomingReachabilityState {
+        (**self).incoming_reachability_state()
+    }
+
+    fn commissioning(&self) -> torca_transport_api::ProviderCommissioning {
+        (**self).commissioning()
+    }
+
+    fn shutdown(&mut self) {
+        (**self).shutdown();
+    }
+}
+
+/// Provider rendezvous connectivity is supervised outside the actor's critical path. A
 /// probe implementation must be cheap to clone through `Arc` and may perform
 /// blocking network work on the worker thread created by the supervisor.
-pub trait RelayProbe: Send + Sync + 'static {
+pub trait RendezvousProbe: Send + Sync + 'static {
     fn probe(&self) -> Result<(), ErrorCode>;
 
-    fn service_info(&self) -> Option<RelayServiceInfo> {
+    fn service_info(&self) -> Option<RendezvousServiceInfo> {
         None
     }
 }
 
-struct RuntimeRelayHealthPort(Arc<dyn RelayProbe>);
+/// Compatibility alias for adapters compiled against the old port name.
+pub use RendezvousProbe as RelayProbe;
 
-impl RelayHealthPort for RuntimeRelayHealthPort {
+struct RuntimeRendezvousHealthPort(Arc<dyn RendezvousProbe>);
+
+impl RendezvousHealthPort for RuntimeRendezvousHealthPort {
     fn check_relay_health(&self) -> Result<(), ErrorCode> {
         self.0.probe()
     }

@@ -16,10 +16,11 @@ INSERT INTO pairing_sessions (
     remote_capability_id,
     remote_avatar_schema,
     remote_avatar_generator_version,
-    remote_avatar_catalog_version,
-    remote_avatar_hash,
-    remote_avatar_payload
+remote_avatar_catalog_version,
+remote_avatar_hash,
+remote_avatar_payload,
+remote_transport_endpoints_json
 ) VALUES (
     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-    ?16, ?17, ?18, ?19, ?20
+?16, ?17, ?18, ?19, ?20, ?21
 );

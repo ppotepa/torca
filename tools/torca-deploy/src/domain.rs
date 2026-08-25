@@ -1,5 +1,6 @@
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
+pub use torca_transport_api::TransportKind as CommunicationProvider;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -44,7 +45,8 @@ pub enum DeployAction {
     RedeployCurrent,
     Rebuild,
     FullRedeploy,
-    RelayMaintenance,
+    #[serde(alias = "relay_maintenance")]
+    ProviderMaintenance,
     CollectLogs,
     BuildArtifacts,
 }
@@ -56,7 +58,7 @@ impl fmt::Display for DeployAction {
             Self::RedeployCurrent => "redeploy current artifacts",
             Self::Rebuild => "rebuild",
             Self::FullRedeploy => "full redeploy",
-            Self::RelayMaintenance => "relay maintenance",
+            Self::ProviderMaintenance => "provider maintenance",
             Self::CollectLogs => "collect logs",
             Self::BuildArtifacts => "build artifacts",
         })
@@ -73,12 +75,28 @@ pub enum BuildPolicy {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum OnionPolicy {
+/// Provider-owned maintenance requested for a managed commissioning service.
+///
+/// The concrete provider interprets the operation.  For Tor this currently
+/// maps to relay/onion maintenance; direct providers may reject unsupported
+/// operations instead of inheriting Tor semantics.
+pub enum ProviderMaintenancePolicy {
     Ensure,
     Restart,
     RepairDirectoryCache,
     RotateIdentity,
 }
+
+impl Default for ProviderMaintenancePolicy {
+    fn default() -> Self {
+        Self::Ensure
+    }
+}
+
+/// Source-compatible name for older PowerShell adapters. New Rust code must
+/// use [`ProviderMaintenancePolicy`]. The persisted field migration below
+/// accepts the old `onion` key as well.
+pub type OnionPolicy = ProviderMaintenancePolicy;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -124,13 +142,18 @@ pub struct DeployPlan {
     pub device: Option<String>,
     pub configuration: Configuration,
     pub client_build: BuildPolicy,
-    pub relay_build: BuildPolicy,
-    pub onion: OnionPolicy,
+    #[serde(alias = "relay_build")]
+    pub provider_service_build: BuildPolicy,
+    #[serde(default, alias = "onion")]
+    pub provider_maintenance: ProviderMaintenancePolicy,
     pub client_data: ClientDataPolicy,
     pub validation: ValidationLevel,
     pub launch: LaunchPolicy,
     #[serde(default)]
     pub privacy: PrivacyPolicy,
+    /// Exactly one provider is selected for new sessions by each deployment.
+    #[serde(default)]
+    pub communication_provider: CommunicationProvider,
 }
 
 impl DeployPlan {
@@ -145,21 +168,28 @@ impl DeployPlan {
             device: None,
             configuration,
             client_build: BuildPolicy::IfRequired,
-            relay_build: BuildPolicy::IfRequired,
-            onion: OnionPolicy::Ensure,
+            provider_service_build: BuildPolicy::IfRequired,
+            provider_maintenance: ProviderMaintenancePolicy::Ensure,
             client_data: ClientDataPolicy::Preserve,
             validation: ValidationLevel::Quick,
             launch: LaunchPolicy::Restart,
             privacy: PrivacyPolicy::Strict,
+            communication_provider: CommunicationProvider::Tor,
         }
     }
 
     pub fn validate(&self) -> Result<(), PlanError> {
-        if self.targets.is_empty() && !matches!(self.action, DeployAction::RelayMaintenance) {
+        if self.targets.is_empty() && !matches!(self.action, DeployAction::ProviderMaintenance) {
             return Err(PlanError::NoTargets);
         }
-        if self.onion == OnionPolicy::RotateIdentity {
-            if self.client_build != BuildPolicy::Rebuild || self.relay_build != BuildPolicy::Rebuild
+        if self.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity {
+            if self.communication_provider != CommunicationProvider::Tor {
+                return Err(PlanError::UnsupportedProviderMaintenance {
+                    provider: self.communication_provider,
+                });
+            }
+            if self.client_build != BuildPolicy::Rebuild
+                || self.provider_service_build != BuildPolicy::Rebuild
             {
                 return Err(PlanError::RotationRequiresRebuild);
             }
@@ -170,6 +200,9 @@ impl DeployPlan {
                 return Err(PlanError::RotationRequiresAllTargets);
             }
         }
+        if !self.communication_provider.deployment_profile().is_deployment_ready() {
+            return Err(PlanError::ProviderNotReady(self.communication_provider));
+        }
         Ok(())
     }
 
@@ -178,38 +211,38 @@ impl DeployPlan {
     pub fn normalized(mut self) -> Self {
         if self.action == DeployAction::RunInstalled {
             self.client_build = BuildPolicy::Reuse;
-            self.relay_build = BuildPolicy::Reuse;
+            self.provider_service_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Restart;
         }
         if self.action == DeployAction::CollectLogs {
             self.client_build = BuildPolicy::Reuse;
-            self.relay_build = BuildPolicy::Reuse;
+            self.provider_service_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Skip;
         }
         if self.action == DeployAction::BuildArtifacts {
-            self.relay_build = BuildPolicy::Reuse;
+            self.provider_service_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Skip;
         }
         if self.action == DeployAction::Rebuild {
             self.client_build = BuildPolicy::Rebuild;
-            self.relay_build = BuildPolicy::Rebuild;
+            self.provider_service_build = BuildPolicy::Rebuild;
         }
         if self.action == DeployAction::FullRedeploy {
             self.client_build = BuildPolicy::Rebuild;
-            self.relay_build = BuildPolicy::Rebuild;
+            self.provider_service_build = BuildPolicy::Rebuild;
         }
-        if self.action == DeployAction::RelayMaintenance {
+        if self.action == DeployAction::ProviderMaintenance {
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Skip;
         }
-        if self.onion == OnionPolicy::RotateIdentity {
+        if self.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity {
             self.action = DeployAction::FullRedeploy;
             self.targets = vec![Target::Windows, Target::Android];
             self.client_build = BuildPolicy::Rebuild;
-            self.relay_build = BuildPolicy::Rebuild;
+            self.provider_service_build = BuildPolicy::Rebuild;
         }
         if self.action == DeployAction::FullRedeploy
             && self.client_data == ClientDataPolicy::Preserve
@@ -219,11 +252,22 @@ impl DeployPlan {
         self
     }
 
+    pub fn needs_provider_service(&self) -> bool {
+        self.communication_provider.deployment_profile().commissioning_service.is_managed()
+            && !matches!(
+                self.action,
+                DeployAction::RunInstalled
+                    | DeployAction::CollectLogs
+                    | DeployAction::BuildArtifacts
+            )
+    }
+
+    /// Compatibility alias for older callers. New deploy orchestration must
+    /// use the provider-neutral name because Iroh/WebRTC do not necessarily
+    /// have a relay service.
+    #[deprecated(note = "use needs_provider_service")]
     pub fn needs_relay(&self) -> bool {
-        !matches!(
-            self.action,
-            DeployAction::RunInstalled | DeployAction::CollectLogs | DeployAction::BuildArtifacts
-        )
+        self.needs_provider_service()
     }
 }
 
@@ -235,15 +279,22 @@ pub enum PlanError {
     RotationRequiresRebuild,
     #[error("rotating the relay onion requires Windows and Android to be selected")]
     RotationRequiresAllTargets,
+    #[error("communication provider '{0}' is not ready for deployment")]
+    ProviderNotReady(CommunicationProvider),
+    #[error("provider '{provider}' does not support the selected maintenance action")]
+    UnsupportedProviderMaintenance { provider: CommunicationProvider },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeployStage {
     Planned,
-    RelayPrepared,
-    RelayReachable,
-    EndpointVerified,
+    #[serde(alias = "relay_prepared")]
+    ProviderServicePrepared,
+    #[serde(alias = "relay_reachable")]
+    ProviderServiceReachable,
+    #[serde(alias = "endpoint_verified")]
+    ProviderEndpointVerified,
     ArtifactsBuilt,
     ClientDataReset,
     ClientsInstalled,
@@ -268,7 +319,8 @@ pub struct DeployRun {
     pub started_at_ms: u128,
     pub plan: DeployPlan,
     pub stage: DeployStage,
-    pub relay_endpoint: Option<String>,
+    #[serde(alias = "relay_endpoint")]
+    pub provider_endpoint: Option<String>,
     pub completed: Vec<DeployStage>,
     pub message: Option<String>,
 }
@@ -283,7 +335,7 @@ impl DeployRun {
             started_at_ms,
             plan,
             stage: DeployStage::Planned,
-            relay_endpoint: None,
+            provider_endpoint: None,
             completed: Vec::new(),
             message: None,
         }
@@ -309,10 +361,10 @@ mod tests {
             vec![Target::Windows],
             Configuration::Debug,
         );
-        plan.onion = OnionPolicy::RotateIdentity;
+        plan.provider_maintenance = ProviderMaintenancePolicy::RotateIdentity;
         assert!(matches!(plan.validate(), Err(PlanError::RotationRequiresRebuild)));
         plan.client_build = BuildPolicy::Rebuild;
-        plan.relay_build = BuildPolicy::Rebuild;
+        plan.provider_service_build = BuildPolicy::Rebuild;
         assert!(matches!(plan.validate(), Err(PlanError::RotationRequiresAllTargets)));
         plan.targets.push(Target::Android);
         assert!(plan.validate().is_ok());
@@ -340,5 +392,67 @@ mod tests {
         let mut relaxed = plan;
         relaxed.privacy = PrivacyPolicy::AllowCapture;
         assert_eq!(relaxed.normalized().privacy, PrivacyPolicy::AllowCapture);
+    }
+
+    #[test]
+    fn incomplete_provider_is_rejected_before_deployment() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        // Iroh is a validated direct provider; WebRTC still requires a host
+        // session/signaling binding and must be rejected until those exist.
+        plan.communication_provider = CommunicationProvider::WebRtc;
+        assert!(matches!(plan.validate(), Err(PlanError::ProviderNotReady(_))));
+    }
+
+    #[test]
+    fn relay_requirement_is_provider_metadata_not_an_action_assumption() {
+        let plan = DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        assert!(plan.needs_provider_service());
+
+        let mut direct = plan;
+        direct.communication_provider = CommunicationProvider::WebRtc;
+        assert!(!direct.needs_provider_service());
+    }
+
+    #[test]
+    fn persisted_tor_named_fields_migrate_to_provider_neutral_plan_fields() {
+        let plan = DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        let mut value = serde_json::to_value(plan).expect("serialize deployment plan");
+        let object = value.as_object_mut().expect("plan object");
+        let maintenance =
+            object.remove("provider_maintenance").expect("provider maintenance field");
+        object.insert("onion".into(), maintenance);
+        let service_build =
+            object.remove("provider_service_build").expect("provider service build field");
+        object.insert("relay_build".into(), service_build);
+
+        let migrated: DeployPlan = serde_json::from_value(value).expect("deserialize old plan");
+        assert_eq!(migrated.provider_maintenance, ProviderMaintenancePolicy::Ensure);
+        assert_eq!(migrated.provider_service_build, BuildPolicy::IfRequired);
+    }
+
+    #[test]
+    fn legacy_checkpoint_action_and_stage_names_remain_readable() {
+        assert_eq!(
+            serde_json::from_str::<DeployAction>("\"relay_maintenance\"")
+                .expect("legacy deployment action"),
+            DeployAction::ProviderMaintenance
+        );
+        assert_eq!(
+            serde_json::from_str::<DeployStage>("\"relay_reachable\"")
+                .expect("legacy deployment stage"),
+            DeployStage::ProviderServiceReachable
+        );
     }
 }

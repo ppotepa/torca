@@ -6,13 +6,13 @@ impl ActorState {
     }
 
     fn maintain(&mut self) -> bool {
-        let Some(delay) = self.runtime.next_pending_operation_delay() else {
-            return false;
-        };
-        if !delay.is_zero() {
-            return false;
-        }
-        self.runtime.reconcile_pending_operations()
+        let startup_changed = self.runtime.maintain_native_startup();
+        let pending_changed = self
+            .runtime
+            .next_pending_operation_delay()
+            .is_some_and(|delay| delay.is_zero())
+            && self.runtime.reconcile_pending_operations();
+        startup_changed || pending_changed
     }
 
     fn invoke(&mut self, raw: &str) -> Vec<u8> {
@@ -139,6 +139,15 @@ impl ActorState {
                 );
             }
         };
+        if name == "snapshot.get" {
+            self.runtime.log(
+                "ffi",
+                if code == ABI_OK { torca_logging::Level::Debug } else { torca_logging::Level::Error },
+                "snapshot",
+                if code == ABI_OK { "SNAPSHOT_RESPONSE_READY" } else { "SNAPSHOT_RESPONSE_FAILED" },
+                &format!("requestId={request_id} abiCode={code}"),
+            );
+        }
         if code != ABI_OK {
             return self.native_error(request_id);
         }

@@ -5,13 +5,13 @@ fn begin_runtime_start(&mut self) {
         return;
     }
     self.host_retry_at = None;
-    self.host_state_hint = TorState::Starting;
+    self.host_state_hint = CommunicationState::Starting;
     self.log(
         "bootstrap",
         Level::Info,
         "runtime",
-        "TOR_STARTING",
-        "Starting production network runtime",
+        "COMMUNICATION_STARTING",
+        "Starting selected communication provider",
     );
     let engine = self.application_runtime.handle().engine_handle();
     let (sender, receiver) = mpsc::channel::<HostStartEvent>();
@@ -21,18 +21,18 @@ fn begin_runtime_start(&mut self) {
     self.host_last_progress_at_ms = self.host_start_started_at_ms;
     self.host_progress = 0;
     self.host_attempt = 1;
-    self.host_status_code = Some("TOR_BOOTSTRAP_STARTING".into());
-    self.host_status_summary = Some("Starting embedded Tor bootstrap".into());
-    self.host_onion_started_at_ms = None;
-    self.host_onion_last_progress_at_ms = None;
-    self.host_onion_progress = 0;
-    self.host_onion_attempt = 0;
-    self.host_onion_status_code = None;
-    self.host_onion_status_summary = None;
-    self.host_onion_retry_at = None;
+    self.host_status_code = Some("COMMUNICATION_STARTING".into());
+    self.host_status_summary = Some("Starting selected communication provider".into());
+    self.host_incoming_started_at_ms = None;
+    self.host_incoming_last_progress_at_ms = None;
+    self.host_incoming_progress = 0;
+    self.host_incoming_attempt = 0;
+    self.host_incoming_status_code = None;
+    self.host_incoming_status_summary = None;
+    self.host_incoming_retry_at = None;
     self.host_start_deadline = Some(Instant::now() + NETWORK_START_OBSERVE_TIMEOUT);
     let progress_sender = sender.clone();
-    let observer: TorBootstrapObserver = std::sync::Arc::new(move |progress| {
+    let observer: CommissioningObserver = std::sync::Arc::new(move |progress| {
         let _ = progress_sender.send(HostStartEvent::Progress(progress));
     });
     let read_receipt_policy = self.read_receipt_policy.clone();
@@ -65,14 +65,14 @@ fn create_bootstrap_identity(&mut self) -> Result<(), ()> {
     self.application_runtime.bootstrap_identity(identity_id, at_ms).map(|_| ()).map_err(|_| ())
 }
 
-fn apply_bootstrap_progress(&mut self, progress: &TorBootstrapEvent) -> bool {
+fn apply_bootstrap_progress(&mut self, progress: &CommissioningEvent) -> bool {
     let retry_at = progress
         .retry_after_ms
         .and_then(|delay_ms| Instant::now().checked_add(Duration::from_millis(delay_ms)));
     match progress.stage {
-        TorBootstrapStage::Network => {
+        CommissioningStage::LocalRuntime => {
             let changed = progress.progress != self.host_progress
-                || self.host_status_code.as_deref() != Some(progress.code)
+                || self.host_status_code.as_deref() != Some(progress.code.as_str())
                 || progress.attempt != self.host_attempt
                 || self.host_status_summary.as_deref() != Some(progress.summary.as_str());
             if progress.progress > self.host_progress {
@@ -80,29 +80,39 @@ fn apply_bootstrap_progress(&mut self, progress: &TorBootstrapEvent) -> bool {
             }
             self.host_progress = self.host_progress.max(progress.progress);
             self.host_attempt = progress.attempt;
-            self.host_status_code = Some(progress.code.into());
+            self.host_status_code = Some(progress.code.clone());
             self.host_status_summary = Some(progress.summary.clone());
             self.host_retry_at = retry_at;
             changed
         }
-        TorBootstrapStage::OnionService => {
-            let changed = progress.progress != self.host_onion_progress
-                || self.host_onion_status_code.as_deref() != Some(progress.code)
-                || progress.attempt != self.host_onion_attempt
-                || self.host_onion_status_summary.as_deref() != Some(progress.summary.as_str());
+        CommissioningStage::IncomingReachability => {
+            let changed = progress.progress != self.host_incoming_progress
+                || self.host_incoming_status_code.as_deref() != Some(progress.code.as_str())
+                || progress.attempt != self.host_incoming_attempt
+                || self.host_incoming_status_summary.as_deref() != Some(progress.summary.as_str());
             let now_ms = unix_time_ms().ok();
-            if self.host_onion_started_at_ms.is_none() {
-                self.host_onion_started_at_ms = now_ms;
-                self.host_onion_last_progress_at_ms = now_ms;
+            if self.host_incoming_started_at_ms.is_none() {
+                self.host_incoming_started_at_ms = now_ms;
+                self.host_incoming_last_progress_at_ms = now_ms;
             }
-            if progress.progress > self.host_onion_progress {
-                self.host_onion_last_progress_at_ms = now_ms;
+            if progress.progress > self.host_incoming_progress {
+                self.host_incoming_last_progress_at_ms = now_ms;
             }
-            self.host_onion_progress = self.host_onion_progress.max(progress.progress);
-            self.host_onion_attempt = progress.attempt;
-            self.host_onion_status_code = Some(progress.code.into());
-            self.host_onion_status_summary = Some(progress.summary.clone());
-            self.host_onion_retry_at = retry_at;
+            self.host_incoming_progress = self.host_incoming_progress.max(progress.progress);
+            self.host_incoming_attempt = progress.attempt;
+            self.host_incoming_status_code = Some(progress.code.clone());
+            self.host_incoming_status_summary = Some(progress.summary.clone());
+            self.host_incoming_retry_at = retry_at;
+            changed
+        }
+        CommissioningStage::PairingRendezvous => {
+            let changed = self.host_status_code.as_deref() != Some(progress.code.as_str())
+                || self.host_status_summary.as_deref() != Some(progress.summary.as_str())
+                || self.host_attempt != progress.attempt;
+            self.host_attempt = progress.attempt;
+            self.host_status_code = Some(progress.code.clone());
+            self.host_status_summary = Some(progress.summary.clone());
+            self.host_retry_at = retry_at;
             changed
         }
     }
@@ -120,7 +130,13 @@ fn advance_runtime_start(&mut self) {
             Ok(HostStartEvent::Progress(progress)) => {
                 let changed = self.apply_bootstrap_progress(&progress);
                 if changed {
-                    self.log("tor", Level::Info, "bootstrap", progress.code, &progress.summary);
+                    self.log(
+                        "communication",
+                        Level::Info,
+                        "bootstrap",
+                        &progress.code,
+                        &progress.summary,
+                    );
                 }
             }
             Ok(HostStartEvent::Finished(result)) => {
@@ -152,28 +168,32 @@ fn advance_runtime_start(&mut self) {
                 self.host = Some(owner);
                 self.host_retry_at = None;
                 self.host_failures = 0;
-                self.host_state_hint = TorState::Ready;
+                self.host_state_hint = CommunicationState::Ready;
                 self.host_progress = 100;
                 self.host_attempt = self.host_attempt.max(1);
-                self.host_status_code = Some("TOR_BOOTSTRAP_READY".into());
-                self.host_status_summary = Some("Tor network bootstrap completed".into());
-                self.host_onion_progress = self.host_onion_progress.max(5);
-                self.host_onion_status_code = Some("ONION_SERVICE_PUBLISHING".into());
-                self.host_onion_status_summary =
-                    Some("Waiting for private onion service reachability".into());
+                self.host_status_code = Some("COMMUNICATION_READY".into());
+                self.host_status_summary = Some("Selected communication provider is ready".into());
+                self.host_incoming_progress = self.host_incoming_progress.max(5);
+                self.host_incoming_status_code = Some("INCOMING_REACHABILITY_PENDING".into());
+                self.host_incoming_status_summary =
+                    Some("Waiting for provider incoming reachability".into());
                 self.log(
                     "bootstrap",
                     Level::Info,
                     "runtime",
-                    "TOR_READY",
-                    "Production network runtime is ready",
+                    "COMMUNICATION_READY",
+                    "Selected communication provider is ready",
                 );
             }
             Err(error) => {
                 self.host_failures = self.host_failures.saturating_add(1);
                 let retry_exhausted = self.host_failures >= NETWORK_MAX_ATTEMPTS;
                 self.host_state_hint =
-                    if retry_exhausted { TorState::Failed } else { TorState::Degraded };
+                    if retry_exhausted {
+                        CommunicationState::Failed
+                    } else {
+                        CommunicationState::Degraded
+                    };
                 self.log(
                     "bootstrap",
                     Level::Error,
@@ -190,10 +210,10 @@ fn advance_runtime_start(&mut self) {
                     Instant::now() + delay
                 });
                 if self.host_retry_at.is_some() {
-                    self.host_status_code = Some("TOR_BOOTSTRAP_RETRYING".into());
+                    self.host_status_code = Some("COMMUNICATION_RETRYING".into());
                     self.host_last_progress_at_ms = unix_time_ms().ok();
                 } else {
-                    self.host_status_code = Some("TOR_RUNTIME_FAILED".into());
+                    self.host_status_code = Some("COMMUNICATION_FAILED".into());
                 }
             }
         }
@@ -245,7 +265,7 @@ fn is_closed(&self) -> bool {
     self.actor.is_none()
 }
 
-fn log(&self, domain: &str, level: Level, component: &str, code: &str, message: &str) {
+pub(crate) fn log(&self, domain: &str, level: Level, component: &str, code: &str, message: &str) {
     if let Some(logger) = &self.logger {
         let _ = logger.event(domain, level, component, code, message);
     }

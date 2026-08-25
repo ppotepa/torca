@@ -71,17 +71,16 @@ impl fmt::Display for PeerLinkError {
 }
 impl std::error::Error for PeerLinkError {}
 
-type IncomingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
-type OutgoingSession = PeerSession<TorPeerTransport, Ed25519HandshakeVerifier>;
+type IncomingSession = PeerSession<Box<dyn PeerTransport + Send>, Ed25519HandshakeVerifier>;
+type OutgoingSession = PeerSession<Box<dyn PeerTransport + Send>, Ed25519HandshakeVerifier>;
 
 pub struct PeerLink<S, K> {
-    listener: PeerListener,
+    transport_factory: Box<dyn PeerTransportFactory>,
     relationships: S,
     signer: K,
     local_identity_id: OpaqueId,
-    tor_client: TorServiceHandle,
     random: RustCryptoProvider,
-    pending: Vec<TorPeerTransport>,
+    pending: Vec<Box<dyn PeerTransport + Send>>,
     incoming: BTreeMap<ContactId, IncomingSession>,
     outgoing: BTreeMap<ContactId, OutgoingSession>,
     reconnect: BTreeMap<ContactId, ReconnectEntry>,

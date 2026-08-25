@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use torca_relay_protocol::{RelayRequest, RelayResponse};
 
-use crate::{RelayTransport, RelayTransportError, RelayTransportFailureKind};
+use crate::{RelayTransportError, RelayTransportFailureKind};
 
 #[derive(Clone, Debug, Default)]
 pub struct ScriptedRelayTransport {
@@ -22,7 +22,7 @@ impl ScriptedRelayTransport {
     }
 }
 
-impl RelayTransport for ScriptedRelayTransport {
+impl crate::PairingServiceTransport for ScriptedRelayTransport {
     fn invalidate(&mut self) {
         self.connected = false;
     }

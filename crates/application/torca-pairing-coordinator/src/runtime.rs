@@ -10,18 +10,19 @@ use torca_pairing::{
     PairingState, PeerProposal,
 };
 use torca_pairing_protocol::{
-    AvatarEnvelope, PairingApproval, PairingCancellation, PairingCompletion, PairingCompletionAck,
-    PairingEnvelope, PairingInviteTicket, PairingOffer, PairingPayload, PairingRejection,
+    AvatarEnvelope, PairingApproval, PairingBootstrapDescriptor, PairingCancellation,
+    PairingCompletion, PairingCompletionAck, PairingEnvelope, PairingInviteTicket, PairingOffer,
+    PairingPayload, PairingRejection,
 };
 
 use crate::{
     PairingApprovalError, PairingApprovalPort, PairingCoordinator, PairingCoordinatorError,
-    PairingCredentialError, PairingCryptoPort, PairingPeerSecretStore, PairingRendezvousPort,
+    PairingCredentialError, PairingCryptoPort, PairingPeerSecretStore, PairingSessionServicePort,
     PairingSideToken, PairingSlotCapability, PairingSlotId, PairingTransportSnapshot,
     encode_invite_uri, invitation_expires_at,
 };
 
-const PAIRING_STATE_VERSION: u8 = 2;
+const PAIRING_STATE_VERSION: u8 = 3;
 
 include!("runtime/model.rs");
 

@@ -6,7 +6,7 @@ param(
     [string[]]$Arguments = @()
 )
 
-# Canonical SOAK2 entry point. Build/deploy output is deliberately kept out of
+# Canonical SOAK1 entry point. Build/deploy output is deliberately kept out of
 # the user's terminal; the Rust cockpit receives runtime output and exposes it
 # through its Logs view. The bootstrap log is retained for failed compilation.
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -18,17 +18,17 @@ $previousSoakFlavor = $env:TORCA_SOAK_FLAVOR
 
 Push-Location $repo
 try {
-    Write-Host "SOAK2 bootstrap: preparing cockpit (build details are captured in $bootstrapLog)"
+    Write-Host "SOAK1 bootstrap: preparing cockpit (build details are captured in $bootstrapLog)"
     & cargo build -q -p torca-soak --locked *> $bootstrapLog
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exe)) {
-        Write-Error "SOAK2 bootstrap build failed. Details: $bootstrapLog"
+        Write-Error "SOAK1 bootstrap build failed. Details: $bootstrapLog"
         if (Test-Path -LiteralPath $bootstrapLog) {
             Get-Content -LiteralPath $bootstrapLog -Tail 30 | ForEach-Object { Write-Host $_ }
         }
         exit 1
     }
 
-    Write-Host "SOAK2 bootstrap: cockpit ready; starting run"
+    Write-Host "SOAK1 bootstrap: cockpit ready; starting run"
     # The Android deployer and ScenarioBridge use this flag to select the
     # isolated com.torca.torca_app.soak flavor. Ordinary deploys never inherit it.
     $env:TORCA_SOAK_FLAVOR = '1'
@@ -37,7 +37,11 @@ try {
     } elseif ($Arguments.Count -eq 0) {
         & $exe --tui
     } else {
-        & $exe --tui @Arguments
+        # `--tui` is a launcher switch only when it is the sole argument.
+        # With an explicit plan the Rust binary detects the interactive
+        # terminal itself; passing `--tui` would otherwise be an unknown CLI
+        # option and make the cockpit fail before rendering.
+        & $exe @Arguments
     }
     exit $LASTEXITCODE
 } finally {

@@ -128,6 +128,8 @@ fn render_rust_contract(
             "                | \"foregrounded\"\n",
             "                | \"backgrounded\"\n",
             "                | \"network_changed\"\n",
+            "                | \"network_validated\"\n",
+            "                | \"flutter_gateway_ready\"\n",
             "                | \"low_memory\"\n",
             "                | \"terminating\"\n",
             "        ),\n",

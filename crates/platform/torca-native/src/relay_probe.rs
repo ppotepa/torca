@@ -2,23 +2,24 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use torca_foundation::ErrorCode;
-use torca_rendezvous_client::{RelayTransportFailureKind, SharedTorRelayTransport};
-use torca_runtime::{RelayProbe, RelayServiceInfo};
+use torca_rendezvous_client::RelayTransportFailureKind;
+use torca_rendezvous_tor::SharedTorRelayTransport;
+use torca_runtime::{RendezvousProbe, RendezvousServiceInfo};
 
 pub(crate) fn build_relay_probe(
     transport: SharedTorRelayTransport,
     timeout: Duration,
-) -> Arc<dyn RelayProbe> {
+) -> Arc<dyn RendezvousProbe> {
     Arc::new(TorRelayProbe { transport, timeout, info: Mutex::new(None) })
 }
 
 struct TorRelayProbe {
     transport: SharedTorRelayTransport,
     timeout: Duration,
-    info: Mutex<Option<RelayServiceInfo>>,
+    info: Mutex<Option<RendezvousServiceInfo>>,
 }
 
-impl RelayProbe for TorRelayProbe {
+impl RendezvousProbe for TorRelayProbe {
     fn probe(&self) -> Result<(), ErrorCode> {
         // Pairing and health checks intentionally share one durable relay
         // transport. `relay_info` owns reconnect serialization, including the
@@ -27,7 +28,7 @@ impl RelayProbe for TorRelayProbe {
             .relay_info(self.timeout)
             .map(|info| {
                 if let Ok(mut current) = self.info.lock() {
-                    *current = Some(RelayServiceInfo {
+                    *current = Some(RendezvousServiceInfo {
                         product_version: info.product_version,
                         build_id: info.build_id,
                         source_commit: info.source_commit,
@@ -38,7 +39,7 @@ impl RelayProbe for TorRelayProbe {
             .map_err(|error| ErrorCode::new(error_code(error.kind)))
     }
 
-    fn service_info(&self) -> Option<RelayServiceInfo> {
+    fn service_info(&self) -> Option<RendezvousServiceInfo> {
         self.info.lock().ok().and_then(|value| value.clone())
     }
 }

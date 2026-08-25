@@ -90,6 +90,33 @@ class TorcaStrings {
   String get blocked => _pl ? 'Zablokowany' : 'Blocked';
   String get directTorContact =>
       _pl ? 'Bezpośredni kontakt Tor' : 'Direct Tor contact';
+  String providerName(String provider) => switch (provider.toLowerCase()) {
+    'iroh' => 'Iroh',
+    'webrtc' => 'WebRTC',
+    'memory' => _pl ? 'Testowa pamięć' : 'Memory test',
+    'tor' => 'Tor',
+    _ => provider.isEmpty ? (_pl ? 'Komunikacja' : 'Communication') : provider,
+  };
+  String directProviderContact(String provider) => _pl
+      ? 'Bezpośredni kontakt ${providerName(provider)}'
+      : 'Direct ${providerName(provider)} contact';
+  String connectingPeerThrough(String provider) => _pl
+      ? 'Łączenie z kontaktem przez ${providerName(provider)}'
+      : 'Connecting to peer through ${providerName(provider)}';
+  String reconnectingPeerThrough(String provider) => _pl
+      ? 'Ponowne łączenie z kontaktem przez ${providerName(provider)}'
+      : 'Reconnecting to peer through ${providerName(provider)}';
+  String providerReady(String provider) => _pl
+      ? '${providerName(provider)} gotowy'
+      : '${providerName(provider)} ready';
+  String providerStarting(String provider) => _pl
+      ? '${providerName(provider)} uruchamia się'
+      : '${providerName(provider)} starting';
+  String providerReconnecting(String provider) => _pl
+      ? '${providerName(provider)} ponownie się łączy'
+      : '${providerName(provider)} reconnecting';
+  String providerStateLabel(String provider, String state) =>
+      '${providerName(provider)}: ${state.isEmpty ? 'offline' : state}';
   String get startConversation =>
       _pl ? 'Rozpocznij rozmowę' : 'Start conversation';
   String get connection => _pl ? 'Połączenie' : 'Connection';
@@ -126,8 +153,8 @@ class TorcaStrings {
   String get chooseNickname =>
       _pl ? 'Wybierz pseudonim' : 'Choose your nickname';
   String get nicknameIntro => _pl
-      ? 'Bezpieczna sieć Tor jest gotowa. Ta nazwa będzie widoczna dla kontaktów.'
-      : 'The secure Tor network is ready. This name will be shown to contacts.';
+      ? 'Bezpieczny provider komunikacji jest gotowy. Ta nazwa będzie widoczna dla kontaktów.'
+      : 'The selected communication provider is ready. This name will be shown to contacts.';
   String deviceFingerprint(String fingerprint) => _pl
       ? 'Odcisk urządzenia\n$fingerprint'
       : 'Device fingerprint\n$fingerprint';
@@ -147,8 +174,8 @@ class TorcaStrings {
   String get couldNotRemoveContact =>
       _pl ? 'Nie udało się usunąć kontaktu' : 'Could not remove contact';
   String get relayNotReady => _pl
-      ? 'Parowanie będzie dostępne, gdy bezpieczny relay będzie gotowy.'
-      : 'Pairing is unavailable until the secure relay is ready.';
+      ? 'Parowanie będzie dostępne, gdy wybrany provider komunikacji będzie gotowy.'
+      : 'Pairing is unavailable until the selected communication provider is ready.';
   String get relayDegraded => _pl
       ? 'Relay ponownie nawiązuje połączenie. Spróbuj za chwilę.'
       : 'The relay is reconnecting. Try again shortly.';
@@ -172,8 +199,8 @@ class TorcaStrings {
       ? 'Nie udało się zakończyć operacji na szyfrowanym magazynie.'
       : 'Encrypted local storage could not complete the operation.';
   String get networkUnavailable => _pl
-      ? 'Bezpieczne połączenie Tor jest obecnie niedostępne.'
-      : 'The secure Tor connection is currently unavailable.';
+      ? 'Wybrane połączenie komunikacyjne jest obecnie niedostępne.'
+      : 'The selected communication connection is currently unavailable.';
   String get runtimeUnavailable => _pl
       ? 'Bezpieczny runtime Torca jest obecnie niedostępny.'
       : 'The secure Torca runtime is currently unavailable.';
@@ -323,8 +350,8 @@ class TorcaStrings {
       : '$name accepted your join request';
   String get closeTooltip => _pl ? 'Zamknij' : 'Close';
   String buildTooltip(String build, String relay) => _pl
-      ? 'Build $build\nWersja relay: $relay'
-      : 'Torca build $build\nRelay version: $relay';
+      ? 'Build $build\nWersja usługi providera: $relay'
+      : 'Torca build $build\nProvider service: $relay';
   String buildLabel(String build) => _pl ? 'build $build' : 'build $build';
   String get secureRuntimeNotReady => _pl
       ? 'Bezpieczne srodowisko nie jest gotowe'
@@ -362,6 +389,12 @@ class TorcaStrings {
   String get enterSixCharacterCode => _pl
       ? 'Wpisz szescioznakowy kod lub zeskanuj kod QR.'
       : 'Enter a six-character code or scan the QR code.';
+  String get pairingBootstrapRequired => _pl
+      ? 'Dla tego providera zeskanuj kod QR albo wklej pelne zaproszenie.'
+      : 'For this provider, scan the QR code or paste the full invitation link.';
+  String get pairingProviderMismatch => _pl
+      ? 'To zaproszenie pochodzi od innego providera komunikacji.'
+      : 'This invitation belongs to a different communication provider.';
   String get invitationGenerating => _pl
       ? 'Generowanie prywatnego zaproszenia...'
       : 'Generating a private invitation...';
@@ -374,16 +407,22 @@ class TorcaStrings {
   String get invitationOperationFailed => _pl
       ? 'Operacja zaproszenia nie powiodla sie'
       : 'Invitation operation failed';
+  String get providerEndpoint =>
+      _pl ? 'Endpoint providera' : 'Provider endpoint';
+
+  String get providerEndpointAvailable => _pl ? 'Dostępny' : 'Available';
+
+  String get providerEndpointUnavailable => _pl ? 'Niedostępny' : 'Unavailable';
   String get invitationJoinSent => _pl
       ? 'Zadanie dolaczenia wyslane. Otrzymasz powiadomienie po akceptacji.'
       : 'Join request sent. You will be notified when it is accepted.';
   String get invitationSavedLocally => _pl
-      ? 'Zapisano lokalnie. Zadanie zostanie wyslane, gdy endpoint bedzie gotowy.'
-      : 'Saved locally. It will be sent when your private endpoint is ready.';
+      ? 'Zapisano lokalnie. Ponowimy, gdy wybrany dostawca komunikacji bedzie gotowy.'
+      : 'Saved locally. It will retry when the selected communication provider is ready.';
   String get openConversation => _pl ? 'Otworz rozmowe' : 'Open conversation';
   String get noMessagesYetDescription => _pl
-      ? 'Wiadomosci sa wysylane bezposrednio przez Tor.'
-      : 'Messages are sent directly through Tor.';
+      ? 'Wiadomosci sa wysylane bezposrednio przez wybrany provider komunikacji.'
+      : 'Messages are sent directly through the selected communication provider.';
   String get attachmentSyncing =>
       _pl ? 'Synchronizacja zalacznika…' : 'Attachment is syncing…';
   String get closeSearch => _pl ? 'Zamknij wyszukiwanie' : 'Close search';
@@ -563,7 +602,7 @@ class TorcaStrings {
   String get noReadableHealthEvents =>
       _pl ? 'Brak czytelnych zdarzen zdrowia' : 'No readable health events';
   String get startingSecureNetwork =>
-      _pl ? 'Uruchamianie bezpiecznej sieci…' : 'Starting secure network…';
+      _pl ? 'Uruchamianie komunikacji…' : 'Starting communication…';
 }
 
 extension TorcaStringsContext on BuildContext {

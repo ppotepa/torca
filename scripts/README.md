@@ -17,6 +17,7 @@ cargo run -p torca-deploy -- status
 cargo run -p torca-deploy -- plan --target all --configuration debug
 cargo run -p torca-deploy -- run --target all
 cargo run -p torca-deploy -- deploy --target all --configuration debug
+cargo run -p torca-deploy -- deploy --target all --configuration debug --communication-provider iroh
 cargo run -p torca-deploy -- rebuild --target all --configuration debug
 cargo run -p torca-deploy -- full-redeploy --target all --configuration debug
 cargo run -p torca-deploy -- relay status
@@ -35,6 +36,12 @@ The plan model makes destructive choices explicit. In particular:
 - `--privacy allow-capture` is a local-development opt-out from the Android window capture flag, not a transport/security change.
 
 See `cargo run -p torca-deploy -- --help` and the subcommand help for the current option set rather than copying every flag into long-lived documentation.
+
+Tor and Iroh are selectable production providers. Exactly one provider is
+compiled into a client deployment; the runtime never silently falls back to
+Tor. The compatibility build/run helpers also accept
+`-CommunicationProvider tor|iroh|webrtc`, but provider-aware deployment should
+remain on the Rust entry point above.
 
 ## What the Rust tool owns
 

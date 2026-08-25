@@ -180,7 +180,10 @@ pub enum PolicyOverrideReason {
 pub struct EffectiveBatteryPolicy {
     pub profile: BatteryProfile,
     pub reason: PolicyOverrideReason,
-    pub tor_dormancy_allowed: bool,
+    /// Whether the selected communication provider may enter its own low-power
+    /// state.  The provider decides what that state means (for example Tor
+    /// SoftDormant, an idle Iroh endpoint, or a paused WebRTC signaling client).
+    pub communication_dormancy_allowed: bool,
     pub background_sync: BackgroundSyncCadence,
     pub metered_transfers: MeteredTransferPolicy,
     pub visual_activity: VisualActivityPolicy,
@@ -254,7 +257,7 @@ impl BatteryPreferences {
         EffectiveBatteryPolicy {
             profile,
             reason,
-            tor_dormancy_allowed: !diagnostics_override
+            communication_dormancy_allowed: !diagnostics_override
                 && !system.foreground
                 && self.allow_delayed_background_delivery,
             background_sync: self.background_sync,
@@ -448,9 +451,7 @@ impl ContactAvailabilityMode {
 /// A resource controlled by policy. Feature crates map their own IDs here.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ResourceScope {
-    Tor,
-    Onion,
-    Relay,
+    Rendezvous,
     Peer(OpaqueId),
     Delivery(OpaqueId),
     Pairing(OpaqueId),
@@ -461,10 +462,10 @@ pub enum ResourceScope {
 /// A class of work that can consume a scheduler/budget permit.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkClass {
-    TorWake,
-    OnionPublish,
-    RelayConnect,
-    RelayProbe,
+    ProviderWake,
+    IncomingReachability,
+    RendezvousConnect,
+    RendezvousProbe,
     PeerDial,
     PeerProbe,
     PairingPoll,
@@ -791,7 +792,7 @@ impl RuntimeGovernor {
 
     /// Returns whether any feature currently owns work that must keep the
     /// network active. This is intentionally broader than a scope query and
-    /// is used only for global Tor dormancy decisions.
+    /// is used only for global selected-provider dormancy decisions.
     pub fn has_any_active_lease(&mut self, now: Instant) -> bool {
         self.expire(now);
         self.leases.values().any(|lease| lease.active_at(now))
@@ -1147,8 +1148,8 @@ mod tests {
         let now = Instant::now();
         let mut governor = RuntimeGovernor::new(now);
         governor.acquire_lease(WorkDemand {
-            scope: ResourceScope::Relay,
-            class: WorkClass::RelayProbe,
+            scope: ResourceScope::Rendezvous,
+            class: WorkClass::RendezvousProbe,
             reason: DemandReason::ActivePairing,
             owner: id(49),
             expires_at: now + Duration::from_secs(30),
@@ -1165,7 +1166,7 @@ mod tests {
             class: WorkClass::Radio,
             reason: DemandReason::RadioSession,
             owner: id(53),
-            expires_at: now - Duration::from_millis(1),
+            expires_at: now.checked_sub(Duration::from_millis(1)).unwrap(),
         });
         assert_eq!(governor.active_peer_ids(now), [id(50)].into_iter().collect());
     }
