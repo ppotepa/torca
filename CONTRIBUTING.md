@@ -1,18 +1,15 @@
 # Contributing to Torca
 
-Torca is a security-sensitive application. Keep changes small enough to review, preserve the enforced architecture boundaries, and state validation evidence precisely.
+Torca is a security-sensitive Rust/Flutter application. Keep changes reviewable, preserve enforced architecture boundaries, and report validation evidence precisely.
 
-## Before changing code
+## Read first
 
-Read:
-
-1. [`README.md`](README.md) for the product shape and canonical workflow;
-2. [`docs/STATUS.md`](docs/STATUS.md) for current maturity and outstanding validation;
-3. [`ARCHITECTURE.md`](ARCHITECTURE.md) for ownership/dependency rules;
-4. [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) for security-sensitive work; and
-5. [`docs/STATUS.md`](docs/STATUS.md) for the current engineering handoff.
-
-Use [`docs/README.md`](docs/README.md) to decide whether a documentation change belongs in an evergreen document or a working ledger.
+1. [`README.md`](README.md) — current product and repository shape.
+2. [`ARCHITECTURE.md`](ARCHITECTURE.md) — ownership/layer/provider boundaries.
+3. [`docs/app-flows.md`](docs/app-flows.md) — current product/runtime journeys.
+4. [`docs/transport.md`](docs/transport.md) — communication-provider model.
+5. [`SECURITY.md`](SECURITY.md), [`docs/security/threat-model.md`](docs/security/threat-model.md) and [`PRIVACY.md`](PRIVACY.md) for security/privacy-sensitive work.
+6. [`docs/development.md`](docs/development.md) and [`docs/testing.md`](docs/testing.md) for workflow/evidence.
 
 ## Canonical development workflow
 
@@ -22,62 +19,61 @@ Use the Rust deployment tool for normal build/run/deploy/device/log work:
 cargo run -p torca-deploy
 ```
 
-With no subcommand it opens the Ratatui wizard. The same planner/executor is available through CLI subcommands such as `status`, `plan`, `run`, `deploy`, `rebuild`, `full-redeploy`, `relay`, `resume`, `logs` and `build`.
-
-The remaining PowerShell scripts are compatibility, validation and maintenance helpers. Do not create a second deployment pipeline or document a lower-level helper as the primary developer workflow.
+No subcommand opens the Ratatui wizard. CLI commands use the same planner/executor for automation. PowerShell scripts are compatibility/validation helpers, not a second deployment pipeline.
 
 ## Architectural ownership
 
-Torca has one responsive Flutter client. Windows and Android are platform hosts of the same product, not separate business implementations.
+Flutter owns presentation, responsive layout, navigation, transient interaction state and local UI preferences. It submits typed user intent through `EngineGateway`.
 
-Flutter owns:
+Rust owns identities, durable workflow state, security-sensitive identifiers/timestamps, pairing, peer authentication, cryptography, persistence, communication-provider composition, delivery/retry, attachments, receipts, Radio Mode policy, diagnostics and presentation-safe projections.
 
-- presentation and responsive layout;
-- navigation and transient interaction state;
-- local presentation preferences; and
-- submission of typed user intent through `EngineGateway`.
+Platform code owns genuine OS integration: lifecycle, paths, protected secret stores, notifications, capture/window/permission behavior and provider host bridges where necessary.
 
-Rust owns:
+Do not move durable/security state machines into Dart, serialization code, Kotlin/C++ hosts, SQL repositories or transport adapters.
 
-- identities, contact relationships and security-sensitive identifiers/timestamps;
-- durable domain state and transactions;
-- pairing, peer authentication and cryptography;
-- SQLCipher persistence and protected-secret usage;
-- Tor/onion lifecycle, peer connectivity and delivery/retry;
-- attachments, receipts, Radio Mode policy and background coordination; and
-- presentation-safe read models, diagnostics and notification intent.
+## Communication providers
 
-Do not move durable workflow or security policy into Dart, serialization code, JNI/C++/Kotlin hosts or storage/network adapters.
+The application/runtime is provider-neutral above `torca-transport-api`. Tor and Iroh are currently selectable; WebRTC and memory are hidden from normal deployment.
 
-## Data and SQL
+Provider work must not:
 
-Business SQL belongs in parameterized `.sql` files owned by storage infrastructure. Application/domain code consumes repositories and storage-owned projections rather than raw database connections.
+- branch product logic in Flutter based on provider names;
+- make Arti/QUIC/DataChannel types leak into application/domain layers;
+- silently substitute Tor when another provider was selected;
+- fabricate Tor/onion state for a direct provider; or
+- claim Tor-like network privacy for a direct provider.
 
-Keep message history paged/searchable. Do not reintroduce complete-history loading/filtering into Flutter for normal conversation views.
+Opening a new provider requires composition/capability/pairing tests plus security/privacy documentation review.
 
-## Native and generated contract
+## Data, SQL and history
 
-`torca-native` is the narrow process/native boundary. The generated contract accepts user intent and returns presentation-safe DTOs/read models.
+Business SQL belongs in storage infrastructure and should remain parameterized/bounded. Application/domain code consumes repositories/read models rather than raw database connections.
 
-- Flutter must not generate durable domain IDs or security-sensitive timestamps.
-- Secret bytes and private keys must not cross into presentation contracts or logs.
+Conversation history/search is paged/query-driven from Rust. Do not reintroduce complete-history loading/filtering in Flutter as a normal correctness path.
+
+## Native/generated contract
+
+`torca-native` is the narrow process composition/native boundary. The generated contract maps user intent and presentation-safe projections.
+
+- Flutter must not generate durable domain IDs/security-sensitive timestamps.
+- Private keys/relationship secrets must not cross into presentation DTOs/logs.
 - Production native failure must remain explicit; do not silently fall back to an in-memory business implementation.
-- Long-running Tor/network work must not block access to local encrypted state.
-- Contract changes must update the canonical schema and generated projections together.
+- Provider/network startup must not block access to usable local encrypted state unnecessarily.
+- Contract changes must update canonical schema + generated projections together.
 
 ## Security-sensitive changes
 
-Do not invent a custom ratchet or cryptographic protocol to obtain a feature label. The current pairwise message-key design does not claim forward secrecy or post-compromise security. Any change to that guarantee needs a reviewed design, focused negative tests and updates to both `SECURITY.md` and the threat model.
+The current relationship-key design does not claim Signal-style forward secrecy/post-compromise security. Do not invent a custom ratchet merely to obtain a feature label.
 
-Treat changes to pairing, contact verification, peer authentication, encryption, protected-secret storage, notifications, Radio Mode media, diagnostics and platform capture/privacy behavior as security-sensitive.
+Treat changes to pairing, provider bootstrap, peer authentication, cryptography, protected-secret storage, contact verification, notifications, Radio media, diagnostics and platform capture/privacy as security-sensitive.
 
-A previously verified contact identity changing is a security event. Do not weaken the send block or allow resets/migrations to silently inherit the previous trust decision.
+For these changes, update the threat model/privacy/security docs when the boundary or claim changes and add negative/failure tests as well as happy paths.
 
 ## Validation
 
-Run the narrowest deterministic tests that cover your change, then expand to the affected repository gates. The CI definition is the best reference for the full automated matrix.
+Run focused deterministic tests first, then the affected repository gates. The CI workflow is the reference for the automated matrix; [`docs/testing.md`](docs/testing.md) explains evidence levels.
 
-Common source checks are:
+Common checks:
 
 ```powershell
 cargo fmt --all -- --check
@@ -86,18 +82,25 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D clippy::cor
 cargo test --workspace --all-targets --all-features --locked
 ```
 
-For Flutter changes, run `flutter analyze` and `flutter test` from `apps/client/flutter`. For contract changes, run the generator in check mode. For platform behavior, build and test the affected platform rather than treating a host-independent check as equivalent evidence.
+For Flutter changes, run `flutter analyze` and `flutter test` from `apps/client/flutter`. For contract changes, run `torca-contract-gen --check`. For platform/provider behavior, build/test the affected target/provider rather than treating host-independent tests as equivalent evidence.
 
-Never write “validated”, “release-ready”, “platform-complete” or similar wording without naming the evidence actually executed. A configured CI workflow is not a passing CI result.
+Never write “CI green”, “device validated”, “release ready” or “audited” without the corresponding executed evidence.
 
-## Documentation changes
+## Documentation policy
 
-Update evergreen documentation when a stable ownership, security, privacy or product rule changes. Update the detailed progress ledger when recording implementation/validation handoff.
+The maintained documentation is deliberately consolidated. Update an existing canonical page rather than adding a dated plan/checklist/status ledger.
 
-Avoid copying rapidly changing constants, schema versions, migration counts, class inventories or test totals into evergreen documents. If a working plan becomes obsolete, preserve its historical value in Git history and move any still-valid principle into the maintained documentation.
+- architecture/ownership -> `ARCHITECTURE.md`
+- product/runtime flows -> `docs/app-flows.md`
+- provider behavior -> `docs/transport.md`
+- development -> `docs/development.md`
+- deploy/runtime diagnostics -> `docs/operations.md`
+- validation/soak -> `docs/testing.md`
+- maturity -> `docs/STATUS.md`
+- security/privacy -> `SECURITY.md`, threat model, `PRIVACY.md`
 
-## Work units and reviews
+Temporary plans belong in issues/PRs and Git history. When a plan finishes, move durable conclusions into current-state docs rather than preserving the plan as a competing source of truth.
 
-A coherent work unit contains the smallest complete implementation, focused tests/contracts where appropriate, documentation/status updates when behavior or guarantees change, and exact validation evidence.
+## Pull requests
 
-Use a branch and pull request when review is useful or required by the working context. If work lands directly on `main`, each commit must still leave the repository internally coherent and must not present unexecuted validation as completed evidence.
+A coherent PR should contain the smallest complete implementation, focused tests/contracts, documentation updates when behavior/guarantees change, and an exact validation section that distinguishes what was run from what was not run.
