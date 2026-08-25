@@ -111,6 +111,45 @@ class PreparedAttachment {
   }
 }
 
+/// Removes abandoned app-owned staging files left behind when the process is
+/// killed while a native attachment job is still being admitted.  The scan is
+/// intentionally bounded to Torca's own filename prefixes and only deletes
+/// files older than the lease window.
+Future<int> cleanupStaleAttachmentStaging({
+  Duration maxAge = const Duration(hours: 24),
+}) async {
+  final cutoff = DateTime.now().subtract(maxAge);
+  var removed = 0;
+  try {
+    await for (final entity in Directory.systemTemp.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = entity.uri.pathSegments.last;
+      if (!_stagingPrefixes.any(name.startsWith)) continue;
+      try {
+        if ((await entity.stat()).modified.isBefore(cutoff)) {
+          await entity.delete();
+          removed++;
+        }
+      } on FileSystemException {
+        // A concurrent native worker may still own the file. It will be
+        // revisited on the next startup rather than interrupting the UI.
+      }
+    }
+  } on FileSystemException {
+    // Temporary storage is optional; attachment processing itself remains
+    // available when the directory cannot be enumerated.
+  }
+  return removed;
+}
+
+const _stagingPrefixes = <String>[
+  'torca-attachment-',
+  'torca-image-',
+  'torca-preview-',
+  'torca-video-preview-',
+  'torca-picked-',
+];
+
 class AttachmentProcessor {
   const AttachmentProcessor({this.policy = const AttachmentProcessingPolicy()});
 

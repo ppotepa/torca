@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:torca_attachment_processing/torca_attachment_processing.dart';
 import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
@@ -22,6 +23,7 @@ import 'settings/local_preferences.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  unawaited(cleanupStaleAttachmentStaging());
   _installUiDiagnostics();
   runApp(const TorcaBootstrap());
 }
