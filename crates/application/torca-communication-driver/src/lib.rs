@@ -531,6 +531,10 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
             .map_err(|_| {
                 RuntimeDriverError::Classified(CommunicationError::Attachment.descriptor())
             })?;
+        // Queue admission itself is a durable-work transition.  Do not wait
+        // for another subsystem's timer to notice the newly created job while
+        // the preparation worker is reading the source.
+        self.attachment_scheduler.wake();
         Ok(())
     }
 
