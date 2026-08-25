@@ -327,10 +327,6 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
     fn set_incoming_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
         self.incoming.set_radio_waker(waker);
     }
-
-    fn keep_alive_interval(&self) -> Duration {
-        Duration::from_millis(self.capabilities().max_idle_interval_ms)
-    }
 }
 
 impl torca_radio_adapters::RadioMediaSystemFactory for IrohRadioMediaSystemFactory {

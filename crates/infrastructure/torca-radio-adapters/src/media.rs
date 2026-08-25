@@ -107,7 +107,12 @@ pub trait RadioMediaConnector: Send {
     /// legacy stream transports, otherwise the provider can close an idle
     /// media stream before the next application frame is sent.
     fn keep_alive_interval(&self) -> Duration {
-        Duration::from_millis(self.capabilities().max_idle_interval_ms).min(KEEP_ALIVE_INTERVAL)
+        // Treat the provider value as a hard upper bound, not as a timer
+        // target. Mobile scheduling jitter, radio wake-up latency and QUIC
+        // clock skew can otherwise make a heartbeat sent exactly at the
+        // boundary arrive after the provider has already closed the stream.
+        let safe_ms = (self.capabilities().max_idle_interval_ms / 2).max(1_000);
+        Duration::from_millis(safe_ms).min(KEEP_ALIVE_INTERVAL)
     }
 }
 
