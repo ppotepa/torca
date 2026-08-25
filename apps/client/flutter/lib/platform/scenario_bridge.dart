@@ -323,6 +323,17 @@ class ScenarioBridge implements ScenarioBridgeController {
             .toList(growable: false),
         'radio': <String, Object?>{
           'activeContactId': snapshot.radio.activeContactId,
+          'contacts': snapshot.radio.contacts
+              .map(
+                (contact) => <String, Object?>{
+                  'contactId': contact.contactId,
+                  'localEnabled': contact.localEnabled,
+                  'remoteState': contact.remoteState,
+                  'state': contact.state,
+                  'changedAtMs': contact.changedAtMs,
+                },
+              )
+              .toList(growable: false),
           'session': snapshot.radio.session == null
               ? null
               : <String, Object?>{
@@ -330,7 +341,23 @@ class ScenarioBridge implements ScenarioBridgeController {
                   'state': snapshot.radio.session!.state,
                   'floor': snapshot.radio.session!.floor,
                   'burstElapsedMs': snapshot.radio.session!.burstElapsedMs,
+                  'maxBurstMs': snapshot.radio.session!.maxBurstMs,
+                  'inputLevelMilli': snapshot.radio.session!.inputLevelMilli,
                 },
+          'lastTransportFailure': snapshot.radio.lastTransportFailure,
+          'lastTransportFailureContactId':
+              snapshot.radio.lastTransportFailureContactId,
+          'timeline': snapshot.radio.timeline
+              .map(
+                (event) => <String, Object?>{
+                  'eventId': event.eventId,
+                  'contactId': event.contactId,
+                  'kind': event.kind,
+                  'actor': event.actor,
+                  'occurredAtMs': event.occurredAtMs,
+                },
+              )
+              .toList(growable: false),
         },
       };
 }

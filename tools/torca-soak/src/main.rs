@@ -1188,8 +1188,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         )?;
         {
             sequence = sequence.saturating_add(1);
-            let body;
-            {
+            let (snapshot, bot_to_bot, conversation_id, peer_name, body) = {
                 let peer = &mut peers[peer_index];
                 let snapshot = snapshot_with_retry(peer, "snapshot")?;
                 let bot_to_bot = matches!(peer, Participant::Fake(_) | Participant::Remote(_))
@@ -1197,28 +1196,30 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
                 let conversation_index = usize::from(bot_to_bot);
                 let conversation_id = conversation_id_at(&snapshot, conversation_index)
                     .ok_or_else(|| format!("{} has no conversation after pairing", peer.name()))?;
-                let message_body = format!("torca-soak sequence={sequence} sender={}", peer.name());
-                body = message_body.clone();
+                let body = format!("torca-soak sequence={sequence} sender={}", peer.name());
                 let response = peer.request(
                     &format!("message-{sequence}"),
                     "message.send",
-                    serde_json::json!({
-                        "conversationIdHex": conversation_id,
-                        "body": message_body
-                    }),
+                    serde_json::json!({"conversationIdHex": conversation_id, "body": body}),
                 )?;
+                let peer_name = peer.name().to_owned();
                 record(
                     &mut timeline,
                     "message_queued",
-                    serde_json::json!({"peer": peer.name(), "sequence": sequence, "response": response}),
+                    serde_json::json!({"peer": peer_name, "sequence": sequence, "response": response}),
                 )?;
-                if cli.scenario == Scenario::ActiveMessaging
-                    && !bot_to_bot
-                    && matches!(peer, Participant::Fake(_) | Participant::Remote(_))
-                {
-                    notifications_expected = notifications_expected.saturating_add(1);
-                }
-                if sequence.is_multiple_of(30) {
+                (snapshot, bot_to_bot, conversation_id.clone(), peer_name, body)
+            };
+            let mut attachment_name = None;
+            if cli.scenario == Scenario::ActiveMessaging
+                && !bot_to_bot
+                && matches!(peers[peer_index], Participant::Fake(_) | Participant::Remote(_))
+            {
+                notifications_expected = notifications_expected.saturating_add(1);
+            }
+            if sequence.is_multiple_of(30) {
+                let (attachment, fixture_path) = {
+                    let peer = &mut peers[peer_index];
                     let fixture = peer.request(
                         &format!("fixture-{sequence}"),
                         "attachment.fixture",
@@ -1228,7 +1229,8 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
                         .pointer("/result/path")
                         .or_else(|| fixture.get("path"))
                         .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| format!("{} fixture path missing", peer.name()))?;
+                        .ok_or_else(|| format!("{} fixture path missing", peer.name()))?
+                        .to_owned();
                     let attachment = peer.request(
                         &format!("attachment-{sequence}"),
                         "attachment.queue",
@@ -1240,39 +1242,48 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
                             "size": 1_048_576_u64
                         }),
                     )?;
-                    record(
-                        &mut timeline,
-                        "attachment_queued",
-                        serde_json::json!({"peer": peer.name(), "sequence": sequence, "response": attachment}),
-                    )?;
-                }
-                if cli.radio && sequence.is_multiple_of(12) {
-                    let contact_id = first_contact_id(&snapshot)
-                        .ok_or_else(|| format!("{} has no contact for radio", peer.name()))?;
+                    (attachment, fixture_path)
+                };
+                record(
+                    &mut timeline,
+                    "attachment_queued",
+                    serde_json::json!({"peer": peer_name, "sequence": sequence, "sourcePath": fixture_path, "response": attachment}),
+                )?;
+                attachment_name = Some(format!("soak-{sequence}.bin"));
+            }
+            if cli.radio && sequence.is_multiple_of(12) {
+                let contact_id = first_contact_id(&snapshot)
+                    .ok_or_else(|| format!("{peer_name} has no contact for radio"))?;
+                let begin = {
+                    let peer = &mut peers[peer_index];
                     peer.request(
                         &format!("radio-enable-{sequence}"),
                         "radio.enable",
                         serde_json::json!({"contactIdHex": contact_id, "enabled": true}),
                     )?;
-                    let begin = peer.request(
+                    peer.request(
                         &format!("radio-begin-{sequence}"),
                         "radio.begin",
                         serde_json::json!({"contactIdHex": contact_id}),
-                    )?;
-                    tui::controlled_sleep(Duration::from_millis(750));
-                    let end = peer.request(
-                        &format!("radio-end-{sequence}"),
-                        "radio.end",
-                        serde_json::json!({"contactIdHex": contact_id}),
-                    )?;
-                    record(
-                        &mut timeline,
-                        "radio_burst",
-                        serde_json::json!({"peer": peer.name(), "sequence": sequence, "begin": begin, "end": end}),
-                    )?;
-                }
+                    )?
+                };
+                wait_for_remote_radio(&mut peers, peer_index, &contact_id)?;
+                tui::controlled_sleep(Duration::from_secs(1));
+                let end = peers[peer_index].request(
+                    &format!("radio-end-{sequence}"),
+                    "radio.end",
+                    serde_json::json!({"contactIdHex": contact_id}),
+                )?;
+                record(
+                    &mut timeline,
+                    "radio_burst",
+                    serde_json::json!({"peer": peer_name, "sequence": sequence, "begin": begin, "end": end}),
+                )?;
             }
             wait_for_message(&mut peers, peer_index, &body)?;
+            if let Some(name) = attachment_name {
+                wait_for_attachment(&mut peers, peer_index, &name)?;
+            }
             delivered_messages = delivered_messages.saturating_add(1);
         }
         record(
@@ -3168,6 +3179,118 @@ fn snapshot_contains_message(snapshot: &serde_json::Value, body: &str) -> bool {
     )
 }
 
+/// A radio command response only proves that the local coordinator accepted
+/// the request. The soak must also observe the remote coordinator entering a
+/// receiving/remote-floor state; otherwise a permanently queued floor request
+/// would be reported as a successful radio burst.
+fn wait_for_remote_radio(
+    peers: &mut [Participant],
+    sender_index: usize,
+    contact_id: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let mut attempt = 0u32;
+    let mut last_error = String::new();
+    while Instant::now() < deadline && !tui::cancel_requested() {
+        for (index, peer) in peers.iter_mut().enumerate() {
+            if index == sender_index {
+                continue;
+            }
+            attempt = attempt.saturating_add(1);
+            match peer.request(&format!("radio-check-{attempt}"), "snapshot", serde_json::json!({}))
+            {
+                Ok(snapshot) => {
+                    if snapshot_radio_is_remote_active(&snapshot, contact_id) {
+                        return Ok(());
+                    }
+                    last_error = format!("{} radio not active yet", peer.name());
+                }
+                Err(error) => last_error = format!("{}: {error}", peer.name()),
+            }
+        }
+        tui::controlled_sleep(Duration::from_millis(500));
+    }
+    Err(format!(
+        "remote radio burst was not observed within 45s for contact {contact_id}; last_error={last_error}"
+    ))
+}
+
+fn snapshot_radio_is_remote_active(snapshot: &serde_json::Value, contact_id: &str) -> bool {
+    let radio = snapshot.pointer("/snapshot/radio").or_else(|| snapshot.get("radio"));
+    let Some(radio) = radio else { return false };
+    if radio.get("session").and_then(serde_json::Value::as_object).is_some_and(|session| {
+        session.get("contactId").and_then(serde_json::Value::as_str) == Some(contact_id)
+            && (session.get("floor").and_then(serde_json::Value::as_str) == Some("remote")
+                || matches!(
+                    session.get("state").and_then(serde_json::Value::as_str),
+                    Some("receiving" | "starting_capture" | "transmitting")
+                ))
+    }) {
+        return true;
+    }
+    radio.get("contacts").and_then(serde_json::Value::as_array).is_some_and(|contacts| {
+        contacts.iter().any(|contact| {
+            contact.get("contactId").and_then(serde_json::Value::as_str) == Some(contact_id)
+                && matches!(
+                    contact.get("state").and_then(serde_json::Value::as_str),
+                    Some("receiving" | "starting_capture" | "transmitting")
+                )
+        })
+    })
+}
+
+/// Attachment queue admission is intentionally fast. Completion is a
+/// separate durable job state and must be asserted independently of the text
+/// message which references the attachment.
+fn wait_for_attachment(
+    peers: &mut [Participant],
+    sender_index: usize,
+    name: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut attempt = 0u32;
+    let mut last_error = String::new();
+    while Instant::now() < deadline && !tui::cancel_requested() {
+        for (index, peer) in peers.iter_mut().enumerate() {
+            if index == sender_index {
+                continue;
+            }
+            attempt = attempt.saturating_add(1);
+            match peer.request(
+                &format!("attachment-check-{attempt}"),
+                "snapshot",
+                serde_json::json!({}),
+            ) {
+                Ok(snapshot) => {
+                    if snapshot_attachment_available(&snapshot, name) {
+                        return Ok(());
+                    }
+                    last_error = format!("{} attachment not available yet", peer.name());
+                }
+                Err(error) => last_error = format!("{}: {error}", peer.name()),
+            }
+        }
+        tui::controlled_sleep(Duration::from_secs(2));
+    }
+    Err(format!(
+        "attachment {name} was not observed as available within 180s; last_error={last_error}"
+    ))
+}
+
+fn snapshot_attachment_available(snapshot: &serde_json::Value, name: &str) -> bool {
+    snapshot
+        .pointer("/snapshot/attachments")
+        .or_else(|| snapshot.get("attachments"))
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|attachments| {
+            attachments.iter().any(|attachment| {
+                attachment.get("name").and_then(serde_json::Value::as_str) == Some(name)
+                    && attachment.get("status").and_then(serde_json::Value::as_str)
+                        == Some("available")
+            })
+        })
+}
+
 fn spawn_peer(executable: &Path, root: &Path, name: &str) -> Result<PeerProcess, String> {
     let (child, input, output) = spawn_peer_parts(executable, root, name)?;
     Ok(PeerProcess {
@@ -3239,7 +3362,8 @@ fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), S
 mod tests {
     use super::{
         contact_count, conversation_count, pairing_by_id, parse_launchable_activity,
-        snapshot_contains_message, snapshot_identity, valid_endpoint, validate_fixture_name,
+        snapshot_attachment_available, snapshot_contains_message, snapshot_identity,
+        snapshot_radio_is_remote_active, valid_endpoint, validate_fixture_name,
     };
     use serde_json::json;
 
@@ -3321,5 +3445,37 @@ mod tests {
         });
         assert!(snapshot_contains_message(&snapshot, "hello"));
         assert!(!snapshot_contains_message(&snapshot, "missing"));
+    }
+
+    #[test]
+    fn radio_observation_requires_remote_floor_or_receiving_state() {
+        let active = json!({
+            "snapshot": {
+                "radio": {
+                    "session": {"contactId": "peer", "state": "receiving", "floor": "remote"}
+                }
+            }
+        });
+        let queued = json!({
+            "snapshot": {
+                "radio": {
+                    "session": {"contactId": "peer", "state": "requesting_floor", "floor": "none"}
+                }
+            }
+        });
+        assert!(snapshot_radio_is_remote_active(&active, "peer"));
+        assert!(!snapshot_radio_is_remote_active(&queued, "peer"));
+    }
+
+    #[test]
+    fn attachment_observation_requires_available_status_and_name() {
+        let available = json!({
+            "snapshot": {"attachments": [{"name": "clip.bin", "status": "available"}]}
+        });
+        let queued = json!({
+            "snapshot": {"attachments": [{"name": "clip.bin", "status": "transferring"}]}
+        });
+        assert!(snapshot_attachment_available(&available, "clip.bin"));
+        assert!(!snapshot_attachment_available(&queued, "clip.bin"));
     }
 }
