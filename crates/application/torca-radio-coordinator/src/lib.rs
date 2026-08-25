@@ -247,6 +247,9 @@ pub enum RadioSessionEvent {
     },
     Interrupted {
         contact_id: ContactId,
+        /// Session generation which produced the interruption.  Events from
+        /// an older provider session must never tear down a newer one.
+        session_id: Option<RadioSessionId>,
         at: Timestamp,
     },
 }
@@ -605,7 +608,17 @@ impl RadioCoordinator {
                 }
                 channel.end_burst()?;
             }
-            RadioSessionEvent::Interrupted { contact_id, at } => {
+            RadioSessionEvent::Interrupted { contact_id, session_id, at } => {
+                let current_session = self
+                    .channels
+                    .get(&contact_id)
+                    .and_then(|channel| channel.session().map(|session| session.id));
+                if session_id.is_some() && session_id != current_session {
+                    // A delayed event from a replaced provider connection is
+                    // expected during reconnect. It is not allowed to mutate
+                    // the current session projection.
+                    return Ok(());
+                }
                 self.audio.end_capture();
                 self.audio.end_playback();
                 if let Some(event) = self

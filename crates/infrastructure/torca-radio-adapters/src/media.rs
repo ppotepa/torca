@@ -750,7 +750,11 @@ impl MediaWorker {
                 let Some(route) = self.directory.route(contact_id) else {
                     emit(
                         &self.events,
-                        RadioSessionEvent::Interrupted { contact_id, at: now_timestamp() },
+                        RadioSessionEvent::Interrupted {
+                            contact_id,
+                            session_id: Some(session_id),
+                            at: now_timestamp(),
+                        },
                     );
                     self.pending = None;
                     return Ok(());
@@ -998,6 +1002,11 @@ impl MediaWorker {
             .as_ref()
             .map(|live| live.pending.contact_id)
             .or_else(|| self.pending.as_ref().map(|pending| pending.contact_id));
+        let session_id = self
+            .live
+            .as_ref()
+            .map(|live| live.pending.session_id)
+            .or_else(|| self.pending.as_ref().map(|pending| pending.session_id));
         if let Some(live) = self.live.take() {
             let _ = live.stream.close_stream();
             let mut pending = live.pending;
@@ -1006,7 +1015,11 @@ impl MediaWorker {
         }
         self.audio.clear();
         if let Some(contact_id) = contact_id {
-            self.events.emit(RadioSessionEvent::Interrupted { contact_id, at: now_timestamp() });
+            self.events.emit(RadioSessionEvent::Interrupted {
+                contact_id,
+                session_id,
+                at: now_timestamp(),
+            });
         }
     }
 
