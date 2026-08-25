@@ -284,24 +284,12 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             && !self.attachment_job_active.swap(true, Ordering::AcqRel)
         {
             self.attachment_scheduler.disarm();
-            if let Err(error) =
-                self.attachment_job_sender.try_send(AttachmentWork::Maintenance { now })
-            {
-                // A full bounded queue is recoverable.  Leaving the active
-                // flag set here permanently disarms attachment maintenance:
-                // no worker completion can arrive for the job that was never
-                // admitted, so every later attachment remains stuck.
-                self.attachment_job_active.store(false, Ordering::Release);
-                match error {
-                    TrySendError::Full(_) => {
-                        self.attachment_scheduler.wake_after(now, Duration::from_millis(100));
-                        eprintln!("torca-attachment: worker queue full; retrying maintenance");
-                    }
-                    TrySendError::Disconnected(_) => {
-                        eprintln!("torca-attachment: worker queue disconnected");
-                    }
-                }
-            }
+            dispatch_attachment_maintenance(
+                &self.attachment_job_sender,
+                &self.attachment_job_active,
+                &mut self.attachment_scheduler,
+                now,
+            );
         }
         Ok(())
     }
@@ -390,6 +378,29 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             attachments.shutdown();
         }
         self.peer.shutdown();
+    }
+}
+
+fn dispatch_attachment_maintenance(
+    sender: &SyncSender<AttachmentWork>,
+    active: &AtomicBool,
+    scheduler: &mut AttachmentJobScheduler,
+    now: Timestamp,
+) {
+    if let Err(error) = sender.try_send(AttachmentWork::Maintenance { now }) {
+        // A full bounded queue is recoverable. Leaving the active flag set
+        // here permanently disarms attachment maintenance: no worker
+        // completion can arrive for the job that was never admitted.
+        active.store(false, Ordering::Release);
+        match error {
+            TrySendError::Full(_) => {
+                scheduler.wake_after(now, Duration::from_millis(100));
+                eprintln!("torca-attachment: worker queue full; retrying maintenance");
+            }
+            TrySendError::Disconnected(_) => {
+                eprintln!("torca-attachment: worker queue disconnected");
+            }
+        }
     }
 }
 
@@ -1047,11 +1058,14 @@ fn map_runtime(error: CommunicationError) -> RuntimeDriverError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ATTACHMENT_MESSAGE_KIND, CommunicationError, PROBE_MESSAGE_KIND,
-        RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND,
-        map_runtime, plan_read_receipts,
+        ATTACHMENT_MESSAGE_KIND, AttachmentJobScheduler, AttachmentWork, CommunicationError,
+        PROBE_MESSAGE_KIND, RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND,
+        RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND, dispatch_attachment_maintenance, map_runtime,
+        plan_read_receipts,
     };
     use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::sync_channel;
     use torca_control_delivery::ReadCandidate;
     use torca_foundation::{ClassifiedError, OpaqueId, Timestamp};
 
@@ -1096,5 +1110,18 @@ mod tests {
         let descriptor = error.descriptor();
         assert_eq!(descriptor.code().as_str(), "communication.attachment_unavailable");
         assert_eq!(descriptor.retry_advice(), torca_foundation::RetryAdvice::Backoff);
+    }
+
+    #[test]
+    fn full_attachment_worker_queue_is_retried_instead_of_sticking_active() {
+        let (sender, _receiver) = sync_channel::<AttachmentWork>(0);
+        let active = AtomicBool::new(true);
+        let mut scheduler = AttachmentJobScheduler::new();
+        let now = Timestamp::from_unix_millis(10).expect("timestamp");
+
+        dispatch_attachment_maintenance(&sender, &active, &mut scheduler, now);
+
+        assert!(!active.load(Ordering::Acquire));
+        assert_eq!(scheduler.next_delay(now), Some(std::time::Duration::from_millis(100)));
     }
 }
