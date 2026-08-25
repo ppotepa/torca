@@ -464,7 +464,10 @@ class TransportStatusDto {
     final relayInfo = value['relayInfo'];
     return TransportStatusDto(
       communication: communication is Map<String, dynamic>
-          ? TransportIndicatorDto.fromJson(communication, fallbackState: 'stopped')
+          ? TransportIndicatorDto.fromJson(
+              communication,
+              fallbackState: 'stopped',
+            )
           : const TransportIndicatorDto(state: 'stopped'),
       tor: tor is Map<String, dynamic>
           ? TransportIndicatorDto.fromJson(tor, fallbackState: 'stopped')
@@ -893,6 +896,7 @@ class RadioDto {
     this.activeContactId,
     this.contacts = const [],
     this.session,
+    this.lastTransportFailure,
     this.timeline = const [],
     this.audio = const RadioAudioDto(),
   });
@@ -908,6 +912,7 @@ class RadioDto {
       session: session is Map<String, dynamic>
           ? RadioSessionDto.fromJson(session)
           : null,
+      lastTransportFailure: value['lastTransportFailure'] as String?,
       timeline: _objects(
         value['timeline'],
       ).map(RadioTimelineEventDto.fromJson).toList(growable: false),
@@ -920,6 +925,7 @@ class RadioDto {
   final String? activeContactId;
   final List<RadioContactDto> contacts;
   final RadioSessionDto? session;
+  final String? lastTransportFailure;
   final List<RadioTimelineEventDto> timeline;
   final RadioAudioDto audio;
 
@@ -1147,7 +1153,11 @@ class CreatePairingCommandDto extends BridgeCommandDto {
 }
 
 class JoinPairingCommandDto extends BridgeCommandDto {
-  const JoinPairingCommandDto({required this.code, this.ticket, this.bootstrapJson});
+  const JoinPairingCommandDto({
+    required this.code,
+    this.ticket,
+    this.bootstrapJson,
+  });
   final String code;
   final String? ticket;
   final String? bootstrapJson;
@@ -1530,7 +1540,8 @@ class RuntimeRequestDto {
       return _command('pairing.join', <String, Object?>{
         'code': command.code,
         if (command.ticket != null) 'ticket': command.ticket,
-        if (command.bootstrapJson != null) 'bootstrap': jsonDecode(command.bootstrapJson!),
+        if (command.bootstrapJson != null)
+          'bootstrap': jsonDecode(command.bootstrapJson!),
       });
     }
     if (command is ApprovePairingCommandDto) {
