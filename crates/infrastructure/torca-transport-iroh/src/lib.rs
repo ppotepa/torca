@@ -397,6 +397,16 @@ impl IrohIncomingRouter {
     pub(crate) fn set_radio_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) {
         if let Ok(mut slot) = self.radio_wake.lock() {
             *slot = Some(waker);
+            // The provider listener can accept a connection before the media
+            // worker finishes installing its callback. Replay the wake when
+            // a radio connection is already queued so it cannot remain
+            // invisible until the fallback poll deadline.
+            let has_pending = self.radio.lock().map(|queue| !queue.is_empty()).unwrap_or(false);
+            if has_pending {
+                if let Some(callback) = slot.as_ref() {
+                    callback();
+                }
+            }
         }
     }
 
