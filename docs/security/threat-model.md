@@ -1,257 +1,264 @@
 # Torca threat model
 
-This threat model records the assets and trust boundaries that should remain visible while Torca evolves. It intentionally avoids treating one release's exact protocol/schema layout as permanent.
-
-Torca is alpha software and has not received an independent production security audit. This model is a design/review tool, not a certification.
+This threat model records the current assets, trust boundaries and review triggers for Torca. It is a design/review aid, not a certification. Torca is alpha software and has not received an independent production security audit.
 
 ## Scope
 
-The model covers the Torca client, local storage/secrets, embedded Tor connectivity, direct peer sessions, pairing/rendezvous, attachments, Radio Mode, the Flutter/native boundary, platform hosts and observability/notification/capture paths.
+The model covers:
 
-It does not attempt to model every attack against the Tor network, operating system, hardware, compiler/toolchain or intended message recipient.
+- Windows/Android Torca clients;
+- Flutter/native/application boundaries;
+- local encrypted storage and protected secrets;
+- pairing and provider commissioning;
+- authenticated peer sessions over selectable communication providers;
+- messages, receipts, attachments and Radio Mode;
+- notifications, diagnostics and capture surfaces; and
+- deployment/runtime lifecycle that can affect availability or privacy.
+
+It does not attempt to model every attack against the OS/hardware/toolchain, global network infrastructure or an intended recipient.
 
 ## Assets
 
 Security-sensitive assets include:
 
-- local identity private key material;
-- protected pairwise/relationship secrets and capabilities;
+- identity private key material;
 - database/storage encryption key material;
+- relationship/peer secrets and capabilities;
+- provider endpoint/signaling secret material;
 - message and attachment plaintext;
-- Radio Mode control/media plaintext while in use;
+- Radio control/media plaintext while in use;
 - encrypted local history and durable delivery state;
 - contact verification/trust state;
-- onion endpoints and pairing invitation capabilities;
-- pairing ephemeral state before a relationship is completed; and
-- metadata that can reveal relationships, communication timing or activity.
+- active pairing invitations/bootstrap capabilities; and
+- relationship/activity metadata such as timing and peer/provider endpoints.
 
-Availability is also an asset: a privacy-preserving messenger that silently loses or indefinitely stalls user work is not functioning safely.
+Availability is also an asset: silent loss or indefinite stalling of durable user work is a security/reliability failure.
 
 ## Components and trust assumptions
 
-### Local Torca client
+### Local Torca process
 
-The local Torca process is trusted to handle the user's plaintext and secret material. Rust application/domain code is the main owner of durable workflow and security state. Flutter is a presentation boundary rather than a key store or network-workflow owner.
+The local process is trusted to handle the user's plaintext and secrets. Rust application/domain code owns durable workflow/security state. Flutter is presentation, not a keystore or durable network workflow owner.
 
-A fully compromised local OS/process/user account is outside the protection that application-level encryption can provide.
+A fully compromised OS/process/account is outside the protections application-layer encryption can provide.
 
 ### Platform services
 
-Windows/Android hosts provide OS-specific paths, protected-secret storage, lifecycle, notification, capture/window and permission integration. The strength of at-rest secret protection is bounded by the selected OS adapter and the security of the device/account.
+Windows/Android hosts provide paths, protected-secret storage, lifecycle, notification, capture/window and permission integration. The strength of protected storage is bounded by the actual OS/device/account implementation.
 
-Android microphone permission gates local Radio Mode capture. OS-level screen-capture protection reduces accidental capture exposure when strict mode is active, but a deliberate development override or a compromised OS defeats that protection.
+Android microphone permission gates local Radio capture. Secure-window behavior reduces accidental capture exposure when strict mode is active, but a development override or compromised OS defeats it.
 
-### Tor / Arti
+### Communication provider
 
-Arti provides Tor connectivity and onion-service functionality inside the process. Tor is trusted for its intended routing properties but **not** as proof of peer application identity. Torca still authenticates peers and encrypted application payloads.
+Exactly one provider is selected per deployment/session.
 
-### Rendezvous relay
+- **Tor**: embedded Arti/onion transport and managed pairing rendezvous.
+- **Iroh**: QUIC/direct path and direct pairing bootstrap.
+- **WebRTC**: adapter/native boundary exists but normal deployment hides it pending host session/signaling implementation.
+- **Memory**: simulated/test provider only.
 
-The relay is untrusted for confidentiality and identity. It may observe operational metadata required to manage ephemeral pairing slots and active connections. Clients must cryptographically protect pairing content and explicitly approve the relationship.
+Providers are trusted only to provide their intended transport properties, not as proof of Torca peer identity or payload authenticity. Application-layer authentication/encryption remains mandatory.
 
-The relay is not trusted with message history, attachment content, Radio Mode media or long-lived peer secrets and is not used as the normal message route.
+Provider metadata differs. Tor is intended to reduce direct peer-address exposure; direct-path providers expose a different network metadata surface. All providers/networks can delay/drop traffic and observe metadata available at their position.
+
+### Pairing commissioning infrastructure
+
+Tor's managed rendezvous service is untrusted for confidentiality and identity. It can observe bounded operational metadata needed to run pairing slots. Direct providers may instead use bootstrap/signaling material without the managed relay.
+
+Commissioning infrastructure is not trusted with durable relationship truth, conversation content/history or long-lived relationship secrets.
 
 ### Remote peer
 
-A successfully authenticated paired peer is trusted as the current holder of the approved relationship identity/capability. It is not trusted to respect local retention/privacy wishes after content is delivered; a recipient can copy messages/files and record Radio Mode audio outside Torca.
+A successfully authenticated paired peer is trusted as the approved holder of the relationship credential. It is not trusted to honor local retention wishes; it can copy messages/files and record Radio audio outside Torca.
 
-## Trust boundaries
-
-### Flutter -> application/native
+## Trust boundary: Flutter -> native/application
 
 Threats:
 
 - presentation forging security-sensitive identifiers/timestamps;
-- duplicated business/security policy in Dart;
+- duplicated product/security state machines in Dart;
 - private material leaking into DTOs/logs;
-- malformed strings/lengths crossing FFI; and
-- presentation state incorrectly becoming a correctness dependency for durable/background work.
+- malformed boundary input; and
+- visible-route/lifecycle state becoming required for durable background correctness.
 
 Controls/direction:
 
-- commands represent user intent;
-- Rust/application owns security-sensitive identifiers and durable transitions;
-- canonical generated contract is checked for drift;
-- FFI/native validates boundary input and exposes presentation-safe read models;
-- key material must not cross into Flutter; and
-- durable delivery/pairing/Radio correctness is independent of the currently visible Flutter route.
+- Flutter submits user intent rather than authoritative durable transitions;
+- Rust owns security-sensitive identifiers/state;
+- generated contract drift is checked;
+- boundary input is validated/bounded;
+- secret bytes do not belong in presentation DTOs; and
+- durable retry/pairing/Radio correctness does not depend on the current route.
 
-### Application -> infrastructure
+## Trust boundary: application -> infrastructure/provider
 
 Threats:
 
-- application becoming coupled to SQL/network/provider details;
-- security policy migrating into adapters/serialization;
-- infrastructure-specific types spreading upward and making controlled/fake adapters impossible; and
-- multiple timer/supervision frameworks creating conflicting ownership.
+- application coupling to SQL/Tor/QUIC/WebRTC details;
+- security policy migrating into serialization/adapters;
+- provider-specific state leaking upward and becoming product state; and
+- multiple competing timer/supervision frameworks.
 
 Controls/direction:
 
-- application/domain ports define the inward contract;
-- source policy rejects application dependencies on infrastructure/platform;
-- Arti ownership is restricted to `torca-tor`;
-- SQL remains in storage infrastructure; and
-- shared runtime policy owns attention/demand/evidence/deadline decisions while executors own concrete I/O.
+- application/domain ports define inward contracts;
+- source policy rejects outward application dependencies;
+- SQL stays in storage infrastructure;
+- Arti stays in Tor infrastructure/provider composition;
+- provider selection happens once in native composition; and
+- shared runtime policy owns attention/demand/evidence/deadline decisions.
 
-### Client -> relay
+## Trust boundary: client -> commissioning service/bootstrap
 
 Threats:
 
-- malicious relay modifies/replays/drops pairing frames;
-- invitation guessing or capability abuse;
-- metadata/timing observation; and
-- resource exhaustion.
+- invitation interception/guessing;
+- malicious rendezvous/signaling modification/replay/drop;
+- bootstrap endpoint substitution;
+- stale/replayed sessions;
+- resource exhaustion; and
+- user approving the wrong peer.
 
 Controls/direction:
 
-- short-lived/bounded invitation/slot state;
-- opaque encrypted pairing material;
-- explicit approval and transcript/context binding;
-- relay authorization/capability rules and resource bounds; and
-- client-owned relationship completion.
+- bounded/short-lived invitation/bootstrap state;
+- encrypted/context-bound pairing exchange;
+- explicit local approval before durable relationship completion;
+- provider-specific commissioning does not replace the durable encrypted offer; and
+- input/session resource bounds.
 
-A malicious relay can still deny service and observe when clients use rendezvous.
+A malicious commissioning service/provider can still deny service and observe metadata available to it.
 
-### Client -> peer over Tor
+## Trust boundary: client -> authenticated peer transport
 
 Threats:
 
 - unauthenticated peer attempts;
-- replay/duplicate application envelopes;
-- ciphertext modification or context confusion;
-- reordered/delayed deliveries and receipts;
-- interruption causing message/attachment/Radio failure;
-- malicious/oversized protocol input; and
-- reconnect/probe storms that waste battery or reduce availability.
+- replay/duplicate envelopes;
+- ciphertext modification/context confusion;
+- malicious/oversized protocol input;
+- reorder/delay/interruptions;
+- reconnect storms/battery exhaustion; and
+- network metadata exposure inconsistent with user expectations.
 
 Controls/direction:
 
 - peer authentication bound to established relationship credentials;
 - application-layer AEAD with associated context and fresh nonces;
-- bounded versioned protocol framing;
-- stable envelope identifiers and inbound deduplication;
-- durable local outbox/control work and retry/recovery;
-- explicit message/receipt/attachment state transitions; and
-- demand/evidence/deadline-based connectivity policy with bounded single-flight work.
+- bounded/versioned framing;
+- stable envelope IDs and inbound deduplication;
+- durable local outbox/control state;
+- explicit receipt/attachment transitions; and
+- demand/evidence/deadline-driven connectivity policy.
 
-Tor hides the direct IP path but does not remove application-layer authentication requirements or all timing-correlation risk.
+Transport privacy is provider-dependent. Tor routing does not remove application authentication needs; Iroh's direct path must not inherit Tor privacy claims simply because payload cryptography is shared.
 
-### Radio Mode media
+## Radio Mode
 
 Threats:
 
-- microphone capture without intended consent/permission;
+- capture without intended consent/permission;
 - concurrent floor ownership or overlapping transmit sessions;
-- replay/context confusion across Radio sessions;
-- media continuing after release/background/session close;
-- peer/network interruption creating duplicate sessions or reconnect storms; and
+- replay/context confusion between sessions;
+- media continuing after release/background/close;
+- provider interruption causing duplicated sessions/reconnect storms; and
 - live audio leaking into logs/diagnostics/history.
 
 Controls/direction:
 
-- explicit per-contact mutual consent and session state;
+- explicit mutual consent and session state;
 - platform microphone permission before capture;
-- half-duplex floor/burst invariants and bounded transmit duration;
-- session-specific directional media keys derived in Rust from protected relationship secret plus session context;
-- authenticated encrypted media frames over the paired peer boundary; and
-- diagnostics that count/state-track Radio work without carrying audio payloads.
+- half-duplex floor/burst invariants and bounded transmit behavior;
+- session-specific directional media keys derived in Rust from relationship secret + session context;
+- authenticated/encrypted media over a provider-owned Radio route; and
+- payload-free/redacted diagnostics.
 
-Session-specific derivation provides separation between Radio sessions but does not create Signal-style forward secrecy or post-compromise recovery for the underlying relationship secret.
+Tor and Iroh advertise Radio support today. Provider capability must gate presentation/runtime availability.
 
-### Local storage -> process
+## Local storage -> process
 
 Threats:
 
-- database theft while the application is not running;
-- accidental plaintext/secret persistence;
+- database theft at rest;
+- plaintext/secret persistence outside intended stores;
 - migration/state corruption;
-- secrets exposed through debug/log formatting; and
-- destructive reset/deploy workflows unintentionally removing identity/history.
+- secrets in debug formatting/logs; and
+- destructive deploy/reset unintentionally deleting identity/history.
 
 Controls/direction:
 
 - SQLCipher-backed structured storage;
-- separate protected-secret stores/namespaces;
-- redacted secret types and best-effort zeroing;
-- transactional durable workflow/storage operations;
-- explicit schema/storage migration code;
-- SQL/persistence concentrated in infrastructure; and
-- deployment policies that distinguish ordinary redeploy from destructive client reset.
+- protected-secret namespaces;
+- redacted secret value types/best-effort zeroing;
+- transactional repository/workflow operations;
+- persistence concentrated in infrastructure; and
+- deploy policy separates normal redeploy from destructive reset.
 
-A compromised running process can still access data it legitimately needs to use.
+A compromised running process can still access data it legitimately needs.
 
-### Runtime -> diagnostics/connectivity/notifications
+## Runtime -> diagnostics/notifications
 
 Threats:
 
-- observability becoming a side channel for plaintext/secrets;
-- notification code receiving broad application snapshots;
-- unbounded telemetry creating privacy/performance problems; and
-- partial/stale diagnostic collection being mistaken for complete evidence.
+- observability exposing plaintext/secrets;
+- broad snapshots handed to platform notification code;
+- unbounded telemetry becoming a privacy/performance problem; and
+- incomplete diagnostics treated as complete evidence.
 
 Controls/direction:
 
 - bounded diagnostics/event ledgers;
 - payload-free connectivity/transport activity;
-- redacted error/status models;
-- cursor-oriented notification events with narrow content;
-- application privacy policy before OS delivery; and
-- fresh incident directories whose manifest does not by itself imply a complete payload.
+- redacted errors/status;
+- cursor-oriented notification events; and
+- application privacy policy before OS delivery.
 
-## Pairing threats
+## Pairing and contact verification
 
-Pairing is the moment a new remote identity becomes trusted, so it deserves stronger review than ordinary UI flows.
+Pairing is the transition where a remote identity becomes trusted and deserves stronger review than ordinary navigation.
 
-Relevant threats include invitation interception/guessing, relay tampering, substitution of identity/route/capability data, stale/replayed sessions and users approving the wrong peer.
+The current design uses ephemeral X25519 agreement, context/transcript-bound derivation/approval, protected pairing state and explicit relationship completion. Provider bootstrap material only gets participants to the pairing exchange. Safety Number-style verification offers an independent post-pairing comparison path.
 
-The current design uses ephemeral X25519 key agreement, context/transcript-bound derivation/approval, protected pairing state and explicit local/remote approval before durable relationship completion. Safety Number-style verification provides an independent way to compare identities after pairing.
-
-Human verification remains necessary when users need assurance beyond possession of the pairing invitation/channel.
+Human verification is still necessary when users require assurance beyond possession of the invitation/bootstrap channel.
 
 ## Key compromise and forward secrecy
 
-Current peer payload encryption uses protected pairwise relationship secret material with fresh nonces. Radio Mode derives session-specific directional keys from that relationship secret.
+Current peer payload encryption uses protected relationship secret material with fresh nonces. Radio derives session-specific directional keys from that relationship secret.
 
-The current scheme does **not** claim Signal-style forward secrecy or post-compromise security. Compromise of the long-lived relationship secret can therefore have consequences beyond one message or Radio session.
+The scheme does **not** claim Signal-style forward secrecy or post-compromise security. Compromise of a long-lived relationship secret can therefore have consequences beyond one message/Radio session.
 
-A future ratchet/session-key evolution design changes this threat boundary materially and must update both this document and `SECURITY.md` after implementation and review.
+A future ratchet/session-key evolution materially changes this boundary and must update both this model and `SECURITY.md` after implementation/review.
 
 ## Denial of service and availability
 
-Torca cannot guarantee availability against a blocked Tor network, unavailable peer, malicious relay, local resource exhaustion or OS suspension.
+Torca cannot guarantee availability against a blocked/degraded provider/network, unavailable peer, malicious commissioning service, local resource exhaustion or OS suspension.
 
-The client should fail safely and visibly:
-
-- preserve durable user work locally where appropriate;
-- distinguish local readiness from network readiness;
-- expose degraded/retry states instead of losing data;
-- use bounded queues, input sizes and telemetry;
-- avoid making the pairing relay a single point of failure for established conversations; and
-- avoid periodic/reconnect work that is not justified by durable demand or real transport evidence.
+The client should fail safely/visibly by preserving durable work, separating local readiness from provider reachability, exposing degraded/retry states, bounding queues/input/telemetry, and avoiding unjustified periodic/reconnect activity.
 
 ## Out of scope / non-guarantees
 
 This model does not promise protection against:
 
-- a fully compromised local endpoint or OS account;
-- an intended recipient copying or externally recording content;
-- global traffic analysis or all Tor correlation attacks;
-- denial of service by network/peer/relay operators;
+- fully compromised local endpoints/OS accounts;
+- intended recipients copying/recording content;
+- all traffic analysis/correlation;
+- provider/network/peer denial of service;
 - undiscovered implementation vulnerabilities;
-- hardware-backed secret storage on every supported platform/configuration; or
-- forward secrecy/post-compromise security in the current pairwise payload scheme.
+- hardware-backed secret storage on every configuration;
+- equal metadata/privacy properties across providers; or
+- forward secrecy/post-compromise security in the current relationship-key design.
 
 ## Review triggers
 
-Revisit this threat model when any of the following changes materially:
+Revisit this model when any of these change materially:
 
-- peer/pairing cryptographic protocol or key evolution;
-- Radio Mode key/session/media architecture;
-- relay responsibilities or persistence;
-- a central service gains access to normal message metadata/content;
-- multi-device/group/call architecture is introduced;
-- platform secret-storage or capture/privacy model changes;
-- notification/telemetry starts carrying new user data;
-- the contract boundary exposes new security-sensitive fields;
-- a new supported platform changes process/lifecycle trust assumptions; or
-- local/cloud backup or synchronization is introduced.
+- pairing/peer cryptographic protocol or key evolution;
+- communication provider opened/removed or its commissioning/routing changes;
+- provider metadata/privacy assumptions;
+- Radio key/media/provider architecture;
+- central service responsibilities/persistence;
+- platform secret/capture/notification behavior;
+- contract exposure of security-sensitive fields;
+- new supported platforms/process models;
+- groups, calls, multi-device or cloud sync/backup; or
+- diagnostics/telemetry begins carrying new user data.
