@@ -33,6 +33,10 @@ const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
 // connection idle budget, while halving idle radio traffic during a session.
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const FLOOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+// This is a safety ceiling for providers which do not expose a more precise
+// transport idle budget.  It must never be used to back off past the
+// provider's advertised interval: QUIC/TURN/onion implementations may close
+// an otherwise healthy realtime lane while it is idle.
 const KEEP_ALIVE_MAX_INTERVAL: Duration = Duration::from_secs(120);
 const AUDIO_RETRANSMIT_AFTER: Duration = Duration::from_millis(250);
 const AUDIO_FRAME_INTERVAL: Duration = Duration::from_millis(20);
@@ -1060,11 +1064,13 @@ fn active_media_wait(
 }
 
 fn radio_keep_alive_interval(base: Duration, idle_keep_alives: u8) -> Duration {
-    match idle_keep_alives {
-        0 => base,
-        1 => (base * 2).min(KEEP_ALIVE_MAX_INTERVAL),
-        _ => (base * 4).min(KEEP_ALIVE_MAX_INTERVAL),
-    }
+    // `base` is a provider contract, not a hint.  In particular Iroh's QUIC
+    // idle budget is shorter than the old adaptive 10s -> 20s -> 40s schedule;
+    // the 40s gap deterministically caused Ready -> Reconnecting after about
+    // 30s.  Keep the argument so the worker can retain its activity counters
+    // and diagnostics without allowing them to invalidate the transport.
+    let _ = idle_keep_alives;
+    base.min(KEEP_ALIVE_MAX_INTERVAL)
 }
 
 fn fill_playback_queue(jitter: &mut JitterBuffer, audio: &AudioPipeline) {
@@ -1778,5 +1784,13 @@ mod tests {
         assert_eq!(history.len(), COMPLETED_BURST_HISTORY);
         assert!(!was_completed_burst(&history, ids[0]));
         assert!(was_completed_burst(&history, *ids.last().expect("history has ids")));
+    }
+
+    #[test]
+    fn keep_alive_never_exceeds_provider_contract_after_idle_backoff() {
+        let provider_interval = Duration::from_secs(10);
+        assert_eq!(radio_keep_alive_interval(provider_interval, 0), provider_interval);
+        assert_eq!(radio_keep_alive_interval(provider_interval, 1), provider_interval);
+        assert_eq!(radio_keep_alive_interval(provider_interval, u8::MAX), provider_interval);
     }
 }

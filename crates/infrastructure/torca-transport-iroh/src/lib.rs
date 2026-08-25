@@ -188,10 +188,13 @@ impl std::io::Read for IrohRadioMediaStream {
                 Some(timeout) => {
                     match tokio::time::timeout(timeout, self.recv.read(buffer)).await {
                         Ok(Ok(value)) => Ok(value),
-                        Ok(Err(error)) => Err(std::io::Error::new(
-                            std::io::ErrorKind::Interrupted,
-                            error.to_string(),
-                        )),
+                        Ok(Err(error)) => {
+                            eprintln!("torca-iroh: radio read failed: {error}");
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::Interrupted,
+                                error.to_string(),
+                            ))
+                        }
                         Err(_) => Err(std::io::Error::new(
                             std::io::ErrorKind::WouldBlock,
                             "radio read timeout",
@@ -199,6 +202,7 @@ impl std::io::Read for IrohRadioMediaStream {
                     }
                 }
                 None => self.recv.read(buffer).await.map_err(|error| {
+                    eprintln!("torca-iroh: radio read failed: {error}");
                     std::io::Error::new(std::io::ErrorKind::Interrupted, error.to_string())
                 }),
             }
@@ -209,13 +213,17 @@ impl std::io::Read for IrohRadioMediaStream {
 
 impl std::io::Write for IrohRadioMediaStream {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        self.runtime
-            .block_on(self.send.write(buffer))
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::BrokenPipe, error.to_string()))
+        self.runtime.block_on(self.send.write(buffer)).map_err(|error| {
+            eprintln!("torca-iroh: radio write failed: {error}");
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, error.to_string())
+        })
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.runtime.block_on(self.send.flush())
+        self.runtime.block_on(self.send.flush()).map_err(|error| {
+            eprintln!("torca-iroh: radio flush failed: {error}");
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, error.to_string())
+        })
     }
 }
 
@@ -248,8 +256,10 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
         if route.provider != TransportKind::Iroh.wire_value() {
             return Err(torca_radio_coordinator::RadioApplicationError::MediaTransport);
         }
-        let remote = decode_endpoint_addr(&route.endpoint)
-            .map_err(|_| torca_radio_coordinator::RadioApplicationError::MediaTransport)?;
+        let remote = decode_endpoint_addr(&route.endpoint).map_err(|error| {
+            eprintln!("torca-iroh: radio dial failed: {error}");
+            torca_radio_coordinator::RadioApplicationError::MediaTransport
+        })?;
         let connection = self
             .runtime
             .block_on(async {
@@ -258,7 +268,10 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
                     .map_err(|_| ())?
                     .map_err(|_| ())
             })
-            .map_err(|_| torca_radio_coordinator::RadioApplicationError::MediaTransport)?;
+            .map_err(|_| {
+                eprintln!("torca-iroh: radio dial timed out or was rejected");
+                torca_radio_coordinator::RadioApplicationError::MediaTransport
+            })?;
         let (send, recv) = self
             .runtime
             .block_on(async {
@@ -267,7 +280,10 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
                     .map_err(|_| ())?
                     .map_err(|_| ())
             })
-            .map_err(|_| torca_radio_coordinator::RadioApplicationError::MediaTransport)?;
+            .map_err(|_| {
+                eprintln!("torca-iroh: radio outgoing stream open timed out or was rejected");
+                torca_radio_coordinator::RadioApplicationError::MediaTransport
+            })?;
         Ok(Box::new(IrohRadioMediaStream {
             connection,
             send,
@@ -284,10 +300,10 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
         torca_radio_coordinator::RadioApplicationError,
     > {
         let Some(connection) = self.incoming.take_radio() else { return Ok(None) };
-        let (send, recv) = self
-            .runtime
-            .block_on(connection.accept_bi())
-            .map_err(|_| torca_radio_coordinator::RadioApplicationError::MediaTransport)?;
+        let (send, recv) = self.runtime.block_on(connection.accept_bi()).map_err(|error| {
+            eprintln!("torca-iroh: radio incoming stream accept failed: {error}");
+            torca_radio_coordinator::RadioApplicationError::MediaTransport
+        })?;
         Ok(Some(Box::new(IrohRadioMediaStream {
             connection,
             send,
