@@ -31,6 +31,20 @@ pub enum RadioApplicationError {
     Crypto,
 }
 
+/// Provider-neutral reason for a realtime session interruption. Providers map
+/// their native errors to this small vocabulary; the UI and coordinator never
+/// need to know whether the underlying lane was QUIC, TCP, or WebRTC.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RadioTransportFailure {
+    EndpointUnavailable,
+    ConnectTimeout,
+    StreamReset,
+    IdleTimeout,
+    NetworkChanged,
+    Protocol,
+    Unknown,
+}
+
 impl core::fmt::Display for RadioApplicationError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(formatter, "{self:?}")
@@ -250,6 +264,7 @@ pub enum RadioSessionEvent {
         /// Session generation which produced the interruption.  Events from
         /// an older provider session must never tear down a newer one.
         session_id: Option<RadioSessionId>,
+        cause: RadioTransportFailure,
         at: Timestamp,
     },
 }
@@ -608,7 +623,7 @@ impl RadioCoordinator {
                 }
                 channel.end_burst()?;
             }
-            RadioSessionEvent::Interrupted { contact_id, session_id, at } => {
+            RadioSessionEvent::Interrupted { contact_id, session_id, cause: _, at } => {
                 let current_session = self
                     .channels
                     .get(&contact_id)

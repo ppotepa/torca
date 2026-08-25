@@ -12,7 +12,9 @@ use torca_contacts::ContactId;
 use torca_crypto::{Ciphertext, CryptoProvider, Nonce, RadioSessionCipher};
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_radio::{MAX_RADIO_BURST_MS, RadioOperationId, RadioSessionId};
-use torca_radio_coordinator::{RadioApplicationError, RadioMediaPort, RadioSessionEvent};
+use torca_radio_coordinator::{
+    RadioApplicationError, RadioMediaPort, RadioSessionEvent, RadioTransportFailure,
+};
 use torca_radio_protocol::{
     BurstEndReason, FloorDeniedReason, MAX_RADIO_BURST_FRAMES, MAX_RADIO_MEDIA_FRAME,
     RADIO_MEDIA_PROOF_LEN, RADIO_PROTOCOL_VERSION, RadioMediaCodec, RadioMediaFrame,
@@ -648,7 +650,7 @@ impl MediaWorker {
                 Ok(false) => {}
                 Err(()) => {
                     eprintln!("torca-radio: media command failed; reconnecting session");
-                    self.interrupt_live();
+                    self.interrupt_live(RadioTransportFailure::Protocol);
                 }
             }
             if self.live.is_none() {
@@ -661,7 +663,18 @@ impl MediaWorker {
                     .map(|live| live.pending.contact_id.to_string())
                     .unwrap_or_else(|| "unknown".to_owned());
                 eprintln!("torca-radio: media stream interrupted contact={contact}; reconnecting");
-                self.interrupt_live();
+                let cause = self
+                    .live
+                    .as_ref()
+                    .filter(|live| {
+                        live.authenticated
+                            && Instant::now().duration_since(live.last_received_at)
+                                >= CONNECTION_IDLE_LIMIT
+                    })
+                    .map_or(RadioTransportFailure::StreamReset, |_| {
+                        RadioTransportFailure::IdleTimeout
+                    });
+                self.interrupt_live(cause);
             }
             // The command channel is the idle wake source.  Active media and
             // pending connection deadlines retain the short audio cadence;
@@ -689,7 +702,7 @@ impl MediaWorker {
             if let Some(command) = command {
                 if self.handle_command(command).is_err() {
                     eprintln!("torca-radio: media command failed; reconnecting session");
-                    self.interrupt_live();
+                    self.interrupt_live(RadioTransportFailure::Protocol);
                 }
             }
         }
@@ -753,6 +766,7 @@ impl MediaWorker {
                         RadioSessionEvent::Interrupted {
                             contact_id,
                             session_id: Some(session_id),
+                            cause: RadioTransportFailure::EndpointUnavailable,
                             at: now_timestamp(),
                         },
                     );
@@ -942,7 +956,7 @@ impl MediaWorker {
         let keep_alive_interval = self.connector.keep_alive_interval();
         match LiveSession::new(pending, stream, cipher, keep_alive_interval) {
             Ok(live) => self.live = Some(live),
-            Err(_) => self.interrupt_live(),
+            Err(_) => self.interrupt_live(RadioTransportFailure::Protocol),
         }
     }
 
@@ -996,7 +1010,7 @@ impl MediaWorker {
         Ok(())
     }
 
-    fn interrupt_live(&mut self) {
+    fn interrupt_live(&mut self, cause: RadioTransportFailure) {
         let contact_id = self
             .live
             .as_ref()
@@ -1018,6 +1032,7 @@ impl MediaWorker {
             self.events.emit(RadioSessionEvent::Interrupted {
                 contact_id,
                 session_id,
+                cause,
                 at: now_timestamp(),
             });
         }
