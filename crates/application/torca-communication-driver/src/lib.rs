@@ -286,9 +286,21 @@ impl PeerSessionPort for TorcaCommunicationDriver {
             self.attachment_scheduler.disarm();
             if let Err(error) =
                 self.attachment_job_sender.try_send(AttachmentWork::Maintenance { now })
-                && matches!(error, TrySendError::Disconnected(_))
             {
+                // A full bounded queue is recoverable.  Leaving the active
+                // flag set here permanently disarms attachment maintenance:
+                // no worker completion can arrive for the job that was never
+                // admitted, so every later attachment remains stuck.
                 self.attachment_job_active.store(false, Ordering::Release);
+                match error {
+                    TrySendError::Full(_) => {
+                        self.attachment_scheduler.wake_after(now, Duration::from_millis(100));
+                        eprintln!("torca-attachment: worker queue full; retrying maintenance");
+                    }
+                    TrySendError::Disconnected(_) => {
+                        eprintln!("torca-attachment: worker queue disconnected");
+                    }
+                }
             }
         }
         Ok(())
