@@ -254,6 +254,7 @@ pub struct BridgeRadio {
     pub contacts: Vec<BridgeRadioContact>,
     pub session: Option<BridgeRadioSession>,
     pub last_transport_failure: Option<String>,
+    pub last_transport_failure_contact_id: Option<String>,
     pub timeline: Vec<BridgeRadioTimelineEvent>,
     pub audio: BridgeRadioAudio,
 }
@@ -1441,6 +1442,7 @@ fn bridge_radio(value: Option<torca_client_application::RadioProjection>) -> Bri
             contacts: Vec::new(),
             session: None,
             last_transport_failure: None,
+            last_transport_failure_contact_id: None,
             timeline: Vec::new(),
             audio: BridgeRadioAudio::default(),
         };
@@ -1471,6 +1473,9 @@ fn bridge_radio(value: Option<torca_client_application::RadioProjection>) -> Bri
             .last_transport_failure
             .map(radio_transport_failure_name)
             .map(str::to_owned),
+        last_transport_failure_contact_id: value
+            .last_transport_failure_contact_id
+            .map(|id| id.to_string()),
         timeline: value
             .timeline
             .into_iter()

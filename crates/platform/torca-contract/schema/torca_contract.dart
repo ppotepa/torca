@@ -897,6 +897,7 @@ class RadioDto {
     this.contacts = const [],
     this.session,
     this.lastTransportFailure,
+    this.lastTransportFailureContactId,
     this.timeline = const [],
     this.audio = const RadioAudioDto(),
   });
@@ -913,6 +914,8 @@ class RadioDto {
           ? RadioSessionDto.fromJson(session)
           : null,
       lastTransportFailure: value['lastTransportFailure'] as String?,
+      lastTransportFailureContactId:
+          value['lastTransportFailureContactId'] as String?,
       timeline: _objects(
         value['timeline'],
       ).map(RadioTimelineEventDto.fromJson).toList(growable: false),
@@ -926,6 +929,7 @@ class RadioDto {
   final List<RadioContactDto> contacts;
   final RadioSessionDto? session;
   final String? lastTransportFailure;
+  final String? lastTransportFailureContactId;
   final List<RadioTimelineEventDto> timeline;
   final RadioAudioDto audio;
 

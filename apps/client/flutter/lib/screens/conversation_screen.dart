@@ -516,6 +516,10 @@ class _ConversationPaneState extends State<ConversationPane>
                 radio: radioContact,
                 session: radioSession,
                 timeline: radioTimeline,
+                transportFailure:
+                    snapshot.radio.lastTransportFailureContactId == contact.id
+                    ? snapshot.radio.lastTransportFailure
+                    : null,
               ),
             _ConversationSearchBar(
               searching: _searching,

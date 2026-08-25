@@ -315,6 +315,7 @@ pub struct RadioProjection {
     pub contacts: Vec<RadioContactProjection>,
     pub session: Option<RadioSessionProjection>,
     pub last_transport_failure: Option<RadioTransportFailure>,
+    pub last_transport_failure_contact_id: Option<ContactId>,
     pub timeline: Vec<RadioTimelineRecord>,
     pub audio: RadioAudioProjection,
 }
@@ -330,6 +331,7 @@ pub struct RadioCoordinator {
     channels: BTreeMap<ContactId, RadioChannel>,
     active_contact_id: Option<ContactId>,
     last_transport_failure: Option<RadioTransportFailure>,
+    last_transport_failure_contact_id: Option<ContactId>,
     foreground: bool,
     recent_events: VecDeque<RadioTimelineRecord>,
     next_state_sync_at_ms: i64,
@@ -364,6 +366,7 @@ impl RadioCoordinator {
             channels,
             active_contact_id,
             last_transport_failure: None,
+            last_transport_failure_contact_id: None,
             foreground: true,
             recent_events,
             next_state_sync_at_ms: Timestamp::MIN_UNIX_MILLIS,
@@ -638,6 +641,7 @@ impl RadioCoordinator {
                     return Ok(());
                 }
                 self.last_transport_failure = Some(cause);
+                self.last_transport_failure_contact_id = Some(contact_id);
                 self.audio.end_capture();
                 self.audio.end_playback();
                 if let Some(event) = self
@@ -834,6 +838,7 @@ impl RadioCoordinator {
             contacts,
             session,
             last_transport_failure: self.last_transport_failure,
+            last_transport_failure_contact_id: self.last_transport_failure_contact_id,
             timeline: self.recent_events.iter().copied().collect(),
             audio: self.audio.devices(),
         }

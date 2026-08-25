@@ -17,6 +17,7 @@ class RadioConversationStatus extends StatelessWidget {
     required this.radio,
     required this.session,
     required this.timeline,
+    this.transportFailure,
     super.key,
   });
 
@@ -24,12 +25,14 @@ class RadioConversationStatus extends StatelessWidget {
   final RadioContactDto? radio;
   final RadioSessionDto? session;
   final List<RadioTimelineEventDto> timeline;
+  final String? transportFailure;
 
   @override
   Widget build(BuildContext context) => Column(
     mainAxisSize: MainAxisSize.min,
     children: <Widget>[
       if (radio?.localEnabled == true) _status(context, radio!),
+      if (transportFailure != null) _transportWarning(context),
       if (timeline.isNotEmpty) _notice(context, timeline.last),
     ],
   );
@@ -134,6 +137,29 @@ class RadioConversationStatus extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _transportWarning(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+      child: Row(
+        children: <Widget>[
+          Icon(context.torcaIcons.warning, size: 14, color: colors.error),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '${context.strings.radioReconnecting} · ${transportFailure!}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: colors.error),
             ),
           ),
         ],
@@ -407,7 +433,10 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       return;
     }
     unawaited(HapticFeedback.mediumImpact());
-    _burstTimer = Timer(const Duration(seconds: 10), () => unawaited(_release()));
+    _burstTimer = Timer(
+      const Duration(seconds: 10),
+      () => unawaited(_release()),
+    );
   }
 
   Future<void> _release({int? pointerId, bool force = false}) async {
