@@ -4,7 +4,9 @@ use std::io::BufReader;
 use crate::peer_envelope;
 use torca_attachment_protocol::{AttachmentPreviewFrame, MAX_ATTACHMENT_PREVIEW};
 use torca_attachment_sqlite::{SqlCipherAttachmentProjection, SqlCipherAttachmentStore};
-use torca_attachment_transfer::{AttachmentTransfer, AttachmentTransferError};
+use torca_attachment_transfer::{
+    AttachmentTransfer, AttachmentTransferError, AttachmentTransferReport,
+};
 use torca_attachments::{
     Attachment, AttachmentId, AttachmentName, AttachmentRepository, AttachmentStatus,
     MAX_ATTACHMENT_BYTES, MediaType,
@@ -210,12 +212,20 @@ where
             .map(|report| AttachmentMaintenanceResult {
                 more_work: report.more_work,
                 policy_blocked: report.policy_suppressed > 0 && !report.more_work,
-                retry_after_ms: None,
+                // A pending frame is waiting for a peer ACK. Re-entering the
+                // actor immediately would spin while the ACK is in flight;
+                // a bounded retry keeps progress responsive without turning
+                // one slow peer into a CPU/battery hot loop.
+                retry_after_ms: attachment_retry_after(&report),
             })
             .map_err(map_attachment_error)
     }
 
     fn shutdown(&mut self) {}
+}
+
+fn attachment_retry_after(report: &AttachmentTransferReport) -> Option<u64> {
+    report.more_work.then_some(250)
 }
 
 fn map_attachment_error(error: AttachmentTransferError) -> CommunicationError {
@@ -235,4 +245,21 @@ fn map_attachment_error(error: AttachmentTransferError) -> CommunicationError {
         _ => AttachmentFailureStage::Unknown,
     };
     CommunicationError::AttachmentStage(stage)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn waiting_attachment_work_is_bounded_not_immediate() {
+        let report = AttachmentTransferReport { more_work: true, ..Default::default() };
+        assert_eq!(attachment_retry_after(&report), Some(250));
+    }
+
+    #[test]
+    fn idle_attachment_work_does_not_schedule_wakeups() {
+        let report = AttachmentTransferReport::default();
+        assert_eq!(attachment_retry_after(&report), None);
+    }
 }
