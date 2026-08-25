@@ -253,6 +253,7 @@ pub struct BridgeRadio {
     pub active_contact_id: Option<String>,
     pub contacts: Vec<BridgeRadioContact>,
     pub session: Option<BridgeRadioSession>,
+    pub last_transport_failure: Option<String>,
     pub timeline: Vec<BridgeRadioTimelineEvent>,
     pub audio: BridgeRadioAudio,
 }
@@ -1439,6 +1440,7 @@ fn bridge_radio(value: Option<torca_client_application::RadioProjection>) -> Bri
             active_contact_id: None,
             contacts: Vec::new(),
             session: None,
+            last_transport_failure: None,
             timeline: Vec::new(),
             audio: BridgeRadioAudio::default(),
         };
@@ -1465,6 +1467,10 @@ fn bridge_radio(value: Option<torca_client_application::RadioProjection>) -> Bri
             max_burst_ms: session.max_burst_ms,
             input_level_milli: session.input_level_milli,
         }),
+        last_transport_failure: value
+            .last_transport_failure
+            .map(radio_transport_failure_name)
+            .map(str::to_owned),
         timeline: value
             .timeline
             .into_iter()
@@ -1532,6 +1538,22 @@ const fn radio_floor_name(value: RadioFloor) -> &'static str {
         RadioFloor::None => "none",
         RadioFloor::Local => "local",
         RadioFloor::Remote => "remote",
+    }
+}
+
+const fn radio_transport_failure_name(
+    value: torca_radio_coordinator::RadioTransportFailure,
+) -> &'static str {
+    match value {
+        torca_radio_coordinator::RadioTransportFailure::EndpointUnavailable => {
+            "endpoint_unavailable"
+        }
+        torca_radio_coordinator::RadioTransportFailure::ConnectTimeout => "connect_timeout",
+        torca_radio_coordinator::RadioTransportFailure::StreamReset => "stream_reset",
+        torca_radio_coordinator::RadioTransportFailure::IdleTimeout => "idle_timeout",
+        torca_radio_coordinator::RadioTransportFailure::NetworkChanged => "network_changed",
+        torca_radio_coordinator::RadioTransportFailure::Protocol => "protocol",
+        torca_radio_coordinator::RadioTransportFailure::Unknown => "unknown",
     }
 }
 

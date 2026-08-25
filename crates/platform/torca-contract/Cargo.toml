@@ -12,6 +12,7 @@ publish = false
 hex = "0.4"
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-client-application = { path = "../../application/torca-client-application" }
+torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
 torca-transport-api = { path = "../../application/torca-transport-api" }
 torca-contacts = { path = "../../domains/torca-contacts" }

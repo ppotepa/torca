@@ -314,6 +314,7 @@ pub struct RadioProjection {
     pub active_contact_id: Option<ContactId>,
     pub contacts: Vec<RadioContactProjection>,
     pub session: Option<RadioSessionProjection>,
+    pub last_transport_failure: Option<RadioTransportFailure>,
     pub timeline: Vec<RadioTimelineRecord>,
     pub audio: RadioAudioProjection,
 }
@@ -328,6 +329,7 @@ pub struct RadioCoordinator {
     boot_epoch: [u8; 16],
     channels: BTreeMap<ContactId, RadioChannel>,
     active_contact_id: Option<ContactId>,
+    last_transport_failure: Option<RadioTransportFailure>,
     foreground: bool,
     recent_events: VecDeque<RadioTimelineRecord>,
     next_state_sync_at_ms: i64,
@@ -361,6 +363,7 @@ impl RadioCoordinator {
             boot_epoch,
             channels,
             active_contact_id,
+            last_transport_failure: None,
             foreground: true,
             recent_events,
             next_state_sync_at_ms: Timestamp::MIN_UNIX_MILLIS,
@@ -623,7 +626,7 @@ impl RadioCoordinator {
                 }
                 channel.end_burst()?;
             }
-            RadioSessionEvent::Interrupted { contact_id, session_id, cause: _, at } => {
+            RadioSessionEvent::Interrupted { contact_id, session_id, cause, at } => {
                 let current_session = self
                     .channels
                     .get(&contact_id)
@@ -634,6 +637,7 @@ impl RadioCoordinator {
                     // the current session projection.
                     return Ok(());
                 }
+                self.last_transport_failure = Some(cause);
                 self.audio.end_capture();
                 self.audio.end_playback();
                 if let Some(event) = self
@@ -829,6 +833,7 @@ impl RadioCoordinator {
             active_contact_id: self.active_contact_id,
             contacts,
             session,
+            last_transport_failure: self.last_transport_failure,
             timeline: self.recent_events.iter().copied().collect(),
             audio: self.audio.devices(),
         }
