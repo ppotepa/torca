@@ -795,7 +795,18 @@ impl MediaWorker {
 
     fn handle_command(&mut self, command: MediaCommand) -> Result<(), ()> {
         match command {
-            MediaCommand::Wake => {}
+            MediaCommand::Wake => {
+                // An incoming provider callback is the authoritative wake
+                // source for accepted media.  Clear the short listener wait
+                // so `try_attach` accepts the queued stream immediately;
+                // without this, a defensive one-second poll could delay a
+                // floor grant or make a cold Iroh session look disconnected.
+                if let Some(pending) = self.pending.as_mut()
+                    && !pending.initiate_connection
+                {
+                    pending.next_connect_at = Instant::now();
+                }
+            }
             MediaCommand::Open { contact_id, session_id, media_token, initiate_connection } => {
                 self.shutdown_live(SessionCloseReason::Replaced);
                 let Some(route) = self.directory.route(contact_id) else {
@@ -996,7 +1007,16 @@ impl MediaWorker {
                 }
             }
         } else {
-            self.connector.try_accept().ok().flatten()
+            let stream = self.connector.try_accept().ok().flatten();
+            if stream.is_none()
+                && let Some(current) = self.pending.as_mut()
+            {
+                // Do not spin while waiting for the provider listener.  The
+                // connector wake above moves this deadline back to now when
+                // a connection is actually queued.
+                current.next_connect_at = Instant::now() + Duration::from_secs(1);
+            }
+            stream
         };
         let Some(stream) = stream else {
             return;
