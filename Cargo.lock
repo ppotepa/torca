@@ -7306,6 +7306,7 @@ dependencies = [
  "torca-messaging",
  "torca-pairing",
  "torca-pairing-protocol",
+ "torca-radio-coordinator",
  "torca-runtime-policy",
  "torca-transport-api",
 ]
