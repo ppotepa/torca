@@ -1,98 +1,101 @@
 # Torca
 
-Torca is an experimental privacy-focused one-to-one messenger for Windows and Android. It uses one responsive Flutter client backed by one Rust application/runtime. Local identities, encrypted local state, pairing, delivery and security policy live in Rust; normal contact traffic is sent directly between Tor onion services rather than through a central message server.
+Torca is an experimental privacy-focused one-to-one messenger for Windows and Android. The client is one responsive Flutter application backed by a Rust application/runtime that owns identities, durable state, pairing, delivery, cryptography, networking and security policy.
 
-> **Project status:** Torca is security-sensitive alpha software. It is under active development, has not received an independent production security audit, and should not be treated as a finished high-risk communications product. Source-level validation, successful local builds and passing tests are useful engineering evidence, not a security certification or a substitute for real-device soak testing.
+> **Status:** security-sensitive alpha software. Torca has not received an independent production security audit and must not be presented as a finished high-risk communications product. Automated tests and successful builds are engineering evidence, not a security certification.
 
-The previous [`ppotepa/tOrca`](https://github.com/ppotepa/tOrca) repository is a requirements/reference source, not a second active implementation.
+## What exists today
 
-## Current capabilities
+The current source implements:
 
-The current source includes:
-
+- a shared Flutter client for Windows and Android;
 - local installation identity and SQLCipher-backed structured storage;
-- operating-system protected-secret adapters for identity, storage and peer secrets;
-- short-lived pairing codes/QR with explicit local approval;
-- authenticated peer sessions and application-layer authenticated encryption;
-- direct peer delivery through Tor onion services after pairing;
-- durable message retry, delivered/read receipts and reply-to;
-- paged and searchable conversation history;
-- encrypted, resumable attachments;
-- Safety Number-style contact verification with identity-change protection;
-- privacy-aware notifications, diagnostics and Android screen-capture protection by default;
-- an experimental mutual-consent, half-duplex Radio Mode over the paired peer channel; and
-- one shared responsive Flutter application for Windows and Android.
+- OS-protected secret adapters for identity, database and relationship secrets;
+- explicit contact pairing with QR/full-link flows and local approval;
+- authenticated peer sessions with application-layer authenticated encryption;
+- provider-neutral communication with **Tor** and **Iroh** selectable in normal deployment;
+- durable message retry, delivered/read receipts, replies, paged history and search;
+- encrypted resumable attachments and explicit export/open flows;
+- Safety Number-style contact verification and identity-change protection;
+- privacy-aware notifications, diagnostics and Android capture protection by default;
+- mutual-consent half-duplex Radio Mode with provider-owned media transport; and
+- a typed deployment tool plus multi-process/device soak-test cockpit.
 
-Calls, groups, multi-device synchronization, public discovery and cloud backup are outside the current product scope. Linux is not currently a supported production client composition.
+Groups, calls, multi-device synchronization, public discovery, cloud backup and a supported Linux production client are outside the current product baseline.
 
-## Security model at a glance
+## Communication providers
 
-Torca uses established cryptographic primitives and keeps secret ownership out of Flutter. Pairing establishes a protected pairwise relationship secret; peer payloads use authenticated encryption with fresh nonces and associated context. Radio Mode derives session-specific directional media keys from the protected pairwise relationship secret.
+Torca has one active communication provider per deployment. The application protocol, encryption, delivery, attachments, Radio Mode coordination and persistence stay provider-neutral.
 
-The current message-key design **does not provide Signal-style forward secrecy or post-compromise security**. Compromise of a long-lived relationship secret can therefore have consequences beyond one message or session. Tor also does not eliminate traffic-analysis, timing-correlation, endpoint-compromise or denial-of-service risk.
+| Provider | Normal deployment | Pairing bootstrap | Current product capabilities |
+| --- | --- | --- | --- |
+| Tor | selectable | managed rendezvous | messages, attachments, incoming sessions, Radio, QR/full-link/short-code pairing |
+| Iroh | selectable | direct QR/full link | messages, attachments, incoming sessions, Radio |
+| WebRTC | hidden | external signaling | adapter/contracts exist; platform session/signaling composition is not deployment-ready |
+| Memory | hidden | test-only | deterministic/simulated runtime use |
 
-Read [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) before making security claims or changing pairing, peer authentication, cryptography, storage, notifications, Radio Mode or platform boundaries.
+Tor remains the default provider for backward-compatible deployments. Iroh is also marked deployment-ready by the shared provider profile. See [`docs/transport.md`](docs/transport.md) for the current provider boundary and capability model.
 
 ## Architecture
 
-```text
-responsive Flutter UI
-        |
-EngineGateway / generated DTOs
-        |
-torca-native C ABI
-        |
-ClientApplicationRuntime + process-owned runtime
-        |
-SQLCipher / crypto / files / peer link / embedded Arti Tor
-```
+![Torca architecture](docs/diagrams/architecture.svg)
 
-The main ownership rule is simple: Flutter renders presentation-safe state and submits typed user intent; Rust owns identifiers, durable state, networking, cryptography and product/security rules. The dependency direction is enforced by repository policy checks, not only by documentation.
+The central ownership rule is:
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the maintained system model.
+- **Flutter** renders presentation-safe state, owns navigation/transient interaction state, and submits typed user intent through `EngineGateway`.
+- **Rust** owns durable workflow state, identifiers, pairing, cryptography, persistence, provider composition, delivery/retry, diagnostics and security rules.
+- **Platform hosts** own genuine OS integration such as protected secret stores, lifecycle, permissions, notifications and window/capture behavior.
 
-## Repository layout
+The process-owned native runtime selects exactly one communication provider and exposes provider-neutral snapshots/events back to Flutter.
+
+Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the system model and [`docs/app-flows.md`](docs/app-flows.md) for current user/runtime flows.
+
+## Repository map
 
 ```text
-apps/client/flutter/      shared responsive application client
+apps/client/flutter/      Flutter UI and Windows/Android host integration
+packages/                 reusable Flutter packages
 crates/foundation/        dependency-light primitives
 crates/domains/           product vocabulary and invariants
-crates/protocol/          bounded wire and pairing/peer/radio protocols
-crates/application/       use cases, ports, runtime coordination and policy
-crates/infrastructure/    SQLCipher, crypto, files, peer and Tor adapters
-crates/platform/          contract, native ABI and OS adapters
-services/relay/           ephemeral pairing rendezvous service
-tests/torca-integration/  cross-crate integration journeys
+crates/protocol/          peer/pairing/relay/radio/wire formats
+crates/application/       use cases, runtime policy and provider-neutral ports
+crates/infrastructure/    storage, crypto, transport and communication adapters
+crates/platform/          contract, native composition and OS adapters
+services/relay/           Tor pairing rendezvous service
 tools/torca-deploy/       canonical build/run/deploy/log workflow
-scripts/                  compatibility and validation helpers
-docs/                     maintained documentation and runbooks
+tools/torca-soak/         soak-test cockpit and orchestration
+tests/torca-integration/  cross-crate integration journeys
+docs/                     maintained project documentation
 ```
 
-## Developer workflow
+The Rust workspace version is currently `0.2.0-alpha.0`; the Flutter app uses the matching alpha product version. Version numbers do not imply release or audit maturity.
 
-The canonical local entry point is the Rust deployment tool:
+## Development
+
+The canonical interactive entry point is the Rust deployment tool:
 
 ```powershell
 cargo run -p torca-deploy
 ```
 
-With no subcommand it opens the Ratatui wizard. The CLI exposes the same planner/executor for automation, for example:
+Useful non-interactive examples:
 
 ```powershell
 cargo run -p torca-deploy -- status
 cargo run -p torca-deploy -- plan --target all --configuration debug
 cargo run -p torca-deploy -- build --target windows --configuration debug
+cargo run -p torca-deploy -- deploy --target android --device <adb-serial>
 cargo run -p torca-deploy -- logs --target all
 cargo run -p torca-deploy -- resume
 ```
 
-Use `--dry-run` where supported when you want to inspect a plan without changing devices or relay state. Destructive data resets and onion rotation should be deliberate actions, not incidental development steps.
+See [`docs/development.md`](docs/development.md) for prerequisites and day-to-day workflow, and [`docs/operations.md`](docs/operations.md) for deployment, diagnostics and lifecycle behavior.
 
 ## Validation
 
-The repository CI definition checks the core Rust workspace, generated Rust/Dart contract, Flutter analysis/tests and Windows/Android client builds. Before presenting a change as validated, distinguish exactly what was run: source checks, host builds, device tests and end-to-end/soak evidence are different gates.
+The checked-in GitHub Actions workflow covers source policy, Rust format/check/clippy/tests, generated contract drift, Flutter analysis/tests, and Windows/Android builds. A configured workflow is not evidence that a particular commit passed; check the actual workflow run before citing CI.
 
-Useful local source checks include:
+Common local checks:
 
 ```powershell
 cargo fmt --all -- --check
@@ -101,28 +104,24 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D clippy::cor
 cargo test --workspace --all-targets --all-features --locked
 ```
 
-Flutter validation is run from `apps/client/flutter` with `flutter analyze` and `flutter test`. Generated contract drift is checked through `torca-contract-gen` and repository source policy.
+From `apps/client/flutter`:
 
-A configured GitHub Actions workflow is not evidence that a particular commit passed CI unless the jobs actually ran and completed successfully.
+```powershell
+flutter analyze
+flutter test
+```
+
+See [`docs/testing.md`](docs/testing.md) for source, platform, integration and soak-test gates.
+
+## Security and privacy
+
+The current relationship-secret design does **not** claim Signal-style forward secrecy or post-compromise security. Provider privacy properties also differ: Tor is intended to reduce direct network-location exposure through onion routing, while direct-path providers such as Iroh have a different network-metadata surface. Application-layer peer authentication and encryption remain required regardless of provider.
+
+Read [`SECURITY.md`](SECURITY.md), [`PRIVACY.md`](PRIVACY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) before making security/privacy claims or changing pairing, transport, cryptography, storage, notifications, Radio Mode or platform boundaries.
 
 ## Documentation
 
-Start with [`docs/STATUS.md`](docs/STATUS.md) for the current maturity/validation summary and [`docs/README.md`](docs/README.md) for the documentation map.
-
-The main maintained documents are:
-
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — stable ownership and dependency boundaries;
-- [`SECURITY.md`](SECURITY.md) — security guarantees, limits and reporting guidance;
-- [`docs/security/threat-model.md`](docs/security/threat-model.md) — assets, trust boundaries and threats;
-- [`PRIVACY.md`](PRIVACY.md) — local/network data behavior and user choices;
-- [`ROADMAP.md`](ROADMAP.md) — long-lived product and engineering direction;
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — contributor workflow and documentation rules;
-- [`0.3.md`](0.3.md) — current architecture-track plan; and
-- [`docs/STATUS.md`](docs/STATUS.md) — current engineering and validation status.
-
-Focused plans such as [`docs/plans/BATTERY1.md`](docs/plans/BATTERY1.md) provide current implementation intent, but they do not override evergreen architecture/security documents or actual source/validation evidence.
-
-Planning labels such as “0.3” and the Cargo package version serve different purposes and can move at different times. Do not infer release maturity from either label alone.
+[`docs/README.md`](docs/README.md) is the documentation index. The maintained set is intentionally small; implementation plans and old validation ledgers belong in Git history rather than competing with current-state documentation.
 
 ## License
 
