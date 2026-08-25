@@ -154,7 +154,8 @@ class RadioConversationStatus extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              '${context.strings.radioReconnecting} · ${transportFailure!}',
+              '${context.strings.radioReconnecting} · '
+              '${context.strings.radioTransportFailure(transportFailure!)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(

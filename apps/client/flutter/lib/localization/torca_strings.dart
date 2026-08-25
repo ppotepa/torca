@@ -307,6 +307,22 @@ class TorcaStrings {
   String get radioUnavailable => _pl
       ? 'Radio jest chwilowo niedostepne'
       : 'Radio is temporarily unavailable';
+  String radioTransportFailure(String code) {
+    final label = switch (code) {
+      'endpoint_unavailable' =>
+        _pl ? 'brak punktu koncowego' : 'endpoint unavailable',
+      'connect_timeout' =>
+        _pl ? 'przekroczono czas laczenia' : 'connection timeout',
+      'stream_reset' => _pl ? 'strumien zostal przerwany' : 'stream reset',
+      'idle_timeout' =>
+        _pl ? 'kanal wygasl podczas bezczynnosci' : 'idle timeout',
+      'network_changed' => _pl ? 'zmienila sie siec' : 'network changed',
+      'protocol' => _pl ? 'blad protokolu' : 'protocol error',
+      _ => _pl ? 'nieznany blad transportu' : 'unknown transport error',
+    };
+    return _pl ? 'Radio: $label' : 'Radio: $label';
+  }
+
   String get microphonePermissionRequired => _pl
       ? 'Dostep do mikrofonu jest wymagany do nadawania.'
       : 'Microphone access is required to transmit.';
