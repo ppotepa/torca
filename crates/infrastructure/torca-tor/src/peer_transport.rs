@@ -24,6 +24,7 @@ const PEER_PROTOCOL_MAJOR: u16 = 1;
 const PEER_PROTOCOL_MINOR: u16 = 0;
 const PEER_WIRE_MESSAGE_KIND: u16 = 1;
 const PEER_WIRE_PAYLOAD_OVERHEAD: usize = 1024;
+const PEER_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Embedded-Tor peer transport with strict `torca-wire` stream framing.
 pub struct TorPeerTransport {
@@ -80,6 +81,9 @@ impl TorPeerTransport {
         stream
             .set_nodelay(true)
             .map_err(|error| io_error("configure incoming peer stream", &error))?;
+        stream
+            .set_write_timeout(Some(PEER_WRITE_TIMEOUT))
+            .map_err(|error| io_error("configure incoming peer write timeout", &error))?;
         let reader_stream = stream
             .try_clone()
             .map_err(|error| io_error("clone incoming peer reader stream", &error))?;
@@ -154,6 +158,9 @@ impl PeerTransport for TorPeerTransport {
             .map_err(|error| PeerTransportError(format!("Tor peer connect failed: {error}")))?;
         let reader_stream =
             stream.try_clone().map_err(|error| io_error("clone peer reader stream", &error))?;
+        stream
+            .set_write_timeout(Some(PEER_WRITE_TIMEOUT))
+            .map_err(|error| io_error("configure peer write timeout", &error))?;
         self.stream = Some(stream);
         self.spawn_reader(reader_stream)?;
         Ok(())
@@ -161,12 +168,25 @@ impl PeerTransport for TorPeerTransport {
 
     fn send(&mut self, payload: Vec<u8>) -> Result<(), PeerTransportError> {
         let frame = self.encode_frame(&payload)?;
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or_else(|| PeerTransportError("peer transport is not connected".into()))?;
-        stream.write_all(&frame).map_err(|error| io_error("write peer frame", &error))?;
-        stream.flush().map_err(|error| io_error("flush peer frame", &error))
+        let result = {
+            let stream = self
+                .stream
+                .as_mut()
+                .ok_or_else(|| PeerTransportError("peer transport is not connected".into()))?;
+            stream
+                .write_all(&frame)
+                .map_err(|error| io_error("write peer frame", &error))
+                .and_then(|()| stream.flush().map_err(|error| io_error("flush peer frame", &error)))
+        };
+        if result.is_err() {
+            // A timed-out or failed write invalidates the stream. Do not keep
+            // it as a connected transport for the next durable job.
+            self.stop_reader();
+            if let Some(stream) = self.stream.take() {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+        }
+        result
     }
 
     fn try_receive(&mut self) -> Result<Option<Vec<u8>>, PeerTransportError> {

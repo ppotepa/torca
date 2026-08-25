@@ -55,6 +55,8 @@ const CONTROL_BATCH: usize = 1;
 // avoiding one OS thread per 64 KiB chunk for large attachments.
 const ATTACHMENT_BATCH: usize = 8;
 const MAX_DEFERRED_ATTACHMENTS: usize = 64;
+const ATTACHMENT_ERROR_RETRY_BASE: Duration = Duration::from_secs(2);
+const ATTACHMENT_ERROR_RETRY_MAX: Duration = Duration::from_secs(60);
 
 enum AttachmentWork {
     Maintenance { now: Timestamp },
@@ -80,6 +82,7 @@ pub struct TorcaCommunicationDriver {
     relationships: Box<dyn RelationshipAdminRuntime>,
     radio: Option<Box<dyn RadioInboundRuntime>>,
     attachment_scheduler: AttachmentJobScheduler,
+    attachment_error_backoff: Duration,
 }
 
 impl TorcaCommunicationDriver {
@@ -132,6 +135,7 @@ impl TorcaCommunicationDriver {
             relationships,
             radio: None,
             attachment_scheduler: AttachmentJobScheduler::new(),
+            attachment_error_backoff: ATTACHMENT_ERROR_RETRY_BASE,
         }
     }
 
@@ -261,6 +265,10 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         if let Ok(mut result) = self.attachment_job_result.lock()
             && let Some(result) = result.take()
         {
+            // A completed worker turn proves that the attachment lane is
+            // alive again. Do not carry a previous storage/transport error
+            // backoff into the next independent job.
+            self.attachment_error_backoff = ATTACHMENT_ERROR_RETRY_BASE;
             if result.more_work && !result.policy_blocked {
                 if let Some(delay) = result.retry_after_ms {
                     self.attachment_scheduler.wake_after(now, Duration::from_millis(delay));
@@ -274,7 +282,18 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         if let Ok(mut error) = self.attachment_job_error.lock()
             && let Some(error) = error.take()
         {
-            return Err(map_runtime(error));
+            // Attachment failures are durable job failures, not runtime-wide
+            // failures. Returning here used to abort the actor maintenance
+            // turn and starve text, control and Radio work behind one broken
+            // file. Keep the job retryable with exponential backoff while
+            // allowing the rest of the communication runtime to continue.
+            eprintln!(
+                "torca-attachment: maintenance error; retrying in {}ms code={error}",
+                self.attachment_error_backoff.as_millis()
+            );
+            self.attachment_scheduler.wake_after(now, self.attachment_error_backoff);
+            self.attachment_error_backoff =
+                self.attachment_error_backoff.saturating_mul(2).min(ATTACHMENT_ERROR_RETRY_MAX);
         }
         self.peer.maintenance(contacts, now).map_err(map_runtime)?;
         self.drain_inbound(now).map_err(map_runtime)?;
