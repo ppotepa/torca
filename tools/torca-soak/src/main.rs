@@ -17,6 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
+use torca_deploy::domain::CommunicationProvider;
 
 mod events;
 mod report;
@@ -45,26 +46,13 @@ enum RelayMode {
     External,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
-#[serde(rename_all = "snake_case")]
-enum CommunicationProvider {
-    Tor,
-    Iroh,
-    WebRtc,
+fn parse_communication_provider(value: &str) -> Result<CommunicationProvider, String> {
+    CommunicationProvider::from_wire(value.trim().to_ascii_lowercase().as_str())
+        .map_err(|_| format!("unsupported communication provider '{value}'"))
 }
 
-impl CommunicationProvider {
-    const fn wire(self) -> &'static str {
-        match self {
-            Self::Tor => "tor",
-            Self::Iroh => "iroh",
-            Self::WebRtc => "webrtc",
-        }
-    }
-
-    const fn requires_managed_relay(self) -> bool {
-        matches!(self, Self::Tor)
-    }
+fn provider_requires_managed_service(provider: CommunicationProvider) -> bool {
+    provider.deployment_profile().commissioning_service.is_managed()
 }
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
@@ -128,7 +116,7 @@ pub(crate) struct Cli {
     #[arg(long, value_enum, default_value_t = RelayMode::Managed)]
     relay: RelayMode,
     /// Communication provider used by Android and isolated lab peers.
-    #[arg(long, value_enum, default_value_t = CommunicationProvider::Iroh)]
+    #[arg(long, value_parser = parse_communication_provider, default_value = "iroh")]
     communication_provider: CommunicationProvider,
     #[arg(long)]
     relay_endpoint: Option<String>,
@@ -447,6 +435,16 @@ impl PeerProcess {
         operation: &str,
         extra: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        if let Some(status) = self
+            .child
+            .try_wait()
+            .map_err(|error| format!("{} process status: {error}", self.name))?
+        {
+            return Err(format!(
+                "{} process exited before {operation}: {status}; inspect its run logs",
+                self.name
+            ));
+        }
         let mut request = serde_json::Map::new();
         request.insert("id".into(), serde_json::Value::String(id.into()));
         request.insert("op".into(), serde_json::Value::String(operation.into()));
@@ -470,7 +468,7 @@ impl PeerProcess {
             .map_err(|error| format!("{} decode response: {error}", self.name))?;
         if response.get("status").and_then(serde_json::Value::as_str) != Some("succeeded") {
             return Err(format!(
-                "{} operation {operation} failed: {}",
+                "{} operation {operation} failed: {} (runtime may be unavailable; check diagnostics/last actor progress)",
                 self.name,
                 response.get("error").unwrap_or(&serde_json::Value::Null)
             ));
@@ -501,6 +499,51 @@ impl PeerProcess {
 }
 
 impl BotHostClient {
+    fn health(address: &str, token: &str, expected: usize) -> Result<Vec<String>, String> {
+        let mut stream = TcpStream::connect(address)
+            .map_err(|error| format!("connect soak bot host {address}: {error}"))?;
+        write!(
+            stream,
+            "GET /health HTTP/1.1\r\nHost: {address}\r\nX-Torca-Soak-Token: {token}\r\nConnection: close\r\n\r\n"
+        )
+        .map_err(|error| format!("write bot host health request: {error}"))?;
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .map_err(|error| format!("read bot host health response: {error}"))?;
+        let (_, body) = response
+            .split_once("\r\n\r\n")
+            .ok_or_else(|| "bot host returned malformed health response".to_owned())?;
+        let value: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("decode bot host health response: {error}"))?;
+        let ready = value
+            .get("ready")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let stopped =
+            value.get("stopped").and_then(serde_json::Value::as_array).map_or(0, Vec::len);
+        if value.get("status").and_then(serde_json::Value::as_str) != Some("succeeded")
+            || ready.len() != expected
+            || stopped != 0
+        {
+            return Err(format!(
+                "bot host is not ready: status={}, ready={}/{}, stopped={}",
+                value.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown"),
+                ready.len(),
+                expected,
+                stopped
+            ));
+        }
+        Ok(ready)
+    }
+
     fn request(
         &self,
         id: &str,
@@ -578,6 +621,12 @@ fn run() -> Result<(), String> {
         && !explicit_args.iter().any(|arg| arg == "--fault-profile")
     {
         cli.fault_profile = FaultProfile::None;
+    }
+    if !CommunicationProvider::selectable().contains(&cli.communication_provider) {
+        return Err(format!(
+            "communication provider '{}' is not available for SOAK yet; choose Tor or Iroh",
+            cli.communication_provider.wire_value()
+        ));
     }
     // Keep the legacy flag spellings usable while every scenario goes
     // through the same cockpit and typed CLI.
@@ -696,7 +745,7 @@ fn run_battery_harness(cli: &Cli) -> Result<(), String> {
         "-NativeLogRoot".to_owned(),
         format!("/sdcard/Android/data/{}/files/torca/logs", android_package()),
         "-CommunicationProvider".to_owned(),
-        cli.communication_provider.wire().to_owned(),
+        cli.communication_provider.wire_value().to_owned(),
     ];
     if cli.communication_provider == CommunicationProvider::Iroh {
         args.extend([
@@ -900,7 +949,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         radio: cli.radio,
         fault_profile: format!("{:?}", cli.fault_profile),
         relay_mode: format!("{:?}", cli.relay),
-        communication_provider: cli.communication_provider.wire().to_owned(),
+        communication_provider: cli.communication_provider.wire_value().to_owned(),
         iroh_profile: iroh_profile_for_soak(cli.communication_provider, cli.scenario),
         fixture: format!("{:?}", cli.fixture),
         fixture_name: cli.fixture_name.clone(),
@@ -922,7 +971,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
 
     let managed_relay;
     let endpoint = match (cli.communication_provider, cli.relay) {
-        (provider, _) if !provider.requires_managed_relay() => {
+        (provider, _) if !provider_requires_managed_service(provider) => {
             managed_relay = None;
             None
         }
@@ -937,17 +986,17 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
             cli.relay_endpoint.clone().or_else(|| std::env::var("TORCA_RELAY_ENDPOINT").ok())
         }
     };
-    if cli.communication_provider.requires_managed_relay()
+    if provider_requires_managed_service(cli.communication_provider)
         && endpoint.as_deref().is_none_or(|value| !valid_endpoint(value))
     {
         return Err("a valid Tor relay endpoint is required; start the managed relay or pass --relay-endpoint host.onion:port".into());
     }
-    let provider_requires_service = cli.communication_provider.requires_managed_relay();
+    let provider_requires_service = provider_requires_managed_service(cli.communication_provider);
     record(
         &mut timeline,
         "provider_ready",
         serde_json::json!({
-            "provider": cli.communication_provider.wire(),
+            "provider": cli.communication_provider.wire_value(),
             "endpoint": endpoint.as_deref().unwrap_or_default(),
             "health": "ready",
             "service": if provider_requires_service { "managed" } else { "provider_owned" },
@@ -967,6 +1016,12 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
     } else {
         cli.lab_peer.clone().unwrap_or_else(default_lab_peer_path)
     };
+    if cli.bot_host.is_none() && !peer_executable.is_file() {
+        return Err(format!(
+            "SOAK lab peer executable is missing: {} (build torca-lab-peer or pass --lab-peer)",
+            peer_executable.display()
+        ));
+    }
 
     let mut peers: Vec<Participant> = Vec::new();
     if let Some(serial) = &cli.android {
@@ -1017,6 +1072,18 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
     let bot_root = cli.repo_root.join(".torca/soak/bots");
     fs::create_dir_all(&bot_root)
         .map_err(|error| format!("create persistent bot root: {error}"))?;
+    if let Some(address) = &cli.bot_host {
+        let token = cli
+            .bot_token
+            .as_deref()
+            .ok_or("--bot-token or TORCA_SOAK_BOT_TOKEN is required with --bot-host")?;
+        let ready = BotHostClient::health(address, token, cli.fake_peers)?;
+        record(
+            &mut timeline,
+            "bot_host_ready",
+            serde_json::json!({"address": address, "ready": ready}),
+        )?;
+    }
     for index in 0..cli.fake_peers {
         let name = format!("peer-{}", (b'a' + index as u8) as char);
         if let Some(address) = &cli.bot_host {
@@ -1072,7 +1139,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         record(
             &mut timeline,
             "provider_ready",
-            serde_json::json!({"peer": peer.name(), "provider": cli.communication_provider.wire()}),
+            serde_json::json!({"peer": peer.name(), "provider": cli.communication_provider.wire_value()}),
         )?;
     }
 
@@ -1660,7 +1727,8 @@ fn build_lab_peer(
     // deadlocks before rustc starts. A provider/profile-specific target also
     // prevents a Tor binary from being accidentally reused for Iroh.
     let profile_key = iroh_profile.map_or_else(|| "default".to_owned(), sanitize_profile_key);
-    let target_dir = repo_root.join(".torca/soak/build").join(provider.wire()).join(profile_key);
+    let target_dir =
+        repo_root.join(".torca/soak/build").join(provider.wire_value()).join(profile_key);
     let target_dir_argument = target_dir.to_string_lossy().into_owned();
     fs::create_dir_all(&target_dir)
         .map_err(|error| format!("create lab peer target directory: {error}"))?;
@@ -1669,6 +1737,9 @@ fn build_lab_peer(
         CommunicationProvider::Tor => "provider-tor,radio-audio",
         CommunicationProvider::Iroh => "provider-iroh,radio-audio",
         CommunicationProvider::WebRtc => "provider-webrtc,radio-audio",
+        CommunicationProvider::Memory => {
+            return Err("memory provider is reserved for unit tests and cannot run SOAK".into());
+        }
     };
     command
         .args([
@@ -1682,7 +1753,7 @@ fn build_lab_peer(
             "--target-dir",
             &target_dir_argument,
         ])
-        .env("TORCA_COMMUNICATION_PROVIDER", provider.wire())
+        .env("TORCA_COMMUNICATION_PROVIDER", provider.wire_value())
         .current_dir(repo_root);
     if let Some(profile) = iroh_profile {
         command.env("TORCA_IROH_PROFILE", profile);
@@ -2930,11 +3001,7 @@ fn run_typed_android_deploy(
         build_plan.device = Some(serial.to_owned());
         build_plan.client_build = torca_deploy::domain::BuildPolicy::Rebuild;
         build_plan.provider_service_build = torca_deploy::domain::BuildPolicy::Reuse;
-        build_plan.communication_provider = match provider {
-            CommunicationProvider::Tor => torca_deploy::domain::CommunicationProvider::Tor,
-            CommunicationProvider::Iroh => torca_deploy::domain::CommunicationProvider::Iroh,
-            CommunicationProvider::WebRtc => torca_deploy::domain::CommunicationProvider::WebRtc,
-        };
+        build_plan.communication_provider = provider;
         build_plan.provider_profile = iroh_profile.map(str::to_owned);
         build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
         build_plan.launch = torca_deploy::domain::LaunchPolicy::Skip;
@@ -2954,11 +3021,7 @@ fn run_typed_android_deploy(
     install_plan.device = Some(serial.to_owned());
     install_plan.client_build = torca_deploy::domain::BuildPolicy::Reuse;
     install_plan.provider_service_build = torca_deploy::domain::BuildPolicy::Reuse;
-    install_plan.communication_provider = match provider {
-        CommunicationProvider::Tor => torca_deploy::domain::CommunicationProvider::Tor,
-        CommunicationProvider::Iroh => torca_deploy::domain::CommunicationProvider::Iroh,
-        CommunicationProvider::WebRtc => torca_deploy::domain::CommunicationProvider::WebRtc,
-    };
+    install_plan.communication_provider = provider;
     install_plan.provider_profile = iroh_profile.map(str::to_owned);
     install_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
     install_plan.client_data = if clean {
@@ -3699,6 +3762,15 @@ mod tests {
         let cli = Cli::try_parse_from(["torca-soak"]).expect("default CLI should parse");
         assert_eq!(cli.scenario, Scenario::ActiveMessaging);
         assert_eq!(cli.communication_provider, CommunicationProvider::Iroh);
+    }
+
+    #[test]
+    fn soak_provider_gate_matches_available_native_compositions() {
+        assert_eq!(
+            CommunicationProvider::selectable(),
+            &[CommunicationProvider::Tor, CommunicationProvider::Iroh]
+        );
+        assert!(!CommunicationProvider::selectable().contains(&CommunicationProvider::WebRtc));
     }
 
     #[test]

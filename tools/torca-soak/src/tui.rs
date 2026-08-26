@@ -514,11 +514,11 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
         )),
         ListItem::new(format!(
             "Provider: {} [{}]",
-            cli.communication_provider.wire(),
+            cli.communication_provider.wire_value(),
             ctx.relay_health
                 .lock()
                 .map(|value| {
-                    if cli.communication_provider.requires_managed_relay() {
+                    if crate::provider_requires_managed_service(cli.communication_provider) {
                         value.clone()
                     } else {
                         "provider-owned".to_owned()
@@ -536,7 +536,7 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
                 .lock()
                 .map(|value| {
                     if value.is_empty() {
-                        if cli.communication_provider.requires_managed_relay() {
+                        if crate::provider_requires_managed_service(cli.communication_provider) {
                             "pending".to_owned()
                         } else {
                             "provider-owned".to_owned()

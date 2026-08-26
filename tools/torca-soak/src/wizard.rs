@@ -213,14 +213,17 @@ fn edit_plan(
                         };
                     }
                     Field::Provider => {
-                        provider = match (provider, increase) {
-                            (CommunicationProvider::Tor, true) => CommunicationProvider::Iroh,
-                            (CommunicationProvider::Iroh, true) => CommunicationProvider::WebRtc,
-                            (CommunicationProvider::WebRtc, true) => CommunicationProvider::Tor,
-                            (CommunicationProvider::Tor, false) => CommunicationProvider::Iroh,
-                            (CommunicationProvider::Iroh, false) => CommunicationProvider::Tor,
-                            (CommunicationProvider::WebRtc, false) => CommunicationProvider::Iroh,
+                        let providers = CommunicationProvider::selectable();
+                        let current =
+                            providers.iter().position(|value| *value == provider).unwrap_or(0);
+                        let next = if increase {
+                            (current + 1) % providers.len()
+                        } else if current == 0 {
+                            providers.len() - 1
+                        } else {
+                            current - 1
                         };
+                        provider = providers[next];
                     }
                     Field::RequireUnplugged => require_unplugged = !require_unplugged,
                     Field::RequireScreenOff => require_screen_off = !require_screen_off,
@@ -254,7 +257,7 @@ fn edit_plan(
                     // Direct providers do not own a managed relay. Keep the
                     // plan truthful so the review screen and artifact do not
                     // imply that an onion service will be started for Iroh.
-                    relay: if provider.requires_managed_relay() {
+                    relay: if crate::provider_requires_managed_service(provider) {
                         RelayMode::Managed
                     } else {
                         RelayMode::External
