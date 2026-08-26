@@ -5,18 +5,30 @@ import '../localization/torca_strings.dart';
 import '../theme/app_semantic_colors.dart';
 import 'connection_state_presenter.dart';
 
-class TorStatusIndicator extends StatelessWidget {
-  const TorStatusIndicator({required this.state, this.onPressed, super.key});
+/// Provider-neutral commissioning indicator.
+///
+/// The old `TorStatusIndicator` name is kept below as a source-compatible
+/// alias for callers that have not migrated yet. New screens must pass the
+/// selected provider instead of assuming onion/Tor semantics.
+class CommunicationStatusIndicator extends StatelessWidget {
+  const CommunicationStatusIndicator({
+    required this.state,
+    required this.provider,
+    this.onPressed,
+    super.key,
+  });
 
   final String state;
+  final String provider;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final presentation = ConnectionStatePresenter.tor(
-      state,
-      context.torcaIcons,
-      context.strings,
+    final presentation = ConnectionStatePresenter.provider(
+      state: state,
+      provider: provider,
+      icons: context.torcaIcons,
+      strings: context.strings,
     );
     final color = switch (presentation.tone) {
       ConnectionTone.ready => context.semanticColors.connectionReady,
@@ -42,4 +54,12 @@ class TorStatusIndicator extends StatelessWidget {
             ),
     );
   }
+}
+
+/// @deprecated Use [CommunicationStatusIndicator] and provide the selected
+/// provider explicitly.
+@Deprecated('Use CommunicationStatusIndicator')
+class TorStatusIndicator extends CommunicationStatusIndicator {
+  const TorStatusIndicator({required super.state, super.onPressed, super.key})
+    : super(provider: 'tor');
 }
