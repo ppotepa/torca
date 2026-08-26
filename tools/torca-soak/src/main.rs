@@ -502,6 +502,10 @@ impl BotHostClient {
     fn health(address: &str, token: &str, expected: usize) -> Result<Vec<String>, String> {
         let mut stream = TcpStream::connect(address)
             .map_err(|error| format!("connect soak bot host {address}: {error}"))?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .and_then(|_| stream.set_write_timeout(Some(Duration::from_secs(10))))
+            .map_err(|error| format!("configure bot host health timeout: {error}"))?;
         write!(
             stream,
             "GET /health HTTP/1.1\r\nHost: {address}\r\nX-Torca-Soak-Token: {token}\r\nConnection: close\r\n\r\n"
@@ -559,6 +563,10 @@ impl BotHostClient {
         let body = serde_json::Value::Object(request).to_string();
         let mut stream = TcpStream::connect(&self.address)
             .map_err(|error| format!("{} connect bot host: {error}", self.name))?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .and_then(|_| stream.set_write_timeout(Some(Duration::from_secs(15))))
+            .map_err(|error| format!("{} configure bot host timeout: {error}", self.name))?;
         write!(
             stream,
             "POST /bot/{} HTTP/1.1\r\nHost: {}\r\nX-Torca-Soak-Token: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -625,6 +633,12 @@ fn run() -> Result<(), String> {
     if !CommunicationProvider::selectable().contains(&cli.communication_provider) {
         return Err(format!(
             "communication provider '{}' is not available for SOAK yet; choose Tor or Iroh",
+            cli.communication_provider.wire_value()
+        ));
+    }
+    if cli.radio && !cli.communication_provider.deployment_profile().features.radio {
+        return Err(format!(
+            "radio workload is not supported by communication provider '{}'",
             cli.communication_provider.wire_value()
         ));
     }
