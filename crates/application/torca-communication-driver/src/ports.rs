@@ -183,6 +183,27 @@ pub trait AttachmentRuntime: Send {
         now: Timestamp,
     ) -> Result<(), CommunicationError>;
 
+    /// Reconciles durable rows left in `Encrypting` after a process crash.
+    /// Implementations should clear partial staging and return the row to a
+    /// retryable state; source paths are supplied again by the next command.
+    fn recover_interrupted_prepares(&mut self, _now: Timestamp) -> Result<(), CommunicationError> {
+        Ok(())
+    }
+
+    /// Performs only bounded metadata validation and durable admission. Heavy
+    /// source reads, encryption and fsync remain in `prepare_outgoing` on the
+    /// attachment worker. Implementations that cannot split these phases may
+    /// keep the default no-op and retain the legacy behavior.
+    fn admit_outgoing(
+        &mut self,
+        _request: &AttachmentSendRequest,
+        _now: Timestamp,
+    ) -> Result<AttachmentAdmission, CommunicationError> {
+        // Legacy implementations perform admission in prepare_outgoing. The
+        // driver must not roll back a row it did not create.
+        Ok(AttachmentAdmission::Legacy)
+    }
+
     fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError>;
 
     fn cancel(&mut self, attachment_id: OpaqueId, now: Timestamp)
@@ -223,6 +244,20 @@ pub trait AttachmentRuntime: Send {
     ) -> Result<AttachmentMaintenanceResult, CommunicationError>;
 
     fn shutdown(&mut self);
+}
+
+/// Result of the lightweight attachment admission phase. `Created` means the
+/// caller owns the new durable row and may safely roll it back if the bounded
+/// worker queue rejects the job. `Existing` is an idempotent duplicate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttachmentAdmission {
+    Created,
+    Existing,
+    /// An existing durable row is still in the admission/encryption phase.
+    /// The caller may re-submit the source to a worker, but must deduplicate
+    /// against an already queued/in-flight prepare.
+    ExistingNeedsPreparation,
+    Legacy,
 }
 
 /// Result of one bounded attachment maintenance pass. The runtime uses this

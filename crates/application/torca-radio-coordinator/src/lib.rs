@@ -26,6 +26,8 @@ pub enum RadioApplicationError {
     Persistence,
     ControlTransport,
     MediaTransport,
+    MediaEndpointUnavailable,
+    MediaConnectTimeout,
     MediaQueueFull,
     MediaWorkerUnavailable,
     Crypto,
@@ -41,6 +43,7 @@ pub enum RadioTransportFailure {
     StreamReset,
     IdleTimeout,
     NetworkChanged,
+    WorkerUnavailable,
     Protocol,
     Unknown,
 }
@@ -63,6 +66,18 @@ impl From<RadioDomainError> for RadioApplicationError {
             | RadioDomainError::UnexpectedFloorGrant
             | RadioDomainError::NoActiveBurst => Self::SessionNotReady,
         }
+    }
+}
+
+pub fn transport_failure_for(error: RadioApplicationError) -> RadioTransportFailure {
+    match error {
+        RadioApplicationError::MediaEndpointUnavailable => {
+            RadioTransportFailure::EndpointUnavailable
+        }
+        RadioApplicationError::MediaConnectTimeout => RadioTransportFailure::ConnectTimeout,
+        RadioApplicationError::MediaWorkerUnavailable => RadioTransportFailure::WorkerUnavailable,
+        RadioApplicationError::MediaTransport => RadioTransportFailure::StreamReset,
+        _ => RadioTransportFailure::Unknown,
     }
 }
 
@@ -166,10 +181,21 @@ pub trait RadioMediaPort: Send {
     fn wake_count(&self) -> u64 {
         0
     }
+
+    /// Whether the provider-owned media worker can still consume commands.
+    /// A default of `true` keeps lightweight/test providers compatible; real
+    /// adapters override it so a crashed worker cannot leave a live session
+    /// looking healthy forever.
+    fn worker_alive(&self) -> bool {
+        true
+    }
 }
 
 /// Audio device capability and capture/playback boundary.
 pub trait RadioAudioPort: Send {
+    /// Installs a non-blocking wake callback for platform-originated audio
+    /// events (for example Android stopping AudioRecord asynchronously).
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn devices(&self) -> RadioAudioProjection {
         RadioAudioProjection::default()
     }
@@ -202,6 +228,11 @@ pub trait RadioAudioPort: Send {
     /// Returns a platform audio fault observed by a real-time callback.
     fn take_error(&mut self) -> Option<RadioApplicationError> {
         None
+    }
+    /// Returns true when the platform stopped capture without a matching
+    /// coordinator command (for example Activity pause or audio-focus loss).
+    fn take_capture_interrupted(&mut self) -> bool {
+        false
     }
 }
 
@@ -236,16 +267,19 @@ pub enum RadioSessionEvent {
     },
     FloorGranted {
         contact_id: ContactId,
+        session_id: RadioSessionId,
         request_id: RadioOperationId,
         burst_id: RadioOperationId,
         at: Timestamp,
     },
     FloorDenied {
         contact_id: ContactId,
+        session_id: RadioSessionId,
         request_id: RadioOperationId,
     },
     RemoteBurstStarted {
         contact_id: ContactId,
+        session_id: RadioSessionId,
         burst_id: RadioOperationId,
         at: Timestamp,
     },
@@ -254,10 +288,12 @@ pub enum RadioSessionEvent {
     /// produces a misleading remote audio cue.
     RemoteAudioStarted {
         contact_id: ContactId,
+        session_id: RadioSessionId,
         burst_id: RadioOperationId,
     },
     BurstEnded {
         contact_id: ContactId,
+        session_id: RadioSessionId,
     },
     Interrupted {
         contact_id: ContactId,
@@ -335,7 +371,23 @@ pub struct RadioCoordinator {
     foreground: bool,
     recent_events: VecDeque<RadioTimelineRecord>,
     next_state_sync_at_ms: i64,
+    pending_floor_started_at_ms: Option<i64>,
+    session_retry_at_ms: Option<i64>,
+    session_retry_attempt: u8,
+    pending_incoming_session: Option<(ContactId, RadioSessionId, [u8; 32])>,
+    connecting_session: Option<(ContactId, RadioSessionId)>,
 }
+
+/// A state sync is a recovery safety net, not a heartbeat.  Transport
+/// liveness is owned by the selected communication provider/media stream.
+/// Sending a control frame every 30 seconds can race with provider reconnect
+/// and needlessly wake the whole runtime, especially for Iroh/QUIC where the
+/// media lane already has its own bounded keep-alive.
+const STATE_SYNC_REFRESH_INTERVAL_MS: i64 = 5 * 60 * 1_000;
+/// Product-level guard for a floor request. The provider worker has its own
+/// wire timeout, but the coordinator must also recover if a terminal event is
+/// lost between the worker and the runtime actor.
+const FLOOR_REQUEST_GUARD_MS: i64 = 35_000;
 
 impl RadioCoordinator {
     pub fn restore(
@@ -370,6 +422,11 @@ impl RadioCoordinator {
             foreground: true,
             recent_events,
             next_state_sync_at_ms: Timestamp::MIN_UNIX_MILLIS,
+            pending_floor_started_at_ms: None,
+            session_retry_at_ms: None,
+            session_retry_attempt: 0,
+            pending_incoming_session: None,
+            connecting_session: None,
         })
     }
 
@@ -388,6 +445,7 @@ impl RadioCoordinator {
     }
 
     pub fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.audio.set_waker(Arc::clone(&waker));
         self.media.set_waker(waker);
     }
 
@@ -403,6 +461,16 @@ impl RadioCoordinator {
         self.ensure_contact(contact_id, at);
         if enabled && !self.audio.microphone_ready()? {
             return Err(RadioApplicationError::MicrophoneUnavailable);
+        }
+        // A floor request belongs to the previously active contact. Switching
+        // the single local radio channel must invalidate that deadline before
+        // the new contact becomes active; otherwise the old watchdog could
+        // cancel an unrelated request on the new channel.
+        if enabled && self.active_contact_id != Some(contact_id) {
+            self.pending_floor_started_at_ms = None;
+            self.session_retry_at_ms = None;
+            self.session_retry_attempt = 0;
+            self.connecting_session = None;
         }
 
         let correlation_id = self.entropy.opaque_id()?;
@@ -440,10 +508,16 @@ impl RadioCoordinator {
                 event,
             });
         }
-        if changed_preferences.is_empty() {
+        // A stale provider session is a runtime fact, not a preference fact.
+        // Even when the persisted value is already `disabled`, a previous
+        // handshake may still be queued in the provider worker and must be
+        // closed. Do not return before draining that close list.
+        if changed_preferences.is_empty() && sessions_to_close.is_empty() {
             return Ok(());
         }
-        self.store.commit(&changed_preferences, &records)?;
+        if !changed_preferences.is_empty() {
+            self.store.commit(&changed_preferences, &records)?;
+        }
         self.remember(&records);
         self.active_contact_id = if enabled {
             Some(contact_id)
@@ -452,6 +526,15 @@ impl RadioCoordinator {
         } else {
             self.active_contact_id
         };
+        if !enabled || self.active_contact_id != Some(contact_id) {
+            self.pending_floor_started_at_ms = None;
+            if !enabled {
+                self.session_retry_at_ms = None;
+                self.session_retry_attempt = 0;
+                self.pending_incoming_session = None;
+                self.connecting_session = None;
+            }
+        }
 
         for preference in changed_preferences {
             self.send_state(preference)?;
@@ -509,7 +592,21 @@ impl RadioCoordinator {
                 }
                 if enabled {
                     self.maybe_start_session(contact_id, at)?;
-                } else if let Some(session_id) = previous_session {
+                } else if let Some(session_id) = previous_session.or_else(|| {
+                    self.pending_incoming_session
+                        .as_ref()
+                        .filter(|(pending_contact, _, _)| *pending_contact == contact_id)
+                        .map(|(_, pending_session, _)| *pending_session)
+                        .or_else(|| {
+                            self.connecting_session
+                                .filter(|(pending_contact, _)| *pending_contact == contact_id)
+                                .map(|(_, pending_session)| pending_session)
+                        })
+                }) {
+                    // Remote disable also cancels an incoming SessionOpen
+                    // which has not reached Ready yet. Otherwise the pending
+                    // media generation can be retried after consent has
+                    // already been withdrawn.
                     self.close_session(contact_id, session_id, false)?;
                 }
             }
@@ -528,21 +625,72 @@ impl RadioCoordinator {
                     return Err(RadioApplicationError::MutualConsentRequired);
                 }
                 let session_id = RadioSessionId::from_opaque(session_id);
+                // SessionOpen is delivered through a retryable control lane.
+                // Treat duplicates as idempotent: a delayed copy must not
+                // replace a live generation or turn a healthy session into a
+                // runtime error (`SessionAlreadyActive`).
+                if self.connecting_session == Some((contact_id, session_id))
+                    || self.pending_incoming_session.as_ref().is_some_and(
+                        |(pending_contact, pending_session, _)| {
+                            *pending_contact == contact_id && *pending_session == session_id
+                        },
+                    )
+                    || self.channels.get(&contact_id).is_some_and(|channel| {
+                        channel.session().is_some_and(|session| session.id == session_id)
+                            || (channel.state() == RadioState::Connecting
+                                && channel.session().is_none())
+                    })
+                {
+                    return Ok(());
+                }
+                // A different SessionOpen cannot supersede a currently live
+                // generation. It is either stale control traffic or a peer
+                // that has not observed our SessionClose yet.
+                if self.channels.get(&contact_id).is_some_and(|channel| channel.session().is_some())
+                {
+                    return Ok(());
+                }
                 self.channels
                     .get_mut(&contact_id)
                     .ok_or(RadioApplicationError::ContactUnavailable)?
                     .begin_connecting()?;
-                self.media.open(contact_id, session_id, media_token, false)?;
+                self.connecting_session = Some((contact_id, session_id));
+                // Keep the incoming generation until provider authentication
+                // publishes Ready. `media.open()` only queues work; the
+                // handshake can still fail afterwards. Retaining this tuple
+                // lets the non-dialing side retry the exact SessionOpen
+                // generation instead of falling into a permanent Connecting
+                // state with no route back to the provider.
+                self.pending_incoming_session = Some((contact_id, session_id, media_token));
+                if let Err(error) = self.media.open(contact_id, session_id, media_token, false) {
+                    if let Some(channel) = self.channels.get_mut(&contact_id) {
+                        channel.connection_failed();
+                    }
+                    self.schedule_session_retry(at);
+                    return Err(error);
+                }
             }
             RadioControlFrame::SessionClose { session_id, reason: _ } => {
-                if self
+                let current_session = self
                     .channels
                     .get(&contact_id)
                     .ok_or(RadioApplicationError::ContactUnavailable)?
                     .session()
-                    .is_some_and(|session| session.id.to_opaque() == session_id)
+                    .map(|session| session.id);
+                let pending_session = self
+                    .pending_incoming_session
+                    .as_ref()
+                    .filter(|(pending_contact, _, _)| *pending_contact == contact_id)
+                    .map(|(_, pending_session, _)| *pending_session)
+                    .or_else(|| {
+                        self.connecting_session
+                            .filter(|(pending_contact, _)| *pending_contact == contact_id)
+                            .map(|(_, pending_session)| pending_session)
+                    });
+                let requested_session = RadioSessionId::from_opaque(session_id);
+                if current_session == Some(requested_session)
+                    || pending_session == Some(requested_session)
                 {
-                    let session_id = RadioSessionId::from_opaque(session_id);
                     let _ = self
                         .channels
                         .get_mut(&contact_id)
@@ -550,7 +698,7 @@ impl RadioCoordinator {
                         .interrupt_session(at);
                     self.audio.end_capture();
                     self.audio.end_playback();
-                    self.media.close(contact_id, session_id)?;
+                    self.close_session(contact_id, requested_session, false)?;
                 }
             }
         }
@@ -563,6 +711,27 @@ impl RadioCoordinator {
     ) -> Result<(), RadioApplicationError> {
         match event {
             RadioSessionEvent::Ready { contact_id, session_id, at } => {
+                let Some(channel) = self.channels.get(&contact_id) else {
+                    return Err(RadioApplicationError::ContactUnavailable);
+                };
+                if self.connecting_session.is_some_and(|(pending_contact, pending_session)| {
+                    pending_contact == contact_id && pending_session != session_id
+                }) {
+                    // A delayed Ready from a failed/replaced generation must
+                    // not complete the currently pending handshake.
+                    return Ok(());
+                }
+                // A delayed Ready from an older provider generation must not
+                // replace a session which has already reconnected. Duplicate
+                // Ready for the current generation is harmless and ignored.
+                if let Some(current) = channel.session().map(|session| session.id)
+                    && current != session_id
+                {
+                    return Ok(());
+                }
+                if channel.session().is_some_and(|session| session.id == session_id) {
+                    return Ok(());
+                }
                 let timeline = self
                     .channels
                     .get_mut(&contact_id)
@@ -576,6 +745,10 @@ impl RadioCoordinator {
                     self.last_transport_failure = None;
                     self.last_transport_failure_contact_id = None;
                 }
+                self.session_retry_at_ms = None;
+                self.session_retry_attempt = 0;
+                self.pending_incoming_session = None;
+                self.connecting_session = None;
                 let correlation = self.entropy.opaque_id()?;
                 let record = RadioTimelineRecord {
                     event_id: self.entropy.opaque_id()?,
@@ -586,11 +759,31 @@ impl RadioCoordinator {
                 self.store.commit(&[], &[record])?;
                 self.remember(&[record]);
             }
-            RadioSessionEvent::FloorGranted { contact_id, request_id, burst_id, at } => {
+            RadioSessionEvent::FloorGranted {
+                contact_id,
+                session_id,
+                request_id,
+                burst_id,
+                at,
+            } => {
                 let channel = self
                     .channels
                     .get_mut(&contact_id)
                     .ok_or(RadioApplicationError::ContactUnavailable)?;
+                if channel.session().is_none_or(|session| session.id != session_id) {
+                    return Ok(());
+                }
+                if channel.state() != RadioState::RequestingFloor
+                    || channel.pending_floor_request() != Some(request_id)
+                {
+                    // The provider may have queued a grant just before the
+                    // user released PTT or the session was replaced. It is a
+                    // stale transition, not a coordinator failure. Release
+                    // the provider-side burst defensively and keep the new
+                    // session generation untouched.
+                    let _ = self.media.end_burst(contact_id, session_id, burst_id);
+                    return Ok(());
+                }
                 channel.grant_local_floor(request_id, burst_id, at)?;
                 let session = channel.session().ok_or(RadioApplicationError::SessionNotReady)?;
                 if let Err(error) = self.audio.begin_capture(contact_id, session.id, burst_id) {
@@ -599,41 +792,70 @@ impl RadioCoordinator {
                     return Err(error);
                 }
                 channel.capture_started()?;
+                self.pending_floor_started_at_ms = None;
             }
-            RadioSessionEvent::FloorDenied { contact_id, request_id } => {
-                self.channels
-                    .get_mut(&contact_id)
-                    .ok_or(RadioApplicationError::ContactUnavailable)?
-                    .deny_local_floor(request_id)?;
-            }
-            RadioSessionEvent::RemoteBurstStarted { contact_id, burst_id, at } => {
+            RadioSessionEvent::FloorDenied { contact_id, session_id, request_id } => {
                 let channel = self
                     .channels
                     .get_mut(&contact_id)
                     .ok_or(RadioApplicationError::ContactUnavailable)?;
+                if channel.session().is_none_or(|session| session.id != session_id) {
+                    return Ok(());
+                }
+                if channel.state() != RadioState::RequestingFloor
+                    || channel.pending_floor_request() != Some(request_id)
+                {
+                    // A delayed denial after local cancellation is harmless;
+                    // the local reservation has already been released.
+                    return Ok(());
+                }
+                channel.deny_local_floor(request_id)?;
+                self.pending_floor_started_at_ms = None;
+            }
+            RadioSessionEvent::RemoteBurstStarted { contact_id, session_id, burst_id, at } => {
+                let channel = self
+                    .channels
+                    .get_mut(&contact_id)
+                    .ok_or(RadioApplicationError::ContactUnavailable)?;
+                if channel.session().is_none_or(|session| session.id != session_id) {
+                    return Ok(());
+                }
+                if channel.state() != RadioState::Ready {
+                    // A duplicate remote burst can arrive after a local
+                    // disconnect/reconnect. The media worker owns wire-level
+                    // duplicate suppression; the coordinator ignores the
+                    // stale projection event.
+                    return Ok(());
+                }
                 channel.grant_remote_floor(burst_id, at)?;
             }
-            RadioSessionEvent::RemoteAudioStarted { contact_id, burst_id } => {
+            RadioSessionEvent::RemoteAudioStarted { contact_id, session_id, burst_id } => {
                 let channel = self
                     .channels
                     .get_mut(&contact_id)
                     .ok_or(RadioApplicationError::ContactUnavailable)?;
                 let session = channel.session().ok_or(RadioApplicationError::SessionNotReady)?;
+                if session.id != session_id {
+                    return Ok(());
+                }
                 if session.floor_operation_id == Some(burst_id)
                     && channel.state() == RadioState::Receiving
                 {
                     self.audio.begin_playback(contact_id, session.id, burst_id)?;
                 }
             }
-            RadioSessionEvent::BurstEnded { contact_id } => {
+            RadioSessionEvent::BurstEnded { contact_id, session_id } => {
                 let channel = self
                     .channels
                     .get_mut(&contact_id)
                     .ok_or(RadioApplicationError::ContactUnavailable)?;
+                if channel.session().is_none_or(|session| session.id != session_id) {
+                    return Ok(());
+                }
                 match channel.state() {
                     RadioState::Transmitting => self.audio.end_capture(),
                     RadioState::Receiving => self.audio.end_playback(),
-                    _ => {}
+                    _ => return Ok(()),
                 }
                 channel.end_burst()?;
             }
@@ -668,6 +890,16 @@ impl RadioCoordinator {
                     self.store.commit(&[], &[record])?;
                     self.remember(&[record]);
                 }
+                if current_session.is_none() {
+                    // No live session existed (for example, provider setup or
+                    // cipher creation failed before the handshake). In that
+                    // case the media worker may still be retrying its old
+                    // generation, but the coordinator also needs a bounded
+                    // SessionOpen retry. Without this, an outgoing Iroh dial
+                    // can remain in Reconnecting indefinitely after the
+                    // first provider error.
+                    self.schedule_session_retry(at);
+                }
             }
         }
         Ok(())
@@ -683,10 +915,19 @@ impl RadioCoordinator {
         let request_id = RadioOperationId::from_opaque(self.entropy.opaque_id()?);
         let channel =
             self.channels.get_mut(&contact_id).ok_or(RadioApplicationError::ContactUnavailable)?;
+        // Do not reserve the local floor until a provider-authenticated media
+        // session exists.  Previously `request_local_floor` ran first and a
+        // cold/reconnecting Iroh endpoint returned `SessionNotReady` while
+        // leaving the channel in `RequestingFloor` forever.
+        let session_id = channel
+            .session()
+            .map(|session| session.id)
+            .ok_or(RadioApplicationError::SessionNotReady)?;
         channel.request_local_floor(request_id)?;
-        let session = channel.session().ok_or(RadioApplicationError::SessionNotReady)?;
-        if let Err(error) = self.media.request_floor(contact_id, session.id, request_id) {
+        self.pending_floor_started_at_ms = Some(current_timestamp().to_unix_millis());
+        if let Err(error) = self.media.request_floor(contact_id, session_id, request_id) {
             let _ = channel.deny_local_floor(request_id);
+            self.pending_floor_started_at_ms = None;
             return Err(error);
         }
         Ok(request_id)
@@ -704,6 +945,7 @@ impl RadioCoordinator {
                 // cannot receive the best-effort cancellation frame.
                 let _ = self.media.cancel_floor(contact_id, session.id, request_id);
                 channel.cancel_local_floor(request_id)?;
+                self.pending_floor_started_at_ms = None;
             }
             RadioState::StartingCapture => {
                 let Some(session) = channel.session() else { return Ok(()) };
@@ -711,6 +953,7 @@ impl RadioCoordinator {
                 self.audio.end_capture();
                 let _ = self.media.end_burst(contact_id, session.id, burst_id);
                 channel.abort_local_capture()?;
+                self.pending_floor_started_at_ms = None;
             }
             RadioState::Transmitting => {
                 let Some(session) = channel.session() else { return Ok(()) };
@@ -718,6 +961,7 @@ impl RadioCoordinator {
                 self.audio.end_capture();
                 let _ = self.media.end_burst(contact_id, session.id, burst_id);
                 channel.end_burst()?;
+                self.pending_floor_started_at_ms = None;
             }
             // Releasing after a remote disconnect, a completed burst or a
             // denied floor is normal. Never surface SessionNotReady to users.
@@ -729,16 +973,102 @@ impl RadioCoordinator {
     pub fn lifecycle(&mut self, lifecycle: HostRadioLifecycle) {
         self.foreground = lifecycle == HostRadioLifecycle::Foreground;
         if !self.foreground {
+            self.pending_floor_started_at_ms = None;
+            self.session_retry_at_ms = None;
+            if let Some(contact_id) = self.active_contact_id
+                && let Some(channel) = self.channels.get_mut(&contact_id)
+                && channel.session().is_none()
+                && channel.state() == RadioState::Connecting
+            {
+                // Background can interrupt the provider handshake between
+                // SessionOpen and Ready. Normalize the domain attempt so the
+                // foreground path can retry instead of consuming a retry
+                // while still looking Connecting.
+                channel.connection_failed();
+            }
             self.end_any_local_burst();
         }
         if lifecycle == HostRadioLifecycle::Terminating {
+            self.pending_incoming_session = None;
+            self.connecting_session = None;
             self.audio.end_capture();
             self.audio.end_playback();
+            return;
+        }
+        if lifecycle == HostRadioLifecycle::Foreground {
+            // Reconcile the remote preference once after returning to the
+            // foreground; background idle must not keep a periodic safety
+            // timer alive merely because Radio is enabled.
+            self.next_state_sync_at_ms = Timestamp::MIN_UNIX_MILLIS;
+            let now = current_timestamp();
+            // A provider handshake may have been interrupted while Android
+            // paused the host. Resume the exact incoming generation instead
+            // of waiting for another control frame from the peer.
+            if self.pending_incoming_session.is_some() {
+                self.session_retry_at_ms = Some(now.to_unix_millis());
+            } else if let Some(contact_id) = self.active_contact_id {
+                let should_restart = self.channels.get(&contact_id).is_some_and(|channel| {
+                    channel.state() == RadioState::Reconnecting
+                        && channel.is_mutually_enabled()
+                        && self
+                            .peers
+                            .remote_identity(contact_id)
+                            .is_some_and(|remote| self.peers.local_identity() < remote)
+                });
+                if should_restart && let Err(error) = self.maybe_start_session(contact_id, now) {
+                    eprintln!("torca-radio: foreground session restart failed: {error}");
+                    self.schedule_session_retry(now);
+                }
+            }
         }
     }
 
     pub fn maintain(&mut self, now: Timestamp) -> Result<(), RadioApplicationError> {
         let mut first_error = None;
+        if !self.media.worker_alive()
+            && let Some(contact_id) = self.active_contact_id
+            && let Some(channel) = self.channels.get_mut(&contact_id)
+        {
+            // A dead provider worker must never leave the product state in
+            // RequestingFloor/StartingCapture.  Those states are local
+            // reservations, not durable facts, so release them immediately
+            // and let the normal reconnect path establish a fresh session.
+            self.audio.end_capture();
+            self.audio.end_playback();
+            let had_session = channel.session().is_some();
+            let was_attempting =
+                matches!(channel.state(), RadioState::Connecting | RadioState::Reconnecting);
+            let was_busy = matches!(
+                channel.state(),
+                RadioState::RequestingFloor
+                    | RadioState::StartingCapture
+                    | RadioState::Transmitting
+                    | RadioState::Receiving
+            );
+            let event = channel.interrupt_session(now);
+            if had_session || was_busy || was_attempting {
+                self.last_transport_failure = Some(RadioTransportFailure::WorkerUnavailable);
+                self.last_transport_failure_contact_id = Some(contact_id);
+                if let Some(event) = event {
+                    let correlation = self.entropy.opaque_id()?;
+                    let record = RadioTimelineRecord {
+                        event_id: self.entropy.opaque_id()?,
+                        contact_id,
+                        correlation_id: correlation,
+                        event,
+                    };
+                    self.store.commit(&[], &[record])?;
+                    self.remember(&[record]);
+                }
+                self.schedule_session_retry(now);
+            }
+        }
+        if self.audio.take_capture_interrupted() {
+            self.end_any_local_burst();
+            if first_error.is_none() {
+                first_error = Some(RadioApplicationError::MicrophoneUnavailable);
+            }
+        }
         if let Some(error) = self.audio.take_error() {
             self.end_any_local_burst();
             first_error = Some(error);
@@ -746,9 +1076,22 @@ impl RadioCoordinator {
         if let Err(error) = self.control.maintain(now) {
             first_error = Some(error);
         }
-        if now.to_unix_millis() >= self.next_state_sync_at_ms {
-            let preferences: Vec<_> =
-                self.channels.values().map(RadioChannel::preference).collect();
+        let has_active_session = self.active_contact_id.is_some_and(|contact_id| {
+            self.channels.get(&contact_id).is_some_and(|channel| channel.session().is_some())
+        });
+        if (self.foreground || has_active_session)
+            && now.to_unix_millis() >= self.next_state_sync_at_ms
+        {
+            // A periodic refresh is only a recovery safety net for channels
+            // that are locally enabled. Disabled channels already publish
+            // their transition synchronously; refreshing them here would
+            // create needless control traffic and provider wakeups.
+            let preferences: Vec<_> = self
+                .channels
+                .values()
+                .filter(|channel| channel.preference().enabled)
+                .map(RadioChannel::preference)
+                .collect();
             for preference in preferences {
                 if let Err(error) = self.send_state(preference)
                     && first_error.is_none()
@@ -756,7 +1099,8 @@ impl RadioCoordinator {
                     first_error = Some(error);
                 }
             }
-            self.next_state_sync_at_ms = now.to_unix_millis().saturating_add(30_000);
+            self.next_state_sync_at_ms =
+                now.to_unix_millis().saturating_add(STATE_SYNC_REFRESH_INTERVAL_MS);
         }
         while let Some(event) = self.media.take_event() {
             if let Err(error) = self.handle_session_event(event)
@@ -765,6 +1109,67 @@ impl RadioCoordinator {
                 first_error = Some(error);
             }
         }
+        if let Some(retry_at) = self.session_retry_at_ms
+            && now.to_unix_millis() >= retry_at
+        {
+            self.session_retry_at_ms = None;
+            if let Some((contact_id, session_id, media_token)) =
+                self.pending_incoming_session.take()
+            {
+                let should_retry = self.channels.get(&contact_id).is_some_and(|channel| {
+                    channel.state() == RadioState::Reconnecting && channel.is_mutually_enabled()
+                });
+                if should_retry {
+                    let begin_result = self
+                        .channels
+                        .get_mut(&contact_id)
+                        .ok_or(RadioApplicationError::ContactUnavailable)
+                        .and_then(|channel| {
+                            channel.begin_connecting().map_err(RadioApplicationError::from)
+                        });
+                    if let Err(error) = begin_result {
+                        self.pending_incoming_session = Some((contact_id, session_id, media_token));
+                        self.schedule_session_retry(now);
+                        if first_error.is_none() {
+                            first_error = Some(error);
+                        }
+                    } else if let Err(error) =
+                        self.media.open(contact_id, session_id, media_token, false)
+                    {
+                        if let Some(channel) = self.channels.get_mut(&contact_id) {
+                            channel.connection_failed();
+                        }
+                        self.pending_incoming_session = Some((contact_id, session_id, media_token));
+                        self.schedule_session_retry(now);
+                        if first_error.is_none() {
+                            first_error = Some(error);
+                        }
+                    } else {
+                        // `open` only queues the provider handshake. Keep the
+                        // generation until Ready so a later Interrupted event
+                        // can schedule another incoming retry.
+                        self.connecting_session = Some((contact_id, session_id));
+                        self.pending_incoming_session = Some((contact_id, session_id, media_token));
+                    }
+                }
+            } else if let Some(contact_id) = self.active_contact_id {
+                let should_retry = self.channels.get(&contact_id).is_some_and(|channel| {
+                    channel.state() == RadioState::Reconnecting
+                        && channel.is_mutually_enabled()
+                        && self
+                            .peers
+                            .remote_identity(contact_id)
+                            .is_some_and(|remote| self.peers.local_identity() < remote)
+                });
+                if should_retry
+                    && let Err(error) = self.maybe_start_session(contact_id, now)
+                    && first_error.is_none()
+                {
+                    first_error = Some(error);
+                }
+            }
+        }
+        self.expire_floor_request(now);
         let expired = self.channels.iter().find_map(|(contact, channel)| {
             (channel.state() == RadioState::Transmitting && channel.burst_limit_reached(now))
                 .then_some(*contact)
@@ -783,13 +1188,76 @@ impl RadioCoordinator {
     /// channels with an empty control queue do not create an idle wakeup.
     pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
         let control = self.control.next_maintenance_delay();
+        let has_active_session = self.active_contact_id.is_some_and(|contact_id| {
+            self.channels.get(&contact_id).is_some_and(|channel| channel.session().is_some())
+        });
+        let has_enabled_channel =
+            self.channels.values().any(|channel| channel.preference().enabled);
         let state_sync =
-            self.channels.values().any(|channel| channel.preference().enabled).then(|| {
+            (has_enabled_channel && (self.foreground || has_active_session)).then(|| {
                 let now_ms = now.to_unix_millis();
                 let due_ms = self.next_state_sync_at_ms.saturating_sub(now_ms).max(0);
                 Duration::from_millis(u64::try_from(due_ms).unwrap_or(u64::MAX))
             });
-        [control, state_sync].into_iter().flatten().min()
+        let floor_guard = self.pending_floor_started_at_ms.map(|started| {
+            let due_ms = started
+                .saturating_add(FLOOR_REQUEST_GUARD_MS)
+                .saturating_sub(now.to_unix_millis())
+                .max(0);
+            Duration::from_millis(u64::try_from(due_ms).unwrap_or(u64::MAX))
+        });
+        let worker_failure = (self.active_contact_id.is_some_and(|contact_id| {
+            self.channels.get(&contact_id).is_some_and(|channel| channel.session().is_some())
+        }) && !self.media.worker_alive())
+        .then_some(Duration::ZERO);
+        let session_retry = self.session_retry_at_ms.map(|retry_at| {
+            let due_ms = retry_at.saturating_sub(now.to_unix_millis()).max(0);
+            Duration::from_millis(u64::try_from(due_ms).unwrap_or(u64::MAX))
+        });
+        [control, state_sync, floor_guard, worker_failure, session_retry]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    fn schedule_session_retry(&mut self, now: Timestamp) {
+        let attempt = self.session_retry_attempt.min(4);
+        let delay_ms = 500_i64.saturating_mul(1_i64 << u32::from(attempt));
+        self.session_retry_attempt = self.session_retry_attempt.saturating_add(1).min(5);
+        self.session_retry_at_ms = Some(now.to_unix_millis().saturating_add(delay_ms.min(8_000)));
+    }
+
+    fn expire_floor_request(&mut self, now: Timestamp) {
+        let Some(started_at) = self.pending_floor_started_at_ms else {
+            return;
+        };
+        if now.to_unix_millis().saturating_sub(started_at) < FLOOR_REQUEST_GUARD_MS {
+            return;
+        }
+        let Some(contact_id) = self.active_contact_id else {
+            self.pending_floor_started_at_ms = None;
+            return;
+        };
+        let Some((session_id, request_id)) = self.channels.get(&contact_id).and_then(|channel| {
+            (channel.state() == RadioState::RequestingFloor)
+                .then(|| channel.session().zip(channel.pending_floor_request()))
+                .flatten()
+                .map(|(session, request)| (session.id, request))
+        }) else {
+            self.pending_floor_started_at_ms = None;
+            return;
+        };
+        let _ = self.media.cancel_floor(contact_id, session_id, request_id);
+        if let Some(channel) = self.channels.get_mut(&contact_id) {
+            let _ = channel.deny_local_floor(request_id);
+        }
+        self.pending_floor_started_at_ms = None;
+        self.last_transport_failure = Some(RadioTransportFailure::ConnectTimeout);
+        self.last_transport_failure_contact_id = Some(contact_id);
+        eprintln!(
+            "torca-radio: floor request guard expired contact={} request={:?}",
+            contact_id, request_id
+        );
     }
 
     pub fn peer_disconnected(
@@ -799,6 +1267,9 @@ impl RadioCoordinator {
     ) -> Result<(), RadioApplicationError> {
         self.audio.end_capture();
         self.audio.end_playback();
+        if self.active_contact_id == Some(contact_id) {
+            self.pending_floor_started_at_ms = None;
+        }
         let Some(channel) = self.channels.get_mut(&contact_id) else { return Ok(()) };
         if let Some(event) = channel.peer_disconnected(at) {
             let correlation = self.entropy.opaque_id()?;
@@ -898,10 +1369,10 @@ impl RadioCoordinator {
     fn maybe_start_session(
         &mut self,
         contact_id: ContactId,
-        _at: Timestamp,
+        at: Timestamp,
     ) -> Result<(), RadioApplicationError> {
         let channel =
-            self.channels.get_mut(&contact_id).ok_or(RadioApplicationError::ContactUnavailable)?;
+            self.channels.get(&contact_id).ok_or(RadioApplicationError::ContactUnavailable)?;
         if !channel.is_mutually_enabled() || channel.session().is_some() {
             return Ok(());
         }
@@ -913,18 +1384,35 @@ impl RadioCoordinator {
         if local > remote {
             return Ok(());
         }
-        channel.begin_connecting()?;
+        self.channels
+            .get_mut(&contact_id)
+            .ok_or(RadioApplicationError::ContactUnavailable)?
+            .begin_connecting()?;
         let session_id = RadioSessionId::from_opaque(self.entropy.opaque_id()?);
+        self.connecting_session = Some((contact_id, session_id));
         let media_token = self.entropy.bytes_32()?;
-        self.control.send(
+        if let Err(error) = self.control.send(
             contact_id,
             RadioControlFrame::SessionOpen {
                 session_id: session_id.to_opaque(),
                 media_token,
                 coordinator_identity: local,
             },
-        )?;
-        self.media.open(contact_id, session_id, media_token, true)
+        ) {
+            if let Some(channel) = self.channels.get_mut(&contact_id) {
+                channel.connection_failed();
+            }
+            self.schedule_session_retry(at);
+            return Err(error);
+        }
+        if let Err(error) = self.media.open(contact_id, session_id, media_token, true) {
+            if let Some(channel) = self.channels.get_mut(&contact_id) {
+                channel.connection_failed();
+            }
+            self.schedule_session_retry(at);
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn close_session(
@@ -933,6 +1421,10 @@ impl RadioCoordinator {
         session_id: RadioSessionId,
         notify_peer: bool,
     ) -> Result<(), RadioApplicationError> {
+        self.session_retry_at_ms = None;
+        self.session_retry_attempt = 0;
+        self.pending_incoming_session = None;
+        self.connecting_session = None;
         self.audio.end_capture();
         self.audio.end_playback();
         if notify_peer {
@@ -956,6 +1448,16 @@ impl RadioCoordinator {
             let _ = self.end_transmission(contact);
         }
     }
+}
+
+fn current_timestamp() -> Timestamp {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(Timestamp::MIN_UNIX_MILLIS);
+    Timestamp::from_unix_millis(millis).unwrap_or_else(|_| {
+        Timestamp::from_unix_millis(Timestamp::MIN_UNIX_MILLIS).expect("minimum timestamp")
+    })
 }
 
 /// Cloneable application handle shared by native commands and the inbound
@@ -1065,6 +1567,26 @@ impl SharedRadioCoordinator {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn provider_errors_have_stable_ui_failure_categories() {
+        assert_eq!(
+            transport_failure_for(RadioApplicationError::MediaEndpointUnavailable),
+            RadioTransportFailure::EndpointUnavailable
+        );
+        assert_eq!(
+            transport_failure_for(RadioApplicationError::MediaConnectTimeout),
+            RadioTransportFailure::ConnectTimeout
+        );
+        assert_eq!(
+            transport_failure_for(RadioApplicationError::MediaWorkerUnavailable),
+            RadioTransportFailure::WorkerUnavailable
+        );
+        assert_eq!(
+            transport_failure_for(RadioApplicationError::MediaTransport),
+            RadioTransportFailure::StreamReset
+        );
+    }
 
     #[derive(Default)]
     struct StateStore {
@@ -1275,6 +1797,44 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_session_open_is_idempotent_while_connecting() {
+        let (mut coordinator, frames, opened, _) = coordinator();
+        let contact = ContactId::from_u128(1);
+        coordinator.set_enabled(contact, true, at(1)).expect("enable");
+        coordinator
+            .receive_control(
+                contact,
+                RadioControlFrame::StateSync {
+                    boot_epoch: [3; 16],
+                    revision: 1,
+                    enabled: true,
+                    changed_at_ms: 2,
+                },
+                at(2),
+            )
+            .expect("remote state");
+        let (session_id, coordinator_identity) = frames
+            .lock()
+            .expect("frames")
+            .iter()
+            .find_map(|(_, frame)| match frame {
+                RadioControlFrame::SessionOpen { session_id, coordinator_identity, .. } => {
+                    Some((*session_id, *coordinator_identity))
+                }
+                _ => None,
+            })
+            .expect("session open");
+        let duplicate = RadioControlFrame::SessionOpen {
+            session_id,
+            media_token: [8; 32],
+            coordinator_identity,
+        };
+        coordinator.receive_control(contact, duplicate.clone(), at(3)).expect("first duplicate");
+        coordinator.receive_control(contact, duplicate, at(4)).expect("second duplicate");
+        assert_eq!(opened.lock().expect("opened").as_slice(), &[contact]);
+    }
+
+    #[test]
     fn disabled_radio_has_no_scheduler_deadline() {
         let (mut coordinator, _, _, _) = coordinator();
         let contact = ContactId::from_u128(9);
@@ -1284,7 +1844,7 @@ mod tests {
         coordinator.set_enabled(contact, true, at(2)).expect("enable");
         assert_eq!(coordinator.next_maintenance_delay(at(2)), Some(Duration::ZERO));
         coordinator.maintain(at(2)).expect("maintenance");
-        assert_eq!(coordinator.next_maintenance_delay(at(2)), Some(Duration::from_secs(30)));
+        assert_eq!(coordinator.next_maintenance_delay(at(2)), Some(Duration::from_secs(5 * 60)));
     }
 
     #[test]
@@ -1299,6 +1859,59 @@ mod tests {
     }
 
     #[test]
+    fn missing_media_session_does_not_leave_requesting_floor_state() {
+        let (mut coordinator, _, _, _) = coordinator();
+        let contact = ContactId::from_u128(2);
+        coordinator.ensure_contact(contact, at(1));
+        assert_eq!(
+            coordinator.begin_transmission(contact),
+            Err(RadioApplicationError::SessionNotReady)
+        );
+        let projection = coordinator
+            .projection(at(2))
+            .contacts
+            .into_iter()
+            .find(|value| value.contact_id == contact)
+            .expect("contact projection");
+        assert_ne!(projection.state, RadioState::RequestingFloor);
+    }
+
+    #[test]
+    fn foreground_restarts_an_interrupted_connecting_generation() {
+        let (mut coordinator, _, opened, _) = coordinator();
+        let contact = ContactId::from_u128(1);
+        coordinator.set_enabled(contact, true, at(1)).expect("enable");
+        coordinator
+            .receive_control(
+                contact,
+                RadioControlFrame::StateSync {
+                    boot_epoch: [4; 16],
+                    revision: 1,
+                    enabled: true,
+                    changed_at_ms: 2,
+                },
+                at(2),
+            )
+            .expect("remote state");
+        assert_eq!(opened.lock().expect("opened").len(), 1);
+
+        coordinator.lifecycle(HostRadioLifecycle::Background);
+        assert_eq!(
+            coordinator
+                .projection(at(3))
+                .contacts
+                .iter()
+                .find(|value| value.contact_id == contact)
+                .expect("contact")
+                .state,
+            RadioState::Reconnecting
+        );
+
+        coordinator.lifecycle(HostRadioLifecycle::Foreground);
+        assert_eq!(opened.lock().expect("opened").len(), 2);
+    }
+
+    #[test]
     fn releasing_without_a_live_burst_is_idempotent() {
         let (mut coordinator, _, _, _) = coordinator();
         let contact = ContactId::from_u128(1);
@@ -1306,6 +1919,102 @@ mod tests {
 
         coordinator.end_transmission(contact).expect("safe release");
         coordinator.end_transmission(contact).expect("safe repeated release");
+    }
+
+    #[test]
+    fn floor_guard_recovers_when_provider_emits_no_terminal_event() {
+        let (mut coordinator, frames, _, _) = coordinator();
+        let contact = ContactId::from_u128(1);
+        coordinator.set_enabled(contact, true, at(1)).expect("enable");
+        coordinator
+            .receive_control(
+                contact,
+                RadioControlFrame::StateSync {
+                    boot_epoch: [9; 16],
+                    revision: 1,
+                    enabled: true,
+                    changed_at_ms: 2,
+                },
+                at(2),
+            )
+            .expect("remote state");
+        let session_id = frames
+            .lock()
+            .expect("frames")
+            .iter()
+            .find_map(|(_, frame)| match frame {
+                RadioControlFrame::SessionOpen { session_id, .. } => Some(*session_id),
+                _ => None,
+            })
+            .map(RadioSessionId::from_opaque)
+            .expect("session open");
+        coordinator
+            .handle_session_event(RadioSessionEvent::Ready {
+                contact_id: contact,
+                session_id,
+                at: at(3),
+            })
+            .expect("ready");
+        let _ = coordinator.begin_transmission(contact).expect("request floor");
+
+        let guard_due =
+            current_timestamp().to_unix_millis().saturating_add(FLOOR_REQUEST_GUARD_MS + 1);
+        coordinator.maintain(at(guard_due)).expect("guard maintenance");
+        assert_eq!(
+            coordinator.projection(at(guard_due)).session.expect("session").state,
+            RadioState::Ready
+        );
+    }
+
+    #[test]
+    fn stale_floor_grant_after_release_is_ignored() {
+        let (mut coordinator, frames, _, _) = coordinator();
+        let contact = ContactId::from_u128(1);
+        coordinator.set_enabled(contact, true, at(1)).expect("enable");
+        coordinator
+            .receive_control(
+                contact,
+                RadioControlFrame::StateSync {
+                    boot_epoch: [8; 16],
+                    revision: 1,
+                    enabled: true,
+                    changed_at_ms: 2,
+                },
+                at(2),
+            )
+            .expect("remote state");
+        let session_id = frames
+            .lock()
+            .expect("frames")
+            .iter()
+            .find_map(|(_, frame)| match frame {
+                RadioControlFrame::SessionOpen { session_id, .. } => Some(*session_id),
+                _ => None,
+            })
+            .map(RadioSessionId::from_opaque)
+            .expect("session open");
+        coordinator
+            .handle_session_event(RadioSessionEvent::Ready {
+                contact_id: contact,
+                session_id,
+                at: at(3),
+            })
+            .expect("ready");
+        let request_id = coordinator.begin_transmission(contact).expect("floor request");
+        coordinator.end_transmission(contact).expect("release");
+        coordinator
+            .handle_session_event(RadioSessionEvent::FloorGranted {
+                contact_id: contact,
+                session_id,
+                request_id,
+                burst_id: RadioOperationId::from_opaque(OpaqueId::from_u128(777)),
+                at: at(4),
+            })
+            .expect("stale grant ignored");
+        assert_eq!(
+            coordinator.projection(at(4)).session.expect("session").state,
+            RadioState::Ready
+        );
     }
 
     #[test]
@@ -1346,5 +2055,131 @@ mod tests {
 
         assert_eq!(closed.lock().expect("closed").as_slice(), &[contact]);
         assert!(coordinator.projection(at(4)).session.is_none());
+    }
+
+    #[test]
+    fn stale_ready_from_replaced_media_generation_is_ignored() {
+        let (mut coordinator, frames, _, _) = coordinator();
+        let contact = ContactId::from_u128(1);
+        coordinator.set_enabled(contact, true, at(1)).expect("enable");
+        coordinator
+            .receive_control(
+                contact,
+                RadioControlFrame::StateSync {
+                    boot_epoch: [9; 16],
+                    revision: 1,
+                    enabled: true,
+                    changed_at_ms: 2,
+                },
+                at(2),
+            )
+            .expect("remote state");
+        let current = frames
+            .lock()
+            .expect("frames")
+            .iter()
+            .find_map(|(_, frame)| match frame {
+                RadioControlFrame::SessionOpen { session_id, .. } => Some(*session_id),
+                _ => None,
+            })
+            .map(RadioSessionId::from_opaque)
+            .expect("session open");
+        coordinator
+            .handle_session_event(RadioSessionEvent::Ready {
+                contact_id: contact,
+                session_id: current,
+                at: at(3),
+            })
+            .expect("ready");
+
+        let stale = RadioSessionId::from_opaque(OpaqueId::from_u128(999));
+        coordinator
+            .handle_session_event(RadioSessionEvent::Ready {
+                contact_id: contact,
+                session_id: stale,
+                at: at(4),
+            })
+            .expect("stale ready is harmless");
+
+        assert_eq!(coordinator.projection(at(4)).session.expect("session").session_id, current);
+    }
+
+    #[test]
+    fn ready_from_unexpected_connecting_generation_is_ignored() {
+        let (mut coordinator, _, opened, _) = coordinator();
+        let contact = ContactId::from_u128(1);
+        coordinator.set_enabled(contact, true, at(1)).expect("enable");
+        coordinator
+            .receive_control(
+                contact,
+                RadioControlFrame::StateSync {
+                    boot_epoch: [9; 16],
+                    revision: 1,
+                    enabled: true,
+                    changed_at_ms: 2,
+                },
+                at(2),
+            )
+            .expect("remote state");
+        assert_eq!(opened.lock().expect("opened").as_slice(), &[contact]);
+
+        coordinator
+            .handle_session_event(RadioSessionEvent::Ready {
+                contact_id: contact,
+                session_id: RadioSessionId::from_opaque(OpaqueId::from_u128(999)),
+                at: at(3),
+            })
+            .expect("stale ready is harmless");
+        assert!(coordinator.projection(at(3)).session.is_none());
+    }
+
+    #[test]
+    fn stale_remote_burst_from_old_session_cannot_start_playback() {
+        let (mut coordinator, frames, _, _) = coordinator();
+        let contact = ContactId::from_u128(1);
+        coordinator.set_enabled(contact, true, at(1)).expect("enable");
+        coordinator
+            .receive_control(
+                contact,
+                RadioControlFrame::StateSync {
+                    boot_epoch: [9; 16],
+                    revision: 1,
+                    enabled: true,
+                    changed_at_ms: 2,
+                },
+                at(2),
+            )
+            .expect("remote state");
+        let session_id = frames
+            .lock()
+            .expect("frames")
+            .iter()
+            .find_map(|(_, frame)| match frame {
+                RadioControlFrame::SessionOpen { session_id, .. } => Some(*session_id),
+                _ => None,
+            })
+            .map(RadioSessionId::from_opaque)
+            .expect("session open");
+        coordinator
+            .handle_session_event(RadioSessionEvent::Ready {
+                contact_id: contact,
+                session_id,
+                at: at(3),
+            })
+            .expect("ready");
+
+        coordinator
+            .handle_session_event(RadioSessionEvent::RemoteBurstStarted {
+                contact_id: contact,
+                session_id: RadioSessionId::from_opaque(OpaqueId::from_u128(999)),
+                burst_id: RadioOperationId::from_opaque(OpaqueId::from_u128(1000)),
+                at: at(4),
+            })
+            .expect("stale burst is harmless");
+
+        assert_eq!(
+            coordinator.projection(at(4)).session.expect("session").state,
+            RadioState::Ready
+        );
     }
 }

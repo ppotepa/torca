@@ -193,6 +193,7 @@ pub enum BridgeCommand {
     EndRadioTransmission {
         contact_id_hex: String,
     },
+    RefreshProviderRoute,
     RefreshSnapshot,
 }
 
@@ -411,6 +412,9 @@ pub struct BridgeTransportStatus {
     /// Provider-neutral aggregate. `tor` is retained until older clients are
     /// migrated to this field.
     pub communication: BridgeTransportIndicator,
+    /// Provider-owned route freshness. This is distinct from communication
+    /// readiness and remains valid for Tor, Iroh and future providers.
+    pub provider_route_state: String,
     pub tor: BridgeTransportIndicator,
     pub relay: BridgeTransportIndicator,
     pub peer: BridgeTransportIndicator,
@@ -741,6 +745,7 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         BridgeCommand::EndRadioTransmission { contact_id_hex } => {
             ApplicationCommand::EndRadioTransmission { contact_id: parse_id(&contact_id_hex)? }
         }
+        BridgeCommand::RefreshProviderRoute => ApplicationCommand::RefreshProviderRoute,
         BridgeCommand::RefreshSnapshot => ApplicationCommand::RefreshSnapshot,
     })
 }
@@ -1095,6 +1100,12 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 in_flight: network.connectivity.communication.in_flight,
                 queued: network.connectivity.communication.queued,
             },
+            provider_route_state: match network.communication.route_state {
+                torca_transport_api::ProviderRouteState::Fresh => "fresh",
+                torca_transport_api::ProviderRouteState::Stale => "stale",
+                torca_transport_api::ProviderRouteState::Unavailable => "unavailable",
+            }
+            .to_owned(),
             tor: BridgeTransportIndicator {
                 state: tor_state.clone(),
                 code: if !is_tor {
@@ -1560,6 +1571,7 @@ const fn radio_transport_failure_name(
         torca_radio_coordinator::RadioTransportFailure::StreamReset => "stream_reset",
         torca_radio_coordinator::RadioTransportFailure::IdleTimeout => "idle_timeout",
         torca_radio_coordinator::RadioTransportFailure::NetworkChanged => "network_changed",
+        torca_radio_coordinator::RadioTransportFailure::WorkerUnavailable => "worker_unavailable",
         torca_radio_coordinator::RadioTransportFailure::Protocol => "protocol",
         torca_radio_coordinator::RadioTransportFailure::Unknown => "unknown",
     }
@@ -1606,6 +1618,7 @@ mod tests {
     fn generated_operation_allowlist_matches_runtime_surface() {
         assert!(generated::contains("command", "profile.set"));
         assert!(generated::contains("command", "diagnostics.observation.start"));
+        assert!(generated::contains("command", "provider.route.refresh"));
         assert!(generated::contains("query", "snapshot.get"));
         assert!(generated::contains("query", "runtime.poll"));
         assert!(generated::contains("lifecycle", "foregrounded"));

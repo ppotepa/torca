@@ -7,6 +7,5 @@ abstract interface class ScenarioBridgeController {
   Future<void> dispose();
 }
 
-typedef ScenarioBridgeFactory = ScenarioBridgeController Function(
-  EngineGateway gateway,
-);
+typedef ScenarioBridgeFactory =
+    ScenarioBridgeController Function(EngineGateway gateway);

@@ -110,7 +110,7 @@
   "contactLabel": "Kontakt",
   "closeTooltip": "Zamknij",
   "secureRuntimeNotReady": "Bezpieczne srodowisko nie jest gotowe",
-  "runtimePreparationFailed": "Nie udalo sie przygotowac lokalnego szyfrowanego srodowiska. Tozsamosc nie zostala zmieniona.",
+  "runtimePreparationFailed": "Nie udalo sie przygotowac lokalnego szyfrowanego runtime. Tozsamosc nie zostala zmieniona.",
   "modern": "Nowoczesny",
   "terminal": "Terminal",
   "compactDensity": "Gestosc kompaktowa",

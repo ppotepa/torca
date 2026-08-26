@@ -14,9 +14,10 @@ The Rust command remains useful for CI or an already-built checkout:
 cargo run -p torca-soak
 ```
 
-The canonical binary is `torca-soak`. `torca-battery-soak-tui` remains only as
-a compatibility alias; legacy PowerShell scenario scripts are implementation
-backends, not additional interactive entry points.
+The only supported binary is `torca-soak`; the former
+`torca-battery-soak-tui` compatibility alias was removed. Legacy PowerShell
+scenario scripts are implementation backends, not additional interactive
+entry points.
 
 With no arguments it opens a Ratatui wizard, discovers ready ADB devices and
 offers five explicit scenarios:

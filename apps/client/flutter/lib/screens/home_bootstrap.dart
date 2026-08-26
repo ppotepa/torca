@@ -280,7 +280,9 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
     );
     final step = failed.isEmpty ? null : failed.first;
     if (step == null || step.code == null || step.code!.isEmpty) {
-      return 'Secure runtime is not ready. Check diagnostics and retry.';
+      return context.strings.runtimeNotReadyDiagnostic(
+        snapshot.communicationProvider,
+      );
     }
     return '${step.id}: ${step.code}';
   }

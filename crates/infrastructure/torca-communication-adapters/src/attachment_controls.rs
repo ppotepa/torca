@@ -12,8 +12,8 @@ use torca_attachments::{
     MAX_ATTACHMENT_BYTES, MediaType,
 };
 use torca_communication_driver::{
-    AttachmentFailureStage, AttachmentMaintenanceResult, AttachmentRuntime, CommunicationError,
-    InboundEnvelope,
+    AttachmentAdmission, AttachmentFailureStage, AttachmentMaintenanceResult, AttachmentRuntime,
+    CommunicationError, InboundEnvelope,
 };
 use torca_contacts::{ContactRepository, PeerCredentialRepository};
 use torca_conversations::ConversationRepository;
@@ -71,6 +71,57 @@ where
     C: CryptoProvider + Send + 'static,
     P: ProtectedSecretStore + Send + 'static,
 {
+    fn admit_outgoing(
+        &mut self,
+        request: &AttachmentSendRequest,
+        now: Timestamp,
+    ) -> Result<AttachmentAdmission, CommunicationError> {
+        let metadata =
+            std::fs::metadata(&request.source_path).map_err(|_| CommunicationError::Attachment)?;
+        if !metadata.is_file()
+            || metadata.len() != request.size
+            || request.size == 0
+            || request.size > MAX_ATTACHMENT_BYTES
+        {
+            return Err(CommunicationError::Attachment);
+        }
+        let id = AttachmentId::from_opaque(request.attachment_id);
+        if let Some(existing) = self.control.get(id).map_err(|_| CommunicationError::Attachment)? {
+            // A retried command is idempotent while the worker owns the
+            // staging pass. Never insert a second row for the same file.
+            if existing.message_id() == MessageId::from_opaque(request.message_id)
+                && existing.size() == request.size
+            {
+                // A legacy row may still be in Prepared because it was
+                // created before the split admission/worker flow. Let one
+                // worker finish that migration; every other state already
+                // has an authoritative job and must be a no-op.
+                return Ok(match existing.status() {
+                    AttachmentStatus::Prepared => AttachmentAdmission::Legacy,
+                    AttachmentStatus::Encrypting => AttachmentAdmission::ExistingNeedsPreparation,
+                    _ => AttachmentAdmission::Existing,
+                });
+            }
+            return Err(CommunicationError::Attachment);
+        }
+        let mut attachment = Attachment::prepare(
+            id,
+            MessageId::from_opaque(request.message_id),
+            AttachmentName::new(request.name.clone())
+                .map_err(|_| CommunicationError::Attachment)?,
+            MediaType::new(request.media_type.clone())
+                .map_err(|_| CommunicationError::Attachment)?,
+            request.size,
+            now,
+        )
+        .map_err(|_| CommunicationError::Attachment)?;
+        attachment.begin_encryption(now).map_err(|_| CommunicationError::Attachment)?;
+        self.control
+            .insert(attachment)
+            .map(|()| AttachmentAdmission::Created)
+            .map_err(|_| CommunicationError::Attachment)
+    }
+
     fn set_battery_policy(
         &mut self,
         profile: BatteryProfile,
@@ -108,17 +159,23 @@ where
             }
             None => None,
         };
-        let attachment = Attachment::prepare(
-            AttachmentId::from_opaque(request.attachment_id),
-            MessageId::from_opaque(request.message_id),
-            AttachmentName::new(request.name.clone())
+        let attachment = self
+            .control
+            .get(AttachmentId::from_opaque(request.attachment_id))
+            .map_err(|_| CommunicationError::Attachment)?
+            .unwrap_or(
+                Attachment::prepare(
+                    AttachmentId::from_opaque(request.attachment_id),
+                    MessageId::from_opaque(request.message_id),
+                    AttachmentName::new(request.name.clone())
+                        .map_err(|_| CommunicationError::Attachment)?,
+                    MediaType::new(request.media_type.clone())
+                        .map_err(|_| CommunicationError::Attachment)?,
+                    request.size,
+                    now,
+                )
                 .map_err(|_| CommunicationError::Attachment)?,
-            MediaType::new(request.media_type.clone())
-                .map_err(|_| CommunicationError::Attachment)?,
-            request.size,
-            now,
-        )
-        .map_err(|_| CommunicationError::Attachment)?;
+            );
         let source =
             File::open(&request.source_path).map_err(|_| CommunicationError::Attachment)?;
         self.transfer
@@ -131,6 +188,18 @@ where
             )
             .map(|_| ())
             .map_err(|_| CommunicationError::Attachment)
+    }
+
+    fn recover_interrupted_prepares(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
+        let attachments = self.control.list().map_err(|_| CommunicationError::Attachment)?;
+        for mut attachment in attachments {
+            if attachment.status() == AttachmentStatus::Encrypting {
+                self.transfer.forget_outgoing(attachment.id());
+                attachment.reset_encryption(now).map_err(|_| CommunicationError::Attachment)?;
+                self.control.update(attachment).map_err(|_| CommunicationError::Attachment)?;
+            }
+        }
+        Ok(())
     }
 
     fn retry(&mut self, attachment_id: OpaqueId, now: Timestamp) -> Result<(), CommunicationError> {

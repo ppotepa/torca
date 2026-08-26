@@ -7,6 +7,10 @@ use torca_foundation::{OpaqueId, Timestamp};
 pub const MAX_PEER_DATA_LEN: usize = 4 * 1024 * 1024;
 /// Maximum handshake signature/proof length.
 pub const MAX_PROOF_LEN: usize = 512;
+/// Maximum provider wire-name length in a route advertisement.
+pub const MAX_ROUTE_PROVIDER_LEN: usize = 32;
+/// Maximum opaque endpoint hint carried by a route advertisement.
+pub const MAX_ROUTE_ENDPOINT_LEN: usize = 8 * 1024;
 
 /// Stable application payload discriminants carried inside `PeerMessage::Data`.
 ///
@@ -102,6 +106,38 @@ pub struct HandshakeAck {
     pub nonce: [u8; 32],
     pub proof: Vec<u8>,
 }
+
+/// Provider-owned route update sent after an authenticated session is ready.
+///
+/// The peer protocol transports the provider name and opaque endpoint bytes,
+/// but never parses them. A selected provider decides how to encode and use
+/// the endpoint. Because this message is sent on the authenticated peer
+/// stream, it can safely refresh direct routes after a network migration.
+#[must_use]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RouteAdvertisement {
+    pub provider: String,
+    pub generation: u64,
+    pub endpoint: Vec<u8>,
+}
+impl RouteAdvertisement {
+    pub fn new(
+        provider: impl Into<String>,
+        generation: u64,
+        endpoint: Vec<u8>,
+    ) -> Result<Self, PeerProtocolError> {
+        let provider = provider.into();
+        if provider.is_empty()
+            || provider.len() > MAX_ROUTE_PROVIDER_LEN
+            || provider.chars().any(char::is_whitespace)
+            || endpoint.is_empty()
+            || endpoint.len() > MAX_ROUTE_ENDPOINT_LEN
+        {
+            return Err(PeerProtocolError::Malformed);
+        }
+        Ok(Self { provider, generation, endpoint })
+    }
+}
 impl HandshakeAck {
     /// Builds and signs a canonical responder acknowledgement.
     pub fn signed<S: HandshakeSigner>(
@@ -163,6 +199,7 @@ pub enum PeerMessage {
     Ack { envelope_id: OpaqueId, status: AckStatus },
     Ping(u64),
     Pong(u64),
+    Route(RouteAdvertisement),
 }
 
 /// Signature verification port owned by the protocol boundary.
@@ -309,6 +346,23 @@ impl PeerCodec {
                 output.push(6);
                 output.extend_from_slice(&value.to_be_bytes());
             }
+            PeerMessage::Route(route) => {
+                // RouteAdvertisement::new is the public validation boundary,
+                // but encode defensively for callers constructing the enum
+                // directly.
+                if route.provider.is_empty()
+                    || route.provider.len() > MAX_ROUTE_PROVIDER_LEN
+                    || route.provider.chars().any(char::is_whitespace)
+                    || route.endpoint.is_empty()
+                    || route.endpoint.len() > MAX_ROUTE_ENDPOINT_LEN
+                {
+                    return Err(PeerProtocolError::Malformed);
+                }
+                output.push(7);
+                write_bytes(route.provider.as_bytes(), &mut output)?;
+                output.extend_from_slice(&route.generation.to_be_bytes());
+                write_bytes(&route.endpoint, &mut output)?;
+            }
         }
         Ok(output)
     }
@@ -341,6 +395,13 @@ impl PeerCodec {
             },
             5 => PeerMessage::Ping(cursor.u64()?),
             6 => PeerMessage::Pong(cursor.u64()?),
+            7 => {
+                let provider = String::from_utf8(cursor.bytes(MAX_ROUTE_PROVIDER_LEN)?)
+                    .map_err(|_| PeerProtocolError::Malformed)?;
+                let generation = cursor.u64()?;
+                let endpoint = cursor.bytes(MAX_ROUTE_ENDPOINT_LEN)?;
+                RouteAdvertisement::new(provider, generation, endpoint).map(PeerMessage::Route)?
+            }
             _ => return Err(PeerProtocolError::Malformed),
         };
         if cursor.remaining() != 0 {
@@ -414,7 +475,7 @@ impl<'a> Cursor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::PeerApplicationKind;
+    use super::{PeerApplicationKind, PeerCodec, PeerMessage, RouteAdvertisement};
     use std::collections::BTreeSet;
 
     #[test]
@@ -427,5 +488,22 @@ mod tests {
         assert_eq!(PeerApplicationKind::Probe.as_u16(), 4);
         assert_eq!(PeerApplicationKind::RadioControl.as_u16(), 5);
         assert_eq!(PeerApplicationKind::Reaction.as_u16(), 6);
+    }
+
+    #[test]
+    fn route_advertisement_round_trips_opaque_provider_bytes() {
+        let route = RouteAdvertisement::new("iroh", 42, vec![0, 1, 2, 255]).expect("route");
+        let encoded = PeerCodec::encode(&PeerMessage::Route(route.clone())).expect("encode");
+        let decoded = PeerCodec::decode(&encoded).expect("decode");
+        assert_eq!(decoded, PeerMessage::Route(route));
+    }
+
+    #[test]
+    fn route_advertisement_rejects_unbounded_or_ambiguous_provider_data() {
+        assert!(RouteAdvertisement::new("iroh direct", 1, vec![1]).is_err());
+        assert!(RouteAdvertisement::new("iroh", 1, Vec::new()).is_err());
+        assert!(
+            RouteAdvertisement::new("iroh", 1, vec![1; super::MAX_ROUTE_ENDPOINT_LEN + 1]).is_err()
+        );
     }
 }

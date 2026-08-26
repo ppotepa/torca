@@ -1,0 +1,21 @@
+[package]
+name = "torca-radio-tor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+default = []
+audio = ["torca-radio-adapters/audio"]
+
+[dependencies]
+torca-radio-adapters = { path = "../torca-radio-adapters", default-features = false }
+torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
+torca-tor = { path = "../torca-tor" }
+
+[lints]
+workspace = true

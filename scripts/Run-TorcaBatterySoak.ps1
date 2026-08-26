@@ -1,21 +1,33 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)][int]$DurationMinutes = 60,
-    [Parameter(Mandatory = $false)][string]$Package = 'com.torca.torca_app',
+    # Empty means "select from TORCA_SOAK_FLAVOR".  Direct invocations remain
+    # on the normal package; the Rust soak cockpit exports TORCA_SOAK_FLAVOR=1
+    # so its auto-deploy and diagnostics use the isolated SOAK namespace.
+    [Parameter(Mandatory = $false)][string]$Package = '',
     [Parameter(Mandatory = $false)][string]$DeviceId,
     [Parameter(Mandatory = $false)][string]$OutputRoot,
     [Parameter(Mandatory = $false)][switch]$RequireUnplugged,
     [Parameter(Mandatory = $false)][switch]$RequireScreenOff,
     [Parameter(Mandatory = $false)][switch]$CollectNativeDiagnostics,
     [Parameter(Mandatory = $false)][string]$NativeLogRoot,
+    [Parameter(Mandatory = $false)][ValidateSet('tor', 'iroh', 'webrtc')][string]$CommunicationProvider = 'iroh',
+    [Parameter(Mandatory = $false)][ValidateSet('always', 'direct', 'local')][string]$ProviderProfile = 'direct',
     [Parameter(Mandatory = $false)][ValidateRange(1, 3)][int]$AutoDeployAttempts = 2,
     [Parameter(Mandatory = $false)][switch]$ValidateAfter
 )
 
 $ErrorActionPreference = 'Stop'
+$scriptRoot = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { $PSScriptRoot }
 if ($DurationMinutes -lt 1) { throw 'DurationMinutes must be at least 1.' }
+if ([string]::IsNullOrWhiteSpace($Package)) {
+    $Package = if ($env:TORCA_SOAK_FLAVOR -eq '1' -or $env:TORCA_SOAK_FLAVOR -eq 'true') {
+        'com.torca.torca_app.soak'
+    } else {
+        'com.torca.torca_app'
+    }
+}
 if (-not $OutputRoot) {
-    $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     $OutputRoot = Join-Path $scriptRoot '../artifacts/soak'
 }
 if (-not $NativeLogRoot) {
@@ -109,7 +121,7 @@ function Ensure-PackageInstalled {
     $installed = Test-PackageInstalled
     if ($installed -and (Test-PackageLaunchable)) { return }
 
-    $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+    $repoRoot = Resolve-Path (Join-Path $scriptRoot '..')
     $deployLog = Join-Path $output 'auto-deploy.log'
     Write-Host "Android auto-deploy details will be saved to '$deployLog'."
     if ($installed) {
@@ -122,9 +134,14 @@ function Ensure-PackageInstalled {
             'run', '-p', 'torca-deploy', '--',
             'deploy', '--target', 'android', '--device', $DeviceId,
             '--configuration', 'debug', '--client-build', 'if-required',
-            '--relay-build', 'if-required', '--onion', 'ensure',
-            '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart'
+            '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart',
+            '--communication-provider', $CommunicationProvider
         )
+        if ($CommunicationProvider -eq 'iroh') {
+            $deployArguments += @('--provider-profile', $ProviderProfile)
+        } elseif ($CommunicationProvider -eq 'tor') {
+            $deployArguments += @('--relay-build', 'if-required', '--onion', 'ensure')
+        }
         Write-Host "--- Android auto-deploy attempt $attempt/$AutoDeployAttempts (live output) ---"
         Push-Location $repoRoot
         try {
@@ -218,6 +235,8 @@ $started = Get-Date
     powerSourceBefore = $powerSourceBefore
     batteryLevelBefore = $batteryLevelBefore
     appPid = $appPid
+    communicationProvider = $CommunicationProvider
+    providerProfile = if ($CommunicationProvider -eq 'iroh') { $ProviderProfile } else { $null }
     screenStateAtStart = if ($RequireScreenOff) { 'dozing_or_asleep' } else { 'unspecified' }
     startedAt = $started.ToString('o')
     scenario = 'warm-start then background idle'
@@ -268,7 +287,7 @@ $appRunningAtEnd = $processAfterText -match "(?m)\s$([regex]::Escape($Package))\
 
 Write-Host "Battery soak capture complete: $output"
 if ($ValidateAfter) {
-    $validator = Join-Path $PSScriptRoot 'Validate-TorcaBatterySoak.ps1'
+    $validator = Join-Path $scriptRoot 'Validate-TorcaBatterySoak.ps1'
     $validationArguments = @(
         '-Path', $output,
         '-MinimumMinutes', $DurationMinutes

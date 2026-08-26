@@ -42,7 +42,12 @@ class TorcaApp extends StatefulWidget {
 class _TorcaAppState extends State<TorcaApp> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   int _handledPairingRequest = 0;
-  final Set<String> _pairingPromptsShown = <String>{};
+  // Remember the last state for which an automatic prompt was shown, rather
+  // than only the session id. A dismissed prompt must not loop on every
+  // snapshot, but a real transition (for example PeerJoined ->
+  // AwaitingApproval) must be able to notify the user again.
+  final Map<String, PairingState> _pairingPromptsShown =
+      <String, PairingState>{};
   final Set<String> _knownContactIds = <String>{};
   bool _contactBaselineCaptured = false;
   bool _pairingPromptOpen = false;
@@ -234,6 +239,12 @@ class _TorcaAppState extends State<TorcaApp> {
       ..clear()
       ..addAll(snapshot.contacts.map((contact) => contact.id));
     _contactBaselineCaptured = true;
+    // Bound the prompt history and allow a newly created invitation reusing a
+    // session id after terminal cleanup to notify normally.
+    final activePairingIds = pairings.map((pairing) => pairing.id).toSet();
+    _pairingPromptsShown.removeWhere(
+      (id, _) => !activePairingIds.contains(id),
+    );
     if (!mounted || _pairingPromptOpen || _scheduledPairingPromptId != null) {
       return;
     }
@@ -241,7 +252,7 @@ class _TorcaAppState extends State<TorcaApp> {
     for (final pairing in pairings) {
       if (_needsPairingDecision(pairing) &&
           !PairingModalRegistry.instance.owns(pairing.id) &&
-          !_pairingPromptsShown.contains(pairing.id)) {
+          _pairingPromptsShown[pairing.id] != pairing.typedState) {
         candidate = pairing;
         break;
       }
@@ -276,7 +287,7 @@ class _TorcaAppState extends State<TorcaApp> {
     _pairingPromptOpen = true;
     _scheduledPairingPromptId = null;
     modalRegistry.claim(pairing.id);
-    _pairingPromptsShown.add(pairing.id);
+    _pairingPromptsShown[pairing.id] = pairing.typedState;
     try {
       await showDialog<void>(
         context: navigator.context,

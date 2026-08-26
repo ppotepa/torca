@@ -77,9 +77,6 @@ pub fn collect_runtime(
     DiagnosticsReport::collect(incident_root)
 }
 
-const ANDROID_PACKAGE: &str = "com.torca.torca_app";
-const ANDROID_LOG_ROOT: &str = "/sdcard/Android/data/com.torca.torca_app/files/torca/logs";
-
 fn collect_windows_native_logs(incident_root: &Path) {
     let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") else { return };
     let source = PathBuf::from(local_app_data).join("Torca").join("logs");
@@ -93,6 +90,10 @@ fn collect_android_native_logs(
     device: &str,
 ) {
     let target = incident_root.join(format!("android-{device}")).join("native");
+    // Keep diagnostics on the same package/flavor selected by the deploy
+    // process. SOAK uses a separate application id and log namespace; using
+    // the normal package here silently collected an empty or stale directory.
+    let android_log_root = crate::android_target::logs_root();
     let listing = runner.run(&CommandSpec {
         program: "adb".into(),
         arguments: vec![
@@ -100,7 +101,7 @@ fn collect_android_native_logs(
             device.into(),
             "shell".into(),
             "find".into(),
-            ANDROID_LOG_ROOT.into(),
+            android_log_root.into(),
             "-type".into(),
             "f".into(),
             "\\(".into(),
@@ -116,9 +117,9 @@ fn collect_android_native_logs(
         environment: std::collections::BTreeMap::new(),
     });
     let Ok(listing) = listing else { return };
-    for source in listing.text.lines().filter(|line| line.starts_with(ANDROID_LOG_ROOT)) {
+    for source in listing.text.lines().filter(|line| line.starts_with(android_log_root)) {
         let relative =
-            source.strip_prefix(ANDROID_LOG_ROOT).unwrap_or_default().trim_start_matches('/');
+            source.strip_prefix(android_log_root).unwrap_or_default().trim_start_matches('/');
         let destination = target.join(relative);
         if let Some(parent) = destination.parent() {
             let _ = fs::create_dir_all(parent);
@@ -151,6 +152,8 @@ fn write_manifest(paths: &RuntimePaths, incident_root: &Path, android_devices: &
         "repoRoot": paths.repo_root.display().to_string(),
         "relayEndpoint": paths.endpoint(),
         "relayStatus": paths.relay_status.display().to_string(),
+        "androidPackage": crate::android_target::package(),
+        "androidLogsRoot": crate::android_target::logs_root(),
         "androidDevices": android_devices,
     });
     let _ = fs::write(
@@ -176,7 +179,7 @@ fn android_process_id(
                 device.into(),
                 "shell".into(),
                 "pidof".into(),
-                ANDROID_PACKAGE.into(),
+                crate::android_target::package().into(),
             ],
             working_directory: paths.repo_root.clone(),
             timeout: Duration::from_secs(10),

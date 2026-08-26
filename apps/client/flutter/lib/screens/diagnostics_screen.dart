@@ -9,6 +9,7 @@ import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
 import '../widgets/diagnostics_overview.dart';
+import '../widgets/bridge_error_presenter.dart';
 import '../widgets/runtime_network_status.dart';
 
 class DiagnosticsScreen extends StatefulWidget {
@@ -162,6 +163,37 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     }
   }
 
+  Future<void> _refreshProviderRoute() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.gateway.execute(
+        const RefreshProviderRouteCommandDto(),
+      );
+      if (!result.ok) {
+        throw StateError(
+          BridgeErrorPresenter.localized(
+            context,
+            result,
+            fallback: context.strings.operationFailed,
+          ),
+        );
+      }
+      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.strings.routeRefreshRequested)),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _markIncident() async {
     await _observation(const MarkIncidentCommandDto());
     if (!mounted || _error != null) return;
@@ -253,6 +285,15 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       DiagnosticsOverview(
         snapshot: snapshot,
         diagnosticsReadable: _hasReadableEvents(_json),
+      ),
+      const SizedBox(height: 12),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: _loading ? null : _refreshProviderRoute,
+          icon: Icon(context.torcaIcons.retry),
+          label: Text(context.strings.refreshProviderRoute),
+        ),
       ),
       const SizedBox(height: 12),
       _WhyAwakeCard(data: _whyAwake()),

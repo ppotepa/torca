@@ -155,9 +155,11 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
     final wide = !widget.compact && MediaQuery.sizeOf(context).width >= 700;
     final stale = _ticksSinceObservation >= _staleAfterTicks;
     final provider = widget.snapshot.communicationProvider.isEmpty
-        ? 'tor'
+        ? 'unknown'
         : widget.snapshot.communicationProvider;
     final providerLabel = provider.toUpperCase();
+    final routeState = widget.snapshot.transport.providerRouteState;
+    final routeStale = routeState == 'stale';
     // Schema-1 snapshots only populated `transport.tor`; preserve that
     // compatibility projection while schema-2/direct providers use the
     // provider-neutral communication indicator.
@@ -169,7 +171,7 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
         : widget.snapshot.transport.communication;
     return Semantics(
       label:
-          'Network status: $providerLabel ${widget.snapshot.transport.communication.state}, P2P ${widget.snapshot.transport.peer.state}${stale ? ', monitoring stale' : ''}',
+          'Network status: $providerLabel ${widget.snapshot.transport.communication.state}, route $routeState, P2P ${widget.snapshot.transport.peer.state}${stale ? ', monitoring stale' : ''}',
       child: Padding(
         padding: const EdgeInsets.only(right: 4),
         child: Row(
@@ -200,7 +202,7 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
               icon: context.torcaIcons.link,
               indicator: communicationIndicator,
               showLabel: wide,
-              stale: stale,
+              stale: stale || routeStale,
             ),
             const SizedBox(width: 4),
             _TransportLight(

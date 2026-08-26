@@ -73,7 +73,7 @@ impl ProviderPairingFactory for WebRtcPairingFactory {
         let driver = RuntimePairingDriver::new(
             runtime,
             inputs.engine,
-            Box::new(move || Some(PairingTransportRoute::new("webrtc", route.clone()))),
+            Box::new(move || Ok(Some(PairingTransportRoute::new("webrtc", route.clone())))),
         )
         .with_bootstrap_source(Box::new(move || Ok(Some(bootstrap.clone()))));
         Ok(Box::new(driver))

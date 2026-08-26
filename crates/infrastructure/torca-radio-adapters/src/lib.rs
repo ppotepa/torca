@@ -12,6 +12,6 @@ pub use codec::{decode_mulaw, encode_mulaw};
 pub use jitter::{JitterBuffer, JitterStats};
 pub use media::{
     RadioMediaAdapter, RadioMediaCipher, RadioMediaConnector, RadioMediaDirectory, RadioMediaRoute,
-    RadioMediaStream, RadioMediaSystem, RadioMediaSystemFactory, TorRadioMediaSystemFactory,
+    RadioMediaStream, RadioMediaSystem, RadioMediaSystemFactory,
     UnsupportedRadioMediaSystemFactory,
 };

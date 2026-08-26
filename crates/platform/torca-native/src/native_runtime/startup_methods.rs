@@ -247,10 +247,18 @@ fn apply_battery_policy(&self, diagnostics_override: bool) {
     // performs the effective-policy reduction and applies it atomically to the
     // Tor/communication executors.
     let _ = diagnostics_override;
-    self.application_runtime.set_battery_policy_inputs(
+    if let Err(error) = self.application_runtime.set_battery_policy_inputs(
         self.battery_policy.preferences,
         self.battery_policy.system,
-    );
+    ) {
+        self.log(
+            "battery",
+            Level::Warn,
+            "policy",
+            "BATTERY_POLICY_APPLY_FAILED",
+            &format!("runtime rejected battery policy update: {error}"),
+        );
+    }
 }
 
 fn has_identity(&self) -> Result<bool, ()> {

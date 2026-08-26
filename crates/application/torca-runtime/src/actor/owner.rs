@@ -95,11 +95,30 @@ impl RuntimeOwner {
                 lifecycle_wake_gate.store(false, Ordering::Release);
             }
         });
+        let radio_sender = sender.clone();
+        let radio_wake_pending = Arc::new(AtomicBool::new(false));
+        let radio_wake_gate = Arc::clone(&radio_wake_pending);
+        let radio_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if radio_wake_gate.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            if radio_sender
+                .try_send(RuntimeCommand::Wake(vec![RuntimeWakeSource::RadioDeadline]))
+                .is_err()
+            {
+                radio_wake_gate.store(false, Ordering::Release);
+            }
+        });
         communication.set_waker(communication_waker);
+        communication.set_radio_waker(radio_waker);
         communication_lifecycle.set_waker(lifecycle_waker);
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
-            let mut diagnostics = DiagnosticBuffer::new(256);
+        let mut diagnostics = DiagnosticBuffer::new(256);
+            diagnostics.set_provider_context(
+                communication_lifecycle.provider().wire_value(),
+                communication_lifecycle.provider_profile(),
+            );
             let mut policy = RuntimeGovernor::new(std::time::Instant::now());
             let mut sequence = 1_u128;
             let startup = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
@@ -143,6 +162,7 @@ impl RuntimeOwner {
                 connectivity,
                 communication_wake_pending,
                 lifecycle_wake_pending,
+                radio_wake_pending,
             );
             communication.shutdown();
             pairing.shutdown();
@@ -183,6 +203,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
     connectivity: ConnectivityObserver,
     communication_wake_pending: Arc<AtomicBool>,
     lifecycle_wake_pending: Arc<AtomicBool>,
+    radio_wake_pending: Arc<AtomicBool>,
 ) {
     let mut health = RuntimeHealthState::default();
     let mut work = RuntimeWorkState::new();
@@ -198,6 +219,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
         if matches!(runtime_wait, RuntimeWait::Command(RuntimeCommand::Wake(_))) {
             communication_wake_pending.store(false, Ordering::Release);
             lifecycle_wake_pending.store(false, Ordering::Release);
+            radio_wake_pending.store(false, Ordering::Release);
             // A transport frame (notably a handshake ACK) is also a delivery
             // wake.  The runtime command itself is intentionally lightweight,
             // but the worker bridge must be told to revisit the durable
@@ -318,42 +340,55 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 pairing.network_changed(now);
                 communication.network_changed(now);
+                communication_lifecycle.network_changed(now);
                 record(
                     diagnostics,
                     sequence,
                     now,
-                    Component::Relay,
+                    Component::Communication,
                     HealthState::Starting,
-                    "RELAY_NETWORK_CHANGED",
+                    "COMMUNICATION_NETWORK_CHANGED",
                 );
             }
-            RuntimeWait::Command(RuntimeCommand::SetRadioDemand(contact_id, enabled)) => {
+            RuntimeWait::Command(RuntimeCommand::SetRadioDemand(contact_id, enabled, response)) => {
                 if enabled {
-                    let _ = communication_lifecycle.set_dormant(false);
+                    if let Err(error) = communication_lifecycle.set_dormant(false) {
+                        let _ = response.send(Err(error));
+                        continue;
+                    }
                     acquire_radio_lease(policy, contact_id);
                     diagnostics.record_battery(BatteryMetric::RadioWake, 1, WakeReason::Radio);
                 } else {
                     policy.release_lease(radio_lease_owner(contact_id));
                 }
+                let _ = response.send(Ok(()));
             }
-            RuntimeWait::Command(RuntimeCommand::SetInstantContactDemand(contact_id, enabled)) => {
+            RuntimeWait::Command(RuntimeCommand::SetInstantContactDemand(contact_id, enabled, response)) => {
                 if enabled {
-                    let _ = communication_lifecycle.set_dormant(false);
+                    if let Err(error) = communication_lifecycle.set_dormant(false) {
+                        let _ = response.send(Err(error));
+                        continue;
+                    }
                     acquire_instant_contact_lease(policy, contact_id);
                 } else {
                     policy.release_lease(instant_contact_lease_owner(contact_id));
                 }
+                let _ = response.send(Ok(()));
             }
-            RuntimeWait::Command(RuntimeCommand::SetRadioTransmission(contact_id, active)) => {
+            RuntimeWait::Command(RuntimeCommand::SetRadioTransmission(contact_id, active, response)) => {
                 if active {
-                    let _ = communication_lifecycle.set_dormant(false);
+                    if let Err(error) = communication_lifecycle.set_dormant(false) {
+                        let _ = response.send(Err(error));
+                        continue;
+                    }
                     acquire_radio_transmission_lease(policy, contact_id);
                     diagnostics.record_battery(BatteryMetric::RadioWake, 1, WakeReason::Radio);
                 } else {
                     policy.release_lease(radio_transmission_lease_owner(contact_id));
                 }
+                let _ = response.send(Ok(()));
             }
-            RuntimeWait::Command(RuntimeCommand::SetBatteryPolicyInputs(preferences, system)) => {
+            RuntimeWait::Command(RuntimeCommand::SetBatteryPolicyInputs(preferences, system, response)) => {
                 work.battery_preferences = preferences;
                 work.system_energy = system;
                 let effective = preferences.effective(system, false);
@@ -368,7 +403,10 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                 );
                 diagnostics.set_battery_profile(effective.profile);
                 if !effective.communication_dormancy_allowed {
-                    let _ = communication_lifecycle.set_dormant(false);
+                    if let Err(error) = communication_lifecycle.set_dormant(false) {
+                        let _ = response.send(Err(error));
+                        continue;
+                    }
                 } else if !work.foreground
                     && scheduling.background_grace_deadline.is_none()
                     && !policy.has_durable_lease(std::time::Instant::now())
@@ -376,10 +414,25 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                     // A user can change policy after the one-shot grace has
                     // already elapsed. Apply that new permission immediately
                     // without manufacturing another wake window.
-                    let _ = communication_lifecycle.set_dormant(true);
+                    if let Err(error) = communication_lifecycle.set_dormant(true) {
+                        let _ = response.send(Err(error));
+                        continue;
+                    }
                 }
+                let _ = response.send(Ok(()));
             }
-            RuntimeWait::Command(RuntimeCommand::SetForeground(foreground)) => {
+            RuntimeWait::Command(RuntimeCommand::SetForeground(foreground, response)) => {
+                // A foreground transition is a user-visible request to make
+                // the selected provider usable now. Do not acknowledge it or
+                // mutate policy state when the provider cannot be resumed;
+                // otherwise the UI reports foreground while the transport is
+                // still dormant and subsequent commands appear to vanish.
+                if foreground {
+                    if let Err(error) = communication_lifecycle.set_dormant(false) {
+                        let _ = response.send(Err(error));
+                        continue;
+                    }
+                }
                 work.foreground = foreground;
                 work.system_energy.foreground = foreground;
                 let effective = work.battery_preferences.effective(work.system_energy, false);
@@ -395,15 +448,29 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                 diagnostics.set_battery_profile(effective.profile);
                 if foreground {
                     scheduling.background_grace_deadline = None;
-                    let _ = communication_lifecycle.set_dormant(false);
                 } else {
                     release_attention_leases(policy, &mut work);
                     scheduling.background_grace_deadline =
-                        Some(std::time::Instant::now() + Duration::from_secs(30));
+                        Some(std::time::Instant::now() + communication_lifecycle.background_grace());
                 }
+                let _ = response.send(Ok(()));
             }
             RuntimeWait::Command(RuntimeCommand::WakeDelivery(message_id, contact_id)) => {
-                let _ = communication_lifecycle.set_dormant(false);
+                if let Err(error) = communication_lifecycle.set_dormant(false) {
+                    let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+                    record(
+                        diagnostics,
+                        sequence,
+                        now,
+                        Component::Communication,
+                        HealthState::Degraded,
+                        "COMMUNICATION_WAKE_FAILED",
+                    );
+                    // WakeDelivery has no response channel: retain the
+                    // durable job and let the next provider/network event
+                    // retry it instead of silently losing the wake failure.
+                    eprintln!("torca-runtime: provider wake failed for delivery: {error}");
+                }
                 communication.wake_delivery();
                 work.active_delivery_leases.insert(message_id);
                 let resolved_contact = if let Some(contact_id) = contact_id {
@@ -434,7 +501,18 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
             }
             RuntimeWait::Command(command) => {
                 if command_requires_network(&command) {
-                    let _ = communication_lifecycle.set_dormant(false);
+                    if let Err(error) = communication_lifecycle.set_dormant(false) {
+                        let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+                        record(
+                            diagnostics,
+                            sequence,
+                            now,
+                            Component::Communication,
+                            HealthState::Degraded,
+                            "COMMUNICATION_WAKE_FAILED",
+                        );
+                        eprintln!("torca-runtime: provider wake failed before command: {error}");
+                    }
                 }
                 if command_writes_database(&command) {
                     diagnostics.count(RuntimeCounter::DbWrite);
@@ -558,6 +636,27 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                 eprintln!("torca-runtime: radio maintenance failed: {error}");
             }
         }
+        // Reachability probing is a real demand, not a property of the
+        // provider name.  Foreground use, explicit AlwaysAvailable mode and
+        // durable work may justify it; an Automatic/BatterySaver background
+        // runtime must not wake Iroh's relay/discovery machinery merely to
+        // refresh a cosmetic status.  The lifecycle implementation coalesces
+        // repeated values and only starts a provider-owned probe on a rising
+        // edge or a network-generation event.
+        let effective_policy =
+            work.battery_preferences.effective(work.system_energy, false);
+        let reachability_demand = work.foreground
+            || matches!(
+                effective_policy.profile,
+                torca_runtime_policy::BatteryProfile::AlwaysAvailable
+                    | torca_runtime_policy::BatteryProfile::Diagnostics
+            )
+            || policy.has_durable_lease(std::time::Instant::now());
+        communication_lifecycle.set_reachability_demand(reachability_demand);
+        // Refresh provider-owned, redaction-safe runtime facts whenever the
+        // actor processes a wake. This keeps diagnostics aligned with Iroh
+        // endpoint/network generations without adding a polling timer.
+        diagnostics.set_provider_runtime(communication_lifecycle.runtime_diagnostics());
         update_runtime_schedule(
             communication_lifecycle,
             pairing,
@@ -620,7 +719,7 @@ fn command_kind(command: &RuntimeCommand) -> &'static str {
         RuntimeCommand::WakeDelivery(..) => "wake_delivery",
         RuntimeCommand::NetworkChanged => "network_changed",
         RuntimeCommand::SetAttention(_) => "attention",
-        RuntimeCommand::SetForeground(_) => "foreground",
+        RuntimeCommand::SetForeground(..) => "foreground",
         RuntimeCommand::SetBatteryPolicyInputs(..) => "battery_policy",
         RuntimeCommand::SetRadioDemand(..) => "radio_demand",
         RuntimeCommand::SetInstantContactDemand(..) => "instant_demand",

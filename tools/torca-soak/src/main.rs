@@ -50,6 +50,7 @@ enum RelayMode {
 enum CommunicationProvider {
     Tor,
     Iroh,
+    WebRtc,
 }
 
 impl CommunicationProvider {
@@ -57,6 +58,7 @@ impl CommunicationProvider {
         match self {
             Self::Tor => "tor",
             Self::Iroh => "iroh",
+            Self::WebRtc => "webrtc",
         }
     }
 
@@ -82,7 +84,8 @@ enum FaultProfile {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, ValueEnum)]
 enum FixtureMode {
-    /// Reuse a valid fixture when present, otherwise provision it once.
+    /// Clean-provision Active Messaging by default; with
+    /// `--preserve-profiles`, reuse a valid fixture when present.
     #[default]
     Auto,
     /// Pair and provision a fresh deterministic test profile.
@@ -98,16 +101,17 @@ enum FixtureMode {
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Cli {
     /// Soak scenario. Omit all arguments to open the interactive wizard.
-    #[arg(long, value_enum, default_value_t = Scenario::RuntimeLab)]
+    #[arg(long, value_enum, default_value_t = Scenario::ActiveMessaging)]
     scenario: Scenario,
     /// Android serial. Omit to run the fake-peer-only laboratory scenario.
     #[arg(long)]
     android: Option<String>,
-    /// Legacy spelling accepted by torca-battery-soak-tui.
+    /// Explicit battery scenario executed by the canonical soak cockpit.
     #[arg(long = "device-id", hide = true)]
     legacy_device_id: Option<String>,
     /// Install/restart the SOAK Android client before the run. Active
-    /// Messaging enables this automatically; Auto fixtures preserve valid data.
+    /// Messaging enables this automatically; only --preserve-profiles may
+    /// reuse an existing fixture.
     #[arg(long)]
     android_auto_deploy: bool,
     /// Reuse Android and bot profiles instead of the clean Active Messaging
@@ -124,7 +128,7 @@ pub(crate) struct Cli {
     #[arg(long, value_enum, default_value_t = RelayMode::Managed)]
     relay: RelayMode,
     /// Communication provider used by Android and isolated lab peers.
-    #[arg(long, value_enum, default_value_t = CommunicationProvider::Tor)]
+    #[arg(long, value_enum, default_value_t = CommunicationProvider::Iroh)]
     communication_provider: CommunicationProvider,
     #[arg(long)]
     relay_endpoint: Option<String>,
@@ -136,8 +140,9 @@ pub(crate) struct Cli {
     radio: bool,
     #[arg(long, value_enum, default_value_t = FaultProfile::Controlled)]
     fault_profile: FaultProfile,
-    /// Test fixture lifecycle. `auto` provisions once and reuses a valid
-    /// named profile; `provision` and `reuse` force either behavior.
+    /// Test fixture lifecycle. `auto` performs clean provisioning for Active
+    /// Messaging unless --preserve-profiles is set; `provision` and `reuse`
+    /// force either behavior.
     #[arg(long, value_enum, default_value_t = FixtureMode::Auto)]
     fixture: FixtureMode,
     /// Stable fixture name stored below .torca/soak/fixtures.
@@ -145,9 +150,8 @@ pub(crate) struct Cli {
     fixture_name: String,
     #[arg(long, default_value = ".torca/soak")]
     output: PathBuf,
-    /// Path to the already-built lab peer executable.
-    /// Optional prebuilt lab peer. When omitted, use the platform-native
-    /// binary produced by `cargo build -p torca-lab-peer`.
+    /// Optional prebuilt lab peer. When omitted, the orchestrator builds
+    /// `torca-lab-peer` with the selected provider feature and profile.
     #[arg(long)]
     lab_peer: Option<PathBuf>,
     /// Optional persistent bot host address (for example 127.0.0.1:47890).
@@ -194,6 +198,10 @@ struct Manifest {
     fault_profile: String,
     relay_mode: String,
     communication_provider: String,
+    /// Provider-owned profile used by the deployed client and lab peers.
+    /// Recording it is essential when comparing battery runs: relay-backed
+    /// Iroh and direct-only Iroh have different background costs.
+    iroh_profile: Option<String>,
     fixture: String,
     fixture_name: String,
     started_at_ms: u128,
@@ -243,6 +251,8 @@ struct PeerProcess {
     child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    iroh_profile: Option<String>,
+    local_only: bool,
 }
 
 struct AndroidBridge {
@@ -268,19 +278,35 @@ struct ActiveBatteryCapture {
 }
 
 fn android_package() -> &'static str {
-    torca_deploy::android_target::package()
+    android_package_for_soak(torca_deploy::android_target::is_soak())
 }
 
-fn android_package_installed(serial: &str) -> bool {
-    Command::new("adb")
+/// Keeps the SOAK/normal package decision pure and testable.  The deploy
+/// library uses the same process-level flavor switch when it resolves APKs,
+/// activities and log roots; duplicating the literal decision here would make
+/// a battery run capable of deploying one package and measuring another.
+const fn android_package_for_soak(soak: bool) -> &'static str {
+    if soak { "com.torca.torca_app.soak" } else { "com.torca.torca_app" }
+}
+
+fn android_package_installed(serial: &str) -> Result<bool, String> {
+    let output = Command::new("adb")
         .args(["-s", serial, "shell", "pm", "path", android_package()])
         .output()
-        .is_ok_and(|output| {
-            output.status.success()
-                && String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("package:"))
-        })
+        .map_err(|error| format!("start adb package probe for {serial}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let detail =
+            if stderr.is_empty() { format!("exit status {}", output.status) } else { stderr };
+        return Err(format!(
+            "adb package probe failed for {serial} ({detail}); verify the device is online and authorized"
+        ));
+    }
+    Ok(package_path_present(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn package_path_present(stdout: &str) -> bool {
+    stdout.lines().any(|line| line.trim_start().starts_with("package:"))
 }
 
 impl Drop for ActiveBatteryCapture {
@@ -460,7 +486,13 @@ impl PeerProcess {
 
     fn restart(&mut self) -> Result<(), String> {
         self.stop();
-        let (child, input, output) = spawn_peer_parts(&self.executable, &self.root, &self.name)?;
+        let (child, input, output) = spawn_peer_parts(
+            &self.executable,
+            &self.root,
+            &self.name,
+            self.iroh_profile.as_deref(),
+            self.local_only,
+        )?;
         self.child = child;
         self.input = input;
         self.output = BufReader::new(output);
@@ -547,8 +579,8 @@ fn run() -> Result<(), String> {
     {
         cli.fault_profile = FaultProfile::None;
     }
-    // Keep the old binary/PowerShell documentation usable while all new
-    // scenarios go through the same cockpit and typed CLI.
+    // Keep the legacy flag spellings usable while every scenario goes
+    // through the same cockpit and typed CLI.
     if cli.android.is_none() {
         cli.android = cli.legacy_device_id.take();
     }
@@ -558,11 +590,15 @@ fn run() -> Result<(), String> {
     }
     let auto_fixture_requested = cli.fixture == FixtureMode::Auto;
     if auto_fixture_requested {
-        // A stale or truncated fixture must not turn the click-and-play path
-        // into a hard failure. Treat only a decodable manifest as reusable;
-        // provisioning will replace an invalid one deterministically.
+        // Active Messaging is a measurement scenario and must not inherit
+        // mutable Android/application state from a previous run. The default
+        // is a clean profile followed by deterministic fixture provisioning.
+        // Reuse is an explicit opt-in for fast debugging only; a stale or
+        // truncated manifest always falls back to provisioning.
         cli.fixture = if cli.scenario == Scenario::ActiveMessaging {
-            if load_fixture_manifest(&cli.repo_root, &cli.fixture_name).is_ok() {
+            if cli.preserve_profiles
+                && load_fixture_manifest(&cli.repo_root, &cli.fixture_name).is_ok()
+            {
                 FixtureMode::Reuse
             } else {
                 FixtureMode::Provision
@@ -574,14 +610,16 @@ fn run() -> Result<(), String> {
             FixtureMode::None
         };
     }
-    // A reusable fixture is already installed and paired.  Re-running the
-    // deployer here would reset/reinstall the client and re-enter relay
-    // warm-up, defeating the point of a stable battery measurement (and can
-    // fail independently of the already-running workload).  Fresh active
-    // messaging runs still get the deterministic SOAK deploy automatically.
+    // Active Messaging always deploys a clean deterministic profile unless
+    // the operator explicitly requested `--preserve-profiles`. This keeps
+    // contact/message counters and battery measurements independent between
+    // runs while retaining a fast opt-in path for debugging.
     if cli.scenario == Scenario::ActiveMessaging {
-        let android_package_missing =
-            cli.android.as_deref().is_some_and(|serial| !android_package_installed(serial));
+        let android_package_missing = if let Some(serial) = cli.android.as_deref() {
+            !android_package_installed(serial)?
+        } else {
+            false
+        };
         if auto_fixture_requested && android_package_missing {
             cli.fixture = FixtureMode::Provision;
         }
@@ -595,6 +633,12 @@ fn run() -> Result<(), String> {
     if cli.bot_token.is_none() {
         cli.bot_token = std::env::var("TORCA_SOAK_BOT_TOKEN").ok();
     }
+    // All subprocesses (Docker, Cargo, adb helpers and fixture paths) must
+    // share one absolute repository root.  The wizard intentionally stores
+    // `.` for portability, but a user may launch it from `tools/` or another
+    // working directory; letting that relative path leak produces misleading
+    // Docker/Cargo errors such as a workspace member being "missing".
+    cli.repo_root = resolve_repo_root(&cli.repo_root)?;
     if !cli.plain {
         let terminal = std::io::stdout().is_terminal() && std::io::stderr().is_terminal();
         if terminal {
@@ -605,6 +649,26 @@ fn run() -> Result<(), String> {
         );
     }
     run_plan(cli)
+}
+
+fn resolve_repo_root(configured: &Path) -> Result<PathBuf, String> {
+    let candidate = if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("resolve current directory for soak: {error}"))?
+            .join(configured)
+    };
+    let root = candidate.canonicalize().map_err(|error| {
+        format!("resolve SOAK repository root {}: {error}", candidate.display())
+    })?;
+    if !root.join("Cargo.toml").is_file() {
+        return Err(format!(
+            "SOAK repository root {} does not contain Cargo.toml; pass --repo-root <checkout>",
+            root.display()
+        ));
+    }
+    Ok(root)
 }
 
 pub(crate) fn run_plan(cli: Cli) -> Result<(), String> {
@@ -623,7 +687,24 @@ fn run_battery_harness(cli: &Cli) -> Result<(), String> {
         cli.duration_seconds.div_ceil(60).to_string(),
         "-DeviceId".to_owned(),
         device.to_owned(),
+        // The SOAK flavor has a separate Android package/data namespace.  Do
+        // not let the PowerShell backend silently fall back to the normal
+        // production package: that produces a misleading "package missing"
+        // loop even after a successful SOAK deploy.
+        "-Package".to_owned(),
+        android_package().to_owned(),
+        "-NativeLogRoot".to_owned(),
+        format!("/sdcard/Android/data/{}/files/torca/logs", android_package()),
+        "-CommunicationProvider".to_owned(),
+        cli.communication_provider.wire().to_owned(),
     ];
+    if cli.communication_provider == CommunicationProvider::Iroh {
+        args.extend([
+            "-ProviderProfile".to_owned(),
+            iroh_profile_for_soak(cli.communication_provider, cli.scenario)
+                .unwrap_or_else(|| "direct".to_owned()),
+        ]);
+    }
     if cli.require_unplugged {
         args.push("-RequireUnplugged".to_owned());
     }
@@ -674,6 +755,11 @@ fn run_powershell_backend(cli: &Cli, script: &str, arguments: &[String]) -> Resu
         .args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&script_path)
         .args(arguments)
+        // The backend may invoke `cargo run -p torca-deploy`.  That child is
+        // named `torca-deploy`, so executable-name detection cannot select the
+        // SOAK Android flavor.  Carry the flavor explicitly across the
+        // process boundary.
+        .env("TORCA_SOAK_FLAVOR", "1")
         .current_dir(&cli.repo_root);
     if !tui::is_active() {
         let status = command
@@ -815,6 +901,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         fault_profile: format!("{:?}", cli.fault_profile),
         relay_mode: format!("{:?}", cli.relay),
         communication_provider: cli.communication_provider.wire().to_owned(),
+        iroh_profile: iroh_profile_for_soak(cli.communication_provider, cli.scenario),
         fixture: format!("{:?}", cli.fixture),
         fixture_name: cli.fixture_name.clone(),
         started_at_ms: started.as_millis(),
@@ -869,8 +956,14 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         }),
     )?;
 
+    let iroh_profile = iroh_profile_for_soak(cli.communication_provider, cli.scenario);
     let peer_executable = if cli.bot_host.is_none() {
-        build_lab_peer(&cli.repo_root, cli.communication_provider, endpoint.as_deref())?
+        build_lab_peer(
+            &cli.repo_root,
+            cli.communication_provider,
+            endpoint.as_deref(),
+            iroh_profile.as_deref(),
+        )?
     } else {
         cli.lab_peer.clone().unwrap_or_else(default_lab_peer_path)
     };
@@ -891,6 +984,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
                     !cli.preserve_profiles && cli.fixture != FixtureMode::Reuse,
                     reuse_built_artifact,
                     cli.communication_provider,
+                    iroh_profile.as_deref(),
                 ) {
                     Ok(()) => break,
                     Err(error) if wait_for_android_preflight_retry(serial, &error) => {
@@ -948,7 +1042,13 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
             }
             fs::create_dir_all(&peer_root)
                 .map_err(|error| format!("create {name} root: {error}"))?;
-            peers.push(Participant::Fake(spawn_peer(&peer_executable, &peer_root, &name)?));
+            peers.push(Participant::Fake(spawn_peer(
+                &peer_executable,
+                &peer_root,
+                &name,
+                iroh_profile.as_deref(),
+                cli.scenario == Scenario::RuntimeLab,
+            )?));
         }
     }
 
@@ -1411,8 +1511,13 @@ fn start_managed_relay(
     repo_root: &Path,
     artifact_root: &Path,
 ) -> Result<(String, ManagedRelay), String> {
+    validate_workspace_members(repo_root)?;
     let stack_root = repo_root.join(".torca/stack");
     let _ = fs::remove_file(stack_root.join("relay_ready.txt"));
+    // Remove the previous endpoint before compose starts.  Otherwise a fast
+    // warm-up can race with the old marker and provision clients against a
+    // relay identity that belongs to an earlier run.
+    let _ = fs::remove_file(stack_root.join("relay_endpoint.txt"));
     let guard =
         ManagedRelay { repo_root: repo_root.to_owned(), artifact_root: artifact_root.to_owned() };
     let mut command = Command::new("docker");
@@ -1463,10 +1568,19 @@ fn start_managed_relay(
     while Instant::now() < deadline && !tui::cancel_requested() {
         if let Ok(endpoint) = fs::read_to_string(&endpoint_file) {
             let endpoint = endpoint.trim().to_owned();
-            let ready = fs::read_to_string(&ready_file)
-                .ok()
-                .is_some_and(|value| value.lines().any(|line| line.trim() == endpoint));
-            if valid_endpoint(&endpoint) && ready {
+            // Relay protocol health and onion publication are independent.
+            // The deployer/clients can continue provisioning while Arti is
+            // publishing; provider readiness will retry the actual path and
+            // report a provider-specific state instead of blocking the whole
+            // SOAK setup on a Tor-only marker.
+            if valid_endpoint(&endpoint) {
+                let onion_ready = fs::read_to_string(&ready_file)
+                    .ok()
+                    .is_some_and(|value| value.lines().any(|line| line.trim() == endpoint));
+                tui::publish_event(
+                    "relay_endpoint_available",
+                    &serde_json::json!({"endpoint": endpoint, "onionReady": onion_ready}),
+                );
                 return Ok((endpoint, guard));
             }
         }
@@ -1474,9 +1588,50 @@ fn start_managed_relay(
     }
     drop(guard);
     Err(format!(
-        "managed relay did not publish a valid endpoint within 180s: {}",
+        "managed relay did not publish a fresh valid endpoint within 180s: {}",
         endpoint_file.display()
     ))
+}
+
+/// Docker receives the repository as a build context and Cargo resolves the
+/// complete workspace before compiling the relay.  Fail early when a sparse
+/// checkout, ignored directory or stale worktree is missing one of the
+/// declared members; otherwise BuildKit reports a misleading manifest error
+/// several minutes into the relay image build.
+fn validate_workspace_members(repo_root: &Path) -> Result<(), String> {
+    let manifest = fs::read_to_string(repo_root.join("Cargo.toml"))
+        .map_err(|error| format!("read workspace Cargo.toml: {error}"))?;
+    let mut in_members = false;
+    let mut missing = Vec::new();
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("members") && trimmed.contains('[') {
+            in_members = true;
+            continue;
+        }
+        if !in_members {
+            continue;
+        }
+        if trimmed.starts_with(']') {
+            break;
+        }
+        let Some(member) = trimmed.strip_prefix('"').and_then(|value| value.split('"').next())
+        else {
+            continue;
+        };
+        let path = repo_root.join(member);
+        if !path.join("Cargo.toml").is_file() {
+            missing.push(format!("{member} (expected {})", path.join("Cargo.toml").display()));
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "workspace is incomplete; Docker relay build cannot start. Missing members: {}",
+            missing.join(", ")
+        ))
+    }
 }
 
 fn command_output_tail(stdout: &[u8], stderr: &[u8]) -> String {
@@ -1498,12 +1653,40 @@ fn build_lab_peer(
     repo_root: &Path,
     provider: CommunicationProvider,
     endpoint: Option<&str>,
+    iroh_profile: Option<&str>,
 ) -> Result<PathBuf, String> {
+    // `cargo run -p torca-soak` already owns Cargo's workspace target lock.
+    // Building the peer into that same target from inside the orchestrator
+    // deadlocks before rustc starts. A provider/profile-specific target also
+    // prevents a Tor binary from being accidentally reused for Iroh.
+    let profile_key = iroh_profile.map_or_else(|| "default".to_owned(), sanitize_profile_key);
+    let target_dir = repo_root.join(".torca/soak/build").join(provider.wire()).join(profile_key);
+    let target_dir_argument = target_dir.to_string_lossy().into_owned();
+    fs::create_dir_all(&target_dir)
+        .map_err(|error| format!("create lab peer target directory: {error}"))?;
     let mut command = Command::new("cargo");
+    let provider_features = match provider {
+        CommunicationProvider::Tor => "provider-tor,radio-audio",
+        CommunicationProvider::Iroh => "provider-iroh,radio-audio",
+        CommunicationProvider::WebRtc => "provider-webrtc,radio-audio",
+    };
     command
-        .args(["build", "-p", "torca-lab-peer", "--locked"])
+        .args([
+            "build",
+            "-p",
+            "torca-lab-peer",
+            "--locked",
+            "--no-default-features",
+            "--features",
+            provider_features,
+            "--target-dir",
+            &target_dir_argument,
+        ])
         .env("TORCA_COMMUNICATION_PROVIDER", provider.wire())
         .current_dir(repo_root);
+    if let Some(profile) = iroh_profile {
+        command.env("TORCA_IROH_PROFILE", profile);
+    }
     if let Some(endpoint) = endpoint {
         command.env("TORCA_RELAY_ENDPOINT", endpoint);
     }
@@ -1511,10 +1694,10 @@ fn build_lab_peer(
     if !result.status.success() {
         return Err("lab peer build failed".into());
     }
-    Ok(repo_root.join(if cfg!(windows) {
-        "target/debug/torca-lab-peer.exe"
+    Ok(target_dir.join(if cfg!(windows) {
+        "debug/torca-lab-peer.exe"
     } else {
-        "target/debug/torca-lab-peer"
+        "debug/torca-lab-peer"
     }))
 }
 
@@ -1865,11 +2048,11 @@ fn validate_active_messaging_preflight(
     expected_fake_peers: usize,
     timeline: &mut File,
 ) -> Result<(), String> {
-    let android = peers
+    let android_index = peers
         .iter_mut()
-        .find(|peer| matches!(peer, Participant::Android(_)))
+        .position(|peer| matches!(peer, Participant::Android(_)))
         .ok_or("Android participant missing from active-messaging preflight")?;
-    let snapshot = snapshot_with_retry(android, "active-contacts")?;
+    let snapshot = snapshot_with_retry(&mut peers[android_index], "active-contacts")?;
     let contacts = contact_count(&snapshot);
     let conversations = conversation_count(&snapshot);
     if contacts < expected_contacts || conversations < expected_conversations {
@@ -1877,11 +2060,43 @@ fn validate_active_messaging_preflight(
             "active-messaging preflight failed: Android has {contacts} contacts and {conversations} conversations; expected at least {expected_contacts} contacts and {expected_conversations} conversations from {expected_fake_peers} soak bots"
         ));
     }
+    // A successful Android star is not sufficient evidence that the bot mesh
+    // exists.  If one pairing silently failed, the run would otherwise report
+    // a healthy battery workload while generating no peer traffic.  Validate
+    // the ring before starting the timed workload so failures are immediate
+    // and attributable to provisioning rather than to the later soak loop.
+    let expected_bot_contacts = expected_fake_peers.saturating_sub(1).min(2);
+    for (index, peer) in peers.iter_mut().enumerate() {
+        if index == android_index || !matches!(peer, Participant::Fake(_) | Participant::Remote(_))
+        {
+            continue;
+        }
+        let bot_snapshot = snapshot_with_retry(peer, "active-bot-preflight")?;
+        let bot_contacts = contact_count(&bot_snapshot);
+        let bot_conversations = conversation_count(&bot_snapshot);
+        if bot_contacts < expected_bot_contacts || bot_conversations < expected_bot_contacts {
+            return Err(format!(
+                "active-messaging preflight failed: {} has {bot_contacts} contacts and {bot_conversations} conversations; expected at least {expected_bot_contacts} bot-ring relationships",
+                peer.name()
+            ));
+        }
+        let peer_name = peer.name().to_owned();
+        record(
+            timeline,
+            "bot_preflight_passed",
+            serde_json::json!({
+                "peer": peer_name,
+                "contacts": bot_contacts,
+                "conversations": bot_conversations,
+                "expected": expected_bot_contacts,
+            }),
+        )?;
+    }
     record(
         timeline,
         "active_preflight_passed",
         serde_json::json!({
-            "android": android.name(),
+            "android": peers[android_index].name(),
             "contacts": contacts,
             "conversations": conversations,
             "expectedContacts": expected_contacts,
@@ -2043,7 +2258,7 @@ fn wait_for_pairing_network(peer: &mut Participant) -> Result<(), String> {
                     .pointer("/snapshot/communicationProvider")
                     .or_else(|| snapshot.get("communicationProvider"))
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or("tor")
+                    .unwrap_or("unknown")
                     .clone_into(&mut last_provider);
                 snapshot
                     .pointer("/snapshot/communicationState")
@@ -2068,9 +2283,9 @@ fn wait_for_pairing_network(peer: &mut Participant) -> Result<(), String> {
                     .unwrap_or("unknown")
                     .clone_into(&mut last_relay);
                 let provider_ready = matches!(last_communication.as_str(), "ready" | "healthy");
-                let tor_relay_ready =
+                let provider_route_ready =
                     last_provider != "tor" || matches!(last_relay.as_str(), "ready" | "healthy");
-                if provider_ready && tor_relay_ready {
+                if provider_ready && provider_route_ready {
                     return Ok(());
                 }
                 last_error.clear();
@@ -2103,7 +2318,7 @@ fn wait_for_provider_ready(peer: &mut Participant) -> Result<(), String> {
                     .pointer("/snapshot/communicationProvider")
                     .or_else(|| snapshot.get("communicationProvider"))
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or("tor")
+                    .unwrap_or("unknown")
                     .clone_into(&mut last_provider);
                 snapshot
                     .pointer("/snapshot/communicationState")
@@ -2598,7 +2813,7 @@ fn android_launchable_activity(serial: &str) -> Result<String, String> {
             .any(|line| line.starts_with("package:"))
     {
         return Err(format!(
-            "Android package '{package}' is not installed on '{serial}'. Install the debug APK or run Run-TorcaBatterySoak.ps1 first."
+            "Android package '{package}' is not installed on '{serial}'. Run `cargo run -p torca-soak -- --scenario active-messaging --android {serial}` to perform the SOAK deploy first."
         ));
     }
 
@@ -2633,6 +2848,7 @@ fn ensure_android_deployed(
     clean: bool,
     reuse_built_artifact: bool,
     provider: CommunicationProvider,
+    iroh_profile: Option<&str>,
 ) -> Result<(), String> {
     let state = Command::new("adb")
         .args(["-s", serial, "get-state"])
@@ -2644,9 +2860,14 @@ fn ensure_android_deployed(
             String::from_utf8_lossy(&state.stdout).trim()
         ));
     }
-    if let Err(error) =
-        run_typed_android_deploy(repo_root, serial, clean, reuse_built_artifact, provider)
-    {
+    if let Err(error) = run_typed_android_deploy(
+        repo_root,
+        serial,
+        clean,
+        reuse_built_artifact,
+        provider,
+        iroh_profile,
+    ) {
         let context = android_preflight_context(serial);
         return Err(format!("{error}; android_preflight={context}"));
     }
@@ -2684,6 +2905,7 @@ fn run_typed_android_deploy(
     clean: bool,
     reuse_built_artifact: bool,
     provider: CommunicationProvider,
+    iroh_profile: Option<&str>,
 ) -> Result<(), String> {
     let paths = torca_deploy::persistence::DeployPaths {
         repo_root: repo_root.to_owned(),
@@ -2711,7 +2933,9 @@ fn run_typed_android_deploy(
         build_plan.communication_provider = match provider {
             CommunicationProvider::Tor => torca_deploy::domain::CommunicationProvider::Tor,
             CommunicationProvider::Iroh => torca_deploy::domain::CommunicationProvider::Iroh,
+            CommunicationProvider::WebRtc => torca_deploy::domain::CommunicationProvider::WebRtc,
         };
+        build_plan.provider_profile = iroh_profile.map(str::to_owned);
         build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
         build_plan.launch = torca_deploy::domain::LaunchPolicy::Skip;
         let build_run = executor
@@ -2733,10 +2957,15 @@ fn run_typed_android_deploy(
     install_plan.communication_provider = match provider {
         CommunicationProvider::Tor => torca_deploy::domain::CommunicationProvider::Tor,
         CommunicationProvider::Iroh => torca_deploy::domain::CommunicationProvider::Iroh,
+        CommunicationProvider::WebRtc => torca_deploy::domain::CommunicationProvider::WebRtc,
     };
+    install_plan.provider_profile = iroh_profile.map(str::to_owned);
     install_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
     install_plan.client_data = if clean {
-        torca_deploy::domain::ClientDataPolicy::ResetAll
+        // A clean soak profile must remove contacts/messages and fixture
+        // state, but preserve provider caches (especially Tor/Iroh directory
+        // data) so the measurement does not include an avoidable cold start.
+        torca_deploy::domain::ClientDataPolicy::ResetProfile
     } else {
         torca_deploy::domain::ClientDataPolicy::Preserve
     };
@@ -3119,6 +3348,47 @@ fn validate_reusable_fixture(
                 fixture.name, fixture.expected_contacts, fixture.expected_conversations
             ));
         }
+        validate_android_fixture_contacts(&snapshot, fixture, peer.name())?;
+    }
+    Ok(())
+}
+
+/// Verifies exact bot identities instead of accepting a stale profile merely
+/// because it contains the expected number of contacts.
+fn validate_android_fixture_contacts(
+    snapshot: &serde_json::Value,
+    fixture: &FixtureManifest,
+    android_participant: &str,
+) -> Result<(), String> {
+    let contacts = snapshot
+        .pointer("/snapshot/contacts")
+        .or_else(|| snapshot.get("contacts"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or("Android fixture contact projection is missing")?;
+    for expected in fixture
+        .identities
+        .iter()
+        .filter(|identity| identity.participant != android_participant && identity.id.is_some())
+    {
+        let expected_id = expected.id.as_deref().unwrap_or_default();
+        let found = contacts.iter().any(|contact| {
+            let id_matches = contact
+                .get("remoteIdentityId")
+                .or_else(|| contact.get("identityId"))
+                .or_else(|| contact.get("id"))
+                .and_then(serde_json::Value::as_str)
+                == Some(expected_id);
+            let name_matches = expected.display_name.as_deref().is_none_or(|name| {
+                contact.get("displayName").and_then(serde_json::Value::as_str) == Some(name)
+            });
+            id_matches && name_matches
+        });
+        if !found {
+            return Err(format!(
+                "fixture '{}' is missing bot contact '{}' ({expected_id}); reprovision the fixture",
+                fixture.name, expected.participant
+            ));
+        }
     }
     Ok(())
 }
@@ -3291,8 +3561,15 @@ fn snapshot_attachment_available(snapshot: &serde_json::Value, name: &str) -> bo
         })
 }
 
-fn spawn_peer(executable: &Path, root: &Path, name: &str) -> Result<PeerProcess, String> {
-    let (child, input, output) = spawn_peer_parts(executable, root, name)?;
+fn spawn_peer(
+    executable: &Path,
+    root: &Path,
+    name: &str,
+    iroh_profile: Option<&str>,
+    local_only: bool,
+) -> Result<PeerProcess, String> {
+    let (child, input, output) =
+        spawn_peer_parts(executable, root, name, iroh_profile, local_only)?;
     Ok(PeerProcess {
         name: name.into(),
         executable: executable.to_owned(),
@@ -3300,6 +3577,8 @@ fn spawn_peer(executable: &Path, root: &Path, name: &str) -> Result<PeerProcess,
         child,
         input,
         output: BufReader::new(output),
+        iroh_profile: iroh_profile.map(str::to_owned),
+        local_only,
     })
 }
 
@@ -3307,15 +3586,22 @@ fn spawn_peer_parts(
     executable: &Path,
     root: &Path,
     name: &str,
+    iroh_profile: Option<&str>,
+    local_only: bool,
 ) -> Result<(Child, ChildStdin, ChildStdout), String> {
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("--root")
         .arg(root)
         .arg("--control-stdio")
         // Keep fake peers deterministic and self-contained.  This is only
         // inherited by the SOAK lab process; real Android/desktop builds use
         // the production provider bind policy.
-        .env("TORCA_IROH_LOCAL_ONLY", "1")
+        .env("TORCA_IROH_LOCAL_ONLY", if local_only { "1" } else { "0" });
+    if let Some(profile) = iroh_profile {
+        command.env("TORCA_IROH_PROFILE", profile);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -3346,6 +3632,43 @@ fn valid_endpoint(endpoint: &str) -> bool {
     host.len() == 62 && host.ends_with(".onion") && port.parse::<u16>().is_ok()
 }
 
+/// Returns the provider-owned profile used by soak clients. Active Messaging
+/// needs the relay/discovery fallback so a physical Android can reach host or
+/// remote bots across NAT; RuntimeLab deliberately stays loopback-only. The
+/// idle scenario uses direct-only to measure the lowest provider overhead.
+/// `TORCA_SOAK_IROH_PROFILE` is an explicit escape hatch for controlled runs.
+fn iroh_profile_for_soak(provider: CommunicationProvider, scenario: Scenario) -> Option<String> {
+    if provider != CommunicationProvider::Iroh {
+        return None;
+    }
+    std::env::var("TORCA_SOAK_IROH_PROFILE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| Some(default_iroh_profile(scenario).to_owned()))
+}
+
+const fn default_iroh_profile(scenario: Scenario) -> &'static str {
+    match scenario {
+        Scenario::ActiveMessaging => "always",
+        Scenario::RuntimeLab => "local",
+        Scenario::IdleBattery | Scenario::Connectivity | Scenario::Deterministic => "direct",
+    }
+}
+
+fn sanitize_profile_key(value: &str) -> String {
+    let key = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if key.is_empty() { "default".to_owned() } else { key }
+}
+
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let data = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
     fs::write(path, data).map_err(|error| format!("write {}: {error}", path.display()))
@@ -3361,17 +3684,53 @@ fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::{
-        contact_count, conversation_count, pairing_by_id, parse_launchable_activity,
+        Cli, CommunicationProvider, FixtureIdentity, FixtureManifest, Scenario,
+        android_package_for_soak, contact_count, conversation_count, default_iroh_profile,
+        package_path_present, pairing_by_id, parse_launchable_activity,
         snapshot_attachment_available, snapshot_contains_message, snapshot_identity,
-        snapshot_radio_is_remote_active, valid_endpoint, validate_fixture_name,
+        snapshot_radio_is_remote_active, valid_endpoint, validate_android_fixture_contacts,
+        validate_fixture_name,
     };
+    use clap::Parser;
     use serde_json::json;
+
+    #[test]
+    fn cli_defaults_to_click_and_play_active_messaging() {
+        let cli = Cli::try_parse_from(["torca-soak"]).expect("default CLI should parse");
+        assert_eq!(cli.scenario, Scenario::ActiveMessaging);
+        assert_eq!(cli.communication_provider, CommunicationProvider::Iroh);
+    }
+
+    #[test]
+    fn battery_package_selection_matches_deploy_flavor() {
+        assert_eq!(android_package_for_soak(true), "com.torca.torca_app.soak");
+        assert_eq!(android_package_for_soak(false), "com.torca.torca_app");
+    }
+
+    #[test]
+    fn package_probe_requires_a_real_pm_path() {
+        assert!(package_path_present("package:/data/app/torca/base.apk\n"));
+        assert!(package_path_present("  package:/data/app/torca/base.apk\n"));
+        assert!(!package_path_present("Error: unknown package: torca\n"));
+        assert!(!package_path_present(""));
+    }
 
     #[test]
     fn endpoint_validation_requires_v3_onion_and_port() {
         assert!(valid_endpoint(&format!("{}.onion:443", "a".repeat(56))));
         assert!(!valid_endpoint("invalid.onion:443"));
         assert!(!valid_endpoint("a.onion"));
+    }
+
+    #[test]
+    fn soak_profiles_match_workload_reachability_requirements() {
+        assert_eq!(default_iroh_profile(Scenario::ActiveMessaging), "always");
+        assert_eq!(default_iroh_profile(Scenario::RuntimeLab), "local");
+        assert_eq!(default_iroh_profile(Scenario::IdleBattery), "direct");
+        assert_eq!(
+            super::iroh_profile_for_soak(CommunicationProvider::Tor, Scenario::ActiveMessaging),
+            None
+        );
     }
 
     #[test]
@@ -3416,6 +3775,39 @@ mod tests {
         assert_eq!(conversation_count(&snapshot), 1);
         assert_eq!(contact_count(&json!({})), 0);
         assert_eq!(conversation_count(&json!({})), 0);
+    }
+
+    #[test]
+    fn reusable_fixture_requires_exact_bot_identity_and_nickname() {
+        let fixture = FixtureManifest {
+            schema: 1,
+            name: "test".into(),
+            scenario: "ActiveMessaging".into(),
+            android_serial: Some("android".into()),
+            fake_peers: 1,
+            expected_contacts: 1,
+            expected_conversations: 1,
+            nicknames: vec!["Bot".into()],
+            identities: vec![
+                FixtureIdentity {
+                    participant: "android".into(),
+                    id: Some("android-id".into()),
+                    display_name: Some("Phone".into()),
+                    fingerprint: None,
+                },
+                FixtureIdentity {
+                    participant: "peer-a".into(),
+                    id: Some("bot-id".into()),
+                    display_name: Some("Bot".into()),
+                    fingerprint: None,
+                },
+            ],
+            created_at_ms: 0,
+        };
+        let valid = json!({"snapshot": {"contacts": [{"remoteIdentityId": "bot-id", "displayName": "Bot"} ]}});
+        assert!(validate_android_fixture_contacts(&valid, &fixture, "android").is_ok());
+        let wrong_name = json!({"snapshot": {"contacts": [{"remoteIdentityId": "bot-id", "displayName": "Other"} ]}});
+        assert!(validate_android_fixture_contacts(&wrong_name, &fixture, "android").is_err());
     }
 
     #[test]

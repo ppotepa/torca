@@ -12,7 +12,28 @@ fn metadata() -> &'static [u8] {
     METADATA.get_or_init(|| {
         let provider = torca_transport_api::TransportKind::from_wire(COMMUNICATION_PROVIDER)
             .unwrap_or_default();
-        let features = provider.deployment_profile().features;
+        let profile = provider.deployment_profile();
+        // The selected Iroh profile is immutable build input. Exposing its
+        // canonical value makes mixed-profile installs diagnosable without
+        // leaking endpoint material into the application contract.
+        let provider_profile = if provider == torca_transport_api::TransportKind::Iroh {
+            Some(match IROH_PROFILE.unwrap_or("always") {
+                "direct" | "direct-only" => "direct",
+                "local" | "local-only" => "local",
+                _ => "always",
+            })
+        } else {
+            None
+        };
+        let features = profile.features;
+        // Endpoint hashes identify commissioning services, not direct peer
+        // transports. Ignore an inherited/stale build variable for Iroh,
+        // Memory, and other providers without such a service.
+        let provider_endpoint_hash = profile
+            .commissioning_service
+            .requires_endpoint()
+            .then_some(PROVIDER_ENDPOINT_HASH)
+            .flatten();
         serde_json::to_vec(&json!({
             "metadataSchema": 2,
             "productVersion": PRODUCT_VERSION,
@@ -26,10 +47,12 @@ fn metadata() -> &'static [u8] {
             "schemaVersion": 1,
             "wireVersion": 1,
             "communicationProvider": COMMUNICATION_PROVIDER,
-            "providerEndpointHash": PROVIDER_ENDPOINT_HASH,
+            "providerProfile": provider_profile,
+            "providerEndpointRequired": profile.commissioning_service.requires_endpoint(),
+            "providerEndpointHash": provider_endpoint_hash,
             // Temporary compatibility alias for older Flutter binaries. It
             // is intentionally nullable for direct providers such as Iroh.
-            "relayEndpointHash": PROVIDER_ENDPOINT_HASH,
+            "relayEndpointHash": provider_endpoint_hash,
             "targetPlatform": std::env::consts::OS,
             "targetArchitecture": std::env::consts::ARCH,
             "capabilities": {
@@ -188,6 +211,7 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                     revision: 1,
                     completed: IdempotencyLedger::default(),
                 };
+                let dead_event_hub = Arc::clone(&actor_event_hub);
                 let actor_result = catch_unwind(AssertUnwindSafe(|| {
                     actor_loop(receiver, &mut state, actor_event_hub);
                 }));
@@ -208,11 +232,19 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
                     );
                     eprintln!("Torca runtime actor panicked: {detail}");
                 }
+                // A blocking revision waiter may have passed the initial
+                // `alive` check immediately before the actor stopped.  Wake
+                // those waiters explicitly; otherwise Android's foreground
+                // service (and Flutter's event isolate) can remain blocked
+                // forever on a dead runtime and never get a chance to
+                // reacquire a fresh generation.
+                dead_event_hub.close();
                 actor_alive.store(false, Ordering::Release);
             }
             Err(error) => {
                 eprintln!("Torca runtime startup failed: {error}");
                 actor_alive.store(false, Ordering::Release);
+                actor_event_hub.close();
                 let _ = ready_tx.send(Err(error));
             }
         })

@@ -96,6 +96,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   String? _inviteUri;
   String? _createdSessionId;
   bool _queued = false;
+  bool _routeRefreshRequired = false;
   bool _completionCloseScheduled = false;
   Set<String> _contactsBeforeCreation = const <String>{};
 
@@ -399,6 +400,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     await _operations.run(key, () async {
       setState(() => _error = null);
       result = await widget.gateway.execute(command);
+      _routeRefreshRequired = result?.kind == 'error:runtime.route_refresh_required';
       if (result?.ok != true && mounted) {
         setState(
           () => _error = result == null
@@ -412,6 +414,26 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       }
     });
     return result;
+  }
+
+  Future<void> _refreshProviderRoute() async {
+    if (_operations.isActive('pairing:route-refresh')) return;
+    await _operations.run('pairing:route-refresh', () async {
+      final result = await widget.gateway.execute(
+        const RefreshProviderRouteCommandDto(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _routeRefreshRequired = !result.ok;
+        _error = result.ok
+            ? null
+            : BridgeErrorPresenter.localized(
+                context,
+                result,
+                fallback: context.strings.invitationOperationFailed,
+              );
+      });
+    });
   }
 
   @override
@@ -432,6 +454,8 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
                   inviteUri: _inviteUri,
                   busy: _operations.anyWithPrefix('pairing:${pairing.id}:'),
                   error: _error,
+                  routeRefreshRequired: _routeRefreshRequired,
+                  onRefreshRoute: _refreshProviderRoute,
                   onApprove: () => _run(
                     'pairing:${pairing.id}:approve',
                     PairingAction.approve.command(pairing.id),
@@ -778,6 +802,8 @@ class _PairingSessionDetails extends StatelessWidget {
     required this.onReject,
     required this.onCancel,
     this.error,
+    this.routeRefreshRequired = false,
+    this.onRefreshRoute,
     this.onDone,
   });
   final PairingDto pairing;
@@ -785,6 +811,8 @@ class _PairingSessionDetails extends StatelessWidget {
   final bool busy;
   final VoidCallback onApprove, onReject, onCancel;
   final String? error;
+  final bool routeRefreshRequired;
+  final VoidCallback? onRefreshRoute;
   final VoidCallback? onDone;
 
   bool get _canReview =>
@@ -802,6 +830,17 @@ class _PairingSessionDetails extends StatelessWidget {
         Text(
           error!,
           style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (routeRefreshRequired && onRefreshRoute != null) ...<Widget>[
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: busy ? null : onRefreshRoute,
+            icon: Icon(context.torcaIcons.retry),
+            label: Text(context.strings.refreshProviderRoute),
+          ),
         ),
         const SizedBox(height: 12),
       ],

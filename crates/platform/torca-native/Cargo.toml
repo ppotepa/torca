@@ -10,8 +10,31 @@ publish = false
 build = "build.rs"
 
 [features]
-default = ["radio-audio"]
-radio-audio = ["torca-radio-adapters/audio"]
+default = ["provider-tor", "radio-audio"]
+## Exactly one provider feature must be enabled for a native artifact.  The
+## default keeps ordinary local builds backwards compatible; deployment uses
+## `--no-default-features` and selects the requested provider explicitly.
+provider-tor = [
+    "dep:torca-rendezvous-client",
+    "dep:torca-rendezvous-tor",
+    "dep:torca-relay-protocol",
+    "dep:torca-radio-tor",
+    "dep:torca-transport-tor",
+    "dep:torca-tor",
+    "torca-radio-tor/audio",
+]
+provider-iroh = [
+    "dep:torca-transport-iroh",
+    "torca-transport-iroh/audio",
+]
+provider-webrtc = [
+    "dep:torca-rendezvous-client",
+    "dep:torca-relay-protocol",
+    "dep:torca-transport-webrtc",
+]
+radio-audio = [
+    "torca-radio-adapters/audio",
+]
 
 [lib]
 name = "torca_native"
@@ -37,19 +60,20 @@ torca-platform = { path = "../torca-platform" }
 torca-peer-link = { path = "../../infrastructure/torca-peer-link" }
 torca-runtime-policy = { path = "../../application/torca-runtime-policy" }
 torca-messaging = { path = "../../domains/torca-messaging" }
-torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client" }
-torca-rendezvous-tor = { path = "../../infrastructure/torca-rendezvous-tor" }
-torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
+torca-rendezvous-client = { path = "../../infrastructure/torca-rendezvous-client", optional = true }
+torca-rendezvous-tor = { path = "../../infrastructure/torca-rendezvous-tor", optional = true }
+torca-relay-protocol = { path = "../../protocol/torca-relay-protocol", optional = true }
 torca-runtime = { path = "../../application/torca-runtime" }
 torca-transport-api = { path = "../../application/torca-transport-api" }
-torca-transport-tor = { path = "../../infrastructure/torca-transport-tor" }
-torca-transport-iroh = { path = "../../infrastructure/torca-transport-iroh" }
-torca-transport-webrtc = { path = "../../infrastructure/torca-transport-webrtc" }
+torca-transport-tor = { path = "../../infrastructure/torca-transport-tor", optional = true }
+torca-transport-iroh = { path = "../../infrastructure/torca-transport-iroh", optional = true }
+torca-transport-webrtc = { path = "../../infrastructure/torca-transport-webrtc", optional = true }
 torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 torca-radio-adapters = { path = "../../infrastructure/torca-radio-adapters", default-features = false }
+torca-radio-tor = { path = "../../infrastructure/torca-radio-tor", optional = true }
 torca-connectivity = { path = "../../application/torca-connectivity" }
 torca-storage-sqlite = { path = "../../infrastructure/torca-storage-sqlite" }
-torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor" }
+torca-tor = { package = "torca-tor", path = "../../infrastructure/torca-tor", optional = true }
 torca-notifications = { path = "../../domains/torca-notifications" }
 torca-logging = { path = "../../infrastructure/torca-logging" }
 serde_json = "1"

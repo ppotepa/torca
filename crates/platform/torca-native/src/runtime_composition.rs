@@ -1,5 +1,7 @@
-use std::sync::{Arc, OnceLock, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+#[cfg(feature = "provider-webrtc")]
+use std::sync::{OnceLock, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
 use torca_communication_adapters::{
@@ -15,32 +17,39 @@ use torca_platform::{PlatformServices, SecretNamespace};
 use torca_radio_coordinator::SharedRadioCoordinator;
 use torca_runtime::{RuntimeHandle, RuntimeOwner};
 use torca_transport_api::CommissioningObserver;
+#[cfg(feature = "provider-webrtc")]
 use torca_transport_api::WebRtcSessionProvider;
+#[cfg(feature = "provider-webrtc")]
 use torca_transport_api::WebRtcSignalingProvider;
 use torca_transport_api::{CommissioningEvent, CommissioningStage};
+#[cfg(feature = "provider-webrtc")]
 use torca_transport_webrtc::WebRtcHostBridge;
 
 use crate::composition::{NativeCompositionError, load_or_create_database_key};
 use crate::provider_composition::{
     ProviderCompositionInputs, ProviderPairingInputs, compose_selected_provider,
 };
-const TOR_STARTUP_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 // The host may recreate its WebRTC bridge after a runtime teardown (for
 // example after an Android activity/process restart). A one-shot OnceLock
 // would retain a dead bridge forever, so the lock protects a replaceable slot.
+#[cfg(feature = "provider-webrtc")]
 static WEBRTC_PROVIDER: OnceLock<RwLock<Option<Arc<dyn WebRtcSessionProvider>>>> = OnceLock::new();
+#[cfg(feature = "provider-webrtc")]
 static WEBRTC_SIGNALING_PROVIDER: OnceLock<RwLock<Option<Arc<dyn WebRtcSignalingProvider>>>> =
     OnceLock::new();
 
+#[cfg(feature = "provider-webrtc")]
 fn webrtc_provider_slot() -> &'static RwLock<Option<Arc<dyn WebRtcSessionProvider>>> {
     WEBRTC_PROVIDER.get_or_init(|| RwLock::new(None))
 }
 
+#[cfg(feature = "provider-webrtc")]
 fn webrtc_signaling_provider_slot() -> &'static RwLock<Option<Arc<dyn WebRtcSignalingProvider>>> {
     WEBRTC_SIGNALING_PROVIDER.get_or_init(|| RwLock::new(None))
 }
 
+#[cfg(feature = "provider-webrtc")]
 pub(crate) fn clear_registered_webrtc_providers() {
     if let Ok(mut slot) = webrtc_provider_slot().write() {
         *slot = None;
@@ -50,6 +59,7 @@ pub(crate) fn clear_registered_webrtc_providers() {
     }
 }
 
+#[cfg(feature = "provider-webrtc")]
 /// Registers the platform-owned WebRTC signalling/DataChannel bridge.
 ///
 /// Registration is intentionally explicit and scoped to one runtime
@@ -58,6 +68,7 @@ pub(crate) fn clear_registered_webrtc_providers() {
 /// desktop hosts should call this before starting native composition when
 /// `TORCA_COMMUNICATION_PROVIDER=webrtc`. A later generation may replace a
 /// bridge after the previous runtime has been torn down.
+#[cfg(feature = "provider-webrtc")]
 pub fn register_webrtc_session_provider(
     provider: Arc<dyn WebRtcSessionProvider>,
 ) -> Result<(), Arc<dyn WebRtcSessionProvider>> {
@@ -70,6 +81,7 @@ pub fn register_webrtc_session_provider(
         .map_err(|_| replacement)
 }
 
+#[cfg(feature = "provider-webrtc")]
 pub fn register_webrtc_signaling_provider(
     provider: Arc<dyn WebRtcSignalingProvider>,
 ) -> Result<(), Arc<dyn WebRtcSignalingProvider>> {
@@ -82,9 +94,11 @@ pub fn register_webrtc_signaling_provider(
         .map_err(|_| replacement)
 }
 
+#[cfg(feature = "provider-webrtc")]
 /// Registers one host bridge for both negotiated sessions and pairing
 /// signaling. This is the preferred platform entry point when the SDK uses a
 /// single owner for its WebRTC lifecycle.
+#[cfg(feature = "provider-webrtc")]
 pub fn register_webrtc_host_bridge(
     bridge: Arc<WebRtcHostBridge>,
 ) -> Result<(), Arc<WebRtcHostBridge>> {
@@ -94,6 +108,7 @@ pub fn register_webrtc_host_bridge(
     register_webrtc_signaling_provider(signaling).map_err(|_| bridge)
 }
 
+#[cfg(feature = "provider-webrtc")]
 pub(crate) fn registered_webrtc_session_provider()
 -> Result<Arc<dyn WebRtcSessionProvider>, NativeCompositionError> {
     webrtc_provider_slot()
@@ -103,6 +118,7 @@ pub(crate) fn registered_webrtc_session_provider()
         .ok_or_else(|| NativeCompositionError::new("WebRTC session provider is not registered"))
 }
 
+#[cfg(feature = "provider-webrtc")]
 pub(crate) fn registered_webrtc_signaling_provider()
 -> Result<Arc<dyn WebRtcSignalingProvider>, NativeCompositionError> {
     webrtc_signaling_provider_slot()
@@ -140,12 +156,15 @@ fn spawn_runtime_for(
     };
     // A failed/retried startup must not inherit a bridge owned by the previous
     // runtime generation when the host no longer provides one.
-    clear_registered_webrtc_providers();
-    if let Some(provider) = platform.webrtc_session_provider() {
-        let _ = register_webrtc_session_provider(provider);
-    }
-    if let Some(provider) = platform.webrtc_signaling_provider() {
-        let _ = register_webrtc_signaling_provider(provider);
+    #[cfg(feature = "provider-webrtc")]
+    {
+        clear_registered_webrtc_providers();
+        if let Some(provider) = platform.webrtc_session_provider() {
+            let _ = register_webrtc_session_provider(provider);
+        }
+        if let Some(provider) = platform.webrtc_signaling_provider() {
+            let _ = register_webrtc_signaling_provider(provider);
+        }
     }
     let configured_provider = crate::transport_config::compiled_provider().map_err(|error| {
         NativeCompositionError::new(format!("invalid communication provider: {error:?}"))
@@ -178,7 +197,7 @@ fn spawn_runtime_for(
             data_dir: paths.data.clone(),
             provider_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
             rendezvous_endpoint,
-            startup_timeout: TOR_STARTUP_TIMEOUT,
+            startup_timeout: configured_provider.deployment_profile().startup_timeout,
             now: current_timestamp()?,
             bootstrap_observer,
         },

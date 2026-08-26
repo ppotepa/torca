@@ -5,7 +5,7 @@ mod error;
 mod policy;
 mod ports;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -22,7 +22,7 @@ pub use policy::{
     RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND, classify_peer_health, plan_read_receipts,
 };
 pub use ports::{
-    AttachmentExportRuntime, AttachmentMaintenanceResult, AttachmentRuntime,
+    AttachmentAdmission, AttachmentExportRuntime, AttachmentMaintenanceResult, AttachmentRuntime,
     ControlDeliveryRuntime, InboundEnvelope, InboundMessagingRuntime, PeerLinkRuntime,
     RadioInboundRuntime, ReadStateRuntime, RelationshipAdminRuntime, TextDeliveryRuntime,
 };
@@ -49,18 +49,34 @@ type WakeSlot = Arc<Mutex<Option<WakeCallback>>>;
 const INBOUND_BATCH: usize = 64;
 // Delivery transports are durable and may wait for a peer ACK. Keep each
 // actor maintenance turn bounded; retries remain queued for later turns.
-const TEXT_BATCH: usize = 1;
+// A small claim window enables provider batching without allowing a large
+// outbox to monopolize the actor. Iroh coalesces these frames into one QUIC
+// write; providers using the compatibility path retain one-send semantics.
+const TEXT_BATCH: usize = 8;
 const CONTROL_BATCH: usize = 1;
 // Process a bounded batch per worker turn. This keeps transport fairness while
 // avoiding one OS thread per 64 KiB chunk for large attachments.
 const ATTACHMENT_BATCH: usize = 8;
 const MAX_DEFERRED_ATTACHMENTS: usize = 64;
+const MAX_PENDING_PREPARES: usize = 64;
+const MAX_ATTACHMENT_WORKER_OUTCOMES: usize = 64;
 const ATTACHMENT_ERROR_RETRY_BASE: Duration = Duration::from_secs(2);
 const ATTACHMENT_ERROR_RETRY_MAX: Duration = Duration::from_secs(60);
 
 enum AttachmentWork {
     Maintenance { now: Timestamp },
     Prepare { request: AttachmentSendRequest, now: Timestamp },
+}
+
+#[derive(Clone)]
+struct AttachmentWorkerShared {
+    active: Arc<AtomicBool>,
+    result_slot: Arc<Mutex<VecDeque<AttachmentMaintenanceResult>>>,
+    error_slot: Arc<Mutex<VecDeque<CommunicationError>>>,
+    prepare_failures: Arc<Mutex<VecDeque<(OpaqueId, OpaqueId)>>>,
+    prepare_completions: Arc<Mutex<VecDeque<OpaqueId>>>,
+    waker: WakeSlot,
+    projection_cache: Arc<Mutex<Vec<AttachmentView>>>,
 }
 
 pub struct TorcaCommunicationDriver {
@@ -71,11 +87,15 @@ pub struct TorcaCommunicationDriver {
     inbound: Box<dyn InboundMessagingRuntime>,
     attachments: Arc<Mutex<Box<dyn AttachmentRuntime>>>,
     attachment_job_active: Arc<AtomicBool>,
-    attachment_job_result: Arc<Mutex<Option<AttachmentMaintenanceResult>>>,
-    attachment_job_error: Arc<Mutex<Option<CommunicationError>>>,
+    attachment_job_result: Arc<Mutex<VecDeque<AttachmentMaintenanceResult>>>,
+    attachment_job_error: Arc<Mutex<VecDeque<CommunicationError>>>,
+    attachment_prepare_failures: Arc<Mutex<VecDeque<(OpaqueId, OpaqueId)>>>,
+    attachment_prepare_completions: Arc<Mutex<VecDeque<OpaqueId>>>,
     attachment_waker: WakeSlot,
     attachment_snapshot_cache: Arc<Mutex<Vec<AttachmentView>>>,
     attachment_job_sender: SyncSender<AttachmentWork>,
+    pending_attachment_prepares: VecDeque<AttachmentWork>,
+    preparing_attachment_ids: HashSet<OpaqueId>,
     deferred_attachments: VecDeque<InboundEnvelope>,
     attachment_export: Box<dyn AttachmentExportRuntime>,
     read_state: Box<dyn ReadStateRuntime>,
@@ -99,21 +119,24 @@ impl TorcaCommunicationDriver {
         relationships: Box<dyn RelationshipAdminRuntime>,
     ) -> Self {
         let attachments = Arc::new(Mutex::new(attachments));
-        let attachment_job_result = Arc::new(Mutex::new(None));
-        let attachment_job_error = Arc::new(Mutex::new(None));
+        let attachment_job_result = Arc::new(Mutex::new(VecDeque::new()));
+        let attachment_job_error = Arc::new(Mutex::new(VecDeque::new()));
+        let attachment_prepare_failures = Arc::new(Mutex::new(VecDeque::new()));
+        let attachment_prepare_completions = Arc::new(Mutex::new(VecDeque::new()));
         let attachment_job_active = Arc::new(AtomicBool::new(false));
         let attachment_waker = Arc::new(Mutex::new(None));
         let attachment_snapshot_cache = Arc::new(Mutex::new(Vec::new()));
         let (attachment_job_sender, attachment_job_receiver) = sync_channel(8);
-        spawn_attachment_worker(
-            Arc::clone(&attachments),
-            Arc::clone(&attachment_job_active),
-            Arc::clone(&attachment_job_result),
-            Arc::clone(&attachment_job_error),
-            Arc::clone(&attachment_waker),
-            Arc::clone(&attachment_snapshot_cache),
-            attachment_job_receiver,
-        );
+        let worker_shared = AttachmentWorkerShared {
+            active: Arc::clone(&attachment_job_active),
+            result_slot: Arc::clone(&attachment_job_result),
+            error_slot: Arc::clone(&attachment_job_error),
+            prepare_failures: Arc::clone(&attachment_prepare_failures),
+            prepare_completions: Arc::clone(&attachment_prepare_completions),
+            waker: Arc::clone(&attachment_waker),
+            projection_cache: Arc::clone(&attachment_snapshot_cache),
+        };
+        spawn_attachment_worker(Arc::clone(&attachments), worker_shared, attachment_job_receiver);
         let text = Box::new(TextDeliveryBridge::new(text));
         let control = Box::new(ControlDeliveryBridge::new(control));
         Self {
@@ -126,9 +149,13 @@ impl TorcaCommunicationDriver {
             attachment_job_active,
             attachment_job_result,
             attachment_job_error,
+            attachment_prepare_failures,
+            attachment_prepare_completions,
             attachment_waker,
             attachment_snapshot_cache,
             attachment_job_sender,
+            pending_attachment_prepares: VecDeque::new(),
+            preparing_attachment_ids: HashSet::new(),
             deferred_attachments: VecDeque::new(),
             attachment_export,
             read_state,
@@ -248,12 +275,46 @@ impl TorcaCommunicationDriver {
         }
         Ok(())
     }
+
+    fn rollback_attachment_admission(&mut self, attachment_id: OpaqueId, now: Timestamp) {
+        if let Ok(mut attachments) = self.attachments.lock() {
+            let _ = attachments.cancel(attachment_id, now);
+            refresh_attachment_cache(&self.attachment_snapshot_cache, &**attachments);
+        }
+    }
 }
 
 impl PeerSessionPort for TorcaCommunicationDriver {
     fn recover(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.text.recover(now).map_err(map_runtime)?;
         self.control.recover(now).map_err(map_runtime)?;
+        self.attachments
+            .lock()
+            .map_err(|_| {
+                RuntimeDriverError::Classified(CommunicationError::Attachment.descriptor())
+            })?
+            .recover_interrupted_prepares(now)
+            .map_err(map_runtime)?;
+        if let Ok(attachments) = self.attachments.lock() {
+            refresh_attachment_cache(&self.attachment_snapshot_cache, &**attachments);
+        }
+        // Durable attachment rows survive a process restart, while the
+        // in-memory scheduler does not. Re-arm only resumable states here;
+        // explicit Failed jobs still require a user retry and must not create
+        // an unsolicited network wakeup.
+        let resumable = self
+            .attachments
+            .lock()
+            .map_err(|_| {
+                RuntimeDriverError::Classified(CommunicationError::Attachment.descriptor())
+            })?
+            .snapshot(&[])
+            .map_err(map_runtime)?
+            .into_iter()
+            .any(|view| matches!(view.status.as_str(), "queued" | "transferring"));
+        if resumable {
+            self.attachment_scheduler.wake_after(now, Duration::ZERO);
+        }
         Ok(())
     }
 
@@ -262,38 +323,73 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         contacts: &[ContactId],
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        if let Ok(mut result) = self.attachment_job_result.lock()
-            && let Some(result) = result.take()
-        {
-            // A completed worker turn proves that the attachment lane is
-            // alive again. Do not carry a previous storage/transport error
-            // backoff into the next independent job.
-            self.attachment_error_backoff = ATTACHMENT_ERROR_RETRY_BASE;
-            if result.more_work && !result.policy_blocked {
-                if let Some(delay) = result.retry_after_ms {
-                    self.attachment_scheduler.wake_after(now, Duration::from_millis(delay));
-                } else {
-                    self.attachment_scheduler.wake();
-                }
-            } else {
-                self.attachment_scheduler.disarm();
+        if let Ok(mut completions) = self.attachment_prepare_completions.lock() {
+            for id in completions.drain(..) {
+                self.preparing_attachment_ids.remove(&id);
             }
         }
-        if let Ok(mut error) = self.attachment_job_error.lock()
-            && let Some(error) = error.take()
-        {
-            // Attachment failures are durable job failures, not runtime-wide
-            // failures. Returning here used to abort the actor maintenance
-            // turn and starve text, control and Radio work behind one broken
-            // file. Keep the job retryable with exponential backoff while
-            // allowing the rest of the communication runtime to continue.
-            eprintln!(
-                "torca-attachment: maintenance error; retrying in {}ms code={error}",
-                self.attachment_error_backoff.as_millis()
-            );
-            self.attachment_scheduler.wake_after(now, self.attachment_error_backoff);
-            self.attachment_error_backoff =
-                self.attachment_error_backoff.saturating_mul(2).min(ATTACHMENT_ERROR_RETRY_MAX);
+        // Preparation is intentionally asynchronous, but the bounded worker
+        // channel must not turn a burst of user-selected files into an
+        // immediate command failure. Move as many pending jobs as the worker
+        // can accept; the next maintenance wake drains the remainder.
+        while let Some(work) = self.pending_attachment_prepares.pop_front() {
+            match self.attachment_job_sender.try_send(work) {
+                Ok(()) => {}
+                Err(TrySendError::Full(work)) => {
+                    self.pending_attachment_prepares.push_front(work);
+                    self.attachment_scheduler.wake_after(now, Duration::from_millis(100));
+                    break;
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    return Err(RuntimeDriverError::Classified(
+                        CommunicationError::Attachment.descriptor(),
+                    ));
+                }
+            }
+        }
+        if let Ok(mut results) = self.attachment_job_result.lock() {
+            let mut result = AttachmentMaintenanceResult::default();
+            let mut retry_after_ms: Option<u64> = None;
+            while let Some(outcome) = results.pop_front() {
+                result.more_work |= outcome.more_work;
+                result.policy_blocked |= outcome.policy_blocked;
+                if let Some(delay) = outcome.retry_after_ms {
+                    retry_after_ms =
+                        Some(retry_after_ms.map_or(delay, |current| current.min(delay)));
+                }
+            }
+            result.retry_after_ms = retry_after_ms;
+            if result.more_work || result.policy_blocked {
+                // A completed worker turn proves that the attachment lane is
+                // alive again. Do not carry a previous storage/transport error
+                // backoff into the next independent job.
+                self.attachment_error_backoff = ATTACHMENT_ERROR_RETRY_BASE;
+                if result.more_work && !result.policy_blocked {
+                    if let Some(delay) = result.retry_after_ms {
+                        self.attachment_scheduler.wake_after(now, Duration::from_millis(delay));
+                    } else {
+                        self.attachment_scheduler.wake();
+                    }
+                } else {
+                    self.attachment_scheduler.disarm();
+                }
+            }
+        }
+        if let Ok(mut errors) = self.attachment_job_error.lock() {
+            while let Some(error) = errors.pop_front() {
+                // Attachment failures are durable job failures, not runtime-wide
+                // failures. Returning here used to abort the actor maintenance
+                // turn and starve text, control and Radio work behind one broken
+                // file. Keep the job retryable with exponential backoff while
+                // allowing the rest of the communication runtime to continue.
+                eprintln!(
+                    "torca-attachment: maintenance error; retrying in {}ms code={error}",
+                    self.attachment_error_backoff.as_millis()
+                );
+                self.attachment_scheduler.wake_after(now, self.attachment_error_backoff);
+                self.attachment_error_backoff =
+                    self.attachment_error_backoff.saturating_mul(2).min(ATTACHMENT_ERROR_RETRY_MAX);
+            }
         }
         self.peer.maintenance(contacts, now).map_err(map_runtime)?;
         self.drain_inbound(now).map_err(map_runtime)?;
@@ -343,9 +439,6 @@ impl PeerSessionPort for TorcaCommunicationDriver {
         }
         self.peer.set_waker(Arc::clone(&waker));
         self.text.set_waker(Arc::clone(&waker));
-        if let Some(radio) = self.radio.as_mut() {
-            radio.set_waker(Arc::clone(&waker));
-        }
         self.control.set_waker(waker);
     }
 
@@ -438,11 +531,18 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
         self.control.wake();
     }
 
+    fn set_radio_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Some(radio) = self.radio.as_mut() {
+            radio.set_waker(waker);
+        }
+    }
+
     fn maintain_radio(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
-        if let Some(radio) = self.radio.as_mut()
-            && let Err(error) = radio.maintenance(now)
-        {
-            eprintln!("torca-radio: maintenance failed code={error}");
+        if let Some(radio) = self.radio.as_mut() {
+            radio.maintenance(now).map_err(|error| {
+                eprintln!("torca-radio: maintenance failed code={error}");
+                RuntimeDriverError::Communication
+            })?;
         }
         Ok(())
     }
@@ -552,6 +652,13 @@ impl ConversationReadPort for TorcaCommunicationDriver {
 }
 
 impl AttachmentTransferPort for TorcaCommunicationDriver {
+    fn take_attachment_prepare_failures(&mut self) -> Vec<(OpaqueId, OpaqueId)> {
+        self.attachment_prepare_failures
+            .lock()
+            .map(|mut failures| failures.drain(..).collect())
+            .unwrap_or_default()
+    }
+
     fn set_battery_policy(
         &mut self,
         profile: BatteryProfile,
@@ -568,11 +675,88 @@ impl AttachmentTransferPort for TorcaCommunicationDriver {
         request: &AttachmentSendRequest,
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError> {
-        self.attachment_job_sender
-            .try_send(AttachmentWork::Prepare { request: request.clone(), now })
-            .map_err(|_| {
-                RuntimeDriverError::Classified(CommunicationError::Attachment.descriptor())
-            })?;
+        // Admit the durable row synchronously so the UI can render an
+        // Encrypting/Importing job immediately. The expensive source pass is
+        // still dispatched to the worker below.
+        let admission = if let Ok(mut attachments) = self.attachments.lock() {
+            let admission = attachments.admit_outgoing(request, now).map_err(map_runtime)?;
+            refresh_attachment_cache(&self.attachment_snapshot_cache, &**attachments);
+            admission
+        } else {
+            return Err(RuntimeDriverError::Classified(
+                CommunicationError::Attachment.descriptor(),
+            ));
+        };
+        if admission == AttachmentAdmission::Existing {
+            // Admission is idempotent. The original worker owns this
+            // attachment (or it is already queued/transferred/available), so
+            // submitting another Prepare would race the durable state machine
+            // and could turn a valid Queued row into a cancellation.
+            self.attachment_scheduler.wake();
+            return Ok(());
+        }
+        if admission == AttachmentAdmission::ExistingNeedsPreparation
+            && self.preparing_attachment_ids.contains(&request.attachment_id)
+        {
+            self.attachment_scheduler.wake();
+            return Ok(());
+        }
+        let work = AttachmentWork::Prepare { request: request.clone(), now };
+        match self.attachment_job_sender.try_send(work) {
+            Ok(()) => {}
+            Err(TrySendError::Full(work)) => {
+                if self.pending_attachment_prepares.len() >= MAX_PENDING_PREPARES {
+                    if admission == AttachmentAdmission::Created {
+                        self.rollback_attachment_admission(request.attachment_id, now);
+                    }
+                    return Err(RuntimeDriverError::Classified(
+                        CommunicationError::Attachment.descriptor(),
+                    ));
+                }
+                // A retried UI command may enqueue the same attachment while
+                // its first preparation is still waiting behind the bounded
+                // worker channel. Keep one authoritative job per attachment;
+                // duplicate prepares could otherwise race and overwrite the
+                // durable staging directory.
+                let attachment_id = match &work {
+                    AttachmentWork::Prepare { request, .. } => Some(request.attachment_id),
+                    AttachmentWork::Maintenance { .. } => None,
+                };
+                if let Some(attachment_id) = attachment_id {
+                    if self.preparing_attachment_ids.contains(&attachment_id) {
+                        self.pending_attachment_prepares.retain(|queued| {
+                            !matches!(queued, AttachmentWork::Prepare { request, .. } if request.attachment_id == attachment_id)
+                        });
+                        self.attachment_scheduler.wake();
+                        return Ok(());
+                    }
+                    self.preparing_attachment_ids.insert(attachment_id);
+                    if let Some(existing) = self.pending_attachment_prepares.iter_mut().find(
+                        |queued| matches!(queued, AttachmentWork::Prepare { request, .. } if request.attachment_id == attachment_id),
+                    ) {
+                        *existing = work;
+                    } else {
+                        self.pending_attachment_prepares.push_back(work);
+                    }
+                } else {
+                    self.pending_attachment_prepares.push_back(work);
+                }
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                if admission == AttachmentAdmission::Created {
+                    self.rollback_attachment_admission(request.attachment_id, now);
+                }
+                return Err(RuntimeDriverError::Classified(
+                    CommunicationError::Attachment.descriptor(),
+                ));
+            }
+        }
+        if admission == AttachmentAdmission::Created
+            || admission == AttachmentAdmission::Legacy
+            || admission == AttachmentAdmission::ExistingNeedsPreparation
+        {
+            self.preparing_attachment_ids.insert(request.attachment_id);
+        }
         // Queue admission itself is a durable-work transition.  Do not wait
         // for another subsystem's timer to notice the newly created job while
         // the preparation worker is reading the source.
@@ -1003,44 +1187,73 @@ impl TextDeliveryRuntime for TextDeliveryBridge {
 
 fn spawn_attachment_worker(
     attachments: Arc<Mutex<Box<dyn AttachmentRuntime>>>,
-    active: Arc<AtomicBool>,
-    result_slot: Arc<Mutex<Option<AttachmentMaintenanceResult>>>,
-    error_slot: Arc<Mutex<Option<CommunicationError>>>,
-    waker: WakeSlot,
-    projection_cache: Arc<Mutex<Vec<AttachmentView>>>,
+    shared: AttachmentWorkerShared,
     receiver: Receiver<AttachmentWork>,
 ) {
     thread::spawn(move || {
         while let Ok(work) = receiver.recv() {
-            let result = attachments.lock().map_err(|_| CommunicationError::Attachment).and_then(
-                |mut runtime| match work {
-                    AttachmentWork::Maintenance { now } => {
-                        let outcome = runtime.maintenance_outgoing(now, ATTACHMENT_BATCH)?;
-                        refresh_attachment_cache(&projection_cache, &**runtime);
-                        Ok(Some(outcome))
-                    }
-                    AttachmentWork::Prepare { request, now } => {
-                        runtime.prepare_outgoing(&request, now)?;
-                        refresh_attachment_cache(&projection_cache, &**runtime);
-                        // Preparation creates a durable outbound job.  Publish
-                        // that fact through the same completion lane as a
-                        // maintenance turn so the actor arms the transfer
-                        // scheduler immediately instead of waiting for an
-                        // unrelated timer or lifecycle event.
-                        Ok(Some(AttachmentMaintenanceResult {
-                            more_work: true,
-                            policy_blocked: false,
-                            retry_after_ms: Some(0),
-                        }))
-                    }
-                },
-            );
+            let prepare_failure = match &work {
+                AttachmentWork::Prepare { request, .. } => {
+                    Some((request.attachment_id, request.message_id))
+                }
+                AttachmentWork::Maintenance { .. } => None,
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                attachments.lock().map_err(|_| CommunicationError::Attachment).and_then(
+                    |mut runtime| match work {
+                        AttachmentWork::Maintenance { now } => {
+                            let outcome = runtime.maintenance_outgoing(now, ATTACHMENT_BATCH)?;
+                            refresh_attachment_cache(&shared.projection_cache, &**runtime);
+                            Ok(Some(outcome))
+                        }
+                        AttachmentWork::Prepare { request, now } => {
+                            let attachment_id = request.attachment_id;
+                            runtime.prepare_outgoing(&request, now)?;
+                            refresh_attachment_cache(&shared.projection_cache, &**runtime);
+                            // Preparation creates a durable outbound job. Publish
+                            // that fact through the same completion lane as a
+                            // maintenance turn so the actor arms the transfer
+                            // scheduler immediately instead of waiting for an
+                            // unrelated timer or lifecycle event.
+                            if let Ok(mut completions) = shared.prepare_completions.lock() {
+                                completions.push_back(attachment_id);
+                            }
+                            Ok(Some(AttachmentMaintenanceResult {
+                                more_work: true,
+                                policy_blocked: false,
+                                retry_after_ms: Some(0),
+                            }))
+                        }
+                    },
+                )
+            }))
+            .unwrap_or_else(|_| {
+                eprintln!("torca-attachment: worker panic isolated; retrying job");
+                Err(CommunicationError::Attachment)
+            });
             let outcome = match result {
                 Ok(Some(outcome)) => outcome,
                 Err(error) => {
                     eprintln!("torca-attachment: worker failed code={error}");
-                    if let Ok(mut slot) = error_slot.lock() {
-                        *slot = Some(error);
+                    // Preparation may have inserted an Encrypting row before
+                    // the source/crypto failure was discovered. Refresh the
+                    // projection after its cancellation so the next snapshot
+                    // exposes the terminal job state immediately.
+                    if let Ok(runtime) = attachments.lock() {
+                        refresh_attachment_cache(&shared.projection_cache, &**runtime);
+                    }
+                    if let Some(failure) = prepare_failure
+                        && let Ok(mut failures) = shared.prepare_failures.lock()
+                    {
+                        failures.push_back(failure);
+                    }
+                    if let Some((attachment_id, _)) = prepare_failure
+                        && let Ok(mut completions) = shared.prepare_completions.lock()
+                    {
+                        completions.push_back(attachment_id);
+                    }
+                    if let Ok(mut slot) = shared.error_slot.lock() {
+                        push_bounded_worker_outcome(&mut slot, error);
                     }
                     AttachmentMaintenanceResult {
                         more_work: true,
@@ -1050,15 +1263,22 @@ fn spawn_attachment_worker(
                 }
                 Ok(None) => unreachable!(),
             };
-            if let Ok(mut slot) = result_slot.lock() {
-                *slot = Some(outcome);
+            if let Ok(mut slot) = shared.result_slot.lock() {
+                push_bounded_worker_outcome(&mut slot, outcome);
             }
-            active.store(false, Ordering::Release);
-            if let Some(callback) = waker.lock().ok().and_then(|target| target.clone()) {
+            shared.active.store(false, Ordering::Release);
+            if let Some(callback) = shared.waker.lock().ok().and_then(|target| target.clone()) {
                 callback();
             }
         }
     });
+}
+
+fn push_bounded_worker_outcome<T>(queue: &mut VecDeque<T>, value: T) {
+    if queue.len() >= MAX_ATTACHMENT_WORKER_OUTCOMES {
+        queue.pop_front();
+    }
+    queue.push_back(value);
 }
 
 fn refresh_attachment_cache(cache: &Mutex<Vec<AttachmentView>>, runtime: &dyn AttachmentRuntime) {
@@ -1078,11 +1298,11 @@ fn map_runtime(error: CommunicationError) -> RuntimeDriverError {
 mod tests {
     use super::{
         ATTACHMENT_MESSAGE_KIND, AttachmentJobScheduler, AttachmentWork, CommunicationError,
-        PROBE_MESSAGE_KIND, RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND,
-        RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND, dispatch_attachment_maintenance, map_runtime,
-        plan_read_receipts,
+        MAX_ATTACHMENT_WORKER_OUTCOMES, PROBE_MESSAGE_KIND, RADIO_CONTROL_MESSAGE_KIND,
+        REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND,
+        dispatch_attachment_maintenance, map_runtime, plan_read_receipts,
     };
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, VecDeque};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::sync_channel;
     use torca_control_delivery::ReadCandidate;
@@ -1142,5 +1362,16 @@ mod tests {
 
         assert!(!active.load(Ordering::Acquire));
         assert_eq!(scheduler.next_delay(now), Some(std::time::Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn worker_outcome_queue_is_bounded_and_keeps_latest_value() {
+        let mut queue = VecDeque::new();
+        for value in 0..=MAX_ATTACHMENT_WORKER_OUTCOMES {
+            super::push_bounded_worker_outcome(&mut queue, value);
+        }
+        assert_eq!(queue.len(), MAX_ATTACHMENT_WORKER_OUTCOMES);
+        assert_eq!(queue.front().copied(), Some(1));
+        assert_eq!(queue.back().copied(), Some(MAX_ATTACHMENT_WORKER_OUTCOMES));
     }
 }

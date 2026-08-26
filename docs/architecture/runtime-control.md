@@ -54,9 +54,15 @@ foreground -> background grace (30 seconds) -> SoftDormant
 
 There is no periodic five-minute background rendezvous and no 90-second relay
 lease. Background grace is a one-shot deadline. At expiry, when no durable work
-remains, the Tor client enters soft dormancy; directory cache and onion identity
-are retained. A user action, real durable work or a relevant platform event can
-wake the required lane again.
+remains, the selected provider enters its provider-owned dormant state. Tor
+keeps its cached identity while reducing network activity. Iroh's relay-backed
+`always` profile closes the endpoint and later rebinds it from the same
+protected endpoint secret; its `direct`/`local` profiles already have relay and
+discovery disabled, so they keep the cheap bound listener to preserve the
+opaque endpoint route while suppressing reachability probes. A user action,
+real durable work or a relevant platform event can wake the required lane
+again. The application must not assume that every provider has an onion
+service or that dormant means the same thing for every transport.
 
 Foreground is likewise a host fact rather than an implicit
 `AlwaysAvailable` profile. It permits visible UI demand and prevents dormant
@@ -65,6 +71,69 @@ cosmetic probe work.
 
 The relay is an untrusted pairing rendezvous service, not a mailbox. It receives
 a lease only for active pairing, pending relay work or explicit diagnostics.
+
+## Iroh energy modes
+
+Iroh is not automatically cheaper merely because it uses QUIC. Its energy
+profile is an explicit deployment choice and must be measured on the target
+device. The provider exposes three modes:
+
+| mode | relay/discovery | inbound reachability | intended use |
+| --- | --- | --- | --- |
+| `always` | configured relay and optional address lookup | monitored while awake | internet reliability |
+| `direct` | disabled | no public reachability probe | paired devices on a reachable direct path |
+| `local` | disabled | no public reachability probe, loopback-friendly | lab/soak runs |
+
+`direct` and `local` are the lowest application-controlled idle cost because
+they do not create relay or discovery workers. They trade that cost for
+availability: a direct endpoint address can become stale after a Wi-Fi/LTE
+change and may require a route refresh or re-pairing. The `always` mode is the
+reliable default for production-style mobile tests, but its relay/discovery
+traffic must be compared with Tor using the same workload.
+
+The Iroh `online` check is demand-driven and bounded to three attempts per
+network generation. Construction of an endpoint does not start a network
+report. A foreground/AlwaysAvailable/durable-reachability demand starts one
+single-flight probe; after three failures it stops creating timers and waits
+for a platform network event or a new demand edge. This is an important
+battery invariant: an offline or captive network must not leave a permanent
+exponential retry loop running.
+The selected QUIC path is observed dynamically (`direct` or `relay`) rather
+than inferred from the deployment profile, so diagnostics can attribute work
+to the route that was actually used.
+
+The same diagnostics record also exposes endpoint, route and network
+generations,
+`reachabilityDemanded` and bounded `onlineProbeAttempts`/
+`onlineProbeFailures` counters. These counters are workload evidence, not a
+scheduler: collecting them never creates a new wake-up.
+
+An in-flight online report is cancellable. Withdrawing the reachability lease,
+entering dormancy, or receiving a network-generation event wakes the probe
+task immediately; it does not wait for the 30-second report timeout. This
+keeps a foreground-to-background transition cheap even when the network is
+offline or captive.
+
+`routeGeneration` is deliberately separate from `endpointGeneration`. Iroh
+can retain the same endpoint identity while its advertised address gains or
+loses direct/relay candidates after Wi-Fi, LTE or relay migration. A provider
+consumer must treat a route-generation change as stale until the updated
+opaque route is exchanged with the peer; it must not silently keep dialing a
+captured address forever. `routeFresh` is false while an asynchronous Iroh
+network migration is in progress, so no pre-migration endpoint can be
+advertised. The provider also increments the route generation when a completed
+online report observes a changed address, so diagnostics can distinguish an
+explicit platform transition from asynchronous Iroh discovery.
+
+Provider service configuration is embedded into the selected artifact and
+fingerprinted by the deployer. `TORCA_IROH_RELAY_URLS`,
+`TORCA_IROH_PKARR_URL`, `TORCA_IROH_DISABLE_RELAY`,
+`TORCA_IROH_DISABLE_DISCOVERY`, `TORCA_IROH_LOCAL_ONLY` and
+`TORCA_IROH_RUNTIME_THREADS` cannot be changed silently by a host shell after
+artifact verification. The direct/local profiles ignore relay and lookup
+values by design. `TORCA_IROH_RUNTIME_THREADS` is an experimental bounded
+knob (`1..=8`) intended for device measurements; Android defaults to two
+workers and desktop to four.
 
 ## Battery settings
 

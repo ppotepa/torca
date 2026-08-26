@@ -19,6 +19,7 @@ pub fn synchronize(
     configuration: Configuration,
     provider: CommunicationProvider,
     endpoint: Option<&str>,
+    provider_profile: Option<&str>,
 ) -> Result<(), ManifestError> {
     let mode = configuration.to_string();
     let canonical_path = paths.manifests.join(format!("clients-{mode}.json"));
@@ -27,16 +28,33 @@ pub fn synchronize(
             .map_err(|source| ManifestError::Read { path: canonical_path.clone(), source })?,
     )
     .map_err(|source| ManifestError::Decode { path: canonical_path.clone(), source })?;
-    let recorded_provider = canonical["communicationProvider"]
-        .as_str()
-        // Schema 1 manifests predate provider selection and are treated as
-        // Tor only during the explicit compatibility window.
-        .unwrap_or("tor");
+    let recorded_provider = canonical["communicationProvider"].as_str().ok_or_else(|| {
+        ManifestError::MissingField { path: canonical_path.clone(), field: "communicationProvider" }
+    })?;
     if recorded_provider != provider.wire_value() {
         return Err(ManifestError::ProviderMismatch {
             expected: provider.wire_value().to_owned(),
             actual: recorded_provider.to_owned(),
         });
+    }
+    if provider == CommunicationProvider::Iroh {
+        let expected_profile = normalized_iroh_profile(provider_profile);
+        let recorded_profile = canonical["irohProfile"].as_str().unwrap_or("always");
+        if recorded_profile != expected_profile.as_str() {
+            return Err(ManifestError::ProviderProfileMismatch {
+                expected: expected_profile,
+                actual: recorded_profile.to_owned(),
+            });
+        }
+        let expected_services = crate::build::iroh_service_config_fingerprint();
+        let recorded_services =
+            canonical["irohServiceConfigFingerprint"].as_str().unwrap_or("default");
+        if recorded_services != expected_services {
+            return Err(ManifestError::ProviderServiceConfigMismatch {
+                expected: expected_services,
+                actual: recorded_services.to_owned(),
+            });
+        }
     }
     let manifest_endpoint = canonical["endpoint"].as_str();
     if manifest_endpoint != endpoint {
@@ -56,6 +74,9 @@ pub fn synchronize(
     let legacy_build = json!({
         "Schema": 2,
         "CommunicationProvider": provider.wire_value(),
+        "IrohProfile": iroh_profile_value(provider, provider_profile),
+        "IrohServiceConfigFingerprint": (provider == CommunicationProvider::Iroh)
+            .then(crate::build::iroh_service_config_fingerprint),
         "Endpoint": endpoint,
         "Targets": canonical["targets"],
         "Configuration": mode,
@@ -68,7 +89,16 @@ pub fn synchronize(
     atomic_json(&paths.runtime_root.join("build-manifest.json"), &legacy_build)?;
 
     for device in devices {
-        synchronize_device(paths, device, configuration, provider, endpoint, &canonical, &release)?;
+        synchronize_device(
+            paths,
+            device,
+            configuration,
+            provider,
+            endpoint,
+            provider_profile,
+            &canonical,
+            &release,
+        )?;
     }
     Ok(())
 }
@@ -79,6 +109,7 @@ fn synchronize_device(
     configuration: Configuration,
     provider: CommunicationProvider,
     endpoint: Option<&str>,
+    provider_profile: Option<&str>,
     canonical: &Value,
     release: &Value,
 ) -> Result<(), ManifestError> {
@@ -107,6 +138,13 @@ fn synchronize_device(
         object.insert("BuildId".into(), canonical["buildId"].clone());
         object.insert("Configuration".into(), json!(configuration.to_string()));
         object.insert("CommunicationProvider".into(), json!(provider.wire_value()));
+        object.insert("IrohProfile".into(), iroh_profile_value(provider, provider_profile));
+        object.insert(
+            "IrohServiceConfigFingerprint".into(),
+            (provider == CommunicationProvider::Iroh)
+                .then(crate::build::iroh_service_config_fingerprint)
+                .map_or(Value::Null, Value::String),
+        );
         object.insert("StorageEpoch".into(), release["storageEpoch"].clone());
         object.insert("SchemaVersion".into(), release["schemaVersion"].clone());
         object.insert("ContractSchema".into(), release["contractSchema"].clone());
@@ -143,6 +181,28 @@ fn safe_name(value: &str) -> String {
         .collect()
 }
 
+fn iroh_profile_value(provider: CommunicationProvider, explicit: Option<&str>) -> Value {
+    if provider != CommunicationProvider::Iroh {
+        return Value::Null;
+    }
+    json!(normalized_iroh_profile(explicit))
+}
+
+fn normalized_iroh_profile(explicit: Option<&str>) -> String {
+    explicit
+        .map(str::to_owned)
+        .or_else(|| std::env::var("TORCA_IROH_PROFILE").ok())
+        .map(|value| value.trim().to_ascii_lowercase())
+        .and_then(|value| match value.as_str() {
+            "direct" | "direct-only" => Some("direct"),
+            "local" | "local-only" => Some("local"),
+            "always" | "always-reachable" => Some("always"),
+            _ => None,
+        })
+        .unwrap_or("always")
+        .to_owned()
+}
+
 fn atomic_json(path: &Path, value: &Value) -> Result<(), ManifestError> {
     let bytes = serde_json::to_vec_pretty(value).map_err(ManifestError::Encode)?;
     let temporary = path.with_extension("tmp");
@@ -173,6 +233,8 @@ pub enum ManifestError {
     Read { path: PathBuf, source: std::io::Error },
     #[error("could not decode manifest {path}: {source}")]
     Decode { path: PathBuf, source: serde_json::Error },
+    #[error("manifest {path} is missing required field {field}")]
+    MissingField { path: PathBuf, field: &'static str },
     #[error("could not encode manifest: {0}")]
     Encode(serde_json::Error),
     #[error("could not write manifest {path}: {source}")]
@@ -181,6 +243,12 @@ pub enum ManifestError {
     EndpointMismatch { expected: Option<String>, actual: Option<String> },
     #[error("artifact provider mismatch; expected {expected}, found {actual}")]
     ProviderMismatch { expected: String, actual: String },
+    #[error("artifact provider profile mismatch; expected {expected}, found {actual}")]
+    ProviderProfileMismatch { expected: String, actual: String },
+    #[error(
+        "artifact provider service configuration mismatch; expected {expected}, found {actual}"
+    )]
+    ProviderServiceConfigMismatch { expected: String, actual: String },
 }
 
 #[cfg(test)]
@@ -205,6 +273,7 @@ mod tests {
             paths.manifests.join("clients-debug.json"),
             serde_json::to_vec(&json!({
                 "endpoint": endpoint,
+                "communicationProvider": "tor",
                 "targets": ["windows"],
                 "buildId": "BUILD",
                 "sourceCommit": "COMMIT",
@@ -225,6 +294,7 @@ mod tests {
             Configuration::Debug,
             CommunicationProvider::Tor,
             Some(&endpoint),
+            None,
         )
         .expect("synchronize");
         let device: Value = serde_json::from_slice(
@@ -258,6 +328,7 @@ mod tests {
             paths.manifests.join("clients-debug.json"),
             serde_json::to_vec(&json!({
                 "communicationProvider": "iroh",
+                "irohProfile": "direct",
                 "endpoint": null,
                 "targets": ["windows"],
                 "buildId": "BUILD",
@@ -268,8 +339,15 @@ mod tests {
         )
         .expect("manifest");
         let devices = [Device { target: Target::Windows, id: "desktop".into(), android_abi: None }];
-        synchronize(&paths, &devices, Configuration::Debug, CommunicationProvider::Iroh, None)
-            .expect("synchronize direct provider");
+        synchronize(
+            &paths,
+            &devices,
+            Configuration::Debug,
+            CommunicationProvider::Iroh,
+            None,
+            Some("direct"),
+        )
+        .expect("synchronize direct provider");
         let device: Value = serde_json::from_slice(
             &fs::read(paths.devices.join("desktop.json")).expect("device manifest"),
         )

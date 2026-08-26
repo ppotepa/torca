@@ -177,7 +177,13 @@ pub(crate) fn publish_event(event: &str, line: &Value) {
         }
     }
     if let Ok(mut events) = ctx.events.lock() {
-        events.push_back(summary.clone());
+        // Compiler/ADB backends often repeat the same status line while a
+        // child process is waiting. Keep the cockpit readable by collapsing
+        // only consecutive duplicates; the complete stream remains in the
+        // bounded `logs` buffer and on disk in the run artifact.
+        if events.back() != Some(&summary) {
+            events.push_back(summary.clone());
+        }
         while events.len() > MAX_EVENTS {
             events.pop_front();
         }

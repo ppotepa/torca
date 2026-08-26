@@ -11,7 +11,7 @@ pub fn is_soak() -> bool {
         || env::current_exe()
             .ok()
             .and_then(|path| path.file_stem().map(|value| value.to_string_lossy().to_string()))
-            .is_some_and(|name| name.starts_with("torca-soak") || name == "torca-battery-soak-tui")
+            .is_some_and(|name| name.starts_with("torca-soak"))
 }
 
 pub fn package() -> &'static str {

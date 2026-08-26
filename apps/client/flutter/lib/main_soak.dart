@@ -8,8 +8,6 @@ import 'platform/scenario_bridge.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(
-    TorcaBootstrap(
-      scenarioBridgeFactory: (gateway) => ScenarioBridge(gateway),
-    ),
+    TorcaBootstrap(scenarioBridgeFactory: (gateway) => ScenarioBridge(gateway)),
   );
 }

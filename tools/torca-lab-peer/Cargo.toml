@@ -7,6 +7,13 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = ["provider-tor", "radio-audio"]
+provider-tor = ["torca-native/provider-tor"]
+provider-iroh = ["torca-native/provider-iroh"]
+provider-webrtc = ["torca-native/provider-webrtc"]
+radio-audio = ["torca-native/radio-audio"]
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 serde_json = "1"

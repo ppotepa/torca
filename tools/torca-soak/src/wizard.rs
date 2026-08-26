@@ -139,7 +139,15 @@ fn edit_plan(
     let mut native_diagnostics = true;
     let mut fixture =
         if scenario == Scenario::ActiveMessaging { FixtureMode::Auto } else { FixtureMode::None };
-    let mut provider = CommunicationProvider::Tor;
+    // New physical soak runs should measure the low-power provider by
+    // default. Tor remains selectable explicitly and remains the product
+    // deployer's compatibility default; the soak wizard must not silently
+    // benchmark a different stack than the operator intended.
+    let mut provider = if scenario == Scenario::ActiveMessaging {
+        CommunicationProvider::Iroh
+    } else {
+        CommunicationProvider::Tor
+    };
     loop {
         let device = devices.get(device_index).map_or("none detected", String::as_str);
         terminal.draw(|frame| {
@@ -207,9 +215,11 @@ fn edit_plan(
                     Field::Provider => {
                         provider = match (provider, increase) {
                             (CommunicationProvider::Tor, true) => CommunicationProvider::Iroh,
-                            (CommunicationProvider::Iroh, false) => CommunicationProvider::Tor,
+                            (CommunicationProvider::Iroh, true) => CommunicationProvider::WebRtc,
+                            (CommunicationProvider::WebRtc, true) => CommunicationProvider::Tor,
                             (CommunicationProvider::Tor, false) => CommunicationProvider::Iroh,
-                            (CommunicationProvider::Iroh, true) => CommunicationProvider::Tor,
+                            (CommunicationProvider::Iroh, false) => CommunicationProvider::Tor,
+                            (CommunicationProvider::WebRtc, false) => CommunicationProvider::Iroh,
                         };
                     }
                     Field::RequireUnplugged => require_unplugged = !require_unplugged,
@@ -241,7 +251,14 @@ fn edit_plan(
                     fake_peers: peers,
                     duration_seconds: duration_minutes * 60,
                     legacy_duration_minutes: None,
-                    relay: RelayMode::Managed,
+                    // Direct providers do not own a managed relay. Keep the
+                    // plan truthful so the review screen and artifact do not
+                    // imply that an onion service will be started for Iroh.
+                    relay: if provider.requires_managed_relay() {
+                        RelayMode::Managed
+                    } else {
+                        RelayMode::External
+                    },
                     communication_provider: provider,
                     relay_endpoint: None,
                     workload: Workload::Balanced,

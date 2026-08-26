@@ -44,6 +44,7 @@ const OUTGOING_STAGING_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-OUTGOING-STAGING-V1
 const PREVIEW_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-PREVIEW-V1";
 const FINAL_CHUNK_AAD_LABEL: &[u8] = b"TORCA-ATTACHMENT-FINAL-CHUNK-V1";
 const FINAL_MANIFEST: &[u8] = b"TORCA-ATTACHMENT-CHUNKS-V1";
+const MAX_CANCEL_CONFIRMATIONS: usize = 256;
 const RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -126,6 +127,16 @@ enum OutgoingFramePhase {
     Chunk { next_offset: u64, digest: [u8; 32] },
     Complete,
     Cancel,
+}
+
+/// Maps an acknowledged wire frame to the next durable transfer action.
+/// Keeping this decision pure makes the ACK state machine easy to regression
+/// test without constructing a database, peer link, or crypto provider.
+fn outcome_after_ack(phase: OutgoingFramePhase) -> AdvanceOutcome {
+    match phase {
+        OutgoingFramePhase::Metadata | OutgoingFramePhase::Chunk { .. } => AdvanceOutcome::Waiting,
+        OutgoingFramePhase::Complete | OutgoingFramePhase::Cancel => AdvanceOutcome::Completed,
+    }
 }
 
 impl<R, M, S, K, C, P> AttachmentTransfer<R, M, S, K, C, P>
@@ -237,7 +248,11 @@ where
         preview: Option<AttachmentPreviewFrame>,
         at: Timestamp,
     ) -> Result<[u8; 32], AttachmentTransferError> {
-        if attachment.status() != AttachmentStatus::Prepared || attachment.size() == 0 {
+        // Newer hosts admit the durable row before this worker runs and leave
+        // it in Encrypting. Older callers still pass Prepared and are
+        // transitioned below. Both states are valid entry points; rejecting
+        // Encrypting here made every admitted upload fail before staging.
+        if !is_prepare_entry_status(attachment.status()) || attachment.size() == 0 {
             return Err(AttachmentTransferError::InvalidState);
         }
         // The attachment is staged before its companion text message is
@@ -252,7 +267,15 @@ where
             .map_err(|_| AttachmentTransferError::Relationship)?
             .ok_or(AttachmentTransferError::Relationship)?;
         let credential = self.credential(contact.id())?;
-        attachment.begin_encryption(at).map_err(map_attachment)?;
+        // Admission normally creates the Encrypting row before this worker is
+        // scheduled. Keep the Prepared path for callers from older hosts and
+        // make the transition idempotent for a retried worker job.
+        if attachment.status() == AttachmentStatus::Prepared {
+            attachment.begin_encryption(at).map_err(map_attachment)?;
+            self.metadata.insert(attachment.clone()).map_err(map_attachment)?;
+        } else if attachment.status() != AttachmentStatus::Encrypting {
+            return Err(AttachmentTransferError::InvalidState);
+        }
         // Promote the durable staging chunks into the final encrypted cache.
         // Each record is independently authenticated, so retries and export
         // never need to materialize the complete attachment in memory.
@@ -261,10 +284,12 @@ where
             attachment.id(),
             attachment.size(),
             &mut source,
+            at,
         );
         let digest = match staging_result {
             Ok(digest) => digest,
             Err(error) => {
+                self.cancel_preparation(&mut attachment, at);
                 self.remove_outgoing_staging(attachment.id());
                 self.remove_final_chunks(attachment.id());
                 return Err(error);
@@ -275,17 +300,20 @@ where
             attachment.id(),
             attachment.size(),
         ) {
+            self.cancel_preparation(&mut attachment, at);
             self.remove_outgoing_staging(attachment.id());
             self.remove_final_chunks(attachment.id());
             return Err(error);
         }
         if let Err(error) = attachment.mark_queued(at) {
+            self.cancel_preparation(&mut attachment, at);
             self.remove_outgoing_staging(attachment.id());
             self.remove_final_chunks(attachment.id());
             let _ = self.cache.remove(attachment.id());
             return Err(map_attachment(error));
         }
-        if let Err(error) = self.metadata.insert(attachment.clone()) {
+        if let Err(error) = self.metadata.update(attachment.clone()) {
+            self.cancel_preparation(&mut attachment, at);
             self.remove_outgoing_staging(attachment.id());
             self.remove_final_chunks(attachment.id());
             let _ = self.cache.remove(attachment.id());
@@ -294,6 +322,7 @@ where
         if let Err(error) =
             self.metadata.update_transfer_progress(attachment.id(), 0, Some(digest), at)
         {
+            self.cancel_preparation(&mut attachment, at);
             self.remove_outgoing_staging(attachment.id());
             self.remove_final_chunks(attachment.id());
             let _ = self.cache.remove(attachment.id());
@@ -303,12 +332,21 @@ where
             && let Err(error) =
                 self.store_preview(credential.secret_handle(), attachment.id(), &preview)
         {
+            self.cancel_preparation(&mut attachment, at);
             self.remove_outgoing_staging(attachment.id());
             self.remove_final_chunks(attachment.id());
             let _ = self.cache.remove(attachment.id());
             return Err(error);
         }
         Ok(digest)
+    }
+
+    fn cancel_preparation(&mut self, attachment: &mut Attachment, at: Timestamp) {
+        if !matches!(attachment.status(), AttachmentStatus::Available | AttachmentStatus::Cancelled)
+        {
+            let _ = attachment.cancel(at);
+        }
+        let _ = self.metadata.update(attachment.clone());
     }
 
     /// Sends at most one chunk for each eligible attachment, keeping each runtime tick bounded.
@@ -322,6 +360,14 @@ where
         let outbound_attachments = attachments
             .into_iter()
             .filter(|attachment| {
+                if attachment.status() == AttachmentStatus::Cancelled
+                    && self.cancel_confirmed.contains(&attachment.id())
+                {
+                    // The cancellation was already acknowledged by the
+                    // peer. Keep the durable row for history, but remove it
+                    // from the scheduler's active projection.
+                    return false;
+                }
                 self.messages
                     .get(attachment.message_id())
                     .ok()
@@ -460,10 +506,15 @@ where
             {
                 Ok(Some(_)) => {
                     self.pending_outgoing.remove(&attachment.id());
+                    let outcome = outcome_after_ack(pending.phase);
                     return match pending.phase {
                         OutgoingFramePhase::Metadata => {
                             self.metadata_acked.insert(attachment.id());
-                            Ok(AdvanceOutcome::Waiting)
+                            // Metadata acknowledgement only advances the job
+                            // to chunk delivery.  Returning `Completed` here
+                            // dropped the attachment from the scheduler before
+                            // its first payload chunk was sent.
+                            Ok(outcome)
                         }
                         OutgoingFramePhase::Chunk { next_offset, digest } => {
                             self.metadata
@@ -481,7 +532,7 @@ where
                             self.metadata.update(attachment.clone()).map_err(map_attachment)?;
                             self.metadata_acked.remove(&attachment.id());
                             self.remove_outgoing_staging(attachment.id());
-                            Ok(AdvanceOutcome::Completed)
+                            Ok(outcome)
                         }
                         OutgoingFramePhase::Cancel => {
                             self.metadata_acked.remove(&attachment.id());
@@ -490,7 +541,17 @@ where
                             self.remove_final_chunks(attachment.id());
                             let _ = self.cache.remove(preview_blob_id(attachment.id()));
                             self.cancel_confirmed.insert(attachment.id());
-                            Ok(AdvanceOutcome::Waiting)
+                            while self.cancel_confirmed.len() > MAX_CANCEL_CONFIRMATIONS {
+                                let Some(oldest) = self.cancel_confirmed.iter().next().copied()
+                                else {
+                                    break;
+                                };
+                                self.cancel_confirmed.remove(&oldest);
+                            }
+                            // Cancellation is terminal once the peer has
+                            // acknowledged it.  The durable row remains for
+                            // history but must leave the active projection.
+                            Ok(outcome)
                         }
                     };
                 }
@@ -516,7 +577,12 @@ where
         }
         if attachment.status() == AttachmentStatus::Cancelled {
             if self.cancel_confirmed.contains(&attachment.id()) {
-                return Ok(AdvanceOutcome::Waiting);
+                // Cancellation is terminal once the peer has acknowledged it.
+                // Returning `Waiting` here kept the durable Cancelled row in
+                // every maintenance pass and scheduled a new wake roughly
+                // every 250 ms forever. The row remains persisted for history,
+                // but it must no longer participate in transfer scheduling.
+                return Ok(AdvanceOutcome::Completed);
             }
             let contact = self.contact_for_message(attachment.message_id())?;
             let credential = self.credential(contact.id())?;
@@ -1044,11 +1110,13 @@ where
         attachment_id: AttachmentId,
         expected_size: u64,
         source: &mut T,
+        at: Timestamp,
     ) -> Result<[u8; 32], AttachmentTransferError> {
         let directory = self.outgoing_staging_directory(attachment_id);
         fs::create_dir_all(&directory).map_err(|_| AttachmentTransferError::Io)?;
         let mut digest = Sha256::new();
         let mut offset = 0_u64;
+        let mut persisted_offset = 0_u64;
         let mut buffer = vec![0_u8; MAX_ATTACHMENT_CHUNK];
         let result = (|| -> Result<[u8; 32], AttachmentTransferError> {
             loop {
@@ -1072,6 +1140,17 @@ where
                     return Err(error);
                 }
                 offset = end;
+                // Persist bounded progress while the worker is staging. A
+                // checkpoint every ~1 MiB avoids one SQL write per 64 KiB
+                // chunk while still making long imports observable and
+                // resumable if the process is interrupted.
+                if offset.saturating_sub(persisted_offset) >= 1024 * 1024 || offset == expected_size
+                {
+                    self.metadata
+                        .update_transfer_progress(attachment_id, offset, None, at)
+                        .map_err(map_attachment)?;
+                    persisted_offset = offset;
+                }
             }
             if offset != expected_size {
                 self.remove_outgoing_staging(attachment_id);
@@ -1285,6 +1364,7 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AdvanceOutcome {
     Waiting,
     Chunk,
@@ -1433,4 +1513,43 @@ fn sync_directory(path: &Path) -> Result<(), AttachmentTransferError> {
         return Ok(());
     }
     File::open(path).and_then(|file| file.sync_all()).map_err(|_| AttachmentTransferError::Io)
+}
+
+const fn is_prepare_entry_status(status: AttachmentStatus) -> bool {
+    matches!(status, AttachmentStatus::Prepared | AttachmentStatus::Encrypting)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AdvanceOutcome, AttachmentStatus, OutgoingFramePhase, is_prepare_entry_status,
+        outcome_after_ack,
+    };
+
+    #[test]
+    fn metadata_ack_keeps_job_alive_for_chunks() {
+        assert_eq!(outcome_after_ack(OutgoingFramePhase::Metadata), AdvanceOutcome::Waiting);
+    }
+
+    #[test]
+    fn chunk_ack_keeps_job_alive_for_next_frame() {
+        assert_eq!(
+            outcome_after_ack(OutgoingFramePhase::Chunk { next_offset: 64, digest: [7; 32] }),
+            AdvanceOutcome::Waiting
+        );
+    }
+
+    #[test]
+    fn terminal_ack_removes_job_from_active_work() {
+        assert_eq!(outcome_after_ack(OutgoingFramePhase::Complete), AdvanceOutcome::Completed);
+        assert_eq!(outcome_after_ack(OutgoingFramePhase::Cancel), AdvanceOutcome::Completed);
+    }
+
+    #[test]
+    fn admitted_encrypting_and_legacy_prepared_rows_enter_worker() {
+        assert!(is_prepare_entry_status(AttachmentStatus::Prepared));
+        assert!(is_prepare_entry_status(AttachmentStatus::Encrypting));
+        assert!(!is_prepare_entry_status(AttachmentStatus::Queued));
+        assert!(!is_prepare_entry_status(AttachmentStatus::Transferring));
+    }
 }

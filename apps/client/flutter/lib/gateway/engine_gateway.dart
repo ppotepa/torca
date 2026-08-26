@@ -82,6 +82,8 @@ class ClientBuildInfo {
     required this.sourceCommit,
     required this.sourceFingerprint,
     required this.providerEndpointHash,
+    required this.providerEndpointRequired,
+    this.providerProfile,
     required this.targetPlatform,
     required this.targetArchitecture,
     required this.contractSchema,
@@ -143,6 +145,23 @@ class ClientBuildInfo {
         '$communicationProvider',
       );
     }
+    final providerEndpointRequired = value['providerEndpointRequired'] is bool
+        ? value['providerEndpointRequired'] as bool
+        // Older metadata did not carry the capability. Keep the Tor default
+        // only while those binaries are still installable.
+        : communicationProvider == 'tor';
+    // A direct provider (Iroh/WebRTC/Memory) owns its route and deliberately
+    // has no managed relay endpoint. A managed-rendezvous provider must carry
+    // the endpoint fingerprint, otherwise the binary can be paired against a
+    // different relay than the one used to build it. Keep this check here at
+    // the FFI boundary so stale/mixed artifacts fail with an actionable
+    // provider-neutral error instead of a later "relay endpoint missing"
+    // failure during pairing.
+    if (providerEndpointRequired && providerEndpointHash == null) {
+      throw const FormatException(
+        'Runtime metadata is missing providerEndpointHash for managed rendezvous provider',
+      );
+    }
     return ClientBuildInfo(
       communicationProvider: communicationProvider,
       productVersion: requiredString('productVersion'),
@@ -150,6 +169,8 @@ class ClientBuildInfo {
       sourceCommit: requiredString('sourceCommit'),
       sourceFingerprint: requiredString('sourceFingerprint'),
       providerEndpointHash: providerEndpointHash,
+      providerEndpointRequired: providerEndpointRequired,
+      providerProfile: optionalString('providerProfile'),
       targetPlatform: requiredString('targetPlatform'),
       targetArchitecture: requiredString('targetArchitecture'),
       contractSchema: requiredInt('contractSchema'),
@@ -166,6 +187,8 @@ class ClientBuildInfo {
   final String sourceCommit;
   final String sourceFingerprint;
   final String? providerEndpointHash;
+  final bool providerEndpointRequired;
+  final String? providerProfile;
   final String targetPlatform;
   final String targetArchitecture;
   final int contractSchema;

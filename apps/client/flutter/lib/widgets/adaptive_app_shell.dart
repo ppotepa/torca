@@ -32,6 +32,7 @@ class AdaptiveAppShell extends StatefulWidget {
   final Widget? floatingActionButton;
   final String buildLabel;
   final String serviceLabel;
+
   /// Hides the global monitor when the active surface already renders the
   /// same monitor in its contextual header (for example a conversation).
   final bool showRuntimeStatus;
@@ -182,7 +183,10 @@ class _BuildFooter extends StatelessWidget {
                   context.strings.buildLabel(buildLabel),
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
-                Text(serviceLabel, style: Theme.of(context).textTheme.labelSmall),
+                Text(
+                  serviceLabel,
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
               ],
             )
           : Icon(context.torcaIcons.identity, size: 22),

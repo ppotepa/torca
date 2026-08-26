@@ -32,6 +32,7 @@ pub(crate) fn close(&mut self) -> i32 {
     {
         self.last_result_json = error_result("secure runtime shutdown failed");
     }
+    #[cfg(feature = "provider-webrtc")]
     crate::runtime_composition::clear_registered_webrtc_providers();
     let Some(actor) = self.actor.take() else {
         if let Some(logger) = &self.logger {
@@ -412,9 +413,19 @@ pub(crate) fn lifecycle(&mut self, event: &str) -> i32 {
     }
     self.battery_policy.apply_system_event(event);
     if event == "foregrounded" || event == "host_started" {
-        self.application_runtime.set_foreground(true);
-    } else if event == "backgrounded" {
-        self.application_runtime.set_foreground(false);
+        if let Err(error) = self.application_runtime.set_foreground(true) {
+            self.log("lifecycle", Level::Warn, "runtime", "FOREGROUND_UPDATE_FAILED", &error.to_string());
+        }
+    } else if event == "backgrounded"
+        && let Err(error) = self.application_runtime.set_foreground(false)
+    {
+        self.log(
+            "lifecycle",
+            Level::Warn,
+            "runtime",
+            "BACKGROUND_UPDATE_FAILED",
+            &error.to_string(),
+        );
     }
     self.apply_battery_policy(false);
     if event == "network_changed" {

@@ -248,6 +248,16 @@ impl std::error::Error for DeliveryTransportError {}
 
 pub trait DeliveryTransport {
     fn send(&mut self, message: &Message) -> Result<DeliveryAck, DeliveryTransportError>;
+
+    /// Sends a group of claimed messages while preserving one result per
+    /// message. The default is deliberately conservative; optimized
+    /// transports can override this to coalesce provider writes.
+    fn send_batch(
+        &mut self,
+        messages: &[&Message],
+    ) -> Vec<Result<DeliveryAck, DeliveryTransportError>> {
+        messages.iter().map(|message| self.send(message)).collect()
+    }
 }
 
 pub trait InboundAcknowledger {
@@ -350,12 +360,24 @@ where
     {
         let records = self.store.claim_due(now, limit)?;
         let mut report = DeliveryBatchReport { claimed: records.len(), ..Default::default() };
-        for record in records {
+        for record in &records {
+            before_send(&record.message);
+        }
+        let messages = records.iter().map(|record| &record.message).collect::<Vec<_>>();
+        let results = self.transport.send_batch(&messages);
+        let results = if results.len() == records.len() {
+            results
+        } else {
+            // A custom transport must return one result per claimed message;
+            // treat a malformed response as a retryable transport failure
+            // rather than silently dropping durable jobs.
+            vec![Err(DeliveryTransportError("batch result length mismatch".into())); records.len()]
+        };
+        for (record, result) in records.into_iter().zip(results) {
             let message_id = record.message.id();
             let attempts =
                 record.attempts.checked_add(1).ok_or(DeliveryWorkerError::AttemptOverflow)?;
-            before_send(&record.message);
-            match self.transport.send(&record.message) {
+            match result {
                 Ok(DeliveryAck::Accepted | DeliveryAck::Duplicate) => {
                     self.store.complete(message_id)?;
                     report.completed += 1;

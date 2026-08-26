@@ -119,16 +119,26 @@ class _HomeScreenState extends State<HomeScreen> {
               '${client?.communicationProvider.toUpperCase() ?? 'Provider'} endpoint hash',
               client?.providerEndpointHash ?? 'not used by this provider',
             ),
+            if (client?.providerProfile != null)
+              _buildDetail('Provider profile', client!.providerProfile!),
             const Divider(),
             _buildDetail(
-            'Provider service version',
+              'Provider service version',
               relay?.productVersion ?? 'unavailable',
             ),
-            _buildDetail('Provider service build', relay?.buildId ?? 'not used by this provider'),
-            _buildDetail('Provider service commit', relay?.sourceCommit ?? 'not used by this provider'),
+            _buildDetail(
+              'Provider service build',
+              relay?.buildId ?? 'not used by this provider',
+            ),
+            _buildDetail(
+              'Provider service commit',
+              relay?.sourceCommit ?? 'not used by this provider',
+            ),
             _buildDetail(
               'Relay protocol',
-              relay == null ? 'not used by this provider' : '${relay.protocolVersion}',
+              relay == null
+                  ? 'not used by this provider'
+                  : '${relay.protocolVersion}',
             ),
           ],
         ),
@@ -496,7 +506,8 @@ class _HomeScreenState extends State<HomeScreen> {
           context: context,
           applicationName: 'Torca',
           applicationVersion: buildInfo?.productVersion ?? 'development',
-          applicationLegalese: 'Private 1:1 messaging over the selected communication provider.',
+          applicationLegalese:
+              'Private 1:1 messaging over the selected communication provider.',
         );
     }
   }

@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
 use torca_foundation::{OpaqueId, Timestamp};
@@ -123,6 +124,17 @@ where
         )
     }
 
+    pub fn send_envelopes_batch(
+        &self,
+        contact_id: ContactId,
+        envelopes: Vec<(OpaqueId, u16, Vec<u8>)>,
+    ) -> Result<(), PeerLinkError> {
+        self.inner
+            .lock()
+            .map_err(|_| PeerLinkError::Protocol)?
+            .send_envelopes_batch(contact_id, envelopes)
+    }
+
     pub fn poll_envelope_ack(
         &self,
         contact_id: ContactId,
@@ -143,18 +155,36 @@ where
         timeout: Duration,
         wait_limit: Duration,
     ) -> Result<LinkAck, PeerLinkError> {
-        // PeerLink owns the event-driven socket wait. Holding the shared lock
-        // for this bounded operation prevents a second caller from starting a
-        // competing ACK poll loop while the reader thread can still deliver
-        // frames and wake the runtime.
-        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.send_and_wait_ack_with_limit(
-            contact_id,
-            envelope_id,
-            message_kind,
-            ciphertext,
-            timeout,
-            wait_limit,
-        )
+        // Never hold the process-wide PeerLink mutex while waiting for I/O.
+        // Send once, then perform short non-blocking polls with the mutex
+        // released between each poll. This keeps lifecycle, Radio, delivery
+        // and attachment control responsive when an ACK is missing.
+        self.send_envelope(contact_id, envelope_id, message_kind, ciphertext)?;
+        let deadline =
+            Instant::now().checked_add(timeout.min(wait_limit)).ok_or(PeerLinkError::AckTimeout)?;
+        loop {
+            if let Some(ack) = self.poll_envelope_ack(contact_id, envelope_id)? {
+                return Ok(ack);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                let millis = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| PeerLinkError::AckTimeout)?
+                    .as_millis();
+                let timestamp = Timestamp::from_unix_millis(
+                    i64::try_from(millis).map_err(|_| PeerLinkError::AckTimeout)?,
+                )
+                .map_err(|_| PeerLinkError::AckTimeout)?;
+                let _ = self
+                    .inner
+                    .lock()
+                    .map_err(|_| PeerLinkError::Protocol)?
+                    .mark_ack_timeout(contact_id, timestamp);
+                return Err(PeerLinkError::AckTimeout);
+            }
+            thread::sleep((deadline - now).min(Duration::from_millis(10)));
+        }
     }
 
     pub fn send_keepalive_and_wait_ack(
@@ -165,11 +195,15 @@ where
         ciphertext: Vec<u8>,
         timeout: Duration,
     ) -> Result<LinkAck, PeerLinkError> {
-        self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.send_keepalive_and_wait_ack(
+        // Keepalive probes use the same non-blocking shared-lock path as
+        // normal delivery.  The probe worker must never monopolise PeerLink
+        // while waiting for a remote ACK.
+        self.send_and_wait_ack_with_limit(
             contact_id,
             envelope_id,
             message_kind,
             ciphertext,
+            timeout,
             timeout,
         )
     }

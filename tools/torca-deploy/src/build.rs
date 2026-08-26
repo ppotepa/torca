@@ -22,6 +22,7 @@ pub fn verify_artifact_manifest(
     configuration: Configuration,
     artifact: &Path,
     communication_provider: CommunicationProvider,
+    provider_profile: Option<&str>,
 ) -> Result<(), String> {
     let mode = artifact_mode(configuration);
     let manifest_path = paths.manifests.join(format!("clients-{mode}.json"));
@@ -56,8 +57,15 @@ pub fn verify_artifact_manifest(
             ));
         }
     }
-    let recorded_provider =
-        manifest.get("communicationProvider").and_then(serde_json::Value::as_str).unwrap_or("tor");
+    let recorded_provider = manifest
+        .get("communicationProvider")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "artifact manifest {} does not record the communication provider",
+                manifest_path.display()
+            )
+        })?;
     if recorded_provider != communication_provider.to_string() {
         return Err(format!(
             "artifact provider mismatch for {}: manifest={}, current={}",
@@ -65,6 +73,49 @@ pub fn verify_artifact_manifest(
             recorded_provider,
             communication_provider
         ));
+    }
+    let recorded_features =
+        manifest.get("compiledFeatures").and_then(serde_json::Value::as_str).ok_or_else(|| {
+            format!(
+                "artifact manifest {} does not record compiled provider features",
+                manifest_path.display()
+            )
+        })?;
+    let expected_features = provider_features(communication_provider);
+    if recorded_features != expected_features {
+        return Err(format!(
+            "artifact feature mismatch for {}: manifest={}, current={}",
+            artifact.display(),
+            recorded_features,
+            expected_features
+        ));
+    }
+    if communication_provider == CommunicationProvider::Iroh {
+        let expected_profile =
+            configured_iroh_profile(provider_profile).unwrap_or_else(|| "always".to_owned());
+        let recorded_profile =
+            manifest.get("irohProfile").and_then(serde_json::Value::as_str).unwrap_or("always");
+        if recorded_profile != expected_profile {
+            return Err(format!(
+                "artifact Iroh profile mismatch for {}: manifest={}, current={}",
+                artifact.display(),
+                recorded_profile,
+                expected_profile
+            ));
+        }
+        let expected_services = iroh_service_config_fingerprint();
+        let recorded_services = manifest
+            .get("irohServiceConfigFingerprint")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("default");
+        if recorded_services != expected_services {
+            return Err(format!(
+                "artifact Iroh service configuration mismatch for {}: manifest={}, current={}",
+                artifact.display(),
+                recorded_services,
+                expected_services
+            ));
+        }
     }
     let expected = manifest
         .get("artifacts")
@@ -147,6 +198,7 @@ impl<'a> BuildController<'a> {
         policy: BuildPolicy,
         endpoint: Option<&str>,
         communication_provider: CommunicationProvider,
+        provider_profile: Option<&str>,
     ) -> Result<(), BuildError> {
         if matches!(policy, BuildPolicy::Reuse) {
             return Ok(());
@@ -172,7 +224,15 @@ impl<'a> BuildController<'a> {
             crate::windows_client::WorkspaceWindowsClient::new(self.paths, self.runner)
                 .stop()
                 .map_err(BuildError::StopRunningClient)?;
-            let mut cargo_args = vec!["build", "-p", "torca-native", "--locked"];
+            let mut cargo_args = vec![
+                "build",
+                "-p",
+                "torca-native",
+                "--no-default-features",
+                "--features",
+                provider_features(communication_provider),
+                "--locked",
+            ];
             if matches!(configuration, Configuration::Release) {
                 cargo_args.push("--release");
             }
@@ -181,6 +241,8 @@ impl<'a> BuildController<'a> {
                 &cargo_args,
                 endpoint,
                 communication_provider,
+                provider_profile,
+                Some(&provider_target_root(&self.paths.repo_root, communication_provider)),
                 &self.paths.repo_root,
             )?;
         }
@@ -190,6 +252,7 @@ impl<'a> BuildController<'a> {
                 configuration,
                 endpoint,
                 communication_provider,
+                provider_profile,
                 &android_abis,
             )?;
             let profile =
@@ -197,7 +260,7 @@ impl<'a> BuildController<'a> {
             for target in android_targets(&android_abis) {
                 let abi = target.abi.package_name();
                 let triple = target.triple;
-                let source = cargo_target_root(&self.paths.repo_root)
+                let source = provider_target_root(&self.paths.repo_root, communication_provider)
                     .join(triple)
                     .join(profile)
                     .join("libtorca_native.so");
@@ -230,7 +293,7 @@ impl<'a> BuildController<'a> {
                     format!("TORCA_PROVIDER_ENDPOINT={endpoint}"),
                 ]);
             }
-            let environment = build_environment(endpoint, communication_provider);
+            let environment = build_environment(endpoint, communication_provider, provider_profile);
             let output = self.runner.run(&CommandSpec {
                 program: flutter.clone(),
                 arguments: flutter_args,
@@ -242,8 +305,9 @@ impl<'a> BuildController<'a> {
                 let diagnostic = self.windows_install_diagnostic(mode);
                 return Err(BuildError::WindowsFlutter { output: output.text, diagnostic });
             }
-            let source =
-                cargo_target_root(&self.paths.repo_root).join(mode).join("torca_native.dll");
+            let source = provider_target_root(&self.paths.repo_root, communication_provider)
+                .join(mode)
+                .join("torca_native.dll");
             let destination = self.paths.repo_root.join(format!(
                 "apps/client/flutter/build/windows/x64/runner/{mode}/torca_native.dll"
             ));
@@ -295,6 +359,8 @@ impl<'a> BuildController<'a> {
                 &references,
                 endpoint,
                 communication_provider,
+                provider_profile,
+                None,
                 &self.paths.repo_root.join("apps/client/flutter"),
             )?;
         }
@@ -307,17 +373,7 @@ impl<'a> BuildController<'a> {
                 Target::Android => selected_android_abis(devices)
                     .into_iter()
                     .map(|abi| {
-                        if soak_flavor_enabled() && matches!(configuration, Configuration::Debug) {
-                            self.paths.repo_root.join(format!(
-                                "apps/client/flutter/build/app/outputs/flutter-apk/app-{}-soak-debug.apk",
-                                abi.package_name()
-                            ))
-                        } else {
-                            self.paths.repo_root.join(format!(
-                                "apps/client/flutter/build/app/outputs/flutter-apk/app-{}-normal-{mode}.apk",
-                                abi.package_name()
-                            ))
-                        }
+                        android_apk_path(&self.paths.repo_root, abi.package_name(), configuration)
                     })
                     .collect(),
             };
@@ -336,6 +392,7 @@ impl<'a> BuildController<'a> {
             configuration,
             targets,
             communication_provider,
+            provider_profile,
         );
         let manifest = serde_json::json!({
             "configuration": configuration.to_string(),
@@ -345,6 +402,12 @@ impl<'a> BuildController<'a> {
             "sourceCommit": source_commit,
             "artifacts": artifacts,
             "communicationProvider": communication_provider.to_string(),
+            "compiledFeatures": provider_features(communication_provider),
+            "irohProfile": (communication_provider == CommunicationProvider::Iroh)
+                .then(|| configured_iroh_profile(provider_profile))
+                .flatten(),
+            "irohServiceConfigFingerprint": (communication_provider == CommunicationProvider::Iroh)
+                .then(iroh_service_config_fingerprint),
             "builtAt": format!("{:?}", std::time::SystemTime::now()),
         });
         std::fs::write(
@@ -376,14 +439,20 @@ impl<'a> BuildController<'a> {
         configuration: Configuration,
         endpoint: Option<&str>,
         communication_provider: CommunicationProvider,
+        provider_profile: Option<&str>,
         abis: &[AndroidAbi],
     ) -> Result<(), BuildError> {
         let toolchain = AndroidToolchain::discover()?;
+        let provider_target_dir =
+            provider_target_root(&self.paths.repo_root, communication_provider);
         for target in android_targets(abis) {
             let mut arguments = vec![
                 "build".to_owned(),
                 "-p".to_owned(),
                 "torca-native".to_owned(),
+                "--no-default-features".to_owned(),
+                "--features".to_owned(),
+                provider_features(communication_provider).to_owned(),
                 "--target".to_owned(),
                 target.triple.to_owned(),
                 "--locked".to_owned(),
@@ -397,13 +466,30 @@ impl<'a> BuildController<'a> {
                 working_directory: self.paths.repo_root.clone(),
                 timeout: Duration::from_secs(3600),
                 environment: {
-                    let mut environment = toolchain.environment(target, endpoint);
+                    let mut environment =
+                        toolchain.environment(target, endpoint, &provider_target_dir);
                     environment.insert(
                         "TORCA_COMMUNICATION_PROVIDER".into(),
                         communication_provider.to_string(),
                     );
-                    if let Some(hash) = provider_endpoint_hash(endpoint) {
-                        environment.insert("TORCA_PROVIDER_ENDPOINT_HASH".into(), hash);
+                    if communication_provider
+                        .deployment_profile()
+                        .commissioning_service
+                        .requires_endpoint()
+                    {
+                        if let Some(hash) = provider_endpoint_hash(endpoint) {
+                            environment.insert("TORCA_PROVIDER_ENDPOINT_HASH".into(), hash);
+                        }
+                    }
+                    if communication_provider == CommunicationProvider::Iroh {
+                        if let Some(profile) = configured_iroh_profile(provider_profile) {
+                            environment.insert("TORCA_IROH_PROFILE".into(), profile);
+                        }
+                        for key in ["TORCA_IROH_RELAY_URLS", "TORCA_IROH_PKARR_URL"] {
+                            if let Ok(value) = env::var(key) {
+                                environment.insert(key.to_owned(), value);
+                            }
+                        }
                     }
                     environment
                 },
@@ -423,9 +509,16 @@ impl<'a> BuildController<'a> {
         args: &[&str],
         endpoint: Option<&str>,
         communication_provider: CommunicationProvider,
+        provider_profile: Option<&str>,
+        cargo_target_dir: Option<&Path>,
         working_directory: &Path,
     ) -> Result<(), BuildError> {
-        let environment = build_environment(endpoint, communication_provider);
+        let environment = build_environment_with_target(
+            endpoint,
+            communication_provider,
+            provider_profile,
+            cargo_target_dir,
+        );
         let output = self.runner.run(&CommandSpec {
             program: program.into(),
             arguments: args.iter().map(|x| (*x).into()).collect(),
@@ -481,18 +574,138 @@ impl<'a> BuildController<'a> {
 fn build_environment(
     endpoint: Option<&str>,
     communication_provider: CommunicationProvider,
+    provider_profile: Option<&str>,
+) -> BTreeMap<String, String> {
+    build_environment_with_target(endpoint, communication_provider, provider_profile, None)
+}
+
+fn build_environment_with_target(
+    endpoint: Option<&str>,
+    communication_provider: CommunicationProvider,
+    provider_profile: Option<&str>,
+    cargo_target_dir: Option<&Path>,
 ) -> BTreeMap<String, String> {
     let mut environment = BTreeMap::from([(
         "TORCA_COMMUNICATION_PROVIDER".to_owned(),
         communication_provider.to_string(),
     )]);
+    if let Some(target_dir) = cargo_target_dir {
+        environment
+            .insert("CARGO_TARGET_DIR".to_owned(), target_dir.to_string_lossy().into_owned());
+    }
     if let Some(endpoint) = endpoint {
         environment.insert("TORCA_PROVIDER_ENDPOINT".to_owned(), endpoint.to_owned());
-        if let Some(hash) = provider_endpoint_hash(Some(endpoint)) {
-            environment.insert("TORCA_PROVIDER_ENDPOINT_HASH".to_owned(), hash);
+        if communication_provider.deployment_profile().commissioning_service.requires_endpoint() {
+            if let Some(hash) = provider_endpoint_hash(Some(endpoint)) {
+                environment.insert("TORCA_PROVIDER_ENDPOINT_HASH".to_owned(), hash);
+            }
+        }
+    }
+    if communication_provider == CommunicationProvider::Iroh {
+        // Iroh's endpoint profile is provider configuration, not a Tor
+        // endpoint. Pass it explicitly to every native build so Android and
+        // Windows embed the same low-power/direct policy instead of relying on
+        // the developer shell environment at runtime.
+        if let Some(profile) = configured_iroh_profile(provider_profile) {
+            environment.insert("TORCA_IROH_PROFILE".to_owned(), profile);
+        }
+        // CommandRunner implementations may intentionally provide a clean
+        // environment (CI and the deterministic soak runner do this). Copy
+        // the non-secret provider service values explicitly so the Iroh crate
+        // can embed the same configuration in every target artifact.
+        for key in [
+            "TORCA_IROH_RELAY_URLS",
+            "TORCA_IROH_PKARR_URL",
+            "TORCA_IROH_DISABLE_RELAY",
+            "TORCA_IROH_DISABLE_DISCOVERY",
+            "TORCA_IROH_LOCAL_ONLY",
+            "TORCA_IROH_RUNTIME_THREADS",
+        ] {
+            if let Ok(value) = env::var(key) {
+                environment.insert(key.to_owned(), value);
+            }
         }
     }
     environment
+}
+
+/// Complete Cargo feature selection for one native artifact. The environment
+/// variable is retained for runtime metadata, while Cargo features decide
+/// which provider implementation is physically linked into the package.
+const fn provider_features(provider: CommunicationProvider) -> &'static str {
+    match provider {
+        CommunicationProvider::Tor => "provider-tor,radio-audio",
+        CommunicationProvider::Iroh => "provider-iroh,radio-audio",
+        CommunicationProvider::WebRtc => "provider-webrtc,radio-audio",
+        // Memory is a simulator-only transport; keep the deployer defensive
+        // and select the smallest provider feature set if it is ever passed
+        // through a test plan.
+        CommunicationProvider::Memory => "provider-iroh,radio-audio",
+    }
+}
+
+fn configured_iroh_profile(explicit: Option<&str>) -> Option<String> {
+    let value = explicit.map(str::to_owned).or_else(|| std::env::var("TORCA_IROH_PROFILE").ok())?;
+    let profile = match value.trim().to_ascii_lowercase().as_str() {
+        "direct" | "direct-only" => "direct",
+        "local" | "local-only" => "local",
+        "always" | "always-reachable" => "always",
+        _ => return None,
+    };
+    Some(profile.to_owned())
+}
+
+/// Redaction-safe fingerprint of the Iroh service configuration embedded in
+/// a native artifact. The URLs never enter a manifest or diagnostic payload,
+/// but changing them must invalidate artifact reuse.
+pub(crate) fn iroh_service_config_fingerprint() -> String {
+    let relays = std::env::var("TORCA_IROH_RELAY_URLS")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let pkarr = std::env::var("TORCA_IROH_PKARR_URL")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default();
+    let disable_relay = std::env::var("TORCA_IROH_DISABLE_RELAY").ok().is_some_and(|value| {
+        matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    });
+    let disable_discovery =
+        std::env::var("TORCA_IROH_DISABLE_DISCOVERY").ok().is_some_and(|value| {
+            matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+        });
+    let local_only = std::env::var("TORCA_IROH_LOCAL_ONLY").ok().is_some_and(|value| {
+        matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    });
+    let runtime_threads = std::env::var("TORCA_IROH_RUNTIME_THREADS")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default();
+    if relays.is_empty()
+        && pkarr.is_empty()
+        && !disable_relay
+        && !disable_discovery
+        && !local_only
+        && runtime_threads.is_empty()
+    {
+        return "default".to_owned();
+    }
+    format!(
+        "{:x}",
+        Sha256::digest(
+            format!(
+                "relay={relays}\npkarr={pkarr}\ndisableRelay={disable_relay}\ndisableDiscovery={disable_discovery}\nlocalOnly={local_only}\nruntimeThreads={runtime_threads}"
+            )
+            .as_bytes(),
+        )
+    )
 }
 
 fn provider_endpoint_hash(endpoint: Option<&str>) -> Option<String> {
@@ -514,6 +727,30 @@ fn selected_android_abis(devices: &[Device]) -> Vec<AndroidAbi> {
     });
     selected.dedup();
     if selected.is_empty() { vec![AndroidAbi::Arm64, AndroidAbi::X86_64] } else { selected }
+}
+
+/// Resolve the APK name produced by Flutter's split-per-ABI build.
+/// Flutter/Gradle has used both flavor/ABI ordering variants across versions;
+/// prefer an existing artifact and retain a deterministic fallback for a
+/// manifest generated before the first build.
+pub(crate) fn android_apk_path(
+    repo_root: &std::path::Path,
+    abi: &str,
+    configuration: Configuration,
+) -> std::path::PathBuf {
+    let mode = configuration.to_string();
+    let output = repo_root.join("apps/client/flutter/build/app/outputs/flutter-apk");
+    let flavor = if soak_flavor_enabled() && matches!(configuration, Configuration::Debug) {
+        "soak"
+    } else {
+        "normal"
+    };
+    let candidates = [
+        output.join(format!("app-{flavor}-{abi}-{mode}.apk")),
+        output.join(format!("app-{abi}-{flavor}-{mode}.apk")),
+        output.join(format!("app-{abi}-{mode}.apk")),
+    ];
+    candidates.iter().find(|path| path.is_file()).cloned().unwrap_or_else(|| candidates[0].clone())
 }
 
 fn android_targets(abis: &[AndroidAbi]) -> Vec<AndroidTarget> {
@@ -571,6 +808,7 @@ impl AndroidToolchain {
         &self,
         target: AndroidTarget,
         endpoint: Option<&str>,
+        cargo_target_dir: &Path,
     ) -> BTreeMap<String, String> {
         let mut environment = BTreeMap::new();
         let existing_path = env::var_os("PATH").unwrap_or_default();
@@ -588,6 +826,8 @@ impl AndroidToolchain {
         // portable command name while placing its verified MSYS/Git directory
         // at the beginning of PATH.
         environment.insert("PERL".into(), "perl".into());
+        environment
+            .insert("CARGO_TARGET_DIR".into(), cargo_target_dir.to_string_lossy().into_owned());
         if let Some(endpoint) = endpoint {
             environment.insert("TORCA_PROVIDER_ENDPOINT".into(), endpoint.into());
         }
@@ -678,17 +918,37 @@ fn build_identity(
     configuration: Configuration,
     targets: &[Target],
     communication_provider: CommunicationProvider,
+    provider_profile: Option<&str>,
 ) -> String {
     let target_list = targets.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
+    // Endpoint profile changes the actual native transport configuration (and
+    // therefore the battery/reachability trade-off). Include it in the build
+    // identity so a direct-only artifact can never be reused as an
+    // always-reachable one, or vice versa.
+    let iroh_profile = if communication_provider == CommunicationProvider::Iroh {
+        configured_iroh_profile(provider_profile).unwrap_or_else(|| "always".to_owned())
+    } else {
+        "none".to_owned()
+    };
+    let iroh_services = if communication_provider == CommunicationProvider::Iroh {
+        iroh_service_config_fingerprint()
+    } else {
+        "none".to_owned()
+    };
     let material = format!(
-        "{source_commit}\n{}\n{configuration}\n{target_list}\n{communication_provider}",
-        endpoint.unwrap_or("no-rendezvous-endpoint")
+        "{source_commit}\n{}\n{configuration}\n{target_list}\n{communication_provider}\n{}\n{iroh_profile}\n{iroh_services}",
+        endpoint.unwrap_or("no-rendezvous-endpoint"),
+        provider_features(communication_provider)
     );
     format!("{:X}", Sha256::digest(material.as_bytes()))
 }
 
 fn cargo_target_root(repo_root: &Path) -> PathBuf {
     target_root_with_override(repo_root, env::var_os("CARGO_TARGET_DIR"))
+}
+
+fn provider_target_root(repo_root: &Path, provider: CommunicationProvider) -> PathBuf {
+    cargo_target_root(repo_root).join("providers").join(provider.wire_value())
 }
 
 fn target_root_with_override(
@@ -753,6 +1013,8 @@ mod tests {
         std::fs::write(&paths.relay_endpoint, &endpoint).expect("relay endpoint");
         let manifest = serde_json::json!({
             "endpoint": endpoint,
+            "communicationProvider": "tor",
+            "compiledFeatures": "provider-tor,radio-audio",
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,
@@ -770,6 +1032,7 @@ mod tests {
             Configuration::Debug,
             &artifact,
             CommunicationProvider::Tor,
+            None,
         )
         .expect("matching artifact");
         std::fs::write(&artifact, b"modified build").expect("modified artifact");
@@ -780,6 +1043,7 @@ mod tests {
                 Configuration::Debug,
                 &artifact,
                 CommunicationProvider::Tor,
+                None,
             )
             .is_err()
         );
@@ -798,6 +1062,23 @@ mod tests {
             repo.join(".build-target")
         );
         assert_eq!(target_root_with_override(repo, None), repo.join("target"));
+    }
+
+    #[test]
+    fn native_provider_outputs_use_isolated_target_directories() {
+        let repo = Path::new(r"G:\torca");
+        assert_eq!(
+            provider_target_root(repo, CommunicationProvider::Tor),
+            repo.join("target/providers/tor")
+        );
+        assert_eq!(
+            provider_target_root(repo, CommunicationProvider::Iroh),
+            repo.join("target/providers/iroh")
+        );
+        assert_ne!(
+            provider_target_root(repo, CommunicationProvider::Tor),
+            provider_target_root(repo, CommunicationProvider::Iroh)
+        );
     }
 
     #[test]
@@ -838,6 +1119,27 @@ mod tests {
     }
 
     #[test]
+    fn android_apk_path_accepts_flutter_flavor_first_layout() {
+        let root = std::env::temp_dir().join(format!("torca-apk-layout-{}", std::process::id()));
+        let output = root.join("apps/client/flutter/build/app/outputs/flutter-apk");
+        std::fs::create_dir_all(&output).expect("apk output directory");
+        let expected = output.join("app-normal-arm64-v8a-debug.apk");
+        std::fs::write(&expected, b"apk").expect("apk");
+        assert_eq!(android_apk_path(&root, "arm64-v8a", Configuration::Debug), expected);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn android_apk_path_falls_back_deterministically_when_not_built() {
+        let root = std::env::temp_dir().join(format!("torca-apk-fallback-{}", std::process::id()));
+        let expected = root.join(
+            "apps/client/flutter/build/app/outputs/flutter-apk/app-normal-arm64-v8a-debug.apk",
+        );
+        assert_eq!(android_apk_path(&root, "arm64-v8a", Configuration::Debug), expected);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn android_toolchain_uses_portable_linker_names_for_msys() {
         let toolchain = AndroidToolchain {
             ndk_bin: PathBuf::from(
@@ -845,8 +1147,11 @@ mod tests {
             ),
             unix_perl: PathBuf::from(r"C:\msys64\usr\bin\perl.exe"),
         };
-        let environment =
-            toolchain.environment(android_targets(&[AndroidAbi::Arm64])[0], Some("a.onion:443"));
+        let environment = toolchain.environment(
+            android_targets(&[AndroidAbi::Arm64])[0],
+            Some("a.onion:443"),
+            Path::new(r"G:\torca\target\providers\tor"),
+        );
         assert_eq!(environment["CC_aarch64-linux-android"], "aarch64-linux-android26-clang.cmd");
         assert_eq!(environment["CC_aarch64_linux_android"], "aarch64-linux-android26-clang.cmd");
         assert_eq!(
@@ -858,7 +1163,7 @@ mod tests {
 
     #[test]
     fn direct_provider_build_environment_has_no_tor_relay_define() {
-        let environment = build_environment(None, CommunicationProvider::WebRtc);
+        let environment = build_environment(None, CommunicationProvider::WebRtc, None);
         assert_eq!(environment["TORCA_COMMUNICATION_PROVIDER"], "webrtc");
         assert!(!environment.contains_key("TORCA_PROVIDER_ENDPOINT"));
     }
@@ -876,6 +1181,8 @@ mod tests {
         std::fs::write(&paths.relay_endpoint, &current_endpoint).expect("relay endpoint");
         let manifest = serde_json::json!({
             "endpoint": format!("{}.onion:443", "b".repeat(56)),
+            "communicationProvider": "tor",
+            "compiledFeatures": "provider-tor,radio-audio",
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,
@@ -893,6 +1200,7 @@ mod tests {
             Configuration::Debug,
             &artifact,
             CommunicationProvider::Tor,
+            None,
         )
         .expect_err("endpoint mismatch");
         assert!(error.contains("artifact endpoint mismatch"));
@@ -913,6 +1221,7 @@ mod tests {
         let manifest = serde_json::json!({
             "endpoint": endpoint,
             "communicationProvider": "webrtc",
+            "compiledFeatures": "provider-webrtc,radio-audio",
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,
@@ -930,6 +1239,7 @@ mod tests {
             Configuration::Debug,
             &artifact,
             CommunicationProvider::Tor,
+            None,
         )
         .expect_err("provider mismatch");
         assert!(error.contains("artifact provider mismatch"));

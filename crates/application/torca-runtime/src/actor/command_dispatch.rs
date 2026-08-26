@@ -5,7 +5,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
     engine: &EngineHandle,
     pairing: &mut P,
     communication: &mut C,
-    communication_lifecycle: &T,
+    communication_lifecycle: &mut T,
     probes: &ProbeSupervisor,
     rendezvous_info: Option<&Arc<dyn RendezvousProbe>>,
     rendezvous_health: Option<&RendezvousHealthHandle>,
@@ -19,6 +19,9 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
     now: Timestamp,
 ) {
     match command {
+        RuntimeCommand::RefreshProviderRoute(response) => {
+            let _ = response.send(communication_lifecycle.refresh_route(now));
+        }
         RuntimeCommand::CreatePairing(id, r) => {
             acquire_pairing_lease(policy, id);
             wake_rendezvous(rendezvous_health);
@@ -248,13 +251,13 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
         RuntimeCommand::WakeDelivery(..) | RuntimeCommand::ReleaseDelivery(_) => unreachable!(),
         RuntimeCommand::SetAttention(_) => unreachable!(),
         RuntimeCommand::NetworkChanged => unreachable!(),
-        RuntimeCommand::SetRadioDemand(_, _)
-        | RuntimeCommand::SetRadioTransmission(_, _)
-        | RuntimeCommand::SetInstantContactDemand(_, _) => {
+        RuntimeCommand::SetRadioDemand(_, _, _)
+        | RuntimeCommand::SetRadioTransmission(_, _, _)
+        | RuntimeCommand::SetInstantContactDemand(_, _, _) => {
             unreachable!()
         }
-        RuntimeCommand::SetForeground(_) => unreachable!(),
-        RuntimeCommand::SetBatteryPolicyInputs(_, _) => unreachable!(),
+        RuntimeCommand::SetForeground(_, _) => unreachable!(),
+        RuntimeCommand::SetBatteryPolicyInputs(_, _, _) => unreachable!(),
         RuntimeCommand::Shutdown(_) => unreachable!(),
     }
 }

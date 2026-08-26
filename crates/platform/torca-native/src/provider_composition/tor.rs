@@ -5,7 +5,7 @@ use torca_pairing_coordinator::{PairingCoordinator, PairingRuntime};
 use torca_pairing_driver::{
     PairingTransportRoute, PairingTransportRouteSource, RuntimePairingDriver,
 };
-use torca_radio_adapters::TorRadioMediaSystemFactory;
+use torca_radio_tor::TorRadioMediaSystemFactory;
 use torca_rendezvous_client::RendezvousClient;
 use torca_rendezvous_tor::SharedTorRelayTransport;
 use torca_runtime::PairingDriver;
@@ -66,9 +66,9 @@ pub(crate) fn compose(
         pairing_factory: Box::new(TorPairingFactory {
             relay_transport: relay_transport.clone(),
             route_source: Box::new(move || {
-                pairing_endpoint
+                Ok(pairing_endpoint
                     .get()
-                    .map(|onion| PairingTransportRoute::new("tor", onion.into_bytes()))
+                    .map(|onion| PairingTransportRoute::new("tor", onion.into_bytes())))
             }),
         }),
         rendezvous_probe: Some(build_relay_probe(relay_transport, RELAY_HEALTH_TIMEOUT)),

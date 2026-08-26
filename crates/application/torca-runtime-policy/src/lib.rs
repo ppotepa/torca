@@ -257,9 +257,14 @@ impl BatteryPreferences {
         EffectiveBatteryPolicy {
             profile,
             reason,
+            // An explicit AlwaysAvailable choice is a reachability contract,
+            // not merely a cosmetic profile.  Do not put the provider into
+            // dormancy in the background in that mode; Automatic/Balanced
+            // and BatterySaver may still use the one-shot grace policy.
             communication_dormancy_allowed: !diagnostics_override
                 && !system.foreground
-                && self.allow_delayed_background_delivery,
+                && self.allow_delayed_background_delivery
+                && self.mode != RequestedBatteryMode::AlwaysAvailable,
             background_sync: self.background_sync,
             metered_transfers: self.metered_transfers,
             visual_activity: self.visual_activity,
@@ -953,6 +958,7 @@ pub struct RuntimeEventHubStats {
 struct HubState {
     revision: u64,
     cursor: u64,
+    closed: bool,
     cancelled: HashSet<u64>,
     stats: RuntimeEventHubStats,
 }
@@ -988,6 +994,7 @@ impl RuntimeEventHub {
         let ready = |state: &HubState| {
             state.revision > after_revision
                 || state.cursor > after_cursor
+                || state.closed
                 || state.cancelled.contains(&waiter)
         };
         let (mut state, _) =
@@ -1019,6 +1026,7 @@ impl RuntimeEventHub {
         let ready = |state: &HubState| {
             state.revision > after_revision
                 || state.cursor > after_cursor
+                || state.closed
                 || state.cancelled.contains(&waiter)
         };
         while !ready(&state) {
@@ -1040,6 +1048,22 @@ impl RuntimeEventHub {
         }
     }
 
+    /// Closes the hub and wakes every blocking waiter.  Runtime shutdown and
+    /// actor panic use this instead of publishing a fabricated cursor value;
+    /// callers can therefore distinguish a dead generation from a normal
+    /// revision change without relying on a sentinel number.
+    pub fn close(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+            self.changed.notify_all();
+        }
+    }
+
+    /// Returns whether the owner of this hub has terminated.
+    pub fn is_closed(&self) -> bool {
+        self.state.lock().map(|state| state.closed).unwrap_or(true)
+    }
+
     /// Returns current revision and cursor without waiting.
     pub fn current(&self) -> Option<(u64, u64)> {
         self.state.lock().ok().map(|state| (state.revision, state.cursor))
@@ -1053,6 +1077,7 @@ impl RuntimeEventHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn id(value: u128) -> OpaqueId {
         OpaqueId::from_u128(value)
@@ -1216,6 +1241,20 @@ mod tests {
     }
 
     #[test]
+    fn explicit_always_available_prevents_background_dormancy() {
+        let preferences = BatteryPreferences {
+            mode: RequestedBatteryMode::AlwaysAvailable,
+            ..BatteryPreferences::default()
+        };
+        let policy = preferences.effective(
+            SystemEnergyState { foreground: false, ..SystemEnergyState::default() },
+            false,
+        );
+        assert_eq!(policy.profile, BatteryProfile::AlwaysAvailable);
+        assert!(!policy.communication_dormancy_allowed);
+    }
+
+    #[test]
     fn thirty_minute_idle_does_not_create_background_work() {
         let start = Instant::now();
         let mut governor = RuntimeGovernor::new(start);
@@ -1234,6 +1273,17 @@ mod tests {
         assert_eq!(hub.current(), Some((0, 0)));
         hub.publish(7);
         assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), Some((1, 7)));
+    }
+
+    #[test]
+    fn event_hub_close_wakes_indefinite_waiter() {
+        let hub = Arc::new(RuntimeEventHub::default());
+        let waiting = Arc::clone(&hub);
+        let waiter = std::thread::spawn(move || waiting.wait_indefinitely(7, 0, 0));
+        std::thread::sleep(Duration::from_millis(5));
+        hub.close();
+        assert!(waiter.join().expect("waiter thread should exit").is_some());
+        assert!(hub.is_closed());
     }
 
     #[test]

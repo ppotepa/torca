@@ -1,12 +1,34 @@
 use torca_transport_api::{TransportKind, TransportParseError};
 
-const COMPILED_PROVIDER: &str = match option_env!("TORCA_COMMUNICATION_PROVIDER") {
-    Some(value) => value,
-    None => "tor",
-};
+#[cfg(not(any(feature = "provider-tor", feature = "provider-iroh", feature = "provider-webrtc",)))]
+compile_error!("torca-native requires exactly one communication provider feature");
+
+#[cfg(any(
+    all(feature = "provider-tor", feature = "provider-iroh"),
+    all(feature = "provider-tor", feature = "provider-webrtc"),
+    all(feature = "provider-iroh", feature = "provider-webrtc"),
+))]
+compile_error!("torca-native supports exactly one communication provider feature");
+
+#[cfg(feature = "provider-tor")]
+const FEATURE_PROVIDER: &str = "tor";
+#[cfg(feature = "provider-iroh")]
+const FEATURE_PROVIDER: &str = "iroh";
+#[cfg(feature = "provider-webrtc")]
+const FEATURE_PROVIDER: &str = "webrtc";
 
 pub(crate) fn compiled_provider() -> Result<TransportKind, TransportParseError> {
-    TransportKind::from_wire(COMPILED_PROVIDER)
+    // The Cargo feature is authoritative.  The environment value is retained
+    // only as a consistency check for deployment metadata; it can never cause
+    // an artifact to load a provider that was not linked into it.
+    if let Some(configured) = option_env!("TORCA_COMMUNICATION_PROVIDER")
+        && configured != FEATURE_PROVIDER
+    {
+        return Err(TransportParseError(format!(
+            "provider '{configured}' does not match compiled feature '{FEATURE_PROVIDER}'"
+        )));
+    }
+    TransportKind::from_wire(FEATURE_PROVIDER)
 }
 
 /// Rejects adapters whose complete native commissioning composition has not
@@ -26,8 +48,15 @@ mod tests {
     use torca_transport_api::TransportKind;
 
     #[test]
-    fn default_provider_is_tor() {
-        assert_eq!(compiled_provider().unwrap_or(TransportKind::Memory), TransportKind::Tor);
+    fn compiled_provider_matches_feature() {
+        let expected = if cfg!(feature = "provider-tor") {
+            TransportKind::Tor
+        } else if cfg!(feature = "provider-iroh") {
+            TransportKind::Iroh
+        } else {
+            TransportKind::WebRtc
+        };
+        assert_eq!(compiled_provider().unwrap_or(TransportKind::Memory), expected);
     }
 
     #[test]

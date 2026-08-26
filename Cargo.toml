@@ -49,6 +49,7 @@ members = [
     "crates/infrastructure/torca-pairing-driver",
     "crates/infrastructure/torca-logging",
     "crates/infrastructure/torca-radio-adapters",
+    "crates/infrastructure/torca-radio-tor",
     "services/relay",
     "crates/platform/torca-contract",
     "crates/platform/torca-native",

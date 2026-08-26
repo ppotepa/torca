@@ -199,7 +199,10 @@ impl TorcaRuntime {
             }
         }
         let session_state = snapshot.radio.session.as_ref().map_or_else(
-            || "none".to_owned(),
+            || format!(
+                "none transport_failure={}",
+                snapshot.radio.last_transport_failure.as_deref().unwrap_or("none")
+            ),
             |session| {
                 format!(
                     "contact={} state={} floor={} burst_elapsed_ms={} transport_failure={}",

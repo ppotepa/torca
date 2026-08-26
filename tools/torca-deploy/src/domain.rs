@@ -149,6 +149,12 @@ pub struct DeployPlan {
     /// Exactly one provider is selected for new sessions by each deployment.
     #[serde(default)]
     pub communication_provider: CommunicationProvider,
+    /// Optional provider-owned runtime profile. The deployer treats this as
+    /// opaque configuration; the selected provider validates its values at
+    /// the composition boundary. Iroh currently accepts `always`, `direct`
+    /// and `local`.
+    #[serde(default)]
+    pub provider_profile: Option<String>,
 }
 
 impl DeployPlan {
@@ -170,12 +176,20 @@ impl DeployPlan {
             launch: LaunchPolicy::Restart,
             privacy: PrivacyPolicy::Strict,
             communication_provider: CommunicationProvider::Tor,
+            provider_profile: None,
         }
     }
 
     pub fn validate(&self) -> Result<(), PlanError> {
         if self.targets.is_empty() && !matches!(self.action, DeployAction::ProviderMaintenance) {
             return Err(PlanError::NoTargets);
+        }
+        if self.action == DeployAction::ProviderMaintenance
+            && !self.communication_provider.deployment_profile().commissioning_service.is_managed()
+        {
+            return Err(PlanError::UnsupportedProviderMaintenance {
+                provider: self.communication_provider,
+            });
         }
         if self.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity {
             if self.communication_provider != CommunicationProvider::Tor {
@@ -197,6 +211,30 @@ impl DeployPlan {
         }
         if !self.communication_provider.deployment_profile().is_deployment_ready() {
             return Err(PlanError::ProviderNotReady(self.communication_provider));
+        }
+        if let Some(profile) = self.provider_profile.as_deref() {
+            if profile.trim().is_empty() {
+                return Err(PlanError::InvalidProviderProfile {
+                    provider: self.communication_provider,
+                    profile: profile.to_owned(),
+                });
+            }
+            if self.communication_provider == CommunicationProvider::Iroh
+                && !matches!(
+                    profile.trim().to_ascii_lowercase().as_str(),
+                    "always"
+                        | "always-reachable"
+                        | "direct"
+                        | "direct-only"
+                        | "local"
+                        | "local-only"
+                )
+            {
+                return Err(PlanError::InvalidProviderProfile {
+                    provider: self.communication_provider,
+                    profile: profile.to_owned(),
+                });
+            }
         }
         Ok(())
     }
@@ -244,6 +282,13 @@ impl DeployPlan {
         {
             self.client_data = ClientDataPolicy::ResetProfile;
         }
+        // Direct providers do not own a deployer-managed service. Persisting a
+        // stale relay build policy on an Iroh plan is misleading and can make
+        // a resumed run appear to require server work that must never happen.
+        if !self.communication_provider.deployment_profile().commissioning_service.is_managed() {
+            self.provider_service_build = BuildPolicy::Reuse;
+            self.provider_maintenance = ProviderMaintenancePolicy::Ensure;
+        }
         self
     }
 
@@ -278,6 +323,8 @@ pub enum PlanError {
     ProviderNotReady(CommunicationProvider),
     #[error("provider '{provider}' does not support the selected maintenance action")]
     UnsupportedProviderMaintenance { provider: CommunicationProvider },
+    #[error("provider '{provider}' does not support profile '{profile}'")]
+    InvalidProviderProfile { provider: CommunicationProvider, profile: String },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -411,9 +458,66 @@ mod tests {
         );
         assert!(plan.needs_provider_service());
 
+        let mut direct = plan.clone();
+        direct.communication_provider = CommunicationProvider::Iroh;
+        assert!(!direct.needs_provider_service());
+
         let mut direct = plan;
         direct.communication_provider = CommunicationProvider::WebRtc;
         assert!(!direct.needs_provider_service());
+    }
+
+    #[test]
+    fn direct_provider_normalization_never_requests_managed_service_work() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::FullRedeploy,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        plan.communication_provider = CommunicationProvider::Iroh;
+        plan.provider_service_build = BuildPolicy::Rebuild;
+        plan.provider_maintenance = ProviderMaintenancePolicy::Restart;
+        let normalized = plan.normalized();
+        assert_eq!(normalized.provider_service_build, BuildPolicy::Reuse);
+        assert_eq!(normalized.provider_maintenance, ProviderMaintenancePolicy::Ensure);
+    }
+
+    #[test]
+    fn direct_provider_maintenance_is_rejected_instead_of_building_clients() {
+        let mut plan =
+            DeployPlan::normal(DeployAction::ProviderMaintenance, vec![], Configuration::Debug);
+        plan.communication_provider = CommunicationProvider::Iroh;
+        assert!(matches!(
+            plan.validate(),
+            Err(PlanError::UnsupportedProviderMaintenance {
+                provider: CommunicationProvider::Iroh
+            })
+        ));
+    }
+
+    #[test]
+    fn iroh_profile_is_validated_at_the_deployment_boundary() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        plan.communication_provider = CommunicationProvider::Iroh;
+        plan.provider_profile = Some("direct-only".into());
+        assert!(plan.validate().is_ok());
+        plan.provider_profile = Some("unknown".into());
+        assert!(matches!(plan.validate(), Err(PlanError::InvalidProviderProfile { .. })));
+    }
+
+    #[test]
+    fn provider_profile_is_rejected_when_blank() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        plan.provider_profile = Some("  ".into());
+        assert!(matches!(plan.validate(), Err(PlanError::InvalidProviderProfile { .. })));
     }
 
     #[test]

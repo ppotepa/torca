@@ -151,7 +151,7 @@ fn show_and_execute(
     let plan = planner::normalize(plan);
     plan.validate()?;
     println!(
-        "Plan: {}\n  targets: {:?}\n  device: {:?}\n  configuration: {}\n  client build: {:?}\n  provider service build: {:?}\n  provider maintenance: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  communication protocol: {}\n  mode: {:?}",
+        "Plan: {}\n  targets: {:?}\n  device: {:?}\n  configuration: {}\n  client build: {:?}\n  provider service build: {:?}\n  provider maintenance: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  communication protocol: {}\n  provider profile: {:?}\n  mode: {:?}",
         plan.action,
         plan.targets,
         plan.device,
@@ -164,6 +164,7 @@ fn show_and_execute(
         plan.launch,
         plan.privacy,
         plan.communication_provider,
+        plan.provider_profile,
         mode
     );
     if mode == ExecutionMode::DryRun {

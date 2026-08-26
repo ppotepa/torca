@@ -270,16 +270,34 @@ class _PendingOperationRow extends StatelessWidget {
     ),
     title: Text(_label(operation.kind)),
     subtitle: Text(
-      operation.lastError?.trim().isNotEmpty == true
-          ? operation.lastError!
-          : operation.typedState == PendingOperationState.retrying
-          ? context.strings.retrying
-          : context.strings.messageQueued,
+      _subtitle(context, operation),
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
     ),
     trailing: Text('#${operation.attempts}'),
   );
+
+  String _subtitle(BuildContext context, PendingOperationDto operation) {
+    final error = operation.lastError?.trim();
+    if (error?.isNotEmpty == true) return error!;
+    final state = operation.typedState == PendingOperationState.retrying
+        ? context.strings.retrying
+        : context.strings.messageQueued;
+    final dependency = switch (operation.typedDependency) {
+      PendingOperationDependency.provider => 'provider',
+      PendingOperationDependency.communication => 'transport',
+      PendingOperationDependency.communicationAndRendezvous =>
+        'transport + rendezvous',
+      PendingOperationDependency.relay => 'service',
+      PendingOperationDependency.torOnionAndRelay => 'service',
+      PendingOperationDependency.runtime => 'runtime',
+      PendingOperationDependency.network => 'network',
+      PendingOperationDependency.unknown => null,
+    };
+    return dependency == null
+        ? state
+        : '$state · ${context.strings.waitingForDependency(dependency)}';
+  }
 
   String _label(String kind) {
     final normalized = kind.replaceAll('_', ' ');

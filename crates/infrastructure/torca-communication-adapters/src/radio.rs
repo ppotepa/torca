@@ -33,6 +33,7 @@ pub struct PeerRadioControl<R, S, K, C, P> {
     link: SharedPeerLink<S, K>,
     crypto: SharedPeerCrypto<C, P>,
     local_identity: OpaqueId,
+    provider: TransportKind,
     queued: VecDeque<(ContactId, RadioControlFrame)>,
     next_attempt_at: Option<Instant>,
     retry_delay: Duration,
@@ -44,12 +45,14 @@ impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
         link: SharedPeerLink<S, K>,
         crypto: SharedPeerCrypto<C, P>,
         local_identity: OpaqueId,
+        provider: TransportKind,
     ) -> Self {
         Self {
             relationships,
             link,
             crypto,
             local_identity,
+            provider,
             queued: VecDeque::new(),
             next_attempt_at: None,
             retry_delay: Duration::from_millis(500),
@@ -119,18 +122,42 @@ where
             &payload,
         )
         .map_err(|_| RadioApplicationError::Crypto)?;
-        let result = self
-            .link
-            .send_envelope(contact_id, envelope_id, RADIO_CONTROL_MESSAGE_KIND, ciphertext)
-            .is_ok();
-        if result {
-            eprintln!("torca-radio: control sent contact={contact_id}");
-            self.queued.pop_front();
-            self.next_attempt_at = None;
-            self.retry_delay = Duration::from_millis(500);
-        } else {
-            self.next_attempt_at = Some(now_instant + self.retry_delay);
-            self.retry_delay = (self.retry_delay * 2).min(Duration::from_secs(30));
+        match self.link.send_envelope(
+            contact_id,
+            envelope_id,
+            RADIO_CONTROL_MESSAGE_KIND,
+            ciphertext,
+        ) {
+            Ok(()) => {
+                eprintln!("torca-radio: control sent contact={contact_id}");
+                self.queued.pop_front();
+                self.next_attempt_at = None;
+                self.retry_delay = Duration::from_millis(500);
+            }
+            Err(error) => {
+                // Keep the bounded retry queue, but never hide the provider
+                // failure behind a generic `false`.  Without the concrete
+                // error an Iroh route/handshake problem looked identical to
+                // a healthy control lane and left the UI in `requesting`
+                // until the floor timeout.
+                eprintln!(
+                    "torca-radio: control send failed contact={} provider={} retry_ms={} error={error:?}",
+                    contact_id,
+                    self.provider.wire_value(),
+                    self.retry_delay.as_millis(),
+                );
+                // Do not let one unavailable contact block control traffic
+                // for every other Radio session. Rotate only when the next
+                // queued item belongs to another contact; frames for the
+                // same contact stay ordered (floor/request/end semantics).
+                let next_is_other_contact =
+                    self.queued.get(1).is_some_and(|(next_contact, _)| *next_contact != contact_id);
+                if next_is_other_contact && let Some(item) = self.queued.pop_front() {
+                    self.queued.push_back(item);
+                }
+                self.next_attempt_at = Some(now_instant + self.retry_delay);
+                self.retry_delay = (self.retry_delay * 2).min(Duration::from_secs(30));
+            }
         }
         Ok(())
     }
@@ -288,10 +315,17 @@ where
             .filter(|contact| contact.status() == ContactStatus::Active)
             .and_then(|contact| {
                 let provider_name = self.provider.wire_value().to_owned();
-                let endpoint = contact.route().provider_endpoint(&provider_name)?.to_vec();
+                let endpoint = contact.route().provider_endpoint(&provider_name)?;
+                // An empty opaque endpoint is not a usable provider route.
+                // Reject it at the directory boundary so every provider gets
+                // the same EndpointUnavailable/retry semantics instead of
+                // attempting a malformed dial and leaving Radio connecting.
+                if endpoint.is_empty() {
+                    return None;
+                }
                 Some(RadioMediaRoute {
                     provider: provider_name,
-                    endpoint,
+                    endpoint: endpoint.to_vec(),
                     local_identity: self.local_identity,
                     remote_identity: contact.remote_identity().identity_id().to_opaque(),
                 })

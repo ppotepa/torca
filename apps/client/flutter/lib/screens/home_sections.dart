@@ -263,6 +263,7 @@ class _ContactsSection extends StatelessWidget {
                         ConnectionIndicator(
                           state: contact.connectionState,
                           blocked: contact.typedStatus == ContactStatus.blocked,
+                          provider: contact.transportProvider,
                           showLabel: false,
                         ),
                         IconButton(

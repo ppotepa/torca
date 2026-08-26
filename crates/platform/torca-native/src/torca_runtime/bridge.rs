@@ -235,6 +235,7 @@ fn bridge_command(
         "radio.transmission.end" => {
             Ok(BridgeCommand::EndRadioTransmission { contact_id_hex: text("contactIdHex")? })
         }
+        "provider.route.refresh" => Ok(BridgeCommand::RefreshProviderRoute),
         _ => Err(("CONTRACT_OPERATION_UNKNOWN", "contract.operation.unknown")),
     }
 }

@@ -30,17 +30,20 @@ impl PairingTransportRoute {
     }
 }
 
-/// Reads the endpoint from the currently selected provider. Returning `None`
-/// means commissioning has not produced a routable endpoint yet.
+/// Reads the endpoint from the currently selected provider. Returning `Ok(None)`
+/// means commissioning has not produced a routable endpoint yet. A typed
+/// error is reserved for a provider state that needs an explicit recovery
+/// action (for example a stale route after network migration); it must not be
+/// silently converted into a generic pending invitation.
 pub trait PairingTransportRouteSource: Send + Sync {
-    fn local_route(&self) -> Option<PairingTransportRoute>;
+    fn local_route(&self) -> Result<Option<PairingTransportRoute>, RuntimeDriverError>;
 }
 
 impl<F> PairingTransportRouteSource for F
 where
-    F: Fn() -> Option<PairingTransportRoute> + Send + Sync,
+    F: Fn() -> Result<Option<PairingTransportRoute>, RuntimeDriverError> + Send + Sync,
 {
-    fn local_route(&self) -> Option<PairingTransportRoute> {
+    fn local_route(&self) -> Result<Option<PairingTransportRoute>, RuntimeDriverError> {
         self()
     }
 }
@@ -114,7 +117,7 @@ where
     fn context(&mut self) -> Result<Option<LocalPairingContext>, RuntimeDriverError> {
         let snapshot = self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         let identity = snapshot.identity.ok_or(RuntimeDriverError::Pairing)?;
-        let Some(route) = self.route_source.local_route() else {
+        let Some(route) = self.route_source.local_route()? else {
             return Ok(None);
         };
         Ok(Some(LocalPairingContext {

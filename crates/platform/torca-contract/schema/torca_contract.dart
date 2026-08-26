@@ -151,6 +151,14 @@ enum TransportState {
   unknown,
 }
 
+enum ProviderRouteState { fresh, stale, unavailable }
+
+ProviderRouteState _providerRouteState(String value) => switch (value) {
+  'fresh' => ProviderRouteState.fresh,
+  'stale' => ProviderRouteState.stale,
+  _ => ProviderRouteState.unavailable,
+};
+
 enum PeerHealthQuality { excellent, good, fair, poor, unknown }
 
 enum ContactStatus { active, blocked, removed, unknown }
@@ -209,6 +217,15 @@ enum AttachmentStatus {
 enum PendingOperationState { queued, retrying, unknown }
 
 enum PendingOperationDependency {
+  /// The selected communication provider is not ready yet. New payloads
+  /// should use this provider-neutral dependency instead of naming Tor.
+  provider,
+  /// The selected provider's transport path is required.
+  communication,
+  /// The selected provider's transport and rendezvous/signalling path are
+  /// required (the rendezvous mechanism is provider-owned).
+  communicationAndRendezvous,
+  /// Legacy compatibility value emitted by older runtimes.
   torOnionAndRelay,
   relay,
   runtime,
@@ -449,6 +466,7 @@ class TransportIndicatorDto {
 class TransportStatusDto {
   const TransportStatusDto({
     this.communication = const TransportIndicatorDto(state: 'stopped'),
+    this.providerRouteState = 'unavailable',
     this.tor = const TransportIndicatorDto(state: 'stopped'),
     this.relay = const TransportIndicatorDto(),
     this.peer = const TransportIndicatorDto(state: 'disconnected'),
@@ -458,6 +476,7 @@ class TransportStatusDto {
   });
   factory TransportStatusDto.fromJson(Map<String, dynamic> value) {
     final communication = value['communication'];
+    final providerRouteState = value['providerRouteState'];
     final tor = value['tor'];
     final relay = value['relay'];
     final peer = value['peer'];
@@ -469,6 +488,7 @@ class TransportStatusDto {
               fallbackState: 'stopped',
             )
           : const TransportIndicatorDto(state: 'stopped'),
+      providerRouteState: providerRouteState as String? ?? 'unavailable',
       tor: tor is Map<String, dynamic>
           ? TransportIndicatorDto.fromJson(tor, fallbackState: 'stopped')
           : const TransportIndicatorDto(state: 'stopped'),
@@ -486,8 +506,12 @@ class TransportStatusDto {
     );
   }
   final TransportIndicatorDto communication, tor, relay, peer;
+  final String providerRouteState;
   final int peersReady, peersTotal;
   final RelayInfoDto? relayInfo;
+
+  ProviderRouteState get typedProviderRouteState =>
+      _providerRouteState(providerRouteState);
 }
 
 class RelayInfoDto {
@@ -527,7 +551,7 @@ class ContactDto {
     required this.id,
     this.remoteIdentityId = '',
     required this.displayName,
-    this.transportProvider = 'tor',
+    this.transportProvider = 'unknown',
     this.endpointAvailable = false,
     this.onionAddress,
     required this.status,
@@ -545,7 +569,7 @@ class ContactDto {
       id: _requiredString(value, 'id'),
       remoteIdentityId: _requiredString(value, 'remoteIdentityId'),
       displayName: _requiredString(value, 'displayName'),
-      transportProvider: value['transportProvider'] as String? ?? 'tor',
+      transportProvider: value['transportProvider'] as String? ?? 'unknown',
       endpointAvailable: value['endpointAvailable'] as bool? ?? false,
       onionAddress: value['onionAddress'] as String?,
       status: _requiredString(value, 'status'),
@@ -778,6 +802,10 @@ class PendingOperationDto {
     _ => PendingOperationState.unknown,
   };
   PendingOperationDependency get typedDependency => switch (dependency) {
+    'provider' => PendingOperationDependency.provider,
+    'communication' => PendingOperationDependency.communication,
+    'communication_and_rendezvous' =>
+      PendingOperationDependency.communicationAndRendezvous,
     'tor_onion_and_relay' => PendingOperationDependency.torOnionAndRelay,
     'relay' => PendingOperationDependency.relay,
     'runtime' => PendingOperationDependency.runtime,
@@ -971,7 +999,7 @@ class AppSnapshotDto {
     this.notificationsEnabled = true,
     this.readReceiptsEnabled = true,
     this.identity,
-    this.communicationProvider = 'tor',
+    this.communicationProvider = 'unknown',
     this.communicationState = 'stopped',
     this.endpointSummary,
     this.torState = 'stopped',
@@ -1003,7 +1031,7 @@ class AppSnapshotDto {
       identity: identity is Map<String, dynamic>
           ? IdentityDto.fromJson(identity)
           : null,
-      communicationProvider: value['communicationProvider'] as String? ?? 'tor',
+      communicationProvider: value['communicationProvider'] as String? ?? 'unknown',
       communicationState: value['communicationState'] as String? ?? 'stopped',
       endpointSummary: value['endpointSummary'] as String?,
       torState: value['torState'] as String? ?? 'stopped',
@@ -1403,6 +1431,10 @@ class RefreshSnapshotCommandDto extends BridgeCommandDto {
   const RefreshSnapshotCommandDto();
 }
 
+class RefreshProviderRouteCommandDto extends BridgeCommandDto {
+  const RefreshProviderRouteCommandDto();
+}
+
 /// Generated wire encoder for the only supported native ABI operation.
 ///
 /// Keeping the command-to-wire mapping here makes the canonical contract the
@@ -1522,6 +1554,9 @@ class RuntimeRequestDto {
   int get timeoutMs => kind == 'query' ? 5000 : 10000;
 
   static RuntimeRequestDto? command(BridgeCommandDto command) {
+    if (command is RefreshProviderRouteCommandDto) {
+      return _command('provider.route.refresh', const <String, Object?>{});
+    }
     if (command is RefreshSnapshotCommandDto) return snapshot;
     if (command is SetAttentionCommandDto) {
       return _command('runtime.attention.set', <String, Object?>{

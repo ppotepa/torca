@@ -58,4 +58,16 @@ void main() {
       'Tor reconnecting',
     );
   });
+
+  test('peer presentation uses the selected provider', () {
+    expect(
+      ConnectionStatePresenter.peer(
+        state: 'ready',
+        blocked: false,
+        provider: 'iroh',
+        icons: icons,
+      ).label,
+      'Direct Iroh contact',
+    );
+  });
 }

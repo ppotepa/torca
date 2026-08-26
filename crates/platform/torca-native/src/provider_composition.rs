@@ -2,8 +2,11 @@
 //! bootstrap.  The bootstrap only selects a deployment-ready provider and
 //! receives provider-neutral runtime parts.
 
+#[cfg(feature = "provider-iroh")]
 pub(crate) mod iroh;
+#[cfg(feature = "provider-tor")]
 pub(crate) mod tor;
+#[cfg(feature = "provider-webrtc")]
 pub(crate) mod webrtc;
 
 use std::sync::Arc;
@@ -25,6 +28,7 @@ pub(crate) struct ProviderPairingInputs {
     pub engine: EngineHandle,
     pub approval: Box<dyn PairingApprovalPort + Send>,
     pub peer_secrets: Box<dyn PairingPeerSecretStore + Send>,
+    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub connectivity: ConnectivityObserver,
 }
 
@@ -56,13 +60,17 @@ pub(crate) struct ProviderComponents {
 /// `rendezvous_endpoint` is optional because direct providers may instead
 /// obtain their signaling details through a platform adapter.
 pub(crate) struct ProviderCompositionInputs {
+    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub data_dir: PathBuf,
     /// Provider-owned secret namespace. The selected adapter may persist an
     /// endpoint/signalling identity here; other providers never see it.
     pub provider_secret_store: Box<dyn ProtectedSecretStore>,
     pub rendezvous_endpoint: Option<(String, u16)>,
+    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub startup_timeout: Duration,
+    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub now: torca_foundation::Timestamp,
+    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub bootstrap_observer: CommissioningObserver,
 }
 
@@ -82,7 +90,8 @@ pub(crate) fn compose_selected_provider(
             "selected communication provider requires a rendezvous endpoint",
         ));
     }
-    let components = match provider {
+    let composed: Result<ProviderComponents, NativeCompositionError> = match provider {
+        #[cfg(feature = "provider-tor")]
         TransportKind::Tor => {
             let (relay_host, relay_port) = inputs
                 .rendezvous_endpoint
@@ -96,17 +105,32 @@ pub(crate) fn compose_selected_provider(
                 inputs.bootstrap_observer,
             )
         }
+        #[cfg(not(feature = "provider-tor"))]
+        TransportKind::Tor => {
+            Err(NativeCompositionError::new("Tor provider is not included in this native artifact"))
+        }
+        #[cfg(feature = "provider-iroh")]
         TransportKind::Iroh => iroh::compose(inputs.provider_secret_store),
+        #[cfg(not(feature = "provider-iroh"))]
+        TransportKind::Iroh => Err(NativeCompositionError::new(
+            "Iroh provider is not included in this native artifact",
+        )),
+        #[cfg(feature = "provider-webrtc")]
         TransportKind::WebRtc => {
             let session = crate::runtime_composition::registered_webrtc_session_provider()?;
             let signaling = crate::runtime_composition::registered_webrtc_signaling_provider()?;
             webrtc::compose(session, signaling)
         }
+        #[cfg(not(feature = "provider-webrtc"))]
+        TransportKind::WebRtc => Err(NativeCompositionError::new(
+            "WebRTC provider is not included in this native artifact",
+        )),
         TransportKind::Memory => Err(NativeCompositionError::new(format!(
             "communication provider '{}' is available only for simulated runtimes",
             provider.wire_value()
         ))),
-    }?;
+    };
+    let components = composed?;
     if components.provider != provider || components.lifecycle.provider() != provider {
         return Err(NativeCompositionError::new(format!(
             "provider composition mismatch: selected={}, bundle={}, lifecycle={}",
@@ -125,7 +149,10 @@ pub(crate) fn compiled_rendezvous_endpoint(
     provider: TransportKind,
 ) -> Result<Option<(String, u16)>, NativeCompositionError> {
     match provider {
+        #[cfg(feature = "provider-tor")]
         TransportKind::Tor => tor::compiled_rendezvous_endpoint().map(Some),
+        #[cfg(not(feature = "provider-tor"))]
+        TransportKind::Tor => Ok(None),
         TransportKind::Iroh | TransportKind::WebRtc | TransportKind::Memory => Ok(None),
     }
 }

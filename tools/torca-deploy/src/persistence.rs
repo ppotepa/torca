@@ -64,7 +64,12 @@ impl StateStore {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let existing = fs::read_to_string(&path).unwrap_or_default();
                 let owner_pid = parse_owner_pid(&existing);
-                let owner_alive = owner_pid.is_some_and(is_process_alive);
+                // The lock owner is this process in the re-entrancy check
+                // below.  On Windows `tasklist` can briefly omit a process
+                // during startup/teardown, so never classify our own lock as
+                // stale based on an external process listing.
+                let owner_alive =
+                    owner_pid.is_some_and(|pid| pid == std::process::id() || is_process_alive(pid));
                 let stale = owner_pid.is_some() && !owner_alive;
                 let malformed_old = owner_pid.is_none()
                     && fs::metadata(&path)

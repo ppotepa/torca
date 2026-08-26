@@ -231,6 +231,7 @@ impl DeployExecutor {
                     run.plan.client_build,
                     endpoint.as_deref(),
                     run.plan.communication_provider,
+                    run.plan.provider_profile.as_deref(),
                 )
                 .map_err(DeployError::Build)?;
             run.advance(DeployStage::ArtifactsBuilt, "native Rust/Flutter artifacts built");
@@ -247,7 +248,18 @@ impl DeployExecutor {
             run.advance(DeployStage::ClientDataReset, "selected client data reset");
             self.checkpoint(run)?;
         }
-        if !run.completed.contains(&DeployStage::ClientsInstalled)
+        // A persisted checkpoint is only valid while the selected package and
+        // its launchable activity still exist on every Android target. This
+        // prevents a stale `ClientsInstalled` stage from skipping install
+        // after an uninstall, flavor switch, or device data reset.
+        let clients_installed = run.completed.contains(&DeployStage::ClientsInstalled)
+            && devices.iter().all(|device| {
+                matches!(device.target, crate::domain::Target::Windows)
+                    || InstallController::new(&paths, self.runner.as_ref())
+                        .verify_installed(&device.id)
+                        .is_ok()
+            });
+        if !clients_installed
             && !matches!(
                 run.plan.action,
                 crate::domain::DeployAction::RunInstalled
@@ -257,7 +269,12 @@ impl DeployExecutor {
         {
             for device in &devices {
                 InstallController::new(&paths, self.runner.as_ref())
-                    .install(device, run.plan.configuration, run.plan.communication_provider)
+                    .install(
+                        device,
+                        run.plan.configuration,
+                        run.plan.communication_provider,
+                        run.plan.provider_profile.as_deref(),
+                    )
                     .map_err(DeployError::Install)?;
             }
             run.advance(DeployStage::ClientsInstalled, "selected client artifacts installed");
@@ -290,6 +307,7 @@ impl DeployExecutor {
                                 run.plan.configuration,
                                 run.plan.privacy,
                                 run.plan.communication_provider,
+                                run.plan.provider_profile.as_deref(),
                                 matches!(run.plan.launch, crate::domain::LaunchPolicy::Restart),
                             )
                             .map(|receipt| (device, receipt))
@@ -336,6 +354,7 @@ impl DeployExecutor {
                 run.plan.configuration,
                 run.plan.communication_provider,
                 endpoint,
+                run.plan.provider_profile.as_deref(),
             )
             .map_err(DeployError::Manifest)?;
         }
@@ -410,6 +429,7 @@ mod tests {
             root.join(".torca/manifests/clients-debug.json"),
             serde_json::to_vec(&serde_json::json!({
                 "endpoint": endpoint,
+                "communicationProvider": "tor",
                 "targets": ["windows"],
                 "buildId": "BUILD",
                 "sourceCommit": "COMMIT",

@@ -263,11 +263,13 @@ impl BootstrapState {
                 BootstrapPhase::Failed
             } else if profile_ready {
                 BootstrapPhase::Ready
-            // Relay is a recoverable, demand-driven capability. Requiring its
-            // first probe here creates a circular dependency: the relay worker
-            // sleeps until pairing demand exists, while pairing UI is hidden
-            // until this phase completes. Local identity + reachable onion are
-            // sufficient to expose profile setup and the application shell.
+            // Provider-owned incoming reachability is a recoverable,
+            // demand-driven capability. Requiring its first probe here creates
+            // a circular dependency: the provider sleeps until pairing demand
+            // exists, while pairing UI is hidden until this phase completes.
+            // Local identity plus the communication runtime are sufficient to
+            // expose profile setup and the application shell; each provider
+            // decides separately when incoming reachability is required.
             } else if identity_ready && transport_ready {
                 BootstrapPhase::ReadyForProfile
             } else if relay_degraded {
@@ -296,6 +298,51 @@ mod tests {
     #[test]
     fn identity_and_transport_unlock_profile_setup() {
         let mut state = BootstrapState::new();
+        for step in [
+            BootstrapStepId::Preferences,
+            BootstrapStepId::NativeBridge,
+            BootstrapStepId::Contract,
+            BootstrapStepId::SecureStorage,
+            BootstrapStepId::Database,
+            BootstrapStepId::DeviceIdentity,
+            BootstrapStepId::CommunicationRuntime,
+            BootstrapStepId::IncomingReachability,
+            BootstrapStepId::Rendezvous,
+        ] {
+            state.complete(step);
+        }
+        assert_eq!(state.snapshot().phase, BootstrapPhase::ReadyForProfile);
+    }
+
+    #[test]
+    fn direct_provider_does_not_block_profile_on_incoming_reachability() {
+        let mut state = BootstrapState::new();
+        let commissioning = torca_transport_api::TransportKind::Iroh.deployment_profile();
+        // A direct provider has no managed commissioning service. Its local
+        // endpoint may still be publishing while the application shell is
+        // already safe to expose.
+        let projection = torca_transport_api::ProviderCommissioning {
+            provider: torca_transport_api::TransportKind::Iroh,
+            steps: vec![
+                torca_transport_api::CommissioningStep {
+                    stage: torca_transport_api::CommissioningStage::LocalRuntime,
+                    state: torca_transport_api::CommissioningState::Ready,
+                    required_for_local_shell: true,
+                    required_for_pairing: true,
+                },
+                torca_transport_api::CommissioningStep {
+                    stage: torca_transport_api::CommissioningStage::IncomingReachability,
+                    state: torca_transport_api::CommissioningState::Pending,
+                    required_for_local_shell: false,
+                    required_for_pairing: false,
+                },
+            ],
+            endpoint_summary: None,
+            route_state: torca_transport_api::ProviderRouteState::Unavailable,
+            pairing_bootstrap: None,
+        };
+        assert!(!commissioning.requires_service_readiness());
+        state.configure_communication_requirements(&projection);
         for step in [
             BootstrapStepId::Preferences,
             BootstrapStepId::NativeBridge,
@@ -383,6 +430,7 @@ mod tests {
                 required_for_pairing: true,
             }],
             endpoint_summary: Some("iroh:test".into()),
+            route_state: torca_transport_api::ProviderRouteState::Fresh,
             pairing_bootstrap: None,
         };
         state.configure_communication_requirements(&commissioning);

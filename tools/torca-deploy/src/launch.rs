@@ -45,6 +45,7 @@ impl<'a> LaunchController<'a> {
         configuration: Configuration,
         privacy: PrivacyPolicy,
         communication_provider: CommunicationProvider,
+        provider_profile: Option<&str>,
         restart: bool,
     ) -> Result<LaunchReceipt, LaunchError> {
         let started_at = SystemTime::now();
@@ -66,6 +67,7 @@ impl<'a> LaunchController<'a> {
                     configuration,
                     &exe,
                     communication_provider,
+                    provider_profile,
                 )
                 .map_err(LaunchError::ArtifactVerification)?;
                 WorkspaceWindowsClient::new(self.paths, self.runner).stop()?;
@@ -180,10 +182,21 @@ impl<'a> LaunchController<'a> {
         }
         // Quick validation proves that the newly launched app has a live
         // local runtime. It never waits for provider-specific remote work.
-        // Full validation waits for the selected provider's service-ready
-        // commissioning code, supplied by its deployment profile.
-        let require_service = matches!(validation, ValidationLevel::Full);
-        let timeout = if require_service { 180 } else { 45 };
+        // Full validation waits for provider-owned commissioning only when
+        // the profile actually requires an external endpoint/service. Direct
+        // providers (for example Iroh) are complete once their local runtime
+        // is ready and must never inherit a Tor-style service gate.
+        let require_service = matches!(validation, ValidationLevel::Full)
+            && communication_provider.deployment_profile().requires_service_readiness();
+        // The selected provider owns its commissioning budget. Tor may need
+        // a longer managed-directory window; Iroh/WebRTC must fail fast so a
+        // transient route problem cannot leave the deploy wizard waiting for
+        // minutes on a local runtime that is already usable.
+        let timeout = if require_service {
+            communication_provider.deployment_profile().service_validation_timeout.as_secs()
+        } else {
+            45
+        };
         let deadline = std::time::Instant::now() + Duration::from_secs(timeout);
         let started = std::time::Instant::now();
         let mut next_heartbeat = started;
@@ -566,7 +579,7 @@ pub enum LaunchError {
     Process(#[from] ProcessError),
     #[error("client process did not become healthy on {device}: {reason}")]
     HealthTimeout { device: String, reason: String },
-    #[error("client process exited before its fresh NETWORK_READY event on {0}")]
+    #[error("client process exited before its fresh provider-readiness event on {0}")]
     ProcessExited(String),
     #[error("workspace Windows client operation failed: {0}")]
     WindowsClient(#[from] WindowsClientError),
@@ -600,7 +613,8 @@ mod tests {
     #[test]
     fn quick_and_full_validation_have_distinct_readiness_contracts() {
         assert!(ready_code(Some("LOCAL_READY"), CommunicationProvider::Tor, false));
-        assert!(ready_code(Some("TOR_STARTING"), CommunicationProvider::Tor, false));
+        assert!(!ready_code(Some("TOR_STARTING"), CommunicationProvider::Tor, false));
+        assert!(!ready_code(Some("COMMUNICATION_STARTING"), CommunicationProvider::Iroh, false));
         assert!(!ready_code(Some("TOR_STARTING"), CommunicationProvider::Tor, true));
         assert!(!ready_code(Some("LOCAL_READY"), CommunicationProvider::Tor, true));
         assert!(ready_code(Some("TOR_BOOTSTRAP_READY"), CommunicationProvider::Tor, true));

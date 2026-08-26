@@ -6,6 +6,29 @@ $script:FlutterRoot = Join-Path $script:RepoRoot 'apps/client/flutter'
 $script:DartSchema = Join-Path $script:RepoRoot 'crates/platform/torca-contract/schema/torca_contract.dart'
 $script:CargoNdkVersion = '4.1.2'
 
+function Get-TorcaProviderFeatures {
+    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    switch ($provider.ToLowerInvariant()) {
+        'tor' { return 'provider-tor,radio-audio' }
+        'iroh' { return 'provider-iroh,radio-audio' }
+        'webrtc' { return 'provider-webrtc,radio-audio' }
+        default { throw "Unsupported communication provider '$provider'." }
+    }
+}
+
+function Get-TorcaProviderTargetRoot {
+    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    Join-Path $script:RepoRoot (Join-Path 'target/providers' $provider.ToLowerInvariant())
+}
+
+function Test-TorcaProviderNeedsEndpoint {
+    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    return $provider.ToLowerInvariant() -eq 'tor'
+}
+
 function Invoke-TorcaExternal {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -205,11 +228,20 @@ function Invoke-TorcaValidation {
         $rustFlags = if ($oldRustFlags) { $oldRustFlags } else { '' }
         if ($env:OS -eq 'Windows_NT') { $rustFlags = "$rustFlags -C link-arg=/IGNORE:4099" }
         $env:RUSTFLAGS = "$rustFlags -A warnings".Trim()
-        Invoke-TorcaExternal 'Rust check' { cargo check --workspace --all-targets --all-features --locked }
-        Invoke-TorcaExternal 'Rust clippy' {
-            cargo clippy --workspace --all-targets --all-features --locked -- -A warnings -A clippy::all -A clippy::pedantic -D clippy::correctness -D clippy::suspicious -D clippy::perf
+        Invoke-TorcaExternal 'Rust check' { cargo check --workspace --all-targets --locked }
+        Invoke-TorcaExternal 'Iroh provider isolation check' {
+            cargo check -p torca-native --no-default-features --features provider-iroh,radio-audio --locked
         }
-        Invoke-TorcaExternal 'Rust tests' { cargo test --workspace --all-targets --all-features --locked }
+        Invoke-TorcaExternal 'WebRTC provider isolation check' {
+            cargo check -p torca-native --no-default-features --features provider-webrtc,radio-audio --locked
+        }
+        Invoke-TorcaExternal 'Rust clippy' {
+            cargo clippy --workspace --all-targets --locked -- -A warnings -A clippy::all -A clippy::pedantic -D clippy::correctness -D clippy::suspicious -D clippy::perf
+        }
+        Invoke-TorcaExternal 'Rust tests' { cargo test --workspace --all-targets --locked }
+        Invoke-TorcaExternal 'Iroh provider tests' {
+            cargo test -p torca-native --no-default-features --features provider-iroh,radio-audio --locked
+        }
     } finally {
         $env:RUSTFLAGS = $oldRustFlags
     }
@@ -308,7 +340,7 @@ function Invoke-TorcaQuickValidation {
         cargo run -p torca-contract-gen -- --check apps/client/flutter/lib/generated/torca_contract.dart
     }
     Invoke-TorcaExternal 'Rust native check' {
-        cargo check -p torca-native --locked
+        cargo check -p torca-native --no-default-features --features (Get-TorcaProviderFeatures) --locked
     }
     Push-Location $script:FlutterRoot
     try {
@@ -404,7 +436,9 @@ function Assert-TorcaAndroidPackage {
         if ($libraries.Count -eq 0) { throw "Android package contains no libtorca_native.so: $Apk" }
         foreach ($library in $libraries) {
             Assert-TorcaNativeAbi -Library $library.FullName -Platform android
-            Assert-TorcaRelayEndpointEmbedded -Library $library.FullName -Endpoint $env:TORCA_RELAY_ENDPOINT
+            if (Test-TorcaProviderNeedsEndpoint) {
+                Assert-TorcaRelayEndpointEmbedded -Library $library.FullName -Endpoint $env:TORCA_RELAY_ENDPOINT
+            }
             Assert-TorcaBuildIdEmbedded -Library $library.FullName -BuildId $env:TORCA_BUILD_ID
             $flutterLibrary = Join-Path $library.DirectoryName 'libflutter.so'
             if (-not (Test-Path -LiteralPath $flutterLibrary)) {
@@ -533,6 +567,7 @@ function Build-TorcaNative {
         }
         $oldRustFlags = $env:RUSTFLAGS
         $oldPath = $env:PATH
+        $oldCargoTargetDir = $env:CARGO_TARGET_DIR
         try {
             # openssl-src invokes Perl during the Windows OpenSSL build. Never
             # let MSYS/Cygwin Perl win PATH resolution: it emits POSIX paths
@@ -546,14 +581,19 @@ function Build-TorcaNative {
             $env:PATH = ((@($nativePerl, $nativePerlC) + $pathParts) -join ';')
             $rustFlags = if ($oldRustFlags) { $oldRustFlags } else { '' }
             $env:RUSTFLAGS = "$rustFlags -C link-arg=/IGNORE:4099".Trim()
+            $env:CARGO_TARGET_DIR = Get-TorcaProviderTargetRoot
             if ($Configuration -eq 'release') {
-                Invoke-TorcaExternal 'Rust native Windows release' { cargo build -p torca-native --release --locked }
+                $features = Get-TorcaProviderFeatures
+                Invoke-TorcaExternal 'Rust native Windows release' { cargo build -p torca-native --release --no-default-features --features $features --locked }
             } else {
-                Invoke-TorcaExternal 'Rust native Windows debug' { cargo build -p torca-native --locked }
+                $features = Get-TorcaProviderFeatures
+                Invoke-TorcaExternal 'Rust native Windows debug' { cargo build -p torca-native --no-default-features --features $features --locked }
             }
         } finally {
             $env:RUSTFLAGS = $oldRustFlags
             $env:PATH = $oldPath
+            if ($null -eq $oldCargoTargetDir) { Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue }
+            else { $env:CARGO_TARGET_DIR = $oldCargoTargetDir }
         }
         return
     }
@@ -563,6 +603,7 @@ function Build-TorcaNative {
     $jniRoot = Join-Path $script:FlutterRoot 'android/app/src/main/jniLibs'
     New-Item -ItemType Directory -Force -Path $jniRoot | Out-Null
     $oldPath = $env:PATH
+    $oldCargoTargetDir = $env:CARGO_TARGET_DIR
     $msysPerlRoot = 'C:\msys64\usr\bin'
     $oldOpenSslSrcPerl = $env:OPENSSL_SRC_PERL
     $oldPerl = $env:PERL
@@ -595,6 +636,7 @@ function Build-TorcaNative {
     # consumed only for the initial Configure invocation.
     $env:PATH = "$msysPerlRoot;$ndkBin;$oldPath"
     $env:OPENSSL_SRC_PERL = $msysPerl
+    $env:CARGO_TARGET_DIR = Get-TorcaProviderTargetRoot
     Remove-Item Env:PERL -ErrorAction SilentlyContinue
     # MSYS make interprets absolute Windows compiler paths as escape sequences.
     # Build each ABI directly so the compiler is resolved by name from PATH.
@@ -612,11 +654,11 @@ function Build-TorcaNative {
             Set-Item -Path ("Env:AR_$($androidTarget.Triple)") -Value 'llvm-ar'
             Set-Item -Path ("Env:RANLIB_$($androidTarget.Triple)") -Value 'llvm-ranlib'
             Remove-Item -Path ("Env:CFLAGS_$($androidTarget.Triple)") -ErrorAction SilentlyContinue
-            $cargoArguments = @('build', '-p', 'torca-native', '--target', $androidTarget.Triple, '--locked')
+            $cargoArguments = @('build', '-p', 'torca-native', '--no-default-features', '--features', (Get-TorcaProviderFeatures), '--target', $androidTarget.Triple, '--locked')
             if ($Configuration -eq 'release') { $cargoArguments += '--release' }
             Invoke-TorcaExternal "Rust native Android $Configuration $($androidTarget.Abi)" { cargo @cargoArguments }
             $profile = if ($Configuration -eq 'release') { 'release' } else { 'debug' }
-            $source = Join-Path $script:RepoRoot "target/$($androidTarget.Triple)/$profile/libtorca_native.so"
+            $source = Join-Path (Get-TorcaProviderTargetRoot) "$($androidTarget.Triple)/$profile/libtorca_native.so"
             $destination = Join-Path $jniRoot "$($androidTarget.Abi)/libtorca_native.so"
             if (-not (Test-Path $source)) { throw "Android native library missing: $source" }
             New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
@@ -625,6 +667,8 @@ function Build-TorcaNative {
         }
     } finally {
         $env:PATH = $oldPath
+        if ($null -eq $oldCargoTargetDir) { Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue }
+        else { $env:CARGO_TARGET_DIR = $oldCargoTargetDir }
         if ($null -eq $oldOpenSslSrcPerl) { Remove-Item Env:OPENSSL_SRC_PERL -ErrorAction SilentlyContinue }
         else { $env:OPENSSL_SRC_PERL = $oldOpenSslSrcPerl }
         if ($null -eq $oldPerl) { Remove-Item Env:PERL -ErrorAction SilentlyContinue }
@@ -684,17 +728,21 @@ function Build-TorcaFlutterTarget {
         }
         if ($Target -eq 'windows') {
             Invoke-TorcaExternal "Flutter Windows $Configuration" { flutter build windows --$Configuration @dartDefine }
-            $rustDll = Join-Path $script:RepoRoot "target/$Configuration/torca_native.dll"
+            $rustDll = Join-Path (Get-TorcaProviderTargetRoot) "$Configuration/torca_native.dll"
             $runnerDir = Join-Path $script:FlutterRoot "build/windows/x64/runner/$([cultureinfo]::InvariantCulture.TextInfo.ToTitleCase($Configuration))"
             if (-not (Test-Path $rustDll)) {
                 throw "Native Windows library missing: $rustDll"
             }
             Assert-TorcaNativeAbi -Library $rustDll -Platform windows
-            Assert-TorcaRelayEndpointEmbedded -Library $rustDll -Endpoint $env:TORCA_RELAY_ENDPOINT
+            if (Test-TorcaProviderNeedsEndpoint) {
+                Assert-TorcaRelayEndpointEmbedded -Library $rustDll -Endpoint $env:TORCA_RELAY_ENDPOINT
+            }
             Assert-TorcaBuildIdEmbedded -Library $rustDll -BuildId $env:TORCA_BUILD_ID
             Copy-Item $rustDll (Join-Path $runnerDir 'torca_native.dll') -Force
             Assert-TorcaNativeAbi -Library (Join-Path $runnerDir 'torca_native.dll') -Platform windows
-            Assert-TorcaRelayEndpointEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -Endpoint $env:TORCA_RELAY_ENDPOINT
+            if (Test-TorcaProviderNeedsEndpoint) {
+                Assert-TorcaRelayEndpointEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -Endpoint $env:TORCA_RELAY_ENDPOINT
+            }
             Assert-TorcaBuildIdEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -BuildId $env:TORCA_BUILD_ID
             $forbiddenNativeNames = @('torca_' + 'bridge.dll', 'torca_' + 'contract.dll')
             Get-ChildItem $runnerDir -Recurse -File |

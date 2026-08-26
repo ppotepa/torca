@@ -43,7 +43,10 @@ abstract final class MicrophonePermission {
   }
 
   static Future<bool> startNativeCapture() async {
-    if (!Platform.isAndroid) return false;
+    // Desktop capture is owned by the Rust/CPAL audio adapter. Returning true
+    // keeps the caller's capture handshake provider-neutral: only Android has
+    // a second AudioRecord boundary that must explicitly acknowledge start.
+    if (!Platform.isAndroid) return true;
     try {
       return await _channel.invokeMethod<bool>('startNativeRadioCapture') ??
           false;

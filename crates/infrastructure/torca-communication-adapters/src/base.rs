@@ -1,5 +1,6 @@
 //! Concrete adapters that compose SQLCipher durable work with one authenticated shared PeerLink.
 
+use std::collections::BTreeMap;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -38,6 +39,9 @@ use torca_storage_sqlite::SqlCipherReadState;
 const NONCE_BYTES: usize = 24;
 const PEER_AAD_LABEL: &[u8] = b"TORCA-PEER-DATA-V1";
 const STALE_CLAIM_AGE: Duration = Duration::from_secs(120);
+
+type EncodedTextEnvelope = (ContactId, OpaqueId, u16, Vec<u8>);
+type TextBatchItem = (usize, OpaqueId, u16, Vec<u8>);
 
 /// Process-shared protected peer-secret manager. It serializes cryptographic operations without
 /// exposing pairwise key bytes to delivery or UI layers.
@@ -420,6 +424,53 @@ where
     fn send(&mut self, message: &Message) -> Result<DeliveryAck, DeliveryTransportError> {
         self.send_message(message).map_err(|error| DeliveryTransportError(format!("{error}")))
     }
+
+    fn send_batch(
+        &mut self,
+        messages: &[&Message],
+    ) -> Vec<Result<DeliveryAck, DeliveryTransportError>> {
+        // A claimed batch can contain messages for different contacts. Group
+        // only by contact so each authenticated stream receives one provider
+        // batch while preserving the original result order for the durable
+        // worker.
+        let mut results: Vec<Option<Result<DeliveryAck, DeliveryTransportError>>> =
+            (0..messages.len()).map(|_| None).collect();
+        let mut groups: BTreeMap<ContactId, Vec<TextBatchItem>> = BTreeMap::new();
+        for (index, message) in messages.iter().enumerate() {
+            match self.encode_message(message) {
+                Ok((contact_id, envelope_id, kind, ciphertext)) => {
+                    groups.entry(contact_id).or_default().push((
+                        index,
+                        envelope_id,
+                        kind,
+                        ciphertext,
+                    ));
+                }
+                Err(error) => {
+                    results[index] = Some(Err(DeliveryTransportError(format!("{error}"))));
+                }
+            }
+        }
+        for (contact_id, group) in groups {
+            let envelopes = group
+                .iter()
+                .map(|(_, envelope_id, kind, ciphertext)| (*envelope_id, *kind, ciphertext.clone()))
+                .collect();
+            let outcome = self.link.send_envelopes_batch(contact_id, envelopes);
+            for (index, _, _, _) in group {
+                results[index] = Some(match &outcome {
+                    Ok(()) => Ok(DeliveryAck::Accepted),
+                    Err(error) => Err(DeliveryTransportError(format!("{error}"))),
+                });
+            }
+        }
+        results
+            .into_iter()
+            .map(|result| {
+                result.unwrap_or_else(|| Err(DeliveryTransportError("batch result missing".into())))
+            })
+            .collect()
+    }
 }
 impl<R, S, K, C, P> TextPeerTransport<R, S, K, C, P>
 where
@@ -430,6 +481,17 @@ where
     P: ProtectedSecretStore,
 {
     fn send_message(&mut self, message: &Message) -> Result<DeliveryAck, CommunicationError> {
+        let (contact_id, envelope_id, kind, encrypted) = self.encode_message(message)?;
+        // Delivery is durable and receipt-driven.  Never wait for a remote
+        // ACK while running the application actor: a missing peer must only
+        // cause the durable worker to retry on a later maintenance turn.
+        self.link
+            .send_envelope(contact_id, envelope_id, kind, encrypted)
+            .map(|_| DeliveryAck::Accepted)
+            .map_err(|_| CommunicationError::Peer)
+    }
+
+    fn encode_message(&self, message: &Message) -> Result<EncodedTextEnvelope, CommunicationError> {
         let conversation =
             ConversationRepository::get(&self.relationships, message.conversation_id())
                 .map_err(|_| CommunicationError::Text)?
@@ -454,13 +516,7 @@ where
             contact.remote_identity().identity_id().to_opaque(),
             &plaintext,
         )?;
-        // Delivery is durable and receipt-driven.  Never wait for a remote
-        // ACK while running the application actor: a missing peer must only
-        // cause the durable worker to retry on a later maintenance turn.
-        self.link
-            .send_envelope(contact.id(), message.id().to_opaque(), TEXT_MESSAGE_KIND, encrypted)
-            .map(|_| DeliveryAck::Accepted)
-            .map_err(|_| CommunicationError::Peer)
+        Ok((contact.id(), message.id().to_opaque(), TEXT_MESSAGE_KIND, encrypted))
     }
 }
 

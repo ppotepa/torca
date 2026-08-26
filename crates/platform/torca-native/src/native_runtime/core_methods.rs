@@ -50,6 +50,7 @@ fn bridge_operation_name(command: &torca_contract::BridgeCommand) -> &'static st
         ConfigureRadioAudio { .. } => "radio.audio.configure",
         BeginRadioTransmission { .. } => "radio.transmission.begin",
         EndRadioTransmission { .. } => "radio.transmission.end",
+        RefreshProviderRoute => "provider.route.refresh",
         RefreshSnapshot => "snapshot.get",
     }
 }
@@ -206,7 +207,15 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         })
         .unwrap_or_default();
     for contact_id in instant_contacts {
-        runtime.application_runtime.set_instant_contact_demand(contact_id, true);
+        if let Err(error) = runtime.application_runtime.set_instant_contact_demand(contact_id, true) {
+            runtime.log(
+                "runtime",
+                Level::Warn,
+                "policy",
+                "INSTANT_DEMAND_RESTORE_FAILED",
+                &format!("could not restore instant contact demand: {error}"),
+            );
+        }
     }
     runtime.log(
         "bootstrap",

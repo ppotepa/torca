@@ -1,6 +1,6 @@
 use torca_contacts::ContactId;
 use torca_foundation::OpaqueId;
-use torca_peer_protocol::{AckStatus, PeerMessage};
+use torca_peer_protocol::{AckStatus, PeerMessage, RouteAdvertisement};
 
 use crate::{InboundPeerEnvelope, LinkAck, PeerLinkError};
 
@@ -9,6 +9,7 @@ pub(crate) enum AckWaitAction {
     Complete(Result<LinkAck, PeerLinkError>),
     Store { envelope_id: OpaqueId, ack: Result<LinkAck, PeerLinkError> },
     QueueInbound(InboundPeerEnvelope),
+    Route(RouteAdvertisement),
     Ignore,
 }
 
@@ -42,6 +43,7 @@ pub(crate) fn classify_ack_wait_message(
                 ciphertext,
             })
         }
+        PeerMessage::Route(route) => AckWaitAction::Route(route),
         _ => AckWaitAction::Ignore,
     }
 }

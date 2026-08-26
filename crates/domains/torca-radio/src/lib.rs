@@ -186,6 +186,7 @@ pub struct RadioChannel {
     state: RadioState,
     session: Option<RadioSession>,
     pending_floor_request: Option<RadioOperationId>,
+    connection_attempt_active: bool,
 }
 
 impl RadioChannel {
@@ -199,6 +200,7 @@ impl RadioChannel {
             state,
             session: None,
             pending_floor_request: None,
+            connection_attempt_active: false,
         }
     }
 
@@ -236,6 +238,7 @@ impl RadioChannel {
         }
         self.session = None;
         self.pending_floor_request = None;
+        self.connection_attempt_active = false;
         self.state = self.derived_idle_state();
         Some(RadioTimelineEvent {
             kind: if enabled {
@@ -268,6 +271,7 @@ impl RadioChannel {
         if !self.is_mutually_enabled() {
             self.session = None;
             self.pending_floor_request = None;
+            self.connection_attempt_active = false;
         }
         self.state = self.derived_idle_state();
         changed.then_some(RadioTimelineEvent {
@@ -289,6 +293,7 @@ impl RadioChannel {
         self.remote_revision = 0;
         let was_live = self.session.take().is_some();
         self.pending_floor_request = None;
+        self.connection_attempt_active = false;
         self.state =
             if self.preference.enabled { RadioState::Reconnecting } else { RadioState::Off };
         was_live.then_some(RadioTimelineEvent {
@@ -302,11 +307,27 @@ impl RadioChannel {
         if !self.is_mutually_enabled() {
             return Err(RadioDomainError::MutualConsentRequired);
         }
-        if self.session.is_some() {
+        if self.session.is_some() || self.connection_attempt_active {
             return Err(RadioDomainError::SessionAlreadyActive);
         }
+        self.connection_attempt_active = true;
         self.state = RadioState::Connecting;
         Ok(())
+    }
+
+    /// Rolls back a failed provider session start without forgetting the
+    /// authenticated remote preference. This is distinct from a live-session
+    /// interruption: no session existed yet, so callers need a reconnectable
+    /// state rather than leaving the channel stuck in `Connecting`.
+    pub fn connection_failed(&mut self) {
+        self.session = None;
+        self.pending_floor_request = None;
+        self.connection_attempt_active = false;
+        self.state = if self.is_mutually_enabled() {
+            RadioState::Reconnecting
+        } else {
+            self.derived_idle_state()
+        };
     }
 
     pub fn session_ready(
@@ -320,6 +341,7 @@ impl RadioChannel {
         let restored = matches!(self.state, RadioState::Reconnecting);
         self.session = Some(RadioSession::new(id));
         self.pending_floor_request = None;
+        self.connection_attempt_active = false;
         self.state = RadioState::Ready;
         Ok(RadioTimelineEvent {
             kind: if restored {
@@ -448,6 +470,11 @@ impl RadioChannel {
     pub fn interrupt_session(&mut self, at: Timestamp) -> Option<RadioTimelineEvent> {
         let existed = self.session.take().is_some();
         self.pending_floor_request = None;
+        // An interruption also invalidates a not-yet-ready connection
+        // generation. Without clearing this flag, the next provider retry
+        // sees `SessionAlreadyActive` even though no session exists and the
+        // channel can remain stuck in Connecting forever.
+        self.connection_attempt_active = false;
         self.state = if self.is_mutually_enabled() {
             RadioState::Reconnecting
         } else {
@@ -513,6 +540,34 @@ mod tests {
         radio.observe_remote([7; 16], 1, true, at(2));
         assert!(radio.is_mutually_enabled());
         assert_eq!(radio.state(), RadioState::Connecting);
+    }
+
+    #[test]
+    fn failed_provider_start_is_reconnectable_without_forgetting_consent() {
+        let mut radio = channel(true);
+        radio.observe_remote([7; 16], 1, true, at(2));
+        radio.begin_connecting().expect("connecting");
+        radio.connection_failed();
+        assert_eq!(radio.state(), RadioState::Reconnecting);
+        assert!(radio.is_mutually_enabled());
+        assert!(radio.session().is_none());
+    }
+
+    #[test]
+    fn interrupted_connecting_generation_can_be_restarted() {
+        let mut radio = channel(true);
+        radio.observe_remote([7; 16], 1, true, at(2));
+        radio.begin_connecting().expect("connecting");
+        assert!(radio.interrupt_session(at(3)).is_none());
+        radio.begin_connecting().expect("fresh connecting generation");
+    }
+
+    #[test]
+    fn duplicate_session_open_cannot_replace_connecting_generation() {
+        let mut radio = channel(true);
+        radio.observe_remote([7; 16], 1, true, at(2));
+        radio.begin_connecting().expect("connecting");
+        assert_eq!(radio.begin_connecting(), Err(RadioDomainError::SessionAlreadyActive));
     }
 
     #[test]

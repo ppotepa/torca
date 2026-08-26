@@ -7377,8 +7377,10 @@ dependencies = [
 name = "torca-diagnostics"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "serde_json",
  "torca-foundation",
  "torca-runtime-policy",
+ "torca-transport-api",
 ]
 
 [[package]]
@@ -7477,6 +7479,7 @@ dependencies = [
  "torca-platform-windows",
  "torca-radio-adapters",
  "torca-radio-coordinator",
+ "torca-radio-tor",
  "torca-relay-protocol",
  "torca-rendezvous-client",
  "torca-rendezvous-tor",
@@ -7646,7 +7649,6 @@ dependencies = [
  "torca-radio",
  "torca-radio-coordinator",
  "torca-radio-protocol",
- "torca-tor",
  "torca-transport-api",
 ]
 
@@ -7665,6 +7667,15 @@ name = "torca-radio-protocol"
 version = "0.2.0-alpha.0"
 dependencies = [
  "torca-foundation",
+]
+
+[[package]]
+name = "torca-radio-tor"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "torca-radio-adapters",
+ "torca-radio-coordinator",
+ "torca-tor",
 ]
 
 [[package]]
@@ -7836,6 +7847,7 @@ dependencies = [
  "torca-rendezvous-client",
  "torca-runtime",
  "torca-transport-api",
+ "url",
 ]
 
 [[package]]

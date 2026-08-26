@@ -38,4 +38,15 @@ void main() {
       'Pairing is unavailable until the secure relay is ready.',
     );
   });
+
+  test('route refresh is presented as a retryable provider-neutral state', () {
+    const result = BridgeResultDto(
+      ok: false,
+      kind: 'error:runtime.route_refresh_required',
+    );
+    expect(
+      BridgeErrorPresenter.message(result),
+      'The communication route is being refreshed. Try again shortly.',
+    );
+  });
 }

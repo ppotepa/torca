@@ -33,13 +33,18 @@ enum RuntimeCommand {
     StopBatteryObservation(Sender<Result<(), RuntimeDriverError>>),
     ResetBatteryObservation(Sender<Result<(), RuntimeDriverError>>),
     NetworkChanged,
-    SetRadioDemand(ContactId, bool),
-    SetInstantContactDemand(ContactId, bool),
-    SetRadioTransmission(ContactId, bool),
+    RefreshProviderRoute(Sender<Result<(), RuntimeDriverError>>),
+    SetRadioDemand(ContactId, bool, Sender<Result<(), RuntimeDriverError>>),
+    SetInstantContactDemand(ContactId, bool, Sender<Result<(), RuntimeDriverError>>),
+    SetRadioTransmission(ContactId, bool, Sender<Result<(), RuntimeDriverError>>),
     /// Host facts and persisted intent. RuntimeOwner performs the reduction
     /// and is the only component that applies its result to executors.
-    SetBatteryPolicyInputs(BatteryPreferences, SystemEnergyState),
-    SetForeground(bool),
+    SetBatteryPolicyInputs(
+        BatteryPreferences,
+        SystemEnergyState,
+        Sender<Result<(), RuntimeDriverError>>,
+    ),
+    SetForeground(bool, Sender<Result<(), RuntimeDriverError>>),
     /// An executor event.  Unlike a user command this is not permission to run
     /// every maintenance path; it names the lanes that actually need service.
     Wake(Vec<RuntimeWakeSource>),
@@ -61,7 +66,8 @@ impl RuntimeCommand {
                 | Self::RejectPairing(..)
                 | Self::CancelPairing(..)
                 | Self::NetworkChanged
-                | Self::SetForeground(_)
+                | Self::RefreshProviderRoute(_)
+                | Self::SetForeground(..)
                 | Self::WakeDelivery(..)
                 | Self::QueueOutbound(..)
         )
@@ -223,6 +229,12 @@ impl RuntimeHandle {
     pub fn network_snapshot(&self) -> Result<NetworkSnapshot, RuntimeDriverError> {
         request_query(&self.sender, RuntimeCommand::NetworkSnapshot)
     }
+    /// Asks the selected communication provider to refresh its local route.
+    /// This is useful after a stale direct route and is intentionally
+    /// provider-neutral; Tor, Iroh and future providers own the actual work.
+    pub fn refresh_provider_route(&self) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, RuntimeCommand::RefreshProviderRoute)
+    }
     pub fn diagnostics_json(&self) -> Result<String, RuntimeDriverError> {
         let (tx, rx) = mpsc::channel();
         send_with_timeout(&self.sender, RuntimeCommand::Diagnostics(tx))?;
@@ -285,42 +297,40 @@ impl RuntimeHandle {
     }
 
     /// Keeps the selected radio peer leased independently of the Flutter route.
-    pub fn set_radio_demand(&self, contact_id: ContactId, enabled: bool) {
-        let _ =
-            send_with_timeout(&self.sender, RuntimeCommand::SetRadioDemand(contact_id, enabled));
+    pub fn set_radio_demand(&self, contact_id: ContactId, enabled: bool) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |response| {
+            RuntimeCommand::SetRadioDemand(contact_id, enabled, response)
+        })
     }
 
     /// Keeps a user-selected contact immediately reachable until explicitly
     /// disabled. The setting owner persists intent; this actor owns only the
     /// process-local connection lease.
-    pub fn set_instant_contact_demand(&self, contact_id: ContactId, enabled: bool) {
-        let _ = send_with_timeout(
-            &self.sender,
-            RuntimeCommand::SetInstantContactDemand(contact_id, enabled),
-        );
+    pub fn set_instant_contact_demand(&self, contact_id: ContactId, enabled: bool) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |response| {
+            RuntimeCommand::SetInstantContactDemand(contact_id, enabled, response)
+        })
     }
 
     /// Keeps a short lease while a push-to-talk transmission is being negotiated.
-    pub fn set_radio_transmission(&self, contact_id: ContactId, active: bool) {
-        let _ = send_with_timeout(
-            &self.sender,
-            RuntimeCommand::SetRadioTransmission(contact_id, active),
-        );
+    pub fn set_radio_transmission(&self, contact_id: ContactId, active: bool) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |response| {
+            RuntimeCommand::SetRadioTransmission(contact_id, active, response)
+        })
     }
 
     pub fn set_battery_policy_inputs(
         &self,
         preferences: BatteryPreferences,
         system: SystemEnergyState,
-    ) {
-        let _ = send_with_timeout(
-            &self.sender,
-            RuntimeCommand::SetBatteryPolicyInputs(preferences, system),
-        );
+    ) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |response| {
+            RuntimeCommand::SetBatteryPolicyInputs(preferences, system, response)
+        })
     }
 
-    pub fn set_foreground(&self, foreground: bool) {
-        let _ = send_with_timeout(&self.sender, RuntimeCommand::SetForeground(foreground));
+    pub fn set_foreground(&self, foreground: bool) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |response| RuntimeCommand::SetForeground(foreground, response))
     }
 
 }

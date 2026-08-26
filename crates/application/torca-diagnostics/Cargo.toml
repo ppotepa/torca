@@ -11,6 +11,8 @@ publish = false
 [dependencies]
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-runtime-policy = { path = "../torca-runtime-policy" }
+torca-transport-api = { path = "../torca-transport-api" }
+serde_json = "1"
 
 [lints]
 workspace = true

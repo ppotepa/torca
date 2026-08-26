@@ -13,7 +13,7 @@
       "diagnostics.observation.start", "diagnostics.observation.stop", "diagnostics.observation.reset", "diagnostics.incident.mark",
       "conversation.read", "attachment.queue", "attachment.retry",
       "attachment.cancel", "attachment.export", "radio.set_enabled", "radio.audio.configure",
-      "radio.transmission.begin", "radio.transmission.end"
+      "radio.transmission.begin", "radio.transmission.end", "provider.route.refresh"
     ],
     "queries": ["snapshot.get", "conversation.page", "conversation.search", "notifications.poll", "runtime.poll", "diagnostics.get", "diagnostics.logs.tail", "pairing.parse", "pairing.encode", "avatars.get"]
   },

@@ -80,6 +80,9 @@ fn record_pairing_result<T>(
     let (state, suffix) = match result {
         Ok(_) => (HealthState::Ready, "ACCEPTED"),
         Err(RuntimeDriverError::Pending) => (HealthState::Degraded, "QUEUED"),
+        Err(RuntimeDriverError::RouteRefreshRequired) => {
+            (HealthState::Degraded, "ROUTE_REFRESH_REQUIRED")
+        }
         Err(RuntimeDriverError::Communication) => {
             (HealthState::Degraded, "RETRYING")
         }
@@ -170,18 +173,28 @@ mod tests {
         let (attachments, _response) = mpsc::channel();
         assert!(!RuntimeCommand::Diagnostics(diagnostics).requires_health_maintenance());
         assert!(!RuntimeCommand::AttachmentSnapshot(attachments).requires_delivery_maintenance());
-        assert!(RuntimeCommand::SetForeground(false).requires_health_maintenance());
+        let (response, _receiver) = mpsc::channel();
+        assert!(RuntimeCommand::SetForeground(false, response).requires_health_maintenance());
     }
 
     #[test]
     fn battery_input_does_not_start_network_or_delivery_maintenance() {
+        let (response, _receiver) = mpsc::channel();
         let command = RuntimeCommand::SetBatteryPolicyInputs(
             BatteryPreferences::default(),
             SystemEnergyState::default(),
+            response,
         );
         assert!(!command.requires_health_maintenance());
         assert!(!command.requires_delivery_maintenance());
         assert!(!command.requires_peer_maintenance());
+    }
+
+    #[test]
+    fn route_refresh_required_has_a_stable_retryable_error_code() {
+        let descriptor = RuntimeDriverError::RouteRefreshRequired.descriptor();
+        assert_eq!(descriptor.code().as_str(), "runtime.route_refresh_required");
+        assert_eq!(descriptor.retry_advice(), RetryAdvice::Immediate);
     }
 
     #[test]

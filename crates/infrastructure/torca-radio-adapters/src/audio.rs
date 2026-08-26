@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 #[cfg(target_os = "android")]
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossbeam_queue::ArrayQueue;
@@ -16,6 +16,8 @@ use torca_radio_protocol::{MAX_RADIO_BURST_FRAMES, RADIO_SAMPLES_PER_FRAME};
 use crate::codec::encode_mulaw;
 
 pub type AudioFrame = [u8; RADIO_SAMPLES_PER_FRAME];
+type AudioWakeCallback = Arc<dyn Fn() + Send + Sync>;
+type AudioWakeSlot = Arc<Mutex<Option<AudioWakeCallback>>>;
 const INBOUND_AUDIO_QUEUE_FRAMES: usize = 75;
 
 #[cfg(target_os = "android")]
@@ -62,11 +64,41 @@ pub fn install_android_pipeline(pipeline: AudioPipeline) {
 #[cfg(target_os = "android")]
 pub fn set_android_native_capture_active(active: bool) {
     ANDROID_NATIVE_CAPTURE_ACTIVE.store(active, Ordering::Release);
+    // Android can stop AudioRecord asynchronously (activity pause, audio
+    // focus loss, permission UI, or an input error) without a corresponding
+    // Flutter command. Disable the shared Rust pipeline immediately so no
+    // further PCM is accepted and playback's half-duplex echo guard is
+    // released. The coordinator will reconcile the logical burst on its next
+    // event; this function must remain allocation-free and non-blocking.
+    if !active
+        && let Some(slot) = ANDROID_PIPELINE.get()
+        && let Ok(pipeline) = slot.lock()
+        && let Some(pipeline) = pipeline.as_ref()
+    {
+        if pipeline.capture_enabled() {
+            pipeline.capture_interrupted.store(true, Ordering::Release);
+        }
+        pipeline.set_capture_enabled(false);
+        if let Ok(waker) = pipeline.capture_waker.lock()
+            && let Some(callback) = waker.as_ref()
+        {
+            callback();
+        }
+    }
 }
 
 #[cfg(target_os = "android")]
 fn android_native_capture_active() -> bool {
     ANDROID_NATIVE_CAPTURE_ACTIVE.load(Ordering::Acquire)
+}
+
+#[cfg(target_os = "android")]
+fn android_native_capture_available() -> bool {
+    // The Android AudioRecord is started by Flutter only after the Rust
+    // coordinator grants the floor.  Rust still owns `capture_enabled`, so
+    // accepting the grant here is safe while the platform recorder is being
+    // started on the UI isolate.
+    ANDROID_PIPELINE.get().is_some()
 }
 
 /// Accepts little-endian mono PCM from Android's AudioRecord and converts it
@@ -106,12 +138,14 @@ pub fn push_android_pcm(bytes: &[u8]) {
 }
 
 /// Shared fixed-capacity lane between real-time callbacks and the media
-/// worker. Neither side can grow memory under a slow Tor circuit.
+/// worker. Neither side can grow memory under a slow provider stream.
 #[derive(Clone)]
 pub struct AudioPipeline {
     outbound: Arc<ArrayQueue<AudioFrame>>,
     inbound: Arc<ArrayQueue<AudioFrame>>,
     capture_enabled: Arc<AtomicBool>,
+    capture_interrupted: Arc<AtomicBool>,
+    capture_waker: AudioWakeSlot,
     capture_level_milli: Arc<AtomicU32>,
     playback_frame_active: Arc<AtomicBool>,
     start_cue_generation: Arc<AtomicU32>,
@@ -125,10 +159,12 @@ impl Default for AudioPipeline {
         Self {
             // A complete ten-second burst is only about 80 KiB after μ-law
             // encoding. Buffering that bounded payload is preferable to
-            // discarding speech whenever a Tor circuit briefly slows down.
+            // discarding speech whenever the provider stream briefly slows down.
             outbound: Arc::new(ArrayQueue::new(MAX_RADIO_BURST_FRAMES)),
             inbound: Arc::new(ArrayQueue::new(INBOUND_AUDIO_QUEUE_FRAMES)),
             capture_enabled: Arc::new(AtomicBool::new(false)),
+            capture_interrupted: Arc::new(AtomicBool::new(false)),
+            capture_waker: Arc::new(Mutex::new(None)),
             capture_level_milli: Arc::new(AtomicU32::new(0)),
             playback_frame_active: Arc::new(AtomicBool::new(false)),
             start_cue_generation: Arc::new(AtomicU32::new(1)),
@@ -152,6 +188,16 @@ impl AudioPipeline {
         self.capture_enabled.store(enabled, Ordering::Release);
         if !enabled {
             self.capture_level_milli.store(0, Ordering::Release);
+        }
+    }
+
+    pub(crate) fn take_capture_interrupted(&self) -> bool {
+        self.capture_interrupted.swap(false, Ordering::AcqRel)
+    }
+
+    pub(crate) fn set_capture_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut slot) = self.capture_waker.lock() {
+            *slot = Some(waker);
         }
     }
 
@@ -289,6 +335,9 @@ impl RadioAudioAdapter {
 }
 
 impl RadioAudioPort for RadioAudioAdapter {
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        self.pipeline.set_capture_waker(waker);
+    }
     fn devices(&self) -> RadioAudioProjection {
         self.platform.devices()
     }
@@ -336,8 +385,13 @@ impl RadioAudioPort for RadioAudioAdapter {
             std::thread::sleep(Duration::from_millis(5));
         }
         #[cfg(target_os = "android")]
-        let result =
-            if android_native_capture_active() { Ok(()) } else { self.platform.begin_capture() };
+        let result = if android_native_capture_available() {
+            Ok(())
+        } else if android_native_capture_active() {
+            Ok(())
+        } else {
+            self.platform.begin_capture()
+        };
         #[cfg(not(target_os = "android"))]
         let result = self.platform.begin_capture();
         if result.is_ok() {
@@ -389,6 +443,10 @@ impl RadioAudioPort for RadioAudioAdapter {
 
     fn take_error(&mut self) -> Option<RadioApplicationError> {
         self.platform.take_error()
+    }
+
+    fn take_capture_interrupted(&mut self) -> bool {
+        self.pipeline.take_capture_interrupted()
     }
 }
 

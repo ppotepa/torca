@@ -202,6 +202,13 @@ impl Attachment {
     pub fn begin_encryption(&mut self, at: Timestamp) -> Result<(), AttachmentError> {
         self.transition(AttachmentStatus::Prepared, AttachmentStatus::Encrypting, at)
     }
+    /// Rolls back an interrupted source-encryption pass. The source path is
+    /// intentionally not persisted in the attachment domain, so a process
+    /// restart must expose the item as retryable `Prepared` rather than leave
+    /// it permanently stuck in `Encrypting`.
+    pub fn reset_encryption(&mut self, at: Timestamp) -> Result<(), AttachmentError> {
+        self.transition(AttachmentStatus::Encrypting, AttachmentStatus::Prepared, at)
+    }
     pub fn mark_queued(&mut self, at: Timestamp) -> Result<(), AttachmentError> {
         self.transition(AttachmentStatus::Encrypting, AttachmentStatus::Queued, at)
     }
@@ -343,6 +350,18 @@ mod tests {
         );
         assert_eq!(
             attachment.begin_transfer(timestamp(1_004)),
+            Err(AttachmentError::InvalidTransition)
+        );
+    }
+
+    #[test]
+    fn interrupted_encryption_returns_to_retryable_prepared_state() {
+        let mut attachment = attachment();
+        attachment.begin_encryption(timestamp(1_001)).expect("encrypt");
+        attachment.reset_encryption(timestamp(1_002)).expect("reset");
+        assert_eq!(attachment.status(), AttachmentStatus::Prepared);
+        assert_eq!(
+            attachment.reset_encryption(timestamp(1_003)),
             Err(AttachmentError::InvalidTransition)
         );
     }

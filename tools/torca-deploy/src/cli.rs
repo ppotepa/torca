@@ -77,6 +77,10 @@ pub struct PlanArgs {
     /// protocol is used by a deployment; Tor remains the default.
     #[arg(long, visible_alias = "communication-protocol", value_enum, default_value = "tor")]
     pub communication_provider: CommunicationProviderArg,
+    /// Provider-owned runtime profile. This remains opaque to the generic
+    /// deploy domain; Iroh uses `always`, `direct` or `local`.
+    #[arg(long = "provider-profile", visible_alias = "iroh-profile")]
+    pub provider_profile: Option<String>,
     #[arg(long)]
     pub dry_run: bool,
 }
@@ -166,6 +170,19 @@ pub enum CommunicationProviderArg {
 
 impl PlanArgs {
     pub fn plan(&self, action: DeployAction) -> DeployPlan {
+        let communication_provider = match self.communication_provider {
+            CommunicationProviderArg::Tor => CommunicationProvider::Tor,
+            CommunicationProviderArg::Iroh => CommunicationProvider::Iroh,
+            CommunicationProviderArg::WebRtc => CommunicationProvider::WebRtc,
+        };
+        // Freeze the provider profile into the persisted deployment plan. A
+        // resumed run must not silently change from direct to relay-backed
+        // Iroh because the developer shell changed in the meantime.
+        let provider_profile = self.provider_profile.clone().or_else(|| {
+            (communication_provider == CommunicationProvider::Iroh).then(|| {
+                std::env::var("TORCA_IROH_PROFILE").unwrap_or_else(|_| "always".to_owned())
+            })
+        });
         DeployPlan {
             action,
             targets: match self.target {
@@ -215,11 +232,8 @@ impl PlanArgs {
                 PrivacyArg::Strict => PrivacyPolicy::Strict,
                 PrivacyArg::AllowCapture => PrivacyPolicy::AllowCapture,
             },
-            communication_provider: match self.communication_provider {
-                CommunicationProviderArg::Tor => CommunicationProvider::Tor,
-                CommunicationProviderArg::Iroh => CommunicationProvider::Iroh,
-                CommunicationProviderArg::WebRtc => CommunicationProvider::WebRtc,
-            },
+            communication_provider,
+            provider_profile,
         }
     }
 }
@@ -261,6 +275,31 @@ mod tests {
             args.plan(DeployAction::RedeployCurrent).communication_provider,
             CommunicationProvider::WebRtc
         ));
+    }
+
+    #[test]
+    fn provider_profile_is_carried_by_the_plan() {
+        let args = plan_args(&[
+            "torca-deploy",
+            "plan",
+            "--communication-provider",
+            "iroh",
+            "--provider-profile",
+            "direct-only",
+        ]);
+        assert_eq!(
+            args.plan(DeployAction::RedeployCurrent).provider_profile.as_deref(),
+            Some("direct-only")
+        );
+    }
+
+    #[test]
+    fn iroh_gets_a_stable_default_profile_in_the_plan() {
+        let args = plan_args(&["torca-deploy", "plan", "--communication-provider", "iroh"]);
+        assert_eq!(
+            args.plan(DeployAction::RedeployCurrent).provider_profile.as_deref(),
+            Some("always")
+        );
     }
 
     #[test]

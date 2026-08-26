@@ -1,6 +1,5 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -14,22 +13,27 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_radio::{MAX_RADIO_BURST_MS, RadioOperationId, RadioSessionId};
 use torca_radio_coordinator::{
     RadioApplicationError, RadioMediaPort, RadioSessionEvent, RadioTransportFailure,
+    transport_failure_for,
 };
 use torca_radio_protocol::{
     BurstEndReason, FloorDeniedReason, MAX_RADIO_BURST_FRAMES, MAX_RADIO_MEDIA_FRAME,
     RADIO_MEDIA_PROOF_LEN, RADIO_PROTOCOL_VERSION, RadioMediaCodec, RadioMediaFrame,
     SessionCloseReason,
 };
-use torca_tor::{PeerListener, TOR_RADIO_VIRTUAL_PORT, TorServiceHandle};
 use torca_transport_api::RealtimeCapabilities;
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;
 type WakeSlot = Arc<Mutex<Option<WakeCallback>>>;
+type EventQueue = Arc<Mutex<VecDeque<RadioSessionEvent>>>;
 
 use crate::{AudioPipeline, JitterBuffer};
 
 const COMMAND_CAPACITY: usize = 32;
-const EVENT_CAPACITY: usize = 64;
+// Session transitions are sparse, but a reconnect can produce a burst of
+// Interrupted/Ready/FloorDenied events while the runtime is draining an
+// unrelated command. Keep enough headroom that a slow native snapshot cannot
+// silently lose a terminal Radio transition and leave the UI in `requesting`.
+const EVENT_CAPACITY: usize = 256;
 // A cold Iroh endpoint may still be discovering a relay or punching through
 // a mobile NAT when the user presses PTT.  The previous 15-second budget was
 // identical to the floor timeout, so a successful first dial could arrive
@@ -39,9 +43,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(8);
 const ACTIVE_READ_TIMEOUT: Duration = Duration::from_millis(20);
-// Keep the authenticated media stream alive without waking the device every
-// few seconds. The 10-second interval remains comfortably below the
-// connection idle budget, while halving idle radio traffic during a session.
+const MEDIA_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+// Keep the authenticated media stream alive without imposing a provider
+// specific timer. Providers that own transport liveness (such as Iroh/QUIC)
+// can opt out; this is only the fallback for legacy stream transports.
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
 // A cold provider dial plus authentication can exceed five seconds. Keep a
 // bounded timeout so a dead peer cannot leave the UI requesting forever, while
@@ -79,6 +84,11 @@ pub struct RadioMediaRoute {
 /// implement it over TCP, QUIC or a platform DataChannel; the coordinator
 /// never sees the concrete socket type.
 pub trait RadioMediaStream: Read + Write + Send {
+    /// Installs bounded I/O semantics before the worker performs its first
+    /// read. Provider implementations must make a timed-out read return
+    /// `WouldBlock`/`TimedOut` instead of blocking the worker indefinitely;
+    /// otherwise floor cancellation and reconnect deadlines cannot be
+    /// honoured consistently across transports.
     fn configure(&self, _read: Duration, _write: Duration) -> Result<(), RadioApplicationError> {
         Ok(())
     }
@@ -114,11 +124,17 @@ pub trait RadioMediaConnector: Send {
     /// touches coordinator state on the provider's listener task.
     fn set_incoming_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
 
-    /// Provider-specific idle keep-alive.  QUIC providers already have an
-    /// internal heartbeat and need a shorter application deadline than the
-    /// legacy stream transports, otherwise the provider can close an idle
-    /// media stream before the next application frame is sent.
+    /// Provider-specific idle keep-alive. Providers that own transport
+    /// liveness may opt out of an application heartbeat entirely; legacy
+    /// stream transports retain the bounded fallback below.
     fn keep_alive_interval(&self) -> Duration {
+        if !self.capabilities().requires_application_keep_alive {
+            // The provider owns transport liveness (for example QUIC/Iroh).
+            // Do not create a second application heartbeat: it wakes the
+            // worker and radio hardware even when no burst is active. The
+            // existing connection-idle deadline still bounds stale sessions.
+            return Duration::from_secs(24 * 60 * 60);
+        }
         // Treat the provider value as a hard upper bound, not as a timer
         // target. Mobile scheduling jitter, radio wake-up latency and QUIC
         // clock skew can otherwise make a heartbeat sent exactly at the
@@ -202,93 +218,6 @@ pub trait RadioMediaSystemFactory: Send {
     ) -> Result<RadioMediaSystem, RadioApplicationError>;
 }
 
-/// Tor-specific factory kept beside the existing TCP/onion media worker.
-/// Future providers implement `RadioMediaSystemFactory` in their own
-/// composition module without changing communication assembly.
-pub struct TorRadioMediaSystemFactory {
-    tor: TorServiceHandle,
-}
-
-struct TorRadioMediaStream(TcpStream);
-
-impl Read for TorRadioMediaStream {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        self.0.read(buffer)
-    }
-}
-impl Write for TorRadioMediaStream {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.write(bytes)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
-    }
-}
-impl RadioMediaStream for TorRadioMediaStream {
-    fn configure(&self, read: Duration, write: Duration) -> Result<(), RadioApplicationError> {
-        self.0
-            .set_read_timeout(Some(read))
-            .and_then(|_| self.0.set_write_timeout(Some(write)))
-            .and_then(|_| self.0.set_nodelay(true))
-            .map_err(|_| RadioApplicationError::MediaTransport)
-    }
-
-    fn close_stream(&self) -> Result<(), RadioApplicationError> {
-        self.0.shutdown(Shutdown::Both).map_err(|_| RadioApplicationError::MediaTransport)
-    }
-
-    fn set_read_deadline(&self, timeout: Duration) -> Result<(), RadioApplicationError> {
-        self.0.set_read_timeout(Some(timeout)).map_err(|_| RadioApplicationError::MediaTransport)
-    }
-}
-
-struct TorRadioMediaConnector {
-    tor: TorServiceHandle,
-    listener: PeerListener,
-}
-
-impl RadioMediaConnector for TorRadioMediaConnector {
-    fn connect(
-        &mut self,
-        route: &RadioMediaRoute,
-        timeout: Duration,
-    ) -> Result<Box<dyn RadioMediaStream>, RadioApplicationError> {
-        if route.provider != "tor" {
-            return Err(RadioApplicationError::MediaTransport);
-        }
-        let onion = std::str::from_utf8(&route.endpoint)
-            .map_err(|_| RadioApplicationError::MediaTransport)?;
-        self.tor
-            .connect_onion_with_timeout(onion, TOR_RADIO_VIRTUAL_PORT, timeout)
-            .map(|stream| Box::new(TorRadioMediaStream(stream)) as Box<dyn RadioMediaStream>)
-            .map_err(|_| RadioApplicationError::MediaTransport)
-    }
-
-    fn try_accept(&mut self) -> Result<Option<Box<dyn RadioMediaStream>>, RadioApplicationError> {
-        let stream =
-            self.listener.try_accept().map_err(|_| RadioApplicationError::MediaTransport)?.map(
-                |(stream, _)| Box::new(TorRadioMediaStream(stream)) as Box<dyn RadioMediaStream>,
-            );
-        Ok(stream)
-    }
-}
-
-impl TorRadioMediaSystemFactory {
-    #[must_use]
-    pub const fn new(tor: TorServiceHandle) -> Self {
-        Self { tor }
-    }
-}
-
-impl RadioMediaSystemFactory for TorRadioMediaSystemFactory {
-    fn start(
-        self: Box<Self>,
-        directory: Box<dyn RadioMediaDirectory>,
-    ) -> Result<RadioMediaSystem, RadioApplicationError> {
-        RadioMediaSystem::start_tor(self.tor, directory)
-    }
-}
-
 /// Explicit capability boundary for providers without a media route.
 pub struct UnsupportedRadioMediaSystemFactory {
     provider: torca_transport_api::TransportKind,
@@ -324,23 +253,6 @@ impl RadioMediaSystem {
         Self { media: RadioMediaAdapter::disabled(), audio: crate::RadioAudioAdapter::disabled() }
     }
 
-    pub fn start_tor(
-        tor: TorServiceHandle,
-        directory: Box<dyn RadioMediaDirectory>,
-    ) -> Result<Self, RadioApplicationError> {
-        let listener = PeerListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-            .map_err(|_| RadioApplicationError::MediaTransport)?;
-        tor.register_onion_route(TOR_RADIO_VIRTUAL_PORT, listener.local_addr())
-            .map_err(|_| RadioApplicationError::MediaTransport)?;
-        let pipeline = AudioPipeline::default();
-        #[cfg(target_os = "android")]
-        crate::install_android_pipeline(pipeline.clone());
-        let audio = crate::RadioAudioAdapter::new(pipeline.clone());
-        let connector = TorRadioMediaConnector { tor, listener };
-        let media = RadioMediaAdapter::start(Box::new(connector), directory, pipeline)?;
-        Ok(Self { media, audio })
-    }
-
     /// Starts media with a provider-owned connector. This is the extension
     /// point used by direct transports such as Iroh; common framing, crypto,
     /// jitter and audio queues remain shared.
@@ -359,7 +271,7 @@ impl RadioMediaSystem {
 
 pub struct RadioMediaAdapter {
     commands: SyncSender<MediaCommand>,
-    events: Receiver<RadioSessionEvent>,
+    events: EventQueue,
     wakeups: Arc<AtomicU64>,
     worker_alive: Arc<std::sync::atomic::AtomicBool>,
     waker: WakeSlot,
@@ -369,10 +281,9 @@ impl RadioMediaAdapter {
     pub fn disabled() -> Self {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         drop(command_rx);
-        let (_event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
         Self {
             commands: command_tx,
-            events: event_rx,
+            events: Arc::new(Mutex::new(VecDeque::new())),
             wakeups: Arc::new(AtomicU64::new(0)),
             worker_alive: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             waker: Arc::new(Mutex::new(None)),
@@ -385,19 +296,29 @@ impl RadioMediaAdapter {
         audio: AudioPipeline,
     ) -> Result<Self, RadioApplicationError> {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
-        let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
+        let events = Arc::new(Mutex::new(VecDeque::with_capacity(EVENT_CAPACITY)));
         let wakeups = Arc::new(AtomicU64::new(0));
         let worker_alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let wake_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let waker = Arc::new(Mutex::new(None));
         let incoming_wake_sender = command_tx.clone();
+        let incoming_wake_pending = Arc::clone(&wake_pending);
         connector.set_incoming_waker(Arc::new(move || {
-            // A listener callback can race worker teardown.  This is only a
-            // wake hint, so a full/disconnected queue is intentionally
-            // ignored; the worker will still service its normal deadline.
-            let _ = incoming_wake_sender.try_send(MediaCommand::Wake);
+            // Coalesce callbacks until the worker consumes the wake. A busy
+            // provider listener must never fill the bounded command queue and
+            // make Open/RequestFloor fail with MediaQueueFull.
+            if incoming_wake_pending
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+                && incoming_wake_sender.try_send(MediaCommand::Wake).is_err()
+            {
+                incoming_wake_pending.store(false, Ordering::Release);
+            }
         }));
         let worker_alive_flag = Arc::clone(&worker_alive);
         let worker_waker = Arc::clone(&waker);
+        let worker_exit_waker = Arc::clone(&waker);
+        let worker_events = Arc::clone(&events);
         thread::Builder::new()
             .name("torca-radio-media".into())
             .spawn(move || {
@@ -406,8 +327,9 @@ impl RadioMediaAdapter {
                     directory,
                     audio,
                     command_rx,
-                    event_tx,
+                    worker_events,
                     Arc::clone(&worker_alive_flag),
+                    Arc::clone(&wake_pending),
                     worker_waker,
                 );
                 let result =
@@ -416,9 +338,18 @@ impl RadioMediaAdapter {
                     eprintln!("torca-radio: media worker panicked; marking worker unavailable");
                     worker_alive_flag.store(false, Ordering::Release);
                 }
+                // A worker can disappear without producing a media event
+                // (for example, a disconnected command channel or panic).
+                // Wake RuntimeOwner explicitly so it observes worker_alive=
+                // false immediately instead of leaving an active session in
+                // Ready/Requesting until an unrelated deadline.
+                if let Some(callback) = worker_exit_waker.lock().ok().and_then(|slot| slot.clone())
+                {
+                    callback();
+                }
             })
             .map_err(|_| RadioApplicationError::MediaTransport)?;
-        Ok(Self { commands: command_tx, events: event_rx, wakeups, worker_alive, waker })
+        Ok(Self { commands: command_tx, events, wakeups, worker_alive, waker })
     }
 
     fn submit(&self, command: MediaCommand) -> Result<(), RadioApplicationError> {
@@ -449,6 +380,10 @@ impl Drop for RadioMediaAdapter {
 impl RadioMediaPort for RadioMediaAdapter {
     fn wake_count(&self) -> u64 {
         self.wakeups.load(Ordering::Relaxed)
+    }
+
+    fn worker_alive(&self) -> bool {
+        self.worker_alive.load(Ordering::Acquire)
     }
 
     fn open(
@@ -497,12 +432,22 @@ impl RadioMediaPort for RadioMediaAdapter {
     }
 
     fn take_event(&mut self) -> Option<RadioSessionEvent> {
-        self.events.try_recv().ok()
+        self.events.lock().ok()?.pop_front()
     }
 
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
         if let Ok(mut slot) = self.waker.lock() {
             *slot = Some(waker);
+            // The media worker can complete a fast in-memory/provider
+            // handshake before RuntimeOwner installs its callback. Replay a
+            // wake when transitions are already queued so Ready/Interrupted
+            // cannot remain invisible until an unrelated deadline.
+            let has_pending = self.events.lock().map(|queue| !queue.is_empty()).unwrap_or(false);
+            if has_pending {
+                if let Some(callback) = slot.as_ref() {
+                    callback();
+                }
+            }
         }
     }
 }
@@ -561,6 +506,7 @@ struct LiveSession {
     read_buffer: Vec<u8>,
     authenticated: bool,
     hello_sent: bool,
+    hello_sent_at: Option<Instant>,
     local_is_coordinator: bool,
     pending_floor: Option<RadioOperationId>,
     pending_floor_at: Option<Instant>,
@@ -586,6 +532,7 @@ struct LiveSession {
     last_keep_alive_at: Instant,
     keep_alive_interval: Duration,
     keep_alive_sequence: u64,
+    last_keep_alive_response: Option<u64>,
     idle_keep_alives: u8,
     unacked_audio: VecDeque<(u32, Vec<u8>, Instant)>,
     oldest_unacked_at: Option<Instant>,
@@ -610,6 +557,7 @@ impl LiveSession {
             read_buffer: Vec::with_capacity(MAX_RADIO_MEDIA_FRAME * 2),
             authenticated: false,
             hello_sent: false,
+            hello_sent_at: None,
             pending_floor,
             pending_floor_at,
             pending_floor_sent_at: None,
@@ -634,6 +582,7 @@ impl LiveSession {
             last_keep_alive_at: now,
             keep_alive_interval,
             keep_alive_sequence: 0,
+            last_keep_alive_response: None,
             idle_keep_alives: 0,
             unacked_audio: VecDeque::new(),
             oldest_unacked_at: None,
@@ -654,6 +603,7 @@ struct MediaWorker {
     pending: Option<PendingSession>,
     live: Option<LiveSession>,
     worker_alive: Arc<std::sync::atomic::AtomicBool>,
+    wake_pending: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MediaWorker {
@@ -662,8 +612,9 @@ impl MediaWorker {
         directory: Box<dyn RadioMediaDirectory>,
         audio: AudioPipeline,
         commands: Receiver<MediaCommand>,
-        events: SyncSender<RadioSessionEvent>,
+        events: EventQueue,
         worker_alive: Arc<std::sync::atomic::AtomicBool>,
+        wake_pending: Arc<std::sync::atomic::AtomicBool>,
         waker: WakeSlot,
     ) -> Self {
         Self {
@@ -671,10 +622,11 @@ impl MediaWorker {
             directory,
             audio,
             commands,
-            events: EventSink { sender: events, waker: Arc::clone(&waker) },
+            events: EventSink { queue: events, waker: Arc::clone(&waker) },
             pending: None,
             live: None,
             worker_alive,
+            wake_pending,
         }
     }
 
@@ -796,6 +748,7 @@ impl MediaWorker {
     fn handle_command(&mut self, command: MediaCommand) -> Result<(), ()> {
         match command {
             MediaCommand::Wake => {
+                self.wake_pending.store(false, Ordering::Release);
                 // An incoming provider callback is the authoritative wake
                 // source for accepted media.  Clear the short listener wait
                 // so `try_attach` accepts the queued stream immediately;
@@ -808,6 +761,17 @@ impl MediaWorker {
                 }
             }
             MediaCommand::Open { contact_id, session_id, media_token, initiate_connection } => {
+                // Control delivery may replay SessionOpen after a lost ACK.
+                // Re-opening the same generation would close a healthy stream
+                // and put both peers back into handshake, which is especially
+                // visible as an endless `Requesting channel` state on Iroh.
+                if self.live.as_ref().is_some_and(|live| live.matches(contact_id, session_id))
+                    || self.pending.as_ref().is_some_and(|pending| {
+                        pending.contact_id == contact_id && pending.session_id == session_id
+                    })
+                {
+                    return Ok(());
+                }
                 self.shutdown_live(SessionCloseReason::Replaced);
                 let Some(route) = self.directory.route(contact_id) else {
                     emit(
@@ -852,10 +816,23 @@ impl MediaWorker {
                     // Keep a floor request queued until Ready instead of
                     // turning that normal race into a denial.
                     if !live.authenticated {
+                        if live.pending_floor == Some(request_id) {
+                            // The coordinator may replay the command after a
+                            // provider wake or a lost runtime revision.  A
+                            // duplicate of the same operation is idempotent;
+                            // denying it would move the UI from requesting to
+                            // ready even though the original request is still
+                            // queued behind the provider handshake.
+                            return Ok(());
+                        }
                         if live.pending_floor.is_some() {
                             emit(
                                 &self.events,
-                                RadioSessionEvent::FloorDenied { contact_id, request_id },
+                                RadioSessionEvent::FloorDenied {
+                                    contact_id,
+                                    session_id: live.pending.session_id,
+                                    request_id,
+                                },
                             );
                         } else {
                             live.pending_floor = Some(request_id);
@@ -871,7 +848,11 @@ impl MediaWorker {
                     {
                         emit(
                             &self.events,
-                            RadioSessionEvent::FloorDenied { contact_id, request_id },
+                            RadioSessionEvent::FloorDenied {
+                                contact_id,
+                                session_id: live.pending.session_id,
+                                request_id,
+                            },
                         );
                         return Ok(());
                     }
@@ -884,10 +865,21 @@ impl MediaWorker {
                 if let Some(pending) = self.pending.as_mut().filter(|pending| {
                     pending.contact_id == contact_id && pending.session_id == session_id
                 }) {
+                    if pending.floor_request == Some(request_id) {
+                        // Preserve one floor operation across SessionOpen ->
+                        // media Ready.  This is especially important for
+                        // Iroh, where the control and media lanes can wake
+                        // the runtime independently.
+                        return Ok(());
+                    }
                     if pending.floor_request.is_some() {
                         emit(
                             &self.events,
-                            RadioSessionEvent::FloorDenied { contact_id, request_id },
+                            RadioSessionEvent::FloorDenied {
+                                contact_id,
+                                session_id: pending.session_id,
+                                request_id,
+                            },
                         );
                     } else {
                         pending.floor_request = Some(request_id);
@@ -895,7 +887,10 @@ impl MediaWorker {
                     }
                     return Ok(());
                 }
-                emit(&self.events, RadioSessionEvent::FloorDenied { contact_id, request_id });
+                emit(
+                    &self.events,
+                    RadioSessionEvent::FloorDenied { contact_id, session_id, request_id },
+                );
             }
             MediaCommand::EndBurst { contact_id, session_id, burst_id } => {
                 let Some(live) =
@@ -978,10 +973,10 @@ impl MediaWorker {
                 return;
             }
             eprintln!(
-                "torca-radio: media connect started contact={} attempt={} virtual_port={}",
+                "torca-radio: media connect started contact={} provider={} attempt={}",
                 pending.contact_id,
+                pending.route.provider,
                 pending.reconnect_attempt.saturating_add(1),
-                TOR_RADIO_VIRTUAL_PORT,
             );
             match self.connector.connect(&pending.route, CONNECT_TIMEOUT) {
                 Ok(stream) => {
@@ -1001,15 +996,42 @@ impl MediaWorker {
                         started.elapsed().as_millis(),
                     );
                     if let Some(current) = self.pending.as_mut() {
+                        let first_attempt = current.reconnect_attempt == 0;
                         schedule_reconnect(current);
+                        if first_attempt {
+                            emit(
+                                &self.events,
+                                RadioSessionEvent::Interrupted {
+                                    contact_id: pending.contact_id,
+                                    session_id: Some(pending.session_id),
+                                    cause: transport_failure_for(error),
+                                    at: now_timestamp(),
+                                },
+                            );
+                        }
                     }
                     None
                 }
             }
         } else {
-            let stream = self.connector.try_accept().ok().flatten();
+            let stream = match self.connector.try_accept() {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!(
+                        "torca-radio: incoming media accept failed contact={} attempt={} elapsed_ms={} error={error:?}",
+                        pending.contact_id,
+                        pending.reconnect_attempt.saturating_add(1),
+                        started.elapsed().as_millis(),
+                    );
+                    if let Some(current) = self.pending.as_mut() {
+                        schedule_reconnect(current);
+                    }
+                    None
+                }
+            };
             if stream.is_none()
                 && let Some(current) = self.pending.as_mut()
+                && current.next_connect_at <= Instant::now()
             {
                 // Do not spin while waiting for the provider listener.  The
                 // connector wake above moves this deadline back to now when
@@ -1021,12 +1043,37 @@ impl MediaWorker {
         let Some(stream) = stream else {
             return;
         };
-        let Ok(cipher) = self.directory.session_cipher(
+        let cipher = match self.directory.session_cipher(
             pending.contact_id,
             pending.session_id,
             &pending.media_token,
-        ) else {
-            return;
+        ) {
+            Ok(cipher) => cipher,
+            Err(error) => {
+                // A provider stream without a session cipher is not a
+                // recoverable half-connected state.  Previously this branch
+                // silently dropped the stream and left the coordinator in
+                // `connecting` forever (and the worker retried immediately).
+                // Surface a terminal transition for this attempt and apply
+                // the same bounded reconnect policy as transport failures.
+                eprintln!(
+                    "torca-radio: media session setup failed contact={} provider={} error={error:?}",
+                    pending.contact_id, pending.route.provider
+                );
+                if let Some(current) = self.pending.as_mut() {
+                    schedule_reconnect(current);
+                }
+                emit(
+                    &self.events,
+                    RadioSessionEvent::Interrupted {
+                        contact_id: pending.contact_id,
+                        session_id: Some(pending.session_id),
+                        cause: RadioTransportFailure::Protocol,
+                        at: now_timestamp(),
+                    },
+                );
+                return;
+            }
         };
         let keep_alive_interval = self.connector.keep_alive_interval();
         match LiveSession::new(pending, stream, cipher, keep_alive_interval) {
@@ -1043,12 +1090,24 @@ impl MediaWorker {
         if !live.hello_sent {
             send_hello(live)?;
             live.hello_sent = true;
+            live.hello_sent_at = Some(Instant::now());
         }
         let frames = read_frames(live)?;
         for frame in frames {
             handle_incoming(live, &self.events, &self.audio, frame)?;
         }
         let now = Instant::now();
+        if !live.authenticated
+            && live
+                .hello_sent_at
+                .is_some_and(|sent_at| now.duration_since(sent_at) >= MEDIA_HANDSHAKE_TIMEOUT)
+        {
+            eprintln!(
+                "torca-radio: media handshake timed out contact={} provider={}",
+                live.pending.contact_id, live.pending.route.provider
+            );
+            return Err(());
+        }
         if live.authenticated
             && !live.local_is_coordinator
             && let (Some(request_id), Some(sent_at)) =
@@ -1068,6 +1127,16 @@ impl MediaWorker {
             && now.duration_since(started_at) >= FLOOR_REQUEST_TIMEOUT
         {
             // A lost grant must not leave the UI in `requesting` forever.
+            // Release the peer-side reservation as well: otherwise the
+            // coordinator that granted the floor can keep the old request
+            // marked busy and reject every subsequent burst on this stream.
+            send_frame(
+                live,
+                &RadioMediaFrame::FloorDenied {
+                    request_id: request_id.to_opaque(),
+                    reason: FloorDeniedReason::Cancelled,
+                },
+            )?;
             // Clear the local reservation and publish a terminal transition;
             // the coordinator may retry explicitly with a new operation id.
             live.pending_floor = None;
@@ -1077,6 +1146,7 @@ impl MediaWorker {
             live.pending.floor_requested_at = None;
             self.events.emit(RadioSessionEvent::FloorDenied {
                 contact_id: live.pending.contact_id,
+                session_id: live.pending.session_id,
                 request_id,
             });
         }
@@ -1121,8 +1191,11 @@ impl MediaWorker {
         }
         pending.floor_request = None;
         pending.floor_requested_at = None;
-        self.events
-            .emit(RadioSessionEvent::FloorDenied { contact_id: pending.contact_id, request_id });
+        self.events.emit(RadioSessionEvent::FloorDenied {
+            contact_id: pending.contact_id,
+            session_id: pending.session_id,
+            request_id,
+        });
     }
 
     fn interrupt_live(&mut self, cause: RadioTransportFailure) {
@@ -1164,18 +1237,31 @@ impl MediaWorker {
 
 #[derive(Clone)]
 struct EventSink {
-    sender: SyncSender<RadioSessionEvent>,
+    queue: EventQueue,
     waker: WakeSlot,
 }
 
 impl EventSink {
     fn emit(&self, event: RadioSessionEvent) {
-        if self.sender.try_send(event).is_ok() {
-            if let Some(callback) = self.waker.lock().ok().and_then(|slot| slot.clone()) {
-                callback();
-            }
-        } else {
-            eprintln!("torca-radio: media event queue full; transition dropped");
+        let queued = self
+            .queue
+            .lock()
+            .ok()
+            .map(|mut queue| {
+                if queue.len() >= EVENT_CAPACITY {
+                    // Keep the queue bounded, but preserve the newest transition:
+                    // a terminal Interrupted/FloorDenied event is more useful
+                    // than an old duplicate Ready event when the runtime was
+                    // briefly busy draining another lane.
+                    let _ = queue.pop_front();
+                    eprintln!("torca-radio: media event queue full; evicting oldest transition");
+                }
+                queue.push_back(event);
+                true
+            })
+            .unwrap_or(false);
+        if queued && let Some(callback) = self.waker.lock().ok().and_then(|slot| slot.clone()) {
+            callback();
         }
     }
 }
@@ -1270,7 +1356,13 @@ fn finish_local_burst_if_drained(
     live.pending_floor = None;
     live.pending_floor_at = None;
     live.pending_floor_sent_at = None;
-    emit(events, RadioSessionEvent::BurstEnded { contact_id: live.pending.contact_id });
+    emit(
+        events,
+        RadioSessionEvent::BurstEnded {
+            contact_id: live.pending.contact_id,
+            session_id: live.pending.session_id,
+        },
+    );
     Ok(())
 }
 
@@ -1304,7 +1396,13 @@ fn finish_remote_burst_if_drained(
     live.remote_final_sequence_exclusive = None;
     live.remote_received_sequences.clear();
     live.jitter.reset();
-    emit(events, RadioSessionEvent::BurstEnded { contact_id: live.pending.contact_id });
+    emit(
+        events,
+        RadioSessionEvent::BurstEnded {
+            contact_id: live.pending.contact_id,
+            session_id: live.pending.session_id,
+        },
+    );
 }
 
 fn send_hello(live: &mut LiveSession) -> Result<(), ()> {
@@ -1369,12 +1467,25 @@ fn handle_incoming(
             let request_id = RadioOperationId::from_opaque(request_id);
             // A lost response can cause the requester to repeat the same
             // floor request. Do not allocate a second burst for one request;
-            // that would produce duplicate grants and duplicate start cues.
+            // that would produce duplicate bursts. Re-send the original grant
+            // when the first grant was lost, however: QUIC preserves bytes on
+            // a live stream but a reconnect can lose the application-level
+            // response before the requester observes it.
             if live.remote_floor_request == Some(request_id) {
                 eprintln!(
                     "torca-radio: duplicate floor request contact={} request={:?}",
                     live.pending.contact_id, request_id
                 );
+                if let Some((_, burst_id)) = live.remote_floor_reservation {
+                    send_frame(
+                        live,
+                        &RadioMediaFrame::FloorGrant {
+                            request_id: request_id.to_opaque(),
+                            burst_id: burst_id.to_opaque(),
+                            max_duration_ms: MAX_RADIO_BURST_MS,
+                        },
+                    )?;
+                }
                 return Ok(());
             }
             if live.local_is_coordinator
@@ -1432,6 +1543,7 @@ fn handle_incoming(
                     events,
                     RadioSessionEvent::FloorGranted {
                         contact_id: live.pending.contact_id,
+                        session_id: live.pending.session_id,
                         request_id,
                         burst_id,
                         at: now_timestamp(),
@@ -1479,6 +1591,7 @@ fn handle_incoming(
                 events,
                 RadioSessionEvent::RemoteBurstStarted {
                     contact_id: live.pending.contact_id,
+                    session_id: live.pending.session_id,
                     burst_id,
                     at: now_timestamp(),
                 },
@@ -1496,6 +1609,7 @@ fn handle_incoming(
                     events,
                     RadioSessionEvent::FloorDenied {
                         contact_id: live.pending.contact_id,
+                        session_id: live.pending.session_id,
                         request_id,
                     },
                 );
@@ -1516,7 +1630,10 @@ fn handle_incoming(
                     )?;
                     emit(
                         events,
-                        RadioSessionEvent::BurstEnded { contact_id: live.pending.contact_id },
+                        RadioSessionEvent::BurstEnded {
+                            contact_id: live.pending.contact_id,
+                            session_id: live.pending.session_id,
+                        },
                     );
                 }
             }
@@ -1567,6 +1684,7 @@ fn handle_incoming(
                     events,
                     RadioSessionEvent::RemoteAudioStarted {
                         contact_id: live.pending.contact_id,
+                        session_id: live.pending.session_id,
                         burst_id,
                     },
                 );
@@ -1599,7 +1717,13 @@ fn handle_incoming(
                 live.remote_final_sequence_exclusive = None;
                 live.remote_received_sequences.clear();
                 audio.clear();
-                emit(events, RadioSessionEvent::BurstEnded { contact_id: live.pending.contact_id });
+                emit(
+                    events,
+                    RadioSessionEvent::BurstEnded {
+                        contact_id: live.pending.contact_id,
+                        session_id: live.pending.session_id,
+                    },
+                );
             }
         }
         RadioMediaFrame::BurstAck { burst_id, sequence } => {
@@ -1614,7 +1738,17 @@ fn handle_incoming(
                 }
             }
         }
-        RadioMediaFrame::KeepAlive { .. } => {}
+        RadioMediaFrame::KeepAlive { sequence } => {
+            // KeepAlive doubles as an idempotent application-level ACK. A
+            // provider may keep the QUIC/TCP socket open while the remote
+            // worker is paused; replying here proves that both Radio workers
+            // are alive. Remember the sequence so two peers replying to one
+            // another do not create an endless ping-pong.
+            if live.last_keep_alive_response != Some(sequence) {
+                live.last_keep_alive_response = Some(sequence);
+                send_frame(live, &RadioMediaFrame::KeepAlive { sequence })?;
+            }
+        }
         RadioMediaFrame::Close { .. } => return Err(()),
     }
     Ok(())
@@ -1660,6 +1794,7 @@ fn dispatch_floor_request(live: &mut LiveSession, events: &EventSink) -> Result<
             events,
             RadioSessionEvent::FloorGranted {
                 contact_id: live.pending.contact_id,
+                session_id: live.pending.session_id,
                 request_id,
                 burst_id,
                 at: now_timestamp(),
@@ -1783,7 +1918,13 @@ fn enforce_burst_deadlines(
             live.remote_received_sequences.clear();
             live.jitter.reset();
             audio.clear();
-            emit(events, RadioSessionEvent::BurstEnded { contact_id: live.pending.contact_id });
+            emit(
+                events,
+                RadioSessionEvent::BurstEnded {
+                    contact_id: live.pending.contact_id,
+                    session_id: live.pending.session_id,
+                },
+            );
         }
     }
     Ok(())
@@ -2004,5 +2145,25 @@ mod tests {
         assert_eq!(radio_keep_alive_interval(provider_interval, 0), provider_interval);
         assert_eq!(radio_keep_alive_interval(provider_interval, 1), provider_interval);
         assert_eq!(radio_keep_alive_interval(provider_interval, u8::MAX), provider_interval);
+    }
+
+    #[test]
+    fn media_event_queue_is_bounded_and_keeps_newest_transition() {
+        let queue: EventQueue = Arc::new(Mutex::new(VecDeque::with_capacity(EVENT_CAPACITY)));
+        let sink = EventSink { queue: Arc::clone(&queue), waker: Arc::new(Mutex::new(None)) };
+        for value in 0..=EVENT_CAPACITY {
+            sink.emit(RadioSessionEvent::FloorDenied {
+                contact_id: ContactId::from_u128(1),
+                session_id: RadioSessionId::from_opaque(OpaqueId::from_u128(1)),
+                request_id: RadioOperationId::from_opaque(OpaqueId::from_u128(value as u128)),
+            });
+        }
+        let events = queue.lock().expect("event queue");
+        assert_eq!(events.len(), EVENT_CAPACITY);
+        assert!(matches!(
+            events.back(),
+            Some(RadioSessionEvent::FloorDenied { request_id, .. })
+                if *request_id == RadioOperationId::from_opaque(OpaqueId::from_u128(EVENT_CAPACITY as u128))
+        ));
     }
 }

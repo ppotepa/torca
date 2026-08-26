@@ -42,9 +42,9 @@ change the relay container or store messages on the relay.
 
 ## Legacy compatibility
 
-The implementation and acceptance criteria moved to SOAK1. Existing
-`torca-battery-soak-tui` invocations remain a compatibility alias, but new
-automation must use `torca-soak` or the PowerShell bootstrap.
+The implementation and acceptance criteria moved to SOAK1. All runs use the
+single canonical `torca-soak` binary (or its PowerShell bootstrap). The former
+`torca-battery-soak-tui` alias was removed to avoid two competing entry points.
 
 The SOAK1 acceptance criteria are:
 

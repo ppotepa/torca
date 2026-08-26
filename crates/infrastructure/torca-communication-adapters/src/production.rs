@@ -37,6 +37,11 @@ use crate::{
 // transport's future receipt/ACK budget, but sends no longer wait on it in the
 // application actor.
 const ACK_TIMEOUT: Duration = Duration::from_secs(5);
+// Attachment frames are durable jobs and may be the first traffic after a
+// cold provider dial. Give the peer lane a complete reconnect/handshake
+// window before marking a chunk failed; text/control keep their shorter ACK
+// budget so interactive actions remain responsive.
+const ATTACHMENT_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const RETRY_MAX_ATTEMPTS: u32 = 12;
 const RETRY_BASE: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(60);
@@ -193,7 +198,7 @@ where
         attachment_cache,
         staging_root,
         inputs.local_identity_id,
-        ACK_TIMEOUT,
+        ATTACHMENT_ACK_TIMEOUT,
     )
     .map_err(|_| CommunicationBuildError::Attachment)?;
     let attachments = AttachmentControlAdapter::new(
@@ -241,6 +246,7 @@ where
         link.clone(),
         shared_crypto.clone(),
         inputs.local_identity_id,
+        inputs.communication_provider,
     );
     let radio_peer_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;

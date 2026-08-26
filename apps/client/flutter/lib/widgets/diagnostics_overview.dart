@@ -47,13 +47,14 @@ class DiagnosticsOverview extends StatelessWidget {
         'State: ${snapshot.communicationState}',
         context.torcaIcons.identity,
       ),
-      if (snapshot.endpointSummary != null || snapshot.onionAddress != null)
-        _OverviewItem(
-          _endpointLabel(snapshot.communicationProvider),
-          true,
-          snapshot.endpointSummary ?? snapshot.onionAddress!,
-          context.torcaIcons.link,
-        ),
+      _OverviewItem(
+        'Provider route',
+        snapshot.transport.typedProviderRouteState ==
+            ProviderRouteState.fresh,
+        snapshot.endpointSummary ??
+            'Route: ${snapshot.transport.providerRouteState}',
+        context.torcaIcons.link,
+      ),
       _OverviewItem(
         context.strings.directPeers,
         totalPeers == 0 || readyPeers > 0,
@@ -102,12 +103,6 @@ class DiagnosticsOverview extends StatelessWidget {
     return provider.trim().isEmpty ? 'Communication' : provider.trim();
   }
 
-  String _endpointLabel(String provider) {
-    final normalized = provider.trim().toLowerCase();
-    return normalized.isEmpty || normalized == 'tor'
-        ? 'Onion service'
-        : '${_providerDisplayName(provider)} endpoint';
-  }
 }
 
 class _HealthCard extends StatelessWidget {

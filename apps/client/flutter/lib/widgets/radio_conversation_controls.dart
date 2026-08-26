@@ -154,8 +154,7 @@ class RadioConversationStatus extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              '${context.strings.radioReconnecting} · '
-              '${context.strings.radioTransportFailure(transportFailure!)}',
+              context.strings.radioTransportFailure(transportFailure!),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(
@@ -385,7 +384,6 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       await _stopCaptureSafely();
       return;
     }
-    setState(() => _commandBusy = false);
     if (_releaseRequested || !_pointerHeld) {
       _burstTimer?.cancel();
       _transmissionActive = false;
@@ -393,6 +391,15 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
       );
       await _stopCaptureSafely();
+      if (mounted) {
+        setState(() {
+          _activePointerId = null;
+          _pointerHeld = false;
+          _transmissionActive = false;
+          _commandBusy = false;
+        });
+        _syncPulse();
+      }
       return;
     }
     if (!result.ok) {
@@ -401,6 +408,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _activePointerId = null;
         _pointerHeld = false;
         _transmissionActive = false;
+        _commandBusy = false;
       });
       await _stopCaptureSafely();
       _syncPulse();
@@ -413,11 +421,53 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       );
       return;
     }
-    // Do not open the microphone until Rust has granted the radio floor. This
-    // prevents local capture from outliving a queued/rejected transmission.
+
+    // `BeginRadioTransmission` only queues a floor request.  Do not open the
+    // microphone until the runtime projection confirms that this exact
+    // contact is transmitting; otherwise Android can keep AudioRecord active
+    // while Iroh is still reconnecting or the remote side has denied the
+    // floor.
+    final granted = await _waitForFloorGranted();
+    if (!mounted) {
+      if (granted) {
+        await widget.gateway.execute(
+          EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
+        );
+      }
+      await _stopCaptureSafely();
+      return;
+    }
+    setState(() => _commandBusy = false);
+    if (!granted || _releaseRequested || !_pointerHeld) {
+      _burstTimer?.cancel();
+      _transmissionActive = false;
+      await widget.gateway.execute(
+        EndRadioTransmissionCommandDto(contactIdHex: widget.contact.id),
+      );
+      await _stopCaptureSafely();
+      if (mounted) {
+        setState(() {
+          _activePointerId = null;
+          _pointerHeld = false;
+          _transmissionActive = false;
+        });
+        _syncPulse();
+      }
+      if (!granted && !_releaseRequested) {
+        _showError(context.strings.couldNotStartRadio);
+      }
+      return;
+    }
+
+    // The floor is now owned by this session. Android starts AudioRecord only
+    // after this point; the native Rust pipeline remains the authority that
+    // accepts PCM, so a slow platform start cannot leak pre-grant audio.
     try {
       await MicrophonePermission.setCommunicationMode(true);
-      await MicrophonePermission.startNativeCapture();
+      final captureStarted = await MicrophonePermission.startNativeCapture();
+      if (!captureStarted) {
+        throw StateError('native radio capture did not start');
+      }
     } on Object {
       await _stopCaptureSafely();
       await widget.gateway.execute(
@@ -428,6 +478,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _activePointerId = null;
         _pointerHeld = false;
         _transmissionActive = false;
+        _commandBusy = false;
       });
       _syncPulse();
       _showError(context.strings.couldNotStartRadio);
@@ -438,6 +489,69 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
       const Duration(seconds: 10),
       () => unawaited(_release()),
     );
+  }
+
+  Future<bool> _waitForFloorGranted() async {
+    var sawFloorRequest = false;
+
+    bool isTransmitting() {
+      final snapshot = widget.gateway.snapshots.value;
+      final session = snapshot.radio.session;
+      final state = session?.contactId == widget.contact.id
+          ? session!.typedState
+          : snapshot.radio.forContact(widget.contact.id)?.typedState;
+      if (state == RadioState.requestingFloor ||
+          state == RadioState.startingCapture) {
+        sawFloorRequest = true;
+      }
+      return session?.contactId == widget.contact.id &&
+          session?.typedState == RadioState.transmitting;
+    }
+
+    bool isTerminalWithoutGrant() {
+      if (!sawFloorRequest) return false;
+      final snapshot = widget.gateway.snapshots.value;
+      final session = snapshot.radio.session;
+      final state = session?.contactId == widget.contact.id
+          ? session!.typedState
+          : snapshot.radio.forContact(widget.contact.id)?.typedState;
+      return state != RadioState.requestingFloor &&
+          state != RadioState.startingCapture &&
+          state != RadioState.transmitting;
+    }
+
+    if (isTransmitting()) return true;
+    final completer = Completer<bool>();
+    late VoidCallback listener;
+    listener = () {
+      if (isTransmitting() && !completer.isCompleted) {
+        completer.complete(true);
+      } else if (isTerminalWithoutGrant() && !completer.isCompleted) {
+        // FloorDenied, provider reconnect and session close are all terminal
+        // for this operation. Do not make the user wait for the watchdog.
+        completer.complete(false);
+      }
+    };
+    widget.gateway.snapshots.addListener(listener);
+    final timer = Timer(const Duration(seconds: 35), () {
+      if (!completer.isCompleted) completer.complete(false);
+    });
+    // Release is a local privacy boundary. It may happen while the gateway's
+    // serialized request tail is waiting for the provider; polling this
+    // short-lived in-flight operation avoids holding the UI in `requesting`
+    // until the 35-second product guard expires.
+    final releaseTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (_releaseRequested && !completer.isCompleted) {
+        completer.complete(false);
+      }
+    });
+    try {
+      return await completer.future;
+    } finally {
+      timer.cancel();
+      releaseTimer.cancel();
+      widget.gateway.snapshots.removeListener(listener);
+    }
   }
 
   Future<void> _release({int? pointerId, bool force = false}) async {

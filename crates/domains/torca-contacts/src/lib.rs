@@ -129,6 +129,38 @@ impl ContactRoute {
     pub fn provider_endpoints(&self) -> &BTreeMap<String, Vec<u8>> {
         &self.provider_endpoints
     }
+
+    /// Replaces one provider's opaque route while preserving routes owned by
+    /// other providers.  Route refresh is used after a network migration;
+    /// the endpoint bytes remain provider-owned and are never interpreted by
+    /// the contacts domain.
+    pub fn update_provider_endpoint(
+        &mut self,
+        provider: impl Into<String>,
+        endpoint: Vec<u8>,
+    ) -> Result<(), ContactError> {
+        let provider = provider.into();
+        if provider.is_empty()
+            || provider.len() > 32
+            || endpoint.is_empty()
+            || endpoint.len() > 8 * 1024
+        {
+            return Err(ContactError::InvalidTransportRoute);
+        }
+        if provider == "tor" {
+            let onion = String::from_utf8(endpoint.clone())
+                .map_err(|_| ContactError::InvalidTransportRoute)?;
+            if onion.len() > 255
+                || !onion.to_ascii_lowercase().ends_with(".onion")
+                || onion.chars().any(char::is_whitespace)
+            {
+                return Err(ContactError::InvalidTransportRoute);
+            }
+            self.onion_address = Some(onion);
+        }
+        self.provider_endpoints.insert(provider, endpoint);
+        Ok(())
+    }
 }
 
 /// Durable metadata required to authenticate this installation to one verified peer.
@@ -362,5 +394,18 @@ mod tests {
         assert_eq!(route.onion_address_opt(), None);
         assert_eq!(route.onion_address(), "");
         assert_eq!(route.provider_endpoint("iroh"), Some(b"node-opaque-endpoint".as_slice()));
+    }
+
+    #[test]
+    fn provider_route_refresh_preserves_other_provider_entries() {
+        let mut route =
+            ContactRoute::new("peer.onion", OpaqueId::from_u128(1)).expect("valid legacy route");
+        route
+            .update_provider_endpoint("iroh", b"new-opaque-endpoint".to_vec())
+            .expect("refresh route");
+
+        assert_eq!(route.provider_endpoint("tor"), Some(b"peer.onion".as_slice()));
+        assert_eq!(route.provider_endpoint("iroh"), Some(b"new-opaque-endpoint".as_slice()));
+        assert_eq!(route.onion_address_opt(), Some("peer.onion"));
     }
 }

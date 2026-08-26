@@ -221,6 +221,7 @@ pub enum ApplicationCommand {
     EndRadioTransmission {
         contact_id: OpaqueId,
     },
+    RefreshProviderRoute,
     RefreshSnapshot,
 }
 
@@ -419,22 +420,29 @@ impl ClientApplicationRuntime {
         &self,
         preferences: BatteryPreferences,
         system: SystemEnergyState,
-    ) {
+    ) -> Result<(), RuntimeDriverError> {
         if let Some(runtime) = &self.runtime {
-            runtime.set_battery_policy_inputs(preferences, system);
+            runtime.set_battery_policy_inputs(preferences, system)?;
         }
+        Ok(())
     }
 
-    pub fn set_foreground(&self, foreground: bool) {
+    pub fn set_foreground(&self, foreground: bool) -> Result<(), RuntimeDriverError> {
         if let Some(runtime) = &self.runtime {
-            runtime.set_foreground(foreground);
+            runtime.set_foreground(foreground)?;
         }
+        Ok(())
     }
 
-    pub fn set_instant_contact_demand(&self, contact_id: ContactId, enabled: bool) {
+    pub fn set_instant_contact_demand(
+        &self,
+        contact_id: ContactId,
+        enabled: bool,
+    ) -> Result<(), RuntimeDriverError> {
         if let Some(runtime) = &self.runtime {
-            runtime.set_instant_contact_demand(contact_id, enabled);
+            runtime.set_instant_contact_demand(contact_id, enabled)?;
         }
+        Ok(())
     }
 
     pub fn radio_lifecycle(&self, lifecycle: HostRadioLifecycle) -> Result<(), ApplicationError> {
@@ -812,7 +820,9 @@ impl ClientApplicationRuntime {
             ApplicationCommand::SetBatteryPreferences { .. } => "battery_preferences_updated",
             ApplicationCommand::SetContactAvailability { contact_id, mode } => {
                 let enabled = mode == "instant";
-                self.set_instant_contact_demand(ContactId::from_opaque(contact_id), enabled);
+                runtime_command(
+                    self.set_instant_contact_demand(ContactId::from_opaque(contact_id), enabled),
+                )?;
                 "contact_availability_updated"
             }
             ApplicationCommand::AcknowledgeNewContacts => "contacts_acknowledged",
@@ -1223,10 +1233,10 @@ impl ClientApplicationRuntime {
                             // channel when a new one is enabled. Mirror that
                             // ownership transition in the policy lease book
                             // so the old peer cannot keep probe demand alive.
-                            runtime.set_radio_demand(previous, false);
+                            runtime_command(runtime.set_radio_demand(previous, false))?;
                         }
                     }
-                    runtime.set_radio_demand(contact, enabled);
+                    runtime_command(runtime.set_radio_demand(contact, enabled))?;
                 }
                 if enabled { "radio_enabled" } else { "radio_disabled" }
             }
@@ -1246,13 +1256,13 @@ impl ClientApplicationRuntime {
                     Ok(request_id) => request_id,
                     Err(error) => {
                         if let Some(runtime) = self.runtime.as_ref() {
-                            runtime.set_radio_transmission(contact, false);
+                            runtime_command(runtime.set_radio_transmission(contact, false))?;
                         }
                         return Err(error);
                     }
                 };
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.set_radio_transmission(contact, true);
+                    runtime_command(runtime.set_radio_transmission(contact, true))?;
                 }
                 resource_id = Some(request_id.to_opaque());
                 "radio_transmission_requested"
@@ -1261,9 +1271,13 @@ impl ClientApplicationRuntime {
                 let contact = ContactId::from_opaque(contact_id);
                 self.radio()?.end_transmission(contact).map_err(string_error)?;
                 if let Some(runtime) = self.runtime.as_ref() {
-                    runtime.set_radio_transmission(contact, false);
+                    runtime_command(runtime.set_radio_transmission(contact, false))?;
                 }
                 "radio_transmission_ended"
+            }
+            ApplicationCommand::RefreshProviderRoute => {
+                self.runtime()?.refresh_provider_route().map_err(string_error)?;
+                "provider_route_refresh_requested"
             }
             ApplicationCommand::RefreshSnapshot => {
                 let _ = self.application.snapshot().map_err(string_error)?;
@@ -1615,6 +1629,7 @@ fn stopped_network_snapshot(provider: torca_transport_api::TransportKind) -> Net
                 },
             ],
             endpoint_summary: None,
+            route_state: torca_transport_api::ProviderRouteState::Unavailable,
             pairing_bootstrap: None,
         },
         tor: CommunicationState::Stopped,
@@ -1633,9 +1648,9 @@ fn stopped_network_snapshot(provider: torca_transport_api::TransportKind) -> Net
 
 fn compiled_provider() -> torca_transport_api::TransportKind {
     torca_transport_api::TransportKind::from_wire(
-        option_env!("TORCA_COMMUNICATION_PROVIDER").unwrap_or("tor"),
+        option_env!("TORCA_COMMUNICATION_PROVIDER").unwrap_or("memory"),
     )
-    .unwrap_or(torca_transport_api::TransportKind::Tor)
+    .unwrap_or(torca_transport_api::TransportKind::Memory)
 }
 
 fn timestamp(value: i64) -> Result<Timestamp, String> {

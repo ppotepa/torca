@@ -87,6 +87,12 @@ pub struct PeerLink<S, K> {
     pending_acks: BTreeMap<(ContactId, OpaqueId), Result<LinkAck, PeerLinkError>>,
     inbound: VecDeque<InboundPeerEnvelope>,
     activity: BTreeMap<ContactId, PeerActivitySnapshot>,
+    /// Highest route generation accepted from each authenticated contact.
+    /// This is intentionally ephemeral; a fresh handshake re-establishes the
+    /// current route after process restart.
+    route_generations: BTreeMap<ContactId, u64>,
+    /// Route generation most recently sent to each contact on this process.
+    advertised_route_generations: BTreeMap<ContactId, u64>,
     connectivity: Option<ConnectivityObserver>,
     waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }

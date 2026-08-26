@@ -171,6 +171,7 @@ class ContactDetailsContent extends StatelessWidget {
             trailing: ConnectionIndicator(
               state: contact.connectionState,
               blocked: contact.typedStatus == ContactStatus.blocked,
+              provider: contact.transportProvider,
             ),
           ),
         ),
@@ -211,12 +212,6 @@ class ContactDetailsContent extends StatelessWidget {
               label: context.strings.quality,
               value: contact.peerHealth.quality,
             ),
-            if (contact.onionAddress != null && contact.onionAddress!.isNotEmpty)
-              _ValueRow(
-                label: context.strings.onionAddress,
-                value: contact.onionAddress!,
-                selectable: true,
-              ),
             _ValueRow(
               label: context.strings.transport,
               value: contact.transportProvider.toUpperCase(),

@@ -42,6 +42,10 @@ struct Bot {
 }
 
 impl Bot {
+    fn is_alive(&mut self) -> bool {
+        self.child.try_wait().is_ok_and(|status| status.is_none())
+    }
+
     fn request(&mut self, request: &Value) -> Result<Value, String> {
         serde_json::to_writer(&mut self.input, request).map_err(|e| e.to_string())?;
         self.input.write_all(b"\n").map_err(|e| e.to_string())?;
@@ -137,9 +141,22 @@ fn handle_connection(mut stream: TcpStream, token: &str, bots: &SharedBots) -> R
         return write_response(&mut stream, 401, json!({"status":"failed","error":"unauthorized"}));
     }
     if method == "GET" && path == "/health" {
-        let names =
-            bots.lock().map_err(|_| "bot registry poisoned")?.keys().cloned().collect::<Vec<_>>();
-        return write_response(&mut stream, 200, json!({"status":"succeeded","bots":names}));
+        let mut registry = bots.lock().map_err(|_| "bot registry poisoned")?;
+        let mut ready = Vec::new();
+        let mut stopped = Vec::new();
+        for (name, bot) in registry.iter_mut() {
+            if bot.is_alive() {
+                ready.push(name.clone());
+            } else {
+                stopped.push(name.clone());
+            }
+        }
+        let status = if stopped.is_empty() { "succeeded" } else { "degraded" };
+        return write_response(
+            &mut stream,
+            200,
+            json!({"status":status,"ready":ready,"stopped":stopped}),
+        );
     }
     if method != "POST" || !path.starts_with("/bot/") {
         return write_response(&mut stream, 404, json!({"status":"failed","error":"not_found"}));
@@ -150,6 +167,13 @@ fn handle_connection(mut stream: TcpStream, token: &str, bots: &SharedBots) -> R
     let response = {
         let mut registry = bots.lock().map_err(|_| "bot registry poisoned")?;
         let bot = registry.get_mut(name).ok_or_else(|| format!("unknown bot {name}"))?;
+        if !bot.is_alive() {
+            return write_response(
+                &mut stream,
+                503,
+                json!({"status":"failed","error":"bot_process_stopped","bot":name}),
+            );
+        }
         let mut request = request;
         if request.get("id").is_none() {
             request["id"] = json!("host-request");

@@ -1,12 +1,18 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::json::empty_snapshot_json;
 
     #[test]
     fn metadata_has_compatibility_fields() {
         let value: Value = serde_json::from_slice(metadata()).expect("valid metadata");
         assert_eq!(value["metadataSchema"], 2);
         assert!(value["communicationProvider"].is_string());
+        if value["communicationProvider"] == "iroh" {
+            assert!(matches!(value["providerProfile"].as_str(), Some("always" | "direct" | "local")));
+        } else {
+            assert!(value["providerProfile"].is_null());
+        }
         assert!(value.get("providerEndpointHash").is_some());
         assert!(value.get("relayEndpointHash").is_some());
         assert_eq!(value["nativeAbi"], NATIVE_ABI);
@@ -34,6 +40,13 @@ mod tests {
         let snapshot = extract_notification_snapshot(response).expect("notification snapshot");
         assert_eq!(snapshot["runtimeId"], "runtime-a");
         assert_eq!(snapshot["afterCursor"], 4);
+    }
+
+    #[test]
+    fn empty_snapshot_exposes_provider_route_state_without_tor_assumptions() {
+        let value: Value = serde_json::from_str(&empty_snapshot_json()).expect("valid snapshot");
+        assert_eq!(value["transport"]["providerRouteState"], "unavailable");
+        assert_eq!(value["bootstrapPhase"], "starting");
     }
 
     #[test]
@@ -82,5 +95,12 @@ mod tests {
             r#"{"kind":"command","name":"message.send"}"#,
         ));
         assert!(request_emits_runtime_revision("not-json"));
+    }
+
+    #[test]
+    fn provider_route_refresh_is_parsed_as_a_typed_command() {
+        let command = bridge_command("provider.route.refresh", &serde_json::json!({}))
+            .expect("provider route refresh command");
+        assert_eq!(command, BridgeCommand::RefreshProviderRoute);
     }
 }

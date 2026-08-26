@@ -8,6 +8,8 @@ param(
     [string]$Validation = 'Full',
     [ValidateSet('tor', 'iroh', 'webrtc')]
     [string]$CommunicationProvider,
+    [ValidateSet('always', 'direct', 'local')]
+    [string]$ProviderProfile,
     [switch]$CI
 )
 
@@ -16,6 +18,18 @@ $root = Split-Path -Parent $PSScriptRoot
 
 if ($PSBoundParameters.ContainsKey('CommunicationProvider')) {
     $env:TORCA_COMMUNICATION_PROVIDER = $CommunicationProvider
+}
+if ($PSBoundParameters.ContainsKey('ProviderProfile')) {
+    if ($env:TORCA_COMMUNICATION_PROVIDER -ne 'iroh') {
+        throw 'ProviderProfile is only valid when CommunicationProvider is iroh.'
+    }
+    $env:TORCA_IROH_PROFILE = $ProviderProfile
+} elseif ($env:TORCA_COMMUNICATION_PROVIDER -eq 'iroh' -and
+    [string]::IsNullOrWhiteSpace([string]$env:TORCA_IROH_PROFILE)) {
+    # Direct invocations must still embed a deterministic profile. The Rust
+    # deployer supplies this explicitly; the script keeps the same default for
+    # developers who call build.ps1 without the wizard.
+    $env:TORCA_IROH_PROFILE = 'always'
 }
 
 & (Join-Path $root 'scripts/modules/Torca.SourcePolicy.ps1') -RepoRoot $root
@@ -75,12 +89,19 @@ if ($Target -ne 'check' -and
     $env:TORCA_SOURCE_FINGERPRINT = Get-TorcaBuildSourceFingerprint -RepoRoot $root
     $env:TORCA_SOURCE_COMMIT = ((git -C $root rev-parse HEAD 2>$null | Out-String).Trim())
     if ([string]::IsNullOrWhiteSpace($env:TORCA_SOURCE_COMMIT)) { $env:TORCA_SOURCE_COMMIT = 'working-tree' }
-    $endpointSha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $env:TORCA_PROVIDER_ENDPOINT_HASH = [BitConverter]::ToString(
-            $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($endpoint))
-        ).Replace('-', '').ToLowerInvariant()
-    } finally { $endpointSha.Dispose() }
+    if ($provider -eq 'tor') {
+        $endpointSha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $env:TORCA_PROVIDER_ENDPOINT_HASH = [BitConverter]::ToString(
+                $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($endpoint))
+            ).Replace('-', '').ToLowerInvariant()
+        } finally { $endpointSha.Dispose() }
+    } else {
+        # Direct providers do not have a managed rendezvous endpoint. Clear a
+        # value inherited from a previous Tor build so stale metadata cannot
+        # make the runtime look partially configured.
+        Remove-Item Env:TORCA_PROVIDER_ENDPOINT_HASH -ErrorAction SilentlyContinue
+    }
 }
 Import-Module $module -Force -ErrorAction Stop -Verbose:$false
 if (-not (Get-Command Invoke-TorcaBuild -ErrorAction SilentlyContinue)) {

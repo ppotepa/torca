@@ -3,7 +3,7 @@ use torca_foundation::Timestamp;
 
 /// Small application-owned scheduler for durable attachment jobs.  It does
 /// not know about sockets or storage; it only prevents the runtime tick from
-/// repeatedly entering the adapter while a previous Tor attempt is settling.
+/// repeatedly entering the adapter while a previous provider attempt is settling.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AttachmentJobScheduler {
     next_due_ms: i64,

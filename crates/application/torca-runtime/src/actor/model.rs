@@ -151,6 +151,11 @@ pub type RelayServiceInfo = RendezvousServiceInfo;
 pub enum RuntimeDriverError {
     Pairing,
     Communication,
+    /// The selected provider is migrating its local route. Callers must wait
+    /// for the provider route-refresh event instead of retrying a captured
+    /// endpoint. This is deliberately provider-neutral (it also applies to
+    /// future WebRTC or other address-changing transports).
+    RouteRefreshRequired,
     Classified(ErrorDescriptor),
     Engine,
     Pending,
@@ -178,6 +183,11 @@ impl ClassifiedError for RuntimeDriverError {
                 "runtime.communication_unavailable",
                 ErrorCategory::Unavailable,
                 RetryAdvice::Backoff,
+            ),
+            Self::RouteRefreshRequired => (
+                "runtime.route_refresh_required",
+                ErrorCategory::Unavailable,
+                RetryAdvice::Immediate,
             ),
             Self::Classified(descriptor) => return *descriptor,
             Self::Engine => ("runtime.engine_failed", ErrorCategory::Internal, RetryAdvice::Never),

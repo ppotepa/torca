@@ -17,8 +17,9 @@ The active implementation has:
 - one responsive Flutter client for Windows and Android;
 - one Rust application/runtime shared by both hosts;
 - local identities and SQLCipher-backed structured storage;
-- explicit pairing through an untrusted ephemeral rendezvous relay;
-- direct authenticated peer communication through Tor onion services;
+- explicit pairing through the selected provider's commissioning path;
+- direct authenticated peer communication through the selected transport
+  provider (Tor/onion or Iroh/QUIC in the supported native builds);
 - durable message retry, receipts, searchable/paged history and attachments;
 - Safety Number-style contact verification;
 - redaction-conscious diagnostics and privacy-aware notification handling;
@@ -34,11 +35,18 @@ The repository contains automated source, Rust, Flutter/contract and Windows/And
 The remaining confidence work is primarily platform and end-to-end validation:
 
 - repeated Windows ↔ Android pairing and messaging journeys;
-- relay/Tor/network interruption and recovery on real devices;
+- provider/network interruption and recovery on real devices (including Tor
+  relay/onion and Iroh route migration where selected);
 - attachment resume/cancel/export across reconnects and restarts;
 - Radio Mode permission, backgrounding, route-change and recovery soak tests;
 - deployment resume/interruption behavior; and
 - longer-running battery/runtime traces before enabling more aggressive communication-provider dormancy policy.
+
+WebRTC is present as an isolated host/provider contract but is not selectable
+for product deployments until its signaling, ICE/STUN/TURN and DataChannel
+implementation is complete. Iroh direct/local profiles intentionally do not
+provide managed background reachability; this is a deployment trade-off, not a
+claim that Iroh always consumes less physical energy than Tor.
 
 The GitHub Actions workflow is configured to run the automated matrix, but the existence of the workflow is not proof that the current commit is green. Check the actual Actions result before citing CI as evidence.
 
@@ -60,7 +68,8 @@ Use the documents in this order when they disagree:
 2. [`../ARCHITECTURE.md`](../ARCHITECTURE.md), [`../SECURITY.md`](../SECURITY.md), [`../PRIVACY.md`](../PRIVACY.md) and the threat model for maintained guarantees/boundaries;
 3. this status page for a concise maturity summary;
 4. [`architecture/runtime-control.md`](architecture/runtime-control.md) for runtime/power invariants;
-5. [`validation/runtime-power.md`](validation/runtime-power.md) and [`diagnostics.md`](diagnostics.md) for evidence and collection;
-6. historical working records only as historical context.
+5. [`architecture/webrtc-host-integration.md`](architecture/webrtc-host-integration.md) for the platform SDK bridge contract;
+6. [`validation/runtime-power.md`](validation/runtime-power.md) and [`diagnostics.md`](diagnostics.md) for evidence and collection;
+7. historical working records only as historical context.
 
 Planning documents and progress ledgers may contain historical checkpoints. They should never be used to claim that a current binary, platform or release passed a gate that was not actually run.

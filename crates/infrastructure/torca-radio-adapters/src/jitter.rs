@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use torca_radio_protocol::{MAX_RADIO_BURST_FRAMES, RADIO_SAMPLES_PER_FRAME};
 
 // Keep the radio feel responsive while retaining enough headroom for a short
-// Tor scheduling hiccup. The old 400 ms target made every long burst sound
+// Provider scheduling hiccup. The old 400 ms target made every long burst sound
 // delayed before it even started.
 const DEFAULT_TARGET_FRAMES: usize = 8;
 const MIN_TARGET_FRAMES: usize = 4;
@@ -90,8 +90,8 @@ impl JitterBuffer {
             }
             None => {
                 self.stats.underruns = self.stats.underruns.saturating_add(1);
-                // Do not stop playback for one missing sequence.  A Tor
-                // circuit can briefly delay a frame while later frames are
+                // Do not stop playback for one missing sequence.  A provider
+                // stream can briefly delay a frame while later frames are
                 // already buffered; repeating the last decoded frame is a
                 // simple packet-loss concealment strategy and sounds much
                 // better than a 160-500 ms silence/rebuffer gap.  The sender

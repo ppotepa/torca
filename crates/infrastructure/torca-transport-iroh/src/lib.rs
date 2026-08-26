@@ -6,12 +6,12 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use iroh::EndpointAddr;
 use iroh::endpoint::{Connection, Endpoint, RecvStream, SendStream};
+use iroh::{EndpointAddr, SecretKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex as AsyncMutex;
@@ -30,8 +30,9 @@ use torca_runtime::{
 };
 use torca_transport_api::{
     CommissioningStage, CommissioningState, CommissioningStep, EnergyClass, LatencyClass,
-    PeerTransport, PeerTransportError, PeerTransportFactory, ProviderCommissioning,
-    ProviderTransport, TransportCapabilities, TransportFactoryError, TransportKind, TransportPath,
+    PeerTransport, PeerTransportError, PeerTransportFactory, ProviderCommissioning, ProviderRoute,
+    ProviderRouteState, ProviderRuntimeDiagnostics, ProviderTransport, TransportCapabilities,
+    TransportFactoryError, TransportKind, TransportPath,
 };
 
 mod pairing;
@@ -42,14 +43,360 @@ const ALPN: &[u8] = b"torca/peer/1";
 pub const PAIRING_ALPN: &[u8] = b"torca/pairing/1";
 /// Reserved provider-owned ALPN for optional Radio media streams.
 pub const RADIO_ALPN: &[u8] = b"torca/radio/1";
+
+/// Deployment-time Iroh endpoint policy. This is intentionally provider-local:
+/// the generic runtime asks for availability/dormancy, while the endpoint
+/// builder decides which discovery and relay services are appropriate for the
+/// selected deployment profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrohEndpointProfile {
+    /// Publicly reachable baseline using the N0 relay and address lookup.
+    AlwaysReachable,
+    /// Keep direct addressing but do not publish/resolve through address
+    /// lookup or maintain a relay connection. A peer must receive a complete
+    /// endpoint address out of band.
+    DirectOnly,
+    /// No relay and no address lookup. Intended for local tests or explicit
+    /// battery experiments; it cannot provide background reachability.
+    LocalOnly,
+}
+
+impl IrohEndpointProfile {
+    /// Parses the provider-local profile used by deployment and diagnostics.
+    /// Unknown values deliberately fall back to the interoperable profile.
+    pub fn from_wire(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "direct" | "direct-only" => Self::DirectOnly,
+            "local" | "local-only" => Self::LocalOnly,
+            _ => Self::AlwaysReachable,
+        }
+    }
+
+    pub const fn wire_value(self) -> &'static str {
+        match self {
+            Self::AlwaysReachable => "always",
+            Self::DirectOnly => "direct",
+            Self::LocalOnly => "local",
+        }
+    }
+
+    /// Relative energy class for scheduling and diagnostics. This is not a
+    /// physical battery measurement: direct/local avoid discovery and relay
+    /// maintenance, while always keeps those services available.
+    pub const fn energy_class(self) -> EnergyClass {
+        match self {
+            Self::DirectOnly | Self::LocalOnly => EnergyClass::Low,
+            Self::AlwaysReachable => EnergyClass::Medium,
+        }
+    }
+
+    /// Whether this profile has an incoming-reachability service to monitor.
+    /// Direct/local profiles intentionally have no relay or address lookup;
+    /// treating their permanently-empty `home_relay_status` as a pending
+    /// online probe would create an endless retry task and false warm-up UI.
+    pub const fn supports_incoming_reachability(self) -> bool {
+        matches!(self, Self::AlwaysReachable)
+    }
+
+    fn from_environment() -> Self {
+        // Deployment passes the profile to Cargo, so packaged clients carry
+        // an immutable profile that matches their artifact manifest. Only an
+        // unconfigured development binary may use the process environment at
+        // runtime; otherwise a stale host variable could silently change the
+        // battery/reachability policy after artifact verification.
+        option_env!("TORCA_IROH_PROFILE")
+            .map(str::to_owned)
+            .or_else(|| std::env::var("TORCA_IROH_PROFILE").ok())
+            .map(|value| Self::from_wire(&value))
+            .unwrap_or(Self::AlwaysReachable)
+    }
+
+    fn apply(self, builder: iroh::endpoint::Builder) -> iroh::endpoint::Builder {
+        match self {
+            Self::AlwaysReachable => builder,
+            // Direct-only is an explicit low-power/offline-discovery profile:
+            // disable both the address-lookup publisher and the relay map so
+            // Iroh does not keep a home-relay task alive in the background.
+            // The endpoint address must then be exchanged out of band.
+            Self::DirectOnly => {
+                builder.clear_address_lookup().relay_mode(iroh::RelayMode::Disabled)
+            }
+            Self::LocalOnly => builder.clear_address_lookup().relay_mode(iroh::RelayMode::Disabled),
+        }
+    }
+}
+
+/// Provider-owned service configuration for the relay-backed Iroh profile.
+///
+/// The direct and local profiles deliberately ignore these services: adding a
+/// relay or public lookup endpoint to those profiles would silently defeat
+/// their low-power/offline contract. Values are read once while the endpoint
+/// is created, never from the application or FFI boundary.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct IrohServiceConfig {
+    relay_urls: Vec<iroh::RelayUrl>,
+    pkarr_url: Option<url::Url>,
+}
+
+const COMPILED_IROH_RELAY_URLS: Option<&str> = option_env!("TORCA_IROH_RELAY_URLS");
+const COMPILED_IROH_PKARR_URL: Option<&str> = option_env!("TORCA_IROH_PKARR_URL");
+const COMPILED_IROH_DISABLE_RELAY: Option<&str> = option_env!("TORCA_IROH_DISABLE_RELAY");
+const COMPILED_IROH_DISABLE_DISCOVERY: Option<&str> = option_env!("TORCA_IROH_DISABLE_DISCOVERY");
+const COMPILED_IROH_LOCAL_ONLY: Option<&str> = option_env!("TORCA_IROH_LOCAL_ONLY");
+const COMPILED_IROH_RUNTIME_THREADS: Option<&str> = option_env!("TORCA_IROH_RUNTIME_THREADS");
+
+fn configured_flag(compiled: Option<&str>, key: &str) -> bool {
+    compiled
+        .map(|value| {
+            matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+        })
+        .or_else(|| {
+            std::env::var(key).ok().map(|value| {
+                matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+            })
+        })
+        .unwrap_or(false)
+}
+
+impl IrohServiceConfig {
+    fn from_environment(profile: IrohEndpointProfile) -> Result<Self, IrohIdentityError> {
+        if !profile.supports_incoming_reachability() {
+            return Ok(Self::default());
+        }
+
+        let relay_value = COMPILED_IROH_RELAY_URLS
+            .map(str::to_owned)
+            .or_else(|| std::env::var("TORCA_IROH_RELAY_URLS").ok());
+        let pkarr_value = COMPILED_IROH_PKARR_URL
+            .map(str::to_owned)
+            .or_else(|| std::env::var("TORCA_IROH_PKARR_URL").ok());
+        Self::from_values(
+            profile,
+            relay_value.as_deref(),
+            pkarr_value.as_deref().filter(|value| !value.trim().is_empty()),
+        )
+    }
+
+    fn from_values(
+        profile: IrohEndpointProfile,
+        relay_value: Option<&str>,
+        pkarr_value: Option<&str>,
+    ) -> Result<Self, IrohIdentityError> {
+        if !profile.supports_incoming_reachability() {
+            return Ok(Self::default());
+        }
+
+        let relay_urls = relay_value
+            .into_iter()
+            .flat_map(|value| {
+                value.split(',').map(str::trim).map(str::to_owned).collect::<Vec<_>>()
+            })
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value.parse::<iroh::RelayUrl>().map_err(|error| {
+                    IrohIdentityError::Bind(format!(
+                        "invalid TORCA_IROH_RELAY_URLS entry '{value}': {error}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let pkarr_url = pkarr_value
+            .map(str::to_owned)
+            .map(|value| {
+                value.parse::<url::Url>().map_err(|error| {
+                    IrohIdentityError::Bind(format!(
+                        "invalid TORCA_IROH_PKARR_URL '{value}': {error}"
+                    ))
+                })
+            })
+            .transpose()?;
+        Ok(Self { relay_urls, pkarr_url })
+    }
+
+    fn is_custom(&self) -> bool {
+        !self.relay_urls.is_empty() || self.pkarr_url.is_some()
+    }
+}
 const MAX_FRAME: usize = MAX_PEER_DATA_LEN;
 const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const PEER_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const RADIO_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_PENDING_INCOMING_STREAMS: usize = 32;
+const MAX_PENDING_PAIRING_CONNECTIONS: usize = 32;
+/// Bound decoded peer frames waiting for the application worker. Without a
+/// cap, a fast peer (or a malicious one) could keep allocating while the
+/// runtime is backgrounded, defeating the provider's idle/battery policy.
+const MAX_PENDING_INBOUND_FRAMES: usize = 256;
+/// A failed incoming-reachability check must not become a permanent mobile
+/// timer.  A later OS network-generation event or explicit provider wake
+/// starts a fresh bounded sequence.
+const MAX_ONLINE_PROBE_ATTEMPTS: u32 = 3;
+
+struct OnlineProbeGuard(Arc<AtomicBool>);
+
+impl Drop for OnlineProbeGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 /// Provider-owned endpoint handle used only by the native composition layer
 /// to lazily encode current route/bootstrap metadata. It never crosses the
 /// application or FFI boundary.
 pub type ProviderEndpoint = Endpoint;
+
+/// Shared, replaceable endpoint owned by the Iroh provider. Factories only
+/// borrow a clone for the duration of a dial; they never own the lifecycle.
+/// This allows the runtime to close an idle endpoint and recreate it later
+/// without changing the stable endpoint identity.
+pub type ProviderEndpointSlot = Arc<IrohEndpointSlot>;
+
+pub struct IrohEndpointSlot {
+    endpoint: Mutex<Option<Endpoint>>,
+    notify: Arc<tokio::sync::Notify>,
+    terminated: AtomicBool,
+    generation: AtomicU64,
+    route_generation: Arc<AtomicU64>,
+    route_stale: Arc<AtomicBool>,
+    runtime: Arc<Runtime>,
+    secret: SecretKey,
+    profile: IrohEndpointProfile,
+    local_only: bool,
+}
+
+impl IrohEndpointSlot {
+    fn new(
+        endpoint: Endpoint,
+        runtime: Arc<Runtime>,
+        secret: SecretKey,
+        profile: IrohEndpointProfile,
+        local_only: bool,
+    ) -> ProviderEndpointSlot {
+        Arc::new(Self {
+            endpoint: Mutex::new(Some(endpoint)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+            terminated: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            route_generation: Arc::new(AtomicU64::new(0)),
+            route_stale: Arc::new(AtomicBool::new(false)),
+            runtime,
+            secret,
+            profile,
+            local_only,
+        })
+    }
+
+    /// Creates a slot for tests which already provide an endpoint. The
+    /// endpoint's own secret key is retained so dormancy/reactivation has the
+    /// same identity as production composition.
+    fn static_endpoint(endpoint: Endpoint, runtime: Arc<Runtime>) -> ProviderEndpointSlot {
+        let secret = endpoint.secret_key().clone();
+        Self::new(endpoint, runtime, secret, IrohEndpointProfile::AlwaysReachable, false)
+    }
+
+    pub fn current(&self) -> Option<Endpoint> {
+        self.endpoint.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Monotonically increasing endpoint generation. A generation changes
+    /// whenever the provider closes or recreates its endpoint; consumers can
+    /// use it to reject work that captured a stale endpoint before dormancy
+    /// or a provider restart.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Returns the generation of the currently advertised endpoint address.
+    /// Iroh may change that address without replacing the endpoint (for
+    /// example after Wi-Fi/LTE migration or relay selection), so callers must
+    /// not use the endpoint generation as a route freshness signal. A network
+    /// transition increments this generation immediately and marks the route
+    /// stale; callers must check `route_is_fresh` before advertising it.
+    pub fn route_generation(&self) -> u64 {
+        self.route_generation.load(Ordering::Acquire)
+    }
+
+    /// Returns whether the current endpoint address is safe to advertise.
+    /// Network migration invalidates the old address before Iroh has finished
+    /// selecting the replacement route.
+    pub fn route_is_fresh(&self) -> bool {
+        !self.route_stale.load(Ordering::Acquire)
+    }
+
+    /// Shared route-freshness marker for transports created by this slot.
+    /// Keeping the atomic behind the slot lets a network callback invalidate
+    /// a transport that is already queued for a dial without exposing any
+    /// Iroh-specific state to the generic peer link.
+    fn route_fresh_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.route_stale)
+    }
+
+    /// Returns the immutable deployment profile used when binding this slot.
+    /// Policy/diagnostics use this instead of guessing battery cost from an
+    /// endpoint address or from the provider name.
+    pub fn profile(&self) -> IrohEndpointProfile {
+        self.profile
+    }
+
+    fn is_terminated(&self) -> bool {
+        self.terminated.load(Ordering::Acquire)
+    }
+
+    async fn wait_current(&self) -> Option<Endpoint> {
+        loop {
+            if let Some(endpoint) = self.current() {
+                return Some(endpoint);
+            }
+            if self.terminated.load(Ordering::Acquire) {
+                return None;
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    fn address(&self) -> Option<EndpointAddr> {
+        self.current().map(|endpoint| endpoint.addr())
+    }
+
+    fn deactivate(&self) {
+        let endpoint = self.endpoint.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(endpoint) = endpoint {
+            self.route_stale.store(true, Ordering::Release);
+            self.generation.fetch_add(1, Ordering::AcqRel);
+            self.route_generation.fetch_add(1, Ordering::AcqRel);
+            self.runtime.block_on(endpoint.close());
+        }
+        self.notify.notify_waiters();
+    }
+
+    fn terminate(&self) {
+        self.terminated.store(true, Ordering::Release);
+        self.deactivate();
+    }
+
+    fn activate(&self) -> Result<(), IrohIdentityError> {
+        if self.terminated.load(Ordering::Acquire) {
+            return Err(IrohIdentityError::Bind("endpoint slot is terminated".to_owned()));
+        }
+        if self.current().is_some() {
+            return Ok(());
+        }
+        let endpoint = bind_endpoint_from_secret(
+            &self.runtime,
+            self.secret.clone(),
+            self.profile,
+            self.local_only,
+        )?;
+        if let Ok(mut slot) = self.endpoint.lock() {
+            *slot = Some(endpoint);
+            self.route_stale.store(false, Ordering::Release);
+            self.generation.fetch_add(1, Ordering::AcqRel);
+            self.route_generation.fetch_add(1, Ordering::AcqRel);
+        }
+        self.notify.notify_waiters();
+        Ok(())
+    }
+}
 
 /// Protected-store handle for the Iroh endpoint identity. It is independent
 /// from Torca's user identity: Iroh uses it to keep its network route stable
@@ -101,12 +448,68 @@ fn bind_endpoint_with_handle(
             secret
         }
     };
-    let local_only = std::env::var_os("TORCA_IROH_LOCAL_ONLY").is_some();
-    let builder = Endpoint::builder(iroh::endpoint::presets::N0).secret_key(secret).alpns(vec![
+    let profile = IrohEndpointProfile::from_environment();
+    let local_only = configured_flag(COMPILED_IROH_LOCAL_ONLY, "TORCA_IROH_LOCAL_ONLY")
+        || matches!(profile, IrohEndpointProfile::LocalOnly);
+    bind_endpoint_from_secret(runtime, secret, profile, local_only)
+}
+
+fn bind_endpoint_from_secret(
+    runtime: &Runtime,
+    secret: SecretKey,
+    profile: IrohEndpointProfile,
+    local_only: bool,
+) -> Result<Endpoint, IrohIdentityError> {
+    let service_config = IrohServiceConfig::from_environment(profile)?;
+    // Packaged artifacts use the values embedded by this crate's build script;
+    // an unconfigured development build may still use process environment.
+    // This prevents a host shell from silently changing an already verified
+    // artifact's routing/energy policy after deployment.
+    let disable_relay = configured_flag(COMPILED_IROH_DISABLE_RELAY, "TORCA_IROH_DISABLE_RELAY");
+    let disable_discovery =
+        configured_flag(COMPILED_IROH_DISABLE_DISCOVERY, "TORCA_IROH_DISABLE_DISCOVERY");
+    // Minimal is important for custom deployments: starting from N0 would
+    // silently retain public N0 lookup services when only one custom service
+    // was configured. Direct/local also start from Minimal so an offline
+    // profile never constructs unused discovery/relay workers.
+    let use_minimal = !matches!(profile, IrohEndpointProfile::AlwaysReachable)
+        || service_config.is_custom()
+        || disable_relay
+        || disable_discovery;
+    let base = if use_minimal {
+        Endpoint::builder(iroh::endpoint::presets::Minimal)
+    } else {
+        Endpoint::builder(iroh::endpoint::presets::N0)
+    };
+    let mut builder = profile.apply(base).secret_key(secret).alpns(vec![
         ALPN.to_vec(),
         PAIRING_ALPN.to_vec(),
         RADIO_ALPN.to_vec(),
     ]);
+
+    if profile.supports_incoming_reachability() && !disable_relay {
+        if !service_config.relay_urls.is_empty() {
+            builder = builder.relay_mode(iroh::RelayMode::custom(service_config.relay_urls));
+        } else if use_minimal {
+            // A custom discovery-only deployment still needs an explicit
+            // relay decision. Keeping this disabled avoids an accidental
+            // fallback to public N0 relays.
+            builder = builder.relay_mode(iroh::RelayMode::Disabled);
+        }
+    } else if disable_relay {
+        builder = builder.relay_mode(iroh::RelayMode::Disabled);
+    }
+
+    if profile.supports_incoming_reachability()
+        && !disable_discovery
+        && let Some(pkarr_url) = service_config.pkarr_url
+    {
+        builder = builder
+            .address_lookup(iroh::address_lookup::PkarrPublisher::builder(pkarr_url.clone()))
+            .address_lookup(iroh::address_lookup::PkarrResolver::builder(pkarr_url));
+    } else if disable_discovery || (profile.supports_incoming_reachability() && use_minimal) {
+        builder = builder.clear_address_lookup();
+    }
     // The laboratory runner starts several peers in one process namespace.
     // A loopback bind makes their bootstrap descriptor immediately routable
     // and deterministic without depending on the host's Wi-Fi/NAT interface.
@@ -149,25 +552,39 @@ pub struct IrohComposition {
 /// protocol. The router classifies by ALPN before any provider subsystem sees
 /// the connection.
 pub(crate) struct IrohIncomingRouter {
-    peer: Mutex<VecDeque<Connection>>,
+    peer_streams: Mutex<VecDeque<(Connection, SendStream, RecvStream)>>,
     pairing: Mutex<VecDeque<Connection>>,
-    radio: Mutex<VecDeque<Connection>>,
+    radio_streams: Mutex<VecDeque<(Connection, SendStream, RecvStream)>>,
     peer_wake: Wake,
     radio_wake: Wake,
     notify: Arc<tokio::sync::Notify>,
+    closed: AtomicBool,
 }
 
 /// Provider-owned Radio media factory. It uses a dedicated ALPN on the same
 /// Iroh endpoint, keeping media streams separate from peer and pairing data.
 pub struct IrohRadioMediaSystemFactory {
-    endpoint: Endpoint,
+    endpoint: ProviderEndpointSlot,
     runtime: Arc<Runtime>,
     incoming: Arc<IrohIncomingRouter>,
 }
 
 impl IrohRadioMediaSystemFactory {
+    #[allow(dead_code)]
     pub(crate) fn new(
         endpoint: Endpoint,
+        runtime: Arc<Runtime>,
+        incoming: Arc<IrohIncomingRouter>,
+    ) -> Self {
+        Self::new_with_slot(
+            IrohEndpointSlot::static_endpoint(endpoint, Arc::clone(&runtime)),
+            runtime,
+            incoming,
+        )
+    }
+
+    pub(crate) fn new_with_slot(
+        endpoint: ProviderEndpointSlot,
         runtime: Arc<Runtime>,
         incoming: Arc<IrohIncomingRouter>,
     ) -> Self {
@@ -194,7 +611,14 @@ impl std::io::Read for IrohRadioMediaStream {
                         Ok(Err(error)) => {
                             eprintln!("torca-iroh: radio read failed: {error}");
                             Err(std::io::Error::new(
-                                std::io::ErrorKind::Interrupted,
+                                // `Interrupted` is reserved for a temporary
+                                // read deadline in the provider-neutral
+                                // worker. A QUIC stream error/reset must be
+                                // fatal for this generation so the worker
+                                // immediately emits Interrupted and starts
+                                // reconnecting instead of waiting for the
+                                // 180-second idle safety limit.
+                                std::io::ErrorKind::ConnectionReset,
                                 error.to_string(),
                             ))
                         }
@@ -216,21 +640,60 @@ impl std::io::Read for IrohRadioMediaStream {
 
 impl std::io::Write for IrohRadioMediaStream {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        self.runtime.block_on(self.send.write(buffer)).map_err(|error| {
-            eprintln!("torca-iroh: radio write failed: {error}");
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, error.to_string())
-        })
+        self.runtime
+            .block_on(async {
+                tokio::time::timeout(RADIO_WRITE_TIMEOUT, self.send.write(buffer))
+                    .await
+                    .map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::TimedOut, "radio write timeout")
+                    })?
+                    .map_err(|error| {
+                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, error.to_string())
+                    })
+            })
+            .map_err(|error| {
+                eprintln!("torca-iroh: radio write failed: {error}");
+                error
+            })
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.runtime.block_on(self.send.flush()).map_err(|error| {
-            eprintln!("torca-iroh: radio flush failed: {error}");
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, error.to_string())
-        })
+        self.runtime
+            .block_on(async {
+                tokio::time::timeout(RADIO_WRITE_TIMEOUT, self.send.flush())
+                    .await
+                    .map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::TimedOut, "radio flush timeout")
+                    })?
+                    .map_err(|error| {
+                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, error.to_string())
+                    })
+            })
+            .map_err(|error| {
+                eprintln!("torca-iroh: radio flush failed: {error}");
+                error
+            })
     }
 }
 
 impl torca_radio_adapters::RadioMediaStream for IrohRadioMediaStream {
+    fn configure(
+        &self,
+        read: Duration,
+        _write: Duration,
+    ) -> Result<(), torca_radio_coordinator::RadioApplicationError> {
+        // `LiveSession::pump_live` performs its first read immediately after
+        // sending Hello.  Without an initial deadline this first read used to
+        // wait forever when the remote Radio worker had not opened/answered
+        // yet, so the media worker could not process commands, floor timeout,
+        // or reconnect.  Keep the provider boundary blocking, but guarantee
+        // that every provider honours the common bounded-read contract.
+        self.read_timeout
+            .lock()
+            .map_err(|_| torca_radio_coordinator::RadioApplicationError::MediaTransport)
+            .map(|mut value| *value = Some(read))
+    }
+
     fn set_read_deadline(
         &self,
         timeout: Duration,
@@ -252,9 +715,14 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
         torca_transport_api::RealtimeCapabilities {
             reliable: true,
             ordered: true,
-            supports_datagrams: true,
+            // The current media adapter is stream-backed. Keep the capability
+            // truthful until a dedicated QUIC datagram lane is implemented;
+            // advertising datagrams here would make the coordinator select a
+            // path that this provider cannot actually service.
+            supports_datagrams: false,
             max_frame_size: 64 * 1024,
             max_idle_interval_ms: 10_000,
+            requires_application_keep_alive: false,
         }
     }
 
@@ -267,23 +735,34 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
         torca_radio_coordinator::RadioApplicationError,
     > {
         if route.provider != TransportKind::Iroh.wire_value() {
-            return Err(torca_radio_coordinator::RadioApplicationError::MediaTransport);
+            return Err(torca_radio_coordinator::RadioApplicationError::MediaEndpointUnavailable);
+        }
+        // A platform network transition invalidates the local route before
+        // Iroh finishes migrating the endpoint.  Refuse a Radio dial during
+        // that short window; the coordinator retries after the provider
+        // waker reports a fresh route instead of entering a reconnect loop.
+        if !self.endpoint.route_is_fresh() {
+            return Err(torca_radio_coordinator::RadioApplicationError::MediaEndpointUnavailable);
         }
         let remote = decode_endpoint_addr(&route.endpoint).map_err(|error| {
             eprintln!("torca-iroh: radio dial failed: {error}");
-            torca_radio_coordinator::RadioApplicationError::MediaTransport
+            torca_radio_coordinator::RadioApplicationError::MediaEndpointUnavailable
         })?;
+        let endpoint = self
+            .endpoint
+            .current()
+            .ok_or(torca_radio_coordinator::RadioApplicationError::MediaEndpointUnavailable)?;
         let connection = self
             .runtime
             .block_on(async {
-                tokio::time::timeout(timeout, self.endpoint.connect(remote, RADIO_ALPN))
+                tokio::time::timeout(timeout, endpoint.connect(remote, RADIO_ALPN))
                     .await
                     .map_err(|_| ())?
                     .map_err(|_| ())
             })
             .map_err(|_| {
                 eprintln!("torca-iroh: radio dial timed out or was rejected");
-                torca_radio_coordinator::RadioApplicationError::MediaTransport
+                torca_radio_coordinator::RadioApplicationError::MediaConnectTimeout
             })?;
         let (send, recv) = self
             .runtime
@@ -295,7 +774,7 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
             })
             .map_err(|_| {
                 eprintln!("torca-iroh: radio outgoing stream open timed out or was rejected");
-                torca_radio_coordinator::RadioApplicationError::MediaTransport
+                torca_radio_coordinator::RadioApplicationError::MediaConnectTimeout
             })?;
         Ok(Box::new(IrohRadioMediaStream {
             connection,
@@ -312,11 +791,12 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
         Option<Box<dyn torca_radio_adapters::RadioMediaStream>>,
         torca_radio_coordinator::RadioApplicationError,
     > {
-        let Some(connection) = self.incoming.take_radio() else { return Ok(None) };
-        let (send, recv) = self.runtime.block_on(connection.accept_bi()).map_err(|error| {
-            eprintln!("torca-iroh: radio incoming stream accept failed: {error}");
-            torca_radio_coordinator::RadioApplicationError::MediaTransport
-        })?;
+        if self.endpoint.current().is_none() {
+            return Ok(None);
+        }
+        let Some((connection, send, recv)) = self.incoming.take_radio_stream() else {
+            return Ok(None);
+        };
         Ok(Some(Box::new(IrohRadioMediaStream {
             connection,
             send,
@@ -344,56 +824,166 @@ impl torca_radio_adapters::RadioMediaSystemFactory for IrohRadioMediaSystemFacto
 }
 
 impl IrohIncomingRouter {
+    #[allow(dead_code)]
     fn start(endpoint: Endpoint, runtime: Arc<Runtime>) -> Arc<Self> {
+        Self::start_with_slot(
+            IrohEndpointSlot::static_endpoint(endpoint, Arc::clone(&runtime)),
+            runtime,
+        )
+    }
+
+    fn start_with_slot(slot: ProviderEndpointSlot, runtime: Arc<Runtime>) -> Arc<Self> {
         let router = Arc::new(Self {
-            peer: Mutex::new(VecDeque::new()),
+            peer_streams: Mutex::new(VecDeque::new()),
             pairing: Mutex::new(VecDeque::new()),
-            radio: Mutex::new(VecDeque::new()),
+            radio_streams: Mutex::new(VecDeque::new()),
             peer_wake: Arc::new(Mutex::new(None)),
             radio_wake: Arc::new(Mutex::new(None)),
             notify: Arc::new(tokio::sync::Notify::new()),
+            closed: AtomicBool::new(false),
         });
         let task_router = Arc::clone(&router);
-        runtime.spawn(async move {
-            while let Some(incoming) = endpoint.accept().await {
-                let Ok(accepted) = incoming.accept() else { continue };
-                let Ok(connection) = accepted.await else { continue };
-                let is_radio = connection.alpn() == RADIO_ALPN;
-                let queue = match connection.alpn() {
-                    value if value == ALPN => &task_router.peer,
-                    value if value == PAIRING_ALPN => &task_router.pairing,
-                    value if value == RADIO_ALPN => &task_router.radio,
-                    _ => continue,
+        let listener_runtime = Arc::clone(&runtime);
+        listener_runtime.spawn(async move {
+            let mut observed_generation = None;
+            loop {
+                let Some(endpoint) = slot.wait_current().await else {
+                    task_router.closed.store(true, Ordering::Release);
+                    task_router.notify.notify_waiters();
+                    break;
                 };
-                if let Ok(mut entries) = queue.lock() {
-                    entries.push_back(connection);
+                let generation = slot.generation();
+                if observed_generation.is_some_and(|previous| previous != generation) {
+                    // A previous endpoint may have accepted streams just before
+                    // dormancy. Drop those handles before consuming the new
+                    // generation so a stale peer/radio/pairing event cannot be
+                    // delivered through a freshly rebound endpoint.
+                    task_router.clear_pending();
                 }
-                task_router.notify.notify_one();
-                if is_radio {
-                    notify(&task_router.radio_wake);
-                } else {
-                    notify(&task_router.peer_wake);
+                observed_generation = Some(generation);
+                while let Some(incoming) = endpoint.accept().await {
+                    if slot.generation() != generation {
+                        task_router.clear_pending();
+                        break;
+                    }
+                    let Ok(accepted) = incoming.accept() else { continue };
+                    let Ok(connection) = accepted.await else { continue };
+                    match connection.alpn() {
+                        value if value == PAIRING_ALPN => {
+                            if let Ok(mut entries) = task_router.pairing.lock() {
+                                if entries.len() >= MAX_PENDING_PAIRING_CONNECTIONS {
+                                    eprintln!(
+                                        "torca-iroh: dropping excess pending pairing connection"
+                                    );
+                                    connection.close(0_u32.into(), b"pairing queue full");
+                                    continue;
+                                }
+                                entries.push_back(connection);
+                            }
+                            task_router.notify.notify_one();
+                        }
+                        value if value == ALPN || value == RADIO_ALPN => {
+                            // Opening the first bidirectional stream is provider
+                            // work, not application work. Do it on a child task so
+                            // a half-open QUIC connection cannot stall the peer or
+                            // radio worker and leave its state in "requesting".
+                            let router = Arc::clone(&task_router);
+                            let child_runtime = Arc::clone(&runtime);
+                            let is_radio = value == RADIO_ALPN;
+                            child_runtime.spawn(async move {
+                                let accepted = tokio::time::timeout(
+                                    PEER_CONNECT_TIMEOUT,
+                                    connection.accept_bi(),
+                                )
+                                .await;
+                                let Ok(Ok((send, recv))) = accepted else {
+                                    eprintln!(
+                                        "torca-iroh: incoming {} stream was not opened",
+                                        if is_radio { "radio" } else { "peer" }
+                                    );
+                                    connection.close(0_u32.into(), b"stream not opened");
+                                    return;
+                                };
+                                if is_radio {
+                                    if let Ok(mut entries) = router.radio_streams.lock() {
+                                        if entries.len() >= MAX_PENDING_INCOMING_STREAMS {
+                                            eprintln!(
+                                                "torca-iroh: dropping excess pending radio stream"
+                                            );
+                                            connection.close(0_u32.into(), b"radio queue full");
+                                            return;
+                                        }
+                                        entries.push_back((connection, send, recv));
+                                    }
+                                    notify(&router.radio_wake);
+                                } else {
+                                    if let Ok(mut entries) = router.peer_streams.lock() {
+                                        if entries.len() >= MAX_PENDING_INCOMING_STREAMS {
+                                            eprintln!(
+                                                "torca-iroh: dropping excess pending peer stream"
+                                            );
+                                            connection.close(0_u32.into(), b"peer queue full");
+                                            return;
+                                        }
+                                        entries.push_back((connection, send, recv));
+                                    }
+                                    notify(&router.peer_wake);
+                                }
+                                router.notify.notify_one();
+                            });
+                        }
+                        _ => connection.close(0_u32.into(), b"unsupported ALPN"),
+                    }
+                }
+                // Closing a dormant endpoint invalidates any connections that
+                // were accepted just before the transition. Do not retain
+                // those handles across a later endpoint generation.
+                if slot.generation() != generation
+                    || (slot.current().is_none() && !slot.is_terminated())
+                {
+                    task_router.clear_pending();
                 }
             }
         });
         router
     }
 
-    fn take_peer(&self) -> Option<Connection> {
-        self.peer.lock().ok()?.pop_front()
+    fn take_peer_stream(&self) -> Option<(Connection, SendStream, RecvStream)> {
+        self.peer_streams.lock().ok()?.pop_front()
+    }
+
+    fn clear_pending(&self) {
+        if let Ok(mut entries) = self.peer_streams.lock() {
+            for (connection, _, _) in entries.drain(..) {
+                connection.close(0_u32.into(), b"endpoint generation closed");
+            }
+        }
+        if let Ok(mut entries) = self.radio_streams.lock() {
+            for (connection, _, _) in entries.drain(..) {
+                connection.close(0_u32.into(), b"endpoint generation closed");
+            }
+        }
+        if let Ok(mut entries) = self.pairing.lock() {
+            for connection in entries.drain(..) {
+                connection.close(0_u32.into(), b"endpoint generation closed");
+            }
+        }
     }
 
     pub(crate) fn take_pairing(&self) -> Option<Connection> {
         self.pairing.lock().ok()?.pop_front()
     }
 
-    pub(crate) async fn wait_for_connection(&self) {
+    pub(crate) async fn wait_for_connection(&self) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return false;
+        }
         self.notify.notified().await;
+        !self.closed.load(Ordering::Acquire)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn take_radio(&self) -> Option<Connection> {
-        self.radio.lock().ok()?.pop_front()
+    pub(crate) fn take_radio_stream(&self) -> Option<(Connection, SendStream, RecvStream)> {
+        self.radio_streams.lock().ok()?.pop_front()
     }
 
     pub(crate) fn set_radio_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) {
@@ -403,7 +993,8 @@ impl IrohIncomingRouter {
             // worker finishes installing its callback. Replay the wake when
             // a radio connection is already queued so it cannot remain
             // invisible until the fallback poll deadline.
-            let has_pending = self.radio.lock().map(|queue| !queue.is_empty()).unwrap_or(false);
+            let has_pending =
+                self.radio_streams.lock().map(|queue| !queue.is_empty()).unwrap_or(false);
             if has_pending {
                 if let Some(callback) = slot.as_ref() {
                     callback();
@@ -425,7 +1016,7 @@ fn build_provider_runtime() -> Result<Runtime, IrohIdentityError> {
     // particularly expensive on mobile devices and does not improve the
     // single-endpoint workload. Keep a small, named pool for observability;
     // desktop retains enough parallelism for concurrent transfers.
-    let worker_threads = if cfg!(target_os = "android") { 2 } else { 4 };
+    let worker_threads = configured_runtime_threads();
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(worker_threads)
         .thread_name("torca-iroh")
@@ -434,11 +1025,23 @@ fn build_provider_runtime() -> Result<Runtime, IrohIdentityError> {
         .map_err(|error| IrohIdentityError::Bind(format!("create Iroh runtime: {error}")))
 }
 
+fn configured_runtime_threads() -> usize {
+    let default_threads = if cfg!(target_os = "android") { 2 } else { 4 };
+    // `build.rs` emits an explicit empty value when no build-time override
+    // exists. Treat that as the packaged default rather than consulting the
+    // host process environment after artifact verification.
+    let configured_threads = COMPILED_IROH_RUNTIME_THREADS.map(str::to_owned);
+    configured_threads
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|threads| (1..=8).contains(threads))
+        .unwrap_or(default_threads)
+}
+
 /// Direct Iroh transport for the shared pairing request protocol. It is
 /// intentionally separate from `IrohTransport`: pairing has request/response
 /// framing while authenticated peer traffic is a long-lived byte stream.
 pub struct IrohPairingServiceTransport {
-    endpoint: Endpoint,
+    endpoint: ProviderEndpointSlot,
     remote: EndpointAddr,
     runtime: Arc<Runtime>,
     connection: Option<Connection>,
@@ -446,11 +1049,23 @@ pub struct IrohPairingServiceTransport {
 
 impl IrohPairingServiceTransport {
     pub fn new(endpoint: Endpoint, remote: EndpointAddr, runtime: Arc<Runtime>) -> Self {
+        Self::new_with_slot(
+            IrohEndpointSlot::static_endpoint(endpoint, Arc::clone(&runtime)),
+            remote,
+            runtime,
+        )
+    }
+
+    pub fn new_with_slot(
+        endpoint: ProviderEndpointSlot,
+        remote: EndpointAddr,
+        runtime: Arc<Runtime>,
+    ) -> Self {
         Self { endpoint, remote, runtime, connection: None }
     }
 
     pub fn from_bootstrap(
-        endpoint: Endpoint,
+        endpoint: ProviderEndpointSlot,
         descriptor: &PairingBootstrapDescriptor,
         runtime: Arc<Runtime>,
     ) -> Result<Self, String> {
@@ -459,7 +1074,7 @@ impl IrohPairingServiceTransport {
         }
         let remote =
             decode_endpoint_addr(descriptor.payload()).map_err(|error| error.to_string())?;
-        Ok(Self::new(endpoint, remote, runtime))
+        Ok(Self::new_with_slot(endpoint, remote, runtime))
     }
 
     fn transport_error(kind: RelayTransportFailureKind, sent: bool) -> RelayTransportError {
@@ -476,9 +1091,19 @@ impl PairingServiceTransport for IrohPairingServiceTransport {
 
     fn reconnect(&mut self) -> Result<(), RelayTransportError> {
         self.invalidate();
+        // The pairing descriptor is an opaque snapshot of the provider route.
+        // Never dial it while this endpoint is between network generations;
+        // report a retryable unavailable result to the rendezvous client.
+        if !self.endpoint.route_is_fresh() {
+            return Err(Self::transport_error(RelayTransportFailureKind::Unavailable, false));
+        }
+        let endpoint = self
+            .endpoint
+            .current()
+            .ok_or_else(|| Self::transport_error(RelayTransportFailureKind::Unavailable, false))?;
         let connection = self
             .runtime
-            .block_on(self.endpoint.connect(self.remote.clone(), PAIRING_ALPN))
+            .block_on(endpoint.connect(self.remote.clone(), PAIRING_ALPN))
             .map_err(|_| Self::transport_error(RelayTransportFailureKind::Unavailable, false))?;
         self.connection = Some(connection);
         Ok(())
@@ -534,16 +1159,27 @@ impl IrohComposition {
         runtime: Arc<Runtime>,
         store: &mut dyn ProtectedSecretStore,
     ) -> Result<Self, IrohIdentityError> {
-        let endpoint = bind_endpoint(&runtime, store)?;
-        let incoming = IrohIncomingRouter::start(endpoint.clone(), Arc::clone(&runtime));
-        let lifecycle = IrohLifecycle::new(endpoint.clone(), Arc::clone(&runtime));
-        let transport_factory = IrohTransportFactory::new(
+        let profile = IrohEndpointProfile::from_environment();
+        let local_only = configured_flag(COMPILED_IROH_LOCAL_ONLY, "TORCA_IROH_LOCAL_ONLY")
+            || matches!(profile, IrohEndpointProfile::LocalOnly);
+        let secret = load_or_create_endpoint_secret(store)?;
+        let endpoint = bind_endpoint_from_secret(&runtime, secret.clone(), profile, local_only)?;
+        let slot = IrohEndpointSlot::new(
             endpoint.clone(),
+            Arc::clone(&runtime),
+            secret,
+            profile,
+            local_only,
+        );
+        let incoming = IrohIncomingRouter::start_with_slot(Arc::clone(&slot), Arc::clone(&runtime));
+        let lifecycle = IrohLifecycle::new_with_slot(Arc::clone(&slot), Arc::clone(&runtime));
+        let transport_factory = IrohTransportFactory::new_with_slot(
+            Arc::clone(&slot),
             Arc::clone(&runtime),
             Arc::clone(&incoming),
         );
-        let radio_media_factory = IrohRadioMediaSystemFactory::new(
-            endpoint.clone(),
+        let radio_media_factory = IrohRadioMediaSystemFactory::new_with_slot(
+            Arc::clone(&slot),
             Arc::clone(&runtime),
             Arc::clone(&incoming),
         );
@@ -551,7 +1187,7 @@ impl IrohComposition {
         // protocols are already separated by ALPN, while a second endpoint
         // would duplicate Iroh's network watchers, relay discovery and
         // Android native worker threads for no functional benefit.
-        let pairing = IrohPairingService::new(endpoint, Arc::clone(&runtime), incoming);
+        let pairing = IrohPairingService::new_with_slot(slot, Arc::clone(&runtime), incoming);
         Ok(Self { lifecycle, transport_factory, pairing, radio_media_factory })
     }
 
@@ -620,46 +1256,201 @@ type Inbound = Arc<(Mutex<VecDeque<Result<Vec<u8>, PeerTransportError>>>, Condva
 /// infrastructure is available for incoming reachability.  This is purposely
 /// not translated into Tor/onion vocabulary.
 pub struct IrohLifecycle {
-    endpoint: Endpoint,
+    endpoint: ProviderEndpointSlot,
     runtime: Arc<Runtime>,
     online: Arc<AtomicBool>,
+    /// Reachability is demand-driven.  Keeping the endpoint bound is cheap,
+    /// but an `online()` network report can wake cellular radios and relay
+    /// workers, so it must only run while incoming reachability is requested.
+    reachability_demand: Arc<AtomicBool>,
+    /// Prevents a network callback and a foreground command from spawning
+    /// overlapping `online()` futures for the same endpoint generation.
+    online_probe_in_flight: Arc<AtomicBool>,
+    /// Cancels an in-flight online report when demand is withdrawn or the
+    /// platform network generation changes.
+    online_probe_cancel: Arc<tokio::sync::Notify>,
     stopped: Arc<AtomicBool>,
     dormant: Arc<AtomicBool>,
+    network_generation: Arc<AtomicU64>,
+    /// Iroh endpoint migration is asynchronous. Serialize migrations so two
+    /// rapid Android network callbacks cannot update the same endpoint in
+    /// parallel and publish an older route after a newer generation.
+    network_change_serial: Arc<tokio::sync::Mutex<()>>,
+    online_probe_attempts: Arc<AtomicU64>,
+    online_probe_failures: Arc<AtomicU64>,
     wake: Wake,
 }
 
 impl IrohLifecycle {
+    fn spawn_online_probe(
+        endpoint: Endpoint,
+        runtime: &Arc<Runtime>,
+        online: &Arc<AtomicBool>,
+        stopped: &Arc<AtomicBool>,
+        dormant: &Arc<AtomicBool>,
+        reachability_demand: &Arc<AtomicBool>,
+        probe_in_flight: &Arc<AtomicBool>,
+        probe_cancel: &Arc<tokio::sync::Notify>,
+        route_generation: &Arc<AtomicU64>,
+        generation: &Arc<AtomicU64>,
+        wake: &Wake,
+        probe_attempts: &Arc<AtomicU64>,
+        probe_failures: &Arc<AtomicU64>,
+        probe_generation: u64,
+    ) {
+        let online = Arc::clone(online);
+        let stopped = Arc::clone(stopped);
+        let dormant = Arc::clone(dormant);
+        let reachability_demand = Arc::clone(reachability_demand);
+        let probe_in_flight = Arc::clone(probe_in_flight);
+        let probe_cancel = Arc::clone(probe_cancel);
+        let route_generation = Arc::clone(route_generation);
+        let generation = Arc::clone(generation);
+        let wake = Arc::clone(wake);
+        let probe_attempts = Arc::clone(probe_attempts);
+        let probe_failures = Arc::clone(probe_failures);
+        runtime.spawn(async move {
+            // `Endpoint::online` has no timeout and can otherwise leave the
+            // provider stuck in Publishing forever on a captive/offline
+            // network. A bounded probe keeps commissioning responsive and
+            // lets a later network event retry it.
+            if stopped.load(Ordering::Acquire)
+                || dormant.load(Ordering::Acquire)
+                || !reachability_demand.load(Ordering::Acquire)
+                || generation.load(Ordering::Acquire) != probe_generation
+            {
+                return;
+            }
+            // A network event and a demand transition can arrive together.
+            // Only one report may own the endpoint at a time; the later wake
+            // observes the result through the atomics and does not duplicate
+            // the cellular/relay work.
+            if probe_in_flight.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let _probe_guard = OnlineProbeGuard(probe_in_flight);
+            let mut retry_delay = Duration::from_secs(30);
+            let mut attempts = 0_u32;
+            loop {
+                if stopped.load(Ordering::Acquire)
+                    || dormant.load(Ordering::Acquire)
+                    || !reachability_demand.load(Ordering::Acquire)
+                    || generation.load(Ordering::Acquire) != probe_generation
+                {
+                    return;
+                }
+                attempts = attempts.saturating_add(1);
+                probe_attempts.fetch_add(1, Ordering::Relaxed);
+                let route_before = endpoint.addr();
+                let reachable = tokio::select! {
+                    _ = probe_cancel.notified() => return,
+                    result = tokio::time::timeout(Duration::from_secs(30), endpoint.online()) => {
+                        // Iroh's `online()` future resolves to `()`: a
+                        // completed future is the provider's positive online
+                        // evidence, while `Err(Elapsed)` means the bounded
+                        // reachability attempt did not complete. Do not
+                        // interpret the timeout wrapper as a nested provider
+                        // result (there is no inner `Result` in this API).
+                        result.is_ok()
+                    }
+                };
+                if endpoint.addr() != route_before {
+                    route_generation.fetch_add(1, Ordering::AcqRel);
+                }
+                if stopped.load(Ordering::Acquire)
+                    || dormant.load(Ordering::Acquire)
+                    || generation.load(Ordering::Acquire) != probe_generation
+                {
+                    return;
+                }
+                online.store(reachable, Ordering::Release);
+                notify(&wake);
+                if reachable {
+                    return;
+                }
+                probe_failures.fetch_add(1, Ordering::Relaxed);
+                if attempts >= MAX_ONLINE_PROBE_ATTEMPTS {
+                    // Keep the endpoint usable for local UI and outbound
+                    // demand, but stop application-owned work until a
+                    // network event or lifecycle wake provides new evidence.
+                    return;
+                }
+                // Cancellation is part of the demand contract. Do not leave
+                // a retry task sleeping for the full backoff after the user
+                // closes the screen, the app backgrounds, or a newer network
+                // generation supersedes this probe.
+                tokio::select! {
+                    _ = probe_cancel.notified() => return,
+                    _ = tokio::time::sleep(retry_delay) => {}
+                }
+                retry_delay = (retry_delay * 2).min(Duration::from_secs(5 * 60));
+            }
+        });
+    }
+
     /// Takes ownership of an endpoint already bound by the native provider
     /// composition.  Identity persistence and endpoint construction belong to
     /// that composition, never to the shared runtime.
     pub fn new(endpoint: Endpoint, runtime: Arc<Runtime>) -> Self {
+        let endpoint_slot = IrohEndpointSlot::static_endpoint(endpoint, Arc::clone(&runtime));
+        Self::new_with_slot(endpoint_slot, runtime)
+    }
+
+    pub(crate) fn new_with_slot(endpoint: ProviderEndpointSlot, runtime: Arc<Runtime>) -> Self {
         let online = Arc::new(AtomicBool::new(false));
+        let reachability_demand = Arc::new(AtomicBool::new(false));
+        let online_probe_in_flight = Arc::new(AtomicBool::new(false));
+        let online_probe_cancel = Arc::new(tokio::sync::Notify::new());
         let stopped = Arc::new(AtomicBool::new(false));
         let dormant = Arc::new(AtomicBool::new(false));
+        let network_generation = Arc::new(AtomicU64::new(0));
+        let network_change_serial = Arc::new(tokio::sync::Mutex::new(()));
+        let online_probe_attempts = Arc::new(AtomicU64::new(0));
+        let online_probe_failures = Arc::new(AtomicU64::new(0));
         let wake = Arc::new(Mutex::new(None));
-        let online_task = Arc::clone(&online);
-        let stopped_task = Arc::clone(&stopped);
-        let wake_task = Arc::clone(&wake);
-        let endpoint_task = endpoint.clone();
-        runtime.spawn(async move {
-            endpoint_task.online().await;
-            if !stopped_task.load(Ordering::Acquire) {
-                online_task.store(true, Ordering::Release);
-                notify(&wake_task);
-            }
-        });
-        Self { endpoint, runtime, online, stopped, dormant, wake }
+        Self {
+            endpoint,
+            runtime,
+            online,
+            reachability_demand,
+            online_probe_in_flight,
+            online_probe_cancel,
+            stopped,
+            dormant,
+            network_generation,
+            network_change_serial,
+            online_probe_attempts,
+            online_probe_failures,
+            wake,
+        }
     }
 
     fn endpoint_summary(&self) -> String {
-        format!("iroh:{}", self.endpoint.addr().id)
+        self.endpoint
+            .address()
+            .map(|address| format!("iroh:{}", address.id))
+            .unwrap_or_else(|| "iroh:dormant".to_owned())
+    }
+
+    fn endpoint_route_state(&self) -> ProviderRouteState {
+        if !self.endpoint.route_is_fresh() {
+            ProviderRouteState::Stale
+        } else if self.endpoint.address().is_some() {
+            ProviderRouteState::Fresh
+        } else {
+            ProviderRouteState::Unavailable
+        }
     }
 
     /// Produces the short-lived direct-QR bootstrap descriptor for this bound
     /// endpoint. It contains only the serialised Iroh address needed to open
     /// the initial pairing stream; it is not a Torca identity or contact route.
     pub fn pairing_bootstrap_descriptor(&self) -> Result<PairingBootstrapDescriptor, String> {
-        let address = self.endpoint.addr();
+        if !self.endpoint.route_is_fresh() {
+            return Err("Iroh endpoint route is migrating".to_owned());
+        }
+        let address =
+            self.endpoint.address().ok_or_else(|| "Iroh endpoint is dormant".to_owned())?;
         if address.is_empty() {
             return Err("Iroh endpoint has no dialable transport address yet".into());
         }
@@ -668,7 +1459,12 @@ impl IrohLifecycle {
     }
 
     pub fn peer_endpoint_bytes(&self) -> Result<Vec<u8>, String> {
-        encode_endpoint_addr(&self.endpoint.addr()).map_err(|error| error.to_string())
+        if !self.endpoint.route_is_fresh() {
+            return Err("Iroh endpoint route is migrating".to_owned());
+        }
+        let address =
+            self.endpoint.address().ok_or_else(|| "Iroh endpoint is dormant".to_owned())?;
+        encode_endpoint_addr(&address).map_err(|error| error.to_string())
     }
 }
 
@@ -677,11 +1473,132 @@ impl CommunicationLifecycle for IrohLifecycle {
         TransportKind::Iroh
     }
 
+    fn provider_profile(&self) -> Option<&'static str> {
+        Some(self.endpoint.profile().wire_value())
+    }
+
+    fn background_grace(&self) -> Duration {
+        // Direct/local endpoints have no discovery or relay workers to keep
+        // warm, so UI-only attention can be released quickly. The
+        // relay-backed profile keeps a short handoff window for an in-flight
+        // foreground transition without creating a periodic wakeup.
+        match self.endpoint.profile() {
+            IrohEndpointProfile::DirectOnly | IrohEndpointProfile::LocalOnly => {
+                Duration::from_secs(5)
+            }
+            IrohEndpointProfile::AlwaysReachable => Duration::from_secs(15),
+        }
+    }
+
+    fn runtime_diagnostics(&self) -> ProviderRuntimeDiagnostics {
+        ProviderRuntimeDiagnostics {
+            endpoint_generation: Some(self.endpoint.generation()),
+            route_generation: Some(self.endpoint.route_generation()),
+            network_generation: Some(self.network_generation.load(Ordering::Acquire)),
+            endpoint_active: Some(self.endpoint.current().is_some()),
+            route_fresh: Some(self.endpoint.route_is_fresh()),
+            route_state: Some(self.endpoint_route_state()),
+            runtime_threads: u16::try_from(configured_runtime_threads()).ok(),
+            energy_class: Some(self.endpoint.profile().energy_class()),
+            reachability_demanded: Some(self.reachability_demand.load(Ordering::Acquire)),
+            online_probe_attempts: Some(self.online_probe_attempts.load(Ordering::Relaxed)),
+            online_probe_failures: Some(self.online_probe_failures.load(Ordering::Relaxed)),
+            incoming_reachability: Some(
+                match self.incoming_reachability_state() {
+                    IncomingReachabilityState::Unknown => "unknown",
+                    IncomingReachabilityState::Publishing => "publishing",
+                    IncomingReachabilityState::Reachable => "reachable",
+                    IncomingReachabilityState::Degraded => "degraded",
+                    IncomingReachabilityState::Failed => "failed",
+                    IncomingReachabilityState::Stopped => "stopped",
+                }
+                .to_owned(),
+            ),
+        }
+    }
+
     fn maintenance(&mut self, _now: Timestamp) -> Result<(), RuntimeDriverError> {
-        if self.endpoint.is_closed() && !self.stopped.load(Ordering::Acquire) {
+        if self.endpoint.current().is_some_and(|endpoint| endpoint.is_closed())
+            && !self.stopped.load(Ordering::Acquire)
+        {
             return Err(RuntimeDriverError::Communication);
         }
         Ok(())
+    }
+
+    fn network_changed(&mut self, _now: Timestamp) {
+        let generation = self.network_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        // Invalidate the previously advertised address synchronously. The
+        // endpoint migration below is asynchronous, so no route update may
+        // be emitted during this gap.
+        self.endpoint.route_stale.store(true, Ordering::Release);
+        self.endpoint.route_generation.fetch_add(1, Ordering::AcqRel);
+        self.online_probe_cancel.notify_waiters();
+        self.online.store(false, Ordering::Release);
+        if let Some(endpoint) = self.endpoint.current() {
+            let runtime = Arc::clone(&self.runtime);
+            let route_generation = Arc::clone(&self.endpoint.route_generation);
+            let endpoint_slot = Arc::clone(&self.endpoint);
+            let network_generation = Arc::clone(&self.network_generation);
+            let network_change_serial = Arc::clone(&self.network_change_serial);
+            let stopped = Arc::clone(&self.stopped);
+            let wake = Arc::clone(&self.wake);
+            let route_before = endpoint.addr();
+            runtime.spawn(async move {
+                let _migration_guard = network_change_serial.lock().await;
+                // A newer platform event superseded this migration while it
+                // was queued. Let that newer task perform the migration and
+                // never clear route_stale for an obsolete generation.
+                if stopped.load(Ordering::Acquire)
+                    || network_generation.load(Ordering::Acquire) != generation
+                {
+                    return;
+                }
+                endpoint.network_change().await;
+                if stopped.load(Ordering::Acquire)
+                    || network_generation.load(Ordering::Acquire) != generation
+                {
+                    return;
+                }
+                // Iroh updates concrete direct/relay addresses asynchronously.
+                // Only after that update is complete may the route be
+                // advertised again. A further generation bump records a
+                // concrete address change separately from invalidation.
+                if endpoint.addr() != route_before {
+                    route_generation.fetch_add(1, Ordering::AcqRel);
+                }
+                // `route_stale` is set by the owner before this task starts;
+                // the endpoint address now represents the post-migration
+                // route, even when its serialized value remained unchanged.
+                endpoint_slot.route_stale.store(false, Ordering::Release);
+                notify(&wake);
+            });
+        }
+        let Some(endpoint) = self.endpoint.current() else {
+            notify(&self.wake);
+            return;
+        };
+        if self.endpoint.profile().supports_incoming_reachability()
+            && self.reachability_demand.load(Ordering::Acquire)
+        {
+            Self::spawn_online_probe(
+                endpoint,
+                &self.runtime,
+                &self.online,
+                &self.stopped,
+                &self.dormant,
+                &self.reachability_demand,
+                &self.online_probe_in_flight,
+                &self.online_probe_cancel,
+                &self.endpoint.route_generation,
+                &self.network_generation,
+                &self.wake,
+                &self.online_probe_attempts,
+                &self.online_probe_failures,
+                generation,
+            );
+        }
+        notify(&self.wake);
     }
 
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
@@ -690,18 +1607,115 @@ impl CommunicationLifecycle for IrohLifecycle {
         }
     }
 
+    fn set_reachability_demand(&mut self, demanded: bool) {
+        let was_demanded = self.reachability_demand.swap(demanded, Ordering::AcqRel);
+        if !demanded {
+            // A cancelled probe will notice the flag on its next await and
+            // the guard releases the single-flight gate.  Clear evidence
+            // immediately so commissioning never reports a stale reachable
+            // state after the caller has withdrawn the lease.
+            self.online.store(false, Ordering::Release);
+            self.online_probe_cancel.notify_waiters();
+        } else if !was_demanded
+            && !self.dormant.load(Ordering::Acquire)
+            && !self.stopped.load(Ordering::Acquire)
+            && self.endpoint.profile().supports_incoming_reachability()
+            && !self.online.load(Ordering::Acquire)
+            && let Some(endpoint) = self.endpoint.current()
+        {
+            Self::spawn_online_probe(
+                endpoint,
+                &self.runtime,
+                &self.online,
+                &self.stopped,
+                &self.dormant,
+                &self.reachability_demand,
+                &self.online_probe_in_flight,
+                &self.online_probe_cancel,
+                &self.endpoint.route_generation,
+                &self.network_generation,
+                &self.wake,
+                &self.online_probe_attempts,
+                &self.online_probe_failures,
+                self.network_generation.load(Ordering::Acquire),
+            );
+        }
+        if was_demanded != demanded {
+            notify(&self.wake);
+        }
+    }
+
     fn set_dormant(&mut self, dormant: bool) -> Result<(), RuntimeDriverError> {
-        // Iroh currently has no equivalent to Tor's SoftDormant.  The runtime
-        // still records this policy transition, while the provider retains a
-        // bound endpoint so incoming direct connections remain possible.
-        self.dormant.store(dormant, Ordering::Release);
+        // Iroh 1.x has no mutable relay-mode equivalent to Tor's
+        // SoftDormant. We nevertheless make the application policy truthful:
+        // dormant suppresses reachability evidence and prevents new online
+        // probes; foreground/durable demand starts a fresh bounded probe.
+        let was_dormant = self.dormant.swap(dormant, Ordering::AcqRel);
+        // Invalidate an in-flight online probe whenever the endpoint
+        // generation changes. Calling set_dormant(false) repeatedly is a
+        // no-op for generation purposes, so normal network commands do not
+        // cancel a useful probe.
+        let generation = if was_dormant == dormant {
+            self.network_generation.load(Ordering::Acquire)
+        } else {
+            self.network_generation.fetch_add(1, Ordering::AcqRel) + 1
+        };
+        self.online.store(false, Ordering::Release);
+        if was_dormant != dormant {
+            self.online_probe_cancel.notify_waiters();
+        }
+        if dormant {
+            // Direct/local profiles already have relay and address-lookup
+            // disabled. Closing their UDP socket buys little, but rebinding
+            // on resume can change the advertised port and invalidate the
+            // opaque endpoint stored in existing contacts. Keep this cheap,
+            // route-stable listener alive and only suppress reachability
+            // probes. The relay-backed profile still closes fully to release
+            // its background network tasks and socket activity.
+            if self.endpoint.profile().supports_incoming_reachability() {
+                self.endpoint.deactivate();
+            }
+        } else if was_dormant {
+            if self.endpoint.current().is_none() {
+                self.endpoint.activate().map_err(|_| RuntimeDriverError::Communication)?;
+            }
+        }
+        if !dormant
+            && was_dormant
+            && self.endpoint.profile().supports_incoming_reachability()
+            && self.reachability_demand.load(Ordering::Acquire)
+        {
+            Self::spawn_online_probe(
+                self.endpoint.current().ok_or(RuntimeDriverError::Communication)?,
+                &self.runtime,
+                &self.online,
+                &self.stopped,
+                &self.dormant,
+                &self.reachability_demand,
+                &self.online_probe_in_flight,
+                &self.online_probe_cancel,
+                &self.endpoint.route_generation,
+                &self.network_generation,
+                &self.wake,
+                &self.online_probe_attempts,
+                &self.online_probe_failures,
+                generation,
+            );
+        }
+        notify(&self.wake);
         Ok(())
     }
 
     fn state(&self) -> CommunicationState {
         if self.stopped.load(Ordering::Acquire) {
             CommunicationState::Stopped
-        } else if self.endpoint.is_closed() {
+        } else if self.dormant.load(Ordering::Acquire) {
+            // Dormancy intentionally closes the provider endpoint to avoid
+            // background Iroh work, but the local runtime remains usable.
+            CommunicationState::Ready
+        } else if self.endpoint.current().is_none() {
+            CommunicationState::Degraded
+        } else if self.endpoint.current().is_some_and(|endpoint| endpoint.is_closed()) {
             CommunicationState::Failed
         } else {
             CommunicationState::Ready
@@ -715,8 +1729,23 @@ impl CommunicationLifecycle for IrohLifecycle {
     fn incoming_reachability_state(&self) -> IncomingReachabilityState {
         if self.stopped.load(Ordering::Acquire) {
             IncomingReachabilityState::Stopped
-        } else if self.endpoint.is_closed() {
+        } else if !self.endpoint.profile().supports_incoming_reachability() {
+            // Direct/local profiles deliberately do not publish through a
+            // relay or lookup service. This is a completed capability choice,
+            // not a provider that is still warming up.
+            IncomingReachabilityState::Stopped
+        } else if self.endpoint.current().is_none() {
+            IncomingReachabilityState::Degraded
+        } else if self.endpoint.current().is_some_and(|endpoint| endpoint.is_closed()) {
             IncomingReachabilityState::Failed
+        } else if self.dormant.load(Ordering::Acquire) {
+            IncomingReachabilityState::Degraded
+        } else if !self.reachability_demand.load(Ordering::Acquire) {
+            // The endpoint is bound, but no runtime lease currently asks us
+            // to prove public reachability. Reporting `Publishing` here would
+            // make an intentionally suppressed probe look like a stuck
+            // warm-up state in diagnostics and commissioning UI.
+            IncomingReachabilityState::Unknown
         } else if self.online.load(Ordering::Acquire) {
             IncomingReachabilityState::Reachable
         } else {
@@ -764,6 +1793,13 @@ impl CommunicationLifecycle for IrohLifecycle {
                 },
             ],
             endpoint_summary: self.local_endpoint_summary(),
+            route_state: if !self.endpoint.route_is_fresh() {
+                ProviderRouteState::Stale
+            } else if self.endpoint.current().is_some() {
+                ProviderRouteState::Fresh
+            } else {
+                ProviderRouteState::Unavailable
+            },
             pairing_bootstrap: self.pairing_bootstrap_descriptor().ok(),
         }
     }
@@ -773,7 +1809,8 @@ impl CommunicationLifecycle for IrohLifecycle {
             return;
         }
         self.online.store(false, Ordering::Release);
-        self.runtime.block_on(self.endpoint.close());
+        self.online_probe_cancel.notify_waiters();
+        self.endpoint.terminate();
     }
 }
 
@@ -782,25 +1819,62 @@ pub struct IrohTransport {
     endpoint: Endpoint,
     remote: Option<EndpointAddr>,
     runtime: Arc<Runtime>,
+    /// Provider-owned freshness marker. It is shared with the endpoint slot
+    /// so a network callback can cancel a queued dial before it opens a QUIC
+    /// connection.
+    route_fresh: Option<Arc<AtomicBool>>,
+    /// The profile is carried with each session so diagnostics and capability
+    /// checks describe the actual route policy (relay enabled vs direct/local
+    /// only), not the conservative provider default.
+    profile: IrohEndpointProfile,
     connection: Option<Connection>,
     sender: Option<Arc<AsyncMutex<SendStream>>>,
     inbound: Inbound,
     wake: Wake,
+    /// The reader task owns the actual stream lifetime.  Keeping this bit
+    /// separate from the mutable transport flag prevents a remote FIN/reset
+    /// from leaving the peer link in a zombie `connected=true` state until
+    /// the next write happens to fail.
+    stream_alive: Arc<AtomicBool>,
     connected: bool,
+    /// Last selected QUIC path. Iroh can migrate a session from relay to a
+    /// direct path, so this is observed from the connection rather than
+    /// inferred solely from the deployment profile.
+    path: TransportPath,
 }
 
 impl IrohTransport {
     /// Creates a disconnected outgoing transport.
     pub fn new(endpoint: Endpoint, remote: EndpointAddr, runtime: Arc<Runtime>) -> Self {
+        Self::new_with_profile(
+            endpoint,
+            remote,
+            runtime,
+            IrohEndpointProfile::AlwaysReachable,
+            None,
+        )
+    }
+
+    fn new_with_profile(
+        endpoint: Endpoint,
+        remote: EndpointAddr,
+        runtime: Arc<Runtime>,
+        profile: IrohEndpointProfile,
+        route_fresh: Option<Arc<AtomicBool>>,
+    ) -> Self {
         Self {
             endpoint,
             remote: Some(remote),
             runtime,
+            route_fresh,
+            profile,
             connection: None,
             sender: None,
             inbound: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
             wake: Arc::new(Mutex::new(None)),
+            stream_alive: Arc::new(AtomicBool::new(false)),
             connected: false,
+            path: TransportPath::Unknown,
         }
     }
 
@@ -811,18 +1885,65 @@ impl IrohTransport {
         connection: Connection,
         runtime: Arc<Runtime>,
     ) -> Result<Self, PeerTransportError> {
+        Self::from_connection_with_profile(
+            endpoint,
+            connection,
+            runtime,
+            IrohEndpointProfile::AlwaysReachable,
+        )
+    }
+
+    fn from_connection_with_profile(
+        endpoint: Endpoint,
+        connection: Connection,
+        runtime: Arc<Runtime>,
+        profile: IrohEndpointProfile,
+    ) -> Result<Self, PeerTransportError> {
+        let path = selected_path(&connection, profile);
         let mut transport = Self {
             endpoint,
             remote: None,
             runtime,
+            route_fresh: None,
+            profile,
             connection: Some(connection),
             sender: None,
             inbound: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
             wake: Arc::new(Mutex::new(None)),
+            stream_alive: Arc::new(AtomicBool::new(false)),
             connected: false,
+            path,
         };
         transport.open_incoming_stream()?;
         Ok(transport)
+    }
+
+    fn from_accepted_stream_with_profile(
+        endpoint: Endpoint,
+        connection: Connection,
+        sender: SendStream,
+        receiver: RecvStream,
+        runtime: Arc<Runtime>,
+        profile: IrohEndpointProfile,
+    ) -> Self {
+        let path = selected_path(&connection, profile);
+        let mut transport = Self {
+            endpoint,
+            remote: None,
+            runtime,
+            route_fresh: None,
+            profile,
+            connection: Some(connection),
+            sender: None,
+            inbound: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
+            wake: Arc::new(Mutex::new(None)),
+            stream_alive: Arc::new(AtomicBool::new(false)),
+            connected: false,
+            path,
+        };
+        transport.install_stream(sender, receiver);
+        transport.connected = true;
+        transport
     }
 
     fn open_incoming_stream(&mut self) -> Result<(), PeerTransportError> {
@@ -830,10 +1951,20 @@ impl IrohTransport {
             .connection
             .clone()
             .ok_or_else(|| PeerTransportError("Iroh connection is unavailable".into()))?;
-        let (sender, receiver) = self
-            .runtime
-            .block_on(connection.accept_bi())
-            .map_err(|error| PeerTransportError(format!("Iroh accept stream failed: {error}")))?;
+        let accepted = self.runtime.block_on(async {
+            tokio::time::timeout(PEER_CONNECT_TIMEOUT, connection.accept_bi()).await
+        });
+        let (sender, receiver) = match accepted {
+            Ok(Ok(streams)) => streams,
+            Ok(Err(error)) => {
+                connection.close(0_u32.into(), b"peer stream rejected");
+                return Err(PeerTransportError(format!("Iroh accept stream failed: {error}")));
+            }
+            Err(_) => {
+                connection.close(0_u32.into(), b"peer stream timeout");
+                return Err(PeerTransportError("Iroh accept stream timed out".into()));
+            }
+        };
         self.install_stream(sender, receiver);
         self.connected = true;
         Ok(())
@@ -842,6 +1973,11 @@ impl IrohTransport {
     fn install_stream(&mut self, sender: SendStream, mut receiver: RecvStream) {
         let inbound = Arc::clone(&self.inbound);
         let wake = Arc::clone(&self.wake);
+        // Use a generation-local flag.  A reader belonging to an older stream
+        // must not be able to mark a newly reconnected stream dead when its
+        // task finishes after the reconnect.
+        let stream_alive = Arc::new(AtomicBool::new(true));
+        self.stream_alive = Arc::clone(&stream_alive);
         self.sender = Some(Arc::new(AsyncMutex::new(sender)));
         self.runtime.spawn(async move {
             loop {
@@ -853,6 +1989,7 @@ impl IrohTransport {
                             Err(PeerTransportError(format!("Iroh receive length failed: {error}"))),
                         );
                         notify(&wake);
+                        stream_alive.store(false, Ordering::Release);
                         break;
                     }
                 };
@@ -862,6 +1999,7 @@ impl IrohTransport {
                         Err(PeerTransportError("Iroh frame exceeds peer limit".into())),
                     );
                     notify(&wake);
+                    stream_alive.store(false, Ordering::Release);
                     break;
                 }
                 let mut payload = vec![0_u8; length];
@@ -871,11 +2009,21 @@ impl IrohTransport {
                         Err(PeerTransportError(format!("Iroh receive payload failed: {error}"))),
                     );
                     notify(&wake);
+                    stream_alive.store(false, Ordering::Release);
                     break;
                 }
-                push_inbound(&inbound, Ok(payload));
+                if !push_inbound(&inbound, Ok(payload)) {
+                    // The bounded queue has reported an overflow marker and
+                    // the stream reader must stop. Dropping this generation
+                    // lets PeerLink reconnect/replay durable envelopes after
+                    // the application drains the marker.
+                    stream_alive.store(false, Ordering::Release);
+                    notify(&wake);
+                    break;
+                }
                 notify(&wake);
             }
+            stream_alive.store(false, Ordering::Release);
         });
     }
 
@@ -884,11 +2032,47 @@ impl IrohTransport {
     }
 }
 
+fn selected_path(connection: &Connection, profile: IrohEndpointProfile) -> TransportPath {
+    connection
+        .paths()
+        .iter()
+        .find(|path| path.is_selected())
+        .map(|path| {
+            if path.is_relay() {
+                TransportPath::IrohRelay
+            } else if path.is_ip() {
+                TransportPath::IrohDirect
+            } else {
+                TransportPath::Unknown
+            }
+        })
+        .unwrap_or_else(|| {
+            // A path may not be published in the first snapshot immediately
+            // after a handshake. Keep the profile as a conservative fallback
+            // until the next reconnect/observation.
+            if profile_supports_relay(profile) {
+                TransportPath::IrohRelay
+            } else {
+                TransportPath::IrohDirect
+            }
+        })
+}
+
 impl PeerTransport for IrohTransport {
     fn connect(&mut self) -> Result<(), PeerTransportError> {
-        if self.connected {
+        if self.connected && self.stream_alive.load(Ordering::Acquire) {
             return Ok(());
         }
+        if self.route_fresh.as_ref().is_some_and(|fresh| !fresh.load(Ordering::Acquire)) {
+            return Err(PeerTransportError(
+                "Iroh local route is stale; waiting for provider migration".to_owned(),
+            ));
+        }
+        // A previous reader may have observed a remote close. Clear the
+        // mutable side before dialing so reconnect never reuses a dead sender.
+        self.connected = false;
+        self.sender = None;
+        self.connection = None;
         let remote = self
             .remote
             .clone()
@@ -901,6 +2085,11 @@ impl PeerTransport for IrohTransport {
             })
             .map_err(|_| PeerTransportError("Iroh peer connect timed out".into()))?
             .map_err(Self::map_error)?;
+        if self.route_fresh.as_ref().is_some_and(|fresh| !fresh.load(Ordering::Acquire)) {
+            connection.close(0_u32.into(), b"local route migrated");
+            return Err(PeerTransportError("Iroh local route changed during dial".to_owned()));
+        }
+        let path = selected_path(&connection, self.profile);
         let (sender, receiver) = self
             .runtime
             .block_on(async {
@@ -909,6 +2098,7 @@ impl PeerTransport for IrohTransport {
             .map_err(|_| PeerTransportError("Iroh peer stream open timed out".into()))?
             .map_err(Self::map_error)?;
         self.connection = Some(connection);
+        self.path = path;
         self.install_stream(sender, receiver);
         self.connected = true;
         Ok(())
@@ -922,6 +2112,12 @@ impl PeerTransport for IrohTransport {
             .sender
             .clone()
             .ok_or_else(|| PeerTransportError("Iroh transport is not connected".into()))?;
+        if !self.stream_alive.load(Ordering::Acquire) {
+            self.connected = false;
+            self.sender = None;
+            self.connection = None;
+            return Err(PeerTransportError("Iroh peer stream is no longer alive".into()));
+        }
         let result = self.runtime.block_on(async move {
             let mut sender = sender.lock().await;
             tokio::time::timeout(PEER_WRITE_TIMEOUT, async {
@@ -935,6 +2131,43 @@ impl PeerTransport for IrohTransport {
         if result.is_err() {
             // A timed-out QUIC write is no longer a usable stream. Force the
             // next delivery attempt through the reconnect path.
+            self.connected = false;
+            self.sender = None;
+            self.connection = None;
+        }
+        result
+    }
+
+    fn send_batch(&mut self, payloads: Vec<Vec<u8>>) -> Result<(), PeerTransportError> {
+        if payloads.is_empty() {
+            return Ok(());
+        }
+        if payloads.iter().any(|payload| payload.len() > MAX_FRAME) {
+            return Err(PeerTransportError("Iroh payload exceeds peer limit".into()));
+        }
+        let sender = self
+            .sender
+            .clone()
+            .ok_or_else(|| PeerTransportError("Iroh transport is not connected".into()))?;
+        if !self.stream_alive.load(Ordering::Acquire) {
+            self.connected = false;
+            self.sender = None;
+            self.connection = None;
+            return Err(PeerTransportError("Iroh peer stream is no longer alive".into()));
+        }
+        let result = self.runtime.block_on(async move {
+            let mut sender = sender.lock().await;
+            tokio::time::timeout(PEER_WRITE_TIMEOUT, async {
+                for payload in payloads {
+                    sender.write_u32(payload.len() as u32).await.map_err(Self::map_error)?;
+                    sender.write_all(&payload).await.map_err(Self::map_error)?;
+                }
+                sender.flush().await.map_err(Self::map_error)
+            })
+            .await
+            .map_err(|_| PeerTransportError("Iroh peer batch write timed out".into()))?
+        });
+        if result.is_err() {
             self.connected = false;
             self.sender = None;
             self.connection = None;
@@ -973,6 +2206,7 @@ impl PeerTransport for IrohTransport {
 
     fn close(&mut self) -> Result<(), PeerTransportError> {
         self.connected = false;
+        self.stream_alive.store(false, Ordering::Release);
         self.sender = None;
         if let Some(connection) = self.connection.take() {
             connection.close(0_u32.into(), b"torca close");
@@ -1004,7 +2238,14 @@ impl ProviderTransport for IrohTransport {
     }
 
     fn path(&self) -> TransportPath {
-        TransportPath::IrohDirect
+        // Iroh may migrate an established QUIC connection from a relay to a
+        // direct path (or back) without rebuilding the stream. Observe the
+        // selected path on every capability read so diagnostics and policy do
+        // not report the deployment profile as the actual route.
+        self.connection
+            .as_ref()
+            .map(|connection| selected_path(connection, self.profile))
+            .unwrap_or(self.path)
     }
 
     fn capabilities(&self) -> TransportCapabilities {
@@ -1013,11 +2254,11 @@ impl ProviderTransport for IrohTransport {
             ordered: true,
             supports_incoming: true,
             supports_direct_path: true,
-            supports_relay_path: true,
+            supports_relay_path: profile_supports_relay(self.profile),
             hides_peer_ip: false,
             max_frame_size: MAX_FRAME,
             latency: LatencyClass::Interactive,
-            energy: EnergyClass::Medium,
+            energy: self.profile.energy_class(),
         }
     }
 }
@@ -1028,11 +2269,24 @@ impl Drop for IrohTransport {
     }
 }
 
-fn push_inbound(queue: &Inbound, item: Result<Vec<u8>, PeerTransportError>) {
-    if let Ok(mut entries) = queue.0.lock() {
-        entries.push_back(item);
+fn push_inbound(queue: &Inbound, item: Result<Vec<u8>, PeerTransportError>) -> bool {
+    let Ok(mut entries) = queue.0.lock() else { return false };
+    if entries.len() >= MAX_PENDING_INBOUND_FRAMES {
+        // Preserve bounded memory and make the overflow visible to the
+        // transport worker. The oldest queued frame is intentionally
+        // discarded: the authenticated delivery layer can request it again,
+        // while retaining an unbounded queue would turn backpressure into a
+        // process-wide memory problem.
+        entries.pop_front();
+        entries.push_back(Err(PeerTransportError(
+            "Iroh inbound frame queue limit exceeded".to_owned(),
+        )));
         queue.1.notify_one();
+        return false;
     }
+    entries.push_back(item);
+    queue.1.notify_one();
+    true
 }
 
 fn notify(wake: &Wake) {
@@ -1046,15 +2300,32 @@ fn notify(wake: &Wake) {
 /// A remote route is decoded from the current contact on every dial. This is
 /// essential because contacts can be created after the runtime starts.
 pub struct IrohTransportFactory {
-    endpoint: Endpoint,
+    endpoint: ProviderEndpointSlot,
     runtime: Arc<Runtime>,
     incoming: Arc<IrohIncomingRouter>,
     wake: Wake,
 }
 
+fn profile_supports_relay(profile: IrohEndpointProfile) -> bool {
+    matches!(profile, IrohEndpointProfile::AlwaysReachable)
+}
+
 impl IrohTransportFactory {
+    #[allow(dead_code)]
     pub(crate) fn new(
         endpoint: Endpoint,
+        runtime: Arc<Runtime>,
+        incoming: Arc<IrohIncomingRouter>,
+    ) -> Self {
+        Self::new_with_slot(
+            IrohEndpointSlot::static_endpoint(endpoint, Arc::clone(&runtime)),
+            runtime,
+            incoming,
+        )
+    }
+
+    pub(crate) fn new_with_slot(
+        endpoint: ProviderEndpointSlot,
         runtime: Arc<Runtime>,
         incoming: Arc<IrohIncomingRouter>,
     ) -> Self {
@@ -1073,29 +2344,34 @@ impl PeerTransportFactory for IrohTransportFactory {
     }
 
     fn capabilities(&self) -> TransportCapabilities {
-        IrohTransport {
-            endpoint: self.endpoint.clone(),
-            remote: None,
-            runtime: Arc::clone(&self.runtime),
-            connection: None,
-            sender: None,
-            inbound: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
-            wake: Arc::clone(&self.wake),
-            connected: false,
+        TransportCapabilities {
+            reliable: true,
+            ordered: true,
+            supports_incoming: true,
+            supports_direct_path: true,
+            supports_relay_path: profile_supports_relay(self.endpoint.profile()),
+            hides_peer_ip: false,
+            max_frame_size: MAX_FRAME,
+            latency: LatencyClass::Interactive,
+            energy: self.endpoint.profile().energy_class(),
         }
-        .capabilities()
     }
 
     fn accept(&mut self) -> Result<Option<Box<dyn PeerTransport + Send>>, TransportFactoryError> {
-        let Some(connection) = self.incoming.take_peer() else {
+        let Some((connection, sender, receiver)) = self.incoming.take_peer_stream() else {
             return Ok(None);
         };
-        let mut transport = IrohTransport::from_connection(
-            self.endpoint.clone(),
+        let mut transport = IrohTransport::from_accepted_stream_with_profile(
+            // The factory owns the selected profile; preserve it on the
+            // session so capability consumers cannot accidentally assume a
+            // relay path for a direct/local deployment.
+            self.endpoint.current().ok_or(TransportFactoryError::Listener)?,
             connection,
+            sender,
+            receiver,
             Arc::clone(&self.runtime),
-        )
-        .map_err(|_| TransportFactoryError::Listener)?;
+            self.endpoint.profile(),
+        );
         if let Some(waker) = self.wake.lock().ok().and_then(|slot| slot.clone()) {
             transport.set_waker(waker);
         }
@@ -1106,17 +2382,60 @@ impl PeerTransportFactory for IrohTransportFactory {
         &mut self,
         contact: &Contact,
     ) -> Result<Box<dyn PeerTransport + Send>, TransportFactoryError> {
+        // A network callback invalidates the local route before Iroh finishes
+        // migrating the endpoint. Never create a session during that gap:
+        // dialing then uses an address which is already unsafe to advertise
+        // and turns a transient migration into a reconnect storm.
+        if !self.endpoint.route_is_fresh() {
+            return Err(TransportFactoryError::RouteStale);
+        }
         let endpoint = contact
             .route()
             .provider_endpoint(TransportKind::Iroh.wire_value())
             .ok_or(TransportFactoryError::ContactNotFound)?;
+        let local_endpoint = self.endpoint.current().ok_or(TransportFactoryError::Listener)?;
         let remote = decode_endpoint_addr(endpoint).map_err(|_| TransportFactoryError::Protocol)?;
-        let mut transport =
-            IrohTransport::new(self.endpoint.clone(), remote, Arc::clone(&self.runtime));
+        let mut transport = IrohTransport::new_with_profile(
+            local_endpoint,
+            remote,
+            Arc::clone(&self.runtime),
+            self.endpoint.profile(),
+            Some(self.endpoint.route_fresh_flag()),
+        );
         if let Some(waker) = self.wake.lock().ok().and_then(|slot| slot.clone()) {
             transport.set_waker(waker);
         }
         Ok(Box::new(transport))
+    }
+
+    fn local_route(&self) -> Option<ProviderRoute> {
+        if !self.endpoint.route_is_fresh() {
+            return None;
+        }
+        let address = self.endpoint.address()?;
+        let endpoint = encode_endpoint_addr(&address).ok()?;
+        ProviderRoute::new(TransportKind::Iroh, self.endpoint.route_generation(), endpoint)
+    }
+
+    fn local_route_is_fresh(&self) -> bool {
+        self.endpoint.route_is_fresh()
+    }
+
+    fn local_route_state(&self) -> ProviderRouteState {
+        if !self.endpoint.route_is_fresh() {
+            ProviderRouteState::Stale
+        } else if self.endpoint.address().is_some() {
+            ProviderRouteState::Fresh
+        } else {
+            ProviderRouteState::Unavailable
+        }
+    }
+
+    fn preserves_sessions_on_network_change(&self) -> bool {
+        // QUIC/Iroh can migrate a live connection to the new network path;
+        // closing every session here would create a reconnect storm and lose
+        // the only authenticated channel on which to advertise the new route.
+        true
     }
 
     fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), TransportFactoryError> {
@@ -1131,17 +2450,28 @@ impl PeerTransportFactory for IrohTransportFactory {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::collections::VecDeque;
+    use std::io::{Read, Write};
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
 
     use iroh::endpoint::presets;
     use tokio::runtime::Runtime;
     use torca_crypto::{InMemoryProtectedSecretStore, ProtectedSecretStore};
+    use torca_foundation::Timestamp;
+    use torca_radio_adapters::{RadioMediaConnector, RadioMediaRoute};
     use torca_runtime::{CommunicationLifecycle, CommunicationState, IncomingReachabilityState};
-    use torca_transport_api::{CommissioningStage, CommissioningState, TransportKind};
+    use torca_transport_api::{
+        CommissioningStage, CommissioningState, EnergyClass, PeerTransport, ProviderRouteState,
+        TransportKind,
+    };
 
     use super::{
-        ALPN, IROH_ENDPOINT_SECRET_HANDLE, IrohComposition, IrohLifecycle, bind_endpoint,
-        decode_endpoint_addr, load_or_create_endpoint_secret,
+        ALPN, IROH_ENDPOINT_SECRET_HANDLE, IrohComposition, IrohEndpointProfile, IrohEndpointSlot,
+        IrohIncomingRouter, IrohLifecycle, IrohRadioMediaSystemFactory, IrohServiceConfig,
+        IrohTransport, RADIO_ALPN, bind_endpoint, decode_endpoint_addr, encode_endpoint_addr,
+        load_or_create_endpoint_secret,
     };
 
     #[test]
@@ -1161,6 +2491,72 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_profiles_are_explicit_and_unknown_values_are_safe() {
+        assert_eq!(IrohEndpointProfile::from_wire("always"), IrohEndpointProfile::AlwaysReachable);
+        assert_eq!(IrohEndpointProfile::from_wire("direct-only"), IrohEndpointProfile::DirectOnly);
+        assert_eq!(IrohEndpointProfile::from_wire("local"), IrohEndpointProfile::LocalOnly);
+        assert_eq!(IrohEndpointProfile::from_wire("unexpected").wire_value(), "always");
+        assert!(IrohEndpointProfile::AlwaysReachable.supports_incoming_reachability());
+        assert!(!IrohEndpointProfile::DirectOnly.supports_incoming_reachability());
+        assert!(!IrohEndpointProfile::LocalOnly.supports_incoming_reachability());
+    }
+
+    #[test]
+    fn service_configuration_is_explicit_and_direct_profiles_ignore_it() {
+        let config = IrohServiceConfig::from_values(
+            IrohEndpointProfile::AlwaysReachable,
+            Some("https://use1-1.relay.n0.iroh.link., https://euw-1.relay.n0.iroh.link."),
+            Some("https://dns.iroh.link/pkarr"),
+        )
+        .expect("valid custom Iroh services");
+        assert!(config.is_custom());
+        assert_eq!(config.relay_urls.len(), 2);
+        assert!(config.pkarr_url.is_some());
+
+        let ignored = IrohServiceConfig::from_values(
+            IrohEndpointProfile::DirectOnly,
+            Some("not a relay URL"),
+            Some("not a URL"),
+        )
+        .expect("direct profile must not parse disabled services");
+        assert!(!ignored.is_custom());
+    }
+
+    #[test]
+    fn direct_profile_does_not_spawn_relay_probe_or_rebind_on_dormancy() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let endpoint = runtime
+            .block_on(
+                iroh::Endpoint::builder(presets::N0)
+                    .clear_address_lookup()
+                    .relay_mode(iroh::RelayMode::Disabled)
+                    .alpns(vec![ALPN.to_vec()])
+                    .bind_addr("127.0.0.1:0")
+                    .expect("loopback bind")
+                    .bind(),
+            )
+            .expect("bind direct endpoint");
+        let endpoint_addr = endpoint.addr();
+        let secret = endpoint.secret_key().clone();
+        let slot = IrohEndpointSlot::new(
+            endpoint,
+            Arc::clone(&runtime),
+            secret,
+            IrohEndpointProfile::DirectOnly,
+            false,
+        );
+        let mut lifecycle = IrohLifecycle::new_with_slot(Arc::clone(&slot), Arc::clone(&runtime));
+
+        assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Stopped);
+        lifecycle.set_dormant(true).expect("enter direct dormant");
+        assert!(slot.current().is_some(), "direct dormancy must preserve the bound route");
+        assert_eq!(slot.current().expect("endpoint").addr(), endpoint_addr);
+        lifecycle.set_dormant(false).expect("leave direct dormant");
+        assert_eq!(slot.current().expect("endpoint").addr(), endpoint_addr);
+        lifecycle.shutdown();
+    }
+
+    #[test]
     fn lifecycle_reports_iroh_without_tor_or_onion_projection() {
         let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
         let endpoint = runtime
@@ -1171,7 +2567,9 @@ mod tests {
 
         assert_eq!(lifecycle.provider(), TransportKind::Iroh);
         assert_eq!(lifecycle.state(), CommunicationState::Ready);
-        assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Publishing);
+        assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Unknown);
+        assert_eq!(lifecycle.runtime_diagnostics().route_state, Some(ProviderRouteState::Fresh));
+        assert_eq!(lifecycle.runtime_diagnostics().energy_class, Some(EnergyClass::Medium));
         let commissioning = lifecycle.commissioning();
         assert_eq!(commissioning.provider, TransportKind::Iroh);
         assert!(commissioning.endpoint_summary.is_some());
@@ -1179,6 +2577,7 @@ mod tests {
         // Creating an invitation is local and must not wait for discovery to
         // mark the endpoint reachable; the join path owns that network try.
         assert!(commissioning.pairing_ready());
+        assert_eq!(lifecycle.background_grace(), Duration::from_secs(15));
         let descriptor = lifecycle.pairing_bootstrap_descriptor().expect("QR bootstrap descriptor");
         assert_eq!(descriptor.provider(), "iroh");
         assert_eq!(
@@ -1186,8 +2585,122 @@ mod tests {
             endpoint_id
         );
 
+        lifecycle.set_dormant(true).expect("enter dormant");
+        assert_eq!(lifecycle.state(), CommunicationState::Ready);
+        assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Degraded);
+        lifecycle.set_dormant(false).expect("leave dormant");
+        assert_eq!(lifecycle.state(), CommunicationState::Ready);
+        assert_eq!(
+            lifecycle.endpoint.current().expect("reactivated endpoint").addr().id,
+            endpoint_id
+        );
+
         lifecycle.shutdown();
         assert_eq!(lifecycle.state(), CommunicationState::Stopped);
+    }
+
+    #[test]
+    fn network_change_invalidates_reachability_evidence() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let endpoint = runtime
+            .block_on(iroh::Endpoint::builder(presets::N0).alpns(vec![ALPN.to_vec()]).bind())
+            .expect("bind local Iroh endpoint");
+        let mut lifecycle = IrohLifecycle::new(endpoint, Arc::clone(&runtime));
+
+        lifecycle.set_reachability_demand(true);
+        lifecycle.online.store(true, Ordering::Release);
+        assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Reachable);
+        let route_generation = lifecycle.endpoint.route_generation();
+        lifecycle.network_changed(Timestamp::UNIX_EPOCH);
+        assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Publishing);
+        assert_eq!(lifecycle.endpoint.route_generation(), route_generation + 1);
+
+        lifecycle.shutdown();
+    }
+
+    #[test]
+    fn bootstrap_descriptors_are_not_created_from_stale_routes() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let endpoint = runtime
+            .block_on(iroh::Endpoint::builder(presets::N0).alpns(vec![ALPN.to_vec()]).bind())
+            .expect("bind local Iroh endpoint");
+        let slot = IrohEndpointSlot::new(
+            endpoint,
+            Arc::clone(&runtime),
+            iroh::SecretKey::generate(),
+            IrohEndpointProfile::AlwaysReachable,
+            false,
+        );
+        let lifecycle = IrohLifecycle::new_with_slot(Arc::clone(&slot), Arc::clone(&runtime));
+        let incoming = IrohIncomingRouter::start_with_slot(Arc::clone(&slot), Arc::clone(&runtime));
+        let pairing = crate::pairing::IrohPairingService::new_with_slot(
+            Arc::clone(&slot),
+            Arc::clone(&runtime),
+            incoming,
+        );
+
+        slot.route_stale.store(true, Ordering::Release);
+        assert!(lifecycle.pairing_bootstrap_descriptor().is_err());
+        assert!(pairing.pairing_bootstrap_descriptor().is_err());
+        assert!(lifecycle.peer_endpoint_bytes().is_err());
+
+        let mut lifecycle = lifecycle;
+        lifecycle.shutdown();
+    }
+
+    #[test]
+    fn inbound_frames_are_bounded_and_report_overflow() {
+        let queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        for _ in 0..super::MAX_PENDING_INBOUND_FRAMES {
+            assert!(super::push_inbound(&queue, Ok(vec![1])));
+        }
+        assert!(!super::push_inbound(&queue, Ok(vec![2])));
+        let entries = queue.0.lock().expect("inbound queue");
+        assert_eq!(entries.len(), super::MAX_PENDING_INBOUND_FRAMES);
+        assert!(entries.back().is_some_and(Result::is_err));
+    }
+
+    #[test]
+    fn queued_peer_dial_is_rejected_when_route_becomes_stale() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let endpoint = runtime
+            .block_on(
+                iroh::Endpoint::builder(presets::N0)
+                    .alpns(vec![ALPN.to_vec()])
+                    .bind_addr("127.0.0.1:0")
+                    .expect("loopback bind")
+                    .bind(),
+            )
+            .expect("bind local Iroh endpoint");
+        let route_fresh = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut transport = IrohTransport::new_with_profile(
+            endpoint.clone(),
+            endpoint.addr(),
+            Arc::clone(&runtime),
+            IrohEndpointProfile::DirectOnly,
+            Some(route_fresh),
+        );
+        let error = transport.connect().expect_err("stale route must not dial");
+        assert!(error.0.contains("route is stale"));
+        runtime.block_on(endpoint.close());
+    }
+
+    #[test]
+    fn reachability_probe_is_not_started_until_a_runtime_demand_exists() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let endpoint = runtime
+            .block_on(iroh::Endpoint::builder(presets::N0).alpns(vec![ALPN.to_vec()]).bind())
+            .expect("bind local Iroh endpoint");
+        let mut lifecycle = IrohLifecycle::new(endpoint, Arc::clone(&runtime));
+
+        assert_eq!(
+            lifecycle.runtime_diagnostics().online_probe_attempts,
+            Some(0),
+            "idle construction must not start Endpoint::online"
+        );
+        lifecycle.set_reachability_demand(false);
+        assert_eq!(lifecycle.runtime_diagnostics().online_probe_attempts, Some(0));
+        lifecycle.shutdown();
     }
 
     #[test]
@@ -1210,6 +2723,83 @@ mod tests {
             IrohComposition::bind(Arc::clone(&runtime), &mut store).expect("bind Iroh composition");
         let descriptor = composition.pairing_bootstrap_descriptor().expect("descriptor");
         assert_eq!(descriptor.provider(), "iroh");
+        let initial_id = decode_endpoint_addr(descriptor.payload()).expect("decode descriptor").id;
+        composition.lifecycle.set_dormant(true).expect("deactivate endpoint");
+        assert!(composition.pairing_bootstrap_descriptor().is_err());
+        composition.lifecycle.set_dormant(false).expect("reactivate endpoint");
+        let resumed = composition.pairing_bootstrap_descriptor().expect("resumed descriptor");
+        assert_eq!(decode_endpoint_addr(resumed.payload()).expect("decode resumed").id, initial_id);
+        assert_eq!(composition.pairing.endpoint_slot().generation(), 2);
         composition.lifecycle.shutdown();
+    }
+
+    #[test]
+    fn radio_provider_stream_round_trips_without_waiting_for_a_second_accept_bi() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let first_endpoint = runtime
+            .block_on(
+                iroh::Endpoint::builder(presets::N0)
+                    .alpns(vec![RADIO_ALPN.to_vec()])
+                    .bind_addr("127.0.0.1:0")
+                    .expect("first loopback bind")
+                    .bind(),
+            )
+            .expect("first Iroh endpoint");
+        let second_endpoint = runtime
+            .block_on(
+                iroh::Endpoint::builder(presets::N0)
+                    .alpns(vec![RADIO_ALPN.to_vec()])
+                    .bind_addr("127.0.0.1:0")
+                    .expect("second loopback bind")
+                    .bind(),
+            )
+            .expect("second Iroh endpoint");
+        let first_router = IrohIncomingRouter::start(first_endpoint.clone(), Arc::clone(&runtime));
+        let second_router =
+            IrohIncomingRouter::start(second_endpoint.clone(), Arc::clone(&runtime));
+        let mut first =
+            IrohRadioMediaSystemFactory::new(first_endpoint, Arc::clone(&runtime), first_router);
+        let mut second = IrohRadioMediaSystemFactory::new(
+            second_endpoint.clone(),
+            Arc::clone(&runtime),
+            second_router,
+        );
+        let route = RadioMediaRoute {
+            provider: TransportKind::Iroh.wire_value().to_owned(),
+            endpoint: encode_endpoint_addr(&second_endpoint.addr()).expect("encode route"),
+            local_identity: torca_foundation::OpaqueId::from_u128(1),
+            remote_identity: torca_foundation::OpaqueId::from_u128(2),
+        };
+        let mut outgoing = first.connect(&route, Duration::from_secs(5)).expect("radio connect");
+        outgoing
+            .configure(Duration::from_millis(50), Duration::from_secs(1))
+            .expect("bounded read");
+        outgoing.write_all(b"radio-smoke").expect("write radio payload");
+        outgoing.flush().expect("flush radio payload");
+
+        let mut incoming = None;
+        for _ in 0..50 {
+            incoming = second.try_accept().expect("radio accept");
+            if incoming.is_some() {
+                break;
+            }
+            runtime.block_on(async { tokio::time::sleep(Duration::from_millis(10)).await });
+        }
+        let mut incoming = incoming.expect("incoming radio stream");
+        incoming
+            .configure(Duration::from_millis(50), Duration::from_secs(1))
+            .expect("bounded incoming read");
+        let mut payload = [0_u8; 11];
+        incoming.read_exact(&mut payload).expect("read radio payload");
+        assert_eq!(&payload, b"radio-smoke");
+
+        let started = std::time::Instant::now();
+        let mut probe = [0_u8; 1];
+        let error = incoming.read(&mut probe).expect_err("idle read must be bounded");
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(started.elapsed() < Duration::from_millis(250));
+
+        let _ = outgoing.close_stream();
+        let _ = incoming.close_stream();
     }
 }

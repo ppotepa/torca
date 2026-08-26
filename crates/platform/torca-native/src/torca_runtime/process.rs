@@ -43,6 +43,7 @@ const COMMUNICATION_PROVIDER: &str = match option_env!("TORCA_COMMUNICATION_PROV
     None => "tor",
 };
 const PROVIDER_ENDPOINT_HASH: Option<&str> = option_env!("TORCA_PROVIDER_ENDPOINT_HASH");
+const IROH_PROFILE: Option<&str> = option_env!("TORCA_IROH_PROFILE");
 
 pub(crate) const fn compiled_build_id() -> &'static str {
     BUILD_ID

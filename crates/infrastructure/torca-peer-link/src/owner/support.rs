@@ -37,6 +37,7 @@ fn map_transport_factory(error: torca_transport_api::TransportFactoryError) -> P
             PeerLinkError::ContactNotFound
         }
         torca_transport_api::TransportFactoryError::Protocol => PeerLinkError::Protocol,
+        torca_transport_api::TransportFactoryError::RouteStale => PeerLinkError::NotReady,
     }
 }
 

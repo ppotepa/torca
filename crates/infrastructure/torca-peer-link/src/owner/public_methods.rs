@@ -3,6 +3,93 @@ where
     S: ContactRepository + PeerCredentialRepository,
     K: HandshakeSigner,
 {
+    fn current_route_advertisement(&self) -> Option<torca_peer_protocol::RouteAdvertisement> {
+        let route = self.transport_factory.local_route()?;
+        torca_peer_protocol::RouteAdvertisement::new(
+            route.provider.wire_value(),
+            route.generation,
+            route.endpoint,
+        )
+        .ok()
+    }
+
+    /// Sends the current provider route once per generation on a ready
+    /// session. The route itself is opaque to the peer link; only the selected
+    /// provider creates and interprets its bytes.
+    fn advertise_route(
+        &mut self,
+        contact_id: ContactId,
+        session: &mut PeerSession<Box<dyn PeerTransport + Send>, Ed25519HandshakeVerifier>,
+    ) -> Result<(), PeerLinkError> {
+        let Some(route) = self.current_route_advertisement() else { return Ok(()) };
+        let already_sent = self
+            .advertised_route_generations
+            .get(&contact_id)
+            .is_some_and(|generation| *generation >= route.generation);
+        if already_sent {
+            return Ok(());
+        }
+        session.send_route(route.clone()).map_err(map_session)?;
+        self.advertised_route_generations.insert(contact_id, route.generation);
+        Ok(())
+    }
+
+    fn advertise_route_for_contact(&mut self, contact_id: ContactId) -> Result<(), PeerLinkError> {
+        let Some(route) = self.current_route_advertisement() else { return Ok(()) };
+        if self.connection_state(contact_id) != PeerConnectionState::Ready {
+            return Ok(());
+        }
+        if self
+            .advertised_route_generations
+            .get(&contact_id)
+            .is_some_and(|generation| *generation >= route.generation)
+        {
+            return Ok(());
+        }
+        let result = if let Some(session) = self.outgoing.get_mut(&contact_id) {
+            session.send_route(route.clone()).map_err(map_session)
+        } else if let Some(session) = self.incoming.get_mut(&contact_id) {
+            session.send_route(route.clone()).map_err(map_session)
+        } else {
+            Ok(())
+        };
+        result?;
+        self.advertised_route_generations.insert(contact_id, route.generation);
+        Ok(())
+    }
+
+    fn apply_route_advertisement(
+        &mut self,
+        contact_id: ContactId,
+        route: torca_peer_protocol::RouteAdvertisement,
+        now: Timestamp,
+    ) -> Result<(), PeerLinkError> {
+        if route.provider != self.transport_factory.kind().wire_value() {
+            return Err(PeerLinkError::Protocol);
+        }
+        if self
+            .route_generations
+            .get(&contact_id)
+            .is_some_and(|generation| *generation >= route.generation)
+        {
+            return Ok(());
+        }
+        let mut contact = self
+            .relationships
+            .get(contact_id)
+            .map_err(map_contact)?
+            .ok_or(PeerLinkError::ContactNotFound)?;
+        let mut contact_route = contact.route().clone();
+        contact_route
+            .update_provider_endpoint(route.provider, route.endpoint)
+            .map_err(map_contact)?;
+        contact.update_route(contact_route, now).map_err(map_contact)?;
+        self.relationships.update(contact).map_err(map_contact)?;
+        self.route_generations.insert(contact_id, route.generation);
+        self.notify_waker();
+        Ok(())
+    }
+
     /// Builds a peer link with an externally supplied transport factory.
     pub fn with_transport_factory(
         transport_factory: Box<dyn PeerTransportFactory>,
@@ -23,6 +110,8 @@ where
             pending_acks: BTreeMap::new(),
             inbound: VecDeque::new(),
             activity: BTreeMap::new(),
+            route_generations: BTreeMap::new(),
+            advertised_route_generations: BTreeMap::new(),
             connectivity: None,
             waker: None,
         }
@@ -157,6 +246,15 @@ where
         self.accept_pending(&mut report)?;
         self.authenticate_pending(now, &mut report)?;
         self.poll_sessions(now, &mut report)?;
+        let route_contacts = self
+            .incoming
+            .keys()
+            .chain(self.outgoing.keys())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        for contact_id in route_contacts {
+            self.advertise_route_for_contact(contact_id)?;
+        }
         self.plan_disconnected(contacts);
         self.run_due_reconnects(now, &mut report)?;
         if report.became_ready > 0
@@ -234,6 +332,15 @@ where
     }
 
     pub fn network_changed(&mut self, now: Timestamp) {
+        // QUIC providers can migrate an authenticated session in place. Do
+        // not tear those sessions down on every Wi-Fi/LTE callback: doing so
+        // loses the very channel needed to advertise a refreshed route and
+        // creates a reconnect burst. Legacy stream providers retain the
+        // conservative close-and-reconnect behavior below.
+        if self.transport_factory.preserves_sessions_on_network_change() {
+            self.notify_waker();
+            return;
+        }
         let had_session =
             self.incoming.keys().chain(self.outgoing.keys()).copied().collect::<BTreeSet<_>>();
         let mut contacts = self
@@ -320,7 +427,7 @@ where
         }
     }
 
-    pub fn send_envelope(
+pub fn send_envelope(
         &mut self,
         contact_id: ContactId,
         envelope_id: OpaqueId,
@@ -371,6 +478,19 @@ where
         envelope_id: OpaqueId,
     ) -> Result<Option<LinkAck>, PeerLinkError> {
         self.poll_envelope_ack_waiting(contact_id, envelope_id, Duration::ZERO)
+    }
+
+    /// Records an ACK timeout without performing another blocking socket wait.
+    /// SharedPeerLink uses this after releasing its mutex between polls, so a
+    /// stalled peer cannot prevent lifecycle, delivery or Radio commands from
+    /// acquiring the link.
+    pub fn mark_ack_timeout(
+        &mut self,
+        contact_id: ContactId,
+        now: Timestamp,
+    ) -> Result<(), PeerLinkError> {
+        self.mark_disconnected(contact_id);
+        self.schedule_reconnect(contact_id, now)
     }
 
     fn poll_envelope_ack_waiting(
@@ -429,6 +549,10 @@ where
                 );
                 self.queue_inbound(envelope)?;
                 Err(PeerLinkError::InboundPending)
+            }
+            AckWaitAction::Route(route) => {
+                self.apply_route_advertisement(contact_id, route, now)?;
+                Ok(None)
             }
             AckWaitAction::Ignore => Ok(None),
         }
@@ -512,5 +636,36 @@ where
         }
         self.reconnect.clear();
         self.inbound.clear();
+    }
+
+    /// Sends several envelopes over one authenticated session operation. The
+    /// durable delivery workers still receive one ACK per envelope; only
+    /// provider framing is coalesced to avoid repeated mobile radio wakeups.
+    pub fn send_envelopes_batch(
+        &mut self,
+        contact_id: ContactId,
+        envelopes: Vec<(OpaqueId, u16, Vec<u8>)>,
+    ) -> Result<(), PeerLinkError> {
+        if envelopes.is_empty() {
+            return Ok(());
+        }
+        if !self.is_ready(contact_id) {
+            let now = system_timestamp()?;
+            if matches!(self.ensure_connected(contact_id, now), Ok(true)) {
+                self.notify_waker();
+            }
+            return Err(PeerLinkError::NotReady);
+        }
+        if let Some(session) = self.outgoing.get_mut(&contact_id) {
+            if session.state() == PeerSessionState::Ready {
+                return session.send_data_batch(envelopes).map_err(map_session);
+            }
+        }
+        if let Some(session) = self.incoming.get_mut(&contact_id) {
+            if session.state() == PeerSessionState::Ready {
+                return session.send_data_batch(envelopes).map_err(map_session);
+            }
+        }
+        Err(PeerLinkError::NotReady)
     }
 }

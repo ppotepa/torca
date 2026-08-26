@@ -11,12 +11,13 @@ use std::time::Duration;
 
 use torca_contacts::{Contact, ContactId};
 use torca_transport_api::{
-    CommissioningState, ProviderCommissioning, TransportKind, WebRtcDataChannel,
-    WebRtcSessionProvider, WebRtcSignalingProvider,
+    CommissioningState, ProviderCommissioning, ProviderRouteState, TransportKind,
+    WebRtcDataChannel, WebRtcSessionProvider, WebRtcSignalingProvider,
 };
 
 pub type SignalingExchange =
     Arc<dyn Fn(&[u8], Duration) -> Result<Vec<u8>, String> + Send + Sync + 'static>;
+pub type SignalingReconnect = Arc<dyn Fn() -> Result<(), String> + Send + Sync + 'static>;
 
 type WakeHandler = Arc<dyn Fn() + Send + Sync + 'static>;
 const MAX_PENDING_INCOMING_CHANNELS: usize = 64;
@@ -30,6 +31,7 @@ pub struct WebRtcHostBridge {
     incoming: Mutex<VecDeque<Arc<dyn WebRtcDataChannel>>>,
     waker: Mutex<Option<WakeHandler>>,
     signaling_exchange: SignalingExchange,
+    signaling_reconnect: SignalingReconnect,
 }
 
 impl WebRtcHostBridge {
@@ -44,7 +46,16 @@ impl WebRtcHostBridge {
             incoming: Mutex::new(VecDeque::new()),
             waker: Mutex::new(None),
             signaling_exchange,
+            signaling_reconnect: Arc::new(|| Ok(())),
         })
+    }
+
+    /// Supplies the platform-owned signaling reconnect operation. This is
+    /// invoked by the provider-neutral pairing transport after a signaling
+    /// session expires or a network generation changes.
+    pub fn with_signaling_reconnect(mut self, reconnect: SignalingReconnect) -> Self {
+        self.signaling_reconnect = reconnect;
+        self
     }
 
     /// Updates provider-owned commissioning facts after the host receives an
@@ -64,6 +75,9 @@ impl WebRtcHostBridge {
         contact_id: ContactId,
         channel: Arc<dyn WebRtcDataChannel>,
     ) -> Result<(), String> {
+        if let Some(waker) = self.waker.lock().map_err(|_| "waker registry poisoned")?.clone() {
+            channel.set_waker(waker);
+        }
         let previous = self
             .channels
             .lock()
@@ -76,8 +90,27 @@ impl WebRtcHostBridge {
         Ok(())
     }
 
+    /// Removes and closes the negotiated channel for one contact. Hosts call
+    /// this when the SDK reports a terminal close so a later dial cannot
+    /// accidentally retrieve a dead channel from the registry.
+    pub fn unbind_contact(&self, contact_id: ContactId) -> Result<bool, String> {
+        let channel =
+            self.channels.lock().map_err(|_| "channel registry poisoned")?.remove(&contact_id);
+        let removed = channel.is_some();
+        if let Some(channel) = channel {
+            let _ = channel.close();
+        }
+        if removed {
+            self.notify();
+        }
+        Ok(removed)
+    }
+
     /// Publishes an incoming negotiated channel for the runtime accept lane.
     pub fn push_incoming(&self, channel: Arc<dyn WebRtcDataChannel>) -> Result<(), String> {
+        if let Some(waker) = self.waker.lock().map_err(|_| "waker registry poisoned")?.clone() {
+            channel.set_waker(waker);
+        }
         let mut incoming =
             self.incoming.lock().map_err(|_| "incoming channel registry poisoned")?;
         if incoming.len() >= MAX_PENDING_INCOMING_CHANNELS {
@@ -143,8 +176,50 @@ impl WebRtcSessionProvider for WebRtcHostBridge {
 
     fn set_waker(&self, waker: WakeHandler) {
         if let Ok(mut slot) = self.waker.lock() {
-            *slot = Some(waker);
+            *slot = Some(Arc::clone(&waker));
         }
+        // Never invoke SDK callbacks while holding either registry lock. A
+        // callback may synchronously wake the runtime and re-enter this
+        // bridge (for example by binding a replacement channel), which would
+        // otherwise deadlock the host thread.
+        let channels = self
+            .channels
+            .lock()
+            .map(|channels| channels.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let incoming = self
+            .incoming
+            .lock()
+            .map(|channels| channels.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for channel in channels.into_iter().chain(incoming) {
+            channel.set_waker(Arc::clone(&waker));
+        }
+    }
+
+    fn refresh_route(&self) -> Result<(), String> {
+        // Invalidate the previous route before asking the SDK to renegotiate.
+        // Until a host callback publishes a fresh commissioning snapshot,
+        // consumers must not continue to advertise the old ICE candidates as
+        // usable. The registry itself has no SDP/ICE knowledge; it only owns
+        // this provider-neutral state transition and wakes the runtime.
+        // Existing channels were negotiated against the old candidate set;
+        // close them before renegotiation so the peer layer cannot keep
+        // sending on a route that the host has declared stale.
+        self.clear_channels()?;
+        if let Ok(mut commissioning) = self.commissioning.write() {
+            commissioning.route_state = ProviderRouteState::Stale;
+            for step in &mut commissioning.steps {
+                if matches!(
+                    step.stage,
+                    torca_transport_api::CommissioningStage::IncomingReachability
+                ) {
+                    step.state = CommissioningState::Pending;
+                }
+            }
+        }
+        self.notify();
+        Ok(())
     }
 
     fn commissioning(&self) -> ProviderCommissioning {
@@ -163,6 +238,7 @@ impl WebRtcSignalingProvider for WebRtcHostBridge {
     }
 
     fn reconnect(&self) -> Result<(), String> {
+        (self.signaling_reconnect)()?;
         self.notify();
         Ok(())
     }
@@ -190,6 +266,7 @@ fn default_commissioning() -> ProviderCommissioning {
             },
         ],
         endpoint_summary: None,
+        route_state: ProviderRouteState::Unavailable,
         pairing_bootstrap: None,
     }
 }

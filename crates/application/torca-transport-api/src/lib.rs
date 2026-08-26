@@ -31,6 +31,16 @@ impl std::error::Error for PeerTransportError {}
 pub trait PeerTransport {
     fn connect(&mut self) -> Result<(), PeerTransportError>;
     fn send(&mut self, payload: Vec<u8>) -> Result<(), PeerTransportError>;
+    /// Sends several already-framed payloads as one provider operation.
+    /// Providers that cannot coalesce writes retain correct semantics through
+    /// the default implementation; stream providers such as Iroh can hold a
+    /// single write lock and flush once to reduce mobile radio wakeups.
+    fn send_batch(&mut self, payloads: Vec<Vec<u8>>) -> Result<(), PeerTransportError> {
+        for payload in payloads {
+            self.send(payload)?;
+        }
+        Ok(())
+    }
     fn try_receive(&mut self) -> Result<Option<Vec<u8>>, PeerTransportError>;
     fn receive_timeout(
         &mut self,
@@ -52,6 +62,10 @@ where
 
     fn send(&mut self, payload: Vec<u8>) -> Result<(), PeerTransportError> {
         (**self).send(payload)
+    }
+
+    fn send_batch(&mut self, payloads: Vec<Vec<u8>>) -> Result<(), PeerTransportError> {
+        (**self).send_batch(payloads)
     }
 
     fn try_receive(&mut self) -> Result<Option<Vec<u8>>, PeerTransportError> {
@@ -127,12 +141,9 @@ impl TransportKind {
                 commissioning_service: ProviderCommissioningService::ManagedRendezvous,
                 pairing_bootstrap: PairingBootstrapMode::ManagedSessionService,
                 features: ProviderFeatures::TOR,
-                local_ready_codes: &[
-                    "LOCAL_READY",
-                    "TOR_STARTING",
-                    "TOR_BOOTSTRAP_READY",
-                    "NETWORK_READY",
-                ],
+                startup_timeout: Duration::from_secs(15 * 60),
+                service_validation_timeout: Duration::from_secs(180),
+                local_ready_codes: &["LOCAL_READY"],
                 service_ready_codes: &["TOR_BOOTSTRAP_READY", "NETWORK_READY"],
             },
             Self::Iroh => ProviderDeploymentProfile {
@@ -144,11 +155,9 @@ impl TransportKind {
                 commissioning_service: ProviderCommissioningService::None,
                 pairing_bootstrap: PairingBootstrapMode::DirectQr,
                 features: ProviderFeatures::IROH,
-                local_ready_codes: &[
-                    "LOCAL_READY",
-                    "COMMUNICATION_STARTING",
-                    "COMMUNICATION_READY",
-                ],
+                startup_timeout: Duration::from_secs(45),
+                service_validation_timeout: Duration::from_secs(45),
+                local_ready_codes: &["LOCAL_READY"],
                 service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
             },
             Self::WebRtc => ProviderDeploymentProfile {
@@ -157,11 +166,9 @@ impl TransportKind {
                 commissioning_service: ProviderCommissioningService::ExternalSignaling,
                 pairing_bootstrap: PairingBootstrapMode::ExternalSignaling,
                 features: ProviderFeatures::WEBRTC,
-                local_ready_codes: &[
-                    "LOCAL_READY",
-                    "COMMUNICATION_STARTING",
-                    "COMMUNICATION_READY",
-                ],
+                startup_timeout: Duration::from_secs(60),
+                service_validation_timeout: Duration::from_secs(60),
+                local_ready_codes: &["LOCAL_READY"],
                 service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
             },
             Self::Memory => ProviderDeploymentProfile {
@@ -170,6 +177,8 @@ impl TransportKind {
                 commissioning_service: ProviderCommissioningService::None,
                 pairing_bootstrap: PairingBootstrapMode::TestMemory,
                 features: ProviderFeatures::MEMORY,
+                startup_timeout: Duration::from_secs(5),
+                service_validation_timeout: Duration::from_secs(5),
                 local_ready_codes: &["LOCAL_READY", "COMMUNICATION_READY"],
                 service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
             },
@@ -208,6 +217,14 @@ pub struct ProviderDeploymentProfile {
     pub commissioning_service: ProviderCommissioningService,
     pub pairing_bootstrap: PairingBootstrapMode,
     pub features: ProviderFeatures,
+    /// Maximum time native composition may spend starting this provider.
+    /// Provider profiles own this because Tor directory bootstrap and a local
+    /// Iroh endpoint have fundamentally different startup characteristics.
+    pub startup_timeout: Duration,
+    /// Maximum deploy health-gate wait for provider-owned service readiness.
+    /// Direct providers can complete this immediately; managed providers may
+    /// need a longer directory/rendezvous window.
+    pub service_validation_timeout: Duration,
     /// Structured log codes accepted by the generic deploy health gate.
     pub local_ready_codes: &'static [&'static str],
     pub service_ready_codes: &'static [&'static str],
@@ -275,6 +292,14 @@ impl ProviderFeatures {
 impl ProviderDeploymentProfile {
     pub const fn is_deployment_ready(self) -> bool {
         matches!(self.deployment_state, ProviderDeploymentState::Validated)
+    }
+
+    /// Whether a deployment must wait for a provider-owned commissioning
+    /// service in addition to the local runtime.  Keeping this decision on
+    /// the profile prevents deployers from equating "has an endpoint" with
+    /// "has a readiness gate" for direct providers.
+    pub const fn requires_service_readiness(self) -> bool {
+        !matches!(self.commissioning_service, ProviderCommissioningService::None)
     }
 
     /// Validates the optional deployment endpoint according to the selected
@@ -392,6 +417,10 @@ pub struct ProviderCommissioning {
     pub provider: TransportKind,
     pub steps: Vec<CommissioningStep>,
     pub endpoint_summary: Option<String>,
+    /// Current provider route state. This is separate from commissioning
+    /// reachability: a provider may be locally ready while its advertised
+    /// route is temporarily stale during network migration.
+    pub route_state: ProviderRouteState,
     /// Opaque provider-owned bootstrap material used to reconstruct a
     /// durable invitation URI after the original create command has left the
     /// FFI boundary.
@@ -463,6 +492,44 @@ pub enum TransportPath {
     Unknown,
 }
 
+/// Redaction-safe provider runtime facts used by diagnostics and soak runs.
+///
+/// These are deliberately optional: a provider that does not expose endpoint
+/// generations or public reachability can still participate without inventing
+/// Tor-shaped values. No endpoint address, peer identity or secret crosses
+/// this boundary.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRuntimeDiagnostics {
+    pub endpoint_generation: Option<u64>,
+    /// Monotonic generation of the provider's advertised route. Unlike the
+    /// endpoint generation, this also changes when the same endpoint learns
+    /// new IP/relay addresses after a platform network transition.
+    pub route_generation: Option<u64>,
+    pub network_generation: Option<u64>,
+    pub endpoint_active: Option<bool>,
+    /// Whether the provider currently has a route safe to advertise. `None`
+    /// means the provider does not expose route freshness.
+    pub route_fresh: Option<bool>,
+    /// Typed route state for diagnostics and provider-neutral scheduling.
+    /// `route_fresh` remains for compatibility with older consumers.
+    pub route_state: Option<ProviderRouteState>,
+    /// Number of provider runtime workers. This is a diagnostic fact so
+    /// battery experiments can compare a one-worker mobile profile with the
+    /// default pool without parsing provider-specific configuration.
+    pub runtime_threads: Option<u16>,
+    /// Relative provider energy class used for diagnostics and soak labels.
+    /// This is not a physical battery measurement and must not be presented
+    /// as mAh or a percentage.
+    pub energy_class: Option<EnergyClass>,
+    /// Whether the runtime currently holds an incoming-reachability demand.
+    /// This is a policy fact, not a claim that the provider is reachable.
+    pub reachability_demanded: Option<bool>,
+    pub incoming_reachability: Option<String>,
+    pub online_probe_attempts: Option<u64>,
+    pub online_probe_failures: Option<u64>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LatencyClass {
     Interactive,
@@ -470,7 +537,8 @@ pub enum LatencyClass {
     High,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EnergyClass {
     Low,
     Medium,
@@ -495,6 +563,7 @@ pub struct TransportCapabilities {
 /// facts are deliberately transport-level: the Radio coordinator still owns
 /// floor arbitration and audio semantics, while the selected provider owns
 /// connection lifecycle and its idle budget.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RealtimeCapabilities {
     pub reliable: bool,
@@ -504,6 +573,10 @@ pub struct RealtimeCapabilities {
     /// Maximum safe application silence in milliseconds.  A provider must not
     /// be forced to use a longer heartbeat gap than its transport can sustain.
     pub max_idle_interval_ms: u64,
+    /// Whether the application must emit a heartbeat while the lane is idle.
+    /// QUIC providers such as Iroh have their own endpoint/connection liveness
+    /// machinery and should not be forced into a second periodic heartbeat.
+    pub requires_application_keep_alive: bool,
 }
 
 impl Default for RealtimeCapabilities {
@@ -514,6 +587,7 @@ impl Default for RealtimeCapabilities {
             supports_datagrams: false,
             max_frame_size: 64 * 1024,
             max_idle_interval_ms: 30_000,
+            requires_application_keep_alive: true,
         }
     }
 }
@@ -538,7 +612,76 @@ pub trait PeerTransportFactory: Send {
         &mut self,
         contact: &Contact,
     ) -> Result<Box<dyn PeerTransport + Send>, TransportFactoryError>;
+    /// Returns the provider's current opaque route for authenticated refresh.
+    /// Providers without a mutable direct route may return `None`.
+    fn local_route(&self) -> Option<ProviderRoute> {
+        None
+    }
+    /// Returns false while the provider is asynchronously migrating its
+    /// local route after a network-generation change. Callers must wait for
+    /// the provider waker instead of dialing with an address captured before
+    /// migration; the default keeps existing providers conservative-free.
+    fn local_route_is_fresh(&self) -> bool {
+        true
+    }
+    /// Returns one typed route state for diagnostics and provider-neutral
+    /// schedulers. The default composes the legacy-compatible route methods
+    /// so existing providers can adopt the richer contract incrementally.
+    fn local_route_state(&self) -> ProviderRouteState {
+        if !self.local_route_is_fresh() {
+            ProviderRouteState::Stale
+        } else if self.local_route().is_some() {
+            ProviderRouteState::Fresh
+        } else {
+            ProviderRouteState::Unavailable
+        }
+    }
+    /// Whether existing sessions can survive an OS network-generation event.
+    /// QUIC providers can migrate paths in place; stream providers that cannot
+    /// do so retain the conservative close-and-reconnect behavior.
+    fn preserves_sessions_on_network_change(&self) -> bool {
+        false
+    }
     fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), TransportFactoryError>;
+}
+
+/// Provider-neutral opaque route advertised over an authenticated peer link.
+/// The endpoint bytes are owned and validated by the selected provider; the
+/// runtime only carries them between the transport factory and contacts
+/// repository.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderRoute {
+    pub provider: TransportKind,
+    pub generation: u64,
+    pub endpoint: Vec<u8>,
+}
+
+impl ProviderRoute {
+    pub fn new(provider: TransportKind, generation: u64, endpoint: Vec<u8>) -> Option<Self> {
+        (!endpoint.is_empty() && endpoint.len() <= 8 * 1024).then_some(Self {
+            provider,
+            generation,
+            endpoint,
+        })
+    }
+}
+
+/// Provider-neutral availability of the local route used for new sessions.
+/// `Stale` is intentionally distinct from `Unavailable`: migration is
+/// expected to recover after a provider wake, while unavailable means that
+/// the provider currently has no dialable address at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderRouteState {
+    Fresh,
+    Stale,
+    Unavailable,
+}
+
+impl ProviderRouteState {
+    pub const fn is_fresh(self) -> bool {
+        matches!(self, Self::Fresh)
+    }
 }
 
 /// Error vocabulary shared by transport factories without exposing a provider
@@ -548,6 +691,10 @@ pub enum TransportFactoryError {
     Listener,
     ContactNotFound,
     Protocol,
+    /// The provider has a valid endpoint, but its local route is temporarily
+    /// stale (for example during an Iroh Wi-Fi/LTE migration). This is
+    /// retryable and must not be reported as a protocol failure.
+    RouteStale,
 }
 
 /// Platform-owned negotiated WebRTC data channel.
@@ -569,6 +716,14 @@ pub trait WebRtcSessionProvider: Send + Sync {
     fn accept(&self) -> Result<Option<Arc<dyn WebRtcDataChannel>>, String>;
     fn connect(&self, contact: &Contact) -> Result<Arc<dyn WebRtcDataChannel>, String>;
     fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>);
+
+    /// Requests a provider-owned ICE/session refresh after a route becomes
+    /// stale. The default is a no-op for hosts whose SDK renegotiates
+    /// automatically; concrete Android/desktop bridges should override this
+    /// to trigger ICE gathering or a new DataChannel offer.
+    fn refresh_route(&self) -> Result<(), String> {
+        Ok(())
+    }
 
     /// Provider-owned commissioning projection. The default is deliberately
     /// conservative: a host must override it when ICE/signaling readiness is
@@ -592,6 +747,7 @@ pub trait WebRtcSessionProvider: Send + Sync {
                 },
             ],
             endpoint_summary: None,
+            route_state: crate::ProviderRouteState::Unavailable,
             pairing_bootstrap: None,
         }
     }
@@ -674,12 +830,18 @@ mod tests {
         let tor = TransportKind::Tor.deployment_profile();
         assert_eq!(tor.deployment_state, super::ProviderDeploymentState::Validated);
         assert_eq!(tor.commissioning_service, ProviderCommissioningService::ManagedRendezvous);
+        assert!(tor.requires_service_readiness());
         assert_eq!(tor.pairing_bootstrap, super::PairingBootstrapMode::ManagedSessionService);
+        assert_eq!(tor.startup_timeout, std::time::Duration::from_secs(15 * 60));
+        assert_eq!(tor.service_validation_timeout, std::time::Duration::from_secs(180));
 
         let iroh = TransportKind::Iroh.deployment_profile();
         assert_eq!(iroh.deployment_state, super::ProviderDeploymentState::Validated);
         assert_eq!(iroh.commissioning_service, ProviderCommissioningService::None);
+        assert!(!iroh.requires_service_readiness());
         assert_eq!(iroh.pairing_bootstrap, super::PairingBootstrapMode::DirectQr);
+        assert_eq!(iroh.startup_timeout, std::time::Duration::from_secs(45));
+        assert_eq!(iroh.service_validation_timeout, std::time::Duration::from_secs(45));
         assert!(!iroh.features.pairing_short_code);
         assert!(iroh.features.radio);
         assert!(iroh.features.pairing_qr && iroh.features.pairing_full_link);
@@ -689,6 +851,7 @@ mod tests {
         let web_rtc = TransportKind::WebRtc.deployment_profile();
         assert_eq!(web_rtc.deployment_state, super::ProviderDeploymentState::Hidden);
         assert_eq!(web_rtc.commissioning_service, ProviderCommissioningService::ExternalSignaling);
+        assert!(web_rtc.requires_service_readiness());
         assert_eq!(web_rtc.pairing_bootstrap, super::PairingBootstrapMode::ExternalSignaling);
     }
 
@@ -724,6 +887,7 @@ mod tests {
                 },
             ],
             endpoint_summary: None,
+            route_state: crate::ProviderRouteState::Unavailable,
             pairing_bootstrap: None,
         };
 

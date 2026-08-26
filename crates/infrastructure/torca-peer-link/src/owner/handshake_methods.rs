@@ -98,6 +98,11 @@ where
             .map_err(|_| PeerLinkError::Protocol)?;
         session.send_handshake_ack(ack).map_err(map_session)?;
         let contact_id = contact.id();
+        // A fresh authenticated session must receive the route even if the
+        // same generation was sent on an older session that the peer may not
+        // have persisted before restarting.
+        self.advertised_route_generations.remove(&contact_id);
+        self.advertise_route(contact_id, &mut session)?;
         self.incoming.insert(contact_id, session);
         self.observe(
             contact_id,
@@ -117,6 +122,16 @@ where
     ) -> Result<(), PeerLinkError> {
         if self.outgoing.contains_key(&contact_id) || self.incoming.contains_key(&contact_id) {
             return Err(PeerLinkError::DuplicateConnection);
+        }
+        // Providers such as Iroh migrate their local endpoint asynchronously
+        // after a network-generation event. Treat that short interval as a
+        // retryable NotReady state before touching the contact route; this
+        // keeps the generic peer link from creating a dial against a stale
+        // local address and avoids a reconnect storm.
+        if self.transport_factory.local_route_state()
+            == torca_transport_api::ProviderRouteState::Stale
+        {
+            return Err(PeerLinkError::NotReady);
         }
         let contact = self
             .relationships

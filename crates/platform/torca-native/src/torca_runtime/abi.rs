@@ -146,6 +146,13 @@ unsafe fn torca_runtime_wait_for_revision_with_waiter(
             Duration::from_millis(u64::from(timeout_ms)),
         )
     };
+    if handle.inner.event_hub.is_closed() {
+        // A waiter may have passed the initial liveness check just before the
+        // actor terminated.  Return the same failure code as an unavailable
+        // runtime so platform hosts can reacquire a new generation instead
+        // of treating the shutdown wake as a normal application revision.
+        return -2;
+    }
     match result {
         Some(_) => 1,
         None => 0,

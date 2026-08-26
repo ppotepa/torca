@@ -50,7 +50,7 @@ pub(crate) fn empty_snapshot_json() -> String {
     // `tor` here creates false rendezvous/relay diagnostics for Iroh.
     let provider = crate::transport_config::compiled_provider()
         .map(|value| value.wire_value())
-        .unwrap_or("tor");
+        .unwrap_or("unknown");
     json!({
         "contractVersion": CONTRACT_VERSION,
         "identity": Value::Null,
@@ -60,11 +60,15 @@ pub(crate) fn empty_snapshot_json() -> String {
         "torState": "stopped",
         "transport": {
             "communication": { "state": "stopped", "code": "COMMUNICATION_NOT_READY", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0, "txSequence": 0, "rxSequence": 0, "inFlight": 0, "queued": 0 },
+            "providerRouteState": "unavailable",
             "tor": { "state": "stopped", "code": "TOR_NOT_READY", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0 },
             "relay": { "state": "unknown", "code": "RELAY_UNAVAILABLE", "latencyMs": Value::Null, "lastActivityAtMs": Value::Null, "activitySequence": 0 }
         },
         "onionAddress": Value::Null,
-        "bootstrapPhase": "failed",
+        // This is a provisional snapshot before the provider composition
+        // worker has reported its first state. Reporting `failed` here makes
+        // Flutter render a terminal error during every cold start.
+        "bootstrapPhase": "starting",
         "bootstrapSteps": [], "pairings": [], "contacts": [], "conversations": [],
         "messages": [], "reactions": [], "attachments": [], "navigationBadges": { "unreadMessages": 0, "newContacts": 0, "pairingAttention": 0 },
         "radio": { "activeContactId": Value::Null, "contacts": [], "session": Value::Null },

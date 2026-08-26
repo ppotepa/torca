@@ -11,7 +11,7 @@ use std::time::Duration;
 use torca_foundation::{OpaqueId, Timestamp};
 use torca_peer_protocol::{
     AckStatus, HandshakeAck, HandshakeHello, HandshakePolicy, HandshakeVerifier, PeerCodec,
-    PeerMessage, PeerProtocolError,
+    PeerMessage, PeerProtocolError, RouteAdvertisement,
 };
 
 /// Peer connection lifecycle.
@@ -184,6 +184,11 @@ impl<T: PeerTransport, V: HandshakeVerifier> PeerSession<T, V> {
                     return Err(PeerSessionError::InvalidState);
                 }
             }
+            PeerMessage::Route(_) => {
+                if self.state != PeerSessionState::Ready {
+                    return Err(PeerSessionError::InvalidState);
+                }
+            }
         }
         Ok(Some(message))
     }
@@ -237,6 +242,56 @@ impl<T: PeerTransport, V: HandshakeVerifier> PeerSession<T, V> {
             return Err(error.into());
         }
         self.in_flight.insert(envelope_id);
+        Ok(())
+    }
+
+    /// Advertises the provider-owned opaque route after authentication. The
+    /// route is metadata only; application payloads and their ACK tracking
+    /// remain unchanged.
+    pub fn send_route(&mut self, route: RouteAdvertisement) -> Result<(), PeerSessionError> {
+        if self.state != PeerSessionState::Ready {
+            return Err(PeerSessionError::InvalidState);
+        }
+        let payload = PeerCodec::encode(&PeerMessage::Route(route))?;
+        if let Err(error) = self.transport.send(payload) {
+            self.transition_to_reconnecting();
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
+    /// Sends several encrypted application envelopes in one provider write
+    /// operation. Envelope IDs remain tracked independently for ACK and retry
+    /// semantics. If the provider fails part-way through, the caller retries
+    /// the durable envelopes; peer-side duplicate handling makes that safe.
+    pub fn send_data_batch(
+        &mut self,
+        envelopes: Vec<(OpaqueId, u16, Vec<u8>)>,
+    ) -> Result<(), PeerSessionError> {
+        if self.state != PeerSessionState::Ready {
+            return Err(PeerSessionError::InvalidState);
+        }
+        if envelopes.is_empty() {
+            return Ok(());
+        }
+        let mut encoded = Vec::with_capacity(envelopes.len());
+        for (envelope_id, message_kind, ciphertext) in &envelopes {
+            if self.in_flight.contains(envelope_id)
+                || envelopes.iter().filter(|candidate| candidate.0 == *envelope_id).count() > 1
+            {
+                return Err(PeerSessionError::DuplicateEnvelope);
+            }
+            encoded.push(PeerCodec::encode(&PeerMessage::Data {
+                envelope_id: *envelope_id,
+                message_kind: *message_kind,
+                ciphertext: ciphertext.clone(),
+            })?);
+        }
+        if let Err(error) = self.transport.send_batch(encoded) {
+            self.transition_to_reconnecting();
+            return Err(error.into());
+        }
+        self.in_flight.extend(envelopes.into_iter().map(|(envelope_id, _, _)| envelope_id));
         Ok(())
     }
 

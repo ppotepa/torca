@@ -31,11 +31,22 @@ jobs:
       - name: Rust format
         run: cargo fmt --all -- --check
       - name: Rust check
-        run: cargo check --workspace --all-targets --all-features --locked
+        run: cargo check --workspace --all-targets --locked
+      - name: Provider isolation checks
+        shell: bash
+        run: |
+          cargo check --locked -p torca-native --no-default-features --features provider-tor,radio-audio
+          cargo check --locked -p torca-native --no-default-features --features provider-iroh,radio-audio
+          cargo check --locked -p torca-native --no-default-features --features provider-webrtc,radio-audio
+      - name: Provider dependency graph policy
+        shell: pwsh
+        run: ./scripts/Verify-TorcaProviderIsolation.ps1 -RepoRoot .
       - name: Rust clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
+        run: cargo clippy --workspace --all-targets --locked -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
       - name: Rust tests
-        run: cargo test --workspace --all-targets --all-features --locked
+        run: cargo test --workspace --all-targets --locked
+      - name: Iroh provider tests
+        run: cargo test --locked -p torca-native --no-default-features --features provider-iroh,radio-audio
       - name: Battery idle scheduler gate
         shell: bash
         run: |

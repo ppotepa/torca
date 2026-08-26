@@ -47,9 +47,14 @@ fn poll_sessions(
                 );
                 self.store_pending_ack(contact_id, envelope_id, status);
             }
+            Ok(Some(PeerMessage::Route(route))) => {
+                self.apply_route_advertisement(contact_id, route, now)?;
+            }
             Ok(_) => {
                 if !was_ready && self.is_ready(contact_id) {
                     self.reconnect.remove(&contact_id);
+                    self.advertised_route_generations.remove(&contact_id);
+                    self.advertise_route_for_contact(contact_id)?;
                     self.observe(
                         contact_id,
                         Some(TransportDirection::Rx),
@@ -102,6 +107,9 @@ fn poll_sessions(
                     now,
                 );
                 self.store_pending_ack(contact_id, envelope_id, status);
+            }
+            Ok(Some(PeerMessage::Route(route))) => {
+                self.apply_route_advertisement(contact_id, route, now)?;
             }
             Ok(_) => {}
             Err(_) => {

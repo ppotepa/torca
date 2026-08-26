@@ -1,7 +1,9 @@
 [CmdletBinding()]
-param([Parameter(Mandatory = $false)][string]$RepoRoot = (Resolve-Path "$PSScriptRoot/..").Path)
+param([Parameter(Mandatory = $false)][string]$RepoRoot = $null)
 
 $ErrorActionPreference = 'Stop'
+$scriptRoot = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { (Get-Location).Path } else { $PSScriptRoot }
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = (Resolve-Path (Join-Path $scriptRoot '..')).Path }
 $modules = Join-Path $RepoRoot 'scripts/modules'
 $checks = @(
     'Torca.ArchitecturePolicy.ps1',

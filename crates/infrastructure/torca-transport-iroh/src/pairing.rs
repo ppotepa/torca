@@ -18,7 +18,9 @@ use torca_relay_protocol::{
 };
 use torca_rendezvous_client::RendezvousClient;
 
-use crate::{IrohIncomingRouter, IrohPairingServiceTransport};
+use crate::{
+    IrohEndpointSlot, IrohIncomingRouter, IrohPairingServiceTransport, ProviderEndpointSlot,
+};
 
 const MAX_QUEUE: usize = 64;
 
@@ -41,7 +43,7 @@ type Slots = Arc<Mutex<BTreeMap<RelaySlotId, Slot>>>;
 /// Provider-owned direct pairing service. It uses the existing bounded slot
 /// semantics, but serves them over an Iroh ALPN instead of a relay socket.
 pub struct IrohPairingService {
-    endpoint: Endpoint,
+    endpoint: ProviderEndpointSlot,
     runtime: Arc<Runtime>,
     slots: Slots,
     remote: BTreeMap<PairingSlotId, RendezvousClient<IrohPairingServiceTransport>>,
@@ -49,8 +51,21 @@ pub struct IrohPairingService {
 }
 
 impl IrohPairingService {
+    #[allow(dead_code)]
     pub(crate) fn new(
         endpoint: Endpoint,
+        runtime: Arc<Runtime>,
+        incoming: Arc<IrohIncomingRouter>,
+    ) -> Self {
+        Self::new_with_slot(
+            IrohEndpointSlot::static_endpoint(endpoint, Arc::clone(&runtime)),
+            runtime,
+            incoming,
+        )
+    }
+
+    pub(crate) fn new_with_slot(
+        endpoint: ProviderEndpointSlot,
         runtime: Arc<Runtime>,
         incoming: Arc<IrohIncomingRouter>,
     ) -> Self {
@@ -59,12 +74,20 @@ impl IrohPairingService {
         Self { endpoint, runtime, slots, remote: BTreeMap::new(), local: BTreeMap::new() }
     }
 
-    pub fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
+    pub fn endpoint(&self) -> Option<Endpoint> {
+        self.endpoint.current()
+    }
+
+    pub fn endpoint_slot(&self) -> ProviderEndpointSlot {
+        Arc::clone(&self.endpoint)
     }
 
     pub fn pairing_bootstrap_descriptor(&self) -> Result<PairingBootstrapDescriptor, String> {
-        let address = self.endpoint.addr();
+        if !self.endpoint.route_is_fresh() {
+            return Err("Iroh endpoint route is migrating".to_owned());
+        }
+        let address =
+            self.endpoint.address().ok_or_else(|| "Iroh endpoint is dormant".to_owned())?;
         if address.is_empty() {
             return Err("Iroh endpoint has no dialable transport address yet".into());
         }
@@ -107,6 +130,7 @@ impl PairingSessionServicePort for IrohPairingService {
         creator_token: PairingSideToken,
         ticket: [u8; 16],
     ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
+        purge_expired_slots(&self.slots);
         let _ = RelayCode::new(code.as_str()).map_err(|_| Self::local_error())?;
         let relay_slot = RelaySlotId(random_id());
         let slot = Slot {
@@ -138,7 +162,7 @@ impl PairingSessionServicePort for IrohPairingService {
     ) -> Result<(PairingSlotId, Timestamp, Vec<u8>), PairingCoordinatorError> {
         let descriptor = bootstrap.ok_or(PairingCoordinatorError::BootstrapMissing)?;
         let transport = IrohPairingServiceTransport::from_bootstrap(
-            self.endpoint.clone(),
+            Arc::clone(&self.endpoint),
             descriptor,
             Arc::clone(&self.runtime),
         )
@@ -166,6 +190,7 @@ impl PairingSessionServicePort for IrohPairingService {
         token: PairingSideToken,
         blob: Vec<u8>,
     ) -> Result<(), PairingCoordinatorError> {
+        purge_expired_slots(&self.slots);
         if let Some(client) = self.remote.get_mut(&slot) {
             return client
                 .push(message_id, RelaySlotId(slot.0), RelaySideToken(token.0), blob)
@@ -204,6 +229,7 @@ impl PairingSessionServicePort for IrohPairingService {
         token: PairingSideToken,
         after: u64,
     ) -> Result<Vec<PairingSessionDelivery>, PairingCoordinatorError> {
+        purge_expired_slots(&self.slots);
         if let Some(client) = self.remote.get_mut(&slot) {
             return client
                 .poll(RelaySlotId(slot.0), RelaySideToken(token.0), RelaySequence(after))
@@ -242,6 +268,7 @@ impl PairingSessionServicePort for IrohPairingService {
         token: PairingSideToken,
         up_to: u64,
     ) -> Result<(), PairingCoordinatorError> {
+        purge_expired_slots(&self.slots);
         if let Some(client) = self.remote.get_mut(&slot) {
             return client
                 .ack(RelaySlotId(slot.0), RelaySideToken(token.0), RelaySequence(up_to))
@@ -266,6 +293,7 @@ impl PairingSessionServicePort for IrohPairingService {
         slot: PairingSlotId,
         capability: PairingSlotCapability,
     ) -> Result<(), PairingCoordinatorError> {
+        purge_expired_slots(&self.slots);
         if let Some(mut client) = self.remote.remove(&slot) {
             return client
                 .close(RelaySlotId(slot.0), RelaySlotCapability(capability.0))
@@ -292,6 +320,7 @@ impl PairingSessionServicePort for IrohPairingService {
         creator_token: PairingSideToken,
         ticket: [u8; 16],
     ) -> Result<(), PairingCoordinatorError> {
+        purge_expired_slots(&self.slots);
         let relay_code = RelayCode::new(code.as_str()).map_err(|_| Self::local_error())?;
         let relay_slot = RelaySlotId(slot.0);
         let mut slots = self.slots.lock().map_err(|_| Self::local_error())?;
@@ -337,7 +366,9 @@ fn spawn_server(incoming: Arc<IrohIncomingRouter>, runtime: Arc<Runtime>, slots:
     runtime.spawn(async move {
         loop {
             let Some(connection) = incoming.take_pairing() else {
-                incoming.wait_for_connection().await;
+                if !incoming.wait_for_connection().await {
+                    break;
+                }
                 continue;
             };
             let slots = Arc::clone(&slots);
@@ -346,6 +377,12 @@ fn spawn_server(incoming: Arc<IrohIncomingRouter>, runtime: Arc<Runtime>, slots:
             });
         }
     });
+}
+
+fn purge_expired_slots(slots: &Slots) {
+    let Ok(mut map) = slots.lock() else { return };
+    let now = current_timestamp();
+    map.retain(|_, entry| entry.expires_at > now);
 }
 
 async fn serve_connection(connection: Connection, slots: Slots) {
@@ -379,6 +416,11 @@ async fn read_request(recv: &mut RecvStream) -> Result<RelayRequest, ()> {
 }
 
 fn process_request(request: RelayRequest, slots: &Slots) -> RelayResponse {
+    // Pairing slots are intentionally in-memory and short-lived. Purging on
+    // every request keeps expired invitations from accumulating when a peer
+    // never sends the final Close, and ensures expired tokens cannot continue
+    // to push/poll after the five-minute invitation window.
+    purge_expired_slots(slots);
     match request {
         RelayRequest::Open {
             code,
@@ -603,5 +645,39 @@ mod tests {
         assert!(matches!(polled, RelayResponse::Deliveries(ref items) if items.len() == 2
                 && items[0].blob == b"joiner"
                 && items[1].blob == b"hello"));
+    }
+
+    #[test]
+    fn expired_slots_are_purged_before_requests_are_served() {
+        let slots = Arc::new(Mutex::new(BTreeMap::new()));
+        let slot_id = RelaySlotId(OpaqueId::from_bytes([7; 16]));
+        let token = RelaySideToken(OpaqueId::from_bytes([8; 16]));
+        slots.lock().expect("slots").insert(
+            slot_id,
+            Slot {
+                code: "EXPIRED".to_owned(),
+                expires_at: Timestamp::from_unix_millis(
+                    current_timestamp().to_unix_millis().saturating_sub(1),
+                )
+                .expect("timestamp"),
+                creator_blob: Vec::new(),
+                ticket: [0; 16],
+                capability: RelaySlotCapability(OpaqueId::from_bytes([9; 16])),
+                creator_token: token,
+                joiner_token: None,
+                creator_queue: VecDeque::new(),
+                joiner_queue: VecDeque::new(),
+                next_creator_sequence: 1,
+                next_joiner_sequence: 1,
+            },
+        );
+
+        let response =
+            process_request(RelayRequest::Poll { slot_id, token, after: RelaySequence(0) }, &slots);
+        assert!(matches!(
+            response,
+            RelayResponse::Error(torca_relay_protocol::RelayProtocolError::SlotNotFound)
+        ));
+        assert!(slots.lock().expect("slots").is_empty());
     }
 }

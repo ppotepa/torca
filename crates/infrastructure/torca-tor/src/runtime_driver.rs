@@ -294,6 +294,13 @@ impl CommunicationLifecycle for OwnedTorDriver {
         torca_transport_api::TransportKind::Tor
     }
 
+    fn runtime_diagnostics(&self) -> torca_transport_api::ProviderRuntimeDiagnostics {
+        torca_transport_api::ProviderRuntimeDiagnostics {
+            energy_class: Some(torca_transport_api::EnergyClass::High),
+            ..torca_transport_api::ProviderRuntimeDiagnostics::default()
+        }
+    }
+
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
         self.detect_process_state(now)?;
         self.reap_recovery(now)?;

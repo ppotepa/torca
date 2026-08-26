@@ -26,7 +26,7 @@ pub(crate) fn compose(
     // relay/direct address information after `Endpoint::online()` completes;
     // freezing `endpoint.addr()` during composition produced QR invitations
     // that contained only the identity and could not be dialled yet.
-    let endpoint = composition.pairing.endpoint().clone();
+    let endpoint = composition.pairing.endpoint_slot();
     Ok(ProviderComponents {
         provider: TransportKind::Iroh,
         lifecycle: Box::new(composition.lifecycle),
@@ -39,7 +39,7 @@ pub(crate) fn compose(
 
 struct IrohPairingFactory {
     service: IrohPairingService,
-    endpoint: torca_transport_iroh::ProviderEndpoint,
+    endpoint: torca_transport_iroh::ProviderEndpointSlot,
 }
 
 /// An Iroh endpoint id by itself is not a dialable invitation.  The address
@@ -47,9 +47,16 @@ struct IrohPairingFactory {
 /// the endpoint has been bound.  Treat that short window as retryable instead
 /// of emitting a QR which can only be saved locally and can never be joined.
 fn encode_dialable_endpoint(
-    endpoint: &torca_transport_iroh::ProviderEndpoint,
+    endpoint: &torca_transport_iroh::ProviderEndpointSlot,
 ) -> Result<Vec<u8>, RuntimeDriverError> {
-    let address = endpoint.addr();
+    // Pairing closures can be invoked while an Android network callback is
+    // migrating the endpoint. Do not persist or advertise the pre-migration
+    // address; the pairing worker will retry once the provider wake marks the
+    // route fresh again.
+    if !endpoint.route_is_fresh() {
+        return Err(RuntimeDriverError::RouteRefreshRequired);
+    }
+    let address = endpoint.current().ok_or(RuntimeDriverError::Pending)?.addr();
     if address.is_empty() {
         return Err(RuntimeDriverError::Pending);
     }
@@ -77,10 +84,10 @@ impl ProviderPairingFactory for IrohPairingFactory {
         let driver = RuntimePairingDriver::new(
             runtime,
             inputs.engine,
-            Box::new(move || {
-                encode_dialable_endpoint(&route_endpoint)
-                    .ok()
-                    .map(|route| PairingTransportRoute::new("iroh", route))
+            Box::new(move || match encode_dialable_endpoint(&route_endpoint) {
+                Ok(route) => Ok(Some(PairingTransportRoute::new("iroh", route))),
+                Err(RuntimeDriverError::Pending) => Ok(None),
+                Err(error) => Err(error),
             }),
         )
         .with_bootstrap_source(Box::new(move || {

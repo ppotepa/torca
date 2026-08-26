@@ -44,6 +44,7 @@ pub const COMMANDS: &[&str] = &[
     "radio.audio.configure",
     "radio.transmission.begin",
     "radio.transmission.end",
+    "provider.route.refresh",
 ];
 pub const QUERIES: &[&str] = &[
     "snapshot.get",

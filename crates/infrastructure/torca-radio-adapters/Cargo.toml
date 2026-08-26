@@ -21,7 +21,6 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-radio = { path = "../../domains/torca-radio" }
 torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 torca-radio-protocol = { path = "../../protocol/torca-radio-protocol" }
-torca-tor = { path = "../torca-tor" }
 torca-transport-api = { path = "../../application/torca-transport-api" }
 
 [target.'cfg(any(target_os = "windows", target_os = "android"))'.dependencies]

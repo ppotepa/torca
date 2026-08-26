@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
+import 'runtime_network_status.dart';
 
 abstract final class BridgeErrorPresenter {
   /// Returns a localized user-facing message without exposing the native
@@ -12,16 +13,26 @@ abstract final class BridgeErrorPresenter {
     BuildContext context,
     BridgeResultDto result, {
     String? fallback,
+    String? provider,
   }) {
     if (result.ok) return '';
     final strings = TorcaStrings.of(context);
+    final activeProvider = provider ??
+        RuntimeStatusScope.maybeOf(context)
+            ?.gateway
+            .snapshots
+            .value
+            .communicationProvider ??
+        'tor';
     final code = (result.errorCode ?? result.messageKey ?? '')
         .trim()
         .toLowerCase()
         .replaceAll('.', '_');
     final message = switch (code) {
-      'relay_not_ready' => strings.relayNotReady,
-      'relay_degraded' => strings.relayDegraded,
+      'relay_not_ready' =>
+          strings.communicationProviderNotReady(activeProvider),
+      'relay_degraded' =>
+          strings.communicationProviderReconnecting(activeProvider),
       'profile_not_ready' => strings.profileNotReady,
       'identity_changed' => strings.identityChanged,
       'pairing_expired' => strings.pairingExpired,
@@ -42,6 +53,7 @@ abstract final class BridgeErrorPresenter {
       'communication_attachment_integrity_failed' =>
         strings.attachmentIntegrityFailed,
       'network_unavailable' => strings.networkUnavailable,
+      'runtime_route_refresh_required' => strings.routeRefreshRequired,
       'runtime_unavailable' => strings.runtimeUnavailable,
       'contract_decode_failed' => strings.contractDecodeFailed,
       _ => fallback ?? strings.operationFailed,
@@ -61,9 +73,9 @@ abstract final class BridgeErrorPresenter {
         .replaceAll('.', '_');
     final typed = switch (code) {
       'relay_not_ready' =>
-        'Pairing is unavailable until the secure relay is ready.',
+          'Pairing is unavailable until the selected communication provider is ready.',
       'relay_degraded' =>
-        'Pairing is temporarily unavailable while the relay reconnects.',
+          'Pairing is temporarily unavailable while the communication provider reconnects.',
       'profile_not_ready' =>
         'The secure runtime is not ready for profile setup.',
       'identity_changed' =>
@@ -106,8 +118,10 @@ abstract final class BridgeErrorPresenter {
       'communication_attachment_unavailable' =>
         'The attachment transfer is temporarily unavailable.',
       'network_unavailable' => _networkUnavailableMessage(provider),
+      'runtime_route_refresh_required' =>
+        'The communication route is changing. Please retry when it is refreshed.',
       'runtime_unavailable' =>
-        'The secure Torca runtime is currently unavailable.',
+        'The ${_providerLabel(provider)} communication runtime is currently unavailable.',
       'contract_decode_failed' =>
         'The installed client and native runtime use incompatible data. Rebuild and redeploy both clients.',
       'operation_conflict' =>
@@ -134,5 +148,15 @@ abstract final class BridgeErrorPresenter {
       _ => provider.trim(),
     };
     return 'The $label peer connection is currently unavailable.';
+  }
+
+  static String _providerLabel(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    return switch (normalized) {
+      'tor' => 'Torca/Tor',
+      'iroh' => 'Iroh',
+      'webrtc' => 'WebRTC',
+      _ => provider.trim().isEmpty ? 'Torca' : provider.trim(),
+    };
   }
 }

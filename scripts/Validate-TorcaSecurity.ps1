@@ -1,10 +1,13 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $false)][string]$RepoRoot = (Resolve-Path "$PSScriptRoot/..").Path,
-    [Parameter(Mandatory = $false)][string]$OutputRoot = (Join-Path $PSScriptRoot '../artifacts/security')
+    [Parameter(Mandatory = $false)][string]$RepoRoot = $null,
+    [Parameter(Mandatory = $false)][string]$OutputRoot = $null
 )
 
 $ErrorActionPreference = 'Stop'
+$scriptRoot = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { (Get-Location).Path } else { $PSScriptRoot }
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = (Resolve-Path (Join-Path $scriptRoot '..')).Path }
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = (Join-Path $scriptRoot '../artifacts/security') }
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $output = Join-Path $OutputRoot $stamp
 New-Item -ItemType Directory -Force -Path $output | Out-Null

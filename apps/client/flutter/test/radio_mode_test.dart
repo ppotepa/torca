@@ -25,6 +25,20 @@ class _RadioGateway implements EngineGateway {
   @override
   Future<BridgeResultDto> execute(BridgeCommandDto command) async {
     commands.add(command);
+    if (command is BeginRadioTransmissionCommandDto) {
+      _snapshots.value = AppSnapshotDto(
+        radio: RadioDto(
+          session: RadioSessionDto(
+            contactId: command.contactIdHex,
+            sessionId: 'test-session',
+            state: 'transmitting',
+            floor: 'local',
+            burstElapsedMs: 0,
+            maxBurstMs: 10000,
+          ),
+        ),
+      );
+    }
     return const BridgeResultDto(ok: true, kind: 'accepted');
   }
 
@@ -266,6 +280,35 @@ void main() {
       );
       expect(status.color, Theme.of(context).colorScheme.errorContainer);
     }
+  });
+
+  testWidgets('radio transport failures are visible and provider-neutral', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: RadioConversationStatus(
+            contact: _contact,
+            radio: const RadioContactDto(
+              contactId: _contactId,
+              localEnabled: true,
+              remoteState: 'enabled',
+              state: 'reconnecting',
+              changedAtMs: 1,
+            ),
+            session: null,
+            timeline: const <RadioTimelineEventDto>[],
+            transportFailure: 'connect_timeout',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('connection timeout'), findsOneWidget);
+    expect(find.textContaining('Radio is reconnecting'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('PTT sends begin while held and end on pointer release', (

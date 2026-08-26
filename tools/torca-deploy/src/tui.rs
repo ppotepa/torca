@@ -114,6 +114,7 @@ enum Field {
     ProviderMaintenance,
     Privacy,
     CommunicationProvider,
+    ProviderProfile,
 }
 
 fn edit_plan(
@@ -131,6 +132,7 @@ fn edit_plan(
     let mut provider_maintenance = ProviderMaintenancePolicy::Ensure;
     let mut privacy = PrivacyPolicy::Strict;
     let mut communication_provider = CommunicationProvider::Tor;
+    let mut provider_profile: Option<String> = None;
     let mut input = InputGuard::default();
     loop {
         terminal.draw(|frame| {
@@ -152,14 +154,22 @@ fn edit_plan(
             };
             let privacy_label = privacy_label(privacy);
             let provider_label = communication_provider.protocol_label();
+            let provider_profile_label = provider_profile.as_deref().unwrap_or("default");
+            let provider_profile_help = if communication_provider == CommunicationProvider::Iroh {
+                iroh_profile_description(provider_profile_label)
+            } else {
+                "provider default"
+            };
             let text = format!(
-                "Action: {action}\n\n{} Target: {target_label}\n{} Build: {configuration}\n{} Data: {data_label}\n{} Provider maintenance: {provider_maintenance_label}\n{} Privacy: {privacy_label}\n{} Communication protocol: {provider_label}\n\n←/→ change   Tab/↑/↓ field   Enter review   Esc back",
+                "Action: {action}\n\n{} Target: {target_label}\n{} Build: {configuration}\n{} Data: {data_label}\n{} Provider maintenance: {provider_maintenance_label}\n{} Privacy: {privacy_label}\n{} Communication protocol: {provider_label}\n{} Provider profile: {provider_profile_label}\n  {}\n\n←/→ change   Tab/↑/↓ field   Enter review   Esc back",
                 marker(matches!(field, Field::Target)),
                 marker(matches!(field, Field::Configuration)),
                 marker(matches!(field, Field::ClientData)),
                 marker(matches!(field, Field::ProviderMaintenance)),
                 marker(matches!(field, Field::Privacy)),
                 marker(matches!(field, Field::CommunicationProvider)),
+                marker(matches!(field, Field::ProviderProfile)),
+                provider_profile_help,
             );
             frame.render_widget(
                 Paragraph::new(text)
@@ -202,6 +212,19 @@ fn edit_plan(
                         Field::CommunicationProvider => {
                             communication_provider =
                                 cycle_provider(communication_provider, direction);
+                            if communication_provider != CommunicationProvider::Iroh {
+                                provider_profile = None;
+                            } else if provider_profile.is_none() {
+                                provider_profile = Some("always".to_owned());
+                            }
+                        }
+                        Field::ProviderProfile => {
+                            if communication_provider == CommunicationProvider::Iroh {
+                                provider_profile = Some(cycle_iroh_profile(
+                                    provider_profile.as_deref().unwrap_or("always"),
+                                    direction,
+                                ));
+                            }
                         }
                     }
                 }
@@ -216,6 +239,7 @@ fn edit_plan(
                     plan.provider_maintenance = provider_maintenance;
                     plan.privacy = privacy;
                     plan.communication_provider = communication_provider;
+                    plan.provider_profile.clone_from(&provider_profile);
                     plan.client_build = if action == DeployAction::RunInstalled {
                         BuildPolicy::Reuse
                     } else {
@@ -246,6 +270,16 @@ fn marker(active: bool) -> &'static str {
     if active { ">" } else { " " }
 }
 
+fn iroh_profile_description(profile: &str) -> &'static str {
+    match profile {
+        "direct" | "direct-only" => {
+            "relay/discovery off; lowest idle cost, LAN or externally reachable peers only"
+        }
+        "local" | "local-only" => "loopback only; simulator/lab use, no remote reachability",
+        _ => "N0 relay/discovery on; recommended for mobile networks and background reachability",
+    }
+}
+
 fn next_field(field: Field) -> Field {
     match field {
         Field::Target => Field::Configuration,
@@ -253,18 +287,20 @@ fn next_field(field: Field) -> Field {
         Field::ClientData => Field::ProviderMaintenance,
         Field::ProviderMaintenance => Field::Privacy,
         Field::Privacy => Field::CommunicationProvider,
-        Field::CommunicationProvider => Field::Target,
+        Field::CommunicationProvider => Field::ProviderProfile,
+        Field::ProviderProfile => Field::Target,
     }
 }
 
 fn previous_field(field: Field) -> Field {
     match field {
-        Field::Target => Field::CommunicationProvider,
+        Field::Target => Field::ProviderProfile,
         Field::Configuration => Field::Target,
         Field::ClientData => Field::Configuration,
         Field::ProviderMaintenance => Field::ClientData,
         Field::Privacy => Field::ProviderMaintenance,
         Field::CommunicationProvider => Field::Privacy,
+        Field::ProviderProfile => Field::CommunicationProvider,
     }
 }
 
@@ -298,6 +334,12 @@ fn cycle_provider(current: CommunicationProvider, direction: i8) -> Communicatio
     let index = providers.iter().position(|provider| *provider == current).unwrap_or(0);
     let next = (index as i8 + direction).rem_euclid(providers.len() as i8) as usize;
     providers[next]
+}
+
+fn cycle_iroh_profile(current: &str, direction: i8) -> String {
+    let profiles = ["always", "direct", "local"];
+    let index = profiles.iter().position(|profile| *profile == current).unwrap_or(0);
+    profiles[(index as i8 + direction).rem_euclid(profiles.len() as i8) as usize].to_owned()
 }
 
 fn cycle_provider_maintenance(
@@ -388,10 +430,16 @@ fn confirm(
         terminal.draw(|frame| {
             let area = frame.area();
             let text = format!(
-                "Action: {}\nTargets: Windows, Android\nBuild: {}\nCommunication protocol: {}\nProvider maintenance: {:?}\nPrivacy: {}\n\nPress y to execute, n/Esc to cancel",
+                "Action: {}\nTargets: Windows, Android\nBuild: {}\nCommunication protocol: {}\nProvider profile: {:?}\n  {}\nProvider maintenance: {:?}\nPrivacy: {}\n\nPress y to execute, n/Esc to cancel",
                 plan.action,
                 plan.configuration,
                 plan.communication_provider.protocol_label(),
+                plan.provider_profile.as_deref().unwrap_or("default"),
+                if plan.communication_provider == CommunicationProvider::Iroh {
+                    iroh_profile_description(plan.provider_profile.as_deref().unwrap_or("always"))
+                } else {
+                    "provider default"
+                },
                 plan.provider_maintenance,
                 privacy_label(plan.privacy)
             );

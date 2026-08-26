@@ -184,6 +184,12 @@ pub struct DiagnosticBuffer {
     schedule: RuntimeScheduleSnapshot,
     wake_sources: BTreeMap<RuntimeWakeSource, u64>,
     observation: ObservationState,
+    /// Provider metadata is diagnostic context, not a policy input. Keeping
+    /// it here makes exported soak/support bundles self-describing without
+    /// exposing provider library types or endpoint material.
+    communication_provider: Option<String>,
+    provider_profile: Option<String>,
+    provider_runtime: torca_transport_api::ProviderRuntimeDiagnostics,
 }
 
 impl DiagnosticBuffer {
@@ -199,6 +205,9 @@ impl DiagnosticBuffer {
             schedule: RuntimeScheduleSnapshot::default(),
             wake_sources: BTreeMap::new(),
             observation: ObservationState::default(),
+            communication_provider: None,
+            provider_profile: None,
+            provider_runtime: torca_transport_api::ProviderRuntimeDiagnostics::default(),
         }
     }
     /// Records an event and updates health.
@@ -292,6 +301,25 @@ impl DiagnosticBuffer {
     pub fn battery_profile(&self) -> BatteryProfile {
         self.profile
     }
+    /// Associates redaction-safe provider identity/profile with this buffer.
+    /// The profile is an artifact/deployment label (for example `direct`),
+    /// never an endpoint, relay URL or secret.
+    pub fn set_provider_context(
+        &mut self,
+        provider: impl Into<String>,
+        profile: Option<impl Into<String>>,
+    ) {
+        self.communication_provider = Some(provider.into());
+        self.provider_profile = profile.map(Into::into);
+    }
+    /// Updates provider-owned runtime facts without exposing provider library
+    /// types or endpoint material to the diagnostics boundary.
+    pub fn set_provider_runtime(
+        &mut self,
+        runtime: torca_transport_api::ProviderRuntimeDiagnostics,
+    ) {
+        self.provider_runtime = runtime;
+    }
     /// Stores the latest redaction-safe scheduler projection. Resource IDs are
     /// intentionally absent; this is the source for the Why Awake view.
     pub fn set_policy_snapshot(&mut self, snapshot: RuntimePolicySnapshot) {
@@ -381,7 +409,10 @@ impl DiagnosticBuffer {
         );
         let _ = write!(
             output,
-            "],\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"observation\":{{\"active\":{},\"wakeSources\":{{{}}},\"counters\":{{{}}},\"totalWork\":{},\"energyScore\":{}}},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"rendezvousProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"providerDials\":{},\"rendezvousDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
+            "],\"communicationProvider\":{},\"providerProfile\":{},\"providerRuntime\":{},\"batteryProfile\":\"{:?}\",\"platform\":{{\"batteryPercent\":{},\"charging\":{},\"powerSaver\":{},\"meteredNetwork\":{},\"processCpuMs\":{},\"uidTxBytes\":{},\"uidRxBytes\":{}}},\"whyAwake\":{},\"observation\":{{\"active\":{},\"wakeSources\":{{{}}},\"counters\":{{{}}},\"totalWork\":{},\"energyScore\":{}}},\"counters\":{{\"schedulerWakeups\":{},\"snapshotBuilds\":{},\"peerProbes\":{},\"rendezvousProbes\":{},\"ffiWakes\":{},\"dbReads\":{},\"dbWrites\":{},\"blobWrites\":{},\"projectionEvents\":{},\"radioWakeups\":{},\"providerDials\":{},\"rendezvousDials\":{},\"peerDials\":{},\"handshakes\":{},\"txFrames\":{},\"rxFrames\":{},\"attachmentChunksTx\":{},\"attachmentChunksRx\":{},\"suppressedWork\":{},\"totalWork\":{},\"energyScore\":{}}}}}",
+            optional_json_string(self.communication_provider.as_deref()),
+            optional_json_string(self.provider_profile.as_deref()),
+            serde_json::to_string(&self.provider_runtime).unwrap_or_else(|_| "{}".to_owned()),
             self.profile,
             optional_json_u8(platform.battery_percent),
             optional_json_bool(platform.charging),
@@ -470,6 +501,18 @@ fn optional_json_u8(value: Option<u8>) -> String {
 fn optional_json_u64(value: Option<u64>) -> String {
     value.map_or_else(|| "null".to_owned(), |value| value.to_string())
 }
+fn optional_json_string(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "null".to_owned(),
+        |value| {
+            let mut output = String::with_capacity(value.len() + 2);
+            output.push('"');
+            push_json_string(value, &mut output);
+            output.push('"');
+            output
+        },
+    )
+}
 
 /// Deterministic fail-point registry for integration tests.
 #[derive(Clone, Debug, Default)]
@@ -502,6 +545,21 @@ mod tests {
     fn energy_ledger_exports_database_write_counter() {
         let mut diagnostics = DiagnosticBuffer::new(4);
         diagnostics.set_battery_profile(BatteryProfile::BatterySaver);
+        diagnostics.set_provider_context("iroh", Some("direct"));
+        diagnostics.set_provider_runtime(torca_transport_api::ProviderRuntimeDiagnostics {
+            endpoint_generation: Some(4),
+            route_generation: Some(5),
+            network_generation: Some(2),
+            endpoint_active: Some(true),
+            route_fresh: Some(true),
+            route_state: Some(torca_transport_api::ProviderRouteState::Fresh),
+            runtime_threads: Some(2),
+            energy_class: Some(torca_transport_api::EnergyClass::Low),
+            reachability_demanded: Some(false),
+            incoming_reachability: Some("stopped".into()),
+            online_probe_attempts: Some(3),
+            online_probe_failures: Some(2),
+        });
         diagnostics.set_platform_energy_sample(PlatformEnergySample {
             battery_percent: Some(73),
             charging: Some(false),
@@ -518,6 +576,13 @@ mod tests {
         assert!(diagnostics.export_json().contains("\"blobWrites\":1"));
         assert!(diagnostics.export_json().contains("\"projectionEvents\":1"));
         assert!(diagnostics.export_json().contains("\"batteryProfile\":\"BatterySaver\""));
+        assert!(diagnostics.export_json().contains("\"communicationProvider\":\"iroh\""));
+        assert!(diagnostics.export_json().contains("\"providerProfile\":\"direct\""));
+        assert!(diagnostics.export_json().contains("\"endpointGeneration\":4"));
+        assert!(diagnostics.export_json().contains("\"routeGeneration\":5"));
+        assert!(diagnostics.export_json().contains("\"routeFresh\":true"));
+        assert!(diagnostics.export_json().contains("\"routeState\":\"fresh\""));
+        assert!(diagnostics.export_json().contains("\"energyClass\":\"low\""));
         assert!(diagnostics.export_json().contains("\"batteryPercent\":73"));
     }
 

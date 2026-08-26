@@ -9,12 +9,16 @@ class ConnectionIndicator extends StatelessWidget {
   const ConnectionIndicator({
     required this.state,
     required this.blocked,
+    // Kept for widgets compiled against the legacy contract. Screens that
+    // render a contact always pass its provider explicitly.
+    this.provider = 'tor',
     this.showLabel = true,
     super.key,
   });
 
   final String state;
   final bool blocked;
+  final String provider;
   final bool showLabel;
 
   @override
@@ -23,6 +27,7 @@ class ConnectionIndicator extends StatelessWidget {
       state: state,
       blocked: blocked,
       icons: context.torcaIcons,
+      provider: provider,
       strings: context.strings,
     );
     final semantic = Theme.of(context).extension<AppSemanticColors>();

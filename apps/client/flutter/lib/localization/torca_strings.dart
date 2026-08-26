@@ -179,6 +179,31 @@ class TorcaStrings {
   String get relayDegraded => _pl
       ? 'Relay ponownie nawiązuje połączenie. Spróbuj za chwilę.'
       : 'The relay is reconnecting. Try again shortly.';
+  String communicationProviderNotReady(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    final label = switch (normalized) {
+      'tor' => 'Tor',
+      'iroh' => 'Iroh',
+      'webrtc' => 'WebRTC',
+      _ => provider.trim().isEmpty ? 'communication provider' : provider.trim(),
+    };
+    return _pl
+        ? 'Provider komunikacji ($label) nie jest jeszcze gotowy.'
+        : 'The $label communication provider is not ready yet.';
+  }
+
+  String communicationProviderReconnecting(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    final label = switch (normalized) {
+      'tor' => 'Tor',
+      'iroh' => 'Iroh',
+      'webrtc' => 'WebRTC',
+      _ => provider.trim().isEmpty ? 'communication provider' : provider.trim(),
+    };
+    return _pl
+        ? 'Provider komunikacji ($label) ponownie nawiazuje polaczenie. Sprobuj za chwile.'
+        : 'The $label communication provider is reconnecting. Try again shortly.';
+  }
   String get profileNotReady => _pl
       ? 'Bezpieczny profil nie jest jeszcze gotowy.'
       : 'The secure profile is not ready yet.';
@@ -204,6 +229,15 @@ class TorcaStrings {
   String get runtimeUnavailable => _pl
       ? 'Bezpieczny runtime Torca jest obecnie niedostępny.'
       : 'The secure Torca runtime is currently unavailable.';
+  String get routeRefreshRequired => _pl
+      ? 'Trasa połączenia jest odświeżana. Spróbuj ponownie za chwilę.'
+      : 'The communication route is being refreshed. Try again shortly.';
+  String get refreshProviderRoute => _pl
+      ? 'Odśwież trasę providera'
+      : 'Refresh provider route';
+  String get routeRefreshRequested => _pl
+      ? 'Zażądano odświeżenia trasy providera.'
+      : 'Provider route refresh requested.';
   String get contractDecodeFailed => _pl
       ? 'Klient i runtime używają niezgodnych danych. Zbuduj i wdroż oba ponownie.'
       : 'The client and native runtime use incompatible data. Rebuild and redeploy both.';
@@ -276,6 +310,9 @@ class TorcaStrings {
       _pl ? 'Elementów: $count' : '$count item${count == 1 ? '' : 's'}';
   String get noActiveTransfers =>
       _pl ? 'Brak aktywnych transferow.' : 'No active transfers.';
+  String waitingForDependency(String dependency) => _pl
+      ? 'Oczekuje: $dependency'
+      : 'Waiting for: $dependency';
   String get diagnosticsExported =>
       _pl ? 'Diagnostyka wyeksportowana' : 'Diagnostics exported';
   String get exportFailed => _pl ? 'Eksport nieudany' : 'Export failed';
@@ -317,6 +354,8 @@ class TorcaStrings {
       'idle_timeout' =>
         _pl ? 'kanal wygasl podczas bezczynnosci' : 'idle timeout',
       'network_changed' => _pl ? 'zmienila sie siec' : 'network changed',
+      'worker_unavailable' =>
+        _pl ? 'worker audio jest niedostepny' : 'audio worker unavailable',
       'protocol' => _pl ? 'blad protokolu' : 'protocol error',
       _ => _pl ? 'nieznany blad transportu' : 'unknown transport error',
     };
@@ -373,8 +412,20 @@ class TorcaStrings {
       ? 'Bezpieczne srodowisko nie jest gotowe'
       : 'Secure runtime is not ready';
   String get runtimePreparationFailed => _pl
-      ? 'Nie udalo sie przygotowac lokalnego szyfrowanego srodowiska. Tozsamosc nie zostala zmieniona.'
+      ? 'Nie udalo sie przygotowac lokalnego szyfrowanego runtime. Tozsamosc nie zostala zmieniona.'
       : 'Torca could not prepare the local encrypted runtime. Your identity has not been changed.';
+  String runtimeNotReadyDiagnostic(String provider) {
+    final normalized = provider.trim().toLowerCase();
+    final label = switch (normalized) {
+      'tor' => 'Tor',
+      'iroh' => 'Iroh',
+      'webrtc' => 'WebRTC',
+      _ => provider.trim().isEmpty ? 'communication provider' : provider.trim(),
+    };
+    return _pl
+        ? 'Runtime komunikacji ($label) nie jest gotowy. Sprawdz diagnostyke i sprobuj ponownie.'
+        : 'The $label communication runtime is not ready. Check diagnostics and retry.';
+  }
   String get modern => _pl ? 'Nowoczesny' : 'Modern';
   String get terminal => _pl ? 'Terminal' : 'Terminal';
   String get compactDensity => _pl ? 'Gestosc kompaktowa' : 'Compact density';

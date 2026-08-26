@@ -136,6 +136,16 @@ function Get-TorcaExistingBuildManifest {
         if (-not $manifest) { continue }
         if ([string]$manifest.Endpoint -ne $Endpoint -or [string]$manifest.Configuration -ne $Configuration) { continue }
         if (-not (@($manifest.Targets) -contains $candidateTarget)) { continue }
+        $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+        if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+        if ($provider.ToLowerInvariant() -eq 'iroh') {
+            $expectedProfile = Get-TorcaIrohProfile
+            $recordedProfile = if ($manifest.PSObject.Properties.Name -contains 'irohProfile' -and
+                -not [string]::IsNullOrWhiteSpace([string]$manifest.irohProfile)) {
+                [string]$manifest.irohProfile
+            } else { 'always' }
+            if ($recordedProfile -ne $expectedProfile) { continue }
+        }
         if (-not (Test-TorcaClientArtifactsExist -RepoRoot $Paths.RepoRoot -Target $Target -Configuration $Configuration)) { continue }
         return $manifest
     }
@@ -153,6 +163,15 @@ function Test-TorcaBuildRequired {
     if (-not $manifest) { return $true }
     if ([string]$manifest.Endpoint -ne $Endpoint -or [string]$manifest.Configuration -ne $Configuration) { return $true }
     if (-not (@($manifest.Targets) -contains $Target)) { return $true }
+    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    if ($provider.ToLowerInvariant() -eq 'iroh') {
+        $recordedProfile = if ($manifest.PSObject.Properties.Name -contains 'irohProfile' -and
+            -not [string]::IsNullOrWhiteSpace([string]$manifest.irohProfile)) {
+            [string]$manifest.irohProfile
+        } else { 'always' }
+        if ($recordedProfile -ne (Get-TorcaIrohProfile)) { return $true }
+    }
     if ([string]$manifest.SourceFingerprint -ne (Get-TorcaBuildSourceFingerprint -RepoRoot $Paths.RepoRoot)) { return $true }
     if ([string]$manifest.BuildId -ne (Get-TorcaBuildId -RepoRoot $Paths.RepoRoot -Endpoint $Endpoint -Target $Target -Configuration $Configuration)) { return $true }
     if (-not (Test-TorcaClientArtifactsExist -RepoRoot $Paths.RepoRoot -Target $Target -Configuration $Configuration)) { return $true }
@@ -166,7 +185,10 @@ function Get-TorcaBuildId {
         [string]$Target,
         [string]$Configuration
     )
-    $payload = "$(Get-TorcaBuildSourceFingerprint -RepoRoot $RepoRoot)|$Endpoint|$Target|$Configuration"
+    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    $profile = if ($provider.ToLowerInvariant() -eq 'iroh') { Get-TorcaIrohProfile } else { 'none' }
+    $payload = "$(Get-TorcaBuildSourceFingerprint -RepoRoot $RepoRoot)|$Endpoint|$Target|$Configuration|$provider|$profile"
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
         return [BitConverter]::ToString(
@@ -188,6 +210,7 @@ function Invoke-TorcaClientBuild {
     $old = $env:TORCA_RELAY_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED; $oldBuildId = $env:TORCA_BUILD_ID
     $oldProductVersion = $env:TORCA_PRODUCT_VERSION; $oldSourceFingerprint = $env:TORCA_SOURCE_FINGERPRINT
     $oldSourceCommit = $env:TORCA_SOURCE_COMMIT; $oldRelayHash = $env:TORCA_RELAY_ENDPOINT_HASH
+    $oldIrohProfile = $env:TORCA_IROH_PROFILE
     try {
         $env:TORCA_RELAY_ENDPOINT = $Endpoint
         $env:TORCA_ORCHESTRATED = '1'
@@ -203,12 +226,17 @@ function Invoke-TorcaClientBuild {
                 $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Endpoint))
             ).Replace('-', '').ToLowerInvariant()
         } finally { $endpointSha.Dispose() }
-        & (Join-Path $RepoRoot 'scripts/build.ps1') -Target $Target -Configuration $Configuration -Validation $Validation
+        $buildProviderArgs = @{}
+        if (-not [string]::IsNullOrWhiteSpace([string]$env:TORCA_COMMUNICATION_PROVIDER)) {
+            $buildProviderArgs['CommunicationProvider'] = [string]$env:TORCA_COMMUNICATION_PROVIDER
+        }
+        & (Join-Path $RepoRoot 'scripts/build.ps1') -Target $Target -Configuration $Configuration -Validation $Validation @buildProviderArgs
         if ($LASTEXITCODE -ne 0) { throw "Build failed with code $LASTEXITCODE." }
     } finally {
         $env:TORCA_RELAY_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated; $env:TORCA_BUILD_ID = $oldBuildId
         $env:TORCA_PRODUCT_VERSION = $oldProductVersion; $env:TORCA_SOURCE_FINGERPRINT = $oldSourceFingerprint
         $env:TORCA_SOURCE_COMMIT = $oldSourceCommit; $env:TORCA_RELAY_ENDPOINT_HASH = $oldRelayHash
+        $env:TORCA_IROH_PROFILE = $oldIrohProfile
     }
 }
 
@@ -558,7 +586,21 @@ function Wait-TorcaClientLaunch {
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)
     $hint = if ($Platform -eq 'windows') { 'collect logs with scripts/torca.ps1 -Command collect -Profile incident' } else { 'collect logs with scripts/torca.ps1 -Command collect -Profile incident -IncludeLogcat' }
-    throw "Runtime launch health check timed out after ${TimeoutSeconds}s for provider=$selectedProvider: $lastDetail. $hint"
+    throw "Runtime launch health check timed out after ${TimeoutSeconds}s for provider=${selectedProvider}: $lastDetail. $hint"
+}
+
+function Get-TorcaIrohProfile {
+    $value = [string]$env:TORCA_IROH_PROFILE
+    if ([string]::IsNullOrWhiteSpace($value)) { return 'always' }
+    switch ($value.Trim().ToLowerInvariant()) {
+        'always' { return 'always' }
+        'always-reachable' { return 'always' }
+        'direct' { return 'direct' }
+        'direct-only' { return 'direct' }
+        'local' { return 'local' }
+        'local-only' { return 'local' }
+        default { throw "Unsupported TORCA_IROH_PROFILE '$value'. Use always, direct or local." }
+    }
 }
 
 function Write-TorcaBuildManifest {
@@ -574,8 +616,18 @@ function Write-TorcaBuildManifest {
     $scopedPaths = Get-TorcaScopedBuildPaths -Paths $Paths -Target $manifestTarget -Configuration $Configuration
     $commit = (& git -C $Paths.RepoRoot rev-parse HEAD 2>$null)
     $release = Get-Content (Join-Path $Paths.RepoRoot 'release/version.json') -Raw | ConvertFrom-Json
+    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    $irohProfile = if ($provider.ToLowerInvariant() -eq 'iroh') { Get-TorcaIrohProfile } else { $null }
+    $compiledFeatures = switch ($provider.ToLowerInvariant()) {
+        'tor' { 'provider-tor,radio-audio' }
+        'iroh' { 'provider-iroh,radio-audio' }
+        'webrtc' { 'provider-webrtc,radio-audio' }
+        default { throw "Unsupported communication provider '$provider'." }
+    }
     $manifest = [pscustomobject]@{
         Schema = 1; Endpoint = $Endpoint; Targets = @($Targets); Configuration = $Configuration
+        communicationProvider = $provider; compiledFeatures = $compiledFeatures; irohProfile = $irohProfile
         # These values must be the exact frozen values embedded into the
         # binaries. Recomputing after Flutter/Gradle generated files changed
         # used to produce a manifest for an identity no artifact contained.
@@ -591,4 +643,4 @@ function Write-TorcaBuildManifest {
     Move-Item -LiteralPath $temporary -Destination $scopedPaths.ManifestFile -Force
 }
 
-Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Clear-TorcaBuildSourceFingerprintCache, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaExistingBuildManifest, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Assert-TorcaAndroidInstalledArtifact, Get-TorcaFileSha256, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Wait-TorcaClientLaunch, Write-TorcaBuildManifest
+Export-ModuleMember -Function Get-TorcaBuildSourceFingerprint, Clear-TorcaBuildSourceFingerprintCache, Get-TorcaScopedBuildPaths, Get-TorcaScopedBuildManifest, Get-TorcaExistingBuildManifest, Get-TorcaIrohProfile, Get-TorcaBuildId, Test-TorcaBuildRequired, Invoke-TorcaClientBuild, Invoke-TorcaClientDeploy, Install-TorcaClient, Assert-TorcaAndroidInstalledArtifact, Get-TorcaFileSha256, Invoke-TorcaClientReleaseDeploy, Invoke-TorcaClientRun, Wait-TorcaClientLaunch, Write-TorcaBuildManifest

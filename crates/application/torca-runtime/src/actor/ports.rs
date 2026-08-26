@@ -225,6 +225,14 @@ pub trait AttachmentTransferPort: Send + 'static {
         now: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
     fn attachment_snapshot(&self) -> Result<Vec<AttachmentView>, RuntimeDriverError>;
+
+    /// Returns asynchronous preparation failures together with the generated
+    /// message id. Preparation runs outside the runtime actor, so a failure
+    /// must be reconciled explicitly instead of leaving an outbox message and
+    /// attachment lease permanently pending.
+    fn take_attachment_prepare_failures(&mut self) -> Vec<(OpaqueId, OpaqueId)> {
+        Vec::new()
+    }
 }
 
 pub trait AttachmentExportPort: Send + 'static {
@@ -262,6 +270,12 @@ pub trait CommunicationDriver:
     /// This is separate from a scheduler deadline: a previously idle worker
     /// may have reported `None` and still needs an explicit command wake.
     fn wake_delivery(&mut self) {}
+
+    /// Wakes only the Radio lane after provider media activity.  Keeping this
+    /// separate from delivery/peer wakeups prevents a Radio frame from being
+    /// mistaken for a text outbox deadline and guarantees that the runtime
+    /// drains `RadioSessionEvent` promptly.
+    fn set_radio_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
 
     /// Runs only Radio control/media housekeeping. RuntimeOwner calls this
     /// from `RadioDeadline`; delivery work must not wake an idle Radio lane.
@@ -316,7 +330,40 @@ pub trait CommunicationLifecycle: Send + 'static {
     /// instead of defaulting commissioning to Tor prevents a newly added
     /// provider from accidentally exposing a Tor-shaped runtime snapshot.
     fn provider(&self) -> torca_transport_api::TransportKind;
+    /// Optional provider-owned deployment profile for diagnostics. This is
+    /// deliberately presentation-only; runtime policy must not branch on a
+    /// concrete provider string.
+    fn provider_profile(&self) -> Option<&'static str> {
+        None
+    }
+    /// Provider-owned grace period used when the host leaves the foreground.
+    /// This is deliberately a policy hint, not a polling interval: the
+    /// runtime schedules at most one transition to idle and otherwise waits
+    /// for events. Low-cost direct Iroh profiles can release UI-only work
+    /// sooner than relay-backed providers without a provider-name branch in
+    /// RuntimeOwner.
+    fn background_grace(&self) -> Duration {
+        Duration::from_secs(30)
+    }
+    /// Provider-neutral, redaction-safe facts for diagnostics. Providers may
+    /// expose endpoint/network generations and reachability state without
+    /// leaking addresses or making the runtime depend on their library API.
+    fn runtime_diagnostics(&self) -> torca_transport_api::ProviderRuntimeDiagnostics {
+        torca_transport_api::ProviderRuntimeDiagnostics::default()
+    }
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    /// Notify the provider that the platform network generation changed.
+    /// Providers may migrate their endpoint or invalidate stale reachability
+    /// evidence. Transports that follow platform changes automatically can
+    /// keep the default no-op implementation.
+    fn network_changed(&mut self, _now: Timestamp) {}
+    /// Requests an explicit provider-owned route refresh. RuntimeOwner does
+    /// not know whether this means QUIC migration, ICE renegotiation or a
+    /// Tor endpoint rebuild; providers own that implementation detail.
+    fn refresh_route(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        self.network_changed(now);
+        Ok(())
+    }
     /// Returns the next provider lifecycle deadline. A healthy, reachable and
     /// idle provider has no application-owned deadline and waits for a command
     /// or explicit network event instead of being polled.
@@ -329,6 +376,11 @@ pub trait CommunicationLifecycle: Send + 'static {
     fn set_dormant(&mut self, _dormant: bool) -> Result<(), RuntimeDriverError> {
         Ok(())
     }
+    /// Tells the provider whether incoming reachability is currently a real
+    /// runtime demand. Providers with a public rendezvous service may use
+    /// this to defer discovery/relay probes while the app is idle; direct
+    /// providers can keep the default no-op implementation.
+    fn set_reachability_demand(&mut self, _demanded: bool) {}
     fn state(&self) -> CommunicationState;
     fn local_endpoint_summary(&self) -> Option<String>;
     fn incoming_reachability_state(&self) -> IncomingReachabilityState {
@@ -379,6 +431,11 @@ pub trait CommunicationLifecycle: Send + 'static {
                 },
             ],
             endpoint_summary: self.local_endpoint_summary(),
+            route_state: if self.local_endpoint_summary().is_some() {
+                torca_transport_api::ProviderRouteState::Fresh
+            } else {
+                torca_transport_api::ProviderRouteState::Unavailable
+            },
             pairing_bootstrap: None,
         }
     }
@@ -390,8 +447,28 @@ impl CommunicationLifecycle for Box<dyn CommunicationLifecycle> {
         (**self).provider()
     }
 
+    fn provider_profile(&self) -> Option<&'static str> {
+        (**self).provider_profile()
+    }
+
+    fn background_grace(&self) -> Duration {
+        (**self).background_grace()
+    }
+
+    fn runtime_diagnostics(&self) -> torca_transport_api::ProviderRuntimeDiagnostics {
+        (**self).runtime_diagnostics()
+    }
+
     fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
         (**self).maintenance(now)
+    }
+
+    fn network_changed(&mut self, now: Timestamp) {
+        (**self).network_changed(now);
+    }
+
+    fn refresh_route(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+        (**self).refresh_route(now)
     }
 
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
@@ -404,6 +481,10 @@ impl CommunicationLifecycle for Box<dyn CommunicationLifecycle> {
 
     fn set_dormant(&mut self, dormant: bool) -> Result<(), RuntimeDriverError> {
         (**self).set_dormant(dormant)
+    }
+
+    fn set_reachability_demand(&mut self, demanded: bool) {
+        (**self).set_reachability_demand(demanded);
     }
 
     fn state(&self) -> CommunicationState {
