@@ -48,9 +48,8 @@ class DiagnosticsOverview extends StatelessWidget {
         context.torcaIcons.identity,
       ),
       _OverviewItem(
-        'Provider route',
-        snapshot.transport.typedProviderRouteState ==
-            ProviderRouteState.fresh,
+        _routeLabel(snapshot.communicationProvider),
+        snapshot.transport.typedProviderRouteState == ProviderRouteState.fresh,
         snapshot.endpointSummary ??
             'Route: ${snapshot.transport.providerRouteState}',
         context.torcaIcons.link,
@@ -103,6 +102,9 @@ class DiagnosticsOverview extends StatelessWidget {
     return provider.trim().isEmpty ? 'Communication' : provider.trim();
   }
 
+  String _routeLabel(String provider) => provider.trim().toLowerCase() == 'tor'
+      ? 'Onion service'
+      : 'Provider route';
 }
 
 class _HealthCard extends StatelessWidget {

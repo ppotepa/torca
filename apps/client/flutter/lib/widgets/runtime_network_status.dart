@@ -305,6 +305,19 @@ class _TransportLightState extends State<_TransportLight>
     _animationsEnabled =
         context.torcaTokens.animationDuration != Duration.zero &&
         !MediaQuery.disableAnimationsOf(context);
+    // A transport light can be inserted after the first snapshot (for
+    // example when a legacy relay indicator changes from unknown to healthy).
+    // In that case there is no old widget for didUpdateWidget to compare
+    // against; seed the pulse from the monotonic counters instead of silently
+    // dropping the first observed activity.
+    if (_animationsEnabled) {
+      if (widget.indicator.txSequence > 0) {
+        _txPulse.forward(from: 0);
+      }
+      if (widget.indicator.rxSequence > 0) {
+        _rxPulse.forward(from: 0);
+      }
+    }
     _syncBreathing();
     if (!_animationsEnabled) {
       _txPulse

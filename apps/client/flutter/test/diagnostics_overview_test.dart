@@ -16,6 +16,7 @@ void main() {
             diagnosticsReadable: true,
             snapshot: AppSnapshotDto(
               identity: IdentityDto(displayName: 'Alice'),
+              communicationProvider: 'tor',
               torState: 'ready',
               onionAddress: 'alice.onion',
               contacts: <ContactDto>[

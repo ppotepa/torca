@@ -38,6 +38,7 @@ void main() {
           ContactDto(
             id: '01',
             displayName: 'Alice',
+            transportProvider: 'tor',
             onionAddress: 'alice.onion',
             status: 'active',
             connectionState: 'ready',

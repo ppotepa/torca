@@ -225,7 +225,7 @@ void main() {
     );
     expect(find.byType(RuntimeNetworkStatus), findsOneWidget);
     expect(
-      find.byKey(const ValueKey<String>('tor-status-light')),
+      find.byKey(const ValueKey<String>('communication-status-light')),
       findsOneWidget,
     );
     expect(
@@ -288,7 +288,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),
-        home: Scaffold(
+        home: const Scaffold(
           body: RadioConversationStatus(
             contact: _contact,
             radio: const RadioContactDto(

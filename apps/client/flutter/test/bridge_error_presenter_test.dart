@@ -35,7 +35,7 @@ void main() {
     );
     expect(
       BridgeErrorPresenter.message(result),
-      'Pairing is unavailable until the secure relay is ready.',
+      'Pairing is unavailable until the selected communication provider is ready.',
     );
   });
 
@@ -46,7 +46,7 @@ void main() {
     );
     expect(
       BridgeErrorPresenter.message(result),
-      'The communication route is being refreshed. Try again shortly.',
+      'The communication route is changing. Please retry when it is refreshed.',
     );
   });
 }
