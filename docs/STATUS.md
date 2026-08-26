@@ -1,6 +1,6 @@
 # Torca project status
 
-Last reviewed against the repository: **2026-08-21**.
+Last reviewed against the repository: **2026-08-26**.
 
 This page is the concise project-status entry point. It summarizes maturity and validation state; checked-in source and executed evidence remain authoritative.
 
@@ -32,7 +32,9 @@ Groups, calls, multi-device sync, public discovery, cloud backup and a Linux pro
 
 The repository contains automated source, Rust, Flutter/contract and Windows/Android build gates. The detailed engineering ledger records many locally completed checks, but a documentation claim is valid only for the exact command/build/device scenario that was actually executed.
 
-The remaining confidence work is primarily platform and end-to-end validation:
+The automated source/runtime/UI gates are currently green locally (403 Rust
+tests, 89 Flutter tests, Flutter analyze and workspace Clippy). The remaining
+confidence work is primarily platform and end-to-end validation:
 
 - repeated Windows ↔ Android pairing and messaging journeys;
 - provider/network interruption and recovery on real devices (including Tor
