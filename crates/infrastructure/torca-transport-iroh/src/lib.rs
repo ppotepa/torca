@@ -39,6 +39,7 @@ mod pairing;
 pub use pairing::IrohPairingService;
 
 const ALPN: &[u8] = b"torca/peer/1";
+const NETWORK_CHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// ALPN used only for the short-lived provider-owned pairing service.
 pub const PAIRING_ALPN: &[u8] = b"torca/pairing/1";
 /// Reserved provider-owned ALPN for optional Radio media streams.
@@ -1554,7 +1555,17 @@ impl CommunicationLifecycle for IrohLifecycle {
                 {
                     return;
                 }
-                endpoint.network_change().await;
+                // Route migration is provider-owned work, but it must still
+                // have a terminal state. A platform callback can arrive
+                // while the network is captive or already gone; do not leave
+                // a Tokio worker awaiting migration forever in that case.
+                if tokio::time::timeout(NETWORK_CHANGE_TIMEOUT, endpoint.network_change())
+                    .await
+                    .is_err()
+                {
+                    notify(&wake);
+                    return;
+                }
                 if stopped.load(Ordering::Acquire)
                     || network_generation.load(Ordering::Acquire) != generation
                 {
@@ -2570,6 +2581,8 @@ mod tests {
         assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Unknown);
         assert_eq!(lifecycle.runtime_diagnostics().route_state, Some(ProviderRouteState::Fresh));
         assert_eq!(lifecycle.runtime_diagnostics().energy_class, Some(EnergyClass::Medium));
+        assert_eq!(lifecycle.runtime_diagnostics().reachability_demanded, Some(false));
+        assert_eq!(lifecycle.runtime_diagnostics().online_probe_attempts, Some(0));
         let commissioning = lifecycle.commissioning();
         assert_eq!(commissioning.provider, TransportKind::Iroh);
         assert!(commissioning.endpoint_summary.is_some());
@@ -2658,6 +2671,70 @@ mod tests {
         let entries = queue.0.lock().expect("inbound queue");
         assert_eq!(entries.len(), super::MAX_PENDING_INBOUND_FRAMES);
         assert!(entries.back().is_some_and(Result::is_err));
+    }
+
+    #[test]
+    fn authenticated_peer_lane_round_trips_after_provider_route_exchange() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let bind = || {
+            runtime
+                .block_on(
+                    iroh::Endpoint::builder(presets::N0)
+                        .clear_address_lookup()
+                        .relay_mode(iroh::RelayMode::Disabled)
+                        .alpns(vec![ALPN.to_vec()])
+                        .bind_addr("127.0.0.1:0")
+                        .expect("loopback bind")
+                        .bind(),
+                )
+                .expect("bind Iroh peer endpoint")
+        };
+        let first = bind();
+        let second = bind();
+        let incoming = IrohIncomingRouter::start(second.clone(), Arc::clone(&runtime));
+        let (wake_sender, wake_receiver) = std::sync::mpsc::sync_channel(1);
+        incoming.set_peer_waker(Arc::new(move || {
+            let _ = wake_sender.try_send(());
+        }));
+        let mut outgoing = IrohTransport::new_with_profile(
+            first.clone(),
+            second.addr(),
+            Arc::clone(&runtime),
+            IrohEndpointProfile::DirectOnly,
+            None,
+        );
+
+        outgoing.connect().expect("dial exchanged provider route");
+        // QUIC opens streams lazily: the remote endpoint observes the first
+        // bidirectional stream only after the dialer writes its handshake or
+        // first framed payload. PeerLink follows the same ordering.
+        outgoing.send(b"paired-message".to_vec()).expect("send paired message");
+        wake_receiver.recv_timeout(Duration::from_secs(3)).expect("incoming peer wake");
+        let (connection, sender, receiver) =
+            incoming.take_peer_stream().expect("accepted peer stream");
+        let mut recipient = IrohTransport::from_accepted_stream_with_profile(
+            second.clone(),
+            connection,
+            sender,
+            receiver,
+            Arc::clone(&runtime),
+            IrohEndpointProfile::DirectOnly,
+        );
+
+        assert_eq!(
+            recipient.receive_timeout(Duration::from_secs(1)).expect("receive paired message"),
+            Some(b"paired-message".to_vec())
+        );
+        recipient.send(b"delivery-receipt".to_vec()).expect("send delivery receipt");
+        assert_eq!(
+            outgoing.receive_timeout(Duration::from_secs(1)).expect("receive delivery receipt"),
+            Some(b"delivery-receipt".to_vec())
+        );
+
+        outgoing.close().expect("close outgoing transport");
+        recipient.close().expect("close incoming transport");
+        runtime.block_on(first.close());
+        runtime.block_on(second.close());
     }
 
     #[test]

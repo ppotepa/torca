@@ -33,6 +33,70 @@ offers five explicit scenarios:
 The PowerShell files under `scripts/` are implementation backends and CI
 compatibility shims. They are not separate developer entry points.
 
+For the Windows CPU gate, keep the selected Torca process running in the
+desired provider/profile and sample it independently:
+
+```powershell
+.\scripts\measure-iroh-cpu.ps1 -ProcessName torca_app `
+  -Provider Iroh -Profile direct -Mode foreground `
+  -DurationSeconds 300 `
+  -Output .torca/measurements/iroh-direct-foreground.json
+```
+
+Use `-Mode background` for the minimized/background gate. The report stores
+raw samples, median, p95, maximum, and a pass/fail verdict normalized to one
+logical CPU; it never starts, stops, or mutates the measured process.
+
+For per-thread Windows evidence, capture a scheduler ETW trace during the same
+interval. It requires the Windows Performance Toolkit/WPR and leaves the
+measured process untouched:
+
+```powershell
+.\scripts\capture-iroh-windows-etw.ps1 -ProcessName torca_app `
+  -Provider Iroh -Profile direct -Mode background `
+  -DurationSeconds 300
+```
+
+For Android wake/network evidence, capture Perfetto on the same unplugged,
+screen-off device used by the battery matrix:
+
+```powershell
+.\scripts\capture-iroh-android-perfetto.ps1 -AndroidSerial R58M... `
+  -Provider Iroh -Profile direct -DurationSeconds 1800
+```
+
+These traces are evidence artifacts, not automatic pass/fail results. Analyze
+the ETL in WPA and the Perfetto trace in Perfetto UI, using the JSON metadata
+to retain provider/profile and interval identity.
+
+For repeatable Android evidence on one device, use the matrix runner. It
+requires at least three repetitions and preserves one directory per
+provider/profile/run:
+
+```powershell
+.\scripts\run-iroh-battery-matrix.ps1 -AndroidSerial R58M... `
+  -DurationMinutes 30 -Repetitions 3
+```
+
+The runner enforces unplugged and screen-off prerequisites through
+`torca-soak`, verifies that the selected device stays ready, and compares a
+redacted network-state fingerprint before and after every run and across the
+whole matrix. A network transition invalidates the matrix instead of being
+silently included in the battery median. A Tor run may require the normal
+external/managed relay setup; use `-SkipTor` when collecting only Iroh evidence.
+
+After collecting CPU and battery artifacts, create one auditable summary. It
+fails with exit code 2 when a required case is missing, has fewer than three
+repetitions, or changed network during a run; it never infers an advantage
+from incomplete data:
+
+```powershell
+.\scripts\summarize-iroh-energy.ps1 `
+  -BatteryMatrix .torca/measurements/iroh-battery-matrix/matrix.json `
+  -CpuReport .torca/measurements/iroh-direct-background.json `
+  -Output .torca/measurements/iroh-energy-report.json
+```
+
 Active Messaging uses a fault-free baseline unless `--fault-profile` is passed
 explicitly; controlled fault injection remains available for RuntimeLab.
 

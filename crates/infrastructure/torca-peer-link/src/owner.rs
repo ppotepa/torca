@@ -32,6 +32,8 @@ const MAX_PENDING_INCOMING: usize = 64;
 const MAX_INBOUND_EVENTS: usize = 256;
 const MAX_PENDING_ACKS: usize = 256;
 const MAX_ACK_WAIT_SLICE: Duration = Duration::from_secs(1);
+const PEER_RECOVERY_WINDOW: Duration = Duration::from_secs(30);
+const PEER_RECOVERY_TICK: Duration = Duration::from_millis(250);
 
 include!("owner/model.rs");
 

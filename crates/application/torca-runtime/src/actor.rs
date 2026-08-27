@@ -39,11 +39,11 @@ use torca_runtime_policy::{
     BatteryPolicy, BatteryPreferences, BatteryProfile, MeteredTransferPolicy, SystemEnergyState,
 };
 
-// Included runtime files use `thread::spawn` and `thread::yield_now`. Keep that
+// Included runtime files use `thread::spawn` and `thread::sleep`. Keep that
 // compact vocabulary while guaranteeing the process-owned runtime thread has a
 // stable diagnostic name.
 mod thread {
-    pub use std::thread::yield_now;
+    pub use std::thread::sleep;
 
     pub fn spawn<F, T>(f: F) -> std::thread::JoinHandle<T>
     where

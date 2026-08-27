@@ -44,7 +44,9 @@ fn send_with_timeout(
                     return Err(RuntimeDriverError::Pending);
                 }
                 command = returned;
-                thread::yield_now();
+                // A full bounded mailbox is backpressure, not a reason to
+                // spin the caller while the runtime drains it.
+                thread::sleep(std::time::Duration::from_millis(1));
             }
         }
     }
@@ -209,6 +211,48 @@ mod tests {
     }
 
     #[test]
+    fn wake_gate_reset_is_source_specific() {
+        let communication = AtomicBool::new(true);
+        let lifecycle = AtomicBool::new(true);
+        let radio = AtomicBool::new(true);
+        clear_wake_gates(
+            &[RuntimeWakeSource::ProviderDeadline],
+            &communication,
+            &lifecycle,
+            &radio,
+        );
+        assert!(communication.load(Ordering::Acquire));
+        assert!(!lifecycle.load(Ordering::Acquire));
+        assert!(radio.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn wake_storm_is_coalesced_and_next_edge_is_preserved() {
+        let (sender, receiver) = mpsc::sync_channel(256);
+        let gate = AtomicBool::new(false);
+        for _ in 0..100_000 {
+            enqueue_coalesced_wake(
+                &sender,
+                &gate,
+                vec![RuntimeWakeSource::DeliveryDeadline],
+            );
+        }
+        assert_eq!(receiver.try_iter().count(), 1);
+        clear_wake_gates(
+            &[RuntimeWakeSource::DeliveryDeadline],
+            &gate,
+            &AtomicBool::new(false),
+            &AtomicBool::new(false),
+        );
+        enqueue_coalesced_wake(
+            &sender,
+            &gate,
+            vec![RuntimeWakeSource::DeliveryDeadline],
+        );
+        assert_eq!(receiver.try_iter().count(), 1);
+    }
+
+    #[test]
     fn scheduler_records_the_source_for_an_executor_deadline() {
         let now = std::time::Instant::now();
         let mut scheduler = RuntimeSchedulingState::new();
@@ -217,6 +261,73 @@ mod tests {
             [(RuntimeWakeSource::DeliveryDeadline, Some(Duration::from_millis(250)))],
         );
         assert_eq!(scheduler.next_deadline(), Some(now + Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn scheduler_diagnoses_zero_and_identical_deadline_replacements() {
+        let now = std::time::Instant::now();
+        let mut scheduler = RuntimeSchedulingState::new();
+        scheduler.replace_deadlines(
+            now,
+            [(RuntimeWakeSource::DeliveryDeadline, Some(Duration::ZERO))],
+        );
+        scheduler.replace_deadlines(
+            now,
+            [(RuntimeWakeSource::DeliveryDeadline, Some(Duration::ZERO))],
+        );
+
+        let snapshot = scheduler.diagnostic_snapshot(now);
+        assert_eq!(snapshot.zero_delay_deadlines, 2);
+        assert_eq!(snapshot.identical_deadline_replacements, 1);
+
+        scheduler.replace_deadlines(now, [(RuntimeWakeSource::DeliveryDeadline, None)]);
+        scheduler.replace_deadlines(
+            now,
+            [(RuntimeWakeSource::DeliveryDeadline, Some(Duration::ZERO))],
+        );
+        assert_eq!(scheduler.diagnostic_snapshot(now).identical_deadline_replacements, 1);
+    }
+
+    #[test]
+    fn peer_recovery_backoff_is_bounded() {
+        assert_eq!(next_peer_recovery_delay(Duration::from_millis(250)), Duration::from_millis(500));
+        assert_eq!(next_peer_recovery_delay(Duration::from_secs(5)), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn peer_recovery_window_is_terminal_and_resets_after_transport_recovers() {
+        let now = std::time::Instant::now();
+        let mut scheduling = RuntimeSchedulingState::new();
+        scheduling.peer_recovery_started_at =
+            Some(now.checked_sub(Duration::from_secs(31)).expect("valid test instant"));
+        scheduling.peer_recovery_generation = 7;
+        scheduling.peer_recovery_attempts = 12;
+
+        assert_eq!(peer_recovery_deadline(&mut scheduling, true, now), None);
+        assert!(scheduling.peer_recovery_exhausted);
+        assert_eq!(peer_recovery_deadline(&mut scheduling, false, now), None);
+
+        assert_eq!(scheduling.peer_recovery_generation, 7);
+        assert_eq!(scheduling.peer_recovery_attempts, 0);
+        assert!(!scheduling.peer_recovery_exhausted);
+
+        assert_eq!(
+            peer_recovery_deadline(&mut scheduling, true, now),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(scheduling.peer_recovery_generation, 8);
+        assert_eq!(scheduling.peer_recovery_attempts, 1);
+        assert_eq!(peer_recovery_deadline(&mut scheduling, false, now), None);
+        assert_eq!(
+            peer_recovery_deadline(&mut scheduling, true, now),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(scheduling.peer_recovery_generation, 9);
+
+        let future = now.checked_add(Duration::from_secs(3 * 60 * 60)).expect("valid future");
+        assert_eq!(peer_recovery_deadline(&mut scheduling, true, future), None);
+        assert!(scheduling.peer_recovery_exhausted);
+        assert_eq!(scheduling.peer_recovery_attempts, 1);
     }
 
     #[test]

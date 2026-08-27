@@ -185,9 +185,17 @@ impl EngineActivityGuard {
 
 fn send_with_timeout(
     sender: &SyncSender<ActorRequest>,
-    mut request: ActorRequest,
+    request: ActorRequest,
 ) -> Result<(), EngineError> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    send_with_timeout_for(sender, request, Duration::from_secs(2))
+}
+
+fn send_with_timeout_for(
+    sender: &SyncSender<ActorRequest>,
+    mut request: ActorRequest,
+    timeout: Duration,
+) -> Result<(), EngineError> {
+    let deadline = Instant::now() + timeout;
     loop {
         match sender.try_send(request) {
             Ok(()) => return Ok(()),
@@ -197,8 +205,24 @@ fn send_with_timeout(
                     return Err(EngineError::Unavailable);
                 }
                 request = returned;
-                thread::yield_now();
+                // Backpressure must block briefly instead of repeatedly
+                // yielding a hot CPU while the single writer drains work.
+                thread::sleep(Duration::from_millis(1));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod engine_backpressure_tests {
+    use super::*;
+
+    #[test]
+    fn engine_backpressure_has_a_terminal_timeout() {
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send(ActorRequest::Shutdown).expect("fill engine mailbox");
+        let started = Instant::now();
+        assert!(send_with_timeout_for(&sender, ActorRequest::Shutdown, Duration::from_millis(5)).is_err());
+        assert!(started.elapsed() >= Duration::from_millis(4));
     }
 }

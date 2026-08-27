@@ -144,6 +144,8 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
             SystemEnergyState::default(),
         ),
         read_receipt_policy,
+        actor_waker: None,
+        actor_wake_pending: None,
     };
     runtime.log(
         "runtime",

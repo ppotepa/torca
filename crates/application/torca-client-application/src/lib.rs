@@ -254,6 +254,7 @@ mod tests {
         let snapshot = runtime.snapshot_context().expect("snapshot context");
         assert_eq!(snapshot.pending_operations.len(), 1);
         assert_eq!(snapshot.pending_operations[0].resource_id, session_id);
+        assert_eq!(runtime.next_pending_operation_delay(), None);
         actor.shutdown().expect("actor shutdown");
     }
 }

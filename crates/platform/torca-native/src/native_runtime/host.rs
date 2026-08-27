@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     Arc,
+    atomic::AtomicBool,
     mpsc::{self, Receiver, TryRecvError},
 };
 use std::thread;
@@ -127,6 +128,11 @@ pub struct TorcaRuntime {
     read_receipts_enabled: bool,
     battery_policy: BatteryPolicyState,
     read_receipt_policy: ReadReceiptPolicy,
+    /// Actor mailbox used only to wake native startup progress. Keeping this
+    /// as an event path removes the former 100ms startup polling loop.
+    pub(crate) actor_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Coalesces progress callbacks while one internal wake is already queued.
+    pub(crate) actor_wake_pending: Option<Arc<AtomicBool>>,
 }
 
 include!("core_methods.rs");

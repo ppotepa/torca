@@ -690,10 +690,30 @@ void _workerMainImpl(List<Object?> arguments) {
   SendPort? eventsPort;
   Timer? snapshotTimer;
   var fallbackFailures = 0;
+  var fallbackPolls = 0;
+  var waiterWakeups = 0;
+  var snapshotDecodes = 0;
+  var snapshotChanges = 0;
+  var fallbackDegradedReported = false;
+  var disposed = false;
   Duration fallbackDelay() {
     const seconds = <int>[1, 2, 5, 15, 30];
     final index = fallbackFailures.clamp(0, seconds.length - 1);
     fallbackFailures++;
+    fallbackPolls++;
+    if (fallbackFailures >= seconds.length && !fallbackDegradedReported) {
+      fallbackDegradedReported = true;
+      developer.log(
+        'revision waiter degraded; using bounded fallback polling',
+        name: 'torca.runtime',
+        error: <String, Object?>{
+          'fallbackPolls': fallbackPolls,
+          'waiterWakeups': waiterWakeups,
+          'snapshotDecodes': snapshotDecodes,
+          'snapshotChanges': snapshotChanges,
+        },
+      );
+    }
     return Duration(seconds: seconds[index]);
   }
 
@@ -723,6 +743,7 @@ void _workerMainImpl(List<Object?> arguments) {
     if (message['attachEvents'] is SendPort) {
       eventsPort = message['attachEvents'] as SendPort;
       void pollSnapshot() {
+        if (disposed) return;
         final target = eventsPort;
         if (target == null) return;
         try {
@@ -734,6 +755,7 @@ void _workerMainImpl(List<Object?> arguments) {
             ).encode('worker-poll-${DateTime.now().microsecondsSinceEpoch}'),
             5000,
           );
+          snapshotDecodes++;
           final decoded = jsonDecode(raw);
           if (decoded is Map && decoded['revision'] is int) {
             final revision = decoded['revision'] as int;
@@ -748,6 +770,7 @@ void _workerMainImpl(List<Object?> arguments) {
             final encoded = jsonEncode(snapshot);
             if (encoded != lastSnapshotJson) {
               lastSnapshotJson = encoded;
+              snapshotChanges++;
               target.send(encoded);
             }
           }
@@ -789,13 +812,22 @@ void _workerMainImpl(List<Object?> arguments) {
         reply.first
             .timeout(const Duration(days: 365))
             .then<void>(
-              (_) {
+              (value) {
                 reply.close();
-                fallbackFailures = 0;
-                snapshotTimer = Timer(Duration.zero, pollSnapshot);
+                if (disposed) return;
+                final waitResult = value is int ? value : -1;
+                if (waitResult == 1) {
+                  fallbackFailures = 0;
+                  waiterWakeups++;
+                  fallbackDegradedReported = false;
+                  snapshotTimer = Timer(Duration.zero, pollSnapshot);
+                } else {
+                  snapshotTimer = Timer(fallbackDelay(), pollSnapshot);
+                }
               },
               onError: (Object _, StackTrace __) {
                 reply.close();
+                if (disposed) return;
                 snapshotTimer = Timer(fallbackDelay(), pollSnapshot);
               },
             );
@@ -805,6 +837,7 @@ void _workerMainImpl(List<Object?> arguments) {
       return;
     }
     if (message['dispose'] == true) {
+      disposed = true;
       snapshotTimer?.cancel();
       bindings.cancelWaitForRevision(handle);
       waiterPort?.send(<String, Object?>{'stop': true});

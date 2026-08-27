@@ -400,7 +400,8 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     await _operations.run(key, () async {
       setState(() => _error = null);
       result = await widget.gateway.execute(command);
-      _routeRefreshRequired = result?.kind == 'error:runtime.route_refresh_required';
+      _routeRefreshRequired =
+          result?.kind == 'error:runtime.route_refresh_required';
       if (result?.ok != true && mounted) {
         setState(
           () => _error = result == null
@@ -1060,7 +1061,11 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
             onPressed: expired
                 ? null
                 : () async {
-                    await Clipboard.setData(ClipboardData(text: widget.code));
+                    // Iroh invitations carry the creator's dialable bootstrap
+                    // address in the full URI. A short code alone can only be
+                    // resolved by providers with a rendezvous lookup service,
+                    // so always copy the provider-neutral invitation URI.
+                    await Clipboard.setData(ClipboardData(text: widget.uri));
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(

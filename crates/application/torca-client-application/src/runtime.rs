@@ -1598,6 +1598,11 @@ impl ClientApplicationRuntime {
     /// the operation. The native actor uses this to block until useful work is
     /// due instead of waking once per second while the queue is empty.
     pub fn next_pending_operation_delay(&self) -> Option<std::time::Duration> {
+        // Work can be persisted before the provider runtime is composed. There
+        // is no useful operation to perform until the handle is attached; an
+        // immediate deadline here would make the native actor spin in
+        // `maintain()` while startup is still in progress.
+        self.runtime.as_ref()?;
         let now_ms = current_timestamp().ok()?.to_unix_millis();
         let next_ms = self.pending.lock().ok()?.next_due_at_ms().ok()??;
         let delta_ms = next_ms.saturating_sub(now_ms);

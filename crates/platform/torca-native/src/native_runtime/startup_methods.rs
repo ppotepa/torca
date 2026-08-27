@@ -32,8 +32,13 @@ fn begin_runtime_start(&mut self) {
     self.host_incoming_retry_at = None;
     self.host_start_deadline = Some(Instant::now() + NETWORK_START_OBSERVE_TIMEOUT);
     let progress_sender = sender.clone();
+    let actor_waker = self.actor_waker.clone();
+    let progress_waker = actor_waker.clone();
     let observer: CommissioningObserver = std::sync::Arc::new(move |progress| {
         let _ = progress_sender.send(HostStartEvent::Progress(progress));
+        if let Some(waker) = &progress_waker {
+            waker();
+        }
     });
     let read_receipt_policy = self.read_receipt_policy.clone();
     thread::Builder::new()
@@ -48,10 +53,14 @@ fn begin_runtime_start(&mut self) {
                     panic_message(payload)
                 ))),
             };
-            if let Err(send_error) = sender.send(HostStartEvent::Finished(result))
+            let send_result = sender.send(HostStartEvent::Finished(result));
+            if let Err(send_error) = send_result
                 && let HostStartEvent::Finished(Ok((_handle, owner, _radio))) = send_error.0
             {
                 let _ = owner.shutdown();
+            }
+            if let Some(waker) = actor_waker {
+                waker();
             }
         })
         .expect("spawn Torca network startup worker");

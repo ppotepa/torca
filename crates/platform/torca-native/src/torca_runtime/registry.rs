@@ -198,10 +198,22 @@ fn spawn_runtime() -> Result<Arc<RuntimeHandleInner>, ()> {
     let alive = Arc::new(AtomicBool::new(false));
     let actor_alive = Arc::clone(&alive);
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+    let sender_for_actor = sender.clone();
     thread::Builder::new()
         .name("torca-runtime".into())
         .spawn(move || match TorcaRuntime::new(Arc::clone(&actor_event_hub)) {
-            Ok(runtime) => {
+            Ok(mut runtime) => {
+                let actor_sender = sender_for_actor.clone();
+                let actor_wake_pending = Arc::new(AtomicBool::new(false));
+                runtime.actor_wake_pending = Some(Arc::clone(&actor_wake_pending));
+                runtime.actor_waker = Some(Arc::new(move || {
+                    if actor_wake_pending.swap(true, Ordering::AcqRel) {
+                        return;
+                    }
+                    if actor_sender.try_send(ActorMessage::InternalWake).is_err() {
+                        actor_wake_pending.store(false, Ordering::Release);
+                    }
+                }));
                 actor_alive.store(true, Ordering::Release);
                 let runtime_id = secure_id_hex().unwrap_or_else(|_| "runtime-unavailable".into());
                 let _ = ready_tx.send(Ok(()));
@@ -319,6 +331,15 @@ fn actor_loop(
                     event_hub.publish(state.revision);
                 }
                 event_hub.publish(state.revision);
+            }
+            ActorMessage::InternalWake => {
+                if let Some(gate) = state.runtime.actor_wake_pending.as_ref() {
+                    gate.store(false, Ordering::Release);
+                }
+                if state.maintain() {
+                    state.revision = state.revision.saturating_add(1);
+                    event_hub.publish(state.revision);
+                }
             }
             ActorMessage::Shutdown { response, source } => {
                 state.runtime.log(

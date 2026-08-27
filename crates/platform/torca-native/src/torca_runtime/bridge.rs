@@ -13,7 +13,11 @@ fn send_with_timeout<T>(
                     return Err(());
                 }
                 message = returned;
-                thread::yield_now();
+                // A full bounded mailbox is backpressure. Yielding in a
+                // tight loop lets this FFI caller consume a whole CPU while
+                // waiting for the actor; sleep briefly and keep the timeout
+                // as the terminal bound.
+                thread::sleep(Duration::from_millis(1));
             }
         }
     }

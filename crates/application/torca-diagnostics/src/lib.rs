@@ -45,6 +45,11 @@ pub struct RuntimeScheduleSnapshot {
     pub active_deadlines: u64,
     pub next_deadline_in_ms: Option<u64>,
     pub sources: BTreeMap<RuntimeWakeSource, u64>,
+    pub zero_delay_deadlines: u64,
+    pub identical_deadline_replacements: u64,
+    pub peer_recovery_generation: u64,
+    pub peer_recovery_attempts: u64,
+    pub peer_recovery_exhausted: bool,
 }
 
 /// Bounded observation data for a user-started diagnostics interval.  It is a
@@ -378,11 +383,16 @@ impl DiagnosticBuffer {
                     .collect::<Vec<_>>()
                     .join(",");
                 format!(
-                    "{{\"activeLeases\":{},\"activeDemands\":{},\"scheduledDeadlines\":{},\"nextDeadlineInMs\":{},\"networkGeneration\":{},\"focusActive\":{},\"focusRemainingMs\":{},\"leaseReasons\":{{{reasons}}},\"scheduledWork\":{{{work}}}}}",
+                    "{{\"activeLeases\":{},\"activeDemands\":{},\"scheduledDeadlines\":{},\"nextDeadlineInMs\":{},\"zeroDelayDeadlines\":{},\"identicalDeadlineReplacements\":{},\"peerRecoveryGeneration\":{},\"peerRecoveryAttempts\":{},\"peerRecoveryExhausted\":{},\"networkGeneration\":{},\"focusActive\":{},\"focusRemainingMs\":{},\"leaseReasons\":{{{reasons}}},\"scheduledWork\":{{{work}}}}}",
                     policy.active_leases,
                     policy.active_demands,
                     self.schedule.active_deadlines,
                     self.schedule.next_deadline_in_ms.map_or_else(|| "null".into(), |value| value.to_string()),
+                    self.schedule.zero_delay_deadlines,
+                    self.schedule.identical_deadline_replacements,
+                    self.schedule.peer_recovery_generation,
+                    self.schedule.peer_recovery_attempts,
+                    self.schedule.peer_recovery_exhausted,
                     policy.network_generation,
                     policy.focus_active,
                     policy.focus_remaining_ms.map_or_else(|| "null".into(), |value| value.to_string()),
@@ -625,6 +635,7 @@ mod tests {
             active_deadlines: 1,
             next_deadline_in_ms: Some(42),
             sources: BTreeMap::from([(RuntimeWakeSource::DeliveryDeadline, 1)]),
+            ..RuntimeScheduleSnapshot::default()
         });
         let json = diagnostics.export_json();
         assert!(json.contains("\"whyAwake\""));

@@ -114,6 +114,10 @@ where
             advertised_route_generations: BTreeMap::new(),
             connectivity: None,
             waker: None,
+            peer_recovery_started_at: None,
+            peer_recovery_generation: 0,
+            peer_recovery_attempts: 0,
+            peer_recovery_exhausted: false,
         }
     }
 
@@ -245,6 +249,7 @@ where
         let mut report = PeerLinkReport::default();
         self.accept_pending(&mut report)?;
         self.authenticate_pending(now, &mut report)?;
+        self.expire_stuck_peer_recovery(now, &mut report)?;
         self.poll_sessions(now, &mut report)?;
         let route_contacts = self
             .incoming
@@ -257,6 +262,7 @@ where
         }
         self.plan_disconnected(contacts);
         self.run_due_reconnects(now, &mut report)?;
+        self.update_peer_recovery_state(now);
         if report.became_ready > 0
             || report.disconnected > 0
             || report.reconnect_started > 0
@@ -265,6 +271,41 @@ where
             self.notify_waker();
         }
         Ok(report)
+    }
+
+    fn expire_stuck_peer_recovery(
+        &mut self,
+        now: Timestamp,
+        report: &mut PeerLinkReport,
+    ) -> Result<(), PeerLinkError> {
+        let expired = self.peer_recovery_started_at.is_some()
+            && peer_recovery_delay(self.peer_recovery_started_at, now).is_none();
+        if !expired {
+            return Ok(());
+        }
+
+        let contacts = self
+            .incoming
+            .keys()
+            .chain(self.outgoing.keys())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        for contact_id in contacts {
+            if self.connection_state(contact_id) == PeerConnectionState::Ready {
+                continue;
+            }
+            self.remove_non_ready(contact_id);
+            self.schedule_reconnect(contact_id, now)?;
+            report.disconnected += 1;
+        }
+        while let Some(mut transport) = self.pending.pop() {
+            let _ = transport.close();
+            report.disconnected += 1;
+        }
+        self.peer_recovery_started_at = None;
+        self.peer_recovery_attempts = 0;
+        self.peer_recovery_exhausted = false;
+        Ok(())
     }
 
     /// Closes quiet ready streams which have no active runtime demand.  Inbound
@@ -324,10 +365,32 @@ where
         let active = !self.pending.is_empty()
             || self.incoming.values().any(|session| session.state() != PeerSessionState::Ready)
             || self.outgoing.values().any(|session| session.state() != PeerSessionState::Ready);
-        match (active, reconnect_delay) {
-            (true, Some(delay)) => Some(delay.min(Duration::from_millis(250))),
-            (true, None) => Some(Duration::from_millis(250)),
-            (false, delay) => delay,
+        let recovery_delay = active
+            .then(|| peer_recovery_delay(self.peer_recovery_started_at, now))
+            .flatten();
+        [reconnect_delay, recovery_delay].into_iter().flatten().min()
+    }
+
+    fn update_peer_recovery_state(&mut self, now: Timestamp) {
+        let active = !self.pending.is_empty()
+            || self.incoming.values().any(|session| session.state() != PeerSessionState::Ready)
+            || self.outgoing.values().any(|session| session.state() != PeerSessionState::Ready);
+        if !active {
+            self.peer_recovery_started_at = None;
+            self.peer_recovery_attempts = 0;
+            self.peer_recovery_exhausted = false;
+            return;
+        }
+        if self.peer_recovery_started_at.is_none() {
+            self.peer_recovery_started_at = Some(now);
+            self.peer_recovery_generation = self.peer_recovery_generation.saturating_add(1);
+            self.peer_recovery_attempts = 0;
+            self.peer_recovery_exhausted = false;
+        }
+        if peer_recovery_delay(self.peer_recovery_started_at, now).is_some() {
+            self.peer_recovery_attempts = self.peer_recovery_attempts.saturating_add(1);
+        } else {
+            self.peer_recovery_exhausted = true;
         }
     }
 

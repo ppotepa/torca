@@ -514,6 +514,11 @@ class _WhyAwakeCard extends StatelessWidget {
             _row('Lease reasons', reasons),
             _row('Scheduled work', scheduled),
             _row('Next deadline', deadline == null ? 'none' : '${deadline} ms'),
+            _row('Zero-delay deadlines', '${value['zeroDelayDeadlines'] ?? 0}'),
+            _row(
+              'Identical deadline replacements',
+              '${value['identicalDeadlineReplacements'] ?? 0}',
+            ),
           ],
         ),
       ),

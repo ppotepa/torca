@@ -12,6 +12,10 @@ enum ActorMessage {
         event: String,
         response: SyncSender<i32>,
     },
+    /// Provider startup progress/finish is delivered directly by the
+    /// startup worker. This wake carries no work itself; the actor drains its
+    /// existing event receiver once and then returns to blocking wait.
+    InternalWake,
     Shutdown {
         response: SyncSender<()>,
         source: &'static str,

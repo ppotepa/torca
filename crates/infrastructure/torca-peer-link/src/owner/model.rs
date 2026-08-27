@@ -95,4 +95,8 @@ pub struct PeerLink<S, K> {
     advertised_route_generations: BTreeMap<ContactId, u64>,
     connectivity: Option<ConnectivityObserver>,
     waker: Option<Arc<dyn Fn() + Send + Sync>>,
+    peer_recovery_started_at: Option<Timestamp>,
+    peer_recovery_generation: u64,
+    peer_recovery_attempts: u64,
+    peer_recovery_exhausted: bool,
 }

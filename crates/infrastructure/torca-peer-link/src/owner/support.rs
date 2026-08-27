@@ -41,6 +41,18 @@ fn map_transport_factory(error: torca_transport_api::TransportFactoryError) -> P
     }
 }
 
+fn peer_recovery_delay(started_at: Option<Timestamp>, now: Timestamp) -> Option<Duration> {
+    let elapsed = now.duration_since(started_at?)?;
+    if elapsed >= PEER_RECOVERY_WINDOW {
+        None
+    } else {
+        Some(
+            PEER_RECOVERY_TICK
+                .min(PEER_RECOVERY_WINDOW.checked_sub(elapsed).expect("elapsed is in window")),
+        )
+    }
+}
+
 fn system_timestamp() -> Result<Timestamp, PeerLinkError> {
     let duration =
         SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| PeerLinkError::Clock)?;

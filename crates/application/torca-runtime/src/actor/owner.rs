@@ -68,46 +68,34 @@ impl RuntimeOwner {
         let communication_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             // Transport activity can advance delivery and peer evidence, but
             // must not become an anonymous "maintain everything" wake.
-            if communication_wake_gate.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            if communication_sender
-                .try_send(RuntimeCommand::Wake(vec![
+            enqueue_coalesced_wake(
+                &communication_sender,
+                &communication_wake_gate,
+                vec![
                     RuntimeWakeSource::DeliveryDeadline,
                     RuntimeWakeSource::PeerDeadline,
-                ]))
-                .is_err()
-            {
-                communication_wake_gate.store(false, Ordering::Release);
-            }
+                ],
+            );
         });
         let lifecycle_sender = sender.clone();
         let lifecycle_wake_pending = Arc::new(AtomicBool::new(false));
         let lifecycle_wake_gate = Arc::clone(&lifecycle_wake_pending);
         let lifecycle_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            if lifecycle_wake_gate.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            if lifecycle_sender
-                .try_send(RuntimeCommand::Wake(vec![RuntimeWakeSource::ProviderDeadline]))
-                .is_err()
-            {
-                lifecycle_wake_gate.store(false, Ordering::Release);
-            }
+            enqueue_coalesced_wake(
+                &lifecycle_sender,
+                &lifecycle_wake_gate,
+                vec![RuntimeWakeSource::ProviderDeadline],
+            );
         });
         let radio_sender = sender.clone();
         let radio_wake_pending = Arc::new(AtomicBool::new(false));
         let radio_wake_gate = Arc::clone(&radio_wake_pending);
         let radio_waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            if radio_wake_gate.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            if radio_sender
-                .try_send(RuntimeCommand::Wake(vec![RuntimeWakeSource::RadioDeadline]))
-                .is_err()
-            {
-                radio_wake_gate.store(false, Ordering::Release);
-            }
+            enqueue_coalesced_wake(
+                &radio_sender,
+                &radio_wake_gate,
+                vec![RuntimeWakeSource::RadioDeadline],
+            );
         });
         communication.set_waker(communication_waker);
         communication.set_radio_waker(radio_waker);
@@ -216,10 +204,13 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
     loop {
         let wait_started = std::time::Instant::now();
         let runtime_wait = wait_for_runtime_command(&receiver, scheduling.next_deadline());
-        if matches!(runtime_wait, RuntimeWait::Command(RuntimeCommand::Wake(_))) {
-            communication_wake_pending.store(false, Ordering::Release);
-            lifecycle_wake_pending.store(false, Ordering::Release);
-            radio_wake_pending.store(false, Ordering::Release);
+        if let RuntimeWait::Command(RuntimeCommand::Wake(sources)) = &runtime_wait {
+            clear_wake_gates(
+                sources,
+                &communication_wake_pending,
+                &lifecycle_wake_pending,
+                &radio_wake_pending,
+            );
             // A transport frame (notably a handshake ACK) is also a delivery
             // wake.  The runtime command itself is intentionally lightweight,
             // but the worker bridge must be told to revisit the durable
@@ -667,6 +658,41 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
             active_transport,
             now,
         );
+    }
+}
+
+fn clear_wake_gates(
+    sources: &[RuntimeWakeSource],
+    communication: &AtomicBool,
+    lifecycle: &AtomicBool,
+    radio: &AtomicBool,
+) {
+    // Release only the gates represented by this wake. Clearing all gates
+    // turns an unrelated lifecycle wake into duplicate communication and
+    // Radio wake commands.
+    if sources.iter().any(|source| {
+        matches!(source, RuntimeWakeSource::DeliveryDeadline | RuntimeWakeSource::PeerDeadline)
+    }) {
+        communication.store(false, Ordering::Release);
+    }
+    if sources.contains(&RuntimeWakeSource::ProviderDeadline) {
+        lifecycle.store(false, Ordering::Release);
+    }
+    if sources.contains(&RuntimeWakeSource::RadioDeadline) {
+        radio.store(false, Ordering::Release);
+    }
+}
+
+fn enqueue_coalesced_wake(
+    sender: &SyncSender<RuntimeCommand>,
+    gate: &AtomicBool,
+    sources: Vec<RuntimeWakeSource>,
+) {
+    if gate.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if sender.try_send(RuntimeCommand::Wake(sources)).is_err() {
+        gate.store(false, Ordering::Release);
     }
 }
 

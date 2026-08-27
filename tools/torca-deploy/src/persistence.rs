@@ -40,6 +40,7 @@ impl DeployPaths {
     }
 }
 
+#[derive(Clone)]
 pub struct StateStore {
     paths: DeployPaths,
 }

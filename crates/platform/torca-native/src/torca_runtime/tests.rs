@@ -103,4 +103,13 @@ mod tests {
             .expect("provider route refresh command");
         assert_eq!(command, BridgeCommand::RefreshProviderRoute);
     }
+
+    #[test]
+    fn bridge_backpressure_has_a_terminal_timeout() {
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send(1_u8).expect("fill bounded bridge mailbox");
+        let started = Instant::now();
+        assert!(send_with_timeout(&sender, 2_u8, Duration::from_millis(5)).is_err());
+        assert!(started.elapsed() >= Duration::from_millis(4));
+    }
 }

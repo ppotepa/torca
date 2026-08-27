@@ -673,10 +673,14 @@ impl MediaWorker {
             let listener_only_wait = self.live.is_none()
                 && self.pending.as_ref().is_none_or(|pending| !pending.initiate_connection);
             let command = if listener_only_wait {
-                match self.commands.recv_timeout(Duration::from_secs(1)) {
+                // An unarmed listener is fully event-driven: the provider
+                // callback enqueues Wake when an inbound stream arrives, and
+                // Shutdown uses the same command lane. A one-second timeout
+                // here created an unnecessary periodic Android wake while
+                // Radio was disabled/idle.
+                match self.commands.recv() {
                     Ok(command) => Some(command),
-                    Err(RecvTimeoutError::Timeout) => None,
-                    Err(RecvTimeoutError::Disconnected) => break,
+                    Err(_) => break,
                 }
             } else {
                 match self.commands.recv_timeout(wait) {

@@ -8,6 +8,12 @@ use crate::domain::{
 #[derive(Debug, Parser)]
 #[command(name = "torca-deploy", version, about = "Torca deployment wizard and automation CLI")]
 pub struct Cli {
+    /// Theme used by the interactive wizard.
+    #[arg(long, global = true, value_enum, default_value = "aurora")]
+    pub theme: ThemeArg,
+    /// Disable terminal colours while retaining textual status markers.
+    #[arg(long, global = true)]
+    pub no_color: bool,
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -39,6 +45,7 @@ pub enum Command {
     Build(PlanArgs),
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Args)]
 pub struct PlanArgs {
     #[arg(long, value_enum, default_value = "all")]
@@ -53,6 +60,7 @@ pub struct PlanArgs {
     #[arg(
         long = "provider-service-build",
         visible_alias = "relay-build",
+        alias = "relay_build",
         value_enum,
         default_value = "if-required"
     )]
@@ -60,6 +68,7 @@ pub struct PlanArgs {
     #[arg(
         long = "provider-maintenance",
         visible_alias = "onion",
+        alias = "relay_maintenance",
         value_enum,
         default_value = "ensure"
     )]
@@ -83,6 +92,23 @@ pub struct PlanArgs {
     pub provider_profile: Option<String>,
     #[arg(long)]
     pub dry_run: bool,
+    /// Print the normalized execution graph used by the executor.
+    #[arg(long)]
+    pub show_steps: bool,
+    /// Run read-only plan and device checks before displaying or executing the plan.
+    #[arg(long)]
+    pub preflight: bool,
+    #[arg(long, value_enum, default_value = "aurora")]
+    pub theme: ThemeArg,
+    #[arg(long)]
+    pub no_color: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum ThemeArg {
+    Aurora,
+    Amber,
+    HighContrast,
 }
 
 #[derive(Debug, Args)]
@@ -275,6 +301,24 @@ mod tests {
             args.plan(DeployAction::RedeployCurrent).communication_provider,
             CommunicationProvider::WebRtc
         ));
+    }
+
+    #[test]
+    fn legacy_relay_flag_aliases_remain_supported() {
+        let cli = Cli::try_parse_from([
+            "torca-deploy",
+            "plan",
+            "--relay_build",
+            "rebuild",
+            "--relay_maintenance",
+            "restart",
+        ])
+        .expect("legacy flags should parse");
+        let Command::Plan(args) = cli.command.expect("plan command") else {
+            panic!("expected plan command");
+        };
+        assert!(matches!(args.provider_service_build, BuildPolicyArg::Rebuild));
+        assert!(matches!(args.provider_maintenance, ProviderMaintenancePolicyArg::Restart));
     }
 
     #[test]

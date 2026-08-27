@@ -93,6 +93,14 @@ struct RuntimeSchedulingState {
     deadlines: BTreeMap<std::time::Instant, BTreeSet<RuntimeWakeSource>>,
     peer_probe_deadline: Option<Timestamp>,
     background_grace_deadline: Option<std::time::Instant>,
+    peer_recovery_delay: Option<std::time::Duration>,
+    peer_recovery_started_at: Option<std::time::Instant>,
+    peer_recovery_generation: u64,
+    peer_recovery_attempts: u64,
+    peer_recovery_exhausted: bool,
+    last_deadline_delays: BTreeMap<RuntimeWakeSource, u64>,
+    zero_delay_deadlines: u64,
+    identical_deadline_replacements: u64,
 }
 
 impl RuntimeSchedulingState {
@@ -110,6 +118,14 @@ impl RuntimeSchedulingState {
             deadlines: BTreeMap::from([(now, initial)]),
             peer_probe_deadline: None,
             background_grace_deadline: None,
+            peer_recovery_delay: None,
+            peer_recovery_started_at: None,
+            peer_recovery_generation: 0,
+            peer_recovery_attempts: 0,
+            peer_recovery_exhausted: false,
+            last_deadline_delays: BTreeMap::new(),
+            zero_delay_deadlines: 0,
+            identical_deadline_replacements: 0,
         }
     }
 
@@ -119,11 +135,23 @@ impl RuntimeSchedulingState {
         candidates: impl IntoIterator<Item = (RuntimeWakeSource, Option<Duration>)>,
     ) {
         self.deadlines.clear();
+        let mut present_sources = BTreeSet::new();
         for (source, delay) in candidates {
             if let Some(delay) = delay {
+                present_sources.insert(source);
+                let delay_ms = delay.as_millis().min(u128::from(u64::MAX)) as u64;
+                if delay.is_zero() {
+                    self.zero_delay_deadlines = self.zero_delay_deadlines.saturating_add(1);
+                }
+                if self.last_deadline_delays.get(&source).copied() == Some(delay_ms) {
+                    self.identical_deadline_replacements =
+                        self.identical_deadline_replacements.saturating_add(1);
+                }
+                self.last_deadline_delays.insert(source, delay_ms);
                 self.deadlines.entry(now + delay).or_default().insert(source);
             }
         }
+        self.last_deadline_delays.retain(|source, _| present_sources.contains(source));
     }
 
     fn next_deadline(&self) -> Option<std::time::Instant> {
@@ -157,6 +185,11 @@ impl RuntimeSchedulingState {
                 .next_deadline()
                 .map(|deadline| deadline.saturating_duration_since(now).as_millis() as u64),
             sources,
+            zero_delay_deadlines: self.zero_delay_deadlines,
+            identical_deadline_replacements: self.identical_deadline_replacements,
+            peer_recovery_generation: self.peer_recovery_generation,
+            peer_recovery_attempts: self.peer_recovery_attempts,
+            peer_recovery_exhausted: self.peer_recovery_exhausted,
         }
     }
 }

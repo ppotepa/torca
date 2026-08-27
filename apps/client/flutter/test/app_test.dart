@@ -83,6 +83,60 @@ void main() {
   });
 
   testWidgets(
+    'generator copies the full provider invitation instead of short code',
+    (WidgetTester tester) async {
+      const inviteUri =
+          'torca://pair?v=2&code=IROH82&provider=iroh&bootstrap=01020304';
+      Object? clipboardArguments;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardArguments = call.arguments;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      final gateway = FakeEngineGateway(
+        responses: <FakeGatewayResponse>[
+          FakeGatewayResponse.success(
+            kind: 'pairing_started',
+            resourceId: '00000000000000000000000000000083',
+            inviteUri: inviteUri,
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: FilledButton(
+                onPressed: () => showInvitationGeneratorModal(context, gateway),
+                child: const Text('Open generator'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open generator'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('Copy invitation'));
+      await tester.pump();
+
+      expect(clipboardArguments, <String, Object?>{'text': inviteUri});
+      expect(find.text('Full invitation copied'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'one invitation modal follows the session state and closes on contact',
     (WidgetTester tester) async {
       const id = '00000000000000000000000000000081';

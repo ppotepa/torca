@@ -49,4 +49,29 @@ void main() {
       'The communication route is changing. Please retry when it is refreshed.',
     );
   });
+
+  test('pairing approval failures retain actionable diagnostics', () {
+    const result = BridgeResultDto(
+      ok: false,
+      kind: 'error:pairing.approval_invalid',
+    );
+    expect(
+      BridgeErrorPresenter.message(result),
+      'The pairing approval could not be authenticated.',
+    );
+  });
+
+  test(
+    'expired pairing state is distinct from a generic operation failure',
+    () {
+      const result = BridgeResultDto(
+        ok: false,
+        kind: 'error:pairing.session_not_found',
+      );
+      expect(
+        BridgeErrorPresenter.message(result),
+        'This pairing session is no longer available.',
+      );
+    },
+  );
 }

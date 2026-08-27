@@ -253,17 +253,20 @@ impl TorcaRuntime {
 
     pub(crate) fn next_pending_operation_delay(&self) -> Option<std::time::Duration> {
         let pending = self.application_runtime.next_pending_operation_delay();
-        // Provider startup completion is delivered on a background worker.
-        // Keep the native actor awake during this short-lived phase so it can
-        // consume HostStartEvent::Finished even when the UI is waiting on the
-        // revision condvar and no other FFI request arrives.
-        let startup = self.host_start.as_ref().map(|_| std::time::Duration::from_millis(100));
-        match (pending, startup) {
-            (Some(pending), Some(startup)) => Some(pending.min(startup)),
-            (Some(pending), None) => Some(pending),
-            (None, Some(startup)) => Some(startup),
-            (None, None) => None,
-        }
+        // Provider startup progress/finish wakes the actor through
+        // ActorMessage::InternalWake. There must be no periodic 100ms poll
+        // while a slow provider is bootstrapping. The real startup/retry
+        // deadlines remain as one-shot safety deadlines.
+        [
+            pending,
+            self.host_start_deadline
+                .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now())),
+            self.host_retry_at
+                .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now())),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     pub(crate) fn maintain_native_startup(&mut self) -> bool {

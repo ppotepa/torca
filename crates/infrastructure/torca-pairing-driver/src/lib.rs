@@ -336,6 +336,11 @@ impl<R, C, A, S> RuntimePairingDriver<R, C, A, S> {
 }
 
 fn map_pairing_error(error: PairingRuntimeError) -> RuntimeDriverError {
+    use torca_foundation::{ErrorCategory, ErrorCode, ErrorDescriptor, RetryAdvice};
+
+    let classified = |code, category, retry| {
+        RuntimeDriverError::Classified(ErrorDescriptor::new(ErrorCode::new(code), category, retry))
+    };
     match error {
         PairingRuntimeError::Coordinator(
             torca_pairing_coordinator::PairingCoordinatorError::BootstrapMissing,
@@ -364,7 +369,60 @@ fn map_pairing_error(error: PairingRuntimeError) -> RuntimeDriverError {
         PairingRuntimeError::Coordinator(
             torca_pairing_coordinator::PairingCoordinatorError::SessionService,
         ) => RuntimeDriverError::Communication,
-        PairingRuntimeError::SessionNotFound => RuntimeDriverError::Pairing,
-        _ => RuntimeDriverError::Pairing,
+        PairingRuntimeError::SessionNotFound => {
+            classified("pairing.session_not_found", ErrorCategory::NotFound, RetryAdvice::Never)
+        }
+        PairingRuntimeError::CreatorApprovalRequired => classified(
+            "pairing.creator_approval_required",
+            ErrorCategory::Conflict,
+            RetryAdvice::Never,
+        ),
+        PairingRuntimeError::IdentityMissing => {
+            classified("pairing.identity_missing", ErrorCategory::Conflict, RetryAdvice::Never)
+        }
+        PairingRuntimeError::InvalidOffer => {
+            classified("pairing.invalid_offer", ErrorCategory::InvalidInput, RetryAdvice::Never)
+        }
+        PairingRuntimeError::InvalidCompletion => {
+            classified("pairing.invalid_completion", ErrorCategory::Conflict, RetryAdvice::Never)
+        }
+        PairingRuntimeError::UnsupportedAlgorithm => classified(
+            "pairing.unsupported_algorithm",
+            ErrorCategory::InvalidInput,
+            RetryAdvice::Never,
+        ),
+        PairingRuntimeError::Approval(_) => {
+            classified("pairing.approval_invalid", ErrorCategory::Unauthorized, RetryAdvice::Never)
+        }
+        PairingRuntimeError::Credential(_) => classified(
+            "pairing.credential_storage_failed",
+            ErrorCategory::Internal,
+            RetryAdvice::Never,
+        ),
+        PairingRuntimeError::Engine => RuntimeDriverError::Engine,
+        PairingRuntimeError::Coordinator(_) => {
+            classified("pairing.protocol_failed", ErrorCategory::Conflict, RetryAdvice::Never)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_pairing_error;
+    use torca_foundation::ClassifiedError;
+    use torca_pairing_coordinator::{PairingApprovalError, PairingRuntimeError};
+
+    #[test]
+    fn approval_failure_keeps_a_specific_public_error_code() {
+        let error = map_pairing_error(PairingRuntimeError::Approval(
+            PairingApprovalError::InvalidTranscript,
+        ));
+        assert_eq!(error.descriptor().code().as_str(), "pairing.approval_invalid");
+    }
+
+    #[test]
+    fn missing_session_is_not_collapsed_into_generic_pairing_failure() {
+        let error = map_pairing_error(PairingRuntimeError::SessionNotFound);
+        assert_eq!(error.descriptor().code().as_str(), "pairing.session_not_found");
     }
 }

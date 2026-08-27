@@ -17,28 +17,37 @@ abstract final class BridgeErrorPresenter {
   }) {
     if (result.ok) return '';
     final strings = TorcaStrings.of(context);
-    final activeProvider = provider ??
-        RuntimeStatusScope.maybeOf(context)
-            ?.gateway
-            .snapshots
-            .value
-            .communicationProvider ??
+    final activeProvider =
+        provider ??
+        RuntimeStatusScope.maybeOf(
+          context,
+        )?.gateway.snapshots.value.communicationProvider ??
         'tor';
     final code = (result.errorCode ?? result.messageKey ?? '')
         .trim()
         .toLowerCase()
         .replaceAll('.', '_');
     final message = switch (code) {
-      'relay_not_ready' =>
-          strings.communicationProviderNotReady(activeProvider),
-      'relay_degraded' =>
-          strings.communicationProviderReconnecting(activeProvider),
+      'relay_not_ready' => strings.communicationProviderNotReady(
+        activeProvider,
+      ),
+      'relay_degraded' => strings.communicationProviderReconnecting(
+        activeProvider,
+      ),
       'profile_not_ready' => strings.profileNotReady,
       'identity_changed' => strings.identityChanged,
       'pairing_expired' => strings.pairingExpired,
       'pairing_bootstrap_missing' => strings.pairingBootstrapRequired,
       'pairing_provider_mismatch' => strings.pairingProviderMismatch,
       'pairing_bootstrap_invalid' => strings.invalidInput,
+      'pairing_session_not_found' => strings.itemNotFound,
+      'pairing_invalid_offer' ||
+      'pairing_invalid_completion' ||
+      'pairing_unsupported_algorithm' ||
+      'pairing_approval_invalid' => strings.invalidInput,
+      'pairing_credential_storage_failed' => strings.storageFailure,
+      'pairing_creator_approval_required' ||
+      'pairing_protocol_failed' => fallback ?? strings.operationFailed,
       'already_exists' => strings.itemAlreadyExists,
       'not_found' => strings.itemNotFound,
       'invalid_input' => strings.invalidInput,
@@ -73,9 +82,9 @@ abstract final class BridgeErrorPresenter {
         .replaceAll('.', '_');
     final typed = switch (code) {
       'relay_not_ready' =>
-          'Pairing is unavailable until the selected communication provider is ready.',
+        'Pairing is unavailable until the selected communication provider is ready.',
       'relay_degraded' =>
-          'Pairing is temporarily unavailable while the communication provider reconnects.',
+        'Pairing is temporarily unavailable while the communication provider reconnects.',
       'profile_not_ready' =>
         'The secure runtime is not ready for profile setup.',
       'identity_changed' =>
@@ -86,6 +95,22 @@ abstract final class BridgeErrorPresenter {
       'pairing_provider_mismatch' =>
         'This invitation belongs to a different communication provider.',
       'pairing_bootstrap_invalid' => 'The invitation bootstrap is invalid.',
+      'pairing_session_not_found' =>
+        'This pairing session is no longer available.',
+      'pairing_creator_approval_required' =>
+        'The device that created the invitation must approve this contact.',
+      'pairing_invalid_offer' =>
+        'The peer sent an invalid pairing offer. Create a new invitation.',
+      'pairing_invalid_completion' =>
+        'Pairing completion could not be verified. Create a new invitation.',
+      'pairing_unsupported_algorithm' =>
+        'The peer uses an unsupported identity algorithm.',
+      'pairing_approval_invalid' =>
+        'The pairing approval could not be authenticated.',
+      'pairing_credential_storage_failed' =>
+        'The contact credential could not be saved securely.',
+      'pairing_protocol_failed' =>
+        'The pairing session entered an invalid state. Create a new invitation.',
       'already_exists' => 'This item already exists.',
       'not_found' => 'The requested item is no longer available.',
       'invalid_input' => 'The supplied value is not valid.',

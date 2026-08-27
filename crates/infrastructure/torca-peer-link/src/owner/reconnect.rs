@@ -34,6 +34,7 @@ pub(super) fn reconnect_delay(
 
 #[cfg(test)]
 mod tests {
+    use super::super::peer_recovery_delay;
     use super::*;
 
     #[test]
@@ -44,5 +45,13 @@ mod tests {
             assert!(delay >= Duration::from_secs(1));
             assert!(delay <= Duration::from_secs(60));
         }
+    }
+
+    #[test]
+    fn peer_recovery_tick_stops_after_bounded_window() {
+        let start = Timestamp::UNIX_EPOCH;
+        assert_eq!(peer_recovery_delay(Some(start), start), Some(Duration::from_millis(250)));
+        let after_window = start.checked_add(Duration::from_secs(31)).expect("valid timestamp");
+        assert_eq!(peer_recovery_delay(Some(start), after_window), None);
     }
 }

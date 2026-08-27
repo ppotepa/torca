@@ -204,6 +204,7 @@ class TorcaStrings {
         ? 'Provider komunikacji ($label) ponownie nawiazuje polaczenie. Sprobuj za chwile.'
         : 'The $label communication provider is reconnecting. Try again shortly.';
   }
+
   String get profileNotReady => _pl
       ? 'Bezpieczny profil nie jest jeszcze gotowy.'
       : 'The secure profile is not ready yet.';
@@ -232,9 +233,8 @@ class TorcaStrings {
   String get routeRefreshRequired => _pl
       ? 'Trasa połączenia jest odświeżana. Spróbuj ponownie za chwilę.'
       : 'The communication route is being refreshed. Try again shortly.';
-  String get refreshProviderRoute => _pl
-      ? 'Odśwież trasę providera'
-      : 'Refresh provider route';
+  String get refreshProviderRoute =>
+      _pl ? 'Odśwież trasę providera' : 'Refresh provider route';
   String get routeRefreshRequested => _pl
       ? 'Zażądano odświeżenia trasy providera.'
       : 'Provider route refresh requested.';
@@ -310,9 +310,8 @@ class TorcaStrings {
       _pl ? 'Elementów: $count' : '$count item${count == 1 ? '' : 's'}';
   String get noActiveTransfers =>
       _pl ? 'Brak aktywnych transferow.' : 'No active transfers.';
-  String waitingForDependency(String dependency) => _pl
-      ? 'Oczekuje: $dependency'
-      : 'Waiting for: $dependency';
+  String waitingForDependency(String dependency) =>
+      _pl ? 'Oczekuje: $dependency' : 'Waiting for: $dependency';
   String get diagnosticsExported =>
       _pl ? 'Diagnostyka wyeksportowana' : 'Diagnostics exported';
   String get exportFailed => _pl ? 'Eksport nieudany' : 'Export failed';
@@ -426,6 +425,7 @@ class TorcaStrings {
         ? 'Runtime komunikacji ($label) nie jest gotowy. Sprawdz diagnostyke i sprobuj ponownie.'
         : 'The $label communication runtime is not ready. Check diagnostics and retry.';
   }
+
   String get modern => _pl ? 'Nowoczesny' : 'Modern';
   String get terminal => _pl ? 'Terminal' : 'Terminal';
   String get compactDensity => _pl ? 'Gestosc kompaktowa' : 'Compact density';
@@ -555,9 +555,9 @@ class TorcaStrings {
       : 'Create and manage short-lived private contact invitations.';
   String get generateInvitation =>
       _pl ? 'Wygeneruj zaproszenie' : 'Generate Invitation';
-  String get copyCode => _pl ? 'Kopiuj kod' : 'Copy code';
+  String get copyCode => _pl ? 'Kopiuj zaproszenie' : 'Copy invitation';
   String get invitationCodeCopied =>
-      _pl ? 'Kod zaproszenia skopiowany' : 'Invitation code copied';
+      _pl ? 'Pełne zaproszenie skopiowane' : 'Full invitation copied';
   String get done => _pl ? 'Gotowe' : 'Done';
   String get accept => _pl ? 'Akceptuj' : 'Accept';
   String get reject => _pl ? 'Odrzuc' : 'Reject';

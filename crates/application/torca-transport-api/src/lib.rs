@@ -201,6 +201,125 @@ impl TransportKind {
         // composed in Rust and can be selected without that platform bridge.
         &[Self::Tor, Self::Iroh]
     }
+
+    /// Complete provider-neutral descriptor for deployment UIs and plans.
+    /// Consumers should use this instead of matching on a provider name.
+    pub const fn descriptor(self) -> ProviderDescriptor {
+        match self {
+            Self::Tor => ProviderDescriptor {
+                kind: Self::Tor,
+                label: "Tor (onion)",
+                description: "Managed onion rendezvous service with discovery and warm-up.",
+                managed_service: true,
+                profiles: &[ProviderProfileDescriptor {
+                    id: "default",
+                    label: "Default",
+                    description: "Managed onion service.",
+                }],
+                maintenance: &[
+                    MaintenanceOption::Ensure,
+                    MaintenanceOption::Restart,
+                    MaintenanceOption::RepairDirectoryCache,
+                    MaintenanceOption::RotateIdentity,
+                ],
+                endpoint_required: true,
+                warmup_stages: &["bootstrap", "publish endpoint", "verify service"],
+            },
+            Self::Iroh => ProviderDescriptor {
+                kind: Self::Iroh,
+                label: "Iroh (QUIC)",
+                description: "Direct QUIC provider with optional discovery and relay fallback.",
+                managed_service: false,
+                profiles: &[
+                    ProviderProfileDescriptor {
+                        id: "always",
+                        label: "Always reachable",
+                        description: "Discovery and relay fallback.",
+                    },
+                    ProviderProfileDescriptor {
+                        id: "direct",
+                        label: "Direct only",
+                        description: "Direct paths only.",
+                    },
+                    ProviderProfileDescriptor {
+                        id: "local",
+                        label: "Local only",
+                        description: "Loopback or lab use.",
+                    },
+                ],
+                maintenance: &[],
+                endpoint_required: false,
+                warmup_stages: &["start local endpoint"],
+            },
+            Self::WebRtc => ProviderDescriptor {
+                kind: Self::WebRtc,
+                label: "WebRTC (ICE/TURN)",
+                description: "External signaling provider.",
+                managed_service: false,
+                profiles: &[],
+                maintenance: &[],
+                endpoint_required: true,
+                warmup_stages: &["connect signaling", "gather ICE"],
+            },
+            Self::Memory => ProviderDescriptor {
+                kind: Self::Memory,
+                label: "Memory (test)",
+                description: "In-process test provider.",
+                managed_service: false,
+                profiles: &[],
+                maintenance: &[],
+                endpoint_required: false,
+                warmup_stages: &["start local endpoint"],
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProviderProfileDescriptor {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MaintenanceOption {
+    Ensure,
+    Restart,
+    RepairDirectoryCache,
+    RotateIdentity,
+}
+
+impl MaintenanceOption {
+    pub const fn wire_value(self) -> &'static str {
+        match self {
+            Self::Ensure => "ensure",
+            Self::Restart => "restart",
+            Self::RepairDirectoryCache => "repair_directory_cache",
+            Self::RotateIdentity => "rotate_identity",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ensure => "Ensure",
+            Self::Restart => "Restart",
+            Self::RepairDirectoryCache => "Repair directory cache",
+            Self::RotateIdentity => "Rotate identity",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProviderDescriptor {
+    pub kind: TransportKind,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub managed_service: bool,
+    pub profiles: &'static [ProviderProfileDescriptor],
+    pub maintenance: &'static [MaintenanceOption],
+    pub endpoint_required: bool,
+    pub warmup_stages: &'static [&'static str],
 }
 
 impl core::fmt::Display for TransportKind {

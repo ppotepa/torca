@@ -3,7 +3,118 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub use torca_transport_api::TransportKind as CommunicationProvider;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldId {
+    Targets,
+    Configuration,
+    ClientBuild,
+    ProviderServiceBuild,
+    ProviderMaintenance,
+    ClientData,
+    Privacy,
+    CommunicationProvider,
+    ProviderProfile,
+    Validation,
+    Launch,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub enum FieldAvailability {
+    Editable,
+    ReadOnly { reason: String },
+    Disabled { reason: String },
+    Hidden,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ValueOption {
+    pub value: String,
+    pub label: String,
+    pub description: String,
+    pub destructive: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorkEstimate {
+    pub steps: usize,
+    pub minutes: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct FieldCapability {
+    pub id: FieldId,
+    pub availability: FieldAvailability,
+    pub label: String,
+    pub description: String,
+    pub values: Vec<ValueOption>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PlanCapabilities {
+    pub fields: Vec<FieldCapability>,
+    pub destructive: bool,
+    pub estimated_work: WorkEstimate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum StepId {
+    DiscoverDevices,
+    Preflight,
+    ProviderService,
+    BuildArtifacts,
+    ResetClientData,
+    InstallClients,
+    LaunchClients,
+    ValidateRuntime,
+    CollectLogs,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub enum StepDisposition {
+    Execute,
+    Reuse,
+    Skip,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PlannedStep {
+    pub id: StepId,
+    pub label: String,
+    pub disposition: StepDisposition,
+    pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum CheckStatus {
+    Pass,
+    Warn,
+    Fail,
+    Skipped,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PreflightCheck {
+    pub name: String,
+    pub status: CheckStatus,
+    pub detail: String,
+    pub remediation: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PreflightReport {
+    pub checks: Vec<PreflightCheck>,
+    pub can_execute: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PlanDiff {
+    pub changes: Vec<String>,
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -268,6 +379,7 @@ impl DeployPlan {
             self.provider_service_build = BuildPolicy::Rebuild;
         }
         if self.action == DeployAction::ProviderMaintenance {
+            self.client_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Skip;
         }
@@ -292,6 +404,463 @@ impl DeployPlan {
         self
     }
 
+    /// Returns the context-sensitive fields shown by the wizard.  The method
+    /// deliberately works from the normalized plan so review and execution
+    /// cannot disagree about an implied value.
+    pub fn capabilities(&self) -> PlanCapabilities {
+        let plan = self.clone().normalized();
+        let managed =
+            plan.communication_provider.deployment_profile().commissioning_service.is_managed();
+        let descriptor = plan.communication_provider.descriptor();
+        let mut fields = Vec::new();
+        let mut add =
+            |id, availability, label: &str, description: &str, values: Vec<ValueOption>| {
+                fields.push(FieldCapability {
+                    id,
+                    availability,
+                    label: label.into(),
+                    description: description.into(),
+                    values,
+                });
+            };
+        add(
+            FieldId::Targets,
+            if plan.action == DeployAction::ProviderMaintenance {
+                FieldAvailability::Hidden
+            } else {
+                FieldAvailability::Editable
+            },
+            "Targets",
+            "Clients and devices affected by this plan.",
+            Vec::new(),
+        );
+        add(
+            FieldId::Configuration,
+            if matches!(
+                plan.action,
+                DeployAction::CollectLogs
+                    | DeployAction::RunInstalled
+                    | DeployAction::ProviderMaintenance
+            ) {
+                FieldAvailability::Hidden
+            } else {
+                FieldAvailability::Editable
+            },
+            "Configuration",
+            "Build configuration.",
+            vec![option("debug", "Debug", false), option("release", "Release", false)],
+        );
+        let build_availability =
+            if matches!(plan.action, DeployAction::CollectLogs | DeployAction::ProviderMaintenance)
+            {
+                FieldAvailability::Hidden
+            } else if plan.action == DeployAction::RunInstalled {
+                FieldAvailability::ReadOnly {
+                    reason: "This action reuses installed or existing artifacts.".into(),
+                }
+            } else if plan.action == DeployAction::RedeployCurrent {
+                FieldAvailability::ReadOnly {
+                    reason: "Redeploy uses the current verified artifacts when possible.".into(),
+                }
+            } else if matches!(plan.action, DeployAction::Rebuild | DeployAction::FullRedeploy) {
+                FieldAvailability::ReadOnly {
+                    reason: "This action requires rebuilding client artifacts.".into(),
+                }
+            } else {
+                FieldAvailability::Editable
+            };
+        add(
+            FieldId::ClientBuild,
+            build_availability,
+            "Client build",
+            "Build or reuse client artifacts.",
+            vec![
+                option("reuse", "Reuse", false),
+                option("if_required", "If required", false),
+                option("rebuild", "Rebuild", false),
+            ],
+        );
+        let service_availability = if !managed {
+            FieldAvailability::Disabled {
+                reason: "This provider has no deployer-managed service.".into(),
+            }
+        } else if matches!(plan.action, DeployAction::RunInstalled) {
+            FieldAvailability::ReadOnly {
+                reason: "Run installed reuses the existing provider service.".into(),
+            }
+        } else if matches!(plan.action, DeployAction::Rebuild | DeployAction::FullRedeploy) {
+            FieldAvailability::ReadOnly {
+                reason: "This action requires rebuilding the provider service.".into(),
+            }
+        } else if matches!(plan.action, DeployAction::CollectLogs | DeployAction::BuildArtifacts) {
+            FieldAvailability::Hidden
+        } else {
+            FieldAvailability::Editable
+        };
+        add(
+            FieldId::ProviderServiceBuild,
+            service_availability,
+            "Provider service build",
+            "Build the provider-owned service when supported.",
+            vec![
+                option("reuse", "Reuse", false),
+                option("if_required", "If required", false),
+                option("rebuild", "Rebuild", false),
+            ],
+        );
+        let maintenance_availability = if !managed {
+            FieldAvailability::Disabled {
+                reason: "This provider has no deployer-managed service.".into(),
+            }
+        } else if matches!(
+            plan.action,
+            DeployAction::FullRedeploy | DeployAction::ProviderMaintenance
+        ) {
+            FieldAvailability::Editable
+        } else {
+            FieldAvailability::Hidden
+        };
+        add(
+            FieldId::ProviderMaintenance,
+            maintenance_availability,
+            "Provider maintenance",
+            "Managed provider service operation.",
+            descriptor
+                .maintenance
+                .iter()
+                .map(|maintenance| {
+                    option(
+                        maintenance.wire_value(),
+                        maintenance.label(),
+                        matches!(
+                            maintenance,
+                            torca_transport_api::MaintenanceOption::RotateIdentity
+                        ),
+                    )
+                })
+                .collect(),
+        );
+        let data_availability = if matches!(
+            plan.action,
+            DeployAction::RunInstalled
+                | DeployAction::CollectLogs
+                | DeployAction::ProviderMaintenance
+        ) {
+            FieldAvailability::ReadOnly { reason: "This action preserves client data.".into() }
+        } else {
+            FieldAvailability::Editable
+        };
+        add(
+            FieldId::ClientData,
+            data_availability,
+            "Client data",
+            "Preserve, reset profiles, or reset all local data.",
+            vec![
+                option("preserve", "Preserve", false),
+                option("reset_profile", "Reset profile", true),
+                option("reset_all", "Reset all", true),
+            ],
+        );
+        add(
+            FieldId::Privacy,
+            if plan.action == DeployAction::CollectLogs {
+                FieldAvailability::Hidden
+            } else if plan.targets.contains(&Target::Android) {
+                FieldAvailability::Editable
+            } else {
+                FieldAvailability::Hidden
+            },
+            "Privacy",
+            "Android screen-capture protection.",
+            vec![
+                option("strict", "Strict", false),
+                option("allow_capture", "Allow capture", false),
+            ],
+        );
+        add(
+            FieldId::CommunicationProvider,
+            FieldAvailability::Editable,
+            "Provider",
+            plan.communication_provider.protocol_label(),
+            CommunicationProvider::selectable()
+                .iter()
+                .map(|provider| option(provider.wire_value(), provider.protocol_label(), false))
+                .collect(),
+        );
+        add(
+            FieldId::ProviderProfile,
+            if descriptor.profiles.is_empty() {
+                FieldAvailability::Hidden
+            } else {
+                FieldAvailability::Editable
+            },
+            "Provider profile",
+            "Provider-owned routing profile.",
+            descriptor
+                .profiles
+                .iter()
+                .map(|profile| ValueOption {
+                    value: profile.id.into(),
+                    label: profile.label.into(),
+                    description: profile.description.into(),
+                    destructive: false,
+                })
+                .collect(),
+        );
+        add(
+            FieldId::Validation,
+            if matches!(
+                plan.action,
+                DeployAction::CollectLogs
+                    | DeployAction::ProviderMaintenance
+                    | DeployAction::RunInstalled
+            ) {
+                FieldAvailability::Hidden
+            } else {
+                FieldAvailability::Editable
+            },
+            "Validation",
+            "Runtime readiness validation.",
+            vec![
+                option("skip", "Skip", false),
+                option("quick", "Quick", false),
+                option("full", "Full", false),
+            ],
+        );
+        add(
+            FieldId::Launch,
+            if matches!(plan.action, DeployAction::CollectLogs | DeployAction::ProviderMaintenance)
+            {
+                FieldAvailability::Hidden
+            } else {
+                FieldAvailability::Editable
+            },
+            "Launch",
+            "Start selected clients.",
+            vec![
+                option("skip", "Skip", false),
+                option("start", "Start", false),
+                option("restart", "Restart", false),
+            ],
+        );
+        let destructive = !matches!(plan.client_data, ClientDataPolicy::Preserve)
+            || plan.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity;
+        PlanCapabilities {
+            fields,
+            destructive,
+            estimated_work: WorkEstimate {
+                steps: plan
+                    .planned_steps()
+                    .iter()
+                    .filter(|s| matches!(s.disposition, StepDisposition::Execute))
+                    .count(),
+                minutes: if destructive { 8 } else { 4 },
+            },
+        }
+    }
+
+    pub fn planned_steps(&self) -> Vec<PlannedStep> {
+        let plan = self.clone().normalized();
+        let mut steps = vec![
+            planned_step(
+                StepId::DiscoverDevices,
+                "Discover devices",
+                if plan.action == DeployAction::ProviderMaintenance {
+                    StepDisposition::Skip
+                } else {
+                    StepDisposition::Execute
+                },
+                if plan.action == DeployAction::ProviderMaintenance {
+                    "maintenance does not require client device discovery"
+                } else {
+                    "selected targets"
+                },
+            ),
+            planned_step(
+                StepId::Preflight,
+                "Preflight",
+                StepDisposition::Execute,
+                "validate plan and environment",
+            ),
+        ];
+        steps.push(planned_step(
+            StepId::ProviderService,
+            "Provider service",
+            if plan.needs_provider_service() {
+                StepDisposition::Execute
+            } else {
+                StepDisposition::Skip
+            },
+            if plan.needs_provider_service() {
+                "managed by selected provider"
+            } else {
+                "selected provider has no deployer-managed service"
+            },
+        ));
+        if matches!(plan.client_build, BuildPolicy::Rebuild | BuildPolicy::IfRequired)
+            && !matches!(plan.action, DeployAction::RunInstalled | DeployAction::CollectLogs)
+        {
+            steps.push(planned_step(
+                StepId::BuildArtifacts,
+                "Build artifacts",
+                StepDisposition::Execute,
+                "client build policy",
+            ));
+        } else {
+            steps.push(planned_step(
+                StepId::BuildArtifacts,
+                "Build artifacts",
+                if plan.action == DeployAction::RunInstalled {
+                    StepDisposition::Reuse
+                } else {
+                    StepDisposition::Skip
+                },
+                if plan.action == DeployAction::RunInstalled {
+                    "Run installed reuses verified artifacts"
+                } else {
+                    "this action does not build client artifacts"
+                },
+            ));
+        }
+        steps.push(planned_step(
+            StepId::ResetClientData,
+            "Reset client data",
+            if matches!(plan.client_data, ClientDataPolicy::Preserve) {
+                StepDisposition::Skip
+            } else {
+                StepDisposition::Execute
+            },
+            if matches!(plan.client_data, ClientDataPolicy::Preserve) {
+                "preserve policy selected"
+            } else {
+                "destructive data policy selected"
+            },
+        ));
+        steps.push(planned_step(
+            StepId::InstallClients,
+            "Install clients",
+            if matches!(plan.action, DeployAction::RunInstalled | DeployAction::BuildArtifacts) {
+                StepDisposition::Reuse
+            } else if matches!(
+                plan.action,
+                DeployAction::CollectLogs | DeployAction::ProviderMaintenance
+            ) {
+                StepDisposition::Skip
+            } else {
+                StepDisposition::Execute
+            },
+            if plan.action == DeployAction::RunInstalled {
+                "installed clients are reused"
+            } else if plan.action == DeployAction::BuildArtifacts {
+                "artifact-only action does not install"
+            } else if plan.action == DeployAction::CollectLogs {
+                "log collection does not install clients"
+            } else if plan.action == DeployAction::ProviderMaintenance {
+                "provider maintenance does not install clients"
+            } else {
+                "install selected artifacts"
+            },
+        ));
+        steps.push(planned_step(
+            StepId::LaunchClients,
+            "Launch clients",
+            if matches!(plan.launch, LaunchPolicy::Skip) {
+                StepDisposition::Skip
+            } else {
+                StepDisposition::Execute
+            },
+            "launch policy selected",
+        ));
+        steps.push(planned_step(
+            StepId::ValidateRuntime,
+            "Validate runtime",
+            if matches!(plan.validation, ValidationLevel::Skip)
+                || matches!(
+                    plan.action,
+                    DeployAction::CollectLogs | DeployAction::ProviderMaintenance
+                )
+            {
+                StepDisposition::Skip
+            } else {
+                StepDisposition::Execute
+            },
+            "validation policy selected",
+        ));
+        if plan.action == DeployAction::CollectLogs {
+            steps.push(planned_step(
+                StepId::CollectLogs,
+                "Collect logs",
+                StepDisposition::Execute,
+                "diagnostic collection",
+            ));
+        }
+        steps
+    }
+
+    /// Plan-only checks shared by CLI and the interactive wizard. It never
+    /// probes, builds, installs, or mutates a device.
+    pub fn preflight(&self) -> PreflightReport {
+        let plan = self.clone().normalized();
+        let mut checks = Vec::new();
+        match plan.validate() {
+            Ok(()) => checks.push(PreflightCheck {
+                name: "Plan".into(),
+                status: CheckStatus::Pass,
+                detail: "normalized plan is valid".into(),
+                remediation: None,
+            }),
+            Err(error) => checks.push(PreflightCheck {
+                name: "Plan".into(),
+                status: CheckStatus::Fail,
+                detail: error.to_string(),
+                remediation: Some("edit the affected plan option".into()),
+            }),
+        }
+        checks.push(PreflightCheck {
+            name: "Provider profile".into(),
+            status: CheckStatus::Pass,
+            detail: plan.communication_provider.protocol_label().into(),
+            remediation: None,
+        });
+        let can_execute = checks.iter().all(|check| check.status != CheckStatus::Fail);
+        PreflightReport { checks, can_execute }
+    }
+
+    pub fn normalized_diff(&self) -> PlanDiff {
+        let normalized = self.clone().normalized();
+        let mut changes = Vec::new();
+        macro_rules! compare {
+            ($field:ident) => {
+                if self.$field != normalized.$field {
+                    changes.push(format!(
+                        "{}: {:?} -> {:?}",
+                        stringify!($field),
+                        self.$field,
+                        normalized.$field
+                    ));
+                }
+            };
+        }
+        compare!(action);
+        compare!(targets);
+        compare!(client_build);
+        compare!(provider_service_build);
+        compare!(client_data);
+        compare!(launch);
+        compare!(provider_maintenance);
+        PlanDiff { changes }
+    }
+
+    /// Stable, redaction-safe identity of the normalized execution plan. The
+    /// executor stores it with every checkpoint so a retry cannot silently
+    /// reuse completed stages after the plan has been edited.
+    pub fn fingerprint(&self) -> String {
+        let normalized = self.clone().normalized();
+        let payload = serde_json::to_vec(&normalized).unwrap_or_default();
+        let digest = Sha256::digest(payload);
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
     pub fn needs_provider_service(&self) -> bool {
         self.communication_provider.deployment_profile().commissioning_service.is_managed()
             && !matches!(
@@ -311,6 +880,19 @@ impl DeployPlan {
     }
 }
 
+fn option(value: &str, label: &str, destructive: bool) -> ValueOption {
+    ValueOption { value: value.into(), label: label.into(), description: label.into(), destructive }
+}
+
+fn planned_step(
+    id: StepId,
+    label: &str,
+    disposition: StepDisposition,
+    reason: &str,
+) -> PlannedStep {
+    PlannedStep { id, label: label.into(), disposition, reason: reason.into() }
+}
+
 #[derive(Debug, Error)]
 pub enum PlanError {
     #[error("a client deployment requires at least one target")]
@@ -325,6 +907,8 @@ pub enum PlanError {
     UnsupportedProviderMaintenance { provider: CommunicationProvider },
     #[error("provider '{provider}' does not support profile '{profile}'")]
     InvalidProviderProfile { provider: CommunicationProvider, profile: String },
+    #[error("deployment checkpoint does not match the normalized plan")]
+    PlanFingerprintMismatch,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -360,6 +944,9 @@ pub struct DeployRun {
     pub run_id: String,
     pub started_at_ms: u128,
     pub plan: DeployPlan,
+    /// Empty is accepted for legacy checkpoints and filled on first resume.
+    #[serde(default)]
+    pub plan_fingerprint: String,
     pub stage: DeployStage,
     #[serde(alias = "relay_endpoint")]
     pub provider_endpoint: Option<String>,
@@ -369,6 +956,7 @@ pub struct DeployRun {
 
 impl DeployRun {
     pub fn new(plan: DeployPlan) -> Self {
+        let plan_fingerprint = plan.fingerprint();
         let started_at_ms =
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
         Self {
@@ -376,6 +964,7 @@ impl DeployRun {
             run_id: format!("{started_at_ms:x}-{}", std::process::id()),
             started_at_ms,
             plan,
+            plan_fingerprint,
             stage: DeployStage::Planned,
             provider_endpoint: None,
             completed: Vec::new(),
@@ -510,6 +1099,61 @@ mod tests {
     }
 
     #[test]
+    fn capabilities_are_populated_from_the_selected_provider_descriptor() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::FullRedeploy,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        plan.communication_provider = CommunicationProvider::Iroh;
+        let capabilities = plan.capabilities();
+        let profile = capabilities
+            .fields
+            .iter()
+            .find(|field| field.id == FieldId::ProviderProfile)
+            .expect("iroh profile capability");
+        assert!(matches!(profile.availability, FieldAvailability::Editable));
+        assert_eq!(
+            profile.values.iter().map(|value| value.value.as_str()).collect::<Vec<_>>(),
+            ["always", "direct", "local"]
+        );
+        let maintenance = capabilities
+            .fields
+            .iter()
+            .find(|field| field.id == FieldId::ProviderMaintenance)
+            .expect("iroh maintenance capability");
+        assert!(maintenance.values.is_empty());
+        assert!(matches!(maintenance.availability, FieldAvailability::Disabled { .. }));
+    }
+
+    #[test]
+    fn provider_maintenance_reuses_client_artifacts_and_skips_client_build_step() {
+        let plan =
+            DeployPlan::normal(DeployAction::ProviderMaintenance, Vec::new(), Configuration::Debug);
+        let normalized = plan.normalized();
+        assert_eq!(normalized.client_build, BuildPolicy::Reuse);
+        let build = normalized
+            .planned_steps()
+            .into_iter()
+            .find(|step| step.id == StepId::BuildArtifacts)
+            .expect("client build step");
+        assert_eq!(build.disposition, StepDisposition::Skip);
+        let install = normalized
+            .planned_steps()
+            .into_iter()
+            .find(|step| step.id == StepId::InstallClients)
+            .expect("client install step");
+        assert_eq!(install.disposition, StepDisposition::Skip);
+        let capability = normalized
+            .capabilities()
+            .fields
+            .into_iter()
+            .find(|field| field.id == FieldId::ClientBuild)
+            .expect("client build capability");
+        assert_eq!(capability.availability, FieldAvailability::Hidden);
+    }
+
+    #[test]
     fn provider_profile_is_rejected_when_blank() {
         let mut plan = DeployPlan::normal(
             DeployAction::RedeployCurrent,
@@ -552,6 +1196,81 @@ mod tests {
             serde_json::from_str::<DeployStage>("\"relay_reachable\"")
                 .expect("legacy deployment stage"),
             DeployStage::ProviderServiceReachable
+        );
+    }
+
+    #[test]
+    fn collect_logs_hides_deployment_fields() {
+        let plan = DeployPlan::normal(
+            DeployAction::CollectLogs,
+            vec![Target::Android],
+            Configuration::Debug,
+        );
+        let fields = plan.capabilities().fields;
+        assert!(matches!(
+            fields.iter().find(|field| field.id == FieldId::Privacy).unwrap().availability,
+            FieldAvailability::Hidden
+        ));
+        assert!(matches!(
+            fields.iter().find(|field| field.id == FieldId::Launch).unwrap().availability,
+            FieldAvailability::Hidden
+        ));
+        let steps = plan.planned_steps();
+        assert!(steps.iter().any(|step| {
+            step.id == StepId::DiscoverDevices && step.disposition == StepDisposition::Execute
+        }));
+        assert!(steps.iter().any(|step| {
+            step.id == StepId::CollectLogs && step.disposition == StepDisposition::Execute
+        }));
+    }
+
+    #[test]
+    fn run_installed_reuses_artifacts_and_installed_clients() {
+        let plan = DeployPlan::normal(
+            DeployAction::RunInstalled,
+            vec![Target::Windows],
+            Configuration::Debug,
+        );
+        let steps = plan.planned_steps();
+        assert!(steps.iter().any(|step| {
+            step.id == StepId::BuildArtifacts && step.disposition == StepDisposition::Reuse
+        }));
+        assert!(steps.iter().any(|step| {
+            step.id == StepId::InstallClients && step.disposition == StepDisposition::Reuse
+        }));
+    }
+
+    #[test]
+    fn direct_provider_exposes_disabled_service_with_reason() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::FullRedeploy,
+            vec![Target::Windows],
+            Configuration::Debug,
+        );
+        plan.communication_provider = CommunicationProvider::Iroh;
+        let service = plan
+            .capabilities()
+            .fields
+            .into_iter()
+            .find(|field| field.id == FieldId::ProviderServiceBuild)
+            .unwrap();
+        assert!(matches!(service.availability, FieldAvailability::Disabled { .. }));
+        assert!(
+            plan.planned_steps().iter().any(|step| step.id == StepId::ProviderService
+                && step.disposition == StepDisposition::Skip)
+        );
+    }
+
+    #[test]
+    fn normalized_diff_explains_run_installed_invariants() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::RunInstalled,
+            vec![Target::Windows],
+            Configuration::Debug,
+        );
+        plan.client_build = BuildPolicy::Rebuild;
+        assert!(
+            plan.normalized_diff().changes.iter().any(|change| change.contains("client_build"))
         );
     }
 }

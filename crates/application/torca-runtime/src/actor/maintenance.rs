@@ -496,13 +496,8 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: Communic
     // arrives before the callback is installed.  Ready peers remain fully
     // event-driven; only active connection establishment gets this cheap
     // recovery tick.
-    let peer_delay = if active_transport {
-        Some(Duration::from_millis(250))
-    } else {
-        scheduling
-            .peer_probe_deadline
-            .and_then(|deadline| deadline.duration_since(now))
-    };
+    let peer_delay = peer_recovery_deadline(scheduling, active_transport, std::time::Instant::now())
+        .or_else(|| scheduling.peer_probe_deadline.and_then(|deadline| deadline.duration_since(now)));
     scheduling.replace_deadlines(
         std::time::Instant::now(),
         [
@@ -520,4 +515,52 @@ fn update_runtime_schedule<P: PairingDriver, C: CommunicationDriver, T: Communic
     );
     diagnostics.set_policy_snapshot(policy.snapshot(std::time::Instant::now()));
     diagnostics.set_runtime_schedule(scheduling.diagnostic_snapshot(std::time::Instant::now()));
+}
+
+fn next_peer_recovery_delay(delay: Duration) -> Duration {
+    (delay * 2).min(Duration::from_secs(5))
+}
+
+const PEER_RECOVERY_WINDOW: Duration = Duration::from_secs(30);
+
+/// Schedules only a bounded safety-net for a connection callback that was
+/// lost. Once the window expires, a permanently stuck transport must wait for
+/// a real provider/network event instead of waking the runtime forever.
+fn peer_recovery_deadline(
+    scheduling: &mut RuntimeSchedulingState,
+    active_transport: bool,
+    now: std::time::Instant,
+) -> Option<Duration> {
+    if !active_transport {
+        scheduling.peer_recovery_delay = None;
+        scheduling.peer_recovery_started_at = None;
+        scheduling.peer_recovery_attempts = 0;
+        scheduling.peer_recovery_exhausted = false;
+        return None;
+    }
+
+    let started_at = match scheduling.peer_recovery_started_at {
+        Some(started_at) => started_at,
+        None => {
+            scheduling.peer_recovery_generation =
+                scheduling.peer_recovery_generation.saturating_add(1);
+            scheduling.peer_recovery_attempts = 0;
+            scheduling.peer_recovery_exhausted = false;
+            let started_at = now;
+            scheduling.peer_recovery_started_at = Some(started_at);
+            started_at
+        }
+    };
+    let elapsed = now.saturating_duration_since(started_at);
+    if elapsed >= PEER_RECOVERY_WINDOW {
+        scheduling.peer_recovery_delay = None;
+        scheduling.peer_recovery_exhausted = true;
+        return None;
+    }
+
+    let delay = scheduling.peer_recovery_delay.unwrap_or(Duration::from_millis(250));
+    let delay = delay.min(PEER_RECOVERY_WINDOW.saturating_sub(elapsed));
+    scheduling.peer_recovery_attempts = scheduling.peer_recovery_attempts.saturating_add(1);
+    scheduling.peer_recovery_delay = Some(next_peer_recovery_delay(delay));
+    Some(delay)
 }

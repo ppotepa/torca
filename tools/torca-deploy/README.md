@@ -17,6 +17,10 @@ cargo run -p torca-deploy -- build --target windows --configuration debug
 cargo run -p torca-deploy -- deploy --target android --device <adb-serial>
 # Explicitly allow Android screenshots/screen recording for a local test run.
 cargo run -p torca-deploy -- run --target android --privacy allow-capture
+# Print the same normalized step graph used by the executor.
+cargo run -p torca-deploy -- plan --dry-run --show-steps --preflight
+# Select an alternate semantic color theme (or disable color).
+cargo run -p torca-deploy -- plan --dry-run --theme amber --no-color
 ```
 
 No command arguments opens the Ratatui wizard. CLI commands are intended for
@@ -33,8 +37,14 @@ Each run is saved under:
 .torca/deploy/runs/<run-id>.events.jsonl
 ```
 
-The TUI asks for target, debug/release configuration, client-data policy,
-onion policy and screen-capture privacy after the workflow is selected.
+The TUI derives a contextual field list from `DeployPlan::capabilities()`.
+Unsupported fields are hidden or disabled with a reason; implied values are
+read-only. `DeployPlan::planned_steps()` is the single execution graph shown
+by review and `--dry-run`. The semantic themes are `aurora` (default),
+`amber`, and `high-contrast`; `NO_COLOR` and `--no-color` retain textual
+status symbols while removing terminal colors. In the action screen, `t`
+cycles themes and `c` toggles monochrome mode; the choice is persisted at
+`.torca/deploy/ui.json`.
 The CLI-only `--device` option restricts discovery, ABI selection, reset,
 installation and launch to one exact device id; when omitted, all ready
 devices for the selected target are used.
@@ -44,6 +54,9 @@ does not change message encryption, transport privacy, or relay data handling.
 `Enter` shows a final plan
 confirmation. The
 process output is streamed while the Rust checkpoint is updated after stages.
+Each checkpoint includes a normalized plan fingerprint; resume rejects a
+checkpoint whose plan was changed, preventing accidental reuse of stale
+completed stages.
 
 Relay onion rotation is destructive. The typed plan rejects it unless relay and
 all client artifacts are rebuilt and both Windows and Android are targeted.
