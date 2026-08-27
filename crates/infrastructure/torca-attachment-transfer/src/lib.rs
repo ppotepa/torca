@@ -1484,21 +1484,21 @@ fn map_attachment(_: AttachmentError) -> AttachmentTransferError {
 
 fn transfer_error_code(error: &AttachmentTransferError) -> &'static str {
     match error {
-        AttachmentTransferError::PeerAckTimeout => "ATTACHMENT_ACK_TIMEOUT",
-        AttachmentTransferError::Peer => "ATTACHMENT_PEER_UNAVAILABLE",
-        AttachmentTransferError::DigestMismatch => "ATTACHMENT_INTEGRITY_FAILED",
+        AttachmentTransferError::PeerAckTimeout => "attachment.ack_timeout",
+        AttachmentTransferError::Peer => "attachment.peer_unavailable",
+        AttachmentTransferError::DigestMismatch => "attachment.integrity_failed",
         AttachmentTransferError::Storage | AttachmentTransferError::Io => {
-            "ATTACHMENT_STORAGE_FAILED"
+            "attachment.storage_failed"
         }
         AttachmentTransferError::Relationship | AttachmentTransferError::Message => {
-            "ATTACHMENT_DEPENDENCY_MISSING"
+            "attachment.dependency_missing"
         }
-        AttachmentTransferError::InboundMessagePending => "ATTACHMENT_MESSAGE_PENDING",
-        AttachmentTransferError::Crypto => "ATTACHMENT_CRYPTO_FAILED",
+        AttachmentTransferError::InboundMessagePending => "attachment.message_pending",
+        AttachmentTransferError::Crypto => "attachment.crypto_failed",
         AttachmentTransferError::Protocol | AttachmentTransferError::OffsetMismatch => {
-            "ATTACHMENT_PROTOCOL_FAILED"
+            "attachment.protocol_failed"
         }
-        _ => "ATTACHMENT_SEND",
+        _ => "attachment.send_failed",
     }
 }
 fn map_peer(error: PeerLinkError) -> AttachmentTransferError {
@@ -1522,9 +1522,10 @@ const fn is_prepare_entry_status(status: AttachmentStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdvanceOutcome, AttachmentStatus, OutgoingFramePhase, is_prepare_entry_status,
-        outcome_after_ack,
+        AdvanceOutcome, AttachmentStatus, AttachmentTransferError, OutgoingFramePhase,
+        is_prepare_entry_status, outcome_after_ack, transfer_error_code,
     };
+    use torca_foundation::ErrorCode;
 
     #[test]
     fn metadata_ack_keeps_job_alive_for_chunks() {
@@ -1551,5 +1552,30 @@ mod tests {
         assert!(is_prepare_entry_status(AttachmentStatus::Encrypting));
         assert!(!is_prepare_entry_status(AttachmentStatus::Queued));
         assert!(!is_prepare_entry_status(AttachmentStatus::Transferring));
+    }
+
+    #[test]
+    fn durable_failure_codes_are_valid_redacted_codes() {
+        let errors = [
+            AttachmentTransferError::Relationship,
+            AttachmentTransferError::Message,
+            AttachmentTransferError::InboundMessagePending,
+            AttachmentTransferError::Attachment,
+            AttachmentTransferError::Storage,
+            AttachmentTransferError::Crypto,
+            AttachmentTransferError::Peer,
+            AttachmentTransferError::PeerAckTimeout,
+            AttachmentTransferError::Protocol,
+            AttachmentTransferError::InvalidState,
+            AttachmentTransferError::DigestMismatch,
+            AttachmentTransferError::OffsetMismatch,
+            AttachmentTransferError::Io,
+            AttachmentTransferError::Clock,
+        ];
+        for error in errors {
+            assert!(
+                ErrorCode::new(transfer_error_code(&error)).as_str().starts_with("attachment.")
+            );
+        }
     }
 }

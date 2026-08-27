@@ -1,10 +1,10 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
+use torca_foundation::ProviderId;
 use torca_pairing_coordinator::{PairingCoordinator, PairingRuntime};
-use torca_pairing_driver::{
-    PairingTransportRoute, PairingTransportRouteSource, RuntimePairingDriver,
-};
+use torca_pairing_driver::RuntimePairingDriver;
+use torca_provider_api::{ProviderRoute, ProviderRouteError, ProviderRouteState, ProviderRouting};
 use torca_radio_tor::TorRadioMediaSystemFactory;
 use torca_rendezvous_client::RendezvousClient;
 use torca_rendezvous_tor::SharedTorRelayTransport;
@@ -19,9 +19,46 @@ use torca_transport_tor::TorPeerTransportFactory;
 
 use crate::composition::NativeCompositionError;
 use crate::provider_composition::{
-    ProviderComponents, ProviderPairingFactory, ProviderPairingInputs,
+    NativeCommunicationProviderPlugin, ProviderComponents, ProviderCompositionInputs,
+    ProviderPairingFactory, ProviderPairingInputs,
 };
 use crate::relay_probe::build_relay_probe;
+
+pub(super) static PLUGIN: TorProviderPlugin = TorProviderPlugin;
+
+pub(crate) struct TorProviderPlugin;
+
+impl NativeCommunicationProviderPlugin for TorProviderPlugin {
+    fn id(&self) -> ProviderId {
+        ProviderId::new("tor").expect("built-in provider id")
+    }
+
+    fn descriptor(&self) -> torca_provider_api::ProviderDescriptor {
+        torca_provider_api::built_in_descriptor(&self.id()).expect("built-in provider descriptor")
+    }
+
+    fn deployment_profile(&self) -> torca_provider_api::ProviderDeploymentProfile {
+        torca_provider_api::built_in_deployment_profile(&self.id())
+            .expect("built-in provider deployment profile")
+    }
+
+    fn compose(
+        &self,
+        inputs: ProviderCompositionInputs,
+    ) -> Result<ProviderComponents, NativeCompositionError> {
+        let (relay_host, relay_port) = inputs
+            .rendezvous_endpoint
+            .ok_or_else(|| NativeCompositionError::new("Tor provider requires rendezvous"))?;
+        compose(
+            inputs.data_dir,
+            relay_host,
+            relay_port,
+            inputs.startup_timeout,
+            inputs.now,
+            inputs.bootstrap_observer,
+        )
+    }
+}
 
 /// Provider-owned resources required by the generic process runtime.
 ///
@@ -58,19 +95,17 @@ pub(crate) fn compose(
     let client = lifecycle
         .client_handle()
         .ok_or_else(|| NativeCompositionError::new("Tor provider client is unavailable"))?;
-    let pairing_endpoint = endpoint.clone();
+    let routing: std::sync::Arc<dyn ProviderRouting> =
+        std::sync::Arc::new(TorRouting { endpoint: endpoint.clone() });
     let relay_transport = SharedTorRelayTransport::new(client.clone(), relay_host, relay_port);
     Ok(ProviderComponents {
         provider: TransportKind::Tor,
         peer_transport_factory: Box::new(TorPeerTransportFactory::new(listener, client.clone())),
         pairing_factory: Box::new(TorPairingFactory {
             relay_transport: relay_transport.clone(),
-            route_source: Box::new(move || {
-                Ok(pairing_endpoint
-                    .get()
-                    .map(|onion| PairingTransportRoute::new("tor", onion.into_bytes())))
-            }),
+            routing: std::sync::Arc::clone(&routing),
         }),
+        routing,
         rendezvous_probe: Some(build_relay_probe(relay_transport, RELAY_HEALTH_TIMEOUT)),
         radio_media_factory: Box::new(TorRadioMediaSystemFactory::new(client)),
         lifecycle: Box::new(lifecycle),
@@ -116,7 +151,39 @@ fn parse_rendezvous_endpoint(value: &str) -> Result<(String, u16), NativeComposi
 
 struct TorPairingFactory {
     relay_transport: SharedTorRelayTransport,
-    route_source: Box<dyn PairingTransportRouteSource>,
+    routing: std::sync::Arc<dyn ProviderRouting>,
+}
+
+struct TorRouting {
+    endpoint: SharedTorEndpoint,
+}
+
+impl ProviderRouting for TorRouting {
+    fn route_state(&self) -> ProviderRouteState {
+        if self.endpoint.get().is_some() {
+            ProviderRouteState::Fresh
+        } else {
+            ProviderRouteState::Unavailable
+        }
+    }
+
+    fn local_route(&self) -> Result<Option<ProviderRoute>, ProviderRouteError> {
+        let Some(endpoint) = self.endpoint.get() else { return Ok(None) };
+        ProviderRoute::new(
+            ProviderId::new("tor").expect("built-in provider id"),
+            0,
+            endpoint.into_bytes(),
+        )
+        .map(Some)
+        .ok_or(ProviderRouteError::Invalid)
+    }
+
+    fn pairing_bootstrap(
+        &self,
+    ) -> Result<Option<torca_pairing_protocol::PairingBootstrapDescriptor>, ProviderRouteError>
+    {
+        Ok(None)
+    }
 }
 
 impl ProviderPairingFactory for TorPairingFactory {
@@ -137,7 +204,7 @@ impl ProviderPairingFactory for TorPairingFactory {
         runtime
             .restore_active_sessions()
             .map_err(|_| NativeCompositionError::new("restore active pairing sessions failed"))?;
-        Ok(Box::new(RuntimePairingDriver::new(runtime, inputs.engine, self.route_source)))
+        Ok(Box::new(RuntimePairingDriver::new(runtime, inputs.engine, self.routing)))
     }
 }
 

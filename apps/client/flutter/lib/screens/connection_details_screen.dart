@@ -55,7 +55,8 @@ class ConnectionDetailsScreen extends StatelessWidget {
                   size: 52,
                   presentation: AvatarActivityPresentation.resolve(
                     blocked: contact.typedStatus == ContactStatus.blocked,
-                    online: contact.presenceState == 'online',
+                    online:
+                        contact.typedAvailability == PeerAvailability.reachable,
                     waking:
                         contact.peerHealth.typedState ==
                         TransportState.connecting,

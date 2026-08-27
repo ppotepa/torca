@@ -11,7 +11,7 @@ use torca_conversations::{
     ConversationError, ConversationId, ConversationRepository, ConversationStatus,
     DirectConversation,
 };
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_identity::{
     AvatarReference, Identity, IdentityId, IdentityKey, IdentityRepository,
     IdentityRepositoryError, KeyAlgorithm, KeyId, Profile, ProfileName, PublicIdentity,
@@ -656,22 +656,23 @@ impl ContactRow {
             .map_err(|_| ContactError::RepositoryFailure)?;
         let remote_identity = PublicIdentity::new(identity_id, key, generation);
         let capability_id = OpaqueId::from_bytes(fixed_16_contact(self.capability_id)?);
-        let endpoints = serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(
+        let mut endpoints = serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(
             &self.transport_endpoints_json,
         )
         .map_err(|_| ContactError::RepositoryFailure)?;
-        let route = if let Some((provider, endpoint)) = endpoints.iter().next() {
-            ContactRoute::with_provider_endpoint(
-                self.onion_address,
-                capability_id,
-                provider.clone(),
-                endpoint.clone(),
-            )
-            .map_err(|_| ContactError::RepositoryFailure)?
-        } else {
-            ContactRoute::new(self.onion_address, capability_id)
-                .map_err(|_| ContactError::RepositoryFailure)?
-        };
+        if !endpoints.contains_key("tor") && !self.onion_address.is_empty() {
+            endpoints.insert("tor".to_owned(), self.onion_address.into_bytes());
+        }
+        let endpoints = endpoints
+            .into_iter()
+            .map(|(provider, endpoint)| {
+                ProviderId::new(provider)
+                    .map(|provider| (provider, endpoint))
+                    .map_err(|_| ContactError::RepositoryFailure)
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+        let route = ContactRoute::from_provider_endpoints(capability_id, endpoints)
+            .map_err(|_| ContactError::RepositoryFailure)?;
         let status = match self.status {
             0 => ContactStatus::Active,
             1 => ContactStatus::Blocked,
@@ -723,8 +724,19 @@ fn execute_contact(
     let remote_identity_id = contact.remote_identity().identity_id().to_opaque().into_bytes();
     let remote_key_id = contact.remote_identity().key().key_id().to_opaque().into_bytes();
     let capability_id = contact.route().capability_id().into_bytes();
-    let transport_endpoints_json = serde_json::to_string(contact.route().provider_endpoints())
+    let serialized_endpoints = contact
+        .route()
+        .provider_endpoints()
+        .iter()
+        .map(|(provider, endpoint)| (provider.as_str(), endpoint))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let transport_endpoints_json = serde_json::to_string(&serialized_endpoints)
         .map_err(|_| ContactError::RepositoryFailure)?;
+    let legacy_tor_endpoint = contact
+        .route()
+        .provider_endpoint("tor")
+        .and_then(|endpoint| std::str::from_utf8(endpoint).ok())
+        .unwrap_or_default();
     backend
         .connection()
         .execute(
@@ -736,7 +748,7 @@ fn execute_contact(
                 encode_algorithm(contact.remote_identity().key().algorithm()),
                 contact.remote_identity().key().public_key(),
                 i64::from(contact.remote_identity().generation()),
-                contact.route().onion_address(),
+                legacy_tor_endpoint,
                 capability_id.as_slice(),
                 encode_contact_status(contact.status()),
                 contact.created_at().to_unix_millis(),
@@ -910,7 +922,12 @@ mod tests {
         let contact = Contact::new(
             ContactId::from_u128(21),
             remote_identity(),
-            ContactRoute::new("peer.onion", OpaqueId::from_u128(22)).expect("route"),
+            ContactRoute::for_provider_endpoint(
+                OpaqueId::from_u128(22),
+                "tor",
+                b"peer.onion".to_vec(),
+            )
+            .expect("route"),
             Timestamp::UNIX_EPOCH,
         );
         let conversation = DirectConversation::new(

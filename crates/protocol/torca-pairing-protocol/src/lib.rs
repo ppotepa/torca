@@ -9,7 +9,7 @@ pub use invite_uri::{
 };
 
 use core::fmt;
-use torca_foundation::OpaqueId;
+use torca_foundation::{OpaqueId, ProviderId};
 
 pub const MAX_PAIRING_PAYLOAD_LEN: usize = 48 * 1024;
 pub const MAX_PUBLIC_KEY_LEN: usize = 512;
@@ -45,7 +45,7 @@ pub struct PairingOffer {
     pub capability_id: OpaqueId,
     pub transcript_nonce: [u8; 32],
     pub avatar: Option<AvatarEnvelope>,
-    /// Stable provider wire name (`tor`, `iroh`, or `webrtc`).
+    /// Validated stable provider identifier.
     pub transport_provider: String,
     /// Provider-specific rendezvous/session endpoint. It is opaque to pairing.
     pub transport_endpoint: Vec<u8>,
@@ -79,7 +79,7 @@ impl PairingOffer {
         if self.public_key.is_empty() || self.public_key.len() > MAX_PUBLIC_KEY_LEN {
             return Err(PairingProtocolError::InvalidPublicKeyLength);
         }
-        if !matches!(self.transport_provider.as_str(), "tor" | "iroh" | "webrtc")
+        if ProviderId::new(self.transport_provider.clone()).is_err()
             || self.transport_provider.len() > MAX_TRANSPORT_PROVIDER_LEN
             || self.transport_endpoint.len() > MAX_TRANSPORT_ENDPOINT_LEN
         {

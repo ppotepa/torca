@@ -4,13 +4,16 @@ where
     K: HandshakeSigner,
 {
     fn current_route_advertisement(&self) -> Option<torca_peer_protocol::RouteAdvertisement> {
-        let route = self.transport_factory.local_route()?;
-        torca_peer_protocol::RouteAdvertisement::new(
-            route.provider.wire_value(),
-            route.generation,
-            route.endpoint,
-        )
-        .ok()
+        if let Some(routing) = &self.provider_routing {
+            let route = routing.local_route().ok().flatten()?;
+            return torca_peer_protocol::RouteAdvertisement::new(
+                route.provider.into_string(),
+                route.generation,
+                route.endpoint,
+            )
+            .ok();
+        }
+        None
     }
 
     /// Sends the current provider route once per generation on a ready
@@ -30,6 +33,18 @@ where
             return Ok(());
         }
         session.send_route(route.clone()).map_err(map_session)?;
+        if let Ok(now) = system_timestamp() {
+            self.observe_with_stage(TelemetryEvent {
+                contact_id,
+                direction: Some(TransportDirection::Tx),
+                operation: TransportOperation::Route,
+                phase: OperationPhase::Completed,
+                correlation_id: None,
+                at: now,
+                stage: Some(TransportStage::RouteAdvertised),
+                error_code: None,
+            });
+        }
         self.advertised_route_generations.insert(contact_id, route.generation);
         Ok(())
     }
@@ -54,6 +69,18 @@ where
             Ok(())
         };
         result?;
+        if let Ok(now) = system_timestamp() {
+            self.observe_with_stage(TelemetryEvent {
+                contact_id,
+                direction: Some(TransportDirection::Tx),
+                operation: TransportOperation::Route,
+                phase: OperationPhase::Completed,
+                correlation_id: None,
+                at: now,
+                stage: Some(TransportStage::RouteAdvertised),
+                error_code: None,
+            });
+        }
         self.advertised_route_generations.insert(contact_id, route.generation);
         Ok(())
     }
@@ -86,6 +113,26 @@ where
         contact.update_route(contact_route, now).map_err(map_contact)?;
         self.relationships.update(contact).map_err(map_contact)?;
         self.route_generations.insert(contact_id, route.generation);
+        self.observe_with_stage(TelemetryEvent {
+            contact_id,
+            direction: Some(TransportDirection::Rx),
+            operation: TransportOperation::Route,
+            phase: OperationPhase::Completed,
+            correlation_id: None,
+            at: now,
+            stage: Some(TransportStage::RouteApplied),
+            error_code: None,
+        });
+        self.observe_with_stage(TelemetryEvent {
+            contact_id,
+            direction: None,
+            operation: TransportOperation::Route,
+            phase: OperationPhase::Completed,
+            correlation_id: None,
+            at: now,
+            stage: Some(TransportStage::RouteRefreshed),
+            error_code: None,
+        });
         self.notify_waker();
         Ok(())
     }
@@ -97,8 +144,43 @@ where
         signer: K,
         local_identity_id: OpaqueId,
     ) -> Self {
+        Self::with_optional_provider_routing(
+            transport_factory,
+            None,
+            relationships,
+            signer,
+            local_identity_id,
+        )
+    }
+
+    /// Builds a peer link whose authenticated route advertisements share the
+    /// same provider owner as pairing bootstrap.
+    pub fn with_provider_routing(
+        transport_factory: Box<dyn PeerTransportFactory>,
+        provider_routing: std::sync::Arc<dyn torca_provider_api::ProviderRouting>,
+        relationships: S,
+        signer: K,
+        local_identity_id: OpaqueId,
+    ) -> Self {
+        Self::with_optional_provider_routing(
+            transport_factory,
+            Some(provider_routing),
+            relationships,
+            signer,
+            local_identity_id,
+        )
+    }
+
+    fn with_optional_provider_routing(
+        transport_factory: Box<dyn PeerTransportFactory>,
+        provider_routing: Option<std::sync::Arc<dyn torca_provider_api::ProviderRouting>>,
+        relationships: S,
+        signer: K,
+        local_identity_id: OpaqueId,
+    ) -> Self {
         Self {
             transport_factory,
+            provider_routing,
             relationships,
             signer,
             local_identity_id,
@@ -206,11 +288,11 @@ where
             if self.connection_state(contact.id()) == PeerConnectionState::Disconnected
                 && self.preferred_dialer(contact.id())
             {
-                self.reconnect.entry(contact.id()).or_insert(ReconnectEntry {
-                    failures: 0,
-                    next_attempt_at: now,
-                    in_progress: false,
-                });
+                self.request_reconnect(
+                    contact.id(),
+                    now,
+                    ReconnectReason::PreferredDialer,
+                );
                 started += 1;
             }
         }
@@ -233,11 +315,7 @@ where
             return Ok(false);
         }
         let now = system_timestamp()?;
-        self.reconnect.entry(contact.id()).or_insert(ReconnectEntry {
-            failures: 0,
-            next_attempt_at: now,
-            in_progress: false,
-        });
+        self.request_reconnect(contact.id(), now, ReconnectReason::DurableDemand);
         Ok(true)
     }
 
@@ -423,21 +501,29 @@ where
         }
         self.pending.clear();
         self.pending_acks.clear();
+        let reconnect_reasons = self
+            .reconnect
+            .iter()
+            .map(|(contact_id, entry)| (*contact_id, entry.reason))
+            .collect::<BTreeMap<_, _>>();
         self.reconnect.clear();
         for contact_id in contacts {
             let preferred = self.preferred_dialer(contact_id);
-            if !preferred && !had_session.contains(&contact_id) {
+            let existing_reason = reconnect_reasons.get(&contact_id).copied();
+            if !preferred && !had_session.contains(&contact_id) && existing_reason.is_none() {
                 continue;
             }
-            let next_attempt_at = if preferred {
+            let reason = existing_reason.unwrap_or(if preferred {
+                ReconnectReason::PreferredDialer
+            } else {
+                ReconnectReason::Recovery
+            });
+            let next_attempt_at = if preferred || reason == ReconnectReason::DurableDemand {
                 now
             } else {
                 now.checked_add(Duration::from_secs(20)).unwrap_or(now)
             };
-            self.reconnect.insert(
-                contact_id,
-                ReconnectEntry { failures: 0, next_attempt_at, in_progress: false },
-            );
+            self.request_reconnect(contact_id, next_attempt_at, reason);
         }
     }
 
@@ -730,5 +816,203 @@ pub fn send_envelope(
             }
         }
         Err(PeerLinkError::NotReady)
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use std::sync::Arc;
+
+    use torca_contacts::{
+        Contact, ContactError, ContactId, ContactRepository, ContactRoute, PeerCredential,
+        PeerCredentialRepository,
+    };
+    use torca_foundation::{OpaqueId, Timestamp};
+    use torca_identity::{
+        IdentityId, IdentityKey, KeyAlgorithm, KeyId, PublicIdentity,
+    };
+    use torca_peer_protocol::{
+        HandshakeSigner, HandshakeSigningError, RouteAdvertisement,
+    };
+    use torca_transport_api::{
+        PeerTransport, PeerTransportFactory, TransportCapabilities, TransportFactoryError,
+        TransportKind,
+    };
+
+    use super::PeerLink;
+    use crate::PeerLinkError;
+
+    struct RouteRelationships {
+        contact: Contact,
+    }
+
+    impl ContactRepository for RouteRelationships {
+        fn insert(&mut self, _contact: Contact) -> Result<(), ContactError> {
+            Err(ContactError::AlreadyExists)
+        }
+
+        fn get(&self, id: ContactId) -> Result<Option<Contact>, ContactError> {
+            Ok((self.contact.id() == id).then(|| self.contact.clone()))
+        }
+
+        fn update(&mut self, contact: Contact) -> Result<(), ContactError> {
+            self.contact = contact;
+            Ok(())
+        }
+
+        fn list(&self) -> Result<Vec<Contact>, ContactError> {
+            Ok(vec![self.contact.clone()])
+        }
+    }
+
+    impl PeerCredentialRepository for RouteRelationships {
+        fn insert_credential(&mut self, _credential: PeerCredential) -> Result<(), ContactError> {
+            Ok(())
+        }
+
+        fn credential_for_contact(
+            &self,
+            _contact_id: ContactId,
+        ) -> Result<Option<PeerCredential>, ContactError> {
+            Ok(None)
+        }
+    }
+
+    struct RouteFactory;
+
+    impl PeerTransportFactory for RouteFactory {
+        fn kind(&self) -> TransportKind {
+            TransportKind::Memory
+        }
+
+        fn capabilities(&self) -> TransportCapabilities {
+            panic!("route update does not inspect capabilities")
+        }
+
+        fn accept(
+            &mut self,
+        ) -> Result<Option<Box<dyn PeerTransport + Send>>, TransportFactoryError> {
+            Ok(None)
+        }
+
+        fn connect(
+            &mut self,
+            _contact: &Contact,
+        ) -> Result<Box<dyn PeerTransport + Send>, TransportFactoryError> {
+            Err(TransportFactoryError::Listener)
+        }
+
+        fn set_waker(
+            &self,
+            _waker: Arc<dyn Fn() + Send + Sync>,
+        ) -> Result<(), TransportFactoryError> {
+            Ok(())
+        }
+    }
+
+    struct RouteSigner;
+
+    impl HandshakeSigner for RouteSigner {
+        fn sign(&self, _canonical: &[u8]) -> Result<Vec<u8>, HandshakeSigningError> {
+            Ok(vec![0; 64])
+        }
+    }
+
+    fn route_link() -> (PeerLink<RouteRelationships, RouteSigner>, ContactId) {
+        let contact_id = ContactId::from_u128(9);
+        let key = IdentityKey::new(KeyId::from_u128(3), KeyAlgorithm::Ed25519, vec![7; 32])
+            .expect("valid peer key");
+        let contact = Contact::new(
+            contact_id,
+            PublicIdentity::new(IdentityId::from_u128(4), key, 0),
+            ContactRoute::for_provider_endpoint(
+                OpaqueId::from_u128(5),
+                TransportKind::Memory.wire_value(),
+                b"initial".to_vec(),
+            )
+            .expect("valid initial route"),
+            Timestamp::UNIX_EPOCH,
+        );
+        (
+            PeerLink::with_transport_factory(
+                Box::new(RouteFactory),
+                RouteRelationships { contact },
+                RouteSigner,
+                OpaqueId::from_u128(6),
+            ),
+            contact_id,
+        )
+    }
+
+    #[test]
+    fn route_advertisements_are_monotonic_idempotent_and_provider_bound() {
+        let (mut link, contact_id) = route_link();
+        let at = Timestamp::from_unix_millis(1).expect("valid time");
+
+        link.apply_route_advertisement(
+            contact_id,
+            RouteAdvertisement::new("memory", 2, b"generation-two".to_vec())
+                .expect("valid route"),
+            at,
+        )
+        .expect("new route is applied");
+        assert_eq!(
+            link.relationships
+                .get(contact_id)
+                .expect("read contact")
+                .expect("persisted contact")
+                .route()
+                .provider_endpoint("memory"),
+            Some(b"generation-two".as_slice())
+        );
+
+        for (generation, endpoint) in [
+            (1, b"older".as_slice()),
+            (2, b"same-generation".as_slice()),
+        ] {
+            link.apply_route_advertisement(
+                contact_id,
+                RouteAdvertisement::new("memory", generation, endpoint.to_vec())
+                    .expect("valid route"),
+                at,
+            )
+            .expect("old or repeated route is idempotent");
+        }
+        assert_eq!(
+            link.relationships
+                .get(contact_id)
+                .expect("read contact")
+                .expect("persisted contact")
+                .route()
+                .provider_endpoint("memory"),
+            Some(b"generation-two".as_slice())
+        );
+
+        link.apply_route_advertisement(
+            contact_id,
+            RouteAdvertisement::new("memory", 3, b"generation-three".to_vec())
+                .expect("valid route"),
+            at,
+        )
+        .expect("newer route is applied");
+        assert_eq!(
+            link.relationships
+                .get(contact_id)
+                .expect("read contact")
+                .expect("persisted contact")
+                .route()
+                .provider_endpoint("memory"),
+            Some(b"generation-three".as_slice())
+        );
+
+        assert_eq!(
+            link.apply_route_advertisement(
+                contact_id,
+                RouteAdvertisement::new("iroh", 4, b"wrong-provider".to_vec())
+                    .expect("valid route frame"),
+                at,
+            ),
+            Err(PeerLinkError::Protocol)
+        );
     }
 }

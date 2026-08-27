@@ -30,6 +30,7 @@ use torca_foundation::{
 use torca_messaging::{Message, MessageBody, MessageId, MessageStatus};
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_pairing_protocol::PairingBootstrapDescriptor;
+pub use torca_presence::PeerAvailability;
 use torca_probing::{ProbeKind, ProbeResult, ProbeStatus, ProbeSupervisor, ProbeTarget};
 use torca_runtime_policy::{
     AttentionContext, AttentionSurface, DemandReason, EvidenceKind, PolicyEvent, ResourceScope,

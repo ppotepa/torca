@@ -10,11 +10,13 @@ publish = false
 
 [dependencies]
 torca-client-engine = { path = "../../application/torca-client-engine" }
+torca-contacts = { path = "../../domains/torca-contacts" }
 torca-crypto = { path = "../torca-crypto" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
 torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
+torca-provider-api = { path = "../../application/torca-provider-api" }
 torca-runtime = { path = "../../application/torca-runtime" }
 torca-storage-sqlite = { path = "../torca-storage-sqlite" }
 

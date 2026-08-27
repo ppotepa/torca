@@ -33,5 +33,8 @@ torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinato
 torca-radio-adapters = { path = "../torca-radio-adapters", default-features = false }
 torca-radio-coordinator = { path = "../../application/torca-radio-coordinator" }
 
+[dev-dependencies]
+torca-peer-link = { path = "../torca-peer-link" }
+
 [lints]
 workspace = true

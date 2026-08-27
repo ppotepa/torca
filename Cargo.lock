@@ -7246,6 +7246,8 @@ dependencies = [
  "torca-peer-link",
  "torca-peer-protocol",
  "torca-peer-shared",
+ "torca-presence",
+ "torca-provider-api",
  "torca-radio",
  "torca-radio-adapters",
  "torca-radio-coordinator",
@@ -7477,6 +7479,7 @@ dependencies = [
  "torca-platform",
  "torca-platform-android",
  "torca-platform-windows",
+ "torca-provider-api",
  "torca-radio-adapters",
  "torca-radio-coordinator",
  "torca-radio-tor",
@@ -7527,11 +7530,13 @@ name = "torca-pairing-driver"
 version = "0.2.0-alpha.0"
 dependencies = [
  "torca-client-engine",
+ "torca-contacts",
  "torca-crypto",
  "torca-foundation",
  "torca-pairing",
  "torca-pairing-coordinator",
  "torca-pairing-protocol",
+ "torca-provider-api",
  "torca-runtime",
  "torca-storage-sqlite",
 ]
@@ -7560,8 +7565,10 @@ dependencies = [
  "torca-contacts",
  "torca-crypto",
  "torca-foundation",
+ "torca-identity",
  "torca-peer",
  "torca-peer-protocol",
+ "torca-provider-api",
  "torca-transport-api",
 ]
 
@@ -7626,6 +7633,40 @@ name = "torca-probing"
 version = "0.2.0-alpha.0"
 dependencies = [
  "torca-foundation",
+]
+
+[[package]]
+name = "torca-provider-api"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "serde",
+ "torca-foundation",
+ "torca-pairing-protocol",
+]
+
+[[package]]
+name = "torca-provider-conformance"
+version = "0.2.0-alpha.0"
+dependencies = [
+ "tokio",
+ "torca-client-engine",
+ "torca-contacts",
+ "torca-conversations",
+ "torca-crypto",
+ "torca-foundation",
+ "torca-identity",
+ "torca-messaging",
+ "torca-pairing",
+ "torca-pairing-coordinator",
+ "torca-pairing-protocol",
+ "torca-peer-link",
+ "torca-peer-protocol",
+ "torca-receipts",
+ "torca-relay",
+ "torca-relay-protocol",
+ "torca-transport-api",
+ "torca-transport-iroh",
+ "torca-transport-memory",
 ]
 
 [[package]]
@@ -7824,6 +7865,7 @@ dependencies = [
  "torca-contacts",
  "torca-foundation",
  "torca-pairing-protocol",
+ "torca-provider-api",
 ]
 
 [[package]]
@@ -7840,6 +7882,7 @@ dependencies = [
  "torca-pairing",
  "torca-pairing-coordinator",
  "torca-pairing-protocol",
+ "torca-peer-link",
  "torca-peer-protocol",
  "torca-radio-adapters",
  "torca-radio-coordinator",
@@ -7854,6 +7897,7 @@ dependencies = [
 name = "torca-transport-memory"
 version = "0.2.0-alpha.0"
 dependencies = [
+ "torca-contacts",
  "torca-transport-api",
 ]
 

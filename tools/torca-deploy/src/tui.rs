@@ -12,7 +12,8 @@ use ratatui::{
 };
 use std::io;
 
-use crate::domain::{Configuration, DeployAction, DeployPlan};
+use crate::domain::{CommunicationProvider, DeployAction, DeployPlan};
+use crate::persistence::{DeployPaths, StateStore};
 
 pub mod app;
 pub mod input;
@@ -31,14 +32,15 @@ pub enum WizardSelection {
     Resume,
 }
 
-const ACTIONS: [(&str, Option<DeployAction>); 7] = [
-    ("Run installed clients", Some(DeployAction::RunInstalled)),
-    ("Redeploy current artifacts", Some(DeployAction::RedeployCurrent)),
-    ("Rebuild clients and relay", Some(DeployAction::Rebuild)),
-    ("Full redeploy", Some(DeployAction::FullRedeploy)),
-    ("Provider maintenance", Some(DeployAction::ProviderMaintenance)),
-    ("Collect logs", Some(DeployAction::CollectLogs)),
-    ("Resume interrupted deployment", None),
+const PROVIDERS: [CommunicationProvider; 2] =
+    [CommunicationProvider::Tor, CommunicationProvider::Iroh];
+const ACTIONS: [(&str, DeployAction); 6] = [
+    ("Run installed clients", DeployAction::RunInstalled),
+    ("Redeploy current artifacts", DeployAction::RedeployCurrent),
+    ("Rebuild clients", DeployAction::Rebuild),
+    ("Full redeploy", DeployAction::FullRedeploy),
+    ("Provider maintenance", DeployAction::ProviderMaintenance),
+    ("Collect logs", DeployAction::CollectLogs),
 ];
 
 pub fn choose_plan(theme_kind: ThemeKind, no_color: bool) -> io::Result<Option<WizardSelection>> {
@@ -54,127 +56,232 @@ pub fn choose_plan(theme_kind: ThemeKind, no_color: bool) -> io::Result<Option<W
     result
 }
 
-/// Run the action selector and enter the contextual options screen.
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    theme_kind: ThemeKind,
-    no_color: bool,
+    mut theme_kind: ThemeKind,
+    mut no_color: bool,
 ) -> io::Result<Option<WizardSelection>> {
-    let mut theme_kind = theme_kind;
-    let mut no_color = no_color;
-    let mut theme = if no_color { Theme::monochrome() } else { Theme::for_kind(theme_kind) };
+    let mut theme = current_theme(theme_kind, no_color);
     persist_ui_config(theme_kind, no_color);
-    let mut selected = 0_usize;
+    let mut provider_selected = 0_usize;
+    let mut action_selected = 0_usize;
     let mut input = InputGuard::default();
     loop {
-        terminal.draw(|frame| {
-            let layout = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(2)
-                .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
-                .split(frame.area());
-            frame.render_widget(
-                Paragraph::new("Torca deploy")
-                    .style(Style::default().fg(theme.accent).bg(theme.background))
-                    .alignment(Alignment::Center)
-                    .block(Block::default().borders(Borders::ALL)),
-                layout[0],
-            );
-            let entries: Vec<ListItem> = ACTIONS
-                .iter()
-                .enumerate()
-                .map(|(index, (label, _))| {
-                    let marker = if index == selected { ">" } else { " " };
-                    ListItem::new(format!(" {marker} {} {label}", index + 1))
-                })
-                .collect();
-            let action_area = crate::tui::layout::columns(layout[1]);
-            frame.render_widget(
-                List::new(entries)
-                    .style(Style::default().fg(theme.text).bg(theme.panel))
-                    .block(Block::default().title("Select action").borders(Borders::ALL)),
-                action_area[0],
-            );
-            if action_area.len() >= 2 {
-                let details = ACTIONS[selected].1.map_or_else(
-                    || "Resume the most recent checkpoint.".to_owned(),
-                    crate::tui::screens::action::details,
-                );
-                frame.render_widget(
-                    Paragraph::new(details)
-                        .style(Style::default().fg(theme.text).bg(theme.panel))
-                        .block(Block::default().title("Selected action").borders(Borders::ALL)),
-                    action_area[1],
-                );
-            }
-            if action_area.len() >= 3 {
-                let context = ACTIONS[selected].1.map_or_else(
-                    || "Checkpoint recovery\nCompleted stages are reused when the plan fingerprint matches.".to_owned(),
-                    |action| {
-                        let plan = DeployPlan::normal(
-                            action,
-                            crate::planner::all_client_targets(),
-                            Configuration::Debug,
-                        );
-                        let descriptor = plan.communication_provider.descriptor();
-                        format!(
-                            "Provider\n{}\n{}\n\nWarm-up\n{}\n\nWarnings\n{}",
-                            descriptor.label,
-                            descriptor.description,
-                            descriptor.warmup_stages.join("\n"),
-                            if plan.capabilities().destructive {
-                                "destructive operation"
-                            } else {
-                                "none"
-                            },
-                        )
-                    },
-                );
-                frame.render_widget(
-                    Paragraph::new(context)
-                        .style(Style::default().fg(theme.text).bg(theme.panel))
-                        .block(Block::default().title("Context").borders(Borders::ALL)),
-                    action_area[2],
-                );
-            }
-            frame.render_widget(
-                Paragraph::new("Up/Down select   Enter continue   t theme   c color   q quit")
-                    .alignment(Alignment::Center)
-                    .block(Block::default().borders(Borders::ALL)),
-                layout[2],
-            );
-        })?;
-        if let Some(key) = input.read()? {
-            match key {
-                KeyCode::Char('t') => {
-                    theme_kind = next_theme(theme_kind);
-                    theme =
-                        if no_color { Theme::monochrome() } else { Theme::for_kind(theme_kind) };
-                    persist_ui_config(theme_kind, no_color);
+        let provider = PROVIDERS[provider_selected];
+        terminal.draw(|frame| render_provider(frame, provider, provider_selected, theme))?;
+        let Some(key) = input.read()? else { continue };
+        match key {
+            KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+            KeyCode::Char('l') => {
+                if let Some(plan) = load_last_plan() {
+                    return Ok(Some(WizardSelection::Plan(plan.normalized())));
                 }
-                KeyCode::Char('c') => {
-                    no_color = !no_color;
-                    theme =
-                        if no_color { Theme::monochrome() } else { Theme::for_kind(theme_kind) };
-                    persist_ui_config(theme_kind, no_color);
+            }
+            KeyCode::Char('r') => {
+                if has_resumable_run() {
+                    return Ok(Some(WizardSelection::Resume));
                 }
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
-                KeyCode::Up => selected = selected.saturating_sub(1),
-                KeyCode::Down => selected = (selected + 1).min(ACTIONS.len() - 1),
-                KeyCode::Enter => {
-                    if selected == ACTIONS.len() - 1 {
-                        return Ok(Some(WizardSelection::Resume));
+            }
+            KeyCode::Up | KeyCode::Left => provider_selected = provider_selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Right => {
+                provider_selected = (provider_selected + 1).min(PROVIDERS.len() - 1);
+            }
+            KeyCode::Char('t') => {
+                theme_kind = next_theme(theme_kind);
+                theme = current_theme(theme_kind, no_color);
+                persist_ui_config(theme_kind, no_color);
+            }
+            KeyCode::Char('c') => {
+                no_color = !no_color;
+                theme = current_theme(theme_kind, no_color);
+                persist_ui_config(theme_kind, no_color);
+            }
+            KeyCode::Enter => loop {
+                let selected_provider = PROVIDERS[provider_selected];
+                terminal.draw(|frame| {
+                    render_action(frame, selected_provider, action_selected, theme);
+                })?;
+                let Some(action_key) = input.read()? else { continue };
+                match action_key {
+                    KeyCode::Esc => break,
+                    KeyCode::Up => action_selected = action_selected.saturating_sub(1),
+                    KeyCode::Down => action_selected = (action_selected + 1).min(ACTIONS.len() - 1),
+                    KeyCode::Char('t') => {
+                        theme_kind = next_theme(theme_kind);
+                        theme = current_theme(theme_kind, no_color);
+                        persist_ui_config(theme_kind, no_color);
                     }
-                    let action = ACTIONS[selected].1.expect("action entry");
-                    return Ok(screens::options::edit_plan(
-                        terminal, action, theme_kind, no_color,
-                    )?
-                    .map(|plan| WizardSelection::Plan(plan.normalized())));
+                    KeyCode::Char('c') => {
+                        no_color = !no_color;
+                        theme = current_theme(theme_kind, no_color);
+                        persist_ui_config(theme_kind, no_color);
+                    }
+                    KeyCode::Enter => {
+                        let action = ACTIONS[action_selected].1;
+                        if action == DeployAction::ProviderMaintenance
+                            && !selected_provider.descriptor().managed_service
+                        {
+                            continue;
+                        }
+                        if let Some(plan) = screens::options::edit_plan_for_provider(
+                            terminal,
+                            action,
+                            selected_provider,
+                            theme_kind,
+                            no_color,
+                        )? {
+                            return Ok(Some(WizardSelection::Plan(plan.normalized())));
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
+            },
+            _ => {}
         }
     }
+}
+
+fn render_provider(
+    frame: &mut ratatui::Frame<'_>,
+    provider: CommunicationProvider,
+    selected: usize,
+    theme: Theme,
+) {
+    let area = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+        .split(frame.area());
+    frame.render_widget(
+        Paragraph::new("TORCA DEPLOY · 1 Provider")
+            .style(Style::default().fg(theme.accent).bg(theme.background))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL)),
+        area[0],
+    );
+    let columns = crate::tui::layout::columns(area[1]);
+    let providers: Vec<ListItem> = PROVIDERS
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            ListItem::new(format!(
+                " {} {} {}",
+                if index == selected { ">" } else { " " },
+                index + 1,
+                item.descriptor().label
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        List::new(providers)
+            .style(Style::default().fg(theme.text).bg(theme.panel))
+            .block(Block::default().title("Choose communication provider").borders(Borders::ALL)),
+        columns[0],
+    );
+    if columns.len() > 1 {
+        let descriptor = provider.descriptor();
+        let details = format!(
+            "{}\n\nManaged service: {}\nEndpoint required: {}\n\nProfiles\n{}\n\nWarm-up\n{}",
+            descriptor.description,
+            if descriptor.managed_service { "yes" } else { "none" },
+            descriptor.endpoint_required,
+            descriptor
+                .profiles
+                .iter()
+                .map(|profile| format!("{} — {}", profile.label, profile.description))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            descriptor.warmup_stages.join("\n")
+        );
+        frame.render_widget(
+            Paragraph::new(details)
+                .style(Style::default().fg(theme.text).bg(theme.panel))
+                .block(Block::default().title("Selected provider").borders(Borders::ALL)),
+            columns[1],
+        );
+    }
+    frame.render_widget(Paragraph::new("Up/Down or Left/Right select   Enter continue   L load last   R resume   t theme   c color   q quit").alignment(Alignment::Center).block(Block::default().borders(Borders::ALL)), area[2]);
+}
+
+fn render_action(
+    frame: &mut ratatui::Frame<'_>,
+    provider: CommunicationProvider,
+    selected: usize,
+    theme: Theme,
+) {
+    let area = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+        .split(frame.area());
+    frame.render_widget(
+        Paragraph::new(format!(
+            "TORCA DEPLOY · 1 Provider · 2 Action · {}",
+            provider.descriptor().label
+        ))
+        .style(Style::default().fg(theme.accent).bg(theme.background))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL)),
+        area[0],
+    );
+    let columns = crate::tui::layout::columns(area[1]);
+    let items: Vec<ListItem> = ACTIONS
+        .iter()
+        .enumerate()
+        .map(|(index, (label, action))| {
+            let unavailable = *action == DeployAction::ProviderMaintenance
+                && !provider.descriptor().managed_service;
+            ListItem::new(format!(
+                " {} {} {}{}",
+                if index == selected { ">" } else { " " },
+                index + 1,
+                label,
+                if unavailable { " (unavailable)" } else { "" }
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        List::new(items)
+            .style(Style::default().fg(theme.text).bg(theme.panel))
+            .block(Block::default().title("What do you want to do?").borders(Borders::ALL)),
+        columns[0],
+    );
+    if columns.len() > 1 {
+        let action = ACTIONS[selected].1;
+        let detail = if action == DeployAction::ProviderMaintenance
+            && !provider.descriptor().managed_service
+        {
+            "Unavailable: this provider has no deployer-managed service.".to_owned()
+        } else {
+            crate::tui::screens::action::details(action)
+        };
+        frame.render_widget(
+            Paragraph::new(detail)
+                .style(Style::default().fg(theme.text).bg(theme.panel))
+                .block(Block::default().title("Selected action").borders(Borders::ALL)),
+            columns[1],
+        );
+    }
+    frame.render_widget(
+        Paragraph::new("Up/Down select   Enter continue   Esc provider   t theme   c color")
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL)),
+        area[2],
+    );
+}
+
+fn current_theme(kind: ThemeKind, no_color: bool) -> Theme {
+    if no_color { Theme::monochrome() } else { Theme::for_kind(kind) }
+}
+
+fn load_last_plan() -> Option<DeployPlan> {
+    let paths = DeployPaths::discover().ok()?;
+    StateStore::new(paths).load_last_plan().ok().flatten()
+}
+
+fn has_resumable_run() -> bool {
+    let Some(paths) = DeployPaths::discover().ok() else { return false };
+    StateStore::new(paths).has_resumable_run().unwrap_or(false)
 }
 
 fn next_theme(theme: ThemeKind) -> ThemeKind {
@@ -186,13 +293,9 @@ fn next_theme(theme: ThemeKind) -> ThemeKind {
 }
 
 fn persist_ui_config(theme: ThemeKind, no_color: bool) {
-    let Ok(root) = std::env::current_dir() else {
-        return;
-    };
+    let Ok(root) = std::env::current_dir() else { return };
     let path = root.join(".torca").join("deploy").join("ui.json");
-    let Some(parent) = path.parent() else {
-        return;
-    };
+    let Some(parent) = path.parent() else { return };
     if std::fs::create_dir_all(parent).is_err() {
         return;
     }

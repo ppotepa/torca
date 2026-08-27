@@ -40,7 +40,7 @@ use torca_runtime::{
     RuntimeDriverError,
 };
 pub use torca_runtime::{PeerActivityEvidence, PeerConnectionStatus};
-pub use torca_runtime::{PeerHealthQuality, PeerHealthSnapshot};
+pub use torca_runtime::{PeerAvailability, PeerHealthQuality, PeerHealthSnapshot};
 use torca_runtime_policy::{BatteryProfile, MeteredTransferPolicy};
 
 type WakeCallback = Arc<dyn Fn() + Send + Sync>;

@@ -491,8 +491,12 @@ function Select-TorcaAndroidApk {
     Write-Verbose "Android ABIs for ${Device}: $($abis -join ', ')"
     $candidates = foreach ($abi in $abis) {
         switch ($abi.Trim()) {
-            'arm64-v8a' { Join-Path $OutputRoot 'app-arm64-v8a-release.apk' }
-            'x86_64' { Join-Path $OutputRoot 'app-x86_64-release.apk' }
+            'arm64-v8a' {
+                @((Join-Path $OutputRoot 'app-arm64-v8a-release.apk'), (Join-Path $OutputRoot 'app-normal-arm64-v8a-release.apk'))
+            }
+            'x86_64' {
+                @((Join-Path $OutputRoot 'app-x86_64-release.apk'), (Join-Path $OutputRoot 'app-normal-x86_64-release.apk'))
+            }
         }
     }
     foreach ($candidate in $candidates) {
@@ -757,10 +761,27 @@ function Build-TorcaFlutterTarget {
             foreach ($staleApk in @(Get-ChildItem -LiteralPath $apkOutput -Filter '*.apk' -File -ErrorAction SilentlyContinue)) {
                 Remove-Item -LiteralPath $staleApk.FullName -Force
             }
-            Invoke-TorcaExternal "Flutter Android $Configuration ABI packages" { flutter build apk --$Configuration --split-per-abi @dartDefine }
+            $gradleOutput = Join-Path $script:FlutterRoot "build/app/outputs/apk/normal/$Configuration"
+            foreach ($staleApk in @(Get-ChildItem -LiteralPath $gradleOutput -Filter "app-*-$Configuration.apk" -File -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $staleApk.FullName -Force
+            }
+            Write-Host "==> Flutter Android $Configuration ABI packages"
+            & flutter build apk --$Configuration --split-per-abi @dartDefine
+            $flutterExit = $LASTEXITCODE
+            # Flavor-aware Flutter versions place split APKs under
+            # outputs/apk/normal/release instead of flutter-apk. Normalize
+            # both layouts into the stable deployment directory used by the
+            # rest of the build pipeline.
+            foreach ($gradleApk in @(Get-ChildItem -LiteralPath $gradleOutput -Filter "app-*-$Configuration.apk" -File -ErrorAction SilentlyContinue)) {
+                $normalizedName = $gradleApk.Name -replace '^app-normal-', 'app-'
+                Copy-Item -LiteralPath $gradleApk.FullName -Destination (Join-Path $apkOutput $normalizedName) -Force
+            }
             $releaseApks = @(Get-ChildItem $apkOutput -Filter "*-$Configuration.apk" -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -in @("app-arm64-v8a-$Configuration.apk", "app-x86_64-$Configuration.apk") })
-            if ($releaseApks.Count -eq 0) { throw "Flutter produced no Android ABI APKs in $apkOutput" }
+                Where-Object { $_.Name -match "^app-(normal-)?(arm64-v8a|x86_64)-$Configuration\.apk$" })
+            if ($releaseApks.Count -eq 0) { throw "Flutter produced no Android ABI APKs in $apkOutput (exit $flutterExit)" }
+            if ($null -ne $flutterExit -and $flutterExit -ne 0) {
+                Write-Warning "Flutter returned exit code $flutterExit after producing valid ABI APKs; continuing with the artifacts."
+            }
             foreach ($apk in $releaseApks) { Assert-TorcaAndroidPackage -Apk $apk.FullName }
         }
     } finally {
@@ -1021,7 +1042,7 @@ function Invoke-TorcaDeploy {
             $apkOutput = Join-Path $script:FlutterRoot 'build/app/outputs/flutter-apk'
             $universalApk = Join-Path $apkOutput 'app-release.apk'
             $splitApks = @(Get-ChildItem $apkOutput -Filter '*-release.apk' -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -in @('app-arm64-v8a-release.apk', 'app-x86_64-release.apk') })
+                Where-Object { $_.Name -match '^app-(normal-)?(arm64-v8a|x86_64)-release\.apk$' })
             if (-not $ReuseBuild -or $splitApks.Count -eq 0) {
                 Push-Location $script:FlutterRoot
                 try {
@@ -1034,7 +1055,7 @@ function Invoke-TorcaDeploy {
                     Pop-Location
                 }
                 Get-ChildItem $apkOutput -Filter '*-release.apk' |
-                    Where-Object { $_.Name -in @('app-arm64-v8a-release.apk', 'app-x86_64-release.apk') } |
+                    Where-Object { $_.Name -match '^app-(normal-)?(arm64-v8a|x86_64)-release\.apk$' } |
                     ForEach-Object {
                         Assert-TorcaAndroidPackage -Apk $_.FullName
                         Copy-Item $_.FullName (Join-Path $androidTarget $_.Name) -Force

@@ -39,6 +39,7 @@ use crate::json::{
 };
 use crate::runtime_composition::spawn_production_runtime;
 use torca_communication_adapters::ReadReceiptPolicy;
+use torca_storage_sqlite::SqlCipherNotificationStore;
 
 pub(crate) const ABI_OK: i32 = 0;
 pub(crate) const ABI_ERROR: i32 = -1;
@@ -123,6 +124,8 @@ pub struct TorcaRuntime {
     contact_notification_seen: HashSet<String>,
     pairing_notification_seen: HashSet<String>,
     pub(crate) notification_cursor: u64,
+    pub(crate) notification_last_scan_revision: u64,
+    pub(crate) notification_store: SqlCipherNotificationStore,
     notification_events: Vec<torca_contract::NotificationEvent>,
     notifications_enabled: bool,
     read_receipts_enabled: bool,

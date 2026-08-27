@@ -7,6 +7,7 @@ use crate::executor::DeployProgress;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WizardScreen {
+    Provider,
     Action,
     Options,
     Devices,
@@ -298,7 +299,6 @@ pub fn marker(active: bool) -> &'static str {
 
 #[derive(Clone, Debug)]
 pub struct WizardModel {
-    pub action: DeployAction,
     pub plan: DeployPlan,
     pub fields: Vec<WizardField>,
     pub focused: usize,
@@ -415,13 +415,11 @@ pub enum FailureAction {
 
 impl WizardModel {
     pub fn new(plan: DeployPlan) -> Self {
-        let action = plan.action;
         let mut model = Self {
-            action,
             plan,
             fields: Vec::new(),
             focused: 0,
-            screen: WizardScreen::Action,
+            screen: WizardScreen::Provider,
             preflight: None,
         };
         model.rebuild_fields();
@@ -457,7 +455,6 @@ impl WizardModel {
     }
 
     pub fn set_action(&mut self, action: DeployAction) {
-        self.action = action;
         self.plan.action = action;
         self.plan = self.plan.clone().normalized();
         self.rebuild_fields();
@@ -466,6 +463,80 @@ impl WizardModel {
 
     pub fn set_provider(&mut self, provider: crate::domain::CommunicationProvider) {
         self.plan.communication_provider = provider;
+        self.plan = self.plan.clone().normalized();
+        self.rebuild_fields();
+        self.preflight = None;
+    }
+
+    /// Apply one interactive change to the currently focused field.  The
+    /// caller never needs to maintain a second copy of the plan values.
+    pub fn cycle_focused(&mut self, direction: i8) {
+        let Some(field) = self.focused_field().map(|field| field.capability.id) else {
+            return;
+        };
+        if !self.is_editable(field) {
+            return;
+        }
+        match field {
+            FieldId::Targets => {
+                let current = match self.plan.targets.as_slice() {
+                    [Target::Windows] => 0_i8,
+                    [Target::Android] => 1,
+                    _ => 2,
+                };
+                match (current + direction).rem_euclid(3) {
+                    0 => self.plan.targets = vec![Target::Windows],
+                    1 => self.plan.targets = vec![Target::Android],
+                    _ => self.plan.targets = crate::planner::all_client_targets(),
+                }
+            }
+            FieldId::Configuration => {
+                self.plan.configuration = if self.plan.configuration == Configuration::Debug {
+                    Configuration::Release
+                } else {
+                    Configuration::Debug
+                };
+            }
+            FieldId::ClientBuild => {
+                self.plan.client_build = cycle_build_policy(self.plan.client_build, direction);
+            }
+            FieldId::ProviderServiceBuild => {
+                self.plan.provider_service_build =
+                    cycle_build_policy(self.plan.provider_service_build, direction);
+            }
+            FieldId::ProviderMaintenance => {
+                self.plan.provider_maintenance = cycle_provider_maintenance(
+                    self.plan.communication_provider,
+                    self.plan.provider_maintenance,
+                    direction,
+                );
+            }
+            FieldId::ClientData => {
+                self.plan.client_data = cycle_data(self.plan.client_data, direction);
+            }
+            FieldId::Privacy => {
+                self.plan.privacy = if self.plan.privacy == PrivacyPolicy::Strict {
+                    PrivacyPolicy::AllowCapture
+                } else {
+                    PrivacyPolicy::Strict
+                }
+            }
+            FieldId::CommunicationProvider => {
+                self.set_provider(cycle_provider(self.plan.communication_provider, direction));
+                return;
+            }
+            FieldId::ProviderProfile => {
+                self.plan.provider_profile = cycle_provider_profile(
+                    self.plan.communication_provider,
+                    self.plan.provider_profile.as_deref().unwrap_or_default(),
+                    direction,
+                );
+            }
+            FieldId::Validation => {
+                self.plan.validation = cycle_validation(self.plan.validation, direction);
+            }
+            FieldId::Launch => self.plan.launch = cycle_launch(self.plan.launch, direction),
+        }
         self.plan = self.plan.clone().normalized();
         self.rebuild_fields();
         self.preflight = None;
@@ -625,5 +696,33 @@ mod tests {
         assert!(model.is_editable(FieldId::Launch));
         assert_eq!(cycle_validation(ValidationLevel::Full, 1), ValidationLevel::Skip);
         assert_eq!(cycle_launch(LaunchPolicy::Skip, -1), LaunchPolicy::Restart);
+    }
+
+    #[test]
+    fn provider_change_normalizes_managed_service_and_rebuilds_capabilities() {
+        let mut model = WizardModel::new(DeployPlan::normal(
+            DeployAction::FullRedeploy,
+            vec![Target::Windows, Target::Android],
+            Configuration::Debug,
+        ));
+        model.set_provider(CommunicationProvider::Iroh);
+        assert_eq!(model.plan.communication_provider, CommunicationProvider::Iroh);
+        assert!(!model.plan.communication_provider.descriptor().managed_service);
+        assert!(!model.is_editable(FieldId::ProviderServiceBuild));
+        assert!(model.capability(FieldId::ProviderProfile).is_some());
+    }
+
+    #[test]
+    fn cycling_focused_target_updates_only_supported_target_sets() {
+        let mut model = WizardModel::new(DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Windows],
+            Configuration::Debug,
+        ));
+        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+        model.cycle_focused(1);
+        assert_eq!(model.plan.targets, vec![Target::Android]);
+        model.cycle_focused(1);
+        assert_eq!(model.plan.targets, crate::planner::all_client_targets());
     }
 }

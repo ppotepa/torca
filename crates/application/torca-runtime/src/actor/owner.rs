@@ -100,6 +100,12 @@ impl RuntimeOwner {
         communication.set_waker(communication_waker);
         communication.set_radio_waker(radio_waker);
         communication_lifecycle.set_waker(lifecycle_waker);
+        let pairing_sender = sender.clone();
+        pairing.set_waker(Arc::new(move || {
+            let _ = pairing_sender.try_send(RuntimeCommand::Wake(vec![
+                RuntimeWakeSource::PairingDeadline,
+            ]));
+        }));
         let handle = RuntimeHandle { sender: sender.clone() };
         let join = thread::spawn(move || {
         let mut diagnostics = DiagnosticBuffer::new(256);
@@ -482,13 +488,40 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                     // only its relationship; warming every known contact
                     // would defeat the lazy connectivity policy.
                     communication.prime_contact(contact_id);
+                    let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+                    record(
+                        diagnostics,
+                        sequence,
+                        now,
+                        Component::Peer,
+                        HealthState::Starting,
+                        "PEER_PRIME_REQUESTED",
+                    );
                 }
                 acquire_delivery_lease(policy, message_id);
+                let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Peer,
+                    HealthState::Starting,
+                    "DELIVERY_LEASE_ACQUIRED",
+                );
             }
             RuntimeWait::Command(RuntimeCommand::ReleaseDelivery(message_id)) => {
                 work.active_delivery_leases.remove(&message_id);
                 work.active_delivery_contacts.remove(&message_id);
                 policy.release_lease(delivery_lease_owner(message_id));
+                let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Peer,
+                    HealthState::Ready,
+                    "DELIVERY_LEASE_RELEASED",
+                );
             }
             RuntimeWait::Command(command) => {
                 if command_requires_network(&command) {
@@ -573,6 +606,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
         if run_health {
             maintain_runtime_health(
                 pairing,
+                communication,
                 communication_lifecycle,
                 rendezvous_health.as_ref(),
                 policy,

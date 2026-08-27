@@ -1,8 +1,20 @@
+struct TelemetryEvent {
+    contact_id: ContactId,
+    direction: Option<TransportDirection>,
+    operation: TransportOperation,
+    phase: OperationPhase,
+    correlation_id: Option<OpaqueId>,
+    at: Timestamp,
+    stage: Option<TransportStage>,
+    error_code: Option<torca_foundation::ErrorCode>,
+}
+
 impl<S, K> PeerLink<S, K>
 where
     S: ContactRepository + PeerCredentialRepository,
     K: HandshakeSigner,
 {
+
 fn observe(
     &mut self,
     contact_id: ContactId,
@@ -12,6 +24,34 @@ fn observe(
     correlation_id: Option<OpaqueId>,
     at: Timestamp,
 ) {
+    let stage = match operation {
+        TransportOperation::Envelope => Some(TransportStage::Message),
+        TransportOperation::Ack => Some(TransportStage::Receipt),
+        _ => None,
+    };
+    self.observe_with_stage(TelemetryEvent {
+        contact_id,
+        direction,
+        operation,
+        phase,
+        correlation_id,
+        at,
+        stage,
+        error_code: None,
+    });
+}
+
+fn observe_with_stage(&mut self, event: TelemetryEvent) {
+    let TelemetryEvent {
+        contact_id,
+        direction,
+        operation,
+        phase,
+        correlation_id,
+        at,
+        stage,
+        error_code,
+    } = event;
     let activity = self.activity.entry(contact_id).or_default();
     let completed = phase == OperationPhase::Completed;
     if completed {
@@ -44,7 +84,7 @@ fn observe(
     }
     activity.sequence = activity.sequence.saturating_add(1);
     if let Some(observer) = &self.connectivity {
-        observer.record(
+        observer.record_with_stage(
             TransportLayer::Peer(Some(contact_id.to_opaque())),
             direction,
             operation,
@@ -52,17 +92,19 @@ fn observe(
             correlation_id,
             at,
             None,
-            None,
+            error_code,
+            stage,
         );
-        observer.record(
-            TransportLayer::Tor,
+        observer.record_with_stage(
+            TransportLayer::Communication,
             direction,
             operation,
             phase,
             correlation_id,
             at,
             None,
-            None,
+            error_code,
+            stage,
         );
     }
 }

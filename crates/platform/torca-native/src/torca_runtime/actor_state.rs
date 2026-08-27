@@ -1,6 +1,15 @@
 // Responsibility: native process actor request routing and response envelopes.
 
 impl ActorState {
+    pub(crate) fn publish_notifications(&mut self, event_hub: &RuntimeEventHub) {
+        let before = self.runtime.notification_cursor;
+        let _ = self.runtime.notification_events_json(before, self.revision);
+        let after = self.runtime.notification_cursor;
+        if after > before {
+            event_hub.publish_notification(after);
+        }
+    }
+
     fn next_maintenance_delay(&self) -> Option<Duration> {
         self.runtime.next_pending_operation_delay()
     }
@@ -86,7 +95,7 @@ impl ActorState {
             }
             ("query", "notifications.poll") => {
                 let cursor = payload.get("afterCursor").and_then(Value::as_u64).unwrap_or(0);
-                self.runtime.notification_events_json(cursor)
+                self.runtime.notification_events_json(cursor, self.revision)
             }
             ("query", "runtime.poll") => {
                 let cursor = payload.get("afterCursor").and_then(Value::as_u64).unwrap_or(0);
@@ -94,7 +103,7 @@ impl ActorState {
                 if snapshot_code != ABI_OK {
                     snapshot_code
                 } else {
-                    let events_code = self.runtime.notification_events_json(cursor);
+                    let events_code = self.runtime.notification_events_json(cursor, self.revision);
                     if events_code == ABI_OK {
                         let snapshot = self.runtime.snapshot_value.clone();
                         let events = serde_json::from_str::<Value>(&self.runtime.query_json)

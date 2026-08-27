@@ -170,6 +170,20 @@ mod tests {
     }
 
     #[test]
+    fn pairing_completion_primes_each_persisted_contact_exactly_once() {
+        let first = ContactId::from_opaque(OpaqueId::from_u128(1));
+        let second = ContactId::from_opaque(OpaqueId::from_u128(2));
+        let report = PairingMaintenanceReport {
+            completed_contacts: vec![first, first, second],
+        };
+        let mut primed = Vec::new();
+
+        prime_completed_pairings(&report, |contact_id| primed.push(contact_id));
+
+        assert_eq!(primed, vec![first, second]);
+    }
+
+    #[test]
     fn read_only_commands_do_not_request_runtime_maintenance() {
         let (diagnostics, _response) = mpsc::channel();
         let (attachments, _response) = mpsc::channel();

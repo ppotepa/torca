@@ -45,8 +45,19 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
       - name: Rust tests
         run: cargo test --workspace --all-targets --locked
+      - name: Provider conformance tests
+        run: cargo test --locked -p torca-provider-conformance
       - name: Iroh provider tests
         run: cargo test --locked -p torca-native --no-default-features --features provider-iroh,radio-audio
+      - name: Tor transport unit tests
+        run: |
+          cargo test --locked -p torca-transport-tor
+          cargo test --locked -p torca-tor
+      - name: Full Rust warnings gate
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Avatar asset validation
+        shell: pwsh
+        run: ./scripts/Validate-TorcaAvatarAssets.ps1
       - name: Battery idle scheduler gate
         shell: bash
         run: |

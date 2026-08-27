@@ -107,12 +107,11 @@ function Test-TorcaClientArtifactsExist {
     if ($Target -in @('android','all')) {
         $apkOutput = Join-Path $flutterRoot 'build/app/outputs/flutter-apk'
         $universalApk = Join-Path $apkOutput "app-$Configuration.apk"
-        $requiredSplitApks = @(
-            (Join-Path $apkOutput "app-arm64-v8a-$Configuration.apk"),
-            (Join-Path $apkOutput "app-x86_64-$Configuration.apk")
-        )
+        $requiredSplitApks = @(Get-ChildItem -LiteralPath $apkOutput -Filter "app-*-$Configuration.apk" -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match "^app-(normal-)?(arm64-v8a|x86_64)-$Configuration\.apk$" } |
+            Select-Object -ExpandProperty FullName)
         $hasUniversalApk = Test-Path -LiteralPath $universalApk
-        $hasRequiredSplitApks = @($requiredSplitApks | Where-Object { Test-Path -LiteralPath $_ }).Count -eq $requiredSplitApks.Count
+        $hasRequiredSplitApks = @($requiredSplitApks | Where-Object { Test-Path -LiteralPath $_ }).Count -ge 2
         if (-not $hasUniversalApk -and -not $hasRequiredSplitApks) { return $false }
     }
     return $true
@@ -270,15 +269,22 @@ function Install-TorcaClient {
             if (-not [string]::IsNullOrWhiteSpace($primaryAbi)) { $abis = @($primaryAbi) }
         }
         foreach ($abi in $abis) {
-            $candidate = switch ($abi.Trim()) {
-                'arm64-v8a' { Join-Path $apkOutput "app-arm64-v8a-$Configuration.apk"; break }
-                'x86_64' { Join-Path $apkOutput "app-x86_64-$Configuration.apk"; break }
-                default { $null }
+            $candidates = switch ($abi.Trim()) {
+                'arm64-v8a' {
+                    @((Join-Path $apkOutput "app-arm64-v8a-$Configuration.apk"), (Join-Path $apkOutput "app-normal-arm64-v8a-$Configuration.apk")); break
+                }
+                'x86_64' {
+                    @((Join-Path $apkOutput "app-x86_64-$Configuration.apk"), (Join-Path $apkOutput "app-normal-x86_64-$Configuration.apk")); break
+                }
+                default { @() }
             }
-            if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-                $apk = $candidate
-                break
+            foreach ($candidate in @($candidates)) {
+                if (Test-Path -LiteralPath $candidate) {
+                    $apk = $candidate
+                    break
+                }
             }
+            if ($apk) { break }
         }
     }
     $splitApks = @(Get-ChildItem -LiteralPath $apkOutput -Filter "app-*-$Configuration.apk" -File -ErrorAction SilentlyContinue)

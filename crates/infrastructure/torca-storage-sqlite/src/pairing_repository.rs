@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use torca_contacts::ContactRoute;
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_identity::{IdentityId, IdentityKey, KeyAlgorithm, KeyId, PublicIdentity};
 use torca_pairing::{
     AvatarGenomeReference, PairingCode, PairingError, PairingRepository, PairingRole,
@@ -212,7 +212,14 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
             Some(proposal.public_identity.key().public_key().to_vec()),
             Some(i64::from(proposal.public_identity.generation())),
             Some(proposal.display_name.clone()),
-            Some(proposal.route.onion_address().to_owned()),
+            Some(
+                proposal
+                    .route
+                    .provider_endpoint("tor")
+                    .and_then(|endpoint| std::str::from_utf8(endpoint).ok())
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
             Some(proposal.route.capability_id().into_bytes().to_vec()),
             avatar.0,
             avatar.1,
@@ -220,8 +227,15 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
             avatar.3,
             avatar.4,
             Some(
-                serde_json::to_string(proposal.route.provider_endpoints())
-                    .map_err(|_| PairingError::Storage)?,
+                serde_json::to_string(
+                    &proposal
+                        .route
+                        .provider_endpoints()
+                        .iter()
+                        .map(|(provider, endpoint)| (provider.as_str(), endpoint))
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                )
+                .map_err(|_| PairingError::Storage)?,
             ),
         )
     } else {
@@ -309,20 +323,25 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
                 u32::try_from(generation).map_err(|_| rusqlite::Error::InvalidQuery)?,
             );
             let capability_id = OpaqueId::from_bytes(blob16(capability)?);
-            let route = match transport_endpoints_json
+            let mut endpoints = transport_endpoints_json
                 .as_deref()
                 .and_then(|json| {
                     serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(json).ok()
                 })
-                .and_then(|endpoints| endpoints.into_iter().next())
-            {
-                Some((provider, endpoint)) => {
-                    ContactRoute::with_provider_endpoint(onion, capability_id, provider, endpoint)
-                        .map_err(|_| rusqlite::Error::InvalidQuery)?
-                }
-                None => ContactRoute::new(onion, capability_id)
-                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
-            };
+                .unwrap_or_default();
+            if !endpoints.contains_key("tor") && !onion.is_empty() {
+                endpoints.insert("tor".to_owned(), onion.into_bytes());
+            }
+            let endpoints = endpoints
+                .into_iter()
+                .map(|(provider, endpoint)| {
+                    ProviderId::new(provider)
+                        .map(|provider| (provider, endpoint))
+                        .map_err(|_| rusqlite::Error::InvalidQuery)
+                })
+                .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+            let route = ContactRoute::from_provider_endpoints(capability_id, endpoints)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
             let avatar = match (
                 avatar_schema,
                 avatar_generator_version,
@@ -466,8 +485,7 @@ mod tests {
                 2,
             ),
             display_name: "Remote Alice".to_owned(),
-            route: ContactRoute::with_provider_endpoint(
-                "",
+            route: ContactRoute::for_provider_endpoint(
                 OpaqueId::from_u128(13),
                 "iroh",
                 b"endpoint-address".to_vec(),
@@ -508,8 +526,12 @@ mod tests {
                 1,
             ),
             display_name: "Avatar Alice".to_owned(),
-            route: ContactRoute::new("b".repeat(56) + ".onion", OpaqueId::from_u128(23))
-                .expect("route"),
+            route: ContactRoute::for_provider_endpoint(
+                OpaqueId::from_u128(23),
+                "tor",
+                ("b".repeat(56) + ".onion").into_bytes(),
+            )
+            .expect("route"),
             avatar: Some(AvatarGenomeReference {
                 schema_version: 1,
                 generator_version: "gen-v1".to_owned(),

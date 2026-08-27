@@ -30,6 +30,40 @@ pub enum PresenceQuality {
     Poor,
 }
 
+/// User-facing peer availability. This deliberately does not mirror socket
+/// lifecycle: an idle peer with recent positive evidence remains distinct
+/// from a peer that has accumulated credible offline evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerAvailability {
+    Unknown,
+    Idle,
+    Reachable,
+    Offline,
+}
+
+/// Projects durable peer evidence into user-facing availability without
+/// requesting any additional network work.
+pub fn classify_availability(
+    ready: bool,
+    last_success_at: Option<Timestamp>,
+    consecutive_failures: u32,
+    now: Timestamp,
+) -> PeerAvailability {
+    if ready {
+        return PeerAvailability::Reachable;
+    }
+    let success_is_stale = last_success_at
+        .and_then(|last| now.duration_since(last))
+        .is_some_and(|age| age > Duration::from_secs(90));
+    if consecutive_failures >= 2 && (last_success_at.is_none() || success_is_stale) {
+        return PeerAvailability::Offline;
+    }
+    if last_success_at.is_some() || consecutive_failures > 0 {
+        return PeerAvailability::Idle;
+    }
+    PeerAvailability::Unknown
+}
+
 /// Freshness boundary supplied by application policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FreshnessPolicy {
@@ -87,7 +121,10 @@ pub fn classify_health(
 
 #[cfg(test)]
 mod tests {
-    use super::{FreshnessPolicy, PresenceObservation, PresenceState, derive_presence};
+    use super::{
+        FreshnessPolicy, PeerAvailability, PresenceObservation, PresenceState,
+        classify_availability, derive_presence,
+    };
     use torca_foundation::Timestamp;
 
     #[test]
@@ -125,5 +162,19 @@ mod tests {
             derive_presence(observation, now, FreshnessPolicy::new(400)),
             PresenceState::Offline
         );
+    }
+
+    #[test]
+    fn availability_separates_idle_from_offline_transport_state() {
+        let now = Timestamp::from_unix_millis(100_000).expect("timestamp");
+        let recent = Timestamp::from_unix_millis(99_000).expect("timestamp");
+        let stale = Timestamp::from_unix_millis(1_000).expect("timestamp");
+
+        assert_eq!(classify_availability(true, None, 0, now), PeerAvailability::Reachable);
+        assert_eq!(classify_availability(false, Some(recent), 0, now), PeerAvailability::Idle);
+        assert_eq!(classify_availability(false, None, 1, now), PeerAvailability::Idle);
+        assert_eq!(classify_availability(false, None, 2, now), PeerAvailability::Offline);
+        assert_eq!(classify_availability(false, Some(stale), 2, now), PeerAvailability::Offline);
+        assert_eq!(classify_availability(false, None, 0, now), PeerAvailability::Unknown);
     }
 }

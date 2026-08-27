@@ -39,6 +39,7 @@ pub enum PeerHealthQuality {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PeerHealthSnapshot {
     pub state: PeerConnectionStatus,
+    pub availability: PeerAvailability,
     pub quality: PeerHealthQuality,
     pub rtt_ms: Option<u64>,
     pub last_success_at: Option<Timestamp>,
@@ -84,6 +85,11 @@ impl PeerHealthSnapshot {
     pub const fn from_connection_state(state: PeerConnectionStatus) -> Self {
         Self {
             state,
+            availability: if matches!(state, PeerConnectionStatus::Ready) {
+                PeerAvailability::Reachable
+            } else {
+                PeerAvailability::Unknown
+            },
             quality: PeerHealthQuality::Unknown,
             rtt_ms: None,
             last_success_at: None,
@@ -108,6 +114,15 @@ pub struct PairingInvitationView {
     pub uri: String,
     pub expires_at: Timestamp,
 }
+
+/// Relationships made durable by one successful pairing maintenance turn.
+/// Runtime consumers must prime only these contacts, after persistence has
+/// completed, and may assume the list is deduplicated.
+#[must_use]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PairingMaintenanceReport {
+    pub completed_contacts: Vec<ContactId>,
+}
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NetworkSnapshot {
@@ -118,9 +133,6 @@ pub struct NetworkSnapshot {
     /// Legacy compatibility state. The field name remains stable for one wire
     /// migration; its type is provider-neutral.
     pub tor: CommunicationState,
-    /// Legacy compatibility endpoint. New code must use
-    /// `communication.endpoint_summary`.
-    pub onion_address: Option<String>,
     pub peers: BTreeMap<ContactId, PeerConnectionStatus>,
     pub peer_health: BTreeMap<ContactId, PeerHealthSnapshot>,
     pub contact_names: BTreeMap<ContactId, String>,

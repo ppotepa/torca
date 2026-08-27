@@ -9,8 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use torca_contacts::Contact;
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_pairing_protocol::PairingBootstrapDescriptor;
+
+pub use torca_provider_api::{
+    MaintenanceOption, PairingBootstrapMode, ProviderCommissioningService,
+    ProviderDeploymentProfile, ProviderDeploymentState, ProviderDescriptor, ProviderFeatures,
+    ProviderProfileDescriptor, ProviderRouteState,
+};
 
 /// Provider-neutral byte stream used by the authenticated peer protocol.
 ///
@@ -130,66 +136,34 @@ impl TransportKind {
         }
     }
 
-    /// Product-facing metadata consumed by deployment and native composition.
-    /// This is the canonical place for provider requirements; callers must
-    /// not infer them from the provider name.
-    pub const fn deployment_profile(self) -> ProviderDeploymentProfile {
-        match self {
-            Self::Tor => ProviderDeploymentProfile {
-                label: "Tor (onion)",
-                deployment_state: ProviderDeploymentState::Validated,
-                commissioning_service: ProviderCommissioningService::ManagedRendezvous,
-                pairing_bootstrap: PairingBootstrapMode::ManagedSessionService,
-                features: ProviderFeatures::TOR,
-                startup_timeout: Duration::from_secs(15 * 60),
-                service_validation_timeout: Duration::from_secs(180),
-                local_ready_codes: &["LOCAL_READY"],
-                service_ready_codes: &["TOR_BOOTSTRAP_READY", "NETWORK_READY"],
-            },
-            Self::Iroh => ProviderDeploymentProfile {
-                label: "Iroh (QUIC)",
-                // Iroh has a complete provider-owned native composition and
-                // direct QR bootstrap. It does not need a managed relay
-                // artifact, so it is safe to expose in the deploy wizard.
-                deployment_state: ProviderDeploymentState::Validated,
-                commissioning_service: ProviderCommissioningService::None,
-                pairing_bootstrap: PairingBootstrapMode::DirectQr,
-                features: ProviderFeatures::IROH,
-                startup_timeout: Duration::from_secs(45),
-                service_validation_timeout: Duration::from_secs(45),
-                local_ready_codes: &["LOCAL_READY"],
-                service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
-            },
-            Self::WebRtc => ProviderDeploymentProfile {
-                label: "WebRTC (ICE/TURN)",
-                deployment_state: ProviderDeploymentState::Hidden,
-                commissioning_service: ProviderCommissioningService::ExternalSignaling,
-                pairing_bootstrap: PairingBootstrapMode::ExternalSignaling,
-                features: ProviderFeatures::WEBRTC,
-                startup_timeout: Duration::from_secs(60),
-                service_validation_timeout: Duration::from_secs(60),
-                local_ready_codes: &["LOCAL_READY"],
-                service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
-            },
-            Self::Memory => ProviderDeploymentProfile {
-                label: "Memory (test)",
-                deployment_state: ProviderDeploymentState::Hidden,
-                commissioning_service: ProviderCommissioningService::None,
-                pairing_bootstrap: PairingBootstrapMode::TestMemory,
-                features: ProviderFeatures::MEMORY,
-                startup_timeout: Duration::from_secs(5),
-                service_validation_timeout: Duration::from_secs(5),
-                local_ready_codes: &["LOCAL_READY", "COMMUNICATION_READY"],
-                service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
-            },
-        }
+    /// Returns the validated identifier for this legacy built-in kind.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a built-in wire value violates the `ProviderId`
+    /// invariant, which is a compile-time catalog defect.
+    pub fn provider_id(self) -> ProviderId {
+        ProviderId::new(self.wire_value()).expect("built-in transport kind is a valid provider id")
     }
 
-    pub const fn deployment_ready(self) -> bool {
+    /// Compatibility adapter for callers that still select built-in providers
+    /// through `TransportKind`. Provider metadata itself lives in
+    /// `torca-provider-api` and is keyed by `ProviderId`.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a built-in kind is missing from the provider metadata
+    /// catalog, which is a compile-time catalog defect.
+    pub fn deployment_profile(self) -> ProviderDeploymentProfile {
+        torca_provider_api::built_in_deployment_profile(&self.provider_id())
+            .expect("built-in transport kind has a deployment profile")
+    }
+
+    pub fn deployment_ready(self) -> bool {
         self.deployment_profile().is_deployment_ready()
     }
 
-    pub const fn protocol_label(self) -> &'static str {
+    pub fn protocol_label(self) -> &'static str {
         self.deployment_profile().label
     }
 
@@ -202,294 +176,21 @@ impl TransportKind {
         &[Self::Tor, Self::Iroh]
     }
 
-    /// Complete provider-neutral descriptor for deployment UIs and plans.
-    /// Consumers should use this instead of matching on a provider name.
-    pub const fn descriptor(self) -> ProviderDescriptor {
-        match self {
-            Self::Tor => ProviderDescriptor {
-                kind: Self::Tor,
-                label: "Tor (onion)",
-                description: "Managed onion rendezvous service with discovery and warm-up.",
-                managed_service: true,
-                profiles: &[ProviderProfileDescriptor {
-                    id: "default",
-                    label: "Default",
-                    description: "Managed onion service.",
-                }],
-                maintenance: &[
-                    MaintenanceOption::Ensure,
-                    MaintenanceOption::Restart,
-                    MaintenanceOption::RepairDirectoryCache,
-                    MaintenanceOption::RotateIdentity,
-                ],
-                endpoint_required: true,
-                warmup_stages: &["bootstrap", "publish endpoint", "verify service"],
-            },
-            Self::Iroh => ProviderDescriptor {
-                kind: Self::Iroh,
-                label: "Iroh (QUIC)",
-                description: "Direct QUIC provider with optional discovery and relay fallback.",
-                managed_service: false,
-                profiles: &[
-                    ProviderProfileDescriptor {
-                        id: "always",
-                        label: "Always reachable",
-                        description: "Discovery and relay fallback.",
-                    },
-                    ProviderProfileDescriptor {
-                        id: "direct",
-                        label: "Direct only",
-                        description: "Direct paths only.",
-                    },
-                    ProviderProfileDescriptor {
-                        id: "local",
-                        label: "Local only",
-                        description: "Loopback or lab use.",
-                    },
-                ],
-                maintenance: &[],
-                endpoint_required: false,
-                warmup_stages: &["start local endpoint"],
-            },
-            Self::WebRtc => ProviderDescriptor {
-                kind: Self::WebRtc,
-                label: "WebRTC (ICE/TURN)",
-                description: "External signaling provider.",
-                managed_service: false,
-                profiles: &[],
-                maintenance: &[],
-                endpoint_required: true,
-                warmup_stages: &["connect signaling", "gather ICE"],
-            },
-            Self::Memory => ProviderDescriptor {
-                kind: Self::Memory,
-                label: "Memory (test)",
-                description: "In-process test provider.",
-                managed_service: false,
-                profiles: &[],
-                maintenance: &[],
-                endpoint_required: false,
-                warmup_stages: &["start local endpoint"],
-            },
-        }
+    /// Returns the provider-neutral descriptor for this legacy built-in kind.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a built-in kind is missing from the provider metadata
+    /// catalog, which is a compile-time catalog defect.
+    pub fn descriptor(self) -> ProviderDescriptor {
+        torca_provider_api::built_in_descriptor(&self.provider_id())
+            .expect("built-in transport kind has a descriptor")
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProviderProfileDescriptor {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub description: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MaintenanceOption {
-    Ensure,
-    Restart,
-    RepairDirectoryCache,
-    RotateIdentity,
-}
-
-impl MaintenanceOption {
-    pub const fn wire_value(self) -> &'static str {
-        match self {
-            Self::Ensure => "ensure",
-            Self::Restart => "restart",
-            Self::RepairDirectoryCache => "repair_directory_cache",
-            Self::RotateIdentity => "rotate_identity",
-        }
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Ensure => "Ensure",
-            Self::Restart => "Restart",
-            Self::RepairDirectoryCache => "Repair directory cache",
-            Self::RotateIdentity => "Rotate identity",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProviderDescriptor {
-    pub kind: TransportKind,
-    pub label: &'static str,
-    pub description: &'static str,
-    pub managed_service: bool,
-    pub profiles: &'static [ProviderProfileDescriptor],
-    pub maintenance: &'static [MaintenanceOption],
-    pub endpoint_required: bool,
-    pub warmup_stages: &'static [&'static str],
 }
 
 impl core::fmt::Display for TransportKind {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str(self.wire_value())
-    }
-}
-
-/// Stable deployment requirements for one communication provider.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProviderDeploymentProfile {
-    pub label: &'static str,
-    pub deployment_state: ProviderDeploymentState,
-    pub commissioning_service: ProviderCommissioningService,
-    pub pairing_bootstrap: PairingBootstrapMode,
-    pub features: ProviderFeatures,
-    /// Maximum time native composition may spend starting this provider.
-    /// Provider profiles own this because Tor directory bootstrap and a local
-    /// Iroh endpoint have fundamentally different startup characteristics.
-    pub startup_timeout: Duration,
-    /// Maximum deploy health-gate wait for provider-owned service readiness.
-    /// Direct providers can complete this immediately; managed providers may
-    /// need a longer directory/rendezvous window.
-    pub service_validation_timeout: Duration,
-    /// Structured log codes accepted by the generic deploy health gate.
-    pub local_ready_codes: &'static [&'static str],
-    pub service_ready_codes: &'static [&'static str],
-}
-
-/// Product capabilities exposed by a selected provider. This is deliberately
-/// data, not provider-name branching in application/UI code. A feature must be
-/// advertised here before it may be enabled in a deployment.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct ProviderFeatures {
-    pub pairing_qr: bool,
-    pub pairing_full_link: bool,
-    pub pairing_short_code: bool,
-    pub incoming: bool,
-    pub messages: bool,
-    pub attachments: bool,
-    pub radio: bool,
-    pub direct_path: bool,
-}
-
-impl ProviderFeatures {
-    pub const TOR: Self = Self {
-        pairing_qr: true,
-        pairing_full_link: true,
-        pairing_short_code: true,
-        incoming: true,
-        messages: true,
-        attachments: true,
-        radio: true,
-        direct_path: false,
-    };
-    pub const IROH: Self = Self {
-        pairing_qr: true,
-        pairing_full_link: true,
-        pairing_short_code: false,
-        incoming: true,
-        messages: true,
-        attachments: true,
-        radio: true,
-        direct_path: true,
-    };
-    pub const WEBRTC: Self = Self {
-        pairing_qr: true,
-        pairing_full_link: true,
-        pairing_short_code: false,
-        incoming: true,
-        messages: true,
-        attachments: true,
-        radio: false,
-        direct_path: true,
-    };
-    pub const MEMORY: Self = Self {
-        pairing_qr: true,
-        pairing_full_link: true,
-        pairing_short_code: true,
-        incoming: true,
-        messages: true,
-        attachments: true,
-        radio: false,
-        direct_path: true,
-    };
-}
-
-impl ProviderDeploymentProfile {
-    pub const fn is_deployment_ready(self) -> bool {
-        matches!(self.deployment_state, ProviderDeploymentState::Validated)
-    }
-
-    /// Whether a deployment must wait for a provider-owned commissioning
-    /// service in addition to the local runtime.  Keeping this decision on
-    /// the profile prevents deployers from equating "has an endpoint" with
-    /// "has a readiness gate" for direct providers.
-    pub const fn requires_service_readiness(self) -> bool {
-        !matches!(self.commissioning_service, ProviderCommissioningService::None)
-    }
-
-    /// Validates the optional deployment endpoint according to the selected
-    /// provider. Endpoint syntax is never inferred from a provider name in
-    /// deploy code; only the profile owns that policy.
-    pub fn endpoint_is_valid(self, endpoint: &str) -> bool {
-        if endpoint.is_empty() || endpoint.len() > 2048 || endpoint.chars().any(char::is_whitespace)
-        {
-            return false;
-        }
-        match self.commissioning_service {
-            ProviderCommissioningService::ManagedRendezvous => {
-                let mut parts = endpoint.split(':');
-                let host = parts.next().unwrap_or_default();
-                let port = parts.next().unwrap_or_default();
-                let Some(prefix) = host.strip_suffix(".onion") else { return false };
-                parts.next().is_none()
-                    && prefix.len() == 56
-                    && prefix
-                        .chars()
-                        .all(|character| "abcdefghijklmnopqrstuvwxyz234567".contains(character))
-                    && port.parse::<u16>().is_ok()
-            }
-            ProviderCommissioningService::ExternalSignaling => {
-                endpoint.starts_with("https://") || endpoint.starts_with("wss://")
-            }
-            ProviderCommissioningService::ExternalRendezvous => {
-                endpoint.contains(':') || endpoint.starts_with("https://")
-            }
-            ProviderCommissioningService::None => true,
-        }
-    }
-}
-
-/// Controls whether a provider is visible to a normal deployment. The state
-/// lives with the provider profile so the CLI and native startup cannot drift.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProviderDeploymentState {
-    Hidden,
-    Experimental,
-    Validated,
-}
-
-/// How an invitation reaches a provider before a durable peer route exists.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PairingBootstrapMode {
-    ManagedSessionService,
-    DirectQr,
-    ExternalSignaling,
-    TestMemory,
-}
-
-/// Provider-owned service needed to commission pairing routes.  This is a
-/// deployment fact, not an application assumption: a provider may have no
-/// service, create a local managed service, or use externally configured
-/// signaling/discovery.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProviderCommissioningService {
-    None,
-    ManagedRendezvous,
-    ExternalRendezvous,
-    ExternalSignaling,
-}
-
-impl ProviderCommissioningService {
-    pub const fn requires_endpoint(self) -> bool {
-        matches!(self, Self::ManagedRendezvous | Self::ExternalRendezvous | Self::ExternalSignaling)
-    }
-
-    pub const fn is_managed(self) -> bool {
-        matches!(self, Self::ManagedRendezvous)
     }
 }
 
@@ -731,30 +432,6 @@ pub trait PeerTransportFactory: Send {
         &mut self,
         contact: &Contact,
     ) -> Result<Box<dyn PeerTransport + Send>, TransportFactoryError>;
-    /// Returns the provider's current opaque route for authenticated refresh.
-    /// Providers without a mutable direct route may return `None`.
-    fn local_route(&self) -> Option<ProviderRoute> {
-        None
-    }
-    /// Returns false while the provider is asynchronously migrating its
-    /// local route after a network-generation change. Callers must wait for
-    /// the provider waker instead of dialing with an address captured before
-    /// migration; the default keeps existing providers conservative-free.
-    fn local_route_is_fresh(&self) -> bool {
-        true
-    }
-    /// Returns one typed route state for diagnostics and provider-neutral
-    /// schedulers. The default composes the legacy-compatible route methods
-    /// so existing providers can adopt the richer contract incrementally.
-    fn local_route_state(&self) -> ProviderRouteState {
-        if !self.local_route_is_fresh() {
-            ProviderRouteState::Stale
-        } else if self.local_route().is_some() {
-            ProviderRouteState::Fresh
-        } else {
-            ProviderRouteState::Unavailable
-        }
-    }
     /// Whether existing sessions can survive an OS network-generation event.
     /// QUIC providers can migrate paths in place; stream providers that cannot
     /// do so retain the conservative close-and-reconnect behavior.
@@ -762,45 +439,6 @@ pub trait PeerTransportFactory: Send {
         false
     }
     fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), TransportFactoryError>;
-}
-
-/// Provider-neutral opaque route advertised over an authenticated peer link.
-/// The endpoint bytes are owned and validated by the selected provider; the
-/// runtime only carries them between the transport factory and contacts
-/// repository.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProviderRoute {
-    pub provider: TransportKind,
-    pub generation: u64,
-    pub endpoint: Vec<u8>,
-}
-
-impl ProviderRoute {
-    pub fn new(provider: TransportKind, generation: u64, endpoint: Vec<u8>) -> Option<Self> {
-        (!endpoint.is_empty() && endpoint.len() <= 8 * 1024).then_some(Self {
-            provider,
-            generation,
-            endpoint,
-        })
-    }
-}
-
-/// Provider-neutral availability of the local route used for new sessions.
-/// `Stale` is intentionally distinct from `Unavailable`: migration is
-/// expected to recover after a provider wake, while unavailable means that
-/// the provider currently has no dialable address at all.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderRouteState {
-    Fresh,
-    Stale,
-    Unavailable,
-}
-
-impl ProviderRouteState {
-    pub const fn is_fresh(self) -> bool {
-        matches!(self, Self::Fresh)
-    }
 }
 
 /// Error vocabulary shared by transport factories without exposing a provider

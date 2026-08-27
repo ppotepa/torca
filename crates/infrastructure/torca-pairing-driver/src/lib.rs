@@ -3,7 +3,8 @@
 mod worker;
 pub use worker::PairingWorkerDriver;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use torca_client_engine::EngineHandle;
@@ -15,64 +16,15 @@ use torca_pairing_coordinator::{
     PairingPollReport, PairingRuntime, PairingRuntimeError, PairingSessionServicePort,
 };
 use torca_pairing_protocol::{AvatarEnvelope, PairingBootstrapDescriptor};
-use torca_runtime::{PairingDriver, PairingInvitationView, RuntimeDriverError};
-
-/// Provider-owned local endpoint advertised in a pairing offer.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PairingTransportRoute {
-    pub transport_provider: String,
-    pub transport_endpoint: Vec<u8>,
-}
-
-impl PairingTransportRoute {
-    pub fn new(provider: impl Into<String>, endpoint: Vec<u8>) -> Self {
-        Self { transport_provider: provider.into(), transport_endpoint: endpoint }
-    }
-}
-
-/// Reads the endpoint from the currently selected provider. Returning `Ok(None)`
-/// means commissioning has not produced a routable endpoint yet. A typed
-/// error is reserved for a provider state that needs an explicit recovery
-/// action (for example a stale route after network migration); it must not be
-/// silently converted into a generic pending invitation.
-pub trait PairingTransportRouteSource: Send + Sync {
-    fn local_route(&self) -> Result<Option<PairingTransportRoute>, RuntimeDriverError>;
-}
-
-impl<F> PairingTransportRouteSource for F
-where
-    F: Fn() -> Result<Option<PairingTransportRoute>, RuntimeDriverError> + Send + Sync,
-{
-    fn local_route(&self) -> Result<Option<PairingTransportRoute>, RuntimeDriverError> {
-        self()
-    }
-}
-
-/// Supplies optional provider-specific data embedded in a newly-created QR
-/// invitation. It is only discovery/signaling material; a completed contact
-/// always takes its durable route from the authenticated pairing offer.
-pub trait PairingBootstrapSource: Send + Sync {
-    fn invitation_bootstrap(
-        &self,
-    ) -> Result<Option<PairingBootstrapDescriptor>, RuntimeDriverError>;
-}
-
-impl<F> PairingBootstrapSource for F
-where
-    F: Fn() -> Result<Option<PairingBootstrapDescriptor>, RuntimeDriverError> + Send + Sync,
-{
-    fn invitation_bootstrap(
-        &self,
-    ) -> Result<Option<PairingBootstrapDescriptor>, RuntimeDriverError> {
-        self()
-    }
-}
+use torca_provider_api::{ProviderRouteError, ProviderRouting};
+use torca_runtime::{
+    PairingDriver, PairingInvitationView, PairingMaintenanceReport, RuntimeDriverError,
+};
 
 pub struct RuntimePairingDriver<R, C, A, S> {
     runtime: PairingRuntime<R, C, A, S>,
     engine: EngineHandle,
-    route_source: Box<dyn PairingTransportRouteSource>,
-    bootstrap_source: Option<Box<dyn PairingBootstrapSource>>,
+    routing: Arc<dyn ProviderRouting>,
     random: RustCryptoProvider,
     poll_schedule: BTreeMap<PairingSessionId, PairingPollSchedule>,
 }
@@ -97,27 +49,21 @@ where
     pub fn new(
         runtime: PairingRuntime<R, C, A, S>,
         engine: EngineHandle,
-        route_source: Box<dyn PairingTransportRouteSource>,
+        routing: Arc<dyn ProviderRouting>,
     ) -> Self {
         Self {
             runtime,
             engine,
-            route_source,
-            bootstrap_source: None,
+            routing,
             random: RustCryptoProvider,
             poll_schedule: BTreeMap::new(),
         }
     }
 
-    pub fn with_bootstrap_source(mut self, source: Box<dyn PairingBootstrapSource>) -> Self {
-        self.bootstrap_source = Some(source);
-        self
-    }
-
     fn context(&mut self) -> Result<Option<LocalPairingContext>, RuntimeDriverError> {
         let snapshot = self.engine.overview_snapshot().map_err(|_| RuntimeDriverError::Engine)?;
         let identity = snapshot.identity.ok_or(RuntimeDriverError::Pairing)?;
-        let Some(route) = self.route_source.local_route()? else {
+        let Some(route) = self.routing.local_route().map_err(map_route_error)? else {
             return Ok(None);
         };
         Ok(Some(LocalPairingContext {
@@ -134,8 +80,8 @@ where
                 genome_hash: record.genome_hash,
                 compressed_genome: record.compressed_genome,
             }),
-            transport_provider: route.transport_provider,
-            transport_endpoint: route.transport_endpoint,
+            transport_provider: route.provider.into_string(),
+            transport_endpoint: route.endpoint,
         }))
     }
 
@@ -199,13 +145,10 @@ where
         // the contract projection will add the provider bootstrap as soon as
         // it becomes available.  A real provider error still fails the
         // command, while `Pending` is deliberately non-fatal for creators.
-        let bootstrap = match self.bootstrap_source.as_ref() {
-            Some(source) => match source.invitation_bootstrap() {
-                Ok(value) => value,
-                Err(RuntimeDriverError::Pending) => None,
-                Err(error) => return Err(error),
-            },
-            None => None,
+        let bootstrap = match self.routing.pairing_bootstrap() {
+            Ok(value) => value,
+            Err(ProviderRouteError::Unavailable) => None,
+            Err(error) => return Err(map_route_error(error)),
         };
         let invitation = self
             .runtime
@@ -260,10 +203,14 @@ where
         self.runtime.cancel(session_id).map_err(map_pairing_error)
     }
 
-    fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+    fn maintenance(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<PairingMaintenanceReport, RuntimeDriverError> {
         self.runtime.maintenance(now).map_err(|_| RuntimeDriverError::Pairing)?;
         let active_sessions = self.active_sessions()?;
         self.poll_schedule.retain(|id, _| active_sessions.contains(id));
+        let mut completed_contacts = BTreeSet::new();
         for session_id in active_sessions {
             if self.poll_schedule.get(&session_id).is_some_and(|state| now < state.next_at) {
                 continue;
@@ -275,6 +222,9 @@ where
             match self.runtime.poll(session_id, now) {
                 Ok(report) => {
                     let had_activity = report != PairingPollReport::default();
+                    if let Some(completed) = report.completed_contact {
+                        completed_contacts.insert(completed.contact_id);
+                    }
                     self.schedule_success(session_id, now, had_activity);
                 }
                 Err(torca_pairing_coordinator::PairingRuntimeError::SessionNotFound) => {
@@ -283,7 +233,9 @@ where
                 Err(_) => self.schedule_failure(session_id, now),
             }
         }
-        Ok(())
+        Ok(PairingMaintenanceReport {
+            completed_contacts: completed_contacts.into_iter().collect(),
+        })
     }
 
     fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {
@@ -403,6 +355,15 @@ fn map_pairing_error(error: PairingRuntimeError) -> RuntimeDriverError {
         PairingRuntimeError::Coordinator(_) => {
             classified("pairing.protocol_failed", ErrorCategory::Conflict, RetryAdvice::Never)
         }
+    }
+}
+
+fn map_route_error(error: ProviderRouteError) -> RuntimeDriverError {
+    match error {
+        ProviderRouteError::Unavailable => RuntimeDriverError::Pending,
+        ProviderRouteError::Stale => RuntimeDriverError::RouteRefreshRequired,
+        ProviderRouteError::Invalid => RuntimeDriverError::Pairing,
+        ProviderRouteError::Provider => RuntimeDriverError::Communication,
     }
 }
 

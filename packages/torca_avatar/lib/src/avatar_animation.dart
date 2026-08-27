@@ -181,6 +181,7 @@ final class AvatarFrameClock extends ChangeNotifier
   int _clients = 0;
   int _focusedClients = 0;
   bool _foreground = true;
+  bool _windowVisible = true;
   AvatarVisualActivityPolicy _policy = AvatarVisualActivityPolicy.followSystem;
 
   int get elapsedMilliseconds => DateTime.now().millisecondsSinceEpoch;
@@ -199,6 +200,20 @@ final class AvatarFrameClock extends ChangeNotifier
       _start();
     }
     notifyListeners();
+  }
+
+  /// Pauses all sprite invalidation while a desktop window is minimized.
+  /// Desktop Flutter does not consistently emit a paused lifecycle state for
+  /// minimize-to-tray, so the window manager supplies this explicit signal.
+  void setWindowVisible(bool visible) {
+    if (_windowVisible == visible) return;
+    _windowVisible = visible;
+    if (!visible) {
+      _timer?.cancel();
+      _timer = null;
+    } else {
+      _start();
+    }
   }
 
   bool allowsAnimation({required bool focused}) => switch (_policy) {
@@ -249,6 +264,7 @@ final class AvatarFrameClock extends ChangeNotifier
 
   void _start() {
     if (!_foreground ||
+        !_windowVisible ||
         _clients == 0 ||
         _timer != null ||
         _policy == AvatarVisualActivityPolicy.staticOnly ||

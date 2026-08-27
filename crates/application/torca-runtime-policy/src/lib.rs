@@ -970,14 +970,24 @@ impl Default for RuntimeEventHub {
 }
 
 impl RuntimeEventHub {
-    /// Publishes a new runtime revision and optional event cursor.
-    pub fn publish(&self, cursor: u64) {
+    /// Publishes a new runtime revision. The notification cursor is published
+    /// separately because it has durable, consumer-owned semantics.
+    pub fn publish(&self, _revision: u64) {
         if let Ok(mut state) = self.state.lock() {
-            if cursor > state.cursor {
-                state.revision = state.revision.saturating_add(1);
-                state.cursor = cursor;
-                self.changed.notify_all();
-            }
+            state.revision = state.revision.saturating_add(1);
+            self.changed.notify_all();
+        }
+    }
+
+    /// Publishes a durable notification cursor without fabricating a runtime
+    /// revision. Readers waiting for application snapshots do not need to
+    /// rebuild when only a native notification was appended.
+    pub fn publish_notification(&self, cursor: u64) {
+        if let Ok(mut state) = self.state.lock()
+            && cursor > state.cursor
+        {
+            state.cursor = cursor;
+            self.changed.notify_all();
         }
     }
 
@@ -1006,6 +1016,63 @@ impl RuntimeEventHub {
         if ready(&state) {
             state.stats.wakeups = state.stats.wakeups.saturating_add(1);
             Some((state.revision, state.cursor))
+        } else {
+            state.stats.timeouts = state.stats.timeouts.saturating_add(1);
+            None
+        }
+    }
+
+    /// Waits only for a runtime revision.  Notification cursors are a
+    /// separate domain-owned sequence and must not participate in this
+    /// predicate: Android's notification service persists that cursor across
+    /// runtime generations, while `revision` is process-local.
+    pub fn wait_revision(
+        &self,
+        waiter: u64,
+        after_revision: u64,
+        timeout: Duration,
+    ) -> Option<u64> {
+        let mut state = self.state.lock().ok()?;
+        state.stats.waits = state.stats.waits.saturating_add(1);
+        let ready = |state: &HubState| {
+            state.revision > after_revision || state.closed || state.cancelled.contains(&waiter)
+        };
+        let (mut state, _) =
+            self.changed.wait_timeout_while(state, timeout, |state| !ready(state)).ok()?;
+        if state.cancelled.remove(&waiter) {
+            state.stats.cancellations = state.stats.cancellations.saturating_add(1);
+            return None;
+        }
+        if ready(&state) {
+            state.stats.wakeups = state.stats.wakeups.saturating_add(1);
+            Some(state.revision)
+        } else {
+            state.stats.timeouts = state.stats.timeouts.saturating_add(1);
+            None
+        }
+    }
+
+    /// Waits only for a notification cursor change.
+    pub fn wait_notification(
+        &self,
+        waiter: u64,
+        after_cursor: u64,
+        timeout: Duration,
+    ) -> Option<u64> {
+        let mut state = self.state.lock().ok()?;
+        state.stats.waits = state.stats.waits.saturating_add(1);
+        let ready = |state: &HubState| {
+            state.cursor > after_cursor || state.closed || state.cancelled.contains(&waiter)
+        };
+        let (mut state, _) =
+            self.changed.wait_timeout_while(state, timeout, |state| !ready(state)).ok()?;
+        if state.cancelled.remove(&waiter) {
+            state.stats.cancellations = state.stats.cancellations.saturating_add(1);
+            return None;
+        }
+        if ready(&state) {
+            state.stats.wakeups = state.stats.wakeups.saturating_add(1);
+            Some(state.cursor)
         } else {
             state.stats.timeouts = state.stats.timeouts.saturating_add(1);
             None
@@ -1272,7 +1339,9 @@ mod tests {
         let hub = RuntimeEventHub::default();
         assert_eq!(hub.current(), Some((0, 0)));
         hub.publish(7);
-        assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), Some((1, 7)));
+        assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), Some((1, 0)));
+        hub.publish_notification(7);
+        assert_eq!(hub.wait_notification(1, 0, Duration::ZERO), Some(7));
     }
 
     #[test]
@@ -1294,7 +1363,7 @@ mod tests {
         assert_eq!(hub.current(), Some((0, 0)));
         // Cancellation is one-shot; the same waiter token can be reused.
         hub.publish(1);
-        assert_eq!(hub.wait(9, 0, 0, Duration::ZERO), Some((1, 1)));
+        assert_eq!(hub.wait(9, 0, 0, Duration::ZERO), Some((1, 0)));
     }
 
     #[test]
@@ -1304,7 +1373,7 @@ mod tests {
         assert_eq!(hub.wait(11, 0, 0, Duration::ZERO), None);
         assert_eq!(hub.wait(12, 0, 0, Duration::ZERO), None);
         hub.publish(4);
-        assert_eq!(hub.wait(12, 0, 0, Duration::ZERO), Some((1, 4)));
+        assert_eq!(hub.wait(12, 0, 0, Duration::ZERO), Some((1, 0)));
     }
 
     #[test]
@@ -1317,7 +1386,7 @@ mod tests {
                 hub.publish(3);
             }
         });
-        assert_eq!(hub.wait_indefinitely(4, 0, 0), Some((1, 3)));
+        assert_eq!(hub.wait_indefinitely(4, 0, 0), Some((1, 0)));
         producer.join().expect("producer");
     }
 
@@ -1326,10 +1395,29 @@ mod tests {
         let hub = RuntimeEventHub::default();
         assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), None);
         hub.publish(1);
-        assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), Some((1, 1)));
+        assert_eq!(hub.wait(1, 0, 0, Duration::ZERO), Some((1, 0)));
         let stats = hub.stats().expect("stats");
         assert_eq!(stats.waits, 2);
         assert_eq!(stats.timeouts, 1);
         assert_eq!(stats.wakeups, 1);
+    }
+
+    #[test]
+    fn revision_wait_ignores_an_unrelated_persisted_notification_cursor() {
+        let hub = RuntimeEventHub::default();
+        hub.publish(40);
+        assert_eq!(hub.wait_revision(7, 1, Duration::ZERO), None);
+        hub.publish(41);
+        assert_eq!(hub.wait_revision(7, 1, Duration::ZERO), Some(2));
+    }
+
+    #[test]
+    fn notification_wait_ignores_runtime_revision_changes() {
+        let hub = RuntimeEventHub::default();
+        hub.publish(1);
+        assert_eq!(hub.wait_notification(8, 0, Duration::ZERO), None);
+        hub.publish_notification(9);
+        assert_eq!(hub.wait_notification(8, 0, Duration::ZERO), Some(9));
+        assert_eq!(hub.current(), Some((1, 9)));
     }
 }

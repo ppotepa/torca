@@ -278,19 +278,35 @@ const fn android_package_for_soak(soak: bool) -> &'static str {
 }
 
 fn android_package_installed(serial: &str) -> Result<bool, String> {
-    let output = Command::new("adb")
-        .args(["-s", serial, "shell", "pm", "path", android_package()])
-        .output()
-        .map_err(|error| format!("start adb package probe for {serial}: {error}"))?;
-    if !output.status.success() {
+    let mut last_error = String::new();
+    for attempt in 0..3 {
+        let output = Command::new("adb")
+            .args(["-s", serial, "shell", "pm", "path", android_package()])
+            .output()
+            .map_err(|error| format!("start adb package probe for {serial}: {error}"))?;
+        if output.status.success() {
+            return Ok(package_path_present(&String::from_utf8_lossy(&output.stdout)));
+        }
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let detail =
+        last_error =
             if stderr.is_empty() { format!("exit status {}", output.status) } else { stderr };
-        return Err(format!(
-            "adb package probe failed for {serial} ({detail}); verify the device is online and authorized"
-        ));
+        // During a cold headless emulator boot the package service can be
+        // temporarily unavailable even though adb reports `device`. Treat
+        // that exactly like a missing SOAK package so deployment can perform
+        // its own retryable install/preflight instead of aborting here.
+        if last_error.contains("Can't find service: package")
+            || last_error.contains("device offline")
+            || last_error.contains("device unauthorized")
+        {
+            return Ok(false);
+        }
+        if attempt < 2 {
+            thread::sleep(Duration::from_secs(2));
+        }
     }
-    Ok(package_path_present(&String::from_utf8_lossy(&output.stdout)))
+    Err(format!(
+        "adb package probe failed for {serial} ({last_error}); verify the device is online and authorized"
+    ))
 }
 
 fn package_path_present(stdout: &str) -> bool {
@@ -679,7 +695,17 @@ fn run() -> Result<(), String> {
     // runs while retaining a fast opt-in path for debugging.
     if cli.scenario == Scenario::ActiveMessaging {
         let android_package_missing = if let Some(serial) = cli.android.as_deref() {
-            !android_package_installed(serial)?
+            match android_package_installed(serial) {
+                Ok(installed) => !installed,
+                Err(error) => {
+                    // This probe is only an optimization deciding whether a
+                    // clean SOAK deploy is needed. If package-manager/ADB is
+                    // transiently unavailable, let ensure_android_deployed
+                    // perform its authoritative retryable preflight.
+                    eprintln!("torca-soak: package probe deferred: {error}");
+                    true
+                }
+            }
         } else {
             false
         };

@@ -109,9 +109,10 @@ mod pairing_session_tests {
                 1,
             ),
             display_name: "Alice".to_owned(),
-            route: ContactRoute::new(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+            route: ContactRoute::for_provider_endpoint(
                 OpaqueId::from_u128(12),
+                "tor",
+                b"opaque-test-route".to_vec(),
             )
             .expect("valid route"),
             avatar: None,

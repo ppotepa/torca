@@ -955,6 +955,10 @@ pub struct DeployRun {
 }
 
 impl DeployRun {
+    pub const fn is_resumable(&self) -> bool {
+        !self.stage.terminal()
+    }
+
     pub fn new(plan: DeployPlan) -> Self {
         let plan_fingerprint = plan.fingerprint();
         let started_at_ms =

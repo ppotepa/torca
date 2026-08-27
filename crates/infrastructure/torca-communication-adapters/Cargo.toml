@@ -27,9 +27,11 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-messaging = { path = "../../domains/torca-messaging" }
 torca-peer-link = { path = "../torca-peer-link" }
+torca-provider-api = { path = "../../application/torca-provider-api" }
 torca-transport-api = { path = "../../application/torca-transport-api" }
 torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
 torca-peer-shared = { path = "../torca-peer-shared" }
+torca-presence = { path = "../../domains/torca-presence" }
 torca-receipts = { path = "../../domains/torca-receipts" }
 torca-radio = { path = "../../domains/torca-radio" }
 torca-radio-adapters = { path = "../torca-radio-adapters", default-features = false }

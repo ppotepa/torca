@@ -317,10 +317,12 @@ fn actor_loop(
                 if emits_revision {
                     state.revision = state.revision.saturating_add(1);
                     event_hub.publish(state.revision);
-                }
-                if state.maintain() {
-                    state.revision = state.revision.saturating_add(1);
-                    event_hub.publish(state.revision);
+                    state.publish_notifications(&event_hub);
+                    if state.maintain() {
+                        state.revision = state.revision.saturating_add(1);
+                        event_hub.publish(state.revision);
+                        state.publish_notifications(&event_hub);
+                    }
                 }
             }
             ActorMessage::Lifecycle { event, response } => {
@@ -329,6 +331,7 @@ fn actor_loop(
                 if state.maintain() {
                     state.revision = state.revision.saturating_add(1);
                     event_hub.publish(state.revision);
+                    state.publish_notifications(&event_hub);
                 }
                 event_hub.publish(state.revision);
             }
@@ -339,6 +342,7 @@ fn actor_loop(
                 if state.maintain() {
                     state.revision = state.revision.saturating_add(1);
                     event_hub.publish(state.revision);
+                    state.publish_notifications(&event_hub);
                 }
             }
             ActorMessage::Shutdown { response, source } => {

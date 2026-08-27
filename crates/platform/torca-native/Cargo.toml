@@ -51,6 +51,7 @@ torca-contacts = { path = "../../domains/torca-contacts" }
 torca-conversations = { path = "../../domains/torca-conversations" }
 torca-crypto = { path = "../../infrastructure/torca-crypto" }
 torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-provider-api = { path = "../../application/torca-provider-api" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }

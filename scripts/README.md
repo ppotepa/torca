@@ -88,3 +88,31 @@ Each collection creates a fresh incident directory instead of mixing new evidenc
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor and validation rules.
 - [`../docs/STATUS.md`](../docs/STATUS.md) — current maturity/validation status.
 - [`../docs/FINALIZE_MANUAL_RUNBOOK.md`](../docs/FINALIZE_MANUAL_RUNBOOK.md) — real-device acceptance procedure.
+
+## Background Iroh benchmark
+
+For unattended Iroh measurements, use `Start-TorcaBackgroundTest.ps1`. The
+default `smoke` mode runs the Iroh transport/conformance checks and one
+screen-off emulator sample. `-Mode conversation` additionally runs the
+production `torca-soak` Active Messaging scenario with a real lab bot contact,
+including pairing, bidirectional messages and delivery checks. `-Mode soak`
+repeats a selected profile; `-Mode full` runs `always`, `direct` and `local`
+sequentially.
+
+The helper serializes runs, starts a headless emulator with two cores and
+1536 MB RAM, uses BelowNormal priority, and aborts when the emulator exceeds
+15% of host CPU. Results are written as JSON under
+`.torca/measurements/background`; interrupted or incomplete runs are not green.
+
+```powershell
+.\scripts\Start-TorcaBackgroundTest.ps1 -Mode soak -Profile always -DurationSeconds 60 -Repetitions 3
+.\scripts\Start-TorcaBackgroundTest.ps1 -Mode conversation -Profile always -FakePeers 1 -DurationSeconds 180
+```
+
+Headless runs deliberately skip the unreliable API 35/36 uiautomator probe and
+record that fact in `startup-ui.xml`; readiness is inferred from resumed
+`MainActivity` plus fatal-log scanning. Add `-EnableUiProbe` when running an
+AVD with a real window and you want semantic menu labels checked as well.
+
+Emulator CPU is not calibrated battery energy. Relay/discovery isolation,
+Wi-Fi/LTE migration and mAh attribution remain hardware-only gates.

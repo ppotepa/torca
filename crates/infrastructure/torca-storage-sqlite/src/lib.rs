@@ -13,6 +13,7 @@ mod durable_sqlcipher;
 mod inbound_sqlcipher;
 mod message_repository;
 mod migration;
+mod notification;
 mod pairing_repository;
 mod pending_operations;
 mod radio;
@@ -42,6 +43,7 @@ pub use message_repository::{
     SqlCipherMessageStoreOpenError,
 };
 pub use migration::{Migration, MigrationError, MigrationRunner, migrations};
+pub use notification::{NotificationStorageError, SqlCipherNotificationStore};
 pub use pairing_repository::SqlCipherPairingRepository;
 pub use pending_operations::{PendingOperationStorageError, SqlCipherPendingOperationStore};
 pub use radio::{RadioStorageOpenError, SqlCipherRadioStore};

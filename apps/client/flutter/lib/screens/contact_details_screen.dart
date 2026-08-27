@@ -159,7 +159,7 @@ class ContactDetailsContent extends StatelessWidget {
               identityId: contact.remoteIdentityId,
               presentation: AvatarActivityPresentation.resolve(
                 blocked: contact.typedStatus == ContactStatus.blocked,
-                online: contact.presenceState == 'online',
+                online: contact.typedAvailability == PeerAvailability.reachable,
               ),
             ),
             title: Text(contact.displayName),
@@ -169,7 +169,7 @@ class ContactDetailsContent extends StatelessWidget {
                   : 'Direct ${contact.transportProvider.toUpperCase()} contact',
             ),
             trailing: ConnectionIndicator(
-              state: contact.connectionState,
+              state: contact.availabilityIndicatorState,
               blocked: contact.typedStatus == ContactStatus.blocked,
               provider: contact.transportProvider,
             ),

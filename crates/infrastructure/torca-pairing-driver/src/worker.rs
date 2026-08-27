@@ -1,13 +1,20 @@
+use std::collections::BTreeSet;
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use torca_contacts::ContactId;
 use torca_foundation::Timestamp;
 use torca_pairing::{PairingCode, PairingSessionId};
 use torca_pairing_protocol::PairingBootstrapDescriptor;
-use torca_runtime::{PairingDriver, PairingInvitationView, RuntimeDriverError};
+use torca_runtime::{
+    PairingDriver, PairingInvitationView, PairingMaintenanceReport, RuntimeDriverError,
+};
 
 const INTERACTIVE_REPLY_WAIT: Duration = Duration::from_secs(8);
+type Wake = Arc<dyn Fn() + Send + Sync>;
+type SharedWaker = Arc<Mutex<Option<Wake>>>;
 
 enum PairingWorkerCommand {
     Create {
@@ -46,16 +53,29 @@ enum PairingWorkerCommand {
 pub struct PairingWorkerDriver {
     sender: SyncSender<PairingWorkerCommand>,
     worker: Option<JoinHandle<()>>,
+    completed_contacts: Arc<Mutex<BTreeSet<ContactId>>>,
+    waker: SharedWaker,
 }
 
 impl PairingWorkerDriver {
     pub fn spawn<D: PairingDriver>(mut driver: D) -> Result<Self, RuntimeDriverError> {
         let (sender, receiver) = mpsc::sync_channel(8);
+        let completed_contacts = Arc::new(Mutex::new(BTreeSet::new()));
+        let waker = Arc::new(Mutex::new(None));
+        let worker_completed_contacts = Arc::clone(&completed_contacts);
+        let worker_waker = Arc::clone(&waker);
         let worker = std::thread::Builder::new()
             .name("torca-pairing-supervisor".to_owned())
-            .spawn(move || run_pairing_worker(&mut driver, &receiver))
+            .spawn(move || {
+                run_pairing_worker(
+                    &mut driver,
+                    &receiver,
+                    &worker_completed_contacts,
+                    &worker_waker,
+                );
+            })
             .map_err(|_| RuntimeDriverError::Pairing)?;
-        Ok(Self { sender, worker: Some(worker) })
+        Ok(Self { sender, worker: Some(worker), completed_contacts, waker })
     }
 
     fn request<T>(
@@ -118,16 +138,28 @@ impl PairingDriver for PairingWorkerDriver {
         self.request(|reply| PairingWorkerCommand::Cancel { session_id, reply })
     }
 
-    fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+    fn maintenance(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<PairingMaintenanceReport, RuntimeDriverError> {
         let _ = now;
         // The worker owns its own deadline-driven poll/maintenance clock.
         // RuntimeOwner still calls this trait method for compatibility, but it
         // must not enqueue a periodic message behind interactive relay I/O.
-        Ok(())
+        let mut pending =
+            self.completed_contacts.lock().map_err(|_| RuntimeDriverError::Pairing)?;
+        let completed_contacts = std::mem::take(&mut *pending).into_iter().collect();
+        Ok(PairingMaintenanceReport { completed_contacts })
     }
 
     fn network_changed(&mut self, now: Timestamp) {
         let _ = self.sender.try_send(PairingWorkerCommand::NetworkChanged(now));
+    }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut target) = self.waker.lock() {
+            *target = Some(waker);
+        }
     }
 
     fn shutdown(&mut self) {
@@ -138,7 +170,12 @@ impl PairingDriver for PairingWorkerDriver {
     }
 }
 
-fn run_pairing_worker<D: PairingDriver>(driver: &mut D, receiver: &Receiver<PairingWorkerCommand>) {
+fn run_pairing_worker<D: PairingDriver>(
+    driver: &mut D,
+    receiver: &Receiver<PairingWorkerCommand>,
+    completed_contacts: &Arc<Mutex<BTreeSet<ContactId>>>,
+    waker: &SharedWaker,
+) {
     loop {
         let timeout = worker_timestamp()
             .and_then(|now| driver.next_maintenance_delay(now))
@@ -147,7 +184,16 @@ fn run_pairing_worker<D: PairingDriver>(driver: &mut D, receiver: &Receiver<Pair
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(now) = worker_timestamp() {
-                    let _ = driver.maintenance(now);
+                    if let Ok(report) = driver.maintenance(now)
+                        && !report.completed_contacts.is_empty()
+                    {
+                        if let Ok(mut pending) = completed_contacts.lock() {
+                            pending.extend(report.completed_contacts);
+                        }
+                        if let Some(wake) = waker.lock().ok().and_then(|slot| slot.clone()) {
+                            wake();
+                        }
+                    }
                 }
                 continue;
             }

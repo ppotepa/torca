@@ -14,6 +14,7 @@ use torca_foundation::{OpaqueId, Timestamp};
 use torca_peer_link::{PeerConnectionState, PeerLinkError};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
+use torca_presence::classify_availability;
 use torca_runtime::PeerConnectionStatus;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -22,6 +23,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 struct HealthEntry {
     snapshot: PeerHealthSnapshot,
     previous_state: PeerConnectionState,
+    previous_successes: u64,
+    previous_failures: u64,
 }
 
 enum PeerProbeCommand {
@@ -125,12 +128,36 @@ where
 {
     fn refresh_states(&mut self, contacts: &[ContactId], now: Timestamp) {
         self.health.retain(|contact_id, _| contacts.contains(contact_id));
+        let activity = self.link.activity();
         for contact_id in contacts {
             let state = self.link.connection_state(*contact_id);
             let entry = self.health.entry(*contact_id).or_insert_with(|| HealthEntry {
                 snapshot: PeerHealthSnapshot::from_connection_state(map_peer_state(state)),
                 previous_state: state,
+                previous_successes: 0,
+                previous_failures: 0,
             });
+            if let Some(observation) = activity.get(contact_id) {
+                let successes = observation
+                    .tx_frames
+                    .saturating_add(observation.rx_frames)
+                    .saturating_add(observation.tx_acks)
+                    .saturating_add(observation.rx_acks)
+                    .saturating_add(observation.handshakes);
+                if successes > entry.previous_successes {
+                    entry.snapshot.last_success_at = Some(now);
+                    entry.snapshot.consecutive_failures = 0;
+                }
+                if observation.failures > entry.previous_failures {
+                    let delta = observation.failures.saturating_sub(entry.previous_failures);
+                    entry.snapshot.consecutive_failures = entry
+                        .snapshot
+                        .consecutive_failures
+                        .saturating_add(u32::try_from(delta).unwrap_or(u32::MAX));
+                }
+                entry.previous_successes = successes;
+                entry.previous_failures = observation.failures;
+            }
             if entry.previous_state == PeerConnectionState::Ready
                 && state != PeerConnectionState::Ready
             {
@@ -151,6 +178,12 @@ where
                     now.duration_since(last),
                 );
             }
+            entry.snapshot.availability = classify_availability(
+                state == PeerConnectionState::Ready,
+                entry.snapshot.last_success_at,
+                entry.snapshot.consecutive_failures,
+                now,
+            );
             entry.previous_state = state;
         }
     }
@@ -189,6 +222,12 @@ where
                 );
             }
         }
+        entry.snapshot.availability = classify_availability(
+            state == PeerConnectionState::Ready,
+            entry.snapshot.last_success_at,
+            entry.snapshot.consecutive_failures,
+            now,
+        );
     }
 }
 
@@ -354,6 +393,8 @@ where
         let entry = self.health.entry(envelope.contact_id).or_insert_with(|| HealthEntry {
             snapshot: PeerHealthSnapshot::from_connection_state(map_peer_state(state)),
             previous_state: state,
+            previous_successes: 0,
+            previous_failures: 0,
         });
         entry.snapshot.state = map_peer_state(state);
         entry.snapshot.last_success_at = Some(now);
@@ -362,6 +403,7 @@ where
             entry.snapshot.rtt_ms = Some(reported);
             entry.snapshot.quality = classify_peer_health(Some(reported), 0, Some(Duration::ZERO));
         }
+        entry.snapshot.availability = classify_availability(true, Some(now), 0, now);
         self.link
             .send_ack(envelope.contact_id, envelope.envelope_id, AckStatus::Accepted)
             .map_err(|_| CommunicationError::Peer)

@@ -55,18 +55,34 @@ fn poll_sessions(
                     self.reconnect.remove(&contact_id);
                     self.advertised_route_generations.remove(&contact_id);
                     self.advertise_route_for_contact(contact_id)?;
-                    self.observe(
+                    self.observe_with_stage(TelemetryEvent {
                         contact_id,
-                        Some(TransportDirection::Rx),
-                        TransportOperation::Handshake,
-                        OperationPhase::Completed,
-                        None,
-                        now,
-                    );
+                        direction: Some(TransportDirection::Rx),
+                        operation: TransportOperation::Handshake,
+                        phase: OperationPhase::Completed,
+                        correlation_id: None,
+                        at: now,
+                        stage: Some(TransportStage::Handshake),
+                        error_code: None,
+                    });
                     report.became_ready += 1;
                 }
             }
             Err(_) => {
+                if !was_ready {
+                    self.observe_with_stage(TelemetryEvent {
+                        contact_id,
+                        direction: Some(TransportDirection::Rx),
+                        operation: TransportOperation::Handshake,
+                        phase: OperationPhase::Failed,
+                        correlation_id: None,
+                        at: now,
+                        stage: Some(TransportStage::Handshake),
+                        error_code: Some(torca_foundation::ErrorCode::new(
+                            "peer.handshake_failed",
+                        )),
+                    });
+                }
                 self.schedule_reconnect(contact_id, now)?;
                 report.disconnected += 1;
             }
@@ -207,20 +223,36 @@ fn queue_inbound(&mut self, envelope: InboundPeerEnvelope) -> Result<(), PeerLin
 
 fn plan_disconnected(&mut self, contacts: &[ContactId]) {
     for &contact_id in contacts {
-        if !self.preferred_dialer(contact_id) {
-            self.reconnect.remove(&contact_id);
-            continue;
-        }
         match self.connection_state(contact_id) {
             PeerConnectionState::Ready => {
                 self.reconnect.remove(&contact_id);
             }
             PeerConnectionState::Disconnected
             | PeerConnectionState::Reconnecting
-            | PeerConnectionState::Failed => {}
+            | PeerConnectionState::Failed => {
+                if !self.preferred_dialer(contact_id)
+                    && self.reconnect.get(&contact_id).is_some_and(|entry| {
+                        entry.reason == ReconnectReason::PreferredDialer
+                    })
+                {
+                    self.reconnect.remove(&contact_id);
+                }
+            }
             PeerConnectionState::Connecting | PeerConnectionState::Handshaking => {}
         }
     }
+}
+
+fn request_reconnect(
+    &mut self,
+    contact_id: ContactId,
+    next_attempt_at: Timestamp,
+    reason: ReconnectReason,
+) {
+    self.reconnect
+        .entry(contact_id)
+        .and_modify(|entry| entry.strengthen(reason))
+        .or_insert_with(|| ReconnectEntry::new(next_attempt_at, reason));
 }
 
 fn run_due_reconnects(
@@ -269,20 +301,32 @@ fn schedule_reconnect(
         .map_or(1, |entry| entry.failures.saturating_add(1));
     let delay = reconnect_delay(&mut self.random, failures)?;
     let next_attempt_at = now.checked_add(delay).ok_or(PeerLinkError::Clock)?;
-    self.observe(
+    let reason = self
+        .reconnect
+        .get(&contact_id)
+        .map_or(ReconnectReason::Recovery, |entry| entry.reason);
+    let reconnect_stage = match reason {
+        ReconnectReason::PreferredDialer => TransportStage::ReconnectPreferredDialer,
+        ReconnectReason::Recovery => TransportStage::ReconnectRecovery,
+        ReconnectReason::DurableDemand => TransportStage::ReconnectDurableDemand,
+    };
+    self.observe_with_stage(TelemetryEvent {
         contact_id,
-        None,
-        TransportOperation::Reconnect,
-        OperationPhase::Started,
-        None,
-        now,
-    );
+        direction: None,
+        operation: TransportOperation::Reconnect,
+        phase: OperationPhase::Started,
+        correlation_id: None,
+        at: now,
+        stage: Some(reconnect_stage),
+        error_code: None,
+    });
     self.reconnect.insert(
         contact_id,
         ReconnectEntry {
             failures,
             next_attempt_at,
             in_progress: false,
+            reason,
         },
     );
     Ok(())

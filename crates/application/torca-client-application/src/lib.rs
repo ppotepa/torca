@@ -33,7 +33,7 @@ pub use torca_radio_coordinator::{
     RadioTimelineRecord, SharedRadioCoordinator,
 };
 pub use torca_runtime::{
-    AttachmentSendRequest, AttachmentView, CommunicationState, NetworkSnapshot,
+    AttachmentSendRequest, AttachmentView, CommunicationState, NetworkSnapshot, PeerAvailability,
     PeerConnectionStatus, PeerHealthQuality, RelayServiceInfo, RuntimeDriverError, RuntimeHandle,
     TransportActivitySnapshot,
 };

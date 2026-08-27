@@ -30,7 +30,7 @@ use torca_runtime::{
 };
 use torca_transport_api::{
     CommissioningStage, CommissioningState, CommissioningStep, EnergyClass, LatencyClass,
-    PeerTransport, PeerTransportError, PeerTransportFactory, ProviderCommissioning, ProviderRoute,
+    PeerTransport, PeerTransportError, PeerTransportFactory, ProviderCommissioning,
     ProviderRouteState, ProviderRuntimeDiagnostics, ProviderTransport, TransportCapabilities,
     TransportFactoryError, TransportKind, TransportPath,
 };
@@ -324,11 +324,11 @@ impl IrohEndpointSlot {
         !self.route_stale.load(Ordering::Acquire)
     }
 
-    /// Shared route-freshness marker for transports created by this slot.
+    /// Shared route-staleness marker for transports created by this slot.
     /// Keeping the atomic behind the slot lets a network callback invalidate
     /// a transport that is already queued for a dial without exposing any
     /// Iroh-specific state to the generic peer link.
-    fn route_fresh_flag(&self) -> Arc<AtomicBool> {
+    fn route_stale_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.route_stale)
     }
 
@@ -1163,6 +1163,18 @@ impl IrohComposition {
         let profile = IrohEndpointProfile::from_environment();
         let local_only = configured_flag(COMPILED_IROH_LOCAL_ONLY, "TORCA_IROH_LOCAL_ONLY")
             || matches!(profile, IrohEndpointProfile::LocalOnly);
+        Self::bind_with_profile(runtime, store, profile, local_only)
+    }
+
+    /// Binds a composition with an explicit deployment profile. Native hosts
+    /// normally use [`Self::bind`]; conformance and deployment tools use this
+    /// entry point so their topology does not depend on process environment.
+    pub fn bind_with_profile(
+        runtime: Arc<Runtime>,
+        store: &mut dyn ProtectedSecretStore,
+        profile: IrohEndpointProfile,
+        local_only: bool,
+    ) -> Result<Self, IrohIdentityError> {
         let secret = load_or_create_endpoint_secret(store)?;
         let endpoint = bind_endpoint_from_secret(&runtime, secret.clone(), profile, local_only)?;
         let slot = IrohEndpointSlot::new(
@@ -1833,7 +1845,7 @@ pub struct IrohTransport {
     /// Provider-owned freshness marker. It is shared with the endpoint slot
     /// so a network callback can cancel a queued dial before it opens a QUIC
     /// connection.
-    route_fresh: Option<Arc<AtomicBool>>,
+    route_stale: Option<Arc<AtomicBool>>,
     /// The profile is carried with each session so diagnostics and capability
     /// checks describe the actual route policy (relay enabled vs direct/local
     /// only), not the conservative provider default.
@@ -1871,13 +1883,13 @@ impl IrohTransport {
         remote: EndpointAddr,
         runtime: Arc<Runtime>,
         profile: IrohEndpointProfile,
-        route_fresh: Option<Arc<AtomicBool>>,
+        route_stale: Option<Arc<AtomicBool>>,
     ) -> Self {
         Self {
             endpoint,
             remote: Some(remote),
             runtime,
-            route_fresh,
+            route_stale,
             profile,
             connection: None,
             sender: None,
@@ -1915,7 +1927,7 @@ impl IrohTransport {
             endpoint,
             remote: None,
             runtime,
-            route_fresh: None,
+            route_stale: None,
             profile,
             connection: Some(connection),
             sender: None,
@@ -1942,7 +1954,7 @@ impl IrohTransport {
             endpoint,
             remote: None,
             runtime,
-            route_fresh: None,
+            route_stale: None,
             profile,
             connection: Some(connection),
             sender: None,
@@ -2074,7 +2086,7 @@ impl PeerTransport for IrohTransport {
         if self.connected && self.stream_alive.load(Ordering::Acquire) {
             return Ok(());
         }
-        if self.route_fresh.as_ref().is_some_and(|fresh| !fresh.load(Ordering::Acquire)) {
+        if self.route_stale.as_ref().is_some_and(|stale| stale.load(Ordering::Acquire)) {
             return Err(PeerTransportError(
                 "Iroh local route is stale; waiting for provider migration".to_owned(),
             ));
@@ -2096,7 +2108,7 @@ impl PeerTransport for IrohTransport {
             })
             .map_err(|_| PeerTransportError("Iroh peer connect timed out".into()))?
             .map_err(Self::map_error)?;
-        if self.route_fresh.as_ref().is_some_and(|fresh| !fresh.load(Ordering::Acquire)) {
+        if self.route_stale.as_ref().is_some_and(|stale| stale.load(Ordering::Acquire)) {
             connection.close(0_u32.into(), b"local route migrated");
             return Err(PeerTransportError("Iroh local route changed during dial".to_owned()));
         }
@@ -2411,35 +2423,12 @@ impl PeerTransportFactory for IrohTransportFactory {
             remote,
             Arc::clone(&self.runtime),
             self.endpoint.profile(),
-            Some(self.endpoint.route_fresh_flag()),
+            Some(self.endpoint.route_stale_flag()),
         );
         if let Some(waker) = self.wake.lock().ok().and_then(|slot| slot.clone()) {
             transport.set_waker(waker);
         }
         Ok(Box::new(transport))
-    }
-
-    fn local_route(&self) -> Option<ProviderRoute> {
-        if !self.endpoint.route_is_fresh() {
-            return None;
-        }
-        let address = self.endpoint.address()?;
-        let endpoint = encode_endpoint_addr(&address).ok()?;
-        ProviderRoute::new(TransportKind::Iroh, self.endpoint.route_generation(), endpoint)
-    }
-
-    fn local_route_is_fresh(&self) -> bool {
-        self.endpoint.route_is_fresh()
-    }
-
-    fn local_route_state(&self) -> ProviderRouteState {
-        if !self.endpoint.route_is_fresh() {
-            ProviderRouteState::Stale
-        } else if self.endpoint.address().is_some() {
-            ProviderRouteState::Fresh
-        } else {
-            ProviderRouteState::Unavailable
-        }
     }
 
     fn preserves_sessions_on_network_change(&self) -> bool {
@@ -2461,29 +2450,165 @@ impl PeerTransportFactory for IrohTransportFactory {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
     use std::io::{Read, Write};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Condvar, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use iroh::endpoint::presets;
     use tokio::runtime::Runtime;
-    use torca_crypto::{InMemoryProtectedSecretStore, ProtectedSecretStore};
-    use torca_foundation::Timestamp;
+    use torca_contacts::{
+        Contact, ContactError, ContactId, ContactRepository, ContactRoute, PeerCredential,
+        PeerCredentialRepository,
+    };
+    use torca_crypto::{
+        InMemoryProtectedSecretStore, ManagedIdentityKeys, OwnedHandshakeSigner,
+        ProtectedSecretStore, RustCryptoProvider,
+    };
+    use torca_foundation::{OpaqueId, Timestamp};
+    use torca_identity::{
+        IdentityId, IdentityKey, IdentityKeyProvider, KeyAlgorithm, KeyId, PublicIdentity,
+    };
+    use torca_peer_link::{LinkAck, PeerConnectionState, PeerLink};
+    use torca_peer_protocol::AckStatus;
     use torca_radio_adapters::{RadioMediaConnector, RadioMediaRoute};
     use torca_runtime::{CommunicationLifecycle, CommunicationState, IncomingReachabilityState};
     use torca_transport_api::{
-        CommissioningStage, CommissioningState, EnergyClass, PeerTransport, ProviderRouteState,
-        TransportKind,
+        CommissioningStage, CommissioningState, EnergyClass, PeerTransport, PeerTransportFactory,
+        ProviderRouteState, TransportFactoryError, TransportKind,
     };
 
     use super::{
         ALPN, IROH_ENDPOINT_SECRET_HANDLE, IrohComposition, IrohEndpointProfile, IrohEndpointSlot,
         IrohIncomingRouter, IrohLifecycle, IrohRadioMediaSystemFactory, IrohServiceConfig,
-        IrohTransport, RADIO_ALPN, bind_endpoint, decode_endpoint_addr, encode_endpoint_addr,
-        load_or_create_endpoint_secret,
+        IrohTransport, IrohTransportFactory, RADIO_ALPN, bind_endpoint, decode_endpoint_addr,
+        encode_endpoint_addr, load_or_create_endpoint_secret,
     };
+
+    fn contact_for_iroh_endpoint(endpoint: &iroh::EndpointAddr) -> Contact {
+        let route = ContactRoute::for_provider_endpoint(
+            OpaqueId::from_u128(31),
+            TransportKind::Iroh.wire_value(),
+            encode_endpoint_addr(endpoint).expect("encode Iroh endpoint"),
+        )
+        .expect("valid Iroh contact route");
+        let key = IdentityKey::new(KeyId::from_u128(33), KeyAlgorithm::Ed25519, vec![7; 32])
+            .expect("valid remote identity key");
+        Contact::new(
+            ContactId::from_u128(30),
+            PublicIdentity::new(IdentityId::from_u128(32), key, 0),
+            route,
+            Timestamp::UNIX_EPOCH,
+        )
+    }
+
+    fn direct_endpoint(runtime: &Runtime) -> iroh::Endpoint {
+        runtime
+            .block_on(
+                iroh::Endpoint::builder(presets::N0)
+                    .clear_address_lookup()
+                    .relay_mode(iroh::RelayMode::Disabled)
+                    .alpns(vec![ALPN.to_vec()])
+                    .bind_addr("127.0.0.1:0")
+                    .expect("loopback bind")
+                    .bind(),
+            )
+            .expect("bind direct Iroh endpoint")
+    }
+
+    fn direct_slot(
+        endpoint: iroh::Endpoint,
+        runtime: &Arc<Runtime>,
+    ) -> super::ProviderEndpointSlot {
+        let secret = endpoint.secret_key().clone();
+        IrohEndpointSlot::new(
+            endpoint,
+            Arc::clone(runtime),
+            secret,
+            IrohEndpointProfile::DirectOnly,
+            false,
+        )
+    }
+
+    #[derive(Default)]
+    struct TestRelationships {
+        contacts: BTreeMap<ContactId, Contact>,
+        credentials: BTreeMap<ContactId, PeerCredential>,
+    }
+
+    impl TestRelationships {
+        fn persisted(contact: Contact, credential: PeerCredential) -> Self {
+            Self {
+                contacts: BTreeMap::from([(contact.id(), contact)]),
+                credentials: BTreeMap::from([(credential.contact_id(), credential)]),
+            }
+        }
+    }
+
+    impl ContactRepository for TestRelationships {
+        fn insert(&mut self, contact: Contact) -> Result<(), ContactError> {
+            if self.contacts.insert(contact.id(), contact).is_some() {
+                return Err(ContactError::AlreadyExists);
+            }
+            Ok(())
+        }
+
+        fn get(&self, id: ContactId) -> Result<Option<Contact>, ContactError> {
+            Ok(self.contacts.get(&id).cloned())
+        }
+
+        fn update(&mut self, contact: Contact) -> Result<(), ContactError> {
+            if !self.contacts.contains_key(&contact.id()) {
+                return Err(ContactError::NotFound);
+            }
+            self.contacts.insert(contact.id(), contact);
+            Ok(())
+        }
+
+        fn list(&self) -> Result<Vec<Contact>, ContactError> {
+            Ok(self.contacts.values().cloned().collect())
+        }
+    }
+
+    impl PeerCredentialRepository for TestRelationships {
+        fn insert_credential(&mut self, credential: PeerCredential) -> Result<(), ContactError> {
+            if self.credentials.insert(credential.contact_id(), credential).is_some() {
+                return Err(ContactError::AlreadyExists);
+            }
+            Ok(())
+        }
+
+        fn credential_for_contact(
+            &self,
+            contact_id: ContactId,
+        ) -> Result<Option<PeerCredential>, ContactError> {
+            Ok(self.credentials.get(&contact_id).copied())
+        }
+    }
+
+    fn test_identity(
+        identity_id: IdentityId,
+    ) -> (PublicIdentity, OwnedHandshakeSigner<RustCryptoProvider, InMemoryProtectedSecretStore>)
+    {
+        let mut keys =
+            ManagedIdentityKeys::new(RustCryptoProvider, InMemoryProtectedSecretStore::default());
+        let generated = keys.generate_signing_key().expect("generate handshake identity");
+        let identity_key =
+            IdentityKey::new(generated.key_id, generated.algorithm, generated.public_key)
+                .expect("valid generated public key");
+        let signer = OwnedHandshakeSigner::new(keys, generated.key_id);
+        (PublicIdentity::new(identity_id, identity_key, 0), signer)
+    }
+
+    fn current_timestamp() -> Timestamp {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time after epoch")
+            .as_millis();
+        Timestamp::from_unix_millis(i64::try_from(millis).expect("timestamp fits i64"))
+            .expect("valid current timestamp")
+    }
 
     #[test]
     fn endpoint_identity_is_stable_in_the_protected_store() {
@@ -2749,17 +2874,240 @@ mod tests {
                     .bind(),
             )
             .expect("bind local Iroh endpoint");
-        let route_fresh = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let route_stale = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let mut transport = IrohTransport::new_with_profile(
             endpoint.clone(),
             endpoint.addr(),
             Arc::clone(&runtime),
             IrohEndpointProfile::DirectOnly,
-            Some(route_fresh),
+            Some(route_stale),
         );
         let error = transport.connect().expect_err("stale route must not dial");
         assert!(error.0.contains("route is stale"));
         runtime.block_on(endpoint.close());
+    }
+
+    #[test]
+    fn factory_created_peer_transport_connects_with_a_fresh_route() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let first = direct_endpoint(&runtime);
+        let second = direct_endpoint(&runtime);
+        let first_slot = direct_slot(first.clone(), &runtime);
+        let second_slot = direct_slot(second.clone(), &runtime);
+        let first_incoming =
+            IrohIncomingRouter::start_with_slot(Arc::clone(&first_slot), Arc::clone(&runtime));
+        let second_incoming =
+            IrohIncomingRouter::start_with_slot(Arc::clone(&second_slot), Arc::clone(&runtime));
+        let mut first_factory =
+            IrohTransportFactory::new_with_slot(first_slot, Arc::clone(&runtime), first_incoming);
+        let mut second_factory =
+            IrohTransportFactory::new_with_slot(second_slot, Arc::clone(&runtime), second_incoming);
+        let contact = contact_for_iroh_endpoint(&second.addr());
+
+        let mut outgoing = first_factory.connect(&contact).expect("fresh factory route");
+        outgoing.connect().expect("connect factory-created transport");
+        outgoing.send(b"factory-route".to_vec()).expect("send through factory transport");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut accepted = loop {
+            if let Some(transport) = second_factory.accept().expect("accept remote transport") {
+                break transport;
+            }
+            assert!(std::time::Instant::now() < deadline, "remote router did not accept stream");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            accepted.receive_timeout(Duration::from_secs(1)).expect("receive factory payload"),
+            Some(b"factory-route".to_vec())
+        );
+
+        outgoing.close().expect("close outgoing transport");
+        accepted.close().expect("close accepted transport");
+        runtime.block_on(first.close());
+        runtime.block_on(second.close());
+    }
+
+    #[test]
+    fn factory_rejects_a_route_that_is_stale_before_transport_creation() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let first = direct_endpoint(&runtime);
+        let second = direct_endpoint(&runtime);
+        let first_slot = direct_slot(first.clone(), &runtime);
+        let second_slot = direct_slot(second.clone(), &runtime);
+        let incoming =
+            IrohIncomingRouter::start_with_slot(Arc::clone(&first_slot), Arc::clone(&runtime));
+        let second_incoming =
+            IrohIncomingRouter::start_with_slot(Arc::clone(&second_slot), Arc::clone(&runtime));
+        let mut factory = IrohTransportFactory::new_with_slot(
+            Arc::clone(&first_slot),
+            Arc::clone(&runtime),
+            incoming,
+        );
+        let contact = contact_for_iroh_endpoint(&second.addr());
+        first_slot.route_stale.store(true, Ordering::Release);
+
+        assert!(matches!(factory.connect(&contact), Err(TransportFactoryError::RouteStale)));
+
+        // A provider refresh must reopen the factory path; the stale guard is
+        // a transient dial barrier, not a permanent disablement of the peer.
+        first_slot.route_stale.store(false, Ordering::Release);
+        let mut refreshed = factory.connect(&contact).expect("refreshed route creates transport");
+        refreshed.connect().expect("refreshed route can dial");
+        refreshed.close().expect("close refreshed transport");
+
+        drop(second_incoming);
+
+        runtime.block_on(first.close());
+        runtime.block_on(second.close());
+    }
+
+    #[test]
+    fn factory_created_transport_rejects_route_staled_before_dial() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let first = direct_endpoint(&runtime);
+        let second = direct_endpoint(&runtime);
+        let first_slot = direct_slot(first.clone(), &runtime);
+        let incoming =
+            IrohIncomingRouter::start_with_slot(Arc::clone(&first_slot), Arc::clone(&runtime));
+        let mut factory = IrohTransportFactory::new_with_slot(
+            Arc::clone(&first_slot),
+            Arc::clone(&runtime),
+            incoming,
+        );
+        let contact = contact_for_iroh_endpoint(&second.addr());
+        let mut transport = factory.connect(&contact).expect("fresh route creates transport");
+        first_slot.route_stale.store(true, Ordering::Release);
+
+        let error = transport.connect().expect_err("staled queued route must not dial");
+        assert!(error.0.contains("route is stale"));
+
+        runtime.block_on(first.close());
+        runtime.block_on(second.close());
+    }
+
+    #[test]
+    fn persisted_contacts_complete_peer_handshake_and_delivery_without_pairing_transport() {
+        let runtime = Arc::new(Runtime::new().expect("Iroh Tokio runtime"));
+        let first_endpoint = direct_endpoint(&runtime);
+        let second_endpoint = direct_endpoint(&runtime);
+        let first_slot = direct_slot(first_endpoint.clone(), &runtime);
+        let second_slot = direct_slot(second_endpoint.clone(), &runtime);
+        let first_incoming =
+            IrohIncomingRouter::start_with_slot(Arc::clone(&first_slot), Arc::clone(&runtime));
+        let second_incoming =
+            IrohIncomingRouter::start_with_slot(Arc::clone(&second_slot), Arc::clone(&runtime));
+        let first_factory =
+            IrohTransportFactory::new_with_slot(first_slot, Arc::clone(&runtime), first_incoming);
+        let second_factory =
+            IrohTransportFactory::new_with_slot(second_slot, Arc::clone(&runtime), second_incoming);
+
+        let (first_identity, first_signer) = test_identity(IdentityId::from_u128(101));
+        let (second_identity, second_signer) = test_identity(IdentityId::from_u128(202));
+        let first_contact_id = ContactId::from_u128(11);
+        let second_contact_id = ContactId::from_u128(22);
+        let first_capability = OpaqueId::from_u128(1_001);
+        let second_capability = OpaqueId::from_u128(2_002);
+        let first_contact = Contact::new(
+            first_contact_id,
+            first_identity.clone(),
+            ContactRoute::for_provider_endpoint(
+                first_capability,
+                TransportKind::Iroh.wire_value(),
+                encode_endpoint_addr(&first_endpoint.addr()).expect("encode first route"),
+            )
+            .expect("first persisted route"),
+            Timestamp::UNIX_EPOCH,
+        );
+        let second_contact = Contact::new(
+            second_contact_id,
+            second_identity.clone(),
+            ContactRoute::for_provider_endpoint(
+                second_capability,
+                TransportKind::Iroh.wire_value(),
+                encode_endpoint_addr(&second_endpoint.addr()).expect("encode second route"),
+            )
+            .expect("second persisted route"),
+            Timestamp::UNIX_EPOCH,
+        );
+        let first_relationships = TestRelationships::persisted(
+            second_contact,
+            PeerCredential::new(second_contact_id, first_capability, OpaqueId::from_u128(3_003))
+                .expect("first peer credential"),
+        );
+        let second_relationships = TestRelationships::persisted(
+            first_contact,
+            PeerCredential::new(first_contact_id, second_capability, OpaqueId::from_u128(4_004))
+                .expect("second peer credential"),
+        );
+        let mut first_link = PeerLink::with_transport_factory(
+            Box::new(first_factory),
+            first_relationships,
+            first_signer,
+            first_identity.identity_id().to_opaque(),
+        );
+        let mut second_link = PeerLink::with_transport_factory(
+            Box::new(second_factory),
+            second_relationships,
+            second_signer,
+            second_identity.identity_id().to_opaque(),
+        );
+
+        let now = current_timestamp();
+        assert!(first_link.ensure_connected(second_contact_id, now).expect("start peer dial"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while first_link.connection_state(second_contact_id) != PeerConnectionState::Ready
+            || second_link.connection_state(first_contact_id) != PeerConnectionState::Ready
+        {
+            let _ = second_link
+                .maintenance(&[first_contact_id], current_timestamp())
+                .expect("maintain recipient handshake");
+            let _ = first_link
+                .maintenance(&[second_contact_id], current_timestamp())
+                .expect("maintain initiator handshake");
+            assert!(std::time::Instant::now() < deadline, "persisted-contact handshake timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let envelope_id = OpaqueId::from_u128(9_001);
+        first_link
+            .send_envelope(second_contact_id, envelope_id, 7, b"hello over peer lane".to_vec())
+            .expect("send authenticated text");
+        let inbound = loop {
+            let _ = second_link
+                .maintenance(&[first_contact_id], current_timestamp())
+                .expect("receive authenticated text");
+            if let Some(inbound) = second_link.take_inbound() {
+                break inbound;
+            }
+            assert!(std::time::Instant::now() < deadline, "peer text did not arrive");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(inbound.contact_id, first_contact_id);
+        assert_eq!(inbound.envelope_id, envelope_id);
+        assert_eq!(inbound.ciphertext, b"hello over peer lane");
+        second_link
+            .send_ack(first_contact_id, envelope_id, AckStatus::Accepted)
+            .expect("send transport receipt");
+
+        let receipt = loop {
+            let _ = first_link
+                .maintenance(&[second_contact_id], current_timestamp())
+                .expect("receive transport receipt");
+            if let Some(receipt) = first_link
+                .poll_envelope_ack(second_contact_id, envelope_id)
+                .expect("poll transport receipt")
+            {
+                break receipt;
+            }
+            assert!(std::time::Instant::now() < deadline, "transport receipt did not arrive");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(receipt, LinkAck::Accepted);
+
+        first_link.shutdown();
+        second_link.shutdown();
+        runtime.block_on(first_endpoint.close());
+        runtime.block_on(second_endpoint.close());
     }
 
     #[test]

@@ -136,6 +136,8 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         contact_notification_seen,
         pairing_notification_seen: HashSet::new(),
         notification_cursor: 0,
+        notification_last_scan_revision: 0,
+        notification_store: parts.notifications,
         notification_events: Vec::new(),
         notifications_enabled,
         read_receipts_enabled,
@@ -147,6 +149,19 @@ pub(crate) fn new(event_hub: Arc<RuntimeEventHub>) -> Result<Self, String> {
         actor_waker: None,
         actor_wake_pending: None,
     };
+    if let Ok(rows) = runtime.notification_store.read_after(0, 512) {
+        for (cursor, payload) in rows {
+            if let Ok(event) = serde_json::from_str::<torca_contract::NotificationEvent>(&payload) {
+                runtime.notification_cursor = runtime.notification_cursor.max(cursor).max(event.cursor);
+                match event.kind.as_str() {
+                    "pairing_request" => { runtime.pairing_notification_seen.insert(event.resource_id.clone()); }
+                    "contact_added" => { runtime.contact_notification_seen.insert(event.resource_id.clone()); }
+                    _ => {}
+                }
+                runtime.notification_events.push(event);
+            }
+        }
+    }
     runtime.log(
         "runtime",
         Level::Info,

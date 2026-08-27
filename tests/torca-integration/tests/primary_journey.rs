@@ -27,8 +27,12 @@ fn peer() -> PeerProposal {
     let key = IdentityKey::new(KeyId::from_u128(40), KeyAlgorithm::Ed25519, vec![7_u8; 32])
         .expect("peer key is valid");
     let public_identity = PublicIdentity::new(IdentityId::from_u128(41), key, 0);
-    let route = ContactRoute::new("peerexample.onion", OpaqueId::from_u128(42))
-        .expect("peer route is valid");
+    let route = ContactRoute::for_provider_endpoint(
+        OpaqueId::from_u128(42),
+        "tor",
+        b"peerexample.onion".to_vec(),
+    )
+    .expect("peer route is valid");
     PeerProposal { public_identity, display_name: "Remote device".to_owned(), route, avatar: None }
 }
 

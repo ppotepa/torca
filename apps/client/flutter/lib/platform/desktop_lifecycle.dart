@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:local_notifier/local_notifier.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -18,11 +19,18 @@ class DesktopLifecycle with WindowListener, TrayListener {
   StreamSubscription<RuntimeEventDto>? _eventSubscription;
   bool _quitting = false;
   bool _disposed = false;
+  bool _windowBackgrounded = false;
 
   Future<void> initialize() async {
     if (!Platform.isWindows || _disposed) return;
     await windowManager.ensureInitialized();
     await windowManager.setPreventClose(true);
+    // A tray-launched process may already be minimized before the first
+    // window event reaches Flutter. Seed the shared avatar clock from the
+    // actual window state so it never starts an animation ticker in that case.
+    AvatarFrameClock.instance.setWindowVisible(
+      !await windowManager.isMinimized(),
+    );
     windowManager.addListener(this);
     trayManager.addListener(this);
     final executable = Platform.resolvedExecutable;
@@ -50,6 +58,24 @@ class DesktopLifecycle with WindowListener, TrayListener {
     windowManager.removeListener(this);
     trayManager.removeListener(this);
     await trayManager.destroy();
+  }
+
+  @override
+  void onWindowMinimize() {
+    AvatarFrameClock.instance.setWindowVisible(false);
+    if (!_windowBackgrounded && !_quitting && !_disposed) {
+      _windowBackgrounded = true;
+      unawaited(gateway.sendLifecycle('backgrounded'));
+    }
+  }
+
+  @override
+  void onWindowRestore() {
+    AvatarFrameClock.instance.setWindowVisible(true);
+    if (_windowBackgrounded && !_quitting && !_disposed) {
+      _windowBackgrounded = false;
+      unawaited(gateway.sendLifecycle('foregrounded'));
+    }
   }
 
   void _preferencesChanged() {
@@ -154,6 +180,7 @@ class DesktopLifecycle with WindowListener, TrayListener {
     // Flutter's desktop lifecycle does not reliably emit `resumed` for a
     // window restored from the tray. This is a host visibility fact, not a
     // second lifecycle owner; it complements RuntimeLifecycleObserver.
+    _windowBackgrounded = false;
     await gateway.sendLifecycle('foregrounded');
     await windowManager.show();
     await windowManager.restore();
@@ -195,7 +222,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
   void onWindowClose() {
     if (_quitting) return;
     if (preferences.closeToTrayEnabled) {
-      unawaited(gateway.sendLifecycle('backgrounded'));
+      if (!_windowBackgrounded) {
+        _windowBackgrounded = true;
+        unawaited(gateway.sendLifecycle('backgrounded'));
+      }
       unawaited(windowManager.hide());
     } else {
       unawaited(_quit());

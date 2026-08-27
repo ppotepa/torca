@@ -4,6 +4,7 @@
 struct RuntimeHealthState {
     last_communication_state: Option<CommunicationState>,
     last_incoming_reachability_state: Option<IncomingReachabilityState>,
+    last_provider_route_state: Option<torca_transport_api::ProviderRouteState>,
     last_relay_state: Option<(ProbeStatus, ErrorCode)>,
     last_peer_states: BTreeMap<ContactId, PeerConnectionStatus>,
     last_peer_successes: BTreeMap<ContactId, Option<Timestamp>>,

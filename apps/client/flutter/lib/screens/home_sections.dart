@@ -247,7 +247,9 @@ class _ContactsSection extends StatelessWidget {
                       identityId: contact.remoteIdentityId,
                       presentation: AvatarActivityPresentation.resolve(
                         blocked: contact.typedStatus == ContactStatus.blocked,
-                        online: contact.presenceState == 'online',
+                        online:
+                            contact.typedAvailability ==
+                            PeerAvailability.reachable,
                       ),
                     ),
                     title: Text(contact.displayName),
@@ -261,7 +263,7 @@ class _ContactsSection extends StatelessWidget {
                           contactName: contact.displayName,
                         ),
                         ConnectionIndicator(
-                          state: contact.connectionState,
+                          state: contact.availabilityIndicatorState,
                           blocked: contact.typedStatus == ContactStatus.blocked,
                           provider: contact.transportProvider,
                           showLabel: false,
@@ -481,7 +483,12 @@ class _ContactContextPanel extends StatelessWidget {
 }
 
 String _contactPresence(BuildContext context, ContactDto contact) {
-  if (contact.presenceState == 'online') return context.strings.online;
+  if (contact.typedAvailability == PeerAvailability.reachable) {
+    return context.strings.online;
+  }
+  if (contact.typedAvailability == PeerAvailability.unknown) {
+    return context.strings.offlineShort;
+  }
   final milliseconds = contact.lastSeenAtMs;
   if (milliseconds == null) return context.strings.offlineShort;
   final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();

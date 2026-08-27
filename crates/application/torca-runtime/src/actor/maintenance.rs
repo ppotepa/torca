@@ -1,7 +1,12 @@
 // Responsibility: one runtime maintenance turn split into explicit phases.
 
-fn maintain_runtime_health<P: PairingDriver, T: CommunicationLifecycle>(
+fn maintain_runtime_health<
+    P: PairingDriver,
+    C: CommunicationDriver,
+    T: CommunicationLifecycle,
+>(
     pairing: &mut P,
+    communication: &mut C,
     communication_lifecycle: &mut T,
     rendezvous_health: Option<&RendezvousHealthHandle>,
     policy: &mut RuntimeGovernor,
@@ -74,8 +79,54 @@ fn maintain_runtime_health<P: PairingDriver, T: CommunicationLifecycle>(
         "COMMUNICATION_MAINTENANCE_FAILED",
         "COMMUNICATION_MAINTENANCE_RECOVERED",
     );
+    let provider_route_state = communication_lifecycle.runtime_diagnostics().route_state;
+    if provider_route_state != health.last_provider_route_state {
+        if let Some(route_state) = provider_route_state {
+            let (state, code) = match route_state {
+                torca_transport_api::ProviderRouteState::Fresh
+                    if health.last_provider_route_state
+                        == Some(torca_transport_api::ProviderRouteState::Stale) =>
+                {
+                    (HealthState::Ready, "PEER_ROUTE_REFRESHED")
+                }
+                torca_transport_api::ProviderRouteState::Fresh => {
+                    (HealthState::Ready, "PEER_ROUTE_FRESH")
+                }
+                torca_transport_api::ProviderRouteState::Stale => {
+                    (HealthState::Degraded, "PEER_ROUTE_STALE")
+                }
+                torca_transport_api::ProviderRouteState::Unavailable => {
+                    (HealthState::Starting, "PEER_ROUTE_UNAVAILABLE")
+                }
+            };
+            record(diagnostics, sequence, now, Component::Communication, state, code);
+        }
+        health.last_provider_route_state = provider_route_state;
+    }
+    let pairing_maintenance = pairing.maintenance(now);
+    if let Ok(report) = &pairing_maintenance {
+        prime_completed_pairings(report, |contact_id| {
+            record(
+                diagnostics,
+                sequence,
+                now,
+                Component::Storage,
+                HealthState::Ready,
+                "PAIRING_CONTACT_PERSISTED",
+            );
+            communication.prime_contact(contact_id);
+            record(
+                diagnostics,
+                sequence,
+                now,
+                Component::Peer,
+                HealthState::Starting,
+                "PEER_PRIME_REQUESTED",
+            );
+        });
+    }
     observe_maintenance(
-        pairing.maintenance(now),
+        pairing_maintenance.map(|_| ()),
         &mut health.pairing_failed,
         diagnostics,
         sequence,
@@ -134,6 +185,15 @@ fn maintain_runtime_health<P: PairingDriver, T: CommunicationLifecycle>(
             map_incoming_reachability_health(incoming_reachability_state),
             incoming_reachability_event_code(incoming_reachability_state),
         );
+    }
+}
+
+fn prime_completed_pairings(
+    report: &PairingMaintenanceReport,
+    mut prime_contact: impl FnMut(ContactId),
+) {
+    for contact_id in report.completed_contacts.iter().copied().collect::<BTreeSet<_>>() {
+        prime_contact(contact_id);
     }
 }
 
@@ -316,13 +376,21 @@ fn maintain_peer_state<C: CommunicationDriver>(
         let previous_state = health.last_peer_states.get(&id).copied();
         if health.last_peer_states.get(&id) != Some(&state) {
             health.transport_activity.mark_peer(id, now);
+            let diagnostic_code = match state {
+                PeerConnectionStatus::Connecting => "PEER_DIAL_STARTED",
+                PeerConnectionStatus::Handshaking => "PEER_HANDSHAKING",
+                PeerConnectionStatus::Ready => "PEER_READY",
+                PeerConnectionStatus::Failed => "PEER_DIAL_FAILED",
+                PeerConnectionStatus::Reconnecting => "PEER_RECONNECTING",
+                PeerConnectionStatus::Disconnected => "PEER_DISCONNECTED",
+            };
             record(
                 diagnostics,
                 sequence,
                 now,
                 Component::Peer,
                 map_peer_health(state),
-                "PEER_STATE_CHANGED",
+                diagnostic_code,
             );
         }
         if state == PeerConnectionStatus::Ready
@@ -418,6 +486,26 @@ fn maintain_peer_state<C: CommunicationDriver>(
                 if changed {
                     policy.apply(PolicyEvent::Evidence { scope, kind }, policy_now);
                 }
+            }
+            if tx_changed || rx_changed {
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Peer,
+                    HealthState::Ready,
+                    "MESSAGE_PEER_STAGE_COMPLETED",
+                );
+            }
+            if ack_changed {
+                record(
+                    diagnostics,
+                    sequence,
+                    now,
+                    Component::Peer,
+                    HealthState::Ready,
+                    "RECEIPT_PEER_STAGE_COMPLETED",
+                );
             }
             current_activity.insert(id, evidence);
         }

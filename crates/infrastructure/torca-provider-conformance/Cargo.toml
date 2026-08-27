@@ -1,0 +1,33 @@
+[package]
+name = "torca-provider-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
+torca-client-engine = { path = "../../application/torca-client-engine" }
+torca-contacts = { path = "../../domains/torca-contacts" }
+torca-conversations = { path = "../../domains/torca-conversations" }
+torca-crypto = { path = "../torca-crypto" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-identity = { path = "../../domains/torca-identity" }
+torca-messaging = { path = "../../domains/torca-messaging" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
+torca-peer-link = { path = "../torca-peer-link" }
+torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
+torca-receipts = { path = "../../domains/torca-receipts" }
+torca-relay = { path = "../../../services/relay" }
+torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
+torca-transport-api = { path = "../../application/torca-transport-api" }
+torca-transport-iroh = { path = "../torca-transport-iroh" }
+torca-transport-memory = { path = "../torca-transport-memory" }
+
+[lints]
+workspace = true

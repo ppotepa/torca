@@ -64,8 +64,18 @@ pub(crate) fn close(&mut self) -> i32 {
     }
 }
 
-pub(crate) fn notification_events_json(&mut self, after_cursor: u64) -> i32 {
-    let _ = self.collect_notification_events();
+pub(crate) fn notification_events_json(&mut self, after_cursor: u64, revision: u64) -> i32 {
+    // The caller's cursor is an acknowledgement boundary. Prune durable
+    // rows before producing the next bounded response so restarts cannot
+    // replay notifications that the OS service already consumed.
+    let _ = self.notification_store.acknowledge_through(after_cursor);
+    // A single runtime revision may be observed by Flutter and the Android
+    // service.  Build the notification projection once for that revision;
+    // repeated readers only drain the bounded cursor-addressed buffer.
+    if self.notification_last_scan_revision != revision {
+        let _ = self.collect_notification_events();
+        self.notification_last_scan_revision = revision;
+    }
     let events = self
         .notification_events
         .iter()
@@ -251,12 +261,17 @@ fn collect_notification_events(&mut self) -> Result<(), ()> {
     if !self.notifications_enabled {
         return Ok(());
     }
+    let initial_len = self.notification_events.len();
     let summaries = self.read_models().history.conversation_summaries().map_err(|_| ())?;
-    let snapshot = self
-        .application_runtime
-        .snapshot_context()
-        .map(bridge_snapshot_from_application)
-        .map_err(|_| ())?;
+    // Notifications only need the application overview (contacts, pairings
+    // and conversation relationships).  A full snapshot would also query
+    // network state, pending work and Radio/CPAL devices, turning a native
+    // notification read into an expensive platform projection.
+    let snapshot = bridge_snapshot_from_application(
+        self.application_runtime
+            .notification_snapshot_context()
+            .map_err(|_| ())?,
+    );
     let contact_names = snapshot
         .contacts
         .iter()
@@ -361,6 +376,10 @@ fn collect_notification_events(&mut self) -> Result<(), ()> {
     if self.notification_events.len() > 256 {
         let remove = self.notification_events.len() - 256;
         self.notification_events.drain(..remove);
+    }
+    for event in self.notification_events.iter().skip(initial_len) {
+        let payload = serde_json::to_string(event).map_err(|_| ())?;
+        let _ = self.notification_store.append(&event.event_id, &payload, event.created_at_ms).map_err(|_| ())?;
     }
     Ok(())
 }

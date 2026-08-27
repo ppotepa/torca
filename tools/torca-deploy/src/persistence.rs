@@ -114,6 +114,22 @@ impl StateStore {
         serde_json::from_slice(&bytes).map_err(PersistenceError::Deserialize)
     }
 
+    pub fn load_last_run(&self) -> Result<Option<DeployRun>, PersistenceError> {
+        if !self.paths.current_path().exists() && !backup_path(&self.paths.current_path()).exists()
+        {
+            return Ok(None);
+        }
+        self.load_current().map(Some)
+    }
+
+    pub fn load_last_plan(&self) -> Result<Option<crate::domain::DeployPlan>, PersistenceError> {
+        self.load_last_run().map(|run| run.map(|run| run.plan))
+    }
+
+    pub fn has_resumable_run(&self) -> Result<bool, PersistenceError> {
+        Ok(self.load_last_run()?.is_some_and(|run| run.is_resumable()))
+    }
+
     pub fn append_event(
         &self,
         run: &DeployRun,
@@ -226,7 +242,32 @@ pub enum PersistenceError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Configuration, DeployAction, DeployPlan, Target};
+    use crate::domain::{Configuration, DeployAction, DeployPlan, DeployStage, Target};
+
+    #[test]
+    fn last_plan_is_optional_and_terminal_runs_are_not_resumable() {
+        let root = std::env::temp_dir().join(format!("torca-deploy-last-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DeployPaths { repo_root: root.clone(), state_root: root.join(".torca/deploy") };
+        let store = StateStore::new(paths);
+        assert!(store.load_last_plan().expect("missing state is valid").is_none());
+
+        let mut run = DeployRun::new(DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Windows],
+            Configuration::Debug,
+        ));
+        store.save(&run).expect("save state");
+        assert!(store.has_resumable_run().expect("read resumable state"));
+        run.advance(DeployStage::Completed, "done");
+        store.save(&run).expect("save completed state");
+        assert!(!store.has_resumable_run().expect("read terminal state"));
+        assert_eq!(
+            store.load_last_plan().expect("load last plan").expect("plan").action,
+            DeployAction::RedeployCurrent
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn state_round_trip_preserves_checkpoint() {

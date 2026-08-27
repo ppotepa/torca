@@ -76,6 +76,7 @@ type OutgoingSession = PeerSession<Box<dyn PeerTransport + Send>, Ed25519Handsha
 
 pub struct PeerLink<S, K> {
     transport_factory: Box<dyn PeerTransportFactory>,
+    pub(super) provider_routing: Option<std::sync::Arc<dyn torca_provider_api::ProviderRouting>>,
     relationships: S,
     signer: K,
     local_identity_id: OpaqueId,

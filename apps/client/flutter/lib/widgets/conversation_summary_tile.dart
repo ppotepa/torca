@@ -69,7 +69,7 @@ class ConversationSummaryTile extends StatelessWidget {
                 (radioSession?.typedState ?? radio?.typedState) ==
                 RadioState.transmitting,
             attention: conversation.unreadCount > 0,
-            online: contact?.presenceState == 'online',
+            online: contact?.typedAvailability == PeerAvailability.reachable,
           ),
         ),
         title: Row(
@@ -111,7 +111,7 @@ class ConversationSummaryTile extends StatelessWidget {
               contactName: contact?.displayName,
             ),
             ConnectionIndicator(
-              state: contact?.connectionState ?? 'disconnected',
+              state: contact?.availabilityIndicatorState ?? 'disconnected',
               blocked: blocked,
               provider: contact?.transportProvider ?? 'tor',
               showLabel: false,

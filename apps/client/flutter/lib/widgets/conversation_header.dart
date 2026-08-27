@@ -111,7 +111,7 @@ class ConversationHeader extends StatelessWidget {
         sending: sending,
         receiving: receiving,
         waking: radioState == RadioState.connecting,
-        online: value?.presenceState == 'online',
+        online: value?.typedAvailability == PeerAvailability.reachable,
         error: radioState == RadioState.reconnecting,
       ),
     );

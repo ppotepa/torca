@@ -51,6 +51,28 @@ pub enum TransportOperation {
     Probe,
     Keepalive,
     Reconnect,
+    Route,
+    Lease,
+}
+
+/// Redaction-safe pipeline stage. Variants intentionally carry no provider
+/// endpoint, address, capability, or payload data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransportStage {
+    Factory,
+    Connect,
+    Handshake,
+    RouteStale,
+    RouteRefreshed,
+    RouteAdvertised,
+    RouteApplied,
+    Message,
+    Receipt,
+    LeaseAcquired,
+    LeaseReleased,
+    ReconnectPreferredDialer,
+    ReconnectRecovery,
+    ReconnectDurableDemand,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +89,7 @@ pub struct TransportEvent {
     pub layer: TransportLayer,
     pub direction: Option<TransportDirection>,
     pub operation: TransportOperation,
+    pub stage: Option<TransportStage>,
     pub phase: OperationPhase,
     pub correlation_id: Option<OpaqueId>,
     pub at: Timestamp,
@@ -136,6 +159,32 @@ impl ConnectivityObserver {
         latency_ms: Option<u64>,
         error_code: Option<ErrorCode>,
     ) {
+        self.record_with_stage(
+            layer,
+            direction,
+            operation,
+            phase,
+            correlation_id,
+            at,
+            latency_ms,
+            error_code,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_with_stage(
+        &self,
+        layer: TransportLayer,
+        direction: Option<TransportDirection>,
+        operation: TransportOperation,
+        phase: OperationPhase,
+        correlation_id: Option<OpaqueId>,
+        at: Timestamp,
+        latency_ms: Option<u64>,
+        error_code: Option<ErrorCode>,
+        stage: Option<TransportStage>,
+    ) {
         let Ok(mut ledger) = self.inner.lock() else { return };
         ledger.cursor = ledger.cursor.saturating_add(1);
         let cursor = ledger.cursor;
@@ -184,6 +233,7 @@ impl ConnectivityObserver {
             layer,
             direction,
             operation,
+            stage,
             phase,
             correlation_id,
             at,

@@ -33,9 +33,6 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
             acquire_pairing_lease(policy, id);
             wake_rendezvous(rendezvous_health);
             let result = pairing.join(id, code, ticket, bootstrap, now);
-            if result.is_ok() {
-                communication.prime_connections();
-            }
             record_pairing_result(&result, "JOIN", diagnostics, sequence, now);
             let _ = r.send(result);
         }
@@ -45,7 +42,6 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
             let result = pairing.approve(id, now);
             if result.is_ok() {
                 policy.release_lease(pairing_lease_owner(id));
-                communication.prime_connections();
             }
             record_pairing_result(&result, "APPROVE", diagnostics, sequence, now);
             let _ = r.send(result);
@@ -219,14 +215,6 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
                 Ok(NetworkSnapshot {
                     communication: communication_lifecycle.commissioning(),
                     tor: communication_lifecycle.state(),
-                    // Preserve the legacy onion field only for Tor.  Direct
-                    // providers expose their route through the generic
-                    // commissioning endpoint and must never be serialized as
-                    // an onion address.
-                    onion_address: (communication_lifecycle.provider()
-                        == torca_transport_api::TransportKind::Tor)
-                        .then(|| communication_lifecycle.local_endpoint_summary())
-                        .flatten(),
                     peers,
                     peer_health,
                     contact_names,

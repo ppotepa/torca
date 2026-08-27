@@ -159,6 +159,62 @@ unsafe fn torca_runtime_wait_for_revision_with_waiter(
     }
 }
 
+#[cfg(target_os = "android")]
+unsafe fn torca_runtime_wait_for_runtime_revision_with_waiter(
+    handle: *const TorcaRuntimeHandle,
+    after_revision: u64,
+    timeout_ms: u32,
+    waiter: u64,
+) -> i32 {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return -1;
+    };
+    if handle.inner.startup_error.is_some() || !handle.inner.alive.load(Ordering::Acquire) {
+        return -2;
+    }
+    let result = handle.inner.event_hub.wait_revision(
+        waiter,
+        after_revision,
+        if timeout_ms == 0 {
+            Duration::from_secs(365 * 24 * 60 * 60)
+        } else {
+            Duration::from_millis(u64::from(timeout_ms))
+        },
+    );
+    if handle.inner.event_hub.is_closed() {
+        return -2;
+    }
+    if result.is_some() { 1 } else { 0 }
+}
+
+#[cfg(target_os = "android")]
+unsafe fn torca_runtime_wait_for_notification_with_waiter(
+    handle: *const TorcaRuntimeHandle,
+    after_cursor: u64,
+    timeout_ms: u32,
+    waiter: u64,
+) -> i32 {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return -1;
+    };
+    if handle.inner.startup_error.is_some() || !handle.inner.alive.load(Ordering::Acquire) {
+        return -2;
+    }
+    let result = handle.inner.event_hub.wait_notification(
+        waiter,
+        after_cursor,
+        if timeout_ms == 0 {
+            Duration::from_secs(365 * 24 * 60 * 60)
+        } else {
+            Duration::from_millis(u64::from(timeout_ms))
+        },
+    );
+    if handle.inner.event_hub.is_closed() {
+        return -2;
+    }
+    if result.is_some() { 1 } else { 0 }
+}
+
 #[unsafe(no_mangle)]
 /// # Safety
 /// `handle` must be a valid handle returned by `torca_runtime_acquire`.
@@ -329,6 +385,54 @@ pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeWaitForRevi
         torca_runtime_wait_for_revision_with_waiter(
             handle,
             after_revision.max(0) as u64,
+            after_cursor.max(0) as u64,
+            timeout_ms.max(0) as u32,
+            2,
+        )
+    };
+    unsafe { torca_runtime_release(handle) };
+    result
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeWaitForRuntimeRevision(
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    after_revision: jni::sys::jlong,
+    timeout_ms: jni::sys::jint,
+) -> jni::sys::jint {
+    let handle = torca_runtime_acquire();
+    if handle.is_null() {
+        return -1;
+    }
+    let result = unsafe {
+        torca_runtime_wait_for_runtime_revision_with_waiter(
+            handle,
+            after_revision.max(0) as u64,
+            timeout_ms.max(0) as u32,
+            2,
+        )
+    };
+    unsafe { torca_runtime_release(handle) };
+    result
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_torca_host_NativeRuntimeBridge_nativeWaitForNotification(
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    after_cursor: jni::sys::jlong,
+    timeout_ms: jni::sys::jint,
+) -> jni::sys::jint {
+    let handle = torca_runtime_acquire();
+    if handle.is_null() {
+        return -1;
+    }
+    let result = unsafe {
+        torca_runtime_wait_for_notification_with_waiter(
+            handle,
             after_cursor.max(0) as u64,
             timeout_ms.max(0) as u32,
             2,

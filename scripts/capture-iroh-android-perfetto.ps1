@@ -19,7 +19,11 @@ $metadataPath = [IO.Path]::GetFullPath($MetadataOutput)
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outputPath) | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $metadataPath) | Out-Null
 
-$remotePath = "/data/local/tmp/torca-iroh-$PID.perfetto-trace"
+$traceNonce = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+# Modern Android runs perfetto under the traced service identity. That identity
+# can write to the system trace directory, but not necessarily to
+# /data/local/tmp even when the adb shell user can.
+$remotePath = "/data/misc/perfetto-traces/torca-iroh-$PID-$traceNonce.perfetto-trace"
 $startedAt = [DateTime]::UtcNow
 $arguments = @(
     '-s', $AndroidSerial, 'shell', 'perfetto', '--txt',

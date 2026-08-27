@@ -1,15 +1,44 @@
 use std::sync::Arc;
 use torca_crypto::RustPairingCrypto;
+use torca_foundation::ProviderId;
 use torca_pairing_coordinator::{PairingCoordinator, PairingRuntime};
-use torca_pairing_driver::{PairingTransportRoute, RuntimePairingDriver};
-use torca_runtime::{PairingDriver, RuntimeDriverError};
+use torca_pairing_driver::RuntimePairingDriver;
+use torca_provider_api::{ProviderRoute, ProviderRouteError, ProviderRouteState, ProviderRouting};
+use torca_runtime::PairingDriver;
 use torca_transport_api::TransportKind;
 use torca_transport_iroh::{IrohComposition, IrohPairingService, provider_runtime};
 
 use crate::composition::NativeCompositionError;
 use crate::provider_composition::{
-    ProviderComponents, ProviderPairingFactory, ProviderPairingInputs,
+    NativeCommunicationProviderPlugin, ProviderComponents, ProviderCompositionInputs,
+    ProviderPairingFactory, ProviderPairingInputs,
 };
+
+pub(super) static PLUGIN: IrohProviderPlugin = IrohProviderPlugin;
+
+pub(crate) struct IrohProviderPlugin;
+
+impl NativeCommunicationProviderPlugin for IrohProviderPlugin {
+    fn id(&self) -> ProviderId {
+        ProviderId::new("iroh").expect("built-in provider id")
+    }
+
+    fn descriptor(&self) -> torca_provider_api::ProviderDescriptor {
+        torca_provider_api::built_in_descriptor(&self.id()).expect("built-in provider descriptor")
+    }
+
+    fn deployment_profile(&self) -> torca_provider_api::ProviderDeploymentProfile {
+        torca_provider_api::built_in_deployment_profile(&self.id())
+            .expect("built-in provider deployment profile")
+    }
+
+    fn compose(
+        &self,
+        inputs: ProviderCompositionInputs,
+    ) -> Result<ProviderComponents, NativeCompositionError> {
+        compose(inputs.provider_secret_store)
+    }
+}
 
 pub(crate) fn compose(
     mut provider_secret_store: Box<dyn torca_crypto::ProtectedSecretStore>,
@@ -27,11 +56,16 @@ pub(crate) fn compose(
     // freezing `endpoint.addr()` during composition produced QR invitations
     // that contained only the identity and could not be dialled yet.
     let endpoint = composition.pairing.endpoint_slot();
+    let routing: Arc<dyn ProviderRouting> = Arc::new(IrohRouting { endpoint });
     Ok(ProviderComponents {
         provider: TransportKind::Iroh,
         lifecycle: Box::new(composition.lifecycle),
         peer_transport_factory: Box::new(composition.transport_factory),
-        pairing_factory: Box::new(IrohPairingFactory { service: composition.pairing, endpoint }),
+        pairing_factory: Box::new(IrohPairingFactory {
+            service: composition.pairing,
+            routing: Arc::clone(&routing),
+        }),
+        routing,
         rendezvous_probe: None,
         radio_media_factory: Box::new(composition.radio_media_factory),
     })
@@ -39,29 +73,66 @@ pub(crate) fn compose(
 
 struct IrohPairingFactory {
     service: IrohPairingService,
+    routing: Arc<dyn ProviderRouting>,
+}
+
+struct IrohRouting {
     endpoint: torca_transport_iroh::ProviderEndpointSlot,
 }
 
-/// An Iroh endpoint id by itself is not a dialable invitation.  The address
-/// lookup/relay/direct discovery task may populate transport addresses after
-/// the endpoint has been bound.  Treat that short window as retryable instead
-/// of emitting a QR which can only be saved locally and can never be joined.
-fn encode_dialable_endpoint(
-    endpoint: &torca_transport_iroh::ProviderEndpointSlot,
-) -> Result<Vec<u8>, RuntimeDriverError> {
-    // Pairing closures can be invoked while an Android network callback is
-    // migrating the endpoint. Do not persist or advertise the pre-migration
-    // address; the pairing worker will retry once the provider wake marks the
-    // route fresh again.
-    if !endpoint.route_is_fresh() {
-        return Err(RuntimeDriverError::RouteRefreshRequired);
+impl IrohRouting {
+    fn endpoint_bytes(&self) -> Result<Vec<u8>, ProviderRouteError> {
+        if !self.endpoint.route_is_fresh() {
+            return Err(ProviderRouteError::Stale);
+        }
+        let address = self.endpoint.current().ok_or(ProviderRouteError::Unavailable)?.addr();
+        if address.is_empty() {
+            return Err(ProviderRouteError::Unavailable);
+        }
+        torca_transport_iroh::encode_endpoint_addr(&address)
+            .map_err(|_| ProviderRouteError::Invalid)
     }
-    let address = endpoint.current().ok_or(RuntimeDriverError::Pending)?.addr();
-    if address.is_empty() {
-        return Err(RuntimeDriverError::Pending);
+}
+
+impl ProviderRouting for IrohRouting {
+    fn route_state(&self) -> ProviderRouteState {
+        if !self.endpoint.route_is_fresh() {
+            ProviderRouteState::Stale
+        } else if self.endpoint.current().is_some() {
+            ProviderRouteState::Fresh
+        } else {
+            ProviderRouteState::Unavailable
+        }
     }
-    torca_transport_iroh::encode_endpoint_addr(&address)
-        .map_err(|_| RuntimeDriverError::Communication)
+
+    fn local_route(&self) -> Result<Option<ProviderRoute>, ProviderRouteError> {
+        let endpoint = match self.endpoint_bytes() {
+            Ok(endpoint) => endpoint,
+            Err(ProviderRouteError::Unavailable) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        ProviderRoute::new(
+            ProviderId::new("iroh").expect("built-in provider id"),
+            self.endpoint.route_generation(),
+            endpoint,
+        )
+        .map(Some)
+        .ok_or(ProviderRouteError::Invalid)
+    }
+
+    fn pairing_bootstrap(
+        &self,
+    ) -> Result<Option<torca_pairing_protocol::PairingBootstrapDescriptor>, ProviderRouteError>
+    {
+        let endpoint = match self.endpoint_bytes() {
+            Ok(endpoint) => endpoint,
+            Err(ProviderRouteError::Unavailable) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        torca_pairing_protocol::PairingBootstrapDescriptor::new("iroh", endpoint)
+            .map(Some)
+            .map_err(|_| ProviderRouteError::Invalid)
+    }
 }
 
 impl ProviderPairingFactory for IrohPairingFactory {
@@ -79,23 +150,7 @@ impl ProviderPairingFactory for IrohPairingFactory {
         runtime.restore_active_sessions().map_err(|_| {
             NativeCompositionError::new("restore active Iroh pairing sessions failed")
         })?;
-        let route_endpoint = self.endpoint.clone();
-        let bootstrap_endpoint = self.endpoint;
-        let driver = RuntimePairingDriver::new(
-            runtime,
-            inputs.engine,
-            Box::new(move || match encode_dialable_endpoint(&route_endpoint) {
-                Ok(route) => Ok(Some(PairingTransportRoute::new("iroh", route))),
-                Err(RuntimeDriverError::Pending) => Ok(None),
-                Err(error) => Err(error),
-            }),
-        )
-        .with_bootstrap_source(Box::new(move || {
-            let payload = encode_dialable_endpoint(&bootstrap_endpoint)?;
-            torca_pairing_protocol::PairingBootstrapDescriptor::new("iroh", payload)
-                .map(Some)
-                .map_err(|_| RuntimeDriverError::Pairing)
-        }));
+        let driver = RuntimePairingDriver::new(runtime, inputs.engine, self.routing);
         Ok(Box::new(driver))
     }
 }

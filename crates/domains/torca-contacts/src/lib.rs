@@ -3,7 +3,7 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_identity::PublicIdentity;
 
 #[must_use]
@@ -36,98 +36,43 @@ pub enum ContactStatus {
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContactRoute {
-    /// Legacy Tor address. Direct providers deliberately keep this absent;
-    /// their endpoint remains opaque in `provider_endpoints`.
-    onion_address: Option<String>,
     capability_id: OpaqueId,
-    /// Opaque provider endpoint hints keyed by stable provider wire name.
-    /// Keeping this map in the domain avoids coupling contacts to a transport crate.
-    provider_endpoints: BTreeMap<String, Vec<u8>>,
+    endpoints: BTreeMap<ProviderId, Vec<u8>>,
 }
 impl ContactRoute {
-    /// Creates a route from the single provider selected for a relationship.
-    /// Tor endpoints are mirrored into the legacy field only for migration.
     pub fn for_provider_endpoint(
         capability_id: OpaqueId,
         provider: impl Into<String>,
         endpoint: Vec<u8>,
     ) -> Result<Self, ContactError> {
-        let provider = provider.into();
-        if provider.is_empty()
-            || provider.len() > 32
-            || endpoint.is_empty()
-            || endpoint.len() > 8 * 1024
+        let provider =
+            ProviderId::new(provider).map_err(|_| ContactError::InvalidTransportRoute)?;
+        if endpoint.is_empty() || endpoint.len() > 8 * 1024 {
+            return Err(ContactError::InvalidTransportRoute);
+        }
+        Ok(Self { capability_id, endpoints: BTreeMap::from([(provider, endpoint)]) })
+    }
+
+    pub fn from_provider_endpoints(
+        capability_id: OpaqueId,
+        endpoints: BTreeMap<ProviderId, Vec<u8>>,
+    ) -> Result<Self, ContactError> {
+        if endpoints.is_empty()
+            || endpoints.values().any(|endpoint| endpoint.is_empty() || endpoint.len() > 8 * 1024)
         {
             return Err(ContactError::InvalidTransportRoute);
         }
-        let onion_address = if provider == "tor" {
-            let value = String::from_utf8(endpoint.clone())
-                .map_err(|_| ContactError::InvalidTransportRoute)?;
-            if value.len() > 255
-                || !value.to_ascii_lowercase().ends_with(".onion")
-                || value.chars().any(char::is_whitespace)
-            {
-                return Err(ContactError::InvalidTransportRoute);
-            }
-            Some(value)
-        } else {
-            None
-        };
-        let mut provider_endpoints = BTreeMap::new();
-        provider_endpoints.insert(provider, endpoint);
-        Ok(Self { onion_address, capability_id, provider_endpoints })
-    }
-    pub fn new(
-        onion_address: impl Into<String>,
-        capability_id: OpaqueId,
-    ) -> Result<Self, ContactError> {
-        let onion_address = onion_address.into();
-        if onion_address.len() > 255
-            || !onion_address.to_ascii_lowercase().ends_with(".onion")
-            || onion_address.chars().any(char::is_whitespace)
-        {
-            return Err(ContactError::InvalidOnionAddress);
-        }
-        let mut provider_endpoints = BTreeMap::new();
-        provider_endpoints.insert("tor".to_owned(), onion_address.as_bytes().to_vec());
-        Ok(Self { onion_address: Some(onion_address), capability_id, provider_endpoints })
-    }
-    pub fn with_provider_endpoint(
-        onion_address: impl Into<String>,
-        capability_id: OpaqueId,
-        provider: impl Into<String>,
-        endpoint: Vec<u8>,
-    ) -> Result<Self, ContactError> {
-        let onion_address = onion_address.into();
-        let provider = provider.into();
-        if provider.is_empty() || provider.len() > 32 || endpoint.len() > 8 * 1024 {
-            return Err(ContactError::InvalidOnionAddress);
-        }
-        let mut route = if provider == "tor" {
-            Self::new(onion_address, capability_id)?
-        } else {
-            if onion_address.len() > 255 || onion_address.chars().any(char::is_whitespace) {
-                return Err(ContactError::InvalidOnionAddress);
-            }
-            Self { onion_address: None, capability_id, provider_endpoints: BTreeMap::new() }
-        };
-        route.provider_endpoints.insert(provider, endpoint);
-        Ok(route)
-    }
-    pub fn onion_address(&self) -> &str {
-        self.onion_address.as_deref().unwrap_or_default()
-    }
-    pub fn onion_address_opt(&self) -> Option<&str> {
-        self.onion_address.as_deref()
+        Ok(Self { capability_id, endpoints })
     }
     pub const fn capability_id(&self) -> OpaqueId {
         self.capability_id
     }
     pub fn provider_endpoint(&self, provider: &str) -> Option<&[u8]> {
-        self.provider_endpoints.get(provider).map(Vec::as_slice)
+        let provider = ProviderId::new(provider).ok()?;
+        self.endpoints.get(&provider).map(Vec::as_slice)
     }
-    pub fn provider_endpoints(&self) -> &BTreeMap<String, Vec<u8>> {
-        &self.provider_endpoints
+    pub fn provider_endpoints(&self) -> &BTreeMap<ProviderId, Vec<u8>> {
+        &self.endpoints
     }
 
     /// Replaces one provider's opaque route while preserving routes owned by
@@ -139,26 +84,12 @@ impl ContactRoute {
         provider: impl Into<String>,
         endpoint: Vec<u8>,
     ) -> Result<(), ContactError> {
-        let provider = provider.into();
-        if provider.is_empty()
-            || provider.len() > 32
-            || endpoint.is_empty()
-            || endpoint.len() > 8 * 1024
-        {
+        let provider =
+            ProviderId::new(provider).map_err(|_| ContactError::InvalidTransportRoute)?;
+        if endpoint.is_empty() || endpoint.len() > 8 * 1024 {
             return Err(ContactError::InvalidTransportRoute);
         }
-        if provider == "tor" {
-            let onion = String::from_utf8(endpoint.clone())
-                .map_err(|_| ContactError::InvalidTransportRoute)?;
-            if onion.len() > 255
-                || !onion.to_ascii_lowercase().ends_with(".onion")
-                || onion.chars().any(char::is_whitespace)
-            {
-                return Err(ContactError::InvalidTransportRoute);
-            }
-            self.onion_address = Some(onion);
-        }
-        self.provider_endpoints.insert(provider, endpoint);
+        self.endpoints.insert(provider, endpoint);
         Ok(())
     }
 }
@@ -286,7 +217,6 @@ impl Contact {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContactError {
-    InvalidOnionAddress,
     InvalidTransportRoute,
     InvalidCredential,
     InvalidTransition,
@@ -383,7 +313,7 @@ mod tests {
     use torca_foundation::OpaqueId;
 
     #[test]
-    fn direct_provider_route_has_no_legacy_onion_address() {
+    fn direct_provider_route_keeps_opaque_bytes() {
         let route = ContactRoute::for_provider_endpoint(
             OpaqueId::from_u128(1),
             "iroh",
@@ -391,21 +321,22 @@ mod tests {
         )
         .expect("valid direct endpoint");
 
-        assert_eq!(route.onion_address_opt(), None);
-        assert_eq!(route.onion_address(), "");
         assert_eq!(route.provider_endpoint("iroh"), Some(b"node-opaque-endpoint".as_slice()));
     }
 
     #[test]
     fn provider_route_refresh_preserves_other_provider_entries() {
-        let mut route =
-            ContactRoute::new("peer.onion", OpaqueId::from_u128(1)).expect("valid legacy route");
+        let mut route = ContactRoute::for_provider_endpoint(
+            OpaqueId::from_u128(1),
+            "tor",
+            b"opaque-tor-route".to_vec(),
+        )
+        .expect("valid opaque route");
         route
             .update_provider_endpoint("iroh", b"new-opaque-endpoint".to_vec())
             .expect("refresh route");
 
-        assert_eq!(route.provider_endpoint("tor"), Some(b"peer.onion".as_slice()));
+        assert_eq!(route.provider_endpoint("tor"), Some(b"opaque-tor-route".as_slice()));
         assert_eq!(route.provider_endpoint("iroh"), Some(b"new-opaque-endpoint".as_slice()));
-        assert_eq!(route.onion_address_opt(), Some("peer.onion"));
     }
 }

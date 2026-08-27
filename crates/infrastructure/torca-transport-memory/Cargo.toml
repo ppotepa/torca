@@ -9,6 +9,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+torca-contacts = { path = "../../domains/torca-contacts" }
 torca-transport-api = { path = "../../application/torca-transport-api" }
 
 [lints]

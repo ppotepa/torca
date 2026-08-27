@@ -7,8 +7,9 @@ use torca_client_engine::{ClientEngine, ClientEngineActor};
 use torca_crypto::{ManagedIdentityKeys, RustCryptoProvider};
 use torca_platform::{PlatformServices, SecretNamespace};
 use torca_storage_sqlite::{
-    SqlCipherMessageStore, SqlCipherPairingRepository, SqlCipherPendingOperationStore,
-    SqlCipherReceiptStore, SqlCipherSecurityProjection, SqlCipherSettingsStore, SqlCipherStore,
+    SqlCipherMessageStore, SqlCipherNotificationStore, SqlCipherPairingRepository,
+    SqlCipherPendingOperationStore, SqlCipherReceiptStore, SqlCipherSecurityProjection,
+    SqlCipherSettingsStore, SqlCipherStore,
 };
 
 pub(crate) use crate::database_key::{DATABASE_KEY_HANDLE, load_or_create_database_key};
@@ -37,6 +38,7 @@ pub(crate) struct ProductionEngineParts {
     pub actor: ClientEngineActor,
     pub read_models: ApplicationReadModels,
     pub pending: Box<dyn PendingOperationStore>,
+    pub notifications: SqlCipherNotificationStore,
 }
 
 /// The only production engine composition. Platform adapters provide paths and
@@ -76,6 +78,8 @@ fn spawn_production_engine_for(
         SqlCipherPairingRepository::open(&database_path, &database_key).map_err(|error| {
             NativeCompositionError::new(format!("open pairing session store failed: {error}"))
         })?;
+    let notifications = SqlCipherNotificationStore::open(&database_path, &database_key)
+        .map_err(|error| storage_error("open notification outbox", &error))?;
 
     let identity_keys = ManagedIdentityKeys::new(
         RustCryptoProvider,
@@ -96,6 +100,7 @@ fn spawn_production_engine_for(
         actor,
         pending: Box::new(pending),
         read_models: build_read_models(history, security, settings),
+        notifications,
     })
 }
 

@@ -9,9 +9,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ack::{AckWaitAction, classify_ack_wait_message, link_ack};
-use reconnect::{ReconnectEntry, reconnect_delay};
+use reconnect::{ReconnectEntry, ReconnectReason, reconnect_delay};
 use torca_connectivity::{
     ConnectivityObserver, OperationPhase, TransportDirection, TransportLayer, TransportOperation,
+    TransportStage,
 };
 use torca_contacts::{
     Contact, ContactError, ContactId, ContactRepository, ContactStatus, PeerCredentialRepository,
@@ -37,9 +38,9 @@ const PEER_RECOVERY_TICK: Duration = Duration::from_millis(250);
 
 include!("owner/model.rs");
 
-include!("owner/public_methods.rs");
 include!("owner/handshake_methods.rs");
 include!("owner/telemetry_methods.rs");
 include!("owner/session_methods.rs");
 
 include!("owner/support.rs");
+include!("owner/public_methods.rs");

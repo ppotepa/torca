@@ -19,7 +19,10 @@ pub trait PairingDriver: Send + 'static {
     ) -> Result<(), RuntimeDriverError>;
     fn reject(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError>;
     fn cancel(&mut self, session_id: PairingSessionId) -> Result<(), RuntimeDriverError>;
-    fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError>;
+    fn maintenance(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<PairingMaintenanceReport, RuntimeDriverError>;
     /// Returns the next useful maintenance deadline. `None` means the worker
     /// can sleep until a command or network event arrives; it must not wake
     /// just to discover that there is no pairing work.
@@ -27,6 +30,9 @@ pub trait PairingDriver: Send + 'static {
         None
     }
     fn network_changed(&mut self, _now: Timestamp) {}
+    /// Installs an event-driven wake used when a background pairing worker
+    /// persists a relationship between runtime maintenance turns.
+    fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
     fn shutdown(&mut self);
 }
 
@@ -66,7 +72,10 @@ impl PairingDriver for Box<dyn PairingDriver> {
         (**self).cancel(session_id)
     }
 
-    fn maintenance(&mut self, now: Timestamp) -> Result<(), RuntimeDriverError> {
+    fn maintenance(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<PairingMaintenanceReport, RuntimeDriverError> {
         (**self).maintenance(now)
     }
 
@@ -76,6 +85,10 @@ impl PairingDriver for Box<dyn PairingDriver> {
 
     fn network_changed(&mut self, now: Timestamp) {
         (**self).network_changed(now);
+    }
+
+    fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+        (**self).set_waker(waker);
     }
 
     fn shutdown(&mut self) {
@@ -323,8 +336,8 @@ pub trait CommunicationDriver:
 }
 /// Provider-neutral lifecycle owned by the selected communication stack.
 ///
-/// Tor maps its bootstrap and onion publisher to this port; Iroh and WebRTC
-/// map endpoint/discovery or signaling/ICE readiness to the same lifecycle.
+/// Each provider maps its own commissioning and reachability machinery to
+/// this lifecycle.
 pub trait CommunicationLifecycle: Send + 'static {
     /// Identity of the provider which owns this lifecycle.  Requiring this
     /// instead of defaulting commissioning to Tor prevents a newly added
@@ -391,8 +404,8 @@ pub trait CommunicationLifecycle: Send + 'static {
         }
     }
     /// Provider-owned readiness projection. Runtime and UI consume this
-    /// neutral snapshot instead of inferring implementation details such as a
-    /// Tor onion service from a provider's endpoint string.
+    /// neutral snapshot instead of inferring implementation details from a
+    /// provider's endpoint string.
     fn commissioning(&self) -> torca_transport_api::ProviderCommissioning {
         use torca_transport_api::{
             CommissioningStage, CommissioningState, CommissioningStep, ProviderCommissioning,

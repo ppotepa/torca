@@ -328,6 +328,26 @@ pub struct ClientApplicationRuntime {
 }
 
 impl ClientApplicationRuntime {
+    /// Returns the minimal snapshot context required to derive notification
+    /// metadata. Unlike `snapshot_context`, this never touches network,
+    /// pending-operation or Radio projections.
+    pub fn notification_snapshot_context(&self) -> Result<ApplicationSnapshotContext, EngineError> {
+        let application = self.application.overview()?;
+        let (identity_fingerprint, identity_fingerprints, safety_numbers) =
+            ApplicationSnapshotContext::security_projection(&application);
+        Ok(ApplicationSnapshotContext {
+            application,
+            network: stopped_network_snapshot(compiled_provider()),
+            attachments: Vec::new(),
+            bootstrap: self.bootstrap_snapshot()?,
+            identity_fingerprint,
+            identity_fingerprints,
+            safety_numbers,
+            pending_operations: Vec::new(),
+            radio: None,
+        })
+    }
+
     /// Returns the local content-addressed avatar envelope for an explicit
     /// targeted query. The regular snapshot never contains the compressed
     /// genome payload.
@@ -1638,7 +1658,6 @@ fn stopped_network_snapshot(provider: torca_transport_api::TransportKind) -> Net
             pairing_bootstrap: None,
         },
         tor: CommunicationState::Stopped,
-        onion_address: None,
         peers: BTreeMap::new(),
         peer_health: BTreeMap::new(),
         contact_names: BTreeMap::new(),

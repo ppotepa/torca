@@ -76,6 +76,7 @@ pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
     pub export_secret_store: EP,
     pub relationship_secret_store: RP,
     pub transport_factory: Box<dyn PeerTransportFactory>,
+    pub provider_routing: std::sync::Arc<dyn torca_provider_api::ProviderRouting>,
     /// The selected provider owns radio media construction. Common
     /// communication code never receives a provider client/endpoint.
     pub radio_media_factory: Box<dyn RadioMediaSystemFactory>,
@@ -108,12 +109,13 @@ where
     let health_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
     let link = SharedPeerLink::new(
-        PeerLink::with_transport_factory(
+        PeerLink::with_provider_routing(
             // The factory is the only provider-specific boundary. The rest
             // of this composition remains unchanged for every provider.
             // `with_transport_factory` takes ownership so no second provider
             // can be started for the same link.
             inputs.transport_factory,
+            inputs.provider_routing,
             ActiveRelationshipStore::new(peer_relationships),
             inputs.signer,
             inputs.local_identity_id,

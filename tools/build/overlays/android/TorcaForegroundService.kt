@@ -5,49 +5,122 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.app.Service
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
+import android.net.ConnectivityDiagnosticsManager
 import android.net.Network
 import android.net.NetworkRequest
 import android.os.Build
+import android.os.BatteryManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import com.torca.app.MainActivity
 import org.json.JSONObject
 
 /** Process-level owner for the Rust Torca runtime independent from FlutterActivity recreation. */
 class TorcaForegroundService : Service() {
     // Reading the native event cursor can briefly contend with the runtime actor.
-    // It must never run on Android's main looper: doing so caused visible UI stalls
-    // while the foreground service was polling for notifications.
-    private val notificationThread = HandlerThread("TorcaNotificationPoller")
+    // It must never run on Android's main looper. The worker blocks in the
+    // native event hub until a notification arrives instead of polling.
+    private val notificationThread = HandlerThread("TorcaNotificationWaiter")
     private lateinit var notificationHandler: Handler
+    @Volatile private var stopping = false
     private var notificationCursor = 0L
     private var notificationRuntimeId = ""
     private lateinit var connectivityManager: ConnectivityManager
+    private var connectivityDiagnosticsManager: ConnectivityDiagnosticsManager? = null
+    private val connectivityDiagnosticsExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "TorcaConnectivityDiagnostics")
+    }
+    private val dataStallActive = AtomicBoolean(false)
     private var warmupWakeLock: PowerManager.WakeLock? = null
+    private var networkChangePending = false
+    private val networkLock = Any()
+    private var defaultNetwork: Network? = null
+    private var defaultNetworkFingerprint: NetworkFingerprint? = null
+    private var lastMetered: Boolean? = null
+    private var lastValidated: Boolean? = null
+    private val networkChangeRunnable = Runnable {
+        networkChangePending = false
+        if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+            NativeRuntimeBridge.nativeLifecycleEvent("network_changed")
+        }
+    }
+    private val energyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val event = when (intent.action) {
+                PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                    if (getSystemService(PowerManager::class.java)?.isPowerSaveMode == true) {
+                        "power_saver_on"
+                    } else "power_saver_off"
+                }
+                Intent.ACTION_POWER_CONNECTED -> "charging_on"
+                Intent.ACTION_POWER_DISCONNECTED -> "charging_off"
+                else -> return
+            }
+            if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                NativeRuntimeBridge.nativeLifecycleEvent(event)
+            }
+        }
+    }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) = notifyNetworkChanged()
-        override fun onLost(network: Network) = notifyNetworkChanged()
+        override fun onAvailable(network: Network) = observeAvailableNetwork(network)
+        override fun onLost(network: Network) = observeLostNetwork(network)
         override fun onCapabilitiesChanged(
             network: Network,
             capabilities: android.net.NetworkCapabilities,
-        ) = notifyNetworkChanged()
+        ) = observeCapabilities(network, capabilities)
     }
-    private val notificationPoller = object : Runnable {
+    private val connectivityDiagnosticsCallback =
+        object : ConnectivityDiagnosticsManager.ConnectivityDiagnosticsCallback() {
+            override fun onDataStallSuspected(
+                report: ConnectivityDiagnosticsManager.DataStallReport,
+            ) {
+                if (NativeRuntimeBridge.nativeRuntimeAvailable() &&
+                    dataStallActive.compareAndSet(false, true)
+                ) {
+                    NativeRuntimeBridge.nativeLifecycleEvent("data_stall_on")
+                }
+            }
+
+            override fun onConnectivityReportAvailable(
+                report: ConnectivityDiagnosticsManager.ConnectivityReport,
+            ) {
+                if (NativeRuntimeBridge.nativeRuntimeAvailable() &&
+                    dataStallActive.compareAndSet(true, false)
+                ) {
+                    NativeRuntimeBridge.nativeLifecycleEvent("data_stall_off")
+                }
+            }
+        }
+    private val notificationWaiter = object : Runnable {
         override fun run() {
+            if (stopping) return
             if (!NativeRuntimeBridge.nativeRuntimeAvailable()) {
                 notificationHandler.postDelayed(this, RUNTIME_WAIT_MS)
                 return
             }
-            pollMessageNotifications()
-            notificationHandler.postDelayed(this, NOTIFICATION_POLL_MS)
+            val result = NativeRuntimeBridge.nativeWaitForNotification(notificationCursor, 0)
+            if (stopping) return
+            if (result >= 0) {
+                pollMessageNotifications()
+                notificationHandler.post(this)
+            } else {
+                // A closed runtime generation is retried with backoff; the
+                // healthy path remains fully event-driven.
+                notificationHandler.postDelayed(this, RUNTIME_RETRY_MS)
+            }
         }
     }
 
@@ -62,13 +135,43 @@ class TorcaForegroundService : Service() {
         AndroidKeystoreBridge.initialize(applicationContext)
         connectivityManager = getSystemService(ConnectivityManager::class.java)
         runCatching {
-            connectivityManager.registerNetworkCallback(
-                NetworkRequest.Builder()
-                    .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    .build(),
-                networkCallback,
-            )
+            val filter = IntentFilter().apply {
+                addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+            }
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(energyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(energyReceiver, filter)
+            }
+        }.onFailure { Log.w(TAG, "Could not register energy callbacks", it) }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                connectivityManager.registerDefaultNetworkCallback(networkCallback)
+            } else {
+                connectivityManager.registerNetworkCallback(
+                    NetworkRequest.Builder()
+                        .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(),
+                    networkCallback,
+                )
+            }
         }.onFailure { Log.w(TAG, "Could not register network callback", it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                connectivityDiagnosticsManager =
+                    getSystemService(ConnectivityDiagnosticsManager::class.java)
+                connectivityDiagnosticsManager?.registerConnectivityDiagnosticsCallback(
+                    NetworkRequest.Builder()
+                        .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build(),
+                    connectivityDiagnosticsExecutor,
+                    connectivityDiagnosticsCallback,
+                )
+            }.onFailure { Log.w(TAG, "Could not register connectivity diagnostics", it) }
+        }
         createServiceChannel()
         createMessageChannel()
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -120,6 +223,26 @@ class TorcaForegroundService : Service() {
                 if (!available) {
                     Log.e(TAG, "Native Torca runtime reported unavailable")
                 } else {
+                    // The registration-time broadcast can arrive before the
+                    // native runtime exists. Replay the current state after
+                    // initialization so battery policy starts with reality.
+                    val powerSaver = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+                    NativeRuntimeBridge.nativeLifecycleEvent(
+                        if (powerSaver) "power_saver_on" else "power_saver_off",
+                    )
+                    val batteryIntent = registerReceiver(
+                        null,
+                        IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                    )
+                    val batteryStatus = batteryIntent?.getIntExtra(
+                        BatteryManager.EXTRA_STATUS,
+                        BatteryManager.BATTERY_STATUS_UNKNOWN,
+                    ) ?: BatteryManager.BATTERY_STATUS_UNKNOWN
+                    NativeRuntimeBridge.nativeLifecycleEvent(
+                        if (batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+                            batteryStatus == BatteryManager.BATTERY_STATUS_FULL
+                        ) "charging_on" else "charging_off",
+                    )
                     // Re-arm relay probing against the network that actually
                     // exists after service startup (Wi-Fi may have changed
                     // while the process was being restored).
@@ -132,25 +255,95 @@ class TorcaForegroundService : Service() {
                 warmupWakeLock = null
             }
         }.start()
-        notificationHandler.post(notificationPoller)
+        notificationHandler.post(notificationWaiter)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        stopping = true
         warmupWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
         warmupWakeLock = null
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
-        notificationHandler.removeCallbacks(notificationPoller)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                connectivityDiagnosticsManager?.unregisterConnectivityDiagnosticsCallback(
+                    connectivityDiagnosticsCallback,
+                )
+            }
+        }
+        connectivityDiagnosticsExecutor.shutdownNow()
+        runCatching { unregisterReceiver(energyReceiver) }
+        notificationHandler.removeCallbacks(notificationWaiter)
+        notificationHandler.removeCallbacks(networkChangeRunnable)
+        runCatching { NativeRuntimeBridge.nativeCancelRevisionWait() }
         notificationThread.quitSafely()
         super.onDestroy()
     }
 
     private fun notifyNetworkChanged() {
-        if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
-            NativeRuntimeBridge.nativeLifecycleEvent("network_changed")
+        if (networkChangePending) return
+        networkChangePending = true
+        notificationHandler.postDelayed(networkChangeRunnable, NETWORK_CHANGE_DEBOUNCE_MS)
+    }
+
+    private fun observeAvailableNetwork(network: Network) {
+        val changed = synchronized(networkLock) {
+            val changed = defaultNetwork != network
+            defaultNetwork = network
+            if (changed) defaultNetworkFingerprint = null
+            changed
         }
+        if (changed) notifyNetworkChanged()
+    }
+
+    private fun observeLostNetwork(network: Network) {
+        val lostDefault = synchronized(networkLock) {
+            if (defaultNetwork != network) return@synchronized false
+            defaultNetwork = null
+            defaultNetworkFingerprint = null
+            true
+        }
+        if (lostDefault) notifyNetworkChanged()
+    }
+
+    private fun observeCapabilities(
+        network: Network,
+        capabilities: android.net.NetworkCapabilities,
+    ) {
+        val fingerprint = NetworkFingerprint.from(capabilities)
+        if (fingerprint.metered != lastMetered) {
+            lastMetered = fingerprint.metered
+            if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                NativeRuntimeBridge.nativeLifecycleEvent(
+                    if (fingerprint.metered) "metered_network_on" else "metered_network_off",
+                )
+            }
+        }
+        if (fingerprint.validated != lastValidated) {
+            lastValidated = fingerprint.validated
+            if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
+                NativeRuntimeBridge.nativeLifecycleEvent(
+                    if (fingerprint.validated) "network_validated" else "network_unvalidated",
+                )
+            }
+        }
+        val routeReplaced = synchronized(networkLock) {
+            when {
+                defaultNetwork == null || defaultNetwork != network -> {
+                    defaultNetwork = network
+                    defaultNetworkFingerprint = fingerprint
+                    true
+                }
+                else -> {
+                    val changed = defaultNetworkFingerprint != fingerprint
+                    defaultNetworkFingerprint = fingerprint
+                    changed
+                }
+            }
+        }
+        if (routeReplaced) notifyNetworkChanged()
     }
 
     private fun pollMessageNotifications() {
@@ -270,9 +463,12 @@ class TorcaForegroundService : Service() {
         const val NOTIFICATION_CURSOR_PREFERENCES = "torca_notification_cursor"
         const val NOTIFICATION_CURSOR = "cursor"
         const val NOTIFICATION_RUNTIME_ID = "runtime_id"
-        const val NOTIFICATION_POLL_MS = 1500L
         const val RUNTIME_WAIT_MS = 250L
-        const val WARMUP_WAKELOCK_MS = 10 * 60 * 1000L
+        const val RUNTIME_RETRY_MS = 5_000L
+        const val NETWORK_CHANGE_DEBOUNCE_MS = 750L
+        // Runtime warm-up is one-shot; cap the emergency CPU hold so a
+        // stalled native initialization cannot drain the battery for minutes.
+        const val WARMUP_WAKELOCK_MS = 90 * 1000L
         const val TAG = "TorcaRuntime"
     }
 
@@ -282,6 +478,24 @@ class TorcaForegroundService : Service() {
         val contactDisplayName: String,
         val kind: String,
     )
+
+    private data class NetworkFingerprint(
+        val validated: Boolean,
+        val internet: Boolean,
+        val metered: Boolean,
+        val wifi: Boolean,
+        val cellular: Boolean,
+    ) {
+        companion object {
+            fun from(capabilities: android.net.NetworkCapabilities) = NetworkFingerprint(
+                validated = capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                internet = capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                metered = !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+                wifi = capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI),
+                cellular = capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR),
+            )
+        }
+    }
 }
 
 object NativeRuntimeBridge {
@@ -290,4 +504,6 @@ object NativeRuntimeBridge {
     @JvmStatic external fun nativeRuntimeAvailable(): Boolean
     @JvmStatic external fun nativeLifecycleEvent(event: String): Boolean
     @JvmStatic external fun nativeNotificationSnapshotJson(afterCursor: Long): String?
+    @JvmStatic external fun nativeWaitForNotification(afterCursor: Long, timeoutMs: Int): Int
+    @JvmStatic external fun nativeCancelRevisionWait(): Int
 }

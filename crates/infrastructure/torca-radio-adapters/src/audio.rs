@@ -459,7 +459,7 @@ mod platform {
     use crate::codec::{decode_mulaw, encode_mulaw};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use std::sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicU8, Ordering},
     };
 
@@ -471,6 +471,8 @@ mod platform {
         fault: Arc<AtomicU8>,
         selected_input_id: Option<String>,
         selected_output_id: Option<String>,
+        cached_devices: RwLock<Option<RadioAudioProjection>>,
+        cached_microphone_ready: RwLock<Option<bool>>,
     }
 
     impl PlatformAudio {
@@ -483,6 +485,8 @@ mod platform {
                 fault: Arc::new(AtomicU8::new(0)),
                 selected_input_id: None,
                 selected_output_id: None,
+                cached_devices: RwLock::new(None),
+                cached_microphone_ready: RwLock::new(None),
             }
         }
 
@@ -495,6 +499,8 @@ mod platform {
                 fault: Arc::new(AtomicU8::new(0)),
                 selected_input_id: None,
                 selected_output_id: None,
+                cached_devices: RwLock::new(Some(RadioAudioProjection::default())),
+                cached_microphone_ready: RwLock::new(Some(false)),
             }
         }
 
@@ -506,6 +512,15 @@ mod platform {
             if !self.enabled {
                 return RadioAudioProjection::default();
             }
+            if let Ok(cache) = self.cached_devices.read()
+                && let Some(value) = cache.as_ref()
+            {
+                return value.clone();
+            }
+            self.refresh_devices()
+        }
+
+        fn refresh_devices(&self) -> RadioAudioProjection {
             let host = cpal::default_host();
             let default_input = host
                 .default_input_device()
@@ -539,11 +554,35 @@ mod platform {
                     name,
                 })
                 .collect();
-            RadioAudioProjection {
+            let projection = RadioAudioProjection {
                 input_devices,
                 output_devices,
                 selected_input_id: self.selected_input_id.clone(),
                 selected_output_id: self.selected_output_id.clone(),
+            };
+            if let Ok(mut cache) = self.cached_devices.write() {
+                *cache = Some(projection.clone());
+            }
+            let microphone_ready = projection.selected_input_id.as_deref().map_or_else(
+                || projection.input_devices.iter().any(|device| device.is_default),
+                |selected| projection.input_devices.iter().any(|device| device.id == selected),
+            );
+            if let Ok(mut cache) = self.cached_microphone_ready.write() {
+                *cache = Some(microphone_ready);
+            }
+            projection
+        }
+
+        pub fn invalidate_devices(&self) {
+            if self.enabled
+                && let Ok(mut cache) = self.cached_devices.write()
+            {
+                *cache = None;
+            }
+            if self.enabled
+                && let Ok(mut cache) = self.cached_microphone_ready.write()
+            {
+                *cache = None;
             }
         }
 
@@ -559,7 +598,7 @@ mod platform {
                 // capability-guarded below.
                 return Ok(());
             }
-            let devices = self.devices();
+            let devices = self.refresh_devices();
             if input_device_id
                 .is_some_and(|id| !devices.input_devices.iter().any(|item| item.id == id))
             {
@@ -572,6 +611,8 @@ mod platform {
             }
             self.selected_input_id = input_device_id.map(str::to_owned);
             self.selected_output_id = output_device_id.map(str::to_owned);
+            self.invalidate_devices();
+            let _ = self.refresh_devices();
             Ok(())
         }
 
@@ -579,7 +620,16 @@ mod platform {
             if !self.enabled {
                 return false;
             }
-            selected_input_device(self.selected_input_id.as_deref()).is_some()
+            if let Ok(cache) = self.cached_microphone_ready.read()
+                && let Some(value) = *cache
+            {
+                return value;
+            }
+            let devices = self.devices();
+            devices.selected_input_id.as_deref().map_or_else(
+                || devices.input_devices.iter().any(|device| device.is_default),
+                |selected| devices.input_devices.iter().any(|device| device.id == selected),
+            )
         }
 
         pub fn begin_capture(&mut self) -> Result<(), RadioApplicationError> {

@@ -165,6 +165,8 @@ enum ContactStatus { active, blocked, removed, unknown }
 
 enum PresenceState { online, offline, unknown }
 
+enum PeerAvailability { unknown, idle, reachable, offline }
+
 enum RadioRemoteState { unknown, disabled, enabled }
 
 enum RadioState {
@@ -220,11 +222,14 @@ enum PendingOperationDependency {
   /// The selected communication provider is not ready yet. New payloads
   /// should use this provider-neutral dependency instead of naming Tor.
   provider,
+
   /// The selected provider's transport path is required.
   communication,
+
   /// The selected provider's transport and rendezvous/signalling path are
   /// required (the rendezvous mechanism is provider-owned).
   communicationAndRendezvous,
+
   /// Legacy compatibility value emitted by older runtimes.
   torOnionAndRelay,
   relay,
@@ -395,6 +400,7 @@ class PairingDto {
 class PeerHealthDto {
   const PeerHealthDto({
     this.state = 'disconnected',
+    this.availability = 'unknown',
     this.quality = 'unknown',
     this.rttMs,
     this.lastSuccessAtMs,
@@ -405,6 +411,7 @@ class PeerHealthDto {
   });
   factory PeerHealthDto.fromJson(Map<String, dynamic> value) => PeerHealthDto(
     state: value['state'] as String? ?? 'disconnected',
+    availability: value['availability'] as String? ?? 'unknown',
     quality: value['quality'] as String? ?? 'unknown',
     rttMs: (value['rttMs'] as num?)?.toInt(),
     lastSuccessAtMs: (value['lastSuccessAtMs'] as num?)?.toInt(),
@@ -413,11 +420,17 @@ class PeerHealthDto {
     lastActivityAtMs: (value['lastActivityAtMs'] as num?)?.toInt(),
     activitySequence: _integer(value['activitySequence']),
   );
-  final String state, quality;
+  final String state, availability, quality;
   final int? rttMs, lastSuccessAtMs, lastActivityAtMs;
   final int consecutiveFailures, reconnectAttempt, activitySequence;
 
   TransportState get typedState => _transportState(state);
+  PeerAvailability get typedAvailability => switch (availability) {
+    'idle' => PeerAvailability.idle,
+    'reachable' => PeerAvailability.reachable,
+    'offline' => PeerAvailability.offline,
+    _ => PeerAvailability.unknown,
+  };
   PeerHealthQuality get typedQuality => switch (quality) {
     'excellent' => PeerHealthQuality.excellent,
     'good' => PeerHealthQuality.good,
@@ -556,6 +569,7 @@ class ContactDto {
     this.onionAddress,
     required this.status,
     required this.connectionState,
+    this.availability = 'unknown',
     this.presenceState = 'unknown',
     this.lastSeenAtMs,
     this.safetyNumber,
@@ -574,6 +588,7 @@ class ContactDto {
       onionAddress: value['onionAddress'] as String?,
       status: _requiredString(value, 'status'),
       connectionState: _requiredString(value, 'connectionState'),
+      availability: value['availability'] as String? ?? 'unknown',
       presenceState: value['presenceState'] as String? ?? 'unknown',
       lastSeenAtMs: (value['lastSeenAtMs'] as num?)?.toInt(),
       safetyNumber: value['safetyNumber'] as String?,
@@ -591,6 +606,7 @@ class ContactDto {
       transportProvider,
       status,
       connectionState,
+      availability,
       presenceState,
       verificationStatus;
   final String? onionAddress, safetyNumber;
@@ -606,6 +622,17 @@ class ContactDto {
     _ => ContactStatus.unknown,
   };
   TransportState get typedConnectionState => _transportState(connectionState);
+  PeerAvailability get typedAvailability => switch (availability) {
+    'idle' => PeerAvailability.idle,
+    'reachable' => PeerAvailability.reachable,
+    'offline' => PeerAvailability.offline,
+    _ => PeerAvailability.unknown,
+  };
+  String get availabilityIndicatorState => switch (typedAvailability) {
+    PeerAvailability.reachable => 'ready',
+    PeerAvailability.offline => 'failed',
+    PeerAvailability.idle || PeerAvailability.unknown => 'disconnected',
+  };
   PresenceState get typedPresenceState => switch (presenceState) {
     'online' => PresenceState.online,
     'offline' => PresenceState.offline,
@@ -1031,7 +1058,8 @@ class AppSnapshotDto {
       identity: identity is Map<String, dynamic>
           ? IdentityDto.fromJson(identity)
           : null,
-      communicationProvider: value['communicationProvider'] as String? ?? 'unknown',
+      communicationProvider:
+          value['communicationProvider'] as String? ?? 'unknown',
       communicationState: value['communicationState'] as String? ?? 'stopped',
       endpointSummary: value['endpointSummary'] as String?,
       torState: value['torState'] as String? ?? 'stopped',

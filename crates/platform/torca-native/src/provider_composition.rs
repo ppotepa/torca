@@ -15,7 +15,9 @@ use std::{path::PathBuf, time::Duration};
 use torca_client_engine::EngineHandle;
 use torca_connectivity::ConnectivityObserver;
 use torca_crypto::ProtectedSecretStore;
+use torca_foundation::ProviderId;
 use torca_pairing_coordinator::{PairingApprovalPort, PairingPeerSecretStore};
+use torca_provider_api::{ProviderDeploymentProfile, ProviderDescriptor, ProviderRouting};
 use torca_radio_adapters::RadioMediaSystemFactory;
 use torca_runtime::{CommunicationLifecycle, PairingDriver, RendezvousProbe};
 use torca_transport_api::{CommissioningObserver, PeerTransportFactory, TransportKind};
@@ -51,6 +53,7 @@ pub(crate) struct ProviderComponents {
     pub provider: TransportKind,
     pub lifecycle: Box<dyn CommunicationLifecycle>,
     pub peer_transport_factory: Box<dyn PeerTransportFactory>,
+    pub routing: Arc<dyn ProviderRouting>,
     pub pairing_factory: Box<dyn ProviderPairingFactory>,
     pub rendezvous_probe: Option<Arc<dyn RendezvousProbe>>,
     pub radio_media_factory: Box<dyn RadioMediaSystemFactory>,
@@ -64,6 +67,7 @@ pub(crate) struct ProviderCompositionInputs {
     pub data_dir: PathBuf,
     /// Provider-owned secret namespace. The selected adapter may persist an
     /// endpoint/signalling identity here; other providers never see it.
+    #[cfg_attr(not(feature = "provider-iroh"), allow(dead_code))]
     pub provider_secret_store: Box<dyn ProtectedSecretStore>,
     pub rendezvous_endpoint: Option<(String, u16)>,
     #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
@@ -74,63 +78,55 @@ pub(crate) struct ProviderCompositionInputs {
     pub bootstrap_observer: CommissioningObserver,
 }
 
+/// Compile-time native provider plugin. The trait owns provider metadata and
+/// composition, while the registry below only maps a validated identifier to
+/// one implementation included in this artifact.
+pub(crate) trait NativeCommunicationProviderPlugin: Send + Sync {
+    fn id(&self) -> ProviderId;
+    fn descriptor(&self) -> ProviderDescriptor;
+    fn deployment_profile(&self) -> ProviderDeploymentProfile;
+    fn compose(
+        &self,
+        inputs: ProviderCompositionInputs,
+    ) -> Result<ProviderComponents, NativeCompositionError>;
+}
+
+fn provider_plugin(id: &ProviderId) -> Option<&'static dyn NativeCommunicationProviderPlugin> {
+    match id.as_str() {
+        #[cfg(feature = "provider-tor")]
+        "tor" => Some(&tor::PLUGIN),
+        #[cfg(feature = "provider-iroh")]
+        "iroh" => Some(&iroh::PLUGIN),
+        #[cfg(feature = "provider-webrtc")]
+        "webrtc" => Some(&webrtc::PLUGIN),
+        _ => None,
+    }
+}
+
 /// The only native provider-selection boundary. The process runtime consumes
 /// its neutral result and never constructs a Tor/onion/relay component.
 pub(crate) fn compose_selected_provider(
     provider: TransportKind,
-    mut inputs: ProviderCompositionInputs,
+    inputs: ProviderCompositionInputs,
 ) -> Result<ProviderComponents, NativeCompositionError> {
-    // The selected provider owns this namespace. Tor currently does not need
-    // it, but consuming it here prevents the generic host from retaining a
-    // secret store after composition and keeps the ownership boundary explicit.
-    let _provider_secret_store = &mut inputs.provider_secret_store;
-    let profile = provider.deployment_profile();
+    let provider_id = ProviderId::new(provider.wire_value())
+        .map_err(|_| NativeCompositionError::new("invalid selected provider identifier"))?;
+    let plugin = provider_plugin(&provider_id).ok_or_else(|| {
+        NativeCompositionError::new(format!(
+            "communication provider '{}' is not included in this native artifact",
+            provider_id
+        ))
+    })?;
+    let profile = plugin.deployment_profile();
     if profile.commissioning_service.requires_endpoint() && inputs.rendezvous_endpoint.is_none() {
         return Err(NativeCompositionError::new(
             "selected communication provider requires a rendezvous endpoint",
         ));
     }
-    let composed: Result<ProviderComponents, NativeCompositionError> = match provider {
-        #[cfg(feature = "provider-tor")]
-        TransportKind::Tor => {
-            let (relay_host, relay_port) = inputs
-                .rendezvous_endpoint
-                .expect("validated by selected provider deployment profile");
-            tor::compose(
-                inputs.data_dir,
-                relay_host,
-                relay_port,
-                inputs.startup_timeout,
-                inputs.now,
-                inputs.bootstrap_observer,
-            )
-        }
-        #[cfg(not(feature = "provider-tor"))]
-        TransportKind::Tor => {
-            Err(NativeCompositionError::new("Tor provider is not included in this native artifact"))
-        }
-        #[cfg(feature = "provider-iroh")]
-        TransportKind::Iroh => iroh::compose(inputs.provider_secret_store),
-        #[cfg(not(feature = "provider-iroh"))]
-        TransportKind::Iroh => Err(NativeCompositionError::new(
-            "Iroh provider is not included in this native artifact",
-        )),
-        #[cfg(feature = "provider-webrtc")]
-        TransportKind::WebRtc => {
-            let session = crate::runtime_composition::registered_webrtc_session_provider()?;
-            let signaling = crate::runtime_composition::registered_webrtc_signaling_provider()?;
-            webrtc::compose(session, signaling)
-        }
-        #[cfg(not(feature = "provider-webrtc"))]
-        TransportKind::WebRtc => Err(NativeCompositionError::new(
-            "WebRTC provider is not included in this native artifact",
-        )),
-        TransportKind::Memory => Err(NativeCompositionError::new(format!(
-            "communication provider '{}' is available only for simulated runtimes",
-            provider.wire_value()
-        ))),
-    };
-    let components = composed?;
+    let components = plugin.compose(inputs)?;
+    if plugin.id() != provider_id || plugin.descriptor().id != provider_id {
+        return Err(NativeCompositionError::new("provider plugin metadata mismatch"));
+    }
     if components.provider != provider || components.lifecycle.provider() != provider {
         return Err(NativeCompositionError::new(format!(
             "provider composition mismatch: selected={}, bundle={}, lifecycle={}",

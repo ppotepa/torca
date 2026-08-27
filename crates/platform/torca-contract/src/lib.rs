@@ -1,11 +1,11 @@
 //! Stable typed boundary between Flutter and the process-owned Rust runtime.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use torca_client_application::{
     ApplicationCommand, ApplicationError, ApplicationSnapshotContext, BootstrapPhase,
-    BootstrapStepId, BootstrapStepState, CommunicationState, PeerConnectionStatus,
-    PeerHealthQuality, PendingOperationKind, ProbeStatus, ProbeTarget, RadioEventActor, RadioFloor,
-    RadioState, RadioTimelineEventKind, RemoteRadioState,
+    BootstrapStepId, BootstrapStepState, CommunicationState, PeerAvailability,
+    PeerConnectionStatus, PeerHealthQuality, PendingOperationKind, ProbeStatus, ProbeTarget,
+    RadioEventActor, RadioFloor, RadioState, RadioTimelineEventKind, RemoteRadioState,
 };
 use torca_contacts::{ContactId, ContactStatus};
 use torca_conversations::ConversationStatus;
@@ -332,7 +332,7 @@ pub struct BridgePendingOperation {
 /// Cursor-addressed, redacted notification emitted by the process runtime.
 /// Message bodies, keys, onion addresses and safety numbers never cross this type.
 #[must_use]
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationEvent {
     pub cursor: u64,
@@ -383,6 +383,7 @@ pub struct BridgePairing {
 #[serde(rename_all = "camelCase")]
 pub struct BridgePeerHealth {
     pub state: String,
+    pub availability: String,
     pub quality: String,
     pub rtt_ms: Option<u64>,
     pub last_success_at_ms: Option<i64>,
@@ -448,6 +449,7 @@ pub struct BridgeContact {
     pub onion_address: Option<String>,
     pub status: String,
     pub connection_state: String,
+    pub availability: String,
     pub presence_state: String,
     pub last_seen_at_ms: Option<i64>,
     pub safety_number: String,
@@ -923,6 +925,15 @@ const fn peer_health_quality_name(value: PeerHealthQuality) -> &'static str {
     }
 }
 
+const fn peer_availability_name(value: PeerAvailability) -> &'static str {
+    match value {
+        PeerAvailability::Unknown => "unknown",
+        PeerAvailability::Idle => "idle",
+        PeerAvailability::Reachable => "reachable",
+        PeerAvailability::Offline => "offline",
+    }
+}
+
 const fn contact_status_name(value: ContactStatus) -> &'static str {
     match value {
         ContactStatus::Active => "active",
@@ -1041,6 +1052,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     .to_owned();
     let endpoint_summary = network.communication.endpoint_summary.clone();
     let is_tor = network.communication.provider == torca_transport_api::TransportKind::Tor;
+    let legacy_onion_address = is_tor.then(|| endpoint_summary.clone()).flatten();
     let requires_managed_rendezvous =
         network.communication.provider.deployment_profile().commissioning_service
             == torca_transport_api::ProviderCommissioningService::ManagedRendezvous;
@@ -1201,7 +1213,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 protocol_version: info.protocol_version,
             }),
         },
-        onion_address: network.onion_address,
+        onion_address: legacy_onion_address,
         bootstrap_phase: bootstrap_phase.into(),
         bootstrap_steps: bootstrap_snapshot
             .steps
@@ -1298,6 +1310,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 let peer_health = network.peer_health.get(&contact.id()).map_or_else(
                     || BridgePeerHealth {
                         state: connection_state.clone(),
+                        availability: "unknown".into(),
                         quality: "unknown".into(),
                         rtt_ms: None,
                         last_success_at_ms: None,
@@ -1308,6 +1321,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     },
                     |health| BridgePeerHealth {
                         state: peer_connection_status_name(health.state).into(),
+                        availability: peer_availability_name(health.availability).into(),
                         quality: peer_health_quality_name(health.quality).into(),
                         rtt_ms: health.rtt_ms,
                         last_success_at_ms: health.last_success_at.map(Timestamp::to_unix_millis),
@@ -1324,6 +1338,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                             .map_or(0, |activity| activity.sequence),
                     },
                 );
+                let availability = peer_health.availability.clone();
                 let safety_number = safety_numbers.get(&contact.id()).cloned().unwrap_or_default();
                 let display_name = network
                     .contact_names
@@ -1343,15 +1358,22 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                         .is_some(),
                     onion_address: (network.communication.provider
                         == torca_transport_api::TransportKind::Tor)
-                        .then(|| contact.route().onion_address().to_owned()),
+                        .then(|| {
+                            contact
+                                .route()
+                                .provider_endpoint("tor")
+                                .and_then(|endpoint| std::str::from_utf8(endpoint).ok())
+                                .unwrap_or_default()
+                                .to_owned()
+                        }),
                     status: contact_status_name(contact.status()).into(),
                     connection_state: peer_health.state.clone(),
-                    presence_state: if peer_health.state == "ready" {
-                        "online".into()
-                    } else if peer_health.last_success_at_ms.is_some() {
-                        "offline".into()
-                    } else {
-                        "unknown".into()
+                    availability: availability.clone(),
+                    presence_state: match availability.as_str() {
+                        "reachable" => "online".into(),
+                        "offline" => "offline".into(),
+                        "idle" | "unknown" => "unknown".into(),
+                        _ => "unknown".into(),
                     },
                     last_seen_at_ms: peer_health.last_success_at_ms,
                     safety_number,

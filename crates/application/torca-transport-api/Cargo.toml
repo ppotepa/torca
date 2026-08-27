@@ -13,6 +13,7 @@ serde = { version = "1", features = ["derive"] }
 torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
 torca-contacts = { path = "../../domains/torca-contacts" }
+torca-provider-api = { path = "../torca-provider-api" }
 
 [lints]
 workspace = true

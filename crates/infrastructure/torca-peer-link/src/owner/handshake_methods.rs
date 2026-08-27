@@ -104,14 +104,16 @@ where
         self.advertised_route_generations.remove(&contact_id);
         self.advertise_route(contact_id, &mut session)?;
         self.incoming.insert(contact_id, session);
-        self.observe(
+        self.observe_with_stage(TelemetryEvent {
             contact_id,
-            Some(TransportDirection::Rx),
-            TransportOperation::Handshake,
-            OperationPhase::Completed,
-            None,
-            now,
-        );
+            direction: Some(TransportDirection::Rx),
+            operation: TransportOperation::Handshake,
+            phase: OperationPhase::Completed,
+            correlation_id: None,
+            at: now,
+            stage: Some(TransportStage::Handshake),
+            error_code: None,
+        });
         Ok(AuthOutcome::Authenticated(contact_id))
     }
 
@@ -128,9 +130,21 @@ where
         // retryable NotReady state before touching the contact route; this
         // keeps the generic peer link from creating a dial against a stale
         // local address and avoids a reconnect storm.
-        if self.transport_factory.local_route_state()
-            == torca_transport_api::ProviderRouteState::Stale
-        {
+        let route_state = self.provider_routing.as_ref().map_or_else(
+            || torca_transport_api::ProviderRouteState::Fresh,
+            |routing| routing.route_state(),
+        );
+        if route_state == torca_transport_api::ProviderRouteState::Stale {
+            self.observe_with_stage(TelemetryEvent {
+                contact_id,
+                direction: None,
+                operation: TransportOperation::Connect,
+                phase: OperationPhase::Failed,
+                correlation_id: None,
+                at: now,
+                stage: Some(TransportStage::RouteStale),
+                error_code: Some(torca_foundation::ErrorCode::new("peer.route_stale")),
+            });
             return Err(PeerLinkError::NotReady);
         }
         let contact = self
@@ -144,7 +158,27 @@ where
             expected_capability: contact.route().capability_id(),
             max_clock_skew_ms: MAX_CLOCK_SKEW_MS,
         };
-        let transport = self.transport_factory.connect(&contact).map_err(map_transport_factory)?;
+        let transport = match self.transport_factory.connect(&contact) {
+            Ok(transport) => transport,
+            Err(error) => {
+                let stage = if error == torca_transport_api::TransportFactoryError::RouteStale {
+                    TransportStage::RouteStale
+                } else {
+                    TransportStage::Factory
+                };
+                self.observe_with_stage(TelemetryEvent {
+                    contact_id,
+                    direction: None,
+                    operation: TransportOperation::Connect,
+                    phase: OperationPhase::Failed,
+                    correlation_id: None,
+                    at: now,
+                    stage: Some(stage),
+                    error_code: Some(torca_foundation::ErrorCode::new("peer.factory_failed")),
+                });
+                return Err(map_transport_factory(error));
+            }
+        };
         let mut session = PeerSession::new(transport, verifier, policy);
         if let Some(waker) = &self.waker {
             session.set_waker(Arc::clone(waker));
@@ -160,25 +194,49 @@ where
             &self.signer,
         )
         .map_err(|_| PeerLinkError::Protocol)?;
-        self.observe(
+        self.observe_with_stage(TelemetryEvent {
             contact_id,
-            None,
-            TransportOperation::Connect,
-            OperationPhase::Started,
-            None,
-            now,
-        );
+            direction: None,
+            operation: TransportOperation::Connect,
+            phase: OperationPhase::Started,
+            correlation_id: None,
+            at: now,
+            stage: Some(TransportStage::Connect),
+            error_code: None,
+        });
         if let Err(error) = session.connect(hello).map_err(map_session) {
-            self.observe(
+            self.observe_with_stage(TelemetryEvent {
                 contact_id,
-                None,
-                TransportOperation::Connect,
-                OperationPhase::Failed,
-                None,
-                now,
-            );
+                direction: None,
+                operation: TransportOperation::Connect,
+                phase: OperationPhase::Failed,
+                correlation_id: None,
+                at: now,
+                stage: Some(TransportStage::Connect),
+                error_code: Some(torca_foundation::ErrorCode::new("peer.connect_failed")),
+            });
             return Err(error);
         }
+        self.observe_with_stage(TelemetryEvent {
+            contact_id,
+            direction: None,
+            operation: TransportOperation::Connect,
+            phase: OperationPhase::Completed,
+            correlation_id: None,
+            at: now,
+            stage: Some(TransportStage::Connect),
+            error_code: None,
+        });
+        self.observe_with_stage(TelemetryEvent {
+            contact_id,
+            direction: Some(TransportDirection::Tx),
+            operation: TransportOperation::Handshake,
+            phase: OperationPhase::Started,
+            correlation_id: None,
+            at: now,
+            stage: Some(TransportStage::Handshake),
+            error_code: None,
+        });
         self.outgoing.insert(contact_id, session);
         Ok(())
     }

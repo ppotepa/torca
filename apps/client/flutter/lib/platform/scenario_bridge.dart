@@ -274,9 +274,11 @@ class ScenarioBridge implements ScenarioBridgeController {
                 'displayName': contact.displayName,
                 'status': contact.status,
                 'connectionState': contact.connectionState,
+                'availability': contact.availability,
                 'presenceState': contact.presenceState,
                 'peerHealth': <String, Object?>{
                   'state': contact.peerHealth.state,
+                  'availability': contact.peerHealth.availability,
                   'quality': contact.peerHealth.quality,
                   'activitySequence': contact.peerHealth.activitySequence,
                 },
