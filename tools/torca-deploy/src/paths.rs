@@ -7,9 +7,9 @@ pub struct RuntimePaths {
     pub repo_root: PathBuf,
     pub runtime_root: PathBuf,
     pub stack_root: PathBuf,
-    pub relay_endpoint: PathBuf,
-    pub relay_ready: PathBuf,
-    pub relay_status: PathBuf,
+    pub provider_endpoint_file: PathBuf,
+    pub provider_ready: PathBuf,
+    pub provider_status: PathBuf,
     pub relay_logs: PathBuf,
     pub docker_compose: PathBuf,
     pub artifacts: PathBuf,
@@ -37,9 +37,9 @@ impl RuntimePaths {
             repo_root: repo_root.clone(),
             runtime_root: runtime_root.clone(),
             stack_root: stack_root.clone(),
-            relay_endpoint: stack_root.join("relay_endpoint.txt"),
-            relay_ready: stack_root.join("relay_ready.txt"),
-            relay_status: stack_root.join("relay_status.json"),
+            provider_endpoint_file: stack_root.join("provider_endpoint_file.txt"),
+            provider_ready: stack_root.join("provider_ready.txt"),
+            provider_status: stack_root.join("provider_status.json"),
             relay_logs: runtime_root.join("logs"),
             docker_compose: repo_root.join("infra/docker/compose.yml"),
             artifacts: repo_root.join("artifacts"),
@@ -59,7 +59,7 @@ impl RuntimePaths {
     }
 
     pub fn endpoint(&self) -> Option<String> {
-        std::fs::read_to_string(&self.relay_endpoint)
+        std::fs::read_to_string(&self.provider_endpoint_file)
             .ok()
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())

@@ -15,8 +15,9 @@ pub use approval::{PairingApprovalError, PairingApprovalPort};
 pub use core::{
     EncryptedPairingPayload, PairingContextId, PairingCoordinator, PairingCoordinatorError,
     PairingCryptoHandle, PairingCryptoPort, PairingDerivedSecret, PairingEphemeralKey,
-    PairingPollBatch, PairingRelayDelivery, PairingSessionDelivery, PairingSessionServicePort,
-    PairingSideToken, PairingSlotCapability, PairingSlotId, PairingTransportSnapshot,
+    PairingPairingServiceDelivery, PairingPollBatch, PairingSessionDelivery,
+    PairingSessionServicePort, PairingSideToken, PairingSlotCapability, PairingSlotId,
+    PairingTransportSnapshot,
 };
 pub use credential::{PairingCredentialError, PairingPeerSecretStore};
 pub use invite_uri::{

@@ -11,7 +11,7 @@ use torca_control_delivery::ControlDeliveryWorker;
 use torca_crypto::{ManagedPeerSecrets, ProtectedSecretStore, RustCryptoProvider};
 use torca_delivery::DeliveryWorker;
 use torca_file_storage::FileBlobStore;
-use torca_foundation::OpaqueId;
+use torca_foundation::{OpaqueId, ProviderId};
 use torca_messaging::RetryPolicy;
 use torca_peer_link::{PeerLink, PeerTransportFactory};
 use torca_peer_protocol::HandshakeSigner;
@@ -23,7 +23,6 @@ use torca_storage_sqlite::{
     SqlCipherMessageStore, SqlCipherRelationshipAdmin, SqlCipherStore,
 };
 use torca_storage_sqlite::{SqlCipherRadioStore, SqlCipherReadState};
-use torca_transport_api::TransportKind;
 
 use crate::{
     ActiveRelationshipStore, AttachmentControlAdapter, AttachmentExportAdapter,
@@ -53,7 +52,7 @@ pub enum CommunicationBuildError {
     Attachment,
     Cache,
     Radio,
-    ProviderUnavailable(TransportKind),
+    ProviderUnavailable(ProviderId),
 }
 
 pub struct ProductionCommunicationOutput {
@@ -69,7 +68,7 @@ impl std::error::Error for CommunicationBuildError {}
 
 pub struct ProductionCommunicationInputs<K, P, AP, EP, RP> {
     /// Exactly one provider is selected for this runtime composition.
-    pub communication_provider: TransportKind,
+    pub communication_provider: ProviderId,
     pub signer: K,
     pub peer_secret_store: P,
     pub attachment_secret_store: AP,
@@ -101,7 +100,7 @@ where
     EP: ProtectedSecretStore + Send + 'static,
     RP: ProtectedSecretStore + Send + 'static,
 {
-    if inputs.transport_factory.kind() != inputs.communication_provider {
+    if inputs.transport_factory.provider_id() != inputs.communication_provider {
         return Err(CommunicationBuildError::ProviderUnavailable(inputs.communication_provider));
     }
     let peer_relationships = SqlCipherStore::open(database_path, database_key)
@@ -248,7 +247,7 @@ where
         link.clone(),
         shared_crypto.clone(),
         inputs.local_identity_id,
-        inputs.communication_provider,
+        inputs.communication_provider.clone(),
     );
     let radio_peer_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;

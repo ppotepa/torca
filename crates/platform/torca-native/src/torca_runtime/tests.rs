@@ -4,7 +4,7 @@ mod tests {
     use crate::json::empty_snapshot_json;
 
     #[test]
-    fn metadata_has_compatibility_fields() {
+    fn metadata_has_provider_fields() {
         let value: Value = serde_json::from_slice(metadata()).expect("valid metadata");
         assert_eq!(value["metadataSchema"], 2);
         assert!(value["communicationProvider"].is_string());
@@ -14,7 +14,6 @@ mod tests {
             assert!(value["providerProfile"].is_null());
         }
         assert!(value.get("providerEndpointHash").is_some());
-        assert!(value.get("relayEndpointHash").is_some());
         assert_eq!(value["nativeAbi"], NATIVE_ABI);
         assert_eq!(value["storageEpoch"], STORAGE_EPOCH);
         assert_eq!(value["contractSchema"], CONTRACT_VERSION);

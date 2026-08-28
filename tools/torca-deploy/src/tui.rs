@@ -12,7 +12,9 @@ use ratatui::{
 };
 use std::io;
 
-use crate::domain::{CommunicationProvider, DeployAction, DeployPlan};
+use crate::domain::{
+    CommunicationProvider, DeployAction, DeployPlan, ProviderMetadataExt, iroh_provider,
+};
 use crate::persistence::{DeployPaths, StateStore};
 
 pub mod app;
@@ -32,8 +34,6 @@ pub enum WizardSelection {
     Resume,
 }
 
-const PROVIDERS: [CommunicationProvider; 2] =
-    [CommunicationProvider::Tor, CommunicationProvider::Iroh];
 const ACTIONS: [(&str, DeployAction); 6] = [
     ("Run installed clients", DeployAction::RunInstalled),
     ("Redeploy current artifacts", DeployAction::RedeployCurrent),
@@ -67,7 +67,7 @@ fn run(
     let mut action_selected = 0_usize;
     let mut input = InputGuard::default();
     loop {
-        let provider = PROVIDERS[provider_selected];
+        let provider = iroh_provider();
         terminal.draw(|frame| render_provider(frame, provider, provider_selected, theme))?;
         let Some(key) = input.read()? else { continue };
         match key {
@@ -84,7 +84,7 @@ fn run(
             }
             KeyCode::Up | KeyCode::Left => provider_selected = provider_selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Right => {
-                provider_selected = (provider_selected + 1).min(PROVIDERS.len() - 1);
+                provider_selected = 0;
             }
             KeyCode::Char('t') => {
                 theme_kind = next_theme(theme_kind);
@@ -97,9 +97,9 @@ fn run(
                 persist_ui_config(theme_kind, no_color);
             }
             KeyCode::Enter => loop {
-                let selected_provider = PROVIDERS[provider_selected];
+                let selected_provider = iroh_provider();
                 terminal.draw(|frame| {
-                    render_action(frame, selected_provider, action_selected, theme);
+                    render_action(frame, selected_provider.clone(), action_selected, theme);
                 })?;
                 let Some(action_key) = input.read()? else { continue };
                 match action_key {
@@ -153,14 +153,14 @@ fn render_provider(
         .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
         .split(frame.area());
     frame.render_widget(
-        Paragraph::new("TORCA DEPLOY · 1 Provider")
+        Paragraph::new("TORCA DEPLOY Â· 1 Provider")
             .style(Style::default().fg(theme.accent).bg(theme.background))
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL)),
         area[0],
     );
     let columns = crate::tui::layout::columns(area[1]);
-    let providers: Vec<ListItem> = PROVIDERS
+    let providers: Vec<ListItem> = [iroh_provider()]
         .iter()
         .enumerate()
         .map(|(index, item)| {
@@ -188,7 +188,7 @@ fn render_provider(
             descriptor
                 .profiles
                 .iter()
-                .map(|profile| format!("{} — {}", profile.label, profile.description))
+                .map(|profile| format!("{} â€” {}", profile.label, profile.description))
                 .collect::<Vec<_>>()
                 .join("\n"),
             descriptor.warmup_stages.join("\n")
@@ -216,7 +216,7 @@ fn render_action(
         .split(frame.area());
     frame.render_widget(
         Paragraph::new(format!(
-            "TORCA DEPLOY · 1 Provider · 2 Action · {}",
+            "TORCA DEPLOY Â· 1 Provider Â· 2 Action Â· {}",
             provider.descriptor().label
         ))
         .style(Style::default().fg(theme.accent).bg(theme.background))

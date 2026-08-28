@@ -3,7 +3,7 @@ members = [
     "crates/foundation/torca-foundation",
     "crates/protocol/torca-wire",
     "crates/protocol/torca-pairing-protocol",
-    "crates/protocol/torca-relay-protocol",
+    "crates/protocol/torca-pairing-service-protocol",
     "crates/protocol/torca-peer-protocol",
     "crates/protocol/torca-radio-protocol",
     "crates/domains/torca-identity",
@@ -33,17 +33,13 @@ members = [
     "crates/application/torca-radio-coordinator",
     "crates/infrastructure/torca-storage-sqlite",
     "crates/infrastructure/torca-crypto",
-    "crates/infrastructure/torca-rendezvous-client",
-    "crates/infrastructure/torca-rendezvous-tor",
+    "crates/infrastructure/torca-pairing-service-client",
     "crates/infrastructure/torca-peer",
     "crates/infrastructure/torca-peer-link",
     "crates/infrastructure/torca-peer-shared",
-    "crates/infrastructure/torca-tor",
-    "crates/infrastructure/torca-transport-tor",
     "crates/infrastructure/torca-transport-memory",
     "crates/infrastructure/torca-transport-iroh",
     "crates/infrastructure/torca-provider-conformance",
-    "crates/infrastructure/torca-transport-webrtc",
     "crates/infrastructure/torca-file-storage",
     "crates/infrastructure/torca-communication-adapters",
     "crates/infrastructure/torca-attachment-sqlite",
@@ -51,8 +47,6 @@ members = [
     "crates/infrastructure/torca-pairing-driver",
     "crates/infrastructure/torca-logging",
     "crates/infrastructure/torca-radio-adapters",
-    "crates/infrastructure/torca-radio-tor",
-    "services/relay",
     "crates/platform/torca-contract",
     "crates/platform/torca-native",
     "crates/platform/torca-platform",
@@ -81,12 +75,6 @@ incremental = true
 debug = 1
 incremental = true
 codegen-units = 256
-
-# Arti 0.45 currently pulls saturating-time 0.4.0.  The published crate can
-# spin forever on Windows where SystemTime rounds sub-100ns durations to zero.
-# Keep the fix reproducible until an upstream release contains the guard.
-[patch.crates-io]
-saturating-time = { path = "third_party/saturating-time" }
 
 [workspace.package]
 version = "0.2.0-alpha.0"

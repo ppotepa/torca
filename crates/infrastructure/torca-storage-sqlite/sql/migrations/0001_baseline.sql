@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS pairing_sessions (
     remote_key_algorithm INTEGER,
     remote_public_key BLOB,
     remote_key_generation INTEGER,
-    remote_onion_address TEXT,
     remote_capability_id BLOB
 );
 
@@ -101,7 +100,6 @@ CREATE TABLE IF NOT EXISTS contacts (
     remote_key_algorithm INTEGER NOT NULL,
     remote_public_key BLOB NOT NULL,
     remote_key_generation INTEGER NOT NULL,
-    onion_address TEXT NOT NULL,
     capability_id BLOB NOT NULL,
     status INTEGER NOT NULL,
     created_at_ms INTEGER NOT NULL,

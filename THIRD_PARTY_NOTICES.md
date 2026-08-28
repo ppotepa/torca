@@ -9,7 +9,7 @@ Principal components include:
 | Component | Purpose | License family |
 | --- | --- | --- |
 | Flutter and Dart | Cross-platform client UI and runtime | BSD-3-Clause |
-| Arti and the Tor crates | Embedded Tor client and onion services | MIT OR Apache-2.0 |
+| Iroh and N0 networking crates | Authenticated peer transport and relay support | MIT OR Apache-2.0 |
 | SQLCipher | Encrypted SQLite storage | BSD-style |
 | rusqlite | Rust SQLite integration | MIT |
 | serde / serde_json | Rust serialization | MIT OR Apache-2.0 |

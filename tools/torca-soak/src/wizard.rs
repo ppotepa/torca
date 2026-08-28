@@ -16,7 +16,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
-use crate::{Cli, CommunicationProvider, FaultProfile, FixtureMode, RelayMode, Scenario, Workload};
+use crate::{Cli, CommunicationProvider, FaultProfile, FixtureMode, Scenario, Workload};
 
 const SCENARIOS: [(Scenario, &str, &str); 5] = [
     (
@@ -139,15 +139,8 @@ fn edit_plan(
     let mut native_diagnostics = true;
     let mut fixture =
         if scenario == Scenario::ActiveMessaging { FixtureMode::Auto } else { FixtureMode::None };
-    // New physical soak runs should measure the low-power provider by
-    // default. Tor remains selectable explicitly and remains the product
-    // deployer's compatibility default; the soak wizard must not silently
-    // benchmark a different stack than the operator intended.
-    let mut provider = if scenario == Scenario::ActiveMessaging {
-        CommunicationProvider::Iroh
-    } else {
-        CommunicationProvider::Tor
-    };
+    // New physical soak runs always measure the production Iroh provider.
+    let mut provider = CommunicationProvider::default();
     loop {
         let device = devices.get(device_index).map_or("none detected", String::as_str);
         terminal.draw(|frame| {
@@ -223,7 +216,7 @@ fn edit_plan(
                         } else {
                             current - 1
                         };
-                        provider = providers[next];
+                        provider = providers[next].clone();
                     }
                     Field::RequireUnplugged => require_unplugged = !require_unplugged,
                     Field::RequireScreenOff => require_screen_off = !require_screen_off,
@@ -248,22 +241,11 @@ fn edit_plan(
                 let plan = Cli {
                     scenario,
                     android,
-                    legacy_device_id: None,
                     android_auto_deploy: matches!(scenario, Scenario::ActiveMessaging),
                     preserve_profiles: false,
                     fake_peers: peers,
                     duration_seconds: duration_minutes * 60,
-                    legacy_duration_minutes: None,
-                    // Direct providers do not own a managed relay. Keep the
-                    // plan truthful so the review screen and artifact do not
-                    // imply that an onion service will be started for Iroh.
-                    relay: if crate::provider_requires_managed_service(provider) {
-                        RelayMode::Managed
-                    } else {
-                        RelayMode::External
-                    },
-                    communication_provider: provider,
-                    relay_endpoint: None,
+                    communication_provider: provider.clone(),
                     workload: Workload::Balanced,
                     radio: false,
                     fault_profile: if scenario == Scenario::ActiveMessaging {
@@ -303,12 +285,11 @@ fn review_plan(
         terminal.draw(|frame| {
             let android = plan.android.as_deref().unwrap_or("not required");
             let text = format!(
-                "Scenario: {}\nAndroid: {android}\nProvider: {:?}\nDuration: {} min\nFake peers: {}\nRelay: {:?}\nFixture: {:?}\nAuto deploy: {}\nUnplugged required: {}\nScreen off required: {}\nNative diagnostics: {}\nValidation: {}\n\nEnter starts the soak. Esc returns to configuration.",
+                "Scenario: {}\nAndroid: {android}\nProvider: {:?}\nDuration: {} min\nFake peers: {}\nFixture: {:?}\nAuto deploy: {}\nUnplugged required: {}\nScreen off required: {}\nNative diagnostics: {}\nValidation: {}\n\nEnter starts the soak. Esc returns to configuration.",
                 scenario_label(plan.scenario),
                 plan.communication_provider,
                 plan.duration_seconds.div_ceil(60),
                 plan.fake_peers,
-                plan.relay,
                 plan.fixture,
                 plan.android_auto_deploy,
                 plan.require_unplugged,

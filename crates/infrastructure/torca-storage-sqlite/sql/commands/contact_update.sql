@@ -4,10 +4,9 @@ UPDATE contacts SET
     remote_key_algorithm = ?4,
     remote_public_key = ?5,
     remote_key_generation = ?6,
-    onion_address = ?7,
-    capability_id = ?8,
-    status = ?9,
-    created_at_ms = ?10,
-updated_at_ms = ?11,
-transport_endpoints_json = ?12
+    capability_id = ?7,
+    status = ?8,
+    created_at_ms = ?9,
+updated_at_ms = ?10,
+transport_endpoints_json = ?11
 WHERE contact_id = ?1;

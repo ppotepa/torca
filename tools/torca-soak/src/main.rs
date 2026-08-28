@@ -3,7 +3,7 @@
 // The orchestrator deliberately talks to `torca-lab-peer` over JSONL instead
 // of linking a second copy of the runtime into this process. Each peer is a
 // real process with an isolated profile, which exercises lifecycle, storage,
-// logging and Tor ownership boundaries.
+// logging and Iroh ownership boundaries.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
@@ -40,19 +40,9 @@ enum Scenario {
     Deterministic,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
-enum RelayMode {
-    Managed,
-    External,
-}
-
 fn parse_communication_provider(value: &str) -> Result<CommunicationProvider, String> {
     CommunicationProvider::from_wire(value.trim().to_ascii_lowercase().as_str())
         .map_err(|_| format!("unsupported communication provider '{value}'"))
-}
-
-fn provider_requires_managed_service(provider: CommunicationProvider) -> bool {
-    provider.deployment_profile().commissioning_service.is_managed()
 }
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
@@ -66,7 +56,6 @@ enum Workload {
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
 enum FaultProfile {
     Controlled,
-    RelayOnly,
     None,
 }
 
@@ -94,9 +83,6 @@ pub(crate) struct Cli {
     /// Android serial. Omit to run the fake-peer-only laboratory scenario.
     #[arg(long)]
     android: Option<String>,
-    /// Explicit battery scenario executed by the canonical soak cockpit.
-    #[arg(long = "device-id", hide = true)]
-    legacy_device_id: Option<String>,
     /// Install/restart the SOAK Android client before the run. Active
     /// Messaging enables this automatically; only --preserve-profiles may
     /// reuse an existing fixture.
@@ -110,16 +96,9 @@ pub(crate) struct Cli {
     fake_peers: usize,
     #[arg(long, default_value_t = 1800)]
     duration_seconds: u64,
-    /// Legacy battery-soak duration in minutes.
-    #[arg(long = "duration-minutes", hide = true)]
-    legacy_duration_minutes: Option<u64>,
-    #[arg(long, value_enum, default_value_t = RelayMode::Managed)]
-    relay: RelayMode,
     /// Communication provider used by Android and isolated lab peers.
     #[arg(long, value_parser = parse_communication_provider, default_value = "iroh")]
     communication_provider: CommunicationProvider,
-    #[arg(long)]
-    relay_endpoint: Option<String>,
     #[arg(long, value_enum, default_value_t = Workload::Balanced)]
     workload: Workload,
     /// Include the high-cost Radio path in the workload. Disabled by default
@@ -184,11 +163,10 @@ struct Manifest {
     workload: String,
     radio: bool,
     fault_profile: String,
-    relay_mode: String,
     communication_provider: String,
     /// Provider-owned profile used by the deployed client and lab peers.
-    /// Recording it is essential when comparing battery runs: relay-backed
-    /// Iroh and direct-only Iroh have different background costs.
+    /// Recording it is essential when comparing Iroh profiles with different
+    /// background costs.
     iroh_profile: Option<String>,
     fixture: String,
     fixture_name: String,
@@ -253,11 +231,6 @@ struct BotHostClient {
     name: String,
     address: String,
     token: String,
-}
-
-struct ManagedRelay {
-    repo_root: PathBuf,
-    artifact_root: PathBuf,
 }
 
 struct ActiveBatteryCapture {
@@ -335,58 +308,6 @@ impl Drop for AndroidBridge {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-    }
-}
-
-impl Drop for ManagedRelay {
-    fn drop(&mut self) {
-        // Preserve the relay-side evidence before compose removes the
-        // container. This is essential when a client reports
-        // RELAY_UNREACHABLE even though Docker was healthy.
-        let mut logs = Command::new("docker");
-        logs.args(["compose", "-f", "infra/docker/compose.yml", "logs", "--no-color", "relay"])
-            .current_dir(&self.repo_root);
-        if let Ok(output) = logs.output() {
-            let mut evidence = String::from_utf8_lossy(&output.stdout).into_owned();
-            if !output.stderr.is_empty() {
-                evidence.push_str("\n--- stderr ---\n");
-                evidence.push_str(&String::from_utf8_lossy(&output.stderr));
-            }
-            let _ = fs::write(self.artifact_root.join("relay-compose.log"), evidence);
-        }
-        let mut command = Command::new("docker");
-        command
-            .args([
-                "compose",
-                "-f",
-                "infra/docker/compose.yml",
-                "down",
-                "--timeout",
-                "30",
-                "--remove-orphans",
-            ])
-            .current_dir(&self.repo_root);
-        let _ = run_external_command(&mut command, "relay cleanup");
-    }
-}
-
-impl ManagedRelay {
-    fn pause(&self) -> Result<(), String> {
-        let mut command = Command::new("docker");
-        command
-            .args(["compose", "-f", "infra/docker/compose.yml", "stop", "relay"])
-            .current_dir(&self.repo_root);
-        let result = run_external_command(&mut command, "pause managed relay")?;
-        result.status.success().then_some(()).ok_or_else(|| "managed relay pause failed".into())
-    }
-
-    fn resume(&self) -> Result<(), String> {
-        let mut command = Command::new("docker");
-        command
-            .args(["compose", "-f", "infra/docker/compose.yml", "start", "relay"])
-            .current_dir(&self.repo_root);
-        let result = run_external_command(&mut command, "resume managed relay")?;
-        result.status.success().then_some(()).ok_or_else(|| "managed relay resume failed".into())
     }
 }
 
@@ -646,26 +567,14 @@ fn run() -> Result<(), String> {
     {
         cli.fault_profile = FaultProfile::None;
     }
-    if !CommunicationProvider::selectable().contains(&cli.communication_provider) {
-        return Err(format!(
-            "communication provider '{}' is not available for SOAK yet; choose Tor or Iroh",
-            cli.communication_provider.wire_value()
-        ));
+    if cli.communication_provider.as_str() != "iroh" {
+        return Err("the alpha soak runner supports Iroh only".into());
     }
-    if cli.radio && !cli.communication_provider.deployment_profile().features.radio {
+    if cli.radio && cli.communication_provider.as_str() != "iroh" {
         return Err(format!(
             "radio workload is not supported by communication provider '{}'",
             cli.communication_provider.wire_value()
         ));
-    }
-    // Keep the legacy flag spellings usable while every scenario goes
-    // through the same cockpit and typed CLI.
-    if cli.android.is_none() {
-        cli.android = cli.legacy_device_id.take();
-    }
-    if let Some(minutes) = cli.legacy_duration_minutes.take() {
-        cli.scenario = Scenario::IdleBattery;
-        cli.duration_seconds = minutes.saturating_mul(60);
     }
     let auto_fixture_requested = cli.fixture == FixtureMode::Auto;
     if auto_fixture_requested {
@@ -787,10 +696,10 @@ fn run_battery_harness(cli: &Cli) -> Result<(), String> {
         "-CommunicationProvider".to_owned(),
         cli.communication_provider.wire_value().to_owned(),
     ];
-    if cli.communication_provider == CommunicationProvider::Iroh {
+    if cli.communication_provider.as_str() == "iroh" {
         args.extend([
             "-ProviderProfile".to_owned(),
-            iroh_profile_for_soak(cli.communication_provider, cli.scenario)
+            iroh_profile_for_soak(cli.communication_provider.clone(), cli.scenario)
                 .unwrap_or_else(|| "direct".to_owned()),
         ]);
     }
@@ -954,11 +863,8 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
     if cli.duration_seconds == 0 {
         return Err("duration-seconds must be positive".into());
     }
-    if matches!(cli.relay, RelayMode::External) && cli.relay_endpoint.is_none() {
-        return Err("--relay-endpoint is required with --relay external".into());
-    }
-    // A second cockpit must not reset the shared bot roots or fight the
-    // managed relay while the first run is active. Reuse the deployer's
+    // A second cockpit must not reset the shared bot roots while the first
+    // run is active. Reuse the deployer's
     // stale-owner handling instead of inventing another lock protocol.
     let _soak_lock =
         torca_deploy::persistence::StateStore::new(torca_deploy::persistence::DeployPaths {
@@ -988,16 +894,15 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         workload: format!("{:?}", cli.workload),
         radio: cli.radio,
         fault_profile: format!("{:?}", cli.fault_profile),
-        relay_mode: format!("{:?}", cli.relay),
         communication_provider: cli.communication_provider.wire_value().to_owned(),
-        iroh_profile: iroh_profile_for_soak(cli.communication_provider, cli.scenario),
+        iroh_profile: iroh_profile_for_soak(cli.communication_provider.clone(), cli.scenario),
         fixture: format!("{:?}", cli.fixture),
         fixture_name: cli.fixture_name.clone(),
         started_at_ms: started.as_millis(),
     };
     write_json(&root.join("manifest.json"), &manifest)?;
     write_json(&root.join("plan.json"), &cli)?;
-    // Battery measurement starts only after setup/pairing. Build, relay warmup,
+    // Battery measurement starts only after setup/pairing. Build and provisioning
     // permission prompts and provisioning belong to preflight, not the user
     // workload being measured.
     let mut _battery_capture: Option<ActiveBatteryCapture> = None;
@@ -1009,29 +914,8 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         serde_json::json!({"runId": run_id, "seed": manifest.seed}),
     )?;
 
-    let managed_relay;
-    let endpoint = match (cli.communication_provider, cli.relay) {
-        (provider, _) if !provider_requires_managed_service(provider) => {
-            managed_relay = None;
-            None
-        }
-        (_, RelayMode::Managed) => {
-            tui::publish_event("relay_starting", &serde_json::json!({"mode": "managed"}));
-            let (endpoint, guard) = start_managed_relay(&cli.repo_root, &root)?;
-            managed_relay = Some(guard);
-            Some(endpoint)
-        }
-        (_, RelayMode::External) => {
-            managed_relay = None;
-            cli.relay_endpoint.clone().or_else(|| std::env::var("TORCA_RELAY_ENDPOINT").ok())
-        }
-    };
-    if provider_requires_managed_service(cli.communication_provider)
-        && endpoint.as_deref().is_none_or(|value| !valid_endpoint(value))
-    {
-        return Err("a valid Tor relay endpoint is required; start the managed relay or pass --relay-endpoint host.onion:port".into());
-    }
-    let provider_requires_service = provider_requires_managed_service(cli.communication_provider);
+    let endpoint: Option<String> = None;
+    let provider_requires_service = false;
     record(
         &mut timeline,
         "provider_ready",
@@ -1045,14 +929,9 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         }),
     )?;
 
-    let iroh_profile = iroh_profile_for_soak(cli.communication_provider, cli.scenario);
+    let iroh_profile = iroh_profile_for_soak(cli.communication_provider.clone(), cli.scenario);
     let peer_executable = if cli.bot_host.is_none() {
-        build_lab_peer(
-            &cli.repo_root,
-            cli.communication_provider,
-            endpoint.as_deref(),
-            iroh_profile.as_deref(),
-        )?
+        build_lab_peer(&cli.repo_root, cli.communication_provider.clone(), iroh_profile.as_deref())?
     } else {
         cli.lab_peer.clone().unwrap_or_else(default_lab_peer_path)
     };
@@ -1078,7 +957,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
                     serial,
                     !cli.preserve_profiles && cli.fixture != FixtureMode::Reuse,
                     reuse_built_artifact,
-                    cli.communication_provider,
+                    cli.communication_provider.clone(),
                     iroh_profile.as_deref(),
                 ) {
                     Ok(()) => break,
@@ -1309,21 +1188,11 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
             && run_started.elapsed() >= Duration::from_secs(cli.duration_seconds / 3)
         {
             fault_injected = true;
-            if let Some(relay) = managed_relay.as_ref() {
+            if matches!(cli.fault_profile, FaultProfile::Controlled) {
                 record(
                     &mut timeline,
-                    "relay_fault_started",
-                    serde_json::json!({"durationSeconds": 15}),
-                )?;
-                relay.pause()?;
-                tui::controlled_sleep(Duration::from_secs(15));
-                relay.resume()?;
-                record(&mut timeline, "relay_fault_recovered", serde_json::json!({}))?;
-            } else if matches!(cli.fault_profile, FaultProfile::Controlled) {
-                record(
-                    &mut timeline,
-                    "relay_fault_skipped",
-                    serde_json::json!({"reason": "external relay"}),
+                    "provider_fault_skipped",
+                    serde_json::json!({"reason": "Iroh owns route recovery"}),
                 )?;
             }
         }
@@ -1578,7 +1447,6 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         },
     )?;
     let verdict = evaluation.verdict;
-    drop(managed_relay);
     if verdict == report::Verdict::Fail {
         return Err(format!("SOAK1 failed; see {}/summary.json", root.display()));
     }
@@ -1614,152 +1482,9 @@ fn wait_for_android_preflight_retry(serial: &str, error: &str) -> bool {
     false
 }
 
-fn start_managed_relay(
-    repo_root: &Path,
-    artifact_root: &Path,
-) -> Result<(String, ManagedRelay), String> {
-    validate_workspace_members(repo_root)?;
-    let stack_root = repo_root.join(".torca/stack");
-    let _ = fs::remove_file(stack_root.join("relay_ready.txt"));
-    // Remove the previous endpoint before compose starts.  Otherwise a fast
-    // warm-up can race with the old marker and provision clients against a
-    // relay identity that belongs to an earlier run.
-    let _ = fs::remove_file(stack_root.join("relay_endpoint.txt"));
-    let guard =
-        ManagedRelay { repo_root: repo_root.to_owned(), artifact_root: artifact_root.to_owned() };
-    let mut command = Command::new("docker");
-    command
-        .args(["compose", "-f", "infra/docker/compose.yml", "up", "-d", "--build", "relay"])
-        .current_dir(repo_root);
-    let result = if tui::is_active() {
-        match run_external_command(&mut command, "relay build/start") {
-            Ok(result) => result,
-            Err(error) => {
-                drop(guard);
-                return Err(error);
-            }
-        }
-    } else {
-        let output = match command.output() {
-            Ok(output) => output,
-            Err(error) => {
-                drop(guard);
-                return Err(format!("relay build/start: {error}"));
-            }
-        };
-        if !output.status.success() {
-            drop(guard);
-            return Err(format!(
-                "managed relay compose start failed (exit={}): {}",
-                output.status.code().map_or_else(|| "unknown".into(), |code| code.to_string()),
-                command_output_tail(&output.stdout, &output.stderr),
-            ));
-        }
-        ExternalCommandResult {
-            status: output.status,
-            tail: command_output_tail(&output.stdout, &output.stderr),
-        }
-    };
-    if !result.status.success() {
-        let detail = if result.tail.is_empty() {
-            "see the cockpit Logs view for Docker output".to_owned()
-        } else {
-            result.tail
-        };
-        drop(guard);
-        return Err(format!("managed relay compose start failed: {detail}"));
-    }
-    let endpoint_file = repo_root.join(".torca/stack/relay_endpoint.txt");
-    let ready_file = repo_root.join(".torca/stack/relay_ready.txt");
-    let deadline = Instant::now() + Duration::from_secs(180);
-    while Instant::now() < deadline && !tui::cancel_requested() {
-        if let Ok(endpoint) = fs::read_to_string(&endpoint_file) {
-            let endpoint = endpoint.trim().to_owned();
-            // Relay protocol health and onion publication are independent.
-            // The deployer/clients can continue provisioning while Arti is
-            // publishing; provider readiness will retry the actual path and
-            // report a provider-specific state instead of blocking the whole
-            // SOAK setup on a Tor-only marker.
-            if valid_endpoint(&endpoint) {
-                let onion_ready = fs::read_to_string(&ready_file)
-                    .ok()
-                    .is_some_and(|value| value.lines().any(|line| line.trim() == endpoint));
-                tui::publish_event(
-                    "relay_endpoint_available",
-                    &serde_json::json!({"endpoint": endpoint, "onionReady": onion_ready}),
-                );
-                return Ok((endpoint, guard));
-            }
-        }
-        tui::controlled_sleep(Duration::from_secs(2));
-    }
-    drop(guard);
-    Err(format!(
-        "managed relay did not publish a fresh valid endpoint within 180s: {}",
-        endpoint_file.display()
-    ))
-}
-
-/// Docker receives the repository as a build context and Cargo resolves the
-/// complete workspace before compiling the relay.  Fail early when a sparse
-/// checkout, ignored directory or stale worktree is missing one of the
-/// declared members; otherwise BuildKit reports a misleading manifest error
-/// several minutes into the relay image build.
-fn validate_workspace_members(repo_root: &Path) -> Result<(), String> {
-    let manifest = fs::read_to_string(repo_root.join("Cargo.toml"))
-        .map_err(|error| format!("read workspace Cargo.toml: {error}"))?;
-    let mut in_members = false;
-    let mut missing = Vec::new();
-    for line in manifest.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("members") && trimmed.contains('[') {
-            in_members = true;
-            continue;
-        }
-        if !in_members {
-            continue;
-        }
-        if trimmed.starts_with(']') {
-            break;
-        }
-        let Some(member) = trimmed.strip_prefix('"').and_then(|value| value.split('"').next())
-        else {
-            continue;
-        };
-        let path = repo_root.join(member);
-        if !path.join("Cargo.toml").is_file() {
-            missing.push(format!("{member} (expected {})", path.join("Cargo.toml").display()));
-        }
-    }
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "workspace is incomplete; Docker relay build cannot start. Missing members: {}",
-            missing.join(", ")
-        ))
-    }
-}
-
-fn command_output_tail(stdout: &[u8], stderr: &[u8]) -> String {
-    const MAX_LINES: usize = 20;
-    let mut lines = String::from_utf8_lossy(stdout)
-        .lines()
-        .chain(String::from_utf8_lossy(stderr).lines())
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    if lines.len() > MAX_LINES {
-        lines.drain(..lines.len() - MAX_LINES);
-    }
-    if lines.is_empty() { String::new() } else { lines.join(" | ") }
-}
-
 fn build_lab_peer(
     repo_root: &Path,
     provider: CommunicationProvider,
-    endpoint: Option<&str>,
     iroh_profile: Option<&str>,
 ) -> Result<PathBuf, String> {
     // `cargo run -p torca-soak` already owns Cargo's workspace target lock.
@@ -1773,14 +1498,7 @@ fn build_lab_peer(
     fs::create_dir_all(&target_dir)
         .map_err(|error| format!("create lab peer target directory: {error}"))?;
     let mut command = Command::new("cargo");
-    let provider_features = match provider {
-        CommunicationProvider::Tor => "provider-tor,radio-audio",
-        CommunicationProvider::Iroh => "provider-iroh,radio-audio",
-        CommunicationProvider::WebRtc => "provider-webrtc,radio-audio",
-        CommunicationProvider::Memory => {
-            return Err("memory provider is reserved for unit tests and cannot run SOAK".into());
-        }
-    };
+    let provider_features = "provider-iroh,radio-audio";
     command
         .args([
             "build",
@@ -1793,13 +1511,9 @@ fn build_lab_peer(
             "--target-dir",
             &target_dir_argument,
         ])
-        .env("TORCA_COMMUNICATION_PROVIDER", provider.wire_value())
         .current_dir(repo_root);
     if let Some(profile) = iroh_profile {
         command.env("TORCA_IROH_PROFILE", profile);
-    }
-    if let Some(endpoint) = endpoint {
-        command.env("TORCA_RELAY_ENDPOINT", endpoint);
     }
     let result = run_external_command(&mut command, "lab peer build")?;
     if !result.status.success() {
@@ -1816,7 +1530,6 @@ fn build_lab_peer(
 /// routed to the Logs view; plain mode preserves the normal terminal output.
 struct ExternalCommandResult {
     status: std::process::ExitStatus,
-    tail: String,
 }
 
 fn run_external_command(
@@ -1825,10 +1538,7 @@ fn run_external_command(
 ) -> Result<ExternalCommandResult, String> {
     if !tui::is_active() {
         let output = command.output().map_err(|error| format!("{label}: {error}"))?;
-        return Ok(ExternalCommandResult {
-            status: output.status,
-            tail: command_output_tail(&output.stdout, &output.stderr),
-        });
+        return Ok(ExternalCommandResult { status: output.status });
     }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("start {label}: {error}"))?;
@@ -1837,14 +1547,9 @@ fn run_external_command(
     let (sender, receiver) = mpsc::channel();
     spawn_backend_reader(stdout, sender.clone(), false);
     spawn_backend_reader(stderr, sender, true);
-    let mut captured = Vec::new();
     loop {
         while let Ok((is_stderr, line)) = receiver.try_recv() {
             tui::publish_backend_line(&line, is_stderr);
-            captured.push(line);
-            if captured.len() > 20 {
-                captured.remove(0);
-            }
         }
         if tui::cancel_requested() {
             let _ = child.kill();
@@ -1853,7 +1558,7 @@ fn run_external_command(
             while let Ok((is_stderr, line)) = receiver.try_recv() {
                 tui::publish_backend_line(&line, is_stderr);
             }
-            return Ok(ExternalCommandResult { status, tail: captured.join(" | ") });
+            return Ok(ExternalCommandResult { status });
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -3041,7 +2746,7 @@ fn run_typed_android_deploy(
         build_plan.device = Some(serial.to_owned());
         build_plan.client_build = torca_deploy::domain::BuildPolicy::Rebuild;
         build_plan.provider_service_build = torca_deploy::domain::BuildPolicy::Reuse;
-        build_plan.communication_provider = provider;
+        build_plan.communication_provider = provider.clone();
         build_plan.provider_profile = iroh_profile.map(str::to_owned);
         build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
         build_plan.launch = torca_deploy::domain::LaunchPolicy::Skip;
@@ -3730,18 +3435,13 @@ fn spawn_peer_parts(
     Ok((child, input, output))
 }
 
-fn valid_endpoint(endpoint: &str) -> bool {
-    let Some((host, port)) = endpoint.rsplit_once(':') else { return false };
-    host.len() == 62 && host.ends_with(".onion") && port.parse::<u16>().is_ok()
-}
-
 /// Returns the provider-owned profile used by soak clients. Active Messaging
 /// needs the relay/discovery fallback so a physical Android can reach host or
 /// remote bots across NAT; RuntimeLab deliberately stays loopback-only. The
 /// idle scenario uses direct-only to measure the lowest provider overhead.
 /// `TORCA_SOAK_IROH_PROFILE` is an explicit escape hatch for controlled runs.
 fn iroh_profile_for_soak(provider: CommunicationProvider, scenario: Scenario) -> Option<String> {
-    if provider != CommunicationProvider::Iroh {
+    if provider.as_str() != "iroh" {
         return None;
     }
     std::env::var("TORCA_SOAK_IROH_PROFILE")
@@ -3791,8 +3491,7 @@ mod tests {
         android_package_for_soak, contact_count, conversation_count, default_iroh_profile,
         package_path_present, pairing_by_id, parse_launchable_activity,
         snapshot_attachment_available, snapshot_contains_message, snapshot_identity,
-        snapshot_radio_is_remote_active, valid_endpoint, validate_android_fixture_contacts,
-        validate_fixture_name,
+        snapshot_radio_is_remote_active, validate_android_fixture_contacts, validate_fixture_name,
     };
     use clap::Parser;
     use serde_json::json;
@@ -3801,16 +3500,12 @@ mod tests {
     fn cli_defaults_to_click_and_play_active_messaging() {
         let cli = Cli::try_parse_from(["torca-soak"]).expect("default CLI should parse");
         assert_eq!(cli.scenario, Scenario::ActiveMessaging);
-        assert_eq!(cli.communication_provider, CommunicationProvider::Iroh);
+        assert_eq!(cli.communication_provider, CommunicationProvider::default());
     }
 
     #[test]
     fn soak_provider_gate_matches_available_native_compositions() {
-        assert_eq!(
-            CommunicationProvider::selectable(),
-            &[CommunicationProvider::Tor, CommunicationProvider::Iroh]
-        );
-        assert!(!CommunicationProvider::selectable().contains(&CommunicationProvider::WebRtc));
+        assert_eq!(CommunicationProvider::selectable(), vec![CommunicationProvider::default()]);
     }
 
     #[test]
@@ -3828,20 +3523,16 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_validation_requires_v3_onion_and_port() {
-        assert!(valid_endpoint(&format!("{}.onion:443", "a".repeat(56))));
-        assert!(!valid_endpoint("invalid.onion:443"));
-        assert!(!valid_endpoint("a.onion"));
-    }
-
-    #[test]
     fn soak_profiles_match_workload_reachability_requirements() {
         assert_eq!(default_iroh_profile(Scenario::ActiveMessaging), "always");
         assert_eq!(default_iroh_profile(Scenario::RuntimeLab), "local");
         assert_eq!(default_iroh_profile(Scenario::IdleBattery), "direct");
         assert_eq!(
-            super::iroh_profile_for_soak(CommunicationProvider::Tor, Scenario::ActiveMessaging),
-            None
+            super::iroh_profile_for_soak(
+                CommunicationProvider::default(),
+                Scenario::ActiveMessaging
+            ),
+            Some("always".to_owned())
         );
     }
 

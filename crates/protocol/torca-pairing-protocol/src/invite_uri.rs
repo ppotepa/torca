@@ -1,9 +1,8 @@
-//! Versioned external representation of a pairing invitation code.
+//! Current external representation of a pairing invitation code.
 
 use core::fmt::{self, Write};
 
-const PREFIX_V2: &str = "torca://pair?v=2&code=";
-const PREFIX_V3: &str = "torca://pair?v=3&code=";
+const PREFIX: &str = "torca://pair?v=3&code=";
 const CODE_LEN: usize = 6;
 const CROCKFORD_BASE32: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const MAX_BOOTSTRAP_PAYLOAD_LEN: usize = 2048;
@@ -79,14 +78,14 @@ pub fn encode_invite_uri(
 }
 
 /// Encodes an invitation with optional provider-specific bootstrap data.
-/// Invitations without it retain the v2 URI form for compatibility.
+/// The current invitation URI always carries the current protocol version.
 pub fn encode_invite_uri_with_bootstrap(
     code: &str,
     ticket: Option<&PairingInviteTicket>,
     bootstrap: Option<&PairingBootstrapDescriptor>,
 ) -> Result<String, InviteUriError> {
     validate_code(code)?;
-    let mut uri = format!("{}{}", if bootstrap.is_some() { PREFIX_V3 } else { PREFIX_V2 }, code);
+    let mut uri = format!("{}{}", PREFIX, code);
     if let Some(ticket) = ticket {
         uri.push_str("&ticket=");
         for byte in ticket.as_bytes() {
@@ -112,20 +111,17 @@ pub fn decode_invite_uri(
     Ok((code, ticket))
 }
 
-/// Decodes v2 invitations and v3 invitations carrying a bootstrap descriptor.
+/// Decodes the current invitation URI and optional provider bootstrap.
 pub fn decode_invite_uri_with_bootstrap(
     value: &str,
 ) -> Result<
     (PairingInviteCode, Option<PairingInviteTicket>, Option<PairingBootstrapDescriptor>),
     InviteUriError,
 > {
-    let (query, supports_bootstrap) = if let Some(query) = value.strip_prefix(PREFIX_V2) {
-        (query, false)
-    } else if let Some(query) = value.strip_prefix(PREFIX_V3) {
-        (query, true)
-    } else {
+    let Some(query) = value.strip_prefix(PREFIX) else {
         return Err(InviteUriError::InvalidFormat);
     };
+    let supports_bootstrap = true;
     let mut segments = query.split('&');
     let code = segments.next().ok_or(InviteUriError::InvalidFormat)?;
     validate_code(code)?;
@@ -232,13 +228,13 @@ mod tests {
             Err(InviteUriError::InvalidFormat)
         );
         assert_eq!(
-            decode_invite_uri("torca://pair?v=2&code=bad!"),
+            decode_invite_uri("torca://pair?v=3&code=bad!"),
             Err(InviteUriError::InvalidCode)
         );
     }
 
     #[test]
-    fn v3_uri_round_trips_provider_bootstrap_without_changing_v2_api() {
+    fn current_uri_round_trips_provider_bootstrap() {
         let bootstrap = PairingBootstrapDescriptor::new("iroh", vec![1, 2, 3]).expect("descriptor");
         let uri =
             encode_invite_uri_with_bootstrap("ABC123", None, Some(&bootstrap)).expect("encode");
@@ -246,6 +242,6 @@ mod tests {
         assert_eq!(code.as_str(), "ABC123");
         assert_eq!(ticket, None);
         assert_eq!(decoded, Some(bootstrap));
-        assert_eq!(decode_invite_uri(&uri).expect("legacy decode").0.as_str(), "ABC123");
+        assert_eq!(decode_invite_uri(&uri).expect("decode").0.as_str(), "ABC123");
     }
 }

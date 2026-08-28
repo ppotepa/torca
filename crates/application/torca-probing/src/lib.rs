@@ -22,18 +22,14 @@ pub enum ProbeTarget {
     SecureStorage,
     Database,
     Engine,
-    /// Provider-neutral communication runtime. Legacy Tor observations remain
-    /// available only for compatibility with stored diagnostics.
+    /// Provider-neutral communication runtime.
     Communication,
-    /// Provider-neutral inbound reachability (onion, ICE, QUIC endpoint, ...).
+    /// Provider-neutral inbound reachability.
     IncomingReachability,
     /// Provider-owned short-lived service used to exchange pairing state.
     /// It may be a rendezvous relay, discovery endpoint or signaling service.
     PairingService,
-    /// Legacy Tor target retained while older diagnostics still emit it.
-    Tor,
-    OnionService,
-    /// Legacy relay target retained while older diagnostics still emit it.
+    /// Pairing-service relay target.
     Relay,
     Peer,
 }

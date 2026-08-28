@@ -22,12 +22,12 @@ const RETRY_BACKOFF: [Duration; 4] = [
 
 /// Infrastructure implements this narrow port.  It must apply a bounded
 /// deadline to the complete request and return a stable, redacted error code.
-pub trait RelayHealthPort: Send + Sync + 'static {
+pub trait PairingServiceHealthPort: Send + Sync + 'static {
     fn check_relay_health(&self) -> Result<(), ErrorCode>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelayHealthSnapshot {
+pub struct PairingServiceHealthSnapshot {
     pub status: ProbeStatus,
     pub diagnostic_code: ErrorCode,
     pub latency_ms: Option<u64>,
@@ -35,7 +35,7 @@ pub struct RelayHealthSnapshot {
     pub probe_count: u64,
 }
 
-impl Default for RelayHealthSnapshot {
+impl Default for PairingServiceHealthSnapshot {
     fn default() -> Self {
         Self {
             status: ProbeStatus::Unknown,
@@ -54,16 +54,16 @@ enum Command {
 
 /// Cloneable read/control handle; it does not own the worker join handle.
 #[derive(Clone)]
-pub struct RelayHealthHandle {
-    state: Arc<RwLock<RelayHealthSnapshot>>,
+pub struct PairingServiceHealthHandle {
+    state: Arc<RwLock<PairingServiceHealthSnapshot>>,
     commands: SyncSender<Command>,
     demand: Arc<AtomicBool>,
 }
 
-impl RelayHealthHandle {
-    pub fn snapshot(&self) -> RelayHealthSnapshot {
+impl PairingServiceHealthHandle {
+    pub fn snapshot(&self) -> PairingServiceHealthSnapshot {
         self.state.read().map_or_else(
-            |_| RelayHealthSnapshot {
+            |_| PairingServiceHealthSnapshot {
                 status: ProbeStatus::Failed,
                 diagnostic_code: ErrorCode::new("relay.supervisor_poisoned"),
                 latency_ms: None,
@@ -102,28 +102,30 @@ impl RelayHealthHandle {
 
 /// Application-owned relay supervisor.  The worker is intentionally one
 /// durable thread instead of a fresh thread for every probe attempt.
-pub struct RelayHealthWorker {
-    handle: RelayHealthHandle,
+pub struct PairingServiceHealthWorker {
+    handle: PairingServiceHealthHandle,
     worker: Option<JoinHandle<()>>,
 }
 
-impl RelayHealthWorker {
-    pub fn spawn(port: Arc<dyn RelayHealthPort>) -> Result<Self, std::io::Error> {
+impl PairingServiceHealthWorker {
+    pub fn spawn(port: Arc<dyn PairingServiceHealthPort>) -> Result<Self, std::io::Error> {
         Self::spawn_internal(port, true)
     }
 
     /// Creates a supervisor that remains asleep until a relay lease is
     /// acquired. Production runtime composition uses this variant so a relay
     /// with no pairing or pending relay work performs zero probes.
-    pub fn spawn_demand_driven(port: Arc<dyn RelayHealthPort>) -> Result<Self, std::io::Error> {
+    pub fn spawn_demand_driven(
+        port: Arc<dyn PairingServiceHealthPort>,
+    ) -> Result<Self, std::io::Error> {
         Self::spawn_internal(port, false)
     }
 
     fn spawn_internal(
-        port: Arc<dyn RelayHealthPort>,
+        port: Arc<dyn PairingServiceHealthPort>,
         initial_demand: bool,
     ) -> Result<Self, std::io::Error> {
-        let state = Arc::new(RwLock::new(RelayHealthSnapshot {
+        let state = Arc::new(RwLock::new(PairingServiceHealthSnapshot {
             status: ProbeStatus::Checking,
             diagnostic_code: ErrorCode::new("relay.probe_starting"),
             latency_ms: None,
@@ -132,15 +134,18 @@ impl RelayHealthWorker {
         }));
         let (commands, receiver) = mpsc::sync_channel(1);
         let demand = Arc::new(AtomicBool::new(initial_demand));
-        let handle =
-            RelayHealthHandle { state: Arc::clone(&state), commands, demand: Arc::clone(&demand) };
+        let handle = PairingServiceHealthHandle {
+            state: Arc::clone(&state),
+            commands,
+            demand: Arc::clone(&demand),
+        };
         let worker = thread::Builder::new()
             .name("torca-relay-health".into())
             .spawn(move || run(port, state, receiver, demand, initial_demand))?;
         Ok(Self { handle, worker: Some(worker) })
     }
 
-    pub fn handle(&self) -> RelayHealthHandle {
+    pub fn handle(&self) -> PairingServiceHealthHandle {
         self.handle.clone()
     }
 
@@ -153,8 +158,8 @@ impl RelayHealthWorker {
 }
 
 fn run(
-    port: Arc<dyn RelayHealthPort>,
-    state: Arc<RwLock<RelayHealthSnapshot>>,
+    port: Arc<dyn PairingServiceHealthPort>,
+    state: Arc<RwLock<PairingServiceHealthSnapshot>>,
     receiver: Receiver<Command>,
     demand: Arc<AtomicBool>,
     initial_demand: bool,
@@ -197,7 +202,7 @@ fn run(
                 drop(current);
                 set_state(
                     &state,
-                    RelayHealthSnapshot {
+                    PairingServiceHealthSnapshot {
                         status: ProbeStatus::Checking,
                         diagnostic_code: ErrorCode::new("relay.probe_running"),
                         latency_ms: None,
@@ -214,7 +219,7 @@ fn run(
                 failures = 0;
                 set_state(
                     &state,
-                    RelayHealthSnapshot {
+                    PairingServiceHealthSnapshot {
                         status: ProbeStatus::Healthy,
                         diagnostic_code: ErrorCode::new("relay.ready"),
                         latency_ms: Some(
@@ -239,7 +244,7 @@ fn run(
                 failures = failures.saturating_add(1);
                 set_state(
                     &state,
-                    RelayHealthSnapshot {
+                    PairingServiceHealthSnapshot {
                         // One failed request is a transient observation, not
                         // a verdict on a persistent stream. Preserve the
                         // failure code but only project degraded after two
@@ -281,7 +286,7 @@ fn retry_delay(failures: u32) -> Duration {
     base + Duration::from_millis(offset)
 }
 
-fn set_state(state: &RwLock<RelayHealthSnapshot>, next: RelayHealthSnapshot) {
+fn set_state(state: &RwLock<PairingServiceHealthSnapshot>, next: PairingServiceHealthSnapshot) {
     if let Ok(mut value) = state.write() {
         *value = next;
     }
@@ -294,7 +299,7 @@ mod tests {
     use std::sync::Mutex;
 
     struct Failing;
-    impl RelayHealthPort for Failing {
+    impl PairingServiceHealthPort for Failing {
         fn check_relay_health(&self) -> Result<(), ErrorCode> {
             Err(ErrorCode::new("relay.connect_failed"))
         }
@@ -302,7 +307,7 @@ mod tests {
 
     #[test]
     fn first_failed_probe_is_retrying_not_degraded() {
-        let worker = RelayHealthWorker::spawn(Arc::new(Failing)).expect("spawn worker");
+        let worker = PairingServiceHealthWorker::spawn(Arc::new(Failing)).expect("spawn worker");
         let deadline = Instant::now() + Duration::from_secs(1);
         while worker.handle().snapshot().diagnostic_code != ErrorCode::new("relay.connect_failed")
             && Instant::now() < deadline
@@ -319,7 +324,7 @@ mod tests {
         results: Mutex<VecDeque<Result<(), ErrorCode>>>,
     }
 
-    impl RelayHealthPort for Scripted {
+    impl PairingServiceHealthPort for Scripted {
         fn check_relay_health(&self) -> Result<(), ErrorCode> {
             self.results.lock().expect("script lock").pop_front().unwrap_or(Ok(()))
         }
@@ -328,7 +333,7 @@ mod tests {
     #[test]
     fn demand_driven_worker_sleeps_without_lease() {
         let port = Arc::new(Scripted { results: Mutex::new(VecDeque::from([Ok(())])) });
-        let worker = RelayHealthWorker::spawn_demand_driven(port).expect("spawn worker");
+        let worker = PairingServiceHealthWorker::spawn_demand_driven(port).expect("spawn worker");
         thread::sleep(Duration::from_millis(50));
         assert_eq!(worker.handle().snapshot().probe_count, 0);
 
@@ -349,7 +354,7 @@ mod tests {
                 Ok(()),
             ])),
         });
-        let worker = RelayHealthWorker::spawn(port).expect("spawn worker");
+        let worker = PairingServiceHealthWorker::spawn(port).expect("spawn worker");
         let failure_deadline = Instant::now() + Duration::from_secs(1);
         while worker.handle().snapshot().diagnostic_code != ErrorCode::new("relay.route_changed")
             && Instant::now() < failure_deadline
@@ -382,7 +387,7 @@ mod tests {
                 Ok(()),
             ])),
         });
-        let worker = RelayHealthWorker::spawn(port).expect("spawn worker");
+        let worker = PairingServiceHealthWorker::spawn(port).expect("spawn worker");
         let first_deadline = Instant::now() + Duration::from_secs(1);
         while worker.handle().snapshot().failures < 1 && Instant::now() < first_deadline {
             thread::yield_now();
@@ -416,7 +421,7 @@ mod tests {
                 Ok(()),
             ])),
         });
-        let worker = RelayHealthWorker::spawn(port).expect("spawn worker");
+        let worker = PairingServiceHealthWorker::spawn(port).expect("spawn worker");
         let busy_deadline = Instant::now() + Duration::from_secs(1);
         while worker.handle().snapshot().diagnostic_code != ErrorCode::new("relay.connection_busy")
             && Instant::now() < busy_deadline

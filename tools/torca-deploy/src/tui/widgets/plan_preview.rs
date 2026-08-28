@@ -2,10 +2,10 @@ use crate::domain::{DeployPlan, StepDisposition};
 
 pub fn step_marker(disposition: StepDisposition) -> &'static str {
     match disposition {
-        StepDisposition::Execute => "✓",
-        StepDisposition::Reuse => "→",
-        StepDisposition::Skip => "○",
-        StepDisposition::Blocked => "✗",
+        StepDisposition::Execute => "âœ“",
+        StepDisposition::Reuse => "â†’",
+        StepDisposition::Skip => "â—‹",
+        StepDisposition::Blocked => "âœ—",
     }
 }
 
@@ -30,6 +30,6 @@ mod tests {
             Configuration::Debug,
         );
         assert!(steps_text(&plan).contains("Build artifacts"));
-        assert!(steps_text(&plan).contains("→"));
+        assert!(steps_text(&plan).contains("â†’"));
     }
 }

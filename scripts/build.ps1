@@ -6,7 +6,7 @@ param(
     [string]$Configuration = 'debug',
     [ValidateSet('Full', 'Quick', 'Skip')]
     [string]$Validation = 'Full',
-    [ValidateSet('tor', 'iroh', 'webrtc')]
+[ValidateSet('iroh')]
     [string]$CommunicationProvider,
     [ValidateSet('always', 'direct', 'local')]
     [string]$ProviderProfile,
@@ -66,20 +66,8 @@ if ($Target -ne 'check' -and
     ($env:TORCA_ORCHESTRATED -ne '1' -or [string]::IsNullOrWhiteSpace($env:TORCA_BUILD_ID))) {
     $release = Get-Content (Join-Path $root 'release/version.json') -Raw | ConvertFrom-Json
     $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'iroh' }
     $endpoint = [string]$env:TORCA_PROVIDER_ENDPOINT
-    if ([string]::IsNullOrWhiteSpace($endpoint) -and $provider -eq 'tor') {
-        # Temporary compatibility for direct Tor builds. New provider-aware
-        # callers pass TORCA_PROVIDER_ENDPOINT instead.
-        $endpoint = [string]$env:TORCA_RELAY_ENDPOINT
-    }
-    if ([string]::IsNullOrWhiteSpace($endpoint) -and $provider -eq 'tor') {
-        $endpointFile = Join-Path $root '.torca/stack/relay_endpoint.txt'
-        if (Test-Path -LiteralPath $endpointFile) { $endpoint = (Get-Content $endpointFile -Raw).Trim() }
-    }
-    if ([string]::IsNullOrWhiteSpace($endpoint) -and $provider -eq 'tor') {
-        throw 'The selected Tor provider requires TORCA_PROVIDER_ENDPOINT. Start the managed rendezvous stack or set the provider endpoint.'
-    }
     # The selected provider owns endpoint interpretation. The shared build
     # path embeds only a generic provider endpoint and configuration hash.
     $env:TORCA_COMMUNICATION_PROVIDER = $provider

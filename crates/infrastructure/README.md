@@ -2,11 +2,10 @@
 
 Infrastructure crates provide concrete implementations of application/domain ports.
 
-This layer owns SQLCipher persistence, production cryptographic adapters, in-process Tor/Arti integration, peer/network IO, rendezvous access, encrypted file/attachment handling and concrete communication composition.
+This layer owns SQLCipher persistence, production cryptographic adapters, Iroh peer/network IO, pairing-service access, encrypted file/attachment handling and concrete communication composition.
 
 Important ownership rules:
 
-- Arti imports belong only to `torca-tor`;
 - operational SQL belongs to storage infrastructure;
 - cryptographic primitives and protected-secret handling stay out of presentation/contract code;
 - concrete adapters may depend inward on application/domain interfaces, not the reverse;

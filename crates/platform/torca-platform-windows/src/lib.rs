@@ -10,11 +10,10 @@ mod dpapi;
 pub use dpapi::DpapiFileSecretStore;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use torca_diagnostics::{PlatformEnergyProvider, PlatformEnergySample};
 use torca_platform::{
     AppPaths, DeviceDescriptor, LifecycleCapabilities, PlatformServices, ProtectedSecretStore,
-    SecretNamespace, WebRtcSessionProvider, WebRtcSignalingProvider,
+    SecretNamespace,
 };
 
 /// Windows system services; runtime composition is shared with Android.
@@ -23,8 +22,6 @@ pub struct WindowsPlatformServices {
     pub paths: AppPaths,
     pub device_id: String,
     pub installation_id: String,
-    webrtc_provider: Option<Arc<dyn WebRtcSessionProvider>>,
-    webrtc_signaling_provider: Option<Arc<dyn WebRtcSignalingProvider>>,
 }
 
 /// Event-triggered Windows energy sample. The caller chooses when to sample
@@ -76,27 +73,11 @@ impl WindowsPlatformServices {
             paths: AppPaths { data, cache, logs },
             device_id: "windows-device".into(),
             installation_id: "windows-install".into(),
-            webrtc_provider: None,
-            webrtc_signaling_provider: None,
         }
     }
 
     pub fn energy_provider(&self) -> WindowsEnergyProvider {
         WindowsEnergyProvider
-    }
-
-    /// Injects the host-owned WebRTC signalling/DataChannel bridge.
-    pub fn with_webrtc_provider(mut self, provider: Arc<dyn WebRtcSessionProvider>) -> Self {
-        self.webrtc_provider = Some(provider);
-        self
-    }
-
-    pub fn with_webrtc_signaling_provider(
-        mut self,
-        provider: Arc<dyn WebRtcSignalingProvider>,
-    ) -> Self {
-        self.webrtc_signaling_provider = Some(provider);
-        self
     }
 }
 
@@ -129,12 +110,6 @@ impl PlatformServices for WindowsPlatformServices {
     }
     fn energy_sample(&self) -> PlatformEnergySample {
         self.energy_provider().sample()
-    }
-    fn webrtc_session_provider(&self) -> Option<Arc<dyn WebRtcSessionProvider>> {
-        self.webrtc_provider.clone()
-    }
-    fn webrtc_signaling_provider(&self) -> Option<Arc<dyn WebRtcSignalingProvider>> {
-        self.webrtc_signaling_provider.clone()
     }
 }
 

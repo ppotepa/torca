@@ -12,12 +12,10 @@ function Get-TorcaRelaySourceFingerprint {
     # source. Hash the Rust and Docker inputs only so a UI-only deploy reuses
     # the existing image without weakening correctness for relay code edits.
     $roots = @(
-        (Join-Path $Paths.RepoRoot 'services/relay'),
         (Join-Path $Paths.RepoRoot 'crates'),
         (Join-Path $Paths.RepoRoot 'Cargo.toml'),
         (Join-Path $Paths.RepoRoot 'Cargo.lock'),
-        (Join-Path $Paths.RepoRoot 'infra/docker/Dockerfile.relay'),
-        $Paths.DockerCompose
+$Paths.DockerCompose
     )
     $files = foreach ($root in $roots) {
         if (Test-Path -LiteralPath $root -PathType Leaf) {

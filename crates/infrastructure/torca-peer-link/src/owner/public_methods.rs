@@ -91,7 +91,7 @@ where
         route: torca_peer_protocol::RouteAdvertisement,
         now: Timestamp,
     ) -> Result<(), PeerLinkError> {
-        if route.provider != self.transport_factory.kind().wire_value() {
+        if route.provider != self.transport_factory.provider_id().as_str() {
             return Err(PeerLinkError::Protocol);
         }
         if self
@@ -210,8 +210,8 @@ where
     }
 
     /// Returns the single provider selected for every session owned by this link.
-    pub fn transport_kind(&self) -> TransportKind {
-        self.transport_factory.kind()
+    pub fn provider_id(&self) -> ProviderId {
+        self.transport_factory.provider_id()
     }
 
     /// Returns redaction-safe capabilities for diagnostics and policy decisions.
@@ -836,7 +836,7 @@ mod route_tests {
     };
     use torca_transport_api::{
         PeerTransport, PeerTransportFactory, TransportCapabilities, TransportFactoryError,
-        TransportKind,
+        
     };
 
     use super::PeerLink;
@@ -881,8 +881,8 @@ mod route_tests {
     struct RouteFactory;
 
     impl PeerTransportFactory for RouteFactory {
-        fn kind(&self) -> TransportKind {
-            TransportKind::Memory
+        fn provider_id(&self) -> torca_foundation::ProviderId {
+            torca_foundation::ProviderId::new("memory").expect("static provider id")
         }
 
         fn capabilities(&self) -> TransportCapabilities {
@@ -927,7 +927,7 @@ mod route_tests {
             PublicIdentity::new(IdentityId::from_u128(4), key, 0),
             ContactRoute::for_provider_endpoint(
                 OpaqueId::from_u128(5),
-                TransportKind::Memory.wire_value(),
+                "memory",
                 b"initial".to_vec(),
             )
             .expect("valid initial route"),

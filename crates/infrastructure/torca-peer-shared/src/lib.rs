@@ -6,13 +6,13 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use torca_contacts::{ContactId, ContactRepository, PeerCredentialRepository};
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_peer_link::{
     InboundPeerEnvelope, LinkAck, PeerActivitySnapshot, PeerConnectionState, PeerLink,
     PeerLinkError, PeerLinkReport,
 };
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
-use torca_transport_api::{TransportCapabilities, TransportKind};
+use torca_transport_api::TransportCapabilities;
 
 pub struct SharedPeerLink<S, K> {
     inner: Arc<Mutex<PeerLink<S, K>>>,
@@ -37,8 +37,8 @@ where
         self.inner.lock().map_err(|_| PeerLinkError::Protocol)?.set_waker(waker)
     }
 
-    pub fn transport_kind(&self) -> Result<TransportKind, PeerLinkError> {
-        self.inner.lock().map(|link| link.transport_kind()).map_err(|_| PeerLinkError::Protocol)
+    pub fn provider_id(&self) -> Result<ProviderId, PeerLinkError> {
+        self.inner.lock().map(|link| link.provider_id()).map_err(|_| PeerLinkError::Protocol)
     }
 
     pub fn transport_capabilities(&self) -> Result<TransportCapabilities, PeerLinkError> {

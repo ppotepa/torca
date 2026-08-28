@@ -32,8 +32,6 @@ pub(crate) fn close(&mut self) -> i32 {
     {
         self.last_result_json = error_result("secure runtime shutdown failed");
     }
-    #[cfg(feature = "provider-webrtc")]
-    crate::runtime_composition::clear_registered_webrtc_providers();
     let Some(actor) = self.actor.take() else {
         if let Some(logger) = &self.logger {
             let _ = logger.finish("completed", "runtime already stopped");

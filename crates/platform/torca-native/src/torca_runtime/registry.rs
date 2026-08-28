@@ -10,21 +10,17 @@ pub extern "C" fn torca_runtime_metadata_len() -> usize {
 
 fn metadata() -> &'static [u8] {
     METADATA.get_or_init(|| {
-        let provider = torca_transport_api::TransportKind::from_wire(COMMUNICATION_PROVIDER)
-            .unwrap_or_default();
-        let profile = provider.deployment_profile();
+        let provider = torca_foundation::ProviderId::new("iroh").expect("production provider id");
+        let profile = torca_provider_api::built_in_deployment_profile(&provider)
+            .expect("Iroh provider profile");
         // The selected Iroh profile is immutable build input. Exposing its
         // canonical value makes mixed-profile installs diagnosable without
         // leaking endpoint material into the application contract.
-        let provider_profile = if provider == torca_transport_api::TransportKind::Iroh {
-            Some(match IROH_PROFILE.unwrap_or("always") {
+        let provider_profile = Some(match IROH_PROFILE.unwrap_or("always") {
                 "direct" | "direct-only" => "direct",
                 "local" | "local-only" => "local",
                 _ => "always",
-            })
-        } else {
-            None
-        };
+            });
         let features = profile.features;
         // Endpoint hashes identify commissioning services, not direct peer
         // transports. Ignore an inherited/stale build variable for Iroh,
@@ -46,13 +42,10 @@ fn metadata() -> &'static [u8] {
             "storageEpoch": STORAGE_EPOCH,
             "schemaVersion": 1,
             "wireVersion": 1,
-            "communicationProvider": COMMUNICATION_PROVIDER,
+            "communicationProvider": provider,
             "providerProfile": provider_profile,
             "providerEndpointRequired": profile.commissioning_service.requires_endpoint(),
             "providerEndpointHash": provider_endpoint_hash,
-            // Temporary compatibility alias for older Flutter binaries. It
-            // is intentionally nullable for direct providers such as Iroh.
-            "relayEndpointHash": provider_endpoint_hash,
             "targetPlatform": std::env::consts::OS,
             "targetArchitecture": std::env::consts::ARCH,
             "capabilities": {

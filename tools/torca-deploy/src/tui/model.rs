@@ -1,7 +1,8 @@
 use crate::domain::{
     BuildPolicy, ClientDataPolicy, CommunicationProvider, Configuration, DeployAction, DeployPlan,
     DeployRun, FieldAvailability, FieldCapability, FieldId, LaunchPolicy, PlanCapabilities,
-    PreflightReport, PrivacyPolicy, ProviderMaintenancePolicy, Target, ValidationLevel,
+    PreflightReport, PrivacyPolicy, ProviderMaintenancePolicy, ProviderMetadataExt, Target,
+    ValidationLevel, iroh_provider,
 };
 use crate::executor::DeployProgress;
 
@@ -240,10 +241,10 @@ pub fn cycle_target(current: u8, direction: i8) -> u8 {
 }
 
 pub fn cycle_provider(current: CommunicationProvider, direction: i8) -> CommunicationProvider {
-    let providers = CommunicationProvider::selectable();
+    let providers = [iroh_provider()];
     let index = providers.iter().position(|provider| *provider == current).unwrap_or(0);
     let next = (index as i8 + direction).rem_euclid(providers.len() as i8) as usize;
-    providers[next]
+    providers[next].clone()
 }
 
 pub fn cycle_provider_profile(
@@ -273,23 +274,15 @@ pub fn cycle_provider_maintenance(
     let current = match current {
         ProviderMaintenancePolicy::Ensure => torca_transport_api::MaintenanceOption::Ensure,
         ProviderMaintenancePolicy::Restart => torca_transport_api::MaintenanceOption::Restart,
-        ProviderMaintenancePolicy::RepairDirectoryCache => {
-            torca_transport_api::MaintenanceOption::RepairDirectoryCache
-        }
-        ProviderMaintenancePolicy::RotateIdentity => {
-            torca_transport_api::MaintenanceOption::RotateIdentity
+        ProviderMaintenancePolicy::RepairDirectoryCache
+        | ProviderMaintenancePolicy::RotateIdentity => {
+            torca_transport_api::MaintenanceOption::Restart
         }
     };
     let index = options.iter().position(|option| *option == current).unwrap_or(0);
     match options[(index as i8 + direction).rem_euclid(options.len() as i8) as usize] {
         torca_transport_api::MaintenanceOption::Ensure => ProviderMaintenancePolicy::Ensure,
         torca_transport_api::MaintenanceOption::Restart => ProviderMaintenancePolicy::Restart,
-        torca_transport_api::MaintenanceOption::RepairDirectoryCache => {
-            ProviderMaintenancePolicy::RepairDirectoryCache
-        }
-        torca_transport_api::MaintenanceOption::RotateIdentity => {
-            ProviderMaintenancePolicy::RotateIdentity
-        }
     }
 }
 
@@ -506,7 +499,7 @@ impl WizardModel {
             }
             FieldId::ProviderMaintenance => {
                 self.plan.provider_maintenance = cycle_provider_maintenance(
-                    self.plan.communication_provider,
+                    self.plan.communication_provider.clone(),
                     self.plan.provider_maintenance,
                     direction,
                 );
@@ -522,12 +515,15 @@ impl WizardModel {
                 }
             }
             FieldId::CommunicationProvider => {
-                self.set_provider(cycle_provider(self.plan.communication_provider, direction));
+                self.set_provider(cycle_provider(
+                    self.plan.communication_provider.clone(),
+                    direction,
+                ));
                 return;
             }
             FieldId::ProviderProfile => {
                 self.plan.provider_profile = cycle_provider_profile(
-                    self.plan.communication_provider,
+                    self.plan.communication_provider.clone(),
                     self.plan.provider_profile.as_deref().unwrap_or_default(),
                     direction,
                 );
@@ -705,8 +701,8 @@ mod tests {
             vec![Target::Windows, Target::Android],
             Configuration::Debug,
         ));
-        model.set_provider(CommunicationProvider::Iroh);
-        assert_eq!(model.plan.communication_provider, CommunicationProvider::Iroh);
+        model.set_provider(iroh_provider());
+        assert_eq!(model.plan.communication_provider, iroh_provider());
         assert!(!model.plan.communication_provider.descriptor().managed_service);
         assert!(!model.is_editable(FieldId::ProviderServiceBuild));
         assert!(model.capability(FieldId::ProviderProfile).is_some());

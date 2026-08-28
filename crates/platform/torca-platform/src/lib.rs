@@ -1,12 +1,10 @@
 //! Platform lifecycle policy shared by Windows and Android hosts.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use torca_diagnostics::PlatformEnergySample;
 
 pub use torca_crypto::{ProtectedSecretStore, ProtectedSecretStoreError};
 use torca_identity::KeyId;
-pub use torca_transport_api::{WebRtcSessionProvider, WebRtcSignalingProvider};
 
 /// Application-private filesystem locations supplied by the platform adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,14 +42,6 @@ pub trait PlatformServices: Send + Sync {
     fn open_secret_store(&self, namespace: SecretNamespace) -> Box<dyn ProtectedSecretStore>;
     fn device_descriptor(&self) -> DeviceDescriptor;
     fn lifecycle_capabilities(&self) -> LifecycleCapabilities;
-    /// Returns the platform-owned WebRTC bridge when the selected deployment
-    /// provider is WebRTC. The default keeps Tor/Iroh hosts dependency-free.
-    fn webrtc_session_provider(&self) -> Option<Arc<dyn WebRtcSessionProvider>> {
-        None
-    }
-    fn webrtc_signaling_provider(&self) -> Option<Arc<dyn WebRtcSignalingProvider>> {
-        None
-    }
     /// Returns an event-triggered energy sample. Platform hosts may override
     /// this at lifecycle/diagnostics boundaries; the default is intentionally
     /// empty rather than a polling fallback.

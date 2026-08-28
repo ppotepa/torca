@@ -27,7 +27,7 @@ pub struct PairingSessionDelivery {
 
 /// Compatibility alias used by the Tor rendezvous adapter. New pairing code
 /// must use [`PairingSessionDelivery`].
-pub type PairingRelayDelivery = PairingSessionDelivery;
+pub type PairingPairingServiceDelivery = PairingSessionDelivery;
 
 #[must_use]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

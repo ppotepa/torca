@@ -13,7 +13,6 @@ $packages = @(
     'torca-pairing-coordinator',
     'torca-storage-sqlite',
     'torca-communication-adapters',
-    'torca-tor',
     'torca-runtime-policy',
     'torca-diagnostics'
 )

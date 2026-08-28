@@ -23,12 +23,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn legacy_constructor_discards_sensitive_detail() {
-        let marker = "private-key-material-should-not-cross-boundary";
-        let error = EngineError(marker.to_owned());
-        assert_eq!(error, EngineError::Repository);
-        assert!(!error.to_string().contains(marker));
-        assert_eq!(error.descriptor().code().as_str(), "application.engine.repository_unavailable");
-    }
 }

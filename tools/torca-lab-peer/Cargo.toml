@@ -8,10 +8,8 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["provider-tor", "radio-audio"]
-provider-tor = ["torca-native/provider-tor"]
+default = ["provider-iroh", "radio-audio"]
 provider-iroh = ["torca-native/provider-iroh"]
-provider-webrtc = ["torca-native/provider-webrtc"]
 radio-audio = ["torca-native/radio-audio"]
 
 [dependencies]

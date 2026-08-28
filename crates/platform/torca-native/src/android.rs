@@ -81,7 +81,7 @@ pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativeIn
 }
 
 /// Receives bounded PCM chunks from the Android AudioRecord voice
-/// communication engine. The adapter converts them to μ-law frames and drops
+/// communication engine. The adapter converts them to Î¼-law frames and drops
 /// them unless the Rust radio coordinator currently owns the floor.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_com_torca_host_AndroidKeystoreBridge_nativePushRadioPcm(

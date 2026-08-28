@@ -8,10 +8,16 @@ use std::sync::{
 use std::time::Duration;
 
 use torca_contacts::Contact;
+use torca_foundation::ProviderId;
 use torca_transport_api::{
     EnergyClass, LatencyClass, PeerTransport, PeerTransportError, PeerTransportFactory,
-    ProviderTransport, TransportCapabilities, TransportFactoryError, TransportKind, TransportPath,
+    ProviderTransport, TransportCapabilities, TransportFactoryError, TransportPath,
+    TransportTopology,
 };
+
+fn memory_provider_id() -> ProviderId {
+    ProviderId::new("memory").expect("static provider id")
+}
 
 type Wake = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 
@@ -175,8 +181,8 @@ impl Drop for MemoryTransportFactory {
 }
 
 impl PeerTransportFactory for MemoryTransportFactory {
-    fn kind(&self) -> TransportKind {
-        TransportKind::Memory
+    fn provider_id(&self) -> ProviderId {
+        memory_provider_id()
     }
 
     fn capabilities(&self) -> TransportCapabilities {
@@ -201,7 +207,7 @@ impl PeerTransportFactory for MemoryTransportFactory {
         }
         let endpoint = contact
             .route()
-            .provider_endpoint(TransportKind::Memory.wire_value())
+            .provider_endpoint(memory_provider_id().as_str())
             .ok_or(TransportFactoryError::ContactNotFound)?;
         let listener = self
             .network
@@ -246,12 +252,12 @@ const fn memory_capabilities() -> TransportCapabilities {
 }
 
 impl ProviderTransport for MemoryTransport {
-    fn kind(&self) -> TransportKind {
-        TransportKind::Memory
+    fn provider_id(&self) -> ProviderId {
+        memory_provider_id()
     }
 
     fn path(&self) -> TransportPath {
-        TransportPath::Memory
+        TransportPath { provider: memory_provider_id(), topology: TransportTopology::Direct }
     }
 
     fn capabilities(&self) -> TransportCapabilities {

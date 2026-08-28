@@ -34,18 +34,6 @@ impl TorcaRuntime {
         let _ = self.apply_history_summaries(&mut snapshot);
         let _ = self.apply_security_states(&mut snapshot);
         self.apply_navigation_badges(&mut snapshot);
-        if !self.application_runtime.has_runtime() {
-            // `tor_state` is a legacy wire field.  Never let a direct
-            // provider's startup hint masquerade as Tor while the generic
-            // communication projection is still waiting for composition.
-            snapshot.tor_state = if crate::transport_config::compiled_provider()
-                .is_ok_and(|provider| provider != torca_transport_api::TransportKind::Tor)
-            {
-                "unsupported".into()
-            } else {
-                torca_contract::communication_state_name(self.host_state_hint).into()
-            };
-        }
         self.apply_host_state_hint(&mut snapshot);
         self.log_network_transitions(&snapshot);
         let mut value = bridge_snapshot_value(&snapshot);
@@ -80,8 +68,8 @@ impl TorcaRuntime {
         // a direct provider (Iroh/WebRTC) never emits Tor-only rendezvous
         // diagnostics during that short bootstrap window.
         let selected_provider = crate::transport_config::compiled_provider()
-            .map(|provider| provider.wire_value())
-            .unwrap_or(snapshot.communication_provider.as_str());
+            .map(|provider| provider.as_str().to_owned())
+            .unwrap_or_else(|_| snapshot.communication_provider.clone());
         let rendezvous = (selected_provider == "tor")
             .then(|| {
                 snapshot

@@ -20,8 +20,6 @@ pub struct ProviderProfileDescriptor {
 pub enum MaintenanceOption {
     Ensure,
     Restart,
-    RepairDirectoryCache,
-    RotateIdentity,
 }
 
 impl MaintenanceOption {
@@ -29,8 +27,6 @@ impl MaintenanceOption {
         match self {
             Self::Ensure => "ensure",
             Self::Restart => "restart",
-            Self::RepairDirectoryCache => "repair_directory_cache",
-            Self::RotateIdentity => "rotate_identity",
         }
     }
 
@@ -38,8 +34,6 @@ impl MaintenanceOption {
         match self {
             Self::Ensure => "Ensure",
             Self::Restart => "Restart",
-            Self::RepairDirectoryCache => "Repair directory cache",
-            Self::RotateIdentity => "Rotate identity",
         }
     }
 }
@@ -85,16 +79,6 @@ pub struct ProviderFeatures {
 }
 
 impl ProviderFeatures {
-    pub const TOR: Self = Self {
-        pairing_qr: true,
-        pairing_full_link: true,
-        pairing_short_code: true,
-        incoming: true,
-        messages: true,
-        attachments: true,
-        radio: true,
-        direct_path: false,
-    };
     pub const IROH: Self = Self {
         pairing_qr: true,
         pairing_full_link: true,
@@ -103,16 +87,6 @@ impl ProviderFeatures {
         messages: true,
         attachments: true,
         radio: true,
-        direct_path: true,
-    };
-    pub const WEBRTC: Self = Self {
-        pairing_qr: true,
-        pairing_full_link: true,
-        pairing_short_code: false,
-        incoming: true,
-        messages: true,
-        attachments: true,
-        radio: false,
         direct_path: true,
     };
     pub const MEMORY: Self = Self {
@@ -142,20 +116,7 @@ impl ProviderDeploymentProfile {
             return false;
         }
         match self.commissioning_service {
-            ProviderCommissioningService::ManagedRendezvous => {
-                let mut parts = endpoint.split(':');
-                let host = parts.next().unwrap_or_default();
-                let port = parts.next().unwrap_or_default();
-                let Some(prefix) = host.strip_suffix(".onion") else {
-                    return false;
-                };
-                parts.next().is_none()
-                    && prefix.len() == 56
-                    && prefix
-                        .chars()
-                        .all(|character| "abcdefghijklmnopqrstuvwxyz234567".contains(character))
-                    && port.parse::<u16>().is_ok()
-            }
+            ProviderCommissioningService::ManagedRendezvous => false,
             ProviderCommissioningService::ExternalSignaling => {
                 endpoint.starts_with("https://") || endpoint.starts_with("wss://")
             }
@@ -219,25 +180,6 @@ impl ProviderRouteState {
 /// The provider identifier, rather than a transport enum, is the lookup key.
 pub fn built_in_descriptor(id: &ProviderId) -> Option<ProviderDescriptor> {
     let descriptor = match id.as_str() {
-        "tor" => ProviderDescriptor {
-            id: id.clone(),
-            label: "Tor (onion)",
-            description: "Managed onion rendezvous service with discovery and warm-up.",
-            managed_service: true,
-            profiles: &[ProviderProfileDescriptor {
-                id: "default",
-                label: "Default",
-                description: "Managed onion service.",
-            }],
-            maintenance: &[
-                MaintenanceOption::Ensure,
-                MaintenanceOption::Restart,
-                MaintenanceOption::RepairDirectoryCache,
-                MaintenanceOption::RotateIdentity,
-            ],
-            endpoint_required: true,
-            warmup_stages: &["bootstrap", "publish endpoint", "verify service"],
-        },
         "iroh" => ProviderDescriptor {
             id: id.clone(),
             label: "Iroh (QUIC)",
@@ -264,16 +206,6 @@ pub fn built_in_descriptor(id: &ProviderId) -> Option<ProviderDescriptor> {
             endpoint_required: false,
             warmup_stages: &["start local endpoint"],
         },
-        "webrtc" => ProviderDescriptor {
-            id: id.clone(),
-            label: "WebRTC (ICE/TURN)",
-            description: "External signaling provider.",
-            managed_service: false,
-            profiles: &[],
-            maintenance: &[],
-            endpoint_required: true,
-            warmup_stages: &["connect signaling", "gather ICE"],
-        },
         "memory" => ProviderDescriptor {
             id: id.clone(),
             label: "Memory (test)",
@@ -291,17 +223,6 @@ pub fn built_in_descriptor(id: &ProviderId) -> Option<ProviderDescriptor> {
 
 pub fn built_in_deployment_profile(id: &ProviderId) -> Option<ProviderDeploymentProfile> {
     let profile = match id.as_str() {
-        "tor" => ProviderDeploymentProfile {
-            label: "Tor (onion)",
-            deployment_state: ProviderDeploymentState::Validated,
-            commissioning_service: ProviderCommissioningService::ManagedRendezvous,
-            pairing_bootstrap: PairingBootstrapMode::ManagedSessionService,
-            features: ProviderFeatures::TOR,
-            startup_timeout: Duration::from_secs(15 * 60),
-            service_validation_timeout: Duration::from_secs(180),
-            local_ready_codes: &["LOCAL_READY"],
-            service_ready_codes: &["TOR_BOOTSTRAP_READY", "NETWORK_READY"],
-        },
         "iroh" => ProviderDeploymentProfile {
             label: "Iroh (QUIC)",
             deployment_state: ProviderDeploymentState::Validated,
@@ -310,17 +231,6 @@ pub fn built_in_deployment_profile(id: &ProviderId) -> Option<ProviderDeployment
             features: ProviderFeatures::IROH,
             startup_timeout: Duration::from_secs(45),
             service_validation_timeout: Duration::from_secs(45),
-            local_ready_codes: &["LOCAL_READY"],
-            service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
-        },
-        "webrtc" => ProviderDeploymentProfile {
-            label: "WebRTC (ICE/TURN)",
-            deployment_state: ProviderDeploymentState::Hidden,
-            commissioning_service: ProviderCommissioningService::ExternalSignaling,
-            pairing_bootstrap: PairingBootstrapMode::ExternalSignaling,
-            features: ProviderFeatures::WEBRTC,
-            startup_timeout: Duration::from_secs(60),
-            service_validation_timeout: Duration::from_secs(60),
             local_ready_codes: &["LOCAL_READY"],
             service_ready_codes: &["COMMUNICATION_READY", "NETWORK_READY"],
         },

@@ -32,15 +32,11 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Rust check
         run: cargo check --workspace --all-targets --locked
-      - name: Provider isolation checks
-        shell: bash
-        run: |
-          cargo check --locked -p torca-native --no-default-features --features provider-tor,radio-audio
-          cargo check --locked -p torca-native --no-default-features --features provider-iroh,radio-audio
-          cargo check --locked -p torca-native --no-default-features --features provider-webrtc,radio-audio
+      - name: Production provider check
+        run: cargo check --locked -p torca-native
       - name: Provider dependency graph policy
         shell: pwsh
-        run: ./scripts/Verify-TorcaProviderIsolation.ps1 -RepoRoot .
+        run: ./scripts/Verify-TorcaProviderBoundary.ps1 -RepoRoot .
       - name: Rust clippy
         run: cargo clippy --workspace --all-targets --locked -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
       - name: Rust tests
@@ -48,11 +44,7 @@ jobs:
       - name: Provider conformance tests
         run: cargo test --locked -p torca-provider-conformance
       - name: Iroh provider tests
-        run: cargo test --locked -p torca-native --no-default-features --features provider-iroh,radio-audio
-      - name: Tor transport unit tests
-        run: |
-          cargo test --locked -p torca-transport-tor
-          cargo test --locked -p torca-tor
+        run: cargo test --locked -p torca-transport-iroh
       - name: Full Rust warnings gate
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Avatar asset validation
@@ -118,8 +110,6 @@ jobs:
           cache: true
       - name: Build Windows client
         shell: pwsh
-        env:
-          TORCA_RELAY_ENDPOINT: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443
         run: cargo run --locked -p torca-deploy -- build --target windows --configuration debug
 
   android:
@@ -147,6 +137,4 @@ jobs:
           cache: true
       - name: Build Android client
         shell: pwsh
-        env:
-          TORCA_RELAY_ENDPOINT: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:443
         run: cargo run --locked -p torca-deploy -- build --target android --configuration debug

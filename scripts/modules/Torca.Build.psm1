@@ -206,12 +206,12 @@ function Invoke-TorcaClientBuild {
         [string]$Endpoint,
         [ValidateSet('Full','Quick','Skip')][string]$Validation = 'Full'
     )
-    $old = $env:TORCA_RELAY_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED; $oldBuildId = $env:TORCA_BUILD_ID
+    $old = $env:TORCA_IROH_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED; $oldBuildId = $env:TORCA_BUILD_ID
     $oldProductVersion = $env:TORCA_PRODUCT_VERSION; $oldSourceFingerprint = $env:TORCA_SOURCE_FINGERPRINT
-    $oldSourceCommit = $env:TORCA_SOURCE_COMMIT; $oldRelayHash = $env:TORCA_RELAY_ENDPOINT_HASH
+    $oldSourceCommit = $env:TORCA_SOURCE_COMMIT; $oldRelayHash = $env:TORCA_IROH_ENDPOINT_HASH
     $oldIrohProfile = $env:TORCA_IROH_PROFILE
     try {
-        $env:TORCA_RELAY_ENDPOINT = $Endpoint
+        $env:TORCA_IROH_ENDPOINT = $Endpoint
         $env:TORCA_ORCHESTRATED = '1'
         $env:TORCA_BUILD_ID = Get-TorcaBuildId -RepoRoot $RepoRoot -Endpoint $Endpoint -Target $Target -Configuration $Configuration
         $release = Get-Content (Join-Path $RepoRoot 'release/version.json') -Raw | ConvertFrom-Json
@@ -221,7 +221,7 @@ function Invoke-TorcaClientBuild {
         if ([string]::IsNullOrWhiteSpace($env:TORCA_SOURCE_COMMIT)) { $env:TORCA_SOURCE_COMMIT = 'working-tree' }
         $endpointSha = [System.Security.Cryptography.SHA256]::Create()
         try {
-            $env:TORCA_RELAY_ENDPOINT_HASH = [BitConverter]::ToString(
+            $env:TORCA_IROH_ENDPOINT_HASH = [BitConverter]::ToString(
                 $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Endpoint))
             ).Replace('-', '').ToLowerInvariant()
         } finally { $endpointSha.Dispose() }
@@ -232,22 +232,22 @@ function Invoke-TorcaClientBuild {
         & (Join-Path $RepoRoot 'scripts/build.ps1') -Target $Target -Configuration $Configuration -Validation $Validation @buildProviderArgs
         if ($LASTEXITCODE -ne 0) { throw "Build failed with code $LASTEXITCODE." }
     } finally {
-        $env:TORCA_RELAY_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated; $env:TORCA_BUILD_ID = $oldBuildId
+        $env:TORCA_IROH_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated; $env:TORCA_BUILD_ID = $oldBuildId
         $env:TORCA_PRODUCT_VERSION = $oldProductVersion; $env:TORCA_SOURCE_FINGERPRINT = $oldSourceFingerprint
-        $env:TORCA_SOURCE_COMMIT = $oldSourceCommit; $env:TORCA_RELAY_ENDPOINT_HASH = $oldRelayHash
+        $env:TORCA_SOURCE_COMMIT = $oldSourceCommit; $env:TORCA_IROH_ENDPOINT_HASH = $oldRelayHash
         $env:TORCA_IROH_PROFILE = $oldIrohProfile
     }
 }
 
 function Invoke-TorcaClientDeploy {
     param([string]$RepoRoot, [string]$Target, [string]$Device, [string]$Endpoint)
-    $old = $env:TORCA_RELAY_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED
+    $old = $env:TORCA_IROH_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED
     try {
-        $env:TORCA_RELAY_ENDPOINT = $Endpoint
+        $env:TORCA_IROH_ENDPOINT = $Endpoint
         $env:TORCA_ORCHESTRATED = '1'
         & (Join-Path $RepoRoot 'scripts/deploy.ps1') -Target $Target -Device $Device -ReuseBuild
         if ($LASTEXITCODE -ne 0) { throw "Deploy failed with code $LASTEXITCODE." }
-    } finally { $env:TORCA_RELAY_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated }
+    } finally { $env:TORCA_IROH_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated }
 }
 
 function Install-TorcaClient {
@@ -369,15 +369,15 @@ function Invoke-TorcaClientReleaseDeploy {
         [string]$Endpoint,
         [switch]$SkipLaunch
     )
-    $old = $env:TORCA_RELAY_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED
+    $old = $env:TORCA_IROH_ENDPOINT; $oldOrchestrated = $env:TORCA_ORCHESTRATED
     try {
-        $env:TORCA_RELAY_ENDPOINT = $Endpoint
+        $env:TORCA_IROH_ENDPOINT = $Endpoint
         $env:TORCA_ORCHESTRATED = '1'
         $arguments = @{ Target = $Target; Device = $Device; ReuseBuild = $true }
         if ($SkipLaunch) { $arguments.SkipLaunch = $true }
         & (Join-Path $RepoRoot 'scripts/deploy.ps1') @arguments
         if ($LASTEXITCODE -ne 0) { throw "Release deploy failed with code $LASTEXITCODE." }
-    } finally { $env:TORCA_RELAY_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated }
+    } finally { $env:TORCA_IROH_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated }
 }
 
 function Invoke-TorcaClientRun {
@@ -626,9 +626,9 @@ function Write-TorcaBuildManifest {
     if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
     $irohProfile = if ($provider.ToLowerInvariant() -eq 'iroh') { Get-TorcaIrohProfile } else { $null }
     $compiledFeatures = switch ($provider.ToLowerInvariant()) {
-        'tor' { 'provider-tor,radio-audio' }
-        'iroh' { 'provider-iroh,radio-audio' }
-        'webrtc' { 'provider-webrtc,radio-audio' }
+        'tor' { 'iroh,radio-audio' }
+        'iroh' { 'iroh,radio-audio' }
+        'webrtc' { 'iroh,radio-audio' }
         default { throw "Unsupported communication provider '$provider'." }
     }
     $manifest = [pscustomobject]@{

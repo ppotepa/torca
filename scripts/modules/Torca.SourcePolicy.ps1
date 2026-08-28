@@ -24,7 +24,6 @@ if (Test-Path -LiteralPath $peerHealthPath) {
 }
 $forbiddenFiles = @(
     'crates/application/torca-pairing-coordinator/src/final_runtime.rs',
-    'crates/infrastructure/torca-storage-sqlite/src/migration_v2.rs',
     'crates/infrastructure/torca-storage-sqlite/src/migration_v3.rs',
     'crates/platform/torca-native/src/retry_ffi.rs'
 )
@@ -139,7 +138,7 @@ $sourceRoots = @(
 $forbiddenFragments = @(
     'tor.exe', 'vendor/tor', 'vendor\\tor', 'torca-runtime-host', 'torca_runtime_host',
     'torca-bridge', 'torca_bridge', 'torca-read-state', 'torca_read_state',
-    'torca-tor-driver', 'PENDING_PROFILE_NAME',
+    'PENDING_PROFILE_NAME',
     'CreateIdentityCommandDto', 'TORCA_USE_MEMORY_GATEWAY', 'Isolate.run',
     'Stop-TorcaOwnedWindowsTor'
 )
@@ -278,13 +277,5 @@ if ($arbDifferences.Count -gt 0) {
     throw 'Flutter ARB catalogs en/pl have different message keys.'
 }
 
-$artiOwners = Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'crates') -Recurse -File -Include '*.rs','*.toml' |
-    Where-Object { $_.FullName -notmatch '\\torca-tor\\' }
-foreach ($file in $artiOwners) {
-    $text = Get-Content -LiteralPath $file.FullName -Raw
-    if ($text.Contains('arti-client') -or $text.Contains('arti_client')) {
-        throw "Arti may only be imported by torca-tor: $($file.FullName)"
-    }
-}
 
 Write-Host 'Torca source policy passed.'

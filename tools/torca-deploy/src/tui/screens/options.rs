@@ -11,7 +11,8 @@ use ratatui::{
 
 use crate::domain::{
     ClientDataPolicy, CommunicationProvider, Configuration, DeployAction, DeployPlan,
-    FieldAvailability, FieldId, ProviderMaintenancePolicy, Target,
+    FieldAvailability, FieldId, ProviderMaintenancePolicy, ProviderMetadataExt, Target,
+    iroh_provider,
 };
 use crate::tui::{
     input::InputGuard,
@@ -35,7 +36,7 @@ pub fn edit_plan(
     theme_kind: ThemeKind,
     no_color: bool,
 ) -> io::Result<Option<DeployPlan>> {
-    edit_plan_for_provider(terminal, action, CommunicationProvider::Tor, theme_kind, no_color)
+    edit_plan_for_provider(terminal, action, iroh_provider(), theme_kind, no_color)
 }
 
 pub fn edit_plan_for_provider(
@@ -82,7 +83,9 @@ fn render(frame: &mut Frame<'_>, area: Rect, model: &WizardModel, theme: Theme, 
         ))
         .style(Style::default().fg(theme.text).bg(theme.panel))
         .block(
-            Block::default().title("Options · Provider → Action → Options").borders(Borders::ALL),
+            Block::default()
+                .title("Options Â· Provider â†’ Action â†’ Options")
+                .borders(Borders::ALL),
         ),
         columns[0],
     );
@@ -185,7 +188,7 @@ fn options_text(model: &WizardModel) -> String {
     let capabilities = model.capabilities();
     write!(
         output,
-        "Plan: {} steps · {} min · {}\n\n←/→ change   Tab/↑/↓ focus   Enter review   Esc back",
+        "Plan: {} steps Â· {} min Â· {}\n\nâ†/â†’ change   Tab/â†‘/â†“ focus   Enter review   Esc back",
         capabilities.estimated_work.steps,
         capabilities.estimated_work.minutes,
         if capabilities.destructive { "DESTRUCTIVE" } else { "non-destructive" }
@@ -206,8 +209,8 @@ fn row(model: &WizardModel, id: FieldId, label: &str, value: &str) -> String {
     };
     let status = match &field.availability {
         FieldAvailability::Editable => String::new(),
-        FieldAvailability::ReadOnly { reason } => format!(" — {reason}"),
-        FieldAvailability::Disabled { reason } => format!(" — unavailable: {reason}"),
+        FieldAvailability::ReadOnly { reason } => format!(" â€” {reason}"),
+        FieldAvailability::Disabled { reason } => format!(" â€” unavailable: {reason}"),
         FieldAvailability::Hidden => String::new(),
     };
     format!("{marker} {label}: {value}{status}")

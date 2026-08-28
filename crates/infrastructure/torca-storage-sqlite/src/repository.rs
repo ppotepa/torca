@@ -81,7 +81,7 @@ impl SqlCipherStore {
         at: Timestamp,
     ) -> Result<(), EngineError> {
         if record.compressed_genome.is_empty() || record.compressed_genome.len() > 32 * 1024 {
-            return Err(EngineError("avatar genome payload exceeds storage limit".into()));
+            return Err(EngineError::InvalidState);
         }
         self.backend
             .connection()
@@ -96,7 +96,7 @@ impl SqlCipherStore {
                     at.to_unix_millis(),
                 ],
             )
-            .map_err(|_| EngineError("avatar genome persistence failed".into()))?;
+            .map_err(|_| EngineError::Repository)?;
         Ok(())
     }
 
@@ -123,7 +123,7 @@ impl SqlCipherStore {
                 },
             )
             .optional()
-            .map_err(|_| EngineError("avatar genome lookup failed".into()))
+            .map_err(|_| EngineError::Repository)
     }
 
     pub fn local_avatar_genome(&self) -> Result<Option<AvatarGenomeRecord>, EngineError> {
@@ -144,7 +144,7 @@ impl SqlCipherStore {
                 })
             })
             .optional()
-            .map_err(|_| EngineError("avatar genome lookup failed".into()))
+            .map_err(|_| EngineError::Repository)
     }
 }
 
@@ -251,12 +251,11 @@ impl ContactRepository for SqlCipherStore {
                     remote_key_algorithm: row.get(2)?,
                     remote_public_key: row.get(3)?,
                     remote_key_generation: row.get(4)?,
-                    onion_address: row.get(5)?,
-                    capability_id: row.get(6)?,
-                    status: row.get(7)?,
-                    created_at_ms: row.get(8)?,
-                    updated_at_ms: row.get(9)?,
-                    transport_endpoints_json: row.get(10)?,
+                    capability_id: row.get(5)?,
+                    status: row.get(6)?,
+                    created_at_ms: row.get(7)?,
+                    updated_at_ms: row.get(8)?,
+                    transport_endpoints_json: row.get(9)?,
                 })
             })
             .optional()
@@ -286,12 +285,11 @@ impl ContactRepository for SqlCipherStore {
                     remote_key_algorithm: row.get(3)?,
                     remote_public_key: row.get(4)?,
                     remote_key_generation: row.get(5)?,
-                    onion_address: row.get(6)?,
-                    capability_id: row.get(7)?,
-                    status: row.get(8)?,
-                    created_at_ms: row.get(9)?,
-                    updated_at_ms: row.get(10)?,
-                    transport_endpoints_json: row.get(11)?,
+                    capability_id: row.get(6)?,
+                    status: row.get(7)?,
+                    created_at_ms: row.get(8)?,
+                    updated_at_ms: row.get(9)?,
+                    transport_endpoints_json: row.get(10)?,
                 })
             })
             .map_err(|_| ContactError::RepositoryFailure)?;
@@ -449,7 +447,7 @@ impl RelationshipRepository for SqlCipherStore {
                 include_str!("../sql/commands/local_avatar_bind.sql"),
                 params![record.genome_hash.as_slice()],
             )
-            .map_err(|_| EngineError("local avatar binding failed".into()))?;
+            .map_err(|_| EngineError::Repository)?;
         Ok(())
     }
 
@@ -483,7 +481,7 @@ impl RelationshipRepository for SqlCipherStore {
                 },
             )
             .optional()
-            .map_err(|_| EngineError("contact avatar genome lookup failed".into()))
+            .map_err(|_| EngineError::Repository)
     }
 
     fn local_avatar_genome(&self) -> Result<Option<AvatarGenomeRecord>, EngineError> {
@@ -500,7 +498,7 @@ impl RelationshipRepository for SqlCipherStore {
         at: Timestamp,
     ) -> Result<(), EngineError> {
         if contact.id() != conversation.contact_id() || contact.id() != credential.contact_id() {
-            return Err(EngineError("pairing relationship identifiers do not match".into()));
+            return Err(EngineError::InvalidState);
         }
         if ContactRepository::get(self, contact.id()).map_err(relationship_error)?.is_some()
             || ConversationRepository::get(self, conversation.id())
@@ -513,7 +511,7 @@ impl RelationshipRepository for SqlCipherStore {
                 .map_err(relationship_error)?
                 .is_some()
         {
-            return Err(EngineError("contact, conversation or credential already exists".into()));
+            return Err(EngineError::Conflict);
         }
 
         self.backend.begin().map_err(|_| relationship_failure())?;
@@ -565,7 +563,7 @@ impl RelationshipRepository for SqlCipherStore {
             .connection()
             .execute(DELETE_CONTACT_SQL, params![contact.as_slice()])
             .map_err(|_| relationship_failure())?;
-        if changed == 1 { Ok(()) } else { Err(EngineError("contact not found".into())) }
+        if changed == 1 { Ok(()) } else { Err(EngineError::NotFound) }
     }
 }
 
@@ -629,7 +627,6 @@ struct ContactRow {
     remote_key_algorithm: i64,
     remote_public_key: Vec<u8>,
     remote_key_generation: i64,
-    onion_address: String,
     capability_id: Vec<u8>,
     status: i64,
     created_at_ms: i64,
@@ -656,13 +653,10 @@ impl ContactRow {
             .map_err(|_| ContactError::RepositoryFailure)?;
         let remote_identity = PublicIdentity::new(identity_id, key, generation);
         let capability_id = OpaqueId::from_bytes(fixed_16_contact(self.capability_id)?);
-        let mut endpoints = serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(
+        let endpoints = serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(
             &self.transport_endpoints_json,
         )
         .map_err(|_| ContactError::RepositoryFailure)?;
-        if !endpoints.contains_key("tor") && !self.onion_address.is_empty() {
-            endpoints.insert("tor".to_owned(), self.onion_address.into_bytes());
-        }
         let endpoints = endpoints
             .into_iter()
             .map(|(provider, endpoint)| {
@@ -732,11 +726,6 @@ fn execute_contact(
         .collect::<std::collections::BTreeMap<_, _>>();
     let transport_endpoints_json = serde_json::to_string(&serialized_endpoints)
         .map_err(|_| ContactError::RepositoryFailure)?;
-    let legacy_tor_endpoint = contact
-        .route()
-        .provider_endpoint("tor")
-        .and_then(|endpoint| std::str::from_utf8(endpoint).ok())
-        .unwrap_or_default();
     backend
         .connection()
         .execute(
@@ -748,7 +737,6 @@ fn execute_contact(
                 encode_algorithm(contact.remote_identity().key().algorithm()),
                 contact.remote_identity().key().public_key(),
                 i64::from(contact.remote_identity().generation()),
-                legacy_tor_endpoint,
                 capability_id.as_slice(),
                 encode_contact_status(contact.status()),
                 contact.created_at().to_unix_millis(),
@@ -845,7 +833,7 @@ fn relationship_error(error: impl fmt::Display) -> EngineError {
 }
 
 fn relationship_failure() -> EngineError {
-    EngineError("relationship repository operation failed".into())
+    EngineError::Repository
 }
 
 fn repository_error(error: rusqlite::Error) -> IdentityRepositoryError {
@@ -922,12 +910,8 @@ mod tests {
         let contact = Contact::new(
             ContactId::from_u128(21),
             remote_identity(),
-            ContactRoute::for_provider_endpoint(
-                OpaqueId::from_u128(22),
-                "tor",
-                b"peer.onion".to_vec(),
-            )
-            .expect("route"),
+            ContactRoute::for_provider_endpoint(OpaqueId::from_u128(22), "tor", vec![1, 2, 3, 4])
+                .expect("route"),
             Timestamp::UNIX_EPOCH,
         );
         let conversation = DirectConversation::new(

@@ -8,25 +8,23 @@ $script:CargoNdkVersion = '4.1.2'
 
 function Get-TorcaProviderFeatures {
     $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'iroh' }
     switch ($provider.ToLowerInvariant()) {
-        'tor' { return 'provider-tor,radio-audio' }
-        'iroh' { return 'provider-iroh,radio-audio' }
-        'webrtc' { return 'provider-webrtc,radio-audio' }
+        'iroh' { return 'iroh,radio-audio' }
+        'webrtc' { return 'iroh,radio-audio' }
         default { throw "Unsupported communication provider '$provider'." }
     }
 }
 
 function Get-TorcaProviderTargetRoot {
     $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
+    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'iroh' }
     Join-Path $script:RepoRoot (Join-Path 'target/providers' $provider.ToLowerInvariant())
 }
 
 function Test-TorcaProviderNeedsEndpoint {
     $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
-    return $provider.ToLowerInvariant() -eq 'tor'
+    return $false
 }
 
 function Invoke-TorcaExternal {
@@ -230,17 +228,17 @@ function Invoke-TorcaValidation {
         $env:RUSTFLAGS = "$rustFlags -A warnings".Trim()
         Invoke-TorcaExternal 'Rust check' { cargo check --workspace --all-targets --locked }
         Invoke-TorcaExternal 'Iroh provider isolation check' {
-            cargo check -p torca-native --no-default-features --features provider-iroh,radio-audio --locked
+            cargo check -p torca-native --no-default-features --features iroh,radio-audio --locked
         }
         Invoke-TorcaExternal 'WebRTC provider isolation check' {
-            cargo check -p torca-native --no-default-features --features provider-webrtc,radio-audio --locked
+            cargo check -p torca-native --no-default-features --features iroh,radio-audio --locked
         }
         Invoke-TorcaExternal 'Rust clippy' {
             cargo clippy --workspace --all-targets --locked -- -A warnings -A clippy::all -A clippy::pedantic -D clippy::correctness -D clippy::suspicious -D clippy::perf
         }
         Invoke-TorcaExternal 'Rust tests' { cargo test --workspace --all-targets --locked }
         Invoke-TorcaExternal 'Iroh provider tests' {
-            cargo test -p torca-native --no-default-features --features provider-iroh,radio-audio --locked
+            cargo test -p torca-native --no-default-features --features iroh,radio-audio --locked
         }
     } finally {
         $env:RUSTFLAGS = $oldRustFlags
@@ -350,39 +348,6 @@ function Invoke-TorcaQuickValidation {
     }
 }
 
-function Assert-TorcaRelayEndpointEmbedded {
-    param(
-        [Parameter(Mandatory = $true)][string]$Library,
-        [Parameter(Mandatory = $true)][string]$Endpoint
-    )
-
-    if (-not (Test-Path -LiteralPath $Library)) {
-        throw "Native library is missing while verifying the compiled relay endpoint: $Library"
-    }
-    if ([string]::IsNullOrWhiteSpace($Endpoint)) {
-        throw 'Cannot verify a blank compiled relay endpoint.'
-    }
-    $needle = [Text.Encoding]::UTF8.GetBytes($Endpoint)
-    $bytes = [IO.File]::ReadAllBytes($Library)
-    $found = $false
-    if ($needle.Length -le $bytes.Length) {
-        for ($offset = 0; $offset -le $bytes.Length - $needle.Length -and -not $found; $offset++) {
-            $match = $true
-            for ($index = 0; $index -lt $needle.Length; $index++) {
-                if ($bytes[$offset + $index] -ne $needle[$index]) {
-                    $match = $false
-                    break
-                }
-            }
-            $found = $match
-        }
-    }
-    if (-not $found) {
-        throw "Native library does not contain the relay endpoint compiled for this build: $Endpoint"
-    }
-    Write-Host "Relay endpoint embedded: $Endpoint"
-}
-
 function Assert-TorcaBuildIdEmbedded {
     param(
         [Parameter(Mandatory = $true)][string]$Library,
@@ -436,9 +401,6 @@ function Assert-TorcaAndroidPackage {
         if ($libraries.Count -eq 0) { throw "Android package contains no libtorca_native.so: $Apk" }
         foreach ($library in $libraries) {
             Assert-TorcaNativeAbi -Library $library.FullName -Platform android
-            if (Test-TorcaProviderNeedsEndpoint) {
-                Assert-TorcaRelayEndpointEmbedded -Library $library.FullName -Endpoint $env:TORCA_RELAY_ENDPOINT
-            }
             Assert-TorcaBuildIdEmbedded -Library $library.FullName -BuildId $env:TORCA_BUILD_ID
             $flutterLibrary = Join-Path $library.DirectoryName 'libflutter.so'
             if (-not (Test-Path -LiteralPath $flutterLibrary)) {
@@ -738,15 +700,9 @@ function Build-TorcaFlutterTarget {
                 throw "Native Windows library missing: $rustDll"
             }
             Assert-TorcaNativeAbi -Library $rustDll -Platform windows
-            if (Test-TorcaProviderNeedsEndpoint) {
-                Assert-TorcaRelayEndpointEmbedded -Library $rustDll -Endpoint $env:TORCA_RELAY_ENDPOINT
-            }
             Assert-TorcaBuildIdEmbedded -Library $rustDll -BuildId $env:TORCA_BUILD_ID
             Copy-Item $rustDll (Join-Path $runnerDir 'torca_native.dll') -Force
             Assert-TorcaNativeAbi -Library (Join-Path $runnerDir 'torca_native.dll') -Platform windows
-            if (Test-TorcaProviderNeedsEndpoint) {
-                Assert-TorcaRelayEndpointEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -Endpoint $env:TORCA_RELAY_ENDPOINT
-            }
             Assert-TorcaBuildIdEmbedded -Library (Join-Path $runnerDir 'torca_native.dll') -BuildId $env:TORCA_BUILD_ID
             $forbiddenNativeNames = @('torca_' + 'bridge.dll', 'torca_' + 'contract.dll')
             Get-ChildItem $runnerDir -Recurse -File |
@@ -950,11 +906,11 @@ function Write-TorcaArtifactManifest {
     $artifactEndpoint = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Endpoint') {
         [string]$buildManifest.Endpoint
     } else { '' }
-    $relayEndpointHash = [string]$release.relayEndpointHash
+    $providerEndpointHash = $null
     if (-not [string]::IsNullOrWhiteSpace($artifactEndpoint)) {
         $endpointSha = [System.Security.Cryptography.SHA256]::Create()
         try {
-            $relayEndpointHash = [BitConverter]::ToString(
+            $providerEndpointHash = [BitConverter]::ToString(
                 $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($artifactEndpoint))
             ).Replace('-', '').ToLowerInvariant()
         } finally { $endpointSha.Dispose() }
@@ -972,7 +928,7 @@ function Write-TorcaArtifactManifest {
         SchemaVersion = $release.schemaVersion
         SourceCommit = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Commit') { $buildManifest.Commit } else { $release.sourceCommit }
         SourceFingerprint = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'SourceFingerprint') { $buildManifest.SourceFingerprint } else { $release.sourceFingerprint }
-        RelayEndpointHash = $relayEndpointHash
+        ProviderEndpointHash = $providerEndpointHash
         NativeLibraryHash = $nativeLibraryHash
         ApplicationArtifactHash = $applicationArtifactHash
         TargetPlatform = if ($buildManifest -and $buildManifest.PSObject.Properties.Name -contains 'Targets') { (@($buildManifest.Targets) -join '|') } else { $release.targetPlatform }

@@ -27,7 +27,6 @@ foreach ($root in $sourceRoots) {
 
 $obsolete = @(
     'crates/application/torca-pairing-coordinator/src/final_runtime.rs',
-    'crates/infrastructure/torca-storage-sqlite/src/migration_v2.rs',
     'crates/infrastructure/torca-storage-sqlite/src/migration_v3.rs',
     'crates/platform/torca-native/src/retry_ffi.rs'
 )
@@ -37,14 +36,6 @@ foreach ($relative in $obsolete) {
     }
 }
 
-# This is the only intentionally retained source-compatibility shim. It exists
-# until all downstream repositories construct typed EngineError variants.
-$legacyError = Join-Path $RepoRoot 'crates/application/torca-client-engine/src/engine/legacy_error.rs'
-if (Test-Path -LiteralPath $legacyError) {
-    $text = Get-Content -LiteralPath $legacyError -Raw
-    if (-not $text.Contains('#[doc(hidden)]') -or -not $text.Contains('EngineError::Repository')) {
-        throw 'Legacy EngineError constructor must remain hidden and redacted until removed.'
-    }
-}
+
 
 Write-Host 'Torca source debt policy passed.'

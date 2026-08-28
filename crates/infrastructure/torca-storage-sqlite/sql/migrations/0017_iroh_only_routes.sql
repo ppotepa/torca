@@ -1,0 +1,2 @@
+-- Iroh-only route storage is present in the clean alpha baseline. The storage
+-- epoch prevents opening pre-alpha databases without an explicit reset.

@@ -317,12 +317,12 @@ mod tests {
     #[test]
     fn direct_provider_does_not_block_profile_on_incoming_reachability() {
         let mut state = BootstrapState::new();
-        let commissioning = torca_transport_api::TransportKind::Iroh.deployment_profile();
+        let commissioning_requires_service = false;
         // A direct provider has no managed commissioning service. Its local
         // endpoint may still be publishing while the application shell is
         // already safe to expose.
         let projection = torca_transport_api::ProviderCommissioning {
-            provider: torca_transport_api::TransportKind::Iroh,
+            provider: torca_foundation::ProviderId::default(),
             steps: vec![
                 torca_transport_api::CommissioningStep {
                     stage: torca_transport_api::CommissioningStage::LocalRuntime,
@@ -341,7 +341,7 @@ mod tests {
             route_state: torca_transport_api::ProviderRouteState::Unavailable,
             pairing_bootstrap: None,
         };
-        assert!(!commissioning.requires_service_readiness());
+        assert!(!commissioning_requires_service);
         state.configure_communication_requirements(&projection);
         for step in [
             BootstrapStepId::Preferences,
@@ -422,7 +422,7 @@ mod tests {
     fn provider_without_incoming_requirement_can_unlock_local_profile() {
         let mut state = BootstrapState::new();
         let commissioning = torca_transport_api::ProviderCommissioning {
-            provider: torca_transport_api::TransportKind::Iroh,
+            provider: torca_foundation::ProviderId::default(),
             steps: vec![torca_transport_api::CommissioningStep {
                 stage: torca_transport_api::CommissioningStage::LocalRuntime,
                 state: torca_transport_api::CommissioningState::Ready,

@@ -24,7 +24,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, dashboard: &ExecutionDashboard,
     let pause_state = if dashboard.paused { "paused" } else { "live" };
     let diagnostics = dashboard.diagnostics_status.as_deref().unwrap_or("not requested");
     let cancel_prompt = if dashboard.cancel_requested {
-        "\n\nCancel requested — press y to confirm or n/Esc to continue"
+        "\n\nCancel requested â€” press y to confirm or n/Esc to continue"
     } else {
         ""
     };

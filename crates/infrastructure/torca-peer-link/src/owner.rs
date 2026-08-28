@@ -18,13 +18,13 @@ use torca_contacts::{
     Contact, ContactError, ContactId, ContactRepository, ContactStatus, PeerCredentialRepository,
 };
 use torca_crypto::{CryptoProvider, Ed25519HandshakeVerifier, RustCryptoProvider};
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_peer::{PeerSession, PeerSessionError, PeerSessionState, PeerTransport};
 use torca_peer_protocol::{
     AckStatus, HandshakeAck, HandshakeHello, HandshakePolicy, HandshakeSigner, PeerCodec,
     PeerMessage,
 };
-use torca_transport_api::{TransportCapabilities, TransportKind};
+use torca_transport_api::TransportCapabilities;
 
 pub use torca_transport_api::PeerTransportFactory;
 

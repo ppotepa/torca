@@ -328,7 +328,7 @@ fn runtime_probe(
     }
 }
 
-fn relay_probe_result(snapshot: RendezvousHealthSnapshot, measured_at: Timestamp) -> ProbeResult {
+fn relay_probe_result(snapshot: PairingServiceHealthSnapshot, measured_at: Timestamp) -> ProbeResult {
     ProbeResult {
         target: ProbeTarget::Relay,
         kind: ProbeKind::Connectivity,

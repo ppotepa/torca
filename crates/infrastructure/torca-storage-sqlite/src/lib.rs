@@ -1,7 +1,7 @@
 //! SQLCipher-backed SQLite storage root.
 
 /// Installed-data epoch. Changing this value requires an explicit deploy reset.
-pub const STORAGE_EPOCH: u16 = 2;
+pub const STORAGE_EPOCH: u16 = 3;
 /// Baseline schema version for this application generation.
 pub const SCHEMA_VERSION: u32 = 1;
 

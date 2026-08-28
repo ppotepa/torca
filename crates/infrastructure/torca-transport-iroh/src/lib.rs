@@ -17,14 +17,16 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex as AsyncMutex;
 use torca_contacts::Contact;
 use torca_crypto::{ProtectedSecretStore, ProtectedSecretStoreError};
-use torca_foundation::Timestamp;
+use torca_foundation::{ProviderId, Timestamp};
 use torca_identity::KeyId;
 use torca_pairing_protocol::PairingBootstrapDescriptor;
-use torca_peer_protocol::MAX_PEER_DATA_LEN;
-use torca_relay_protocol::{RELAY_HEADER_LEN, RelayCodec, RelayRequest, RelayResponse};
-use torca_rendezvous_client::{
-    PairingServiceTransport, RelayTransportError, RelayTransportFailureKind,
+use torca_pairing_service_client::{
+    PairingServiceTransport, PairingServiceTransportError, PairingServiceTransportFailureKind,
 };
+use torca_pairing_service_protocol::{
+    PAIRING_SERVICE_HEADER_LEN, PairingServiceCodec, PairingServiceRequest, PairingServiceResponse,
+};
+use torca_peer_protocol::MAX_PEER_DATA_LEN;
 use torca_runtime::{
     CommunicationLifecycle, CommunicationState, IncomingReachabilityState, RuntimeDriverError,
 };
@@ -32,7 +34,7 @@ use torca_transport_api::{
     CommissioningStage, CommissioningState, CommissioningStep, EnergyClass, LatencyClass,
     PeerTransport, PeerTransportError, PeerTransportFactory, ProviderCommissioning,
     ProviderRouteState, ProviderRuntimeDiagnostics, ProviderTransport, TransportCapabilities,
-    TransportFactoryError, TransportKind, TransportPath,
+    TransportFactoryError, TransportPath, TransportTopology,
 };
 
 mod pairing;
@@ -44,6 +46,10 @@ const NETWORK_CHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 pub const PAIRING_ALPN: &[u8] = b"torca/pairing/1";
 /// Reserved provider-owned ALPN for optional Radio media streams.
 pub const RADIO_ALPN: &[u8] = b"torca/radio/1";
+
+fn iroh_provider_id() -> ProviderId {
+    ProviderId::new("iroh").expect("static provider id")
+}
 
 /// Deployment-time Iroh endpoint policy. This is intentionally provider-local:
 /// the generic runtime asks for availability/dormancy, while the endpoint
@@ -735,7 +741,7 @@ impl torca_radio_adapters::RadioMediaConnector for IrohRadioMediaSystemFactory {
         Box<dyn torca_radio_adapters::RadioMediaStream>,
         torca_radio_coordinator::RadioApplicationError,
     > {
-        if route.provider != TransportKind::Iroh.wire_value() {
+        if route.provider != iroh_provider_id().as_str() {
             return Err(torca_radio_coordinator::RadioApplicationError::MediaEndpointUnavailable);
         }
         // A platform network transition invalidates the local route before
@@ -1078,8 +1084,11 @@ impl IrohPairingServiceTransport {
         Ok(Self::new_with_slot(endpoint, remote, runtime))
     }
 
-    fn transport_error(kind: RelayTransportFailureKind, sent: bool) -> RelayTransportError {
-        RelayTransportError { kind, request_was_sent: sent }
+    fn transport_error(
+        kind: PairingServiceTransportFailureKind,
+        sent: bool,
+    ) -> PairingServiceTransportError {
+        PairingServiceTransportError { kind, request_was_sent: sent }
     }
 }
 
@@ -1090,66 +1099,71 @@ impl PairingServiceTransport for IrohPairingServiceTransport {
         }
     }
 
-    fn reconnect(&mut self) -> Result<(), RelayTransportError> {
+    fn reconnect(&mut self) -> Result<(), PairingServiceTransportError> {
         self.invalidate();
         // The pairing descriptor is an opaque snapshot of the provider route.
         // Never dial it while this endpoint is between network generations;
         // report a retryable unavailable result to the rendezvous client.
         if !self.endpoint.route_is_fresh() {
-            return Err(Self::transport_error(RelayTransportFailureKind::Unavailable, false));
+            return Err(Self::transport_error(
+                PairingServiceTransportFailureKind::Unavailable,
+                false,
+            ));
         }
-        let endpoint = self
-            .endpoint
-            .current()
-            .ok_or_else(|| Self::transport_error(RelayTransportFailureKind::Unavailable, false))?;
-        let connection = self
-            .runtime
-            .block_on(endpoint.connect(self.remote.clone(), PAIRING_ALPN))
-            .map_err(|_| Self::transport_error(RelayTransportFailureKind::Unavailable, false))?;
+        let endpoint = self.endpoint.current().ok_or_else(|| {
+            Self::transport_error(PairingServiceTransportFailureKind::Unavailable, false)
+        })?;
+        let connection =
+            self.runtime.block_on(endpoint.connect(self.remote.clone(), PAIRING_ALPN)).map_err(
+                |_| Self::transport_error(PairingServiceTransportFailureKind::Unavailable, false),
+            )?;
         self.connection = Some(connection);
         Ok(())
     }
 
     fn exchange(
         &mut self,
-        request: &RelayRequest,
+        request: &PairingServiceRequest,
         timeout: Duration,
-    ) -> Result<RelayResponse, RelayTransportError> {
+    ) -> Result<PairingServiceResponse, PairingServiceTransportError> {
         let Some(connection) = self.connection.clone() else {
-            return Err(Self::transport_error(RelayTransportFailureKind::Unavailable, false));
+            return Err(Self::transport_error(
+                PairingServiceTransportFailureKind::Unavailable,
+                false,
+            ));
         };
-        let frame = RelayCodec::encode_request(request).map_err(|_| {
-            Self::transport_error(RelayTransportFailureKind::InvalidResponse, false)
+        let frame = PairingServiceCodec::encode_request(request).map_err(|_| {
+            Self::transport_error(PairingServiceTransportFailureKind::InvalidResponse, false)
         })?;
         let result = self.runtime.block_on(async move {
             let (mut send, mut recv) = tokio::time::timeout(timeout, connection.open_bi())
                 .await
-                .map_err(|_| RelayTransportFailureKind::Timeout)?
-                .map_err(|_| RelayTransportFailureKind::Disconnected)?;
+                .map_err(|_| PairingServiceTransportFailureKind::Timeout)?
+                .map_err(|_| PairingServiceTransportFailureKind::Disconnected)?;
             tokio::time::timeout(timeout, send.write_all(&frame))
                 .await
-                .map_err(|_| RelayTransportFailureKind::Timeout)?
-                .map_err(|_| RelayTransportFailureKind::Disconnected)?;
-            send.finish().map_err(|_| RelayTransportFailureKind::Disconnected)?;
-            let mut header = [0_u8; RELAY_HEADER_LEN];
+                .map_err(|_| PairingServiceTransportFailureKind::Timeout)?
+                .map_err(|_| PairingServiceTransportFailureKind::Disconnected)?;
+            send.finish().map_err(|_| PairingServiceTransportFailureKind::Disconnected)?;
+            let mut header = [0_u8; PAIRING_SERVICE_HEADER_LEN];
             tokio::time::timeout(timeout, recv.read_exact(&mut header))
                 .await
-                .map_err(|_| RelayTransportFailureKind::Timeout)?
-                .map_err(|_| RelayTransportFailureKind::Disconnected)?;
-            let frame_len = RelayCodec::frame_len_from_header(&header)
-                .map_err(|_| RelayTransportFailureKind::InvalidResponse)?;
+                .map_err(|_| PairingServiceTransportFailureKind::Timeout)?
+                .map_err(|_| PairingServiceTransportFailureKind::Disconnected)?;
+            let frame_len = PairingServiceCodec::frame_len_from_header(&header)
+                .map_err(|_| PairingServiceTransportFailureKind::InvalidResponse)?;
             let mut response = Vec::with_capacity(frame_len);
             response.extend_from_slice(&header);
-            let mut payload = vec![0_u8; frame_len - RELAY_HEADER_LEN];
+            let mut payload = vec![0_u8; frame_len - PAIRING_SERVICE_HEADER_LEN];
             if !payload.is_empty() {
                 tokio::time::timeout(timeout, recv.read_exact(&mut payload))
                     .await
-                    .map_err(|_| RelayTransportFailureKind::Timeout)?
-                    .map_err(|_| RelayTransportFailureKind::Disconnected)?;
+                    .map_err(|_| PairingServiceTransportFailureKind::Timeout)?
+                    .map_err(|_| PairingServiceTransportFailureKind::Disconnected)?;
                 response.extend_from_slice(&payload);
             }
-            RelayCodec::decode_response(&response)
-                .map_err(|_| RelayTransportFailureKind::InvalidResponse)
+            PairingServiceCodec::decode_response(&response)
+                .map_err(|_| PairingServiceTransportFailureKind::InvalidResponse)
         });
         result.map_err(|kind| Self::transport_error(kind, true))
     }
@@ -1482,8 +1496,8 @@ impl IrohLifecycle {
 }
 
 impl CommunicationLifecycle for IrohLifecycle {
-    fn provider(&self) -> TransportKind {
-        TransportKind::Iroh
+    fn provider_id(&self) -> ProviderId {
+        iroh_provider_id()
     }
 
     fn provider_profile(&self) -> Option<&'static str> {
@@ -1795,7 +1809,7 @@ impl CommunicationLifecycle for IrohLifecycle {
             IncomingReachabilityState::Stopped => CommissioningState::NotRequired,
         };
         ProviderCommissioning {
-            provider: TransportKind::Iroh,
+            provider: iroh_provider_id(),
             steps: vec![
                 CommissioningStep {
                     stage: CommissioningStage::LocalRuntime,
@@ -1897,7 +1911,10 @@ impl IrohTransport {
             wake: Arc::new(Mutex::new(None)),
             stream_alive: Arc::new(AtomicBool::new(false)),
             connected: false,
-            path: TransportPath::Unknown,
+            path: TransportPath {
+                provider: iroh_provider_id(),
+                topology: TransportTopology::Unknown,
+            },
         }
     }
 
@@ -2062,11 +2079,11 @@ fn selected_path(connection: &Connection, profile: IrohEndpointProfile) -> Trans
         .find(|path| path.is_selected())
         .map(|path| {
             if path.is_relay() {
-                TransportPath::IrohRelay
+                TransportPath { provider: iroh_provider_id(), topology: TransportTopology::Relay }
             } else if path.is_ip() {
-                TransportPath::IrohDirect
+                TransportPath { provider: iroh_provider_id(), topology: TransportTopology::Direct }
             } else {
-                TransportPath::Unknown
+                TransportPath { provider: iroh_provider_id(), topology: TransportTopology::Unknown }
             }
         })
         .unwrap_or_else(|| {
@@ -2074,9 +2091,9 @@ fn selected_path(connection: &Connection, profile: IrohEndpointProfile) -> Trans
             // after a handshake. Keep the profile as a conservative fallback
             // until the next reconnect/observation.
             if profile_supports_relay(profile) {
-                TransportPath::IrohRelay
+                TransportPath { provider: iroh_provider_id(), topology: TransportTopology::Relay }
             } else {
-                TransportPath::IrohDirect
+                TransportPath { provider: iroh_provider_id(), topology: TransportTopology::Direct }
             }
         })
 }
@@ -2256,8 +2273,8 @@ impl PeerTransport for IrohTransport {
 }
 
 impl ProviderTransport for IrohTransport {
-    fn kind(&self) -> TransportKind {
-        TransportKind::Iroh
+    fn provider_id(&self) -> ProviderId {
+        iroh_provider_id()
     }
 
     fn path(&self) -> TransportPath {
@@ -2268,7 +2285,7 @@ impl ProviderTransport for IrohTransport {
         self.connection
             .as_ref()
             .map(|connection| selected_path(connection, self.profile))
-            .unwrap_or(self.path)
+            .unwrap_or_else(|| self.path.clone())
     }
 
     fn capabilities(&self) -> TransportCapabilities {
@@ -2362,8 +2379,8 @@ impl IrohTransportFactory {
 }
 
 impl PeerTransportFactory for IrohTransportFactory {
-    fn kind(&self) -> TransportKind {
-        TransportKind::Iroh
+    fn provider_id(&self) -> ProviderId {
+        iroh_provider_id()
     }
 
     fn capabilities(&self) -> TransportCapabilities {
@@ -2414,7 +2431,7 @@ impl PeerTransportFactory for IrohTransportFactory {
         }
         let endpoint = contact
             .route()
-            .provider_endpoint(TransportKind::Iroh.wire_value())
+            .provider_endpoint(iroh_provider_id().as_str())
             .ok_or(TransportFactoryError::ContactNotFound)?;
         let local_endpoint = self.endpoint.current().ok_or(TransportFactoryError::Listener)?;
         let remote = decode_endpoint_addr(endpoint).map_err(|_| TransportFactoryError::Protocol)?;
@@ -2450,6 +2467,7 @@ impl PeerTransportFactory for IrohTransportFactory {
 
 #[cfg(test)]
 mod tests {
+    use super::iroh_provider_id;
     use std::collections::{BTreeMap, VecDeque};
     use std::io::{Read, Write};
     use std::sync::atomic::Ordering;
@@ -2476,7 +2494,7 @@ mod tests {
     use torca_runtime::{CommunicationLifecycle, CommunicationState, IncomingReachabilityState};
     use torca_transport_api::{
         CommissioningStage, CommissioningState, EnergyClass, PeerTransport, PeerTransportFactory,
-        ProviderRouteState, TransportFactoryError, TransportKind,
+        ProviderRouteState, TransportFactoryError,
     };
 
     use super::{
@@ -2489,7 +2507,7 @@ mod tests {
     fn contact_for_iroh_endpoint(endpoint: &iroh::EndpointAddr) -> Contact {
         let route = ContactRoute::for_provider_endpoint(
             OpaqueId::from_u128(31),
-            TransportKind::Iroh.wire_value(),
+            iroh_provider_id().as_str(),
             encode_endpoint_addr(endpoint).expect("encode Iroh endpoint"),
         )
         .expect("valid Iroh contact route");
@@ -2701,7 +2719,7 @@ mod tests {
         let endpoint_id = endpoint.addr().id;
         let mut lifecycle = IrohLifecycle::new(endpoint, Arc::clone(&runtime));
 
-        assert_eq!(lifecycle.provider(), TransportKind::Iroh);
+        assert_eq!(lifecycle.provider_id(), iroh_provider_id());
         assert_eq!(lifecycle.state(), CommunicationState::Ready);
         assert_eq!(lifecycle.incoming_reachability_state(), IncomingReachabilityState::Unknown);
         assert_eq!(lifecycle.runtime_diagnostics().route_state, Some(ProviderRouteState::Fresh));
@@ -2709,7 +2727,7 @@ mod tests {
         assert_eq!(lifecycle.runtime_diagnostics().reachability_demanded, Some(false));
         assert_eq!(lifecycle.runtime_diagnostics().online_probe_attempts, Some(0));
         let commissioning = lifecycle.commissioning();
-        assert_eq!(commissioning.provider, TransportKind::Iroh);
+        assert_eq!(commissioning.provider, iroh_provider_id());
         assert!(commissioning.endpoint_summary.is_some());
         assert_eq!(commissioning.step(CommissioningStage::LocalRuntime), CommissioningState::Ready);
         // Creating an invitation is local and must not wait for discovery to
@@ -3012,7 +3030,7 @@ mod tests {
             first_identity.clone(),
             ContactRoute::for_provider_endpoint(
                 first_capability,
-                TransportKind::Iroh.wire_value(),
+                iroh_provider_id().as_str(),
                 encode_endpoint_addr(&first_endpoint.addr()).expect("encode first route"),
             )
             .expect("first persisted route"),
@@ -3023,7 +3041,7 @@ mod tests {
             second_identity.clone(),
             ContactRoute::for_provider_endpoint(
                 second_capability,
-                TransportKind::Iroh.wire_value(),
+                iroh_provider_id().as_str(),
                 encode_endpoint_addr(&second_endpoint.addr()).expect("encode second route"),
             )
             .expect("second persisted route"),
@@ -3190,7 +3208,7 @@ mod tests {
             second_router,
         );
         let route = RadioMediaRoute {
-            provider: TransportKind::Iroh.wire_value().to_owned(),
+            provider: iroh_provider_id().as_str().to_owned(),
             endpoint: encode_endpoint_addr(&second_endpoint.addr()).expect("encode route"),
             local_identity: torca_foundation::OpaqueId::from_u128(1),
             remote_identity: torca_foundation::OpaqueId::from_u128(2),

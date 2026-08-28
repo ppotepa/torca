@@ -1,5 +1,7 @@
 use crate::devices::Device;
-use crate::domain::{CommunicationProvider, Configuration, PrivacyPolicy, ValidationLevel};
+use crate::domain::{
+    CommunicationProvider, Configuration, PrivacyPolicy, ProviderMetadataExt, ValidationLevel,
+};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 use crate::windows_client::{WindowsClientError, WorkspaceWindowsClient};
@@ -66,7 +68,7 @@ impl<'a> LaunchController<'a> {
                     crate::domain::Target::Windows,
                     configuration,
                     &exe,
-                    communication_provider,
+                    communication_provider.clone(),
                     provider_profile,
                 )
                 .map_err(LaunchError::ArtifactVerification)?;
@@ -185,7 +187,7 @@ impl<'a> LaunchController<'a> {
         // Full validation waits for provider-owned commissioning only when
         // the profile actually requires an external endpoint/service. Direct
         // providers (for example Iroh) are complete once their local runtime
-        // is ready and must never inherit a Tor-style service gate.
+        // is ready and must never inherit a provider-specific service gate.
         let require_service = matches!(validation, ValidationLevel::Full)
             && communication_provider.deployment_profile().requires_service_readiness();
         // The selected provider owns its commissioning budget. Tor may need
@@ -208,13 +210,13 @@ impl<'a> LaunchController<'a> {
             let ready = match device.target {
                 crate::domain::Target::Windows => Self::windows_network_ready(
                     receipt.started_at,
-                    communication_provider,
+                    communication_provider.clone(),
                     require_service,
                 ),
                 crate::domain::Target::Android => self.android_network_ready(
                     &device.id,
                     receipt.started_at,
-                    communication_provider,
+                    communication_provider.clone(),
                     require_service,
                 ),
             }?;
@@ -248,7 +250,7 @@ impl<'a> LaunchController<'a> {
                 self.android_readiness_diagnostic(&device.id).unwrap_or_else(|_| {
                     format!(
                         "missing fresh Flutter gateway handshake (provider={}, required={})",
-                        communication_provider,
+                        communication_provider.clone(),
                         if require_service { "provider service" } else { "local runtime" },
                     )
                 })
@@ -359,7 +361,7 @@ impl<'a> LaunchController<'a> {
         logs.sort_by_key(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
         Ok(logs.iter().rev().any(|path| {
             file_is_fresh(path, launched_at)
-                && read_readiness_evidence(path, provider, require_service)
+                && read_readiness_evidence(path, provider.clone(), require_service)
         }))
     }
 
@@ -436,7 +438,7 @@ impl<'a> LaunchController<'a> {
         let output =
             self.command("adb", &["-s", device, "shell", "dumpsys", "activity", "activities"])?;
         // `dumpsys activity activities` contains history too. Accept only the
-        // current focus/resumed records, never a historical Torca activity.
+        // current focus/resumed records, never a historical application activity.
         Ok(output.success
             && output.text.lines().any(|line| {
                 (line.contains("mResumedActivity")
@@ -520,8 +522,8 @@ fn read_readiness_evidence_from_content(
     {
         let code = value.get("code").and_then(Value::as_str);
         gateway_ready |= code == Some("FLUTTER_GATEWAY_READY");
-        local_ready |= ready_code(code, provider, false);
-        service_ready |= ready_code(code, provider, true);
+        local_ready |= ready_code(code, provider.clone(), false);
+        service_ready |= ready_code(code, provider.clone(), true);
     }
     gateway_ready && local_ready && (!require_service || service_ready)
 }
@@ -590,6 +592,7 @@ pub enum LaunchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::iroh_provider;
 
     #[test]
     fn android_health_uses_only_latest_relevant_run_logs() {
@@ -612,15 +615,10 @@ mod tests {
 
     #[test]
     fn quick_and_full_validation_have_distinct_readiness_contracts() {
-        assert!(ready_code(Some("LOCAL_READY"), CommunicationProvider::Tor, false));
-        assert!(!ready_code(Some("TOR_STARTING"), CommunicationProvider::Tor, false));
-        assert!(!ready_code(Some("COMMUNICATION_STARTING"), CommunicationProvider::Iroh, false));
-        assert!(!ready_code(Some("TOR_STARTING"), CommunicationProvider::Tor, true));
-        assert!(!ready_code(Some("LOCAL_READY"), CommunicationProvider::Tor, true));
-        assert!(ready_code(Some("TOR_BOOTSTRAP_READY"), CommunicationProvider::Tor, true));
-        assert!(ready_code(Some("COMMUNICATION_READY"), CommunicationProvider::Iroh, true));
-        assert!(ready_code(Some("COMMUNICATION_READY"), CommunicationProvider::WebRtc, true));
-        assert!(!ready_code(Some("TOR_BOOTSTRAP_READY"), CommunicationProvider::WebRtc, true));
+        assert!(!ready_code(Some("TOR_STARTING"), iroh_provider(), false));
+        assert!(!ready_code(Some("COMMUNICATION_STARTING"), iroh_provider(), false));
+        assert!(!ready_code(Some("TOR_STARTING"), iroh_provider(), true));
+        assert!(ready_code(Some("COMMUNICATION_READY"), iroh_provider(), true));
     }
 
     #[test]
@@ -628,18 +626,14 @@ mod tests {
         let local_only = r#"
             {"code":"LOCAL_READY"}
         "#;
-        assert!(!read_readiness_evidence_from_content(
-            local_only,
-            CommunicationProvider::Iroh,
-            false,
-        ));
+        assert!(!read_readiness_evidence_from_content(local_only, iroh_provider(), false,));
         let ready = r#"
             {"code":"LOCAL_READY"}
             {"code":"COMMUNICATION_READY"}
             {"code":"FLUTTER_GATEWAY_READY"}
         "#;
-        assert!(read_readiness_evidence_from_content(ready, CommunicationProvider::Iroh, false,));
-        assert!(read_readiness_evidence_from_content(ready, CommunicationProvider::Iroh, true,));
+        assert!(read_readiness_evidence_from_content(ready, iroh_provider(), false,));
+        assert!(read_readiness_evidence_from_content(ready, iroh_provider(), true,));
     }
 
     #[test]

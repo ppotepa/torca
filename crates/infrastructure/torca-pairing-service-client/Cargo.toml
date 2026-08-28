@@ -1,0 +1,20 @@
+[package]
+name = "torca-pairing-service-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+torca-connectivity = { path = "../../application/torca-connectivity" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
+torca-pairing = { path = "../../domains/torca-pairing" }
+torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
+torca-pairing-service-protocol = { path = "../../protocol/torca-pairing-service-protocol" }
+torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
+
+[lints]
+workspace = true

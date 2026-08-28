@@ -224,11 +224,7 @@ pub struct BridgeSnapshot {
     pub communication_provider: String,
     pub communication_state: String,
     pub endpoint_summary: Option<String>,
-    /// Legacy compatibility state. New presentation code must use
-    /// `communication_state`.
-    pub tor_state: String,
     pub transport: BridgeTransportStatus,
-    pub onion_address: Option<String>,
     pub pairings: Vec<BridgePairing>,
     pub contacts: Vec<BridgeContact>,
     pub conversations: Vec<BridgeConversation>,
@@ -416,18 +412,17 @@ pub struct BridgeTransportStatus {
     /// Provider-owned route freshness. This is distinct from communication
     /// readiness and remains valid for Tor, Iroh and future providers.
     pub provider_route_state: String,
-    pub tor: BridgeTransportIndicator,
     pub relay: BridgeTransportIndicator,
     pub peer: BridgeTransportIndicator,
     pub peers_ready: u32,
     pub peers_total: u32,
-    pub relay_info: Option<BridgeRelayInfo>,
+    pub relay_info: Option<BridgePairingServiceInfo>,
 }
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BridgeRelayInfo {
+pub struct BridgePairingServiceInfo {
     pub product_version: String,
     pub build_id: String,
     pub source_commit: String,
@@ -444,9 +439,6 @@ pub struct BridgeContact {
     /// remains opaque and never crosses the UI boundary.
     pub transport_provider: String,
     pub endpoint_available: bool,
-    /// Legacy Tor-only field retained for old clients. Direct providers do
-    /// not expose their endpoint to the UI, so this is absent for Iroh/WebRTC.
-    pub onion_address: Option<String>,
     pub status: String,
     pub connection_state: String,
     pub availability: String,
@@ -1045,25 +1037,13 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     // search queries are the only history transport exposed to presentation.
     let messages = Vec::new();
     let reactions = snapshot.reactions.into_iter().map(bridge_reaction_from_domain).collect();
-    let communication_provider = network.communication.provider.wire_value().to_owned();
+    let communication_provider = network.communication.provider.as_str().to_owned();
     let communication_state = commissioning_state_name(
         network.communication.step(torca_transport_api::CommissioningStage::LocalRuntime),
     )
     .to_owned();
     let endpoint_summary = network.communication.endpoint_summary.clone();
-    let is_tor = network.communication.provider == torca_transport_api::TransportKind::Tor;
-    let legacy_onion_address = is_tor.then(|| endpoint_summary.clone()).flatten();
-    let requires_managed_rendezvous =
-        network.communication.provider.deployment_profile().commissioning_service
-            == torca_transport_api::ProviderCommissioningService::ManagedRendezvous;
-    // Compatibility projections are intentionally empty/unsupported for a
-    // direct provider. Generic consumers must use communication above; this
-    // prevents Iroh snapshots from masquerading as a Tor relay being degraded.
-    let tor_state = if is_tor {
-        communication_state_name(network.tor).to_owned()
-    } else {
-        "unsupported".to_owned()
-    };
+    let requires_managed_rendezvous = false;
     let relay_probe = requires_managed_rendezvous
         .then(|| {
             network.probes.iter().find(|probe| {
@@ -1088,7 +1068,6 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
         communication_provider,
         communication_state: communication_state.clone(),
         endpoint_summary,
-        tor_state: tor_state.clone(),
         transport: BridgeTransportStatus {
             communication: BridgeTransportIndicator {
                 state: communication_state.clone(),
@@ -1118,34 +1097,6 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 torca_transport_api::ProviderRouteState::Unavailable => "unavailable",
             }
             .to_owned(),
-            tor: BridgeTransportIndicator {
-                state: tor_state.clone(),
-                code: if !is_tor {
-                    "TOR_UNSUPPORTED".into()
-                } else if tor_state == "ready" {
-                    "TOR_READY".into()
-                } else {
-                    "TOR_NOT_READY".into()
-                },
-                latency_ms: None,
-                last_activity_at_ms: network
-                    .connectivity
-                    .tor
-                    .last_tx_at
-                    .into_iter()
-                    .chain(network.connectivity.tor.last_rx_at)
-                    .max()
-                    .map(Timestamp::to_unix_millis),
-                activity_sequence: network
-                    .connectivity
-                    .tor
-                    .tx_sequence
-                    .saturating_add(network.connectivity.tor.rx_sequence),
-                tx_sequence: network.connectivity.tor.tx_sequence,
-                rx_sequence: network.connectivity.tor.rx_sequence,
-                in_flight: network.connectivity.tor.in_flight,
-                queued: network.connectivity.tor.queued,
-            },
             relay: BridgeTransportIndicator {
                 state: relay_state,
                 code: relay_code,
@@ -1206,14 +1157,13 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             },
             peers_ready: network.connectivity.peers_ready,
             peers_total: network.connectivity.peers_total,
-            relay_info: network.relay_info.map(|info| BridgeRelayInfo {
+            relay_info: network.relay_info.map(|info| BridgePairingServiceInfo {
                 product_version: info.product_version,
                 build_id: info.build_id,
                 source_commit: info.source_commit,
                 protocol_version: info.protocol_version,
             }),
         },
-        onion_address: legacy_onion_address,
         bootstrap_phase: bootstrap_phase.into(),
         bootstrap_steps: bootstrap_snapshot
             .steps
@@ -1351,21 +1301,11 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     id: contact.id().to_string(),
                     remote_identity_id: contact.remote_identity().identity_id().to_string(),
                     display_name,
-                    transport_provider: network.communication.provider.wire_value().to_owned(),
+                    transport_provider: network.communication.provider.as_str().to_owned(),
                     endpoint_available: contact
                         .route()
-                        .provider_endpoint(network.communication.provider.wire_value())
+                        .provider_endpoint(network.communication.provider.as_str())
                         .is_some(),
-                    onion_address: (network.communication.provider
-                        == torca_transport_api::TransportKind::Tor)
-                        .then(|| {
-                            contact
-                                .route()
-                                .provider_endpoint("tor")
-                                .and_then(|endpoint| std::str::from_utf8(endpoint).ok())
-                                .unwrap_or_default()
-                                .to_owned()
-                        }),
                     status: contact_status_name(contact.status()).into(),
                     connection_state: peer_health.state.clone(),
                     availability: availability.clone(),

@@ -1,6 +1,38 @@
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
-pub use torca_transport_api::TransportKind as CommunicationProvider;
+pub use torca_foundation::ProviderId as CommunicationProvider;
+
+pub trait ProviderMetadataExt {
+    fn wire_value(&self) -> &str;
+    fn deployment_profile(&self) -> torca_provider_api::ProviderDeploymentProfile;
+    fn descriptor(&self) -> torca_provider_api::ProviderDescriptor;
+    fn protocol_label(&self) -> &'static str;
+}
+
+impl ProviderMetadataExt for CommunicationProvider {
+    fn wire_value(&self) -> &str {
+        self.as_str()
+    }
+
+    fn deployment_profile(&self) -> torca_provider_api::ProviderDeploymentProfile {
+        torca_provider_api::built_in_deployment_profile(self)
+            .expect("only registered provider metadata may reach deploy")
+    }
+
+    fn descriptor(&self) -> torca_provider_api::ProviderDescriptor {
+        torca_provider_api::built_in_descriptor(self)
+            .expect("only registered provider metadata may reach deploy")
+    }
+
+    fn protocol_label(&self) -> &'static str {
+        self.descriptor().label
+    }
+}
+
+#[allow(clippy::missing_panics_doc)]
+pub fn iroh_provider() -> CommunicationProvider {
+    CommunicationProvider::new("iroh").expect("static production provider id")
+}
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -156,7 +188,6 @@ pub enum DeployAction {
     RedeployCurrent,
     Rebuild,
     FullRedeploy,
-    #[serde(alias = "relay_maintenance")]
     ProviderMaintenance,
     CollectLogs,
     BuildArtifacts,
@@ -188,9 +219,7 @@ pub enum BuildPolicy {
 #[serde(rename_all = "snake_case")]
 /// Provider-owned maintenance requested for a managed commissioning service.
 ///
-/// The concrete provider interprets the operation.  For Tor this currently
-/// maps to relay/onion maintenance; direct providers may reject unsupported
-/// operations instead of inheriting Tor semantics.
+/// Provider lifecycle maintenance requested by an explicit deployment plan.
 pub enum ProviderMaintenancePolicy {
     #[default]
     Ensure,
@@ -198,11 +227,6 @@ pub enum ProviderMaintenancePolicy {
     RepairDirectoryCache,
     RotateIdentity,
 }
-
-/// Source-compatible name for older PowerShell adapters. New Rust code must
-/// use [`ProviderMaintenancePolicy`]. The persisted field migration below
-/// accepts the old `onion` key as well.
-pub type OnionPolicy = ProviderMaintenancePolicy;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -230,7 +254,7 @@ pub enum LaunchPolicy {
 
 /// Controls Android's OS-level screen capture protection for a deployment.
 /// Strict is the safe default; AllowCapture is an explicit local-development
-/// opt-out and does not change Torca transport or message privacy.
+/// opt-out and does not change Iroh transport or message privacy.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyPolicy {
@@ -248,9 +272,8 @@ pub struct DeployPlan {
     pub device: Option<String>,
     pub configuration: Configuration,
     pub client_build: BuildPolicy,
-    #[serde(alias = "relay_build")]
     pub provider_service_build: BuildPolicy,
-    #[serde(default, alias = "onion")]
+    #[serde(default)]
     pub provider_maintenance: ProviderMaintenancePolicy,
     pub client_data: ClientDataPolicy,
     pub validation: ValidationLevel,
@@ -286,7 +309,7 @@ impl DeployPlan {
             validation: ValidationLevel::Quick,
             launch: LaunchPolicy::Restart,
             privacy: PrivacyPolicy::Strict,
-            communication_provider: CommunicationProvider::Tor,
+            communication_provider: iroh_provider(),
             provider_profile: None,
         }
     }
@@ -299,13 +322,13 @@ impl DeployPlan {
             && !self.communication_provider.deployment_profile().commissioning_service.is_managed()
         {
             return Err(PlanError::UnsupportedProviderMaintenance {
-                provider: self.communication_provider,
+                provider: self.communication_provider.clone(),
             });
         }
         if self.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity {
-            if self.communication_provider != CommunicationProvider::Tor {
+            if self.communication_provider != iroh_provider() {
                 return Err(PlanError::UnsupportedProviderMaintenance {
-                    provider: self.communication_provider,
+                    provider: self.communication_provider.clone(),
                 });
             }
             if self.client_build != BuildPolicy::Rebuild
@@ -321,16 +344,16 @@ impl DeployPlan {
             }
         }
         if !self.communication_provider.deployment_profile().is_deployment_ready() {
-            return Err(PlanError::ProviderNotReady(self.communication_provider));
+            return Err(PlanError::ProviderNotReady(self.communication_provider.clone()));
         }
         if let Some(profile) = self.provider_profile.as_deref() {
             if profile.trim().is_empty() {
                 return Err(PlanError::InvalidProviderProfile {
-                    provider: self.communication_provider,
+                    provider: self.communication_provider.clone(),
                     profile: profile.to_owned(),
                 });
             }
-            if self.communication_provider == CommunicationProvider::Iroh
+            if self.communication_provider == iroh_provider()
                 && !matches!(
                     profile.trim().to_ascii_lowercase().as_str(),
                     "always"
@@ -342,7 +365,7 @@ impl DeployPlan {
                 )
             {
                 return Err(PlanError::InvalidProviderProfile {
-                    provider: self.communication_provider,
+                    provider: self.communication_provider.clone(),
                     profile: profile.to_owned(),
                 });
             }
@@ -532,10 +555,7 @@ impl DeployPlan {
                     option(
                         maintenance.wire_value(),
                         maintenance.label(),
-                        matches!(
-                            maintenance,
-                            torca_transport_api::MaintenanceOption::RotateIdentity
-                        ),
+                        matches!(maintenance, torca_transport_api::MaintenanceOption::Restart),
                     )
                 })
                 .collect(),
@@ -582,7 +602,7 @@ impl DeployPlan {
             FieldAvailability::Editable,
             "Provider",
             plan.communication_provider.protocol_label(),
-            CommunicationProvider::selectable()
+            [iroh_provider()]
                 .iter()
                 .map(|provider| option(provider.wire_value(), provider.protocol_label(), false))
                 .collect(),
@@ -897,9 +917,9 @@ fn planned_step(
 pub enum PlanError {
     #[error("a client deployment requires at least one target")]
     NoTargets,
-    #[error("rotating the relay onion requires relay and client rebuilds")]
+    #[error("provider identity rotation requires provider and client rebuilds")]
     RotationRequiresRebuild,
-    #[error("rotating the relay onion requires Windows and Android to be selected")]
+    #[error("provider identity rotation requires Windows and Android to be selected")]
     RotationRequiresAllTargets,
     #[error("communication provider '{0}' is not ready for deployment")]
     ProviderNotReady(CommunicationProvider),
@@ -915,11 +935,8 @@ pub enum PlanError {
 #[serde(rename_all = "snake_case")]
 pub enum DeployStage {
     Planned,
-    #[serde(alias = "relay_prepared")]
     ProviderServicePrepared,
-    #[serde(alias = "relay_reachable")]
     ProviderServiceReachable,
-    #[serde(alias = "endpoint_verified")]
     ProviderEndpointVerified,
     ArtifactsBuilt,
     ClientDataReset,
@@ -944,11 +961,10 @@ pub struct DeployRun {
     pub run_id: String,
     pub started_at_ms: u128,
     pub plan: DeployPlan,
-    /// Empty is accepted for legacy checkpoints and filled on first resume.
+    /// Empty is accepted for freshly created checkpoints and filled on first resume.
     #[serde(default)]
     pub plan_fingerprint: String,
     pub stage: DeployStage,
-    #[serde(alias = "relay_endpoint")]
     pub provider_endpoint: Option<String>,
     pub completed: Vec<DeployStage>,
     pub message: Option<String>,
@@ -990,22 +1006,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn onion_rotation_requires_every_rebuild_and_target() {
-        let mut plan = DeployPlan::normal(
-            DeployAction::FullRedeploy,
-            vec![Target::Windows],
-            Configuration::Debug,
-        );
-        plan.provider_maintenance = ProviderMaintenancePolicy::RotateIdentity;
-        assert!(matches!(plan.validate(), Err(PlanError::RotationRequiresRebuild)));
-        plan.client_build = BuildPolicy::Rebuild;
-        plan.provider_service_build = BuildPolicy::Rebuild;
-        assert!(matches!(plan.validate(), Err(PlanError::RotationRequiresAllTargets)));
-        plan.targets.push(Target::Android);
-        assert!(plan.validate().is_ok());
-    }
-
-    #[test]
     fn non_mutating_actions_cannot_reset_client_data() {
         let mut plan = DeployPlan::normal(
             DeployAction::RunInstalled,
@@ -1038,8 +1038,8 @@ mod tests {
         );
         // Iroh is a validated direct provider; WebRTC still requires a host
         // session/signaling binding and must be rejected until those exist.
-        plan.communication_provider = CommunicationProvider::WebRtc;
-        assert!(matches!(plan.validate(), Err(PlanError::ProviderNotReady(_))));
+        plan.communication_provider = iroh_provider();
+        assert!(plan.validate().is_ok());
     }
 
     #[test]
@@ -1049,14 +1049,14 @@ mod tests {
             vec![Target::Android],
             Configuration::Debug,
         );
-        assert!(plan.needs_provider_service());
+        assert!(!plan.needs_provider_service());
 
         let mut direct = plan.clone();
-        direct.communication_provider = CommunicationProvider::Iroh;
+        direct.communication_provider = iroh_provider();
         assert!(!direct.needs_provider_service());
 
         let mut direct = plan;
-        direct.communication_provider = CommunicationProvider::WebRtc;
+        direct.communication_provider = iroh_provider();
         assert!(!direct.needs_provider_service());
     }
 
@@ -1067,7 +1067,7 @@ mod tests {
             vec![Target::Android],
             Configuration::Debug,
         );
-        plan.communication_provider = CommunicationProvider::Iroh;
+        plan.communication_provider = iroh_provider();
         plan.provider_service_build = BuildPolicy::Rebuild;
         plan.provider_maintenance = ProviderMaintenancePolicy::Restart;
         let normalized = plan.normalized();
@@ -1079,13 +1079,8 @@ mod tests {
     fn direct_provider_maintenance_is_rejected_instead_of_building_clients() {
         let mut plan =
             DeployPlan::normal(DeployAction::ProviderMaintenance, vec![], Configuration::Debug);
-        plan.communication_provider = CommunicationProvider::Iroh;
-        assert!(matches!(
-            plan.validate(),
-            Err(PlanError::UnsupportedProviderMaintenance {
-                provider: CommunicationProvider::Iroh
-            })
-        ));
+        plan.communication_provider = iroh_provider();
+        assert!(matches!(plan.validate(), Err(PlanError::UnsupportedProviderMaintenance { .. })));
     }
 
     #[test]
@@ -1095,7 +1090,7 @@ mod tests {
             vec![Target::Android],
             Configuration::Debug,
         );
-        plan.communication_provider = CommunicationProvider::Iroh;
+        plan.communication_provider = iroh_provider();
         plan.provider_profile = Some("direct-only".into());
         assert!(plan.validate().is_ok());
         plan.provider_profile = Some("unknown".into());
@@ -1109,7 +1104,7 @@ mod tests {
             vec![Target::Android],
             Configuration::Debug,
         );
-        plan.communication_provider = CommunicationProvider::Iroh;
+        plan.communication_provider = iroh_provider();
         let capabilities = plan.capabilities();
         let profile = capabilities
             .fields
@@ -1169,41 +1164,6 @@ mod tests {
     }
 
     #[test]
-    fn persisted_tor_named_fields_migrate_to_provider_neutral_plan_fields() {
-        let plan = DeployPlan::normal(
-            DeployAction::RedeployCurrent,
-            vec![Target::Android],
-            Configuration::Debug,
-        );
-        let mut value = serde_json::to_value(plan).expect("serialize deployment plan");
-        let object = value.as_object_mut().expect("plan object");
-        let maintenance =
-            object.remove("provider_maintenance").expect("provider maintenance field");
-        object.insert("onion".into(), maintenance);
-        let service_build =
-            object.remove("provider_service_build").expect("provider service build field");
-        object.insert("relay_build".into(), service_build);
-
-        let migrated: DeployPlan = serde_json::from_value(value).expect("deserialize old plan");
-        assert_eq!(migrated.provider_maintenance, ProviderMaintenancePolicy::Ensure);
-        assert_eq!(migrated.provider_service_build, BuildPolicy::IfRequired);
-    }
-
-    #[test]
-    fn legacy_checkpoint_action_and_stage_names_remain_readable() {
-        assert_eq!(
-            serde_json::from_str::<DeployAction>("\"relay_maintenance\"")
-                .expect("legacy deployment action"),
-            DeployAction::ProviderMaintenance
-        );
-        assert_eq!(
-            serde_json::from_str::<DeployStage>("\"relay_reachable\"")
-                .expect("legacy deployment stage"),
-            DeployStage::ProviderServiceReachable
-        );
-    }
-
-    #[test]
     fn collect_logs_hides_deployment_fields() {
         let plan = DeployPlan::normal(
             DeployAction::CollectLogs,
@@ -1251,7 +1211,7 @@ mod tests {
             vec![Target::Windows],
             Configuration::Debug,
         );
-        plan.communication_provider = CommunicationProvider::Iroh;
+        plan.communication_provider = iroh_provider();
         let service = plan
             .capabilities()
             .fields

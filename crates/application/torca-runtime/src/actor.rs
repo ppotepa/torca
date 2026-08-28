@@ -13,8 +13,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use torca_attachments::AttachmentId;
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_connectivity::{
-    ConnectivityObserver, ConnectivitySnapshot, PeerProbeCandidate, PeerProbeSupervisor,
-    RendezvousHealthHandle, RendezvousHealthPort, RendezvousHealthSnapshot, RendezvousHealthWorker,
+    ConnectivityObserver, ConnectivitySnapshot, PairingServiceHealthHandle,
+    PairingServiceHealthPort, PairingServiceHealthSnapshot, PairingServiceHealthWorker,
+    PeerProbeCandidate, PeerProbeSupervisor,
 };
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;

@@ -19,7 +19,6 @@ pub mod paths;
 pub mod persistence;
 pub mod planner;
 pub mod process;
-pub mod relay;
 pub mod tui;
 pub mod windows_client;
 

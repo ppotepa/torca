@@ -143,8 +143,8 @@ mod tests {
     }
 
     impl PeerTransportFactory for CountingFactory {
-        fn kind(&self) -> TransportKind {
-            TransportKind::Memory
+        fn provider_id(&self) -> ProviderId {
+            ProviderId::new("memory").expect("static provider id")
         }
 
         fn capabilities(&self) -> TransportCapabilities {
@@ -193,12 +193,8 @@ mod tests {
         let contact = Contact::new(
             contact_id,
             PublicIdentity::new(IdentityId::from_u128(remote_identity), key, 0),
-            ContactRoute::for_provider_endpoint(
-                OpaqueId::from_u128(10),
-                TransportKind::Memory.wire_value(),
-                vec![1],
-            )
-            .expect("valid memory route"),
+            ContactRoute::for_provider_endpoint(OpaqueId::from_u128(10), "memory", vec![1])
+                .expect("valid memory route"),
             Timestamp::UNIX_EPOCH,
         );
         let connects = Arc::new(AtomicUsize::new(0));

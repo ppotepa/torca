@@ -52,7 +52,7 @@ impl RuntimeOwner {
     ) -> (RuntimeHandle, Self) {
         let rendezvous_info = rendezvous_probe.clone();
         let rendezvous_worker = rendezvous_probe.and_then(|probe| {
-            RendezvousHealthWorker::spawn_demand_driven(Arc::new(RuntimeRendezvousHealthPort(probe)))
+            PairingServiceHealthWorker::spawn_demand_driven(Arc::new(RuntimePairingServiceHealthPort(probe)))
                 .map_err(|error| {
                     eprintln!("torca-runtime: rendezvous supervisor unavailable: {error}");
                     error
@@ -60,7 +60,7 @@ impl RuntimeOwner {
                 .ok()
         });
         let rendezvous_health =
-            rendezvous_worker.as_ref().map(RendezvousHealthWorker::handle);
+            rendezvous_worker.as_ref().map(PairingServiceHealthWorker::handle);
         let (sender, receiver) = mpsc::sync_channel(MAILBOX_CAPACITY);
         let communication_sender = sender.clone();
         let communication_wake_pending = Arc::new(AtomicBool::new(false));
@@ -110,7 +110,7 @@ impl RuntimeOwner {
         let join = thread::spawn(move || {
         let mut diagnostics = DiagnosticBuffer::new(256);
             diagnostics.set_provider_context(
-                communication_lifecycle.provider().wire_value(),
+                communication_lifecycle.provider_id().as_str(),
                 communication_lifecycle.provider_profile(),
             );
             let mut policy = RuntimeGovernor::new(std::time::Instant::now());
@@ -192,7 +192,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
     diagnostics: &mut DiagnosticBuffer,
     sequence: &mut u128,
     policy: &mut RuntimeGovernor,
-    rendezvous_health: Option<RendezvousHealthHandle>,
+    rendezvous_health: Option<PairingServiceHealthHandle>,
     rendezvous_info: Option<Arc<dyn RendezvousProbe>>,
     connectivity: ConnectivityObserver,
     communication_wake_pending: Arc<AtomicBool>,

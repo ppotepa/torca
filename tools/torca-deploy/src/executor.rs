@@ -4,13 +4,13 @@ use thiserror::Error;
 
 use crate::domain::{
     CheckStatus, DeployPlan, DeployRun, DeployStage, PreflightCheck, PreflightReport,
+    ProviderMetadataExt,
 };
 use crate::persistence::{PersistenceError, StateStore};
 use crate::process::{CommandRunner, ProcessError, SystemCommandRunner};
 use crate::{
     build::BuildController, data::DataController, devices::DeviceController,
     install::InstallController, launch::LaunchController, paths::RuntimePaths,
-    relay::RelayController,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,12 +97,6 @@ impl DeployExecutor {
     ) -> Result<DeployRun, DeployError> {
         let run = self.store.load_current().map_err(DeployError::State)?;
         self.execute_with_cancel(run, mode, cancellation)
-    }
-
-    pub fn relay_status(&self) -> Result<crate::relay::RelayStatus, DeployError> {
-        let paths = RuntimePaths::from_repo(self.store.paths().repo_root.clone());
-        paths.ensure().map_err(DeployError::Paths)?;
-        RelayController::new(&paths, self.runner.as_ref()).status().map_err(DeployError::Relay)
     }
 
     /// Collect a bounded incident snapshot without changing the deployment
@@ -237,7 +231,6 @@ impl DeployExecutor {
         if self.cancelled(&mut run, cancellation) {
             return Err(DeployError::Cancelled);
         }
-        self.validate_endpoint(&run)?;
         if run.plan.needs_provider_service() {
             run.advance(
                 DeployStage::ProviderServicePrepared,
@@ -254,11 +247,7 @@ impl DeployExecutor {
         if self.cancelled(&mut run, cancellation) {
             return Err(DeployError::Cancelled);
         }
-        if run.plan.communication_provider.deployment_profile().commissioning_service.is_managed() {
-            run.provider_endpoint = self.read_relay_endpoint();
-        } else {
-            run.provider_endpoint = None;
-        }
+        run.provider_endpoint = None;
         if !matches!(run.plan.action, crate::domain::DeployAction::CollectLogs)
             && !matches!(run.plan.launch, crate::domain::LaunchPolicy::Skip)
         {
@@ -309,28 +298,6 @@ impl DeployExecutor {
         });
     }
 
-    fn read_relay_endpoint(&self) -> Option<String> {
-        std::fs::read_to_string(
-            self.store.paths().repo_root.join(".torca/stack/relay_endpoint.txt"),
-        )
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    }
-
-    fn validate_endpoint(&self, run: &DeployRun) -> Result<(), DeployError> {
-        if !run.plan.communication_provider.deployment_profile().commissioning_service.is_managed()
-        {
-            return Ok(());
-        }
-        if let (Some(expected), Some(actual)) = (&run.provider_endpoint, self.read_relay_endpoint())
-            && expected != &actual
-        {
-            return Err(DeployError::EndpointMismatch { expected: expected.clone(), actual });
-        }
-        Ok(())
-    }
-
     fn cancelled(&self, run: &mut DeployRun, cancellation: &CancellationToken) -> bool {
         if !cancellation.is_cancelled() {
             return false;
@@ -348,58 +315,7 @@ impl DeployExecutor {
     ) -> Result<(), DeployError> {
         let paths = RuntimePaths::from_repo(self.store.paths().repo_root.clone());
         paths.ensure().map_err(DeployError::Paths)?;
-        let endpoint = if run.plan.needs_provider_service()
-            && !run.completed.contains(&DeployStage::ProviderEndpointVerified)
-        {
-            let previous = paths.endpoint();
-            let relay = RelayController::new(&paths, self.runner.as_ref());
-            let status = relay
-                .ensure(run.plan.provider_maintenance, run.plan.provider_service_build)
-                .map_err(DeployError::Relay)?;
-            if !status.healthy {
-                return Err(DeployError::RelayNotHealthy);
-            }
-            if matches!(
-                run.plan.provider_maintenance,
-                crate::domain::ProviderMaintenancePolicy::RotateIdentity
-            ) && previous == status.endpoint
-            {
-                return Err(DeployError::EndpointMismatch {
-                    expected: "new onion endpoint".into(),
-                    actual: status.endpoint.unwrap_or_default(),
-                });
-            }
-            run.provider_endpoint.clone_from(&status.endpoint);
-            run.advance(
-                DeployStage::ProviderServiceReachable,
-                if status.onion_ready {
-                    "relay protocol healthy and onion publication confirmed"
-                } else {
-                    "relay protocol healthy; onion publication continues in background"
-                },
-            );
-            self.checkpoint(run)?;
-            run.advance(
-                DeployStage::ProviderEndpointVerified,
-                "relay endpoint validated before client build",
-            );
-            self.checkpoint(run)?;
-            status.endpoint
-        } else if run
-            .plan
-            .communication_provider
-            .deployment_profile()
-            .commissioning_service
-            .is_managed()
-        {
-            run.provider_endpoint
-                .clone()
-                .or_else(|| paths.endpoint())
-                .or_else(|| std::env::var("TORCA_PROVIDER_ENDPOINT").ok())
-                .or_else(|| std::env::var("TORCA_RELAY_ENDPOINT").ok())
-        } else {
-            None
-        };
+        let endpoint: Option<String> = None;
         // Generic artifact builds are intentionally host-only: a disconnected
         // phone must never prevent CI from producing portable APKs. An exact
         // device opt-in (used by the soak cockpit) is different: discover it
@@ -445,7 +361,7 @@ impl DeployExecutor {
                     run.plan.configuration,
                     run.plan.client_build,
                     endpoint.as_deref(),
-                    run.plan.communication_provider,
+                    run.plan.communication_provider.clone(),
                     run.plan.provider_profile.as_deref(),
                 )
                 .map_err(DeployError::Build)?;
@@ -494,7 +410,7 @@ impl DeployExecutor {
                     .install(
                         device,
                         run.plan.configuration,
-                        run.plan.communication_provider,
+                        run.plan.communication_provider.clone(),
                         run.plan.provider_profile.as_deref(),
                     )
                     .map_err(DeployError::Install)?;
@@ -508,7 +424,7 @@ impl DeployExecutor {
             }
             // Start every selected client before waiting for health.  The old
             // device-by-device loop made Android wait behind a fully warmed
-            // Windows runtime (and vice versa), turning a slow onion publish
+            // Windows runtime (and vice versa), turning a slow route setup
             // into a serial deployment stall.
             let launch = LaunchController::new(&paths, self.runner.as_ref());
             let receipts = if run.completed.contains(&DeployStage::ClientsLaunched) {
@@ -531,7 +447,7 @@ impl DeployExecutor {
                                 device,
                                 run.plan.configuration,
                                 run.plan.privacy,
-                                run.plan.communication_provider,
+                                run.plan.communication_provider.clone(),
                                 run.plan.provider_profile.as_deref(),
                                 matches!(run.plan.launch, crate::domain::LaunchPolicy::Restart),
                             )
@@ -556,7 +472,7 @@ impl DeployExecutor {
                         device,
                         receipt,
                         run.plan.validation,
-                        run.plan.communication_provider,
+                        run.plan.communication_provider.clone(),
                     )
                     .map_err(DeployError::Launch)?;
             }
@@ -577,7 +493,7 @@ impl DeployExecutor {
                 &paths,
                 &devices,
                 run.plan.configuration,
-                run.plan.communication_provider,
+                run.plan.communication_provider.clone(),
                 endpoint,
                 run.plan.provider_profile.as_deref(),
             )
@@ -597,10 +513,6 @@ pub enum DeployError {
     Process(ProcessError),
     #[error("runtime path error: {0}")]
     Paths(crate::paths::PathError),
-    #[error("relay deployment failed: {0}")]
-    Relay(crate::relay::RelayError),
-    #[error("relay is not healthy")]
-    RelayNotHealthy,
     #[error("device discovery failed: {0}")]
     Devices(crate::devices::DeviceError),
     #[error("build failed: {0}")]
@@ -615,7 +527,7 @@ pub enum DeployError {
     DiagnosticsEmpty,
     #[error("deployment manifest synchronization failed: {0}")]
     Manifest(crate::manifests::ManifestError),
-    #[error("deployment manifest synchronization requires a relay endpoint")]
+    #[error("deployment manifest synchronization requires a provider endpoint")]
     MissingEndpoint,
     #[error("deployment cancellation requested")]
     Cancelled,
@@ -628,7 +540,6 @@ mod tests {
     use super::*;
     use crate::domain::{Configuration, DeployAction, Target};
     use crate::process::{CommandOutput, CommandSpec};
-    use std::path::PathBuf;
 
     struct FakeRunner;
 
@@ -636,63 +547,6 @@ mod tests {
         fn run(&self, _command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
             Ok(CommandOutput { success: true, status: Some(0), text: "ok".into() })
         }
-    }
-
-    #[test]
-    fn successful_execution_persists_completed_checkpoint() {
-        let root =
-            std::env::temp_dir().join(format!("torca-deploy-executor-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("scripts")).expect("create test root");
-        let exe = root.join("apps/client/flutter/build/windows/x64/runner/Debug/torca_app.exe");
-        std::fs::create_dir_all(exe.parent().expect("exe parent")).expect("create exe dir");
-        std::fs::write(&exe, "test").expect("exe");
-        let endpoint = format!("{}.onion:443", "a".repeat(56));
-        std::fs::create_dir_all(root.join(".torca/stack")).expect("stack directory");
-        std::fs::create_dir_all(root.join(".torca/manifests")).expect("manifest directory");
-        std::fs::create_dir_all(root.join("release")).expect("release directory");
-        std::fs::write(root.join(".torca/stack/relay_endpoint.txt"), &endpoint).expect("endpoint");
-        std::fs::write(
-            root.join(".torca/manifests/clients-debug.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "endpoint": endpoint,
-                "communicationProvider": "tor",
-                "targets": ["windows"],
-                "buildId": "BUILD",
-                "sourceCommit": "COMMIT",
-                "compiledFeatures": "provider-tor,radio-audio",
-                "artifacts": [{
-                    "target": "windows",
-                    "path": exe,
-                    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-                }],
-                "builtAt": "NOW"
-            }))
-            .expect("manifest json"),
-        )
-        .expect("manifest");
-        std::fs::write(
-            root.join("release/version.json"),
-            r#"{"version":"1.0.0","build":1,"contractSchema":1,"wireVersion":1,"storageEpoch":1,"schemaVersion":1}"#,
-        )
-        .expect("release metadata");
-        let paths = crate::persistence::DeployPaths {
-            repo_root: PathBuf::from(&root),
-            state_root: root.join(".torca/deploy"),
-        };
-        let deployment = DeployExecutor::with_runner(StateStore::new(paths), Arc::new(FakeRunner));
-        let plan = DeployPlan::normal(
-            DeployAction::RunInstalled,
-            vec![Target::Windows],
-            Configuration::Debug,
-        );
-        let mut plan = plan;
-        plan.launch = crate::domain::LaunchPolicy::Skip;
-        let run = deployment.create_run(plan).expect("create run");
-        let completed = deployment.execute(run, ExecutionMode::Execute).expect("execute");
-        assert_eq!(completed.stage, DeployStage::Completed);
-        assert!(deployment.resume(ExecutionMode::DryRun).is_ok());
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

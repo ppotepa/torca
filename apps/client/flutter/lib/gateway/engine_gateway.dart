@@ -124,22 +124,12 @@ class ClientBuildInfo {
     if (capabilities != null && capabilities is! Map<String, dynamic>) {
       throw const FormatException('Runtime metadata capabilities are invalid');
     }
-    final providerEndpointHash =
-        optionalString('providerEndpointHash') ??
-        // Metadata schema 1 used Tor-specific terminology. Keep reading it
-        // while old native binaries are still installable, but expose the
-        // value through the provider-neutral field to the rest of Flutter.
-        optionalString('relayEndpointHash');
+    final providerEndpointHash = optionalString('providerEndpointHash');
     final communicationProvider =
         (providerValue is String && providerValue.trim().isNotEmpty)
         ? providerValue.trim().toLowerCase()
-        : 'tor';
-    if (!const <String>{
-      'tor',
-      'iroh',
-      'webrtc',
-      'memory',
-    }.contains(communicationProvider)) {
+        : 'iroh';
+    if (communicationProvider != 'iroh') {
       throw FormatException(
         'Runtime metadata has unsupported communicationProvider '
         '$communicationProvider',
@@ -147,16 +137,7 @@ class ClientBuildInfo {
     }
     final providerEndpointRequired = value['providerEndpointRequired'] is bool
         ? value['providerEndpointRequired'] as bool
-        // Older metadata did not carry the capability. Keep the Tor default
-        // only while those binaries are still installable.
-        : communicationProvider == 'tor';
-    // A direct provider (Iroh/WebRTC/Memory) owns its route and deliberately
-    // has no managed relay endpoint. A managed-rendezvous provider must carry
-    // the endpoint fingerprint, otherwise the binary can be paired against a
-    // different relay than the one used to build it. Keep this check here at
-    // the FFI boundary so stale/mixed artifacts fail with an actionable
-    // provider-neutral error instead of a later "relay endpoint missing"
-    // failure during pairing.
+        : false;
     if (providerEndpointRequired && providerEndpointHash == null) {
       throw const FormatException(
         'Runtime metadata is missing providerEndpointHash for managed rendezvous provider',
@@ -195,10 +176,6 @@ class ClientBuildInfo {
   final int wireVersion;
   final ClientCapabilitiesDto capabilities;
 
-  /// Compatibility accessor for widgets compiled against the old Tor-only
-  /// naming. New UI must use [providerEndpointHash].
-  @Deprecated('Use providerEndpointHash')
-  String? get relayEndpointHash => providerEndpointHash;
 }
 
 abstract interface class BuildInfoProvider {

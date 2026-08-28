@@ -1,34 +1,10 @@
 fn main() {
-    // A native artifact must have exactly one communication implementation.
-    // Allowing multiple provider features makes dependency resolution and
-    // runtime readiness ambiguous (and can accidentally ship Tor code in an
-    // Iroh-only build). The default feature set supplies provider-tor for
-    // backwards-compatible local builds; deploy profiles select one feature
-    // explicitly with --no-default-features.
-    let providers = [
-        ("provider-tor", "CARGO_FEATURE_PROVIDER_TOR"),
-        ("provider-iroh", "CARGO_FEATURE_PROVIDER_IROH"),
-        ("provider-webrtc", "CARGO_FEATURE_PROVIDER_WEBRTC"),
-    ]
-    .into_iter()
-    .filter(|(_, env)| std::env::var_os(env).is_some())
-    .map(|(name, _)| name)
-    .collect::<Vec<_>>();
-    if providers.len() != 1 {
-        panic!(
-            "torca-native requires exactly one communication provider feature; enabled: {}",
-            if providers.is_empty() { "none".into() } else { providers.join(", ") }
-        );
-    }
     println!("cargo:rerun-if-env-changed=TORCA_BUILD_ID");
     println!("cargo:rerun-if-env-changed=TORCA_PRODUCT_VERSION");
     println!("cargo:rerun-if-env-changed=TORCA_SOURCE_COMMIT");
     println!("cargo:rerun-if-env-changed=TORCA_SOURCE_FINGERPRINT");
     println!("cargo:rerun-if-env-changed=TORCA_PROVIDER_ENDPOINT");
     println!("cargo:rerun-if-env-changed=TORCA_PROVIDER_ENDPOINT_HASH");
-    // Accepted only by the Tor adapter as a temporary local-build migration.
-    println!("cargo:rerun-if-env-changed=TORCA_RELAY_ENDPOINT");
-    println!("cargo:rerun-if-env-changed=TORCA_COMMUNICATION_PROVIDER");
     println!("cargo:rerun-if-env-changed=TORCA_IROH_PROFILE");
     println!("cargo:rerun-if-env-changed=TORCA_IROH_RELAY_URLS");
     println!("cargo:rerun-if-env-changed=TORCA_IROH_PKARR_URL");

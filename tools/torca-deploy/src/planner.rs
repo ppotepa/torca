@@ -23,6 +23,6 @@ mod tests {
         assert_eq!(plan.action, DeployAction::FullRedeploy);
         assert_eq!(plan.targets, all_client_targets());
         assert_eq!(plan.client_build, BuildPolicy::Rebuild);
-        assert_eq!(plan.provider_service_build, BuildPolicy::Rebuild);
+        assert_eq!(plan.provider_service_build, BuildPolicy::Reuse);
     }
 }

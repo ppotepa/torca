@@ -4,7 +4,7 @@ This roadmap describes long-lived product and engineering direction. It is delib
 
 ## Direction
 
-Torca is moving toward a dependable private one-to-one messenger with a modern everyday user experience and direct peer communication over Tor.
+Torca is moving toward a dependable private one-to-one messenger with direct authenticated peer communication over Iroh.
 
 The desired end state is a product where a user can install the same Torca application on a supported platform, create a local identity, explicitly pair with another person, and communicate reliably without depending on a central account/history/message service.
 
@@ -16,7 +16,7 @@ Reliability remains the first product feature. Continue hardening and measuring:
 
 - bootstrap and degraded/offline behavior;
 - durable outgoing work, retry and restart recovery;
-- peer reconnect and slow/unavailable Tor behavior;
+- peer reconnect and slow/unavailable Iroh behavior;
 - pairing recovery and explicit error states;
 - attachment resume/cancel/export behavior;
 - Windows/Android background/lifecycle behavior;
@@ -67,7 +67,7 @@ As histories and contact lists grow, normal runtime/presentation paths should re
 - keep notification/connectivity/energy diagnostics payload-free and incremental; and
 - avoid work proportional to complete message history in background hot paths.
 
-Aggressive Tor dormancy should remain measurement-gated. Do not trade reliable inbound/pairing/delivery recovery for an unmeasured battery optimization.
+Aggressive Iroh dormancy should remain measurement-gated. Do not trade reliable inbound/pairing/delivery recovery for an unmeasured battery optimization.
 
 ### Development ergonomics
 

@@ -342,7 +342,7 @@ pub trait CommunicationLifecycle: Send + 'static {
     /// Identity of the provider which owns this lifecycle.  Requiring this
     /// instead of defaulting commissioning to Tor prevents a newly added
     /// provider from accidentally exposing a Tor-shaped runtime snapshot.
-    fn provider(&self) -> torca_transport_api::TransportKind;
+    fn provider_id(&self) -> torca_foundation::ProviderId;
     /// Optional provider-owned deployment profile for diagnostics. This is
     /// deliberately presentation-only; runtime policy must not branch on a
     /// concrete provider string.
@@ -428,7 +428,7 @@ pub trait CommunicationLifecycle: Send + 'static {
             IncomingReachabilityState::Stopped => CommissioningState::NotRequired,
         };
         ProviderCommissioning {
-            provider: self.provider(),
+            provider: self.provider_id(),
             steps: vec![
                 CommissioningStep {
                     stage: CommissioningStage::LocalRuntime,
@@ -456,8 +456,8 @@ pub trait CommunicationLifecycle: Send + 'static {
 }
 
 impl CommunicationLifecycle for Box<dyn CommunicationLifecycle> {
-    fn provider(&self) -> torca_transport_api::TransportKind {
-        (**self).provider()
+    fn provider_id(&self) -> torca_foundation::ProviderId {
+        (**self).provider_id()
     }
 
     fn provider_profile(&self) -> Option<&'static str> {
@@ -535,9 +535,9 @@ pub trait RendezvousProbe: Send + Sync + 'static {
 /// Compatibility alias for adapters compiled against the old port name.
 pub use RendezvousProbe as RelayProbe;
 
-struct RuntimeRendezvousHealthPort(Arc<dyn RendezvousProbe>);
+struct RuntimePairingServiceHealthPort(Arc<dyn RendezvousProbe>);
 
-impl RendezvousHealthPort for RuntimeRendezvousHealthPort {
+impl PairingServiceHealthPort for RuntimePairingServiceHealthPort {
     fn check_relay_health(&self) -> Result<(), ErrorCode> {
         self.0.probe()
     }

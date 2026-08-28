@@ -16,10 +16,9 @@ Every request requires `X-Torca-Soak-Token`. Bind it to loopback or a private
 Docker network only. Do not use this service in a production deployment and do
 not put normal client profiles, keys, or message content in its root.
 
-For the Docker development stack:
+Run the development host directly from the workspace:
 
 ```powershell
-$env:TORCA_RELAY_ENDPOINT = '<current-onion>:443'
 $env:TORCA_SOAK_BOT_TOKEN = '<random-dev-token-at-least-16-chars>'
-docker compose -f infra/docker/compose.yml -f infra/docker/compose.soak.yml up --build soak-bot-host
+cargo run -p torca-soak-bot-host -- --bind 127.0.0.1:8787
 ```

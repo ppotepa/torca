@@ -26,8 +26,8 @@ torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-crypto = { path = "../torca-crypto" }
 torca-identity = { path = "../../domains/torca-identity" }
 torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
-torca-rendezvous-client = { path = "../torca-rendezvous-client" }
-torca-relay-protocol = { path = "../../protocol/torca-relay-protocol" }
+torca-pairing-service-client = { path = "../torca-pairing-service-client" }
+torca-pairing-service-protocol = { path = "../../protocol/torca-pairing-service-protocol" }
 torca-pairing = { path = "../../domains/torca-pairing" }
 torca-pairing-coordinator = { path = "../../application/torca-pairing-coordinator" }
 torca-radio-adapters = { path = "../torca-radio-adapters", default-features = false }

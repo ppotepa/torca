@@ -8,7 +8,6 @@ function Get-TorcaRelativePath { param([string]$BasePath,[string]$TargetPath); $
 
 $roots = @(
     'crates/platform/torca-native/src',
-    'crates/infrastructure/torca-tor/src',
     'crates/infrastructure/torca-pairing-driver/src',
     'crates/application/torca-pairing-coordinator/src'
 )

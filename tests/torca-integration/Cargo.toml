@@ -22,8 +22,7 @@ torca-crypto = { path = "../../crates/infrastructure/torca-crypto" }
 torca-file-storage = { path = "../../crates/infrastructure/torca-file-storage" }
 torca-pairing-coordinator = { path = "../../crates/application/torca-pairing-coordinator" }
 torca-pairing-protocol = { path = "../../crates/protocol/torca-pairing-protocol" }
-torca-relay = { path = "../../services/relay" }
-torca-relay-protocol = { path = "../../crates/protocol/torca-relay-protocol" }
+torca-pairing-service-protocol = { path = "../../crates/protocol/torca-pairing-service-protocol" }
 torca-storage-sqlite = { path = "../../crates/infrastructure/torca-storage-sqlite" }
 
 [lints]

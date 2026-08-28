@@ -1,7 +1,7 @@
 //! Provider-neutral transport contracts for authenticated Torca peer sessions.
 //!
-//! This crate deliberately does not implement networking.  Providers (Tor,
-//! Iroh and WebRTC) adapt their byte-oriented sessions to these contracts,
+//! This crate deliberately does not implement networking. Providers adapt
+//! their byte-oriented sessions to these contracts,
 //! while the application protocol remains shared.
 
 use std::fmt;
@@ -94,112 +94,18 @@ where
     }
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    serde::Deserialize,
-    serde::Serialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum TransportKind {
-    #[default]
-    Tor,
-    Iroh,
-    WebRtc,
-    Memory,
+pub fn parse_provider_id(value: &str) -> Result<ProviderId, TransportParseError> {
+    ProviderId::new(value).map_err(|_| TransportParseError(value.to_owned()))
 }
 
-impl TransportKind {
-    pub const fn wire_value(self) -> &'static str {
-        match self {
-            Self::Tor => "tor",
-            Self::Iroh => "iroh",
-            Self::WebRtc => "webrtc",
-            Self::Memory => "memory",
-        }
-    }
-
-    pub fn from_wire(value: &str) -> Result<Self, TransportParseError> {
-        match value {
-            "tor" => Ok(Self::Tor),
-            "iroh" => Ok(Self::Iroh),
-            "webrtc" => Ok(Self::WebRtc),
-            "memory" => Ok(Self::Memory),
-            _ => Err(TransportParseError(value.to_owned())),
-        }
-    }
-
-    /// Returns the validated identifier for this legacy built-in kind.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if a built-in wire value violates the `ProviderId`
-    /// invariant, which is a compile-time catalog defect.
-    pub fn provider_id(self) -> ProviderId {
-        ProviderId::new(self.wire_value()).expect("built-in transport kind is a valid provider id")
-    }
-
-    /// Compatibility adapter for callers that still select built-in providers
-    /// through `TransportKind`. Provider metadata itself lives in
-    /// `torca-provider-api` and is keyed by `ProviderId`.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if a built-in kind is missing from the provider metadata
-    /// catalog, which is a compile-time catalog defect.
-    pub fn deployment_profile(self) -> ProviderDeploymentProfile {
-        torca_provider_api::built_in_deployment_profile(&self.provider_id())
-            .expect("built-in transport kind has a deployment profile")
-    }
-
-    pub fn deployment_ready(self) -> bool {
-        self.deployment_profile().is_deployment_ready()
-    }
-
-    pub fn protocol_label(self) -> &'static str {
-        self.deployment_profile().label
-    }
-
-    /// Providers exposed by the deployment wizard. This list is intentionally
-    /// derived from the same profile used by the runtime gate.
-    pub const fn selectable() -> &'static [Self] {
-        // WebRTC remains hidden until a concrete Android/Windows session and
-        // signaling implementation is registered by the host. Iroh is fully
-        // composed in Rust and can be selected without that platform bridge.
-        &[Self::Tor, Self::Iroh]
-    }
-
-    /// Returns the provider-neutral descriptor for this legacy built-in kind.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if a built-in kind is missing from the provider metadata
-    /// catalog, which is a compile-time catalog defect.
-    pub fn descriptor(self) -> ProviderDescriptor {
-        torca_provider_api::built_in_descriptor(&self.provider_id())
-            .expect("built-in transport kind has a descriptor")
-    }
-}
-
-impl core::fmt::Display for TransportKind {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str(self.wire_value())
-    }
-}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransportParseError(pub String);
 
 /// A stable, provider-neutral stage of bringing communication online.
 ///
 /// The application renders these stages; provider adapters decide which ones
 /// exist and when each becomes ready.  In particular, `IncomingReachability`
-/// is not synonymous with an onion service: a WebRTC provider may report ICE
-/// readiness and an Iroh provider may report a reachable endpoint here.
+/// is not synonymous with any particular provider endpoint representation.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum CommissioningStage {
     LocalRuntime,
@@ -234,7 +140,7 @@ pub struct CommissioningStep {
 /// parsed by application policy and never carries secrets.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderCommissioning {
-    pub provider: TransportKind,
+    pub provider: ProviderId,
     pub steps: Vec<CommissioningStep>,
     pub endpoint_summary: Option<String>,
     /// Current provider route state. This is separate from commissioning
@@ -299,16 +205,18 @@ impl ProviderCommissioning {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TransportParseError(pub String);
+pub struct TransportPath {
+    pub provider: ProviderId,
+    pub topology: TransportTopology,
+}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TransportPath {
-    TorOnion,
-    IrohDirect,
-    IrohRelay,
-    WebRtcDirect,
-    WebRtcTurn,
-    Memory,
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportTopology {
+    Direct,
+    Relay,
     Unknown,
 }
 
@@ -316,7 +224,7 @@ pub enum TransportPath {
 ///
 /// These are deliberately optional: a provider that does not expose endpoint
 /// generations or public reachability can still participate without inventing
-/// Tor-shaped values. No endpoint address, peer identity or secret crosses
+/// provider-shaped values. No endpoint address, peer identity or secret crosses
 /// this boundary.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -413,7 +321,7 @@ impl Default for RealtimeCapabilities {
 }
 
 pub trait ProviderTransport: PeerTransport + Send {
-    fn kind(&self) -> TransportKind;
+    fn provider_id(&self) -> ProviderId;
     fn path(&self) -> TransportPath;
     fn capabilities(&self) -> TransportCapabilities;
 }
@@ -425,7 +333,7 @@ pub trait ProviderTransport: PeerTransport + Send {
 /// streams. Handshake, delivery, retries and application encryption remain
 /// above this boundary.
 pub trait PeerTransportFactory: Send {
-    fn kind(&self) -> TransportKind;
+    fn provider_id(&self) -> ProviderId;
     fn capabilities(&self) -> TransportCapabilities;
     fn accept(&mut self) -> Result<Option<Box<dyn PeerTransport + Send>>, TransportFactoryError>;
     fn connect(
@@ -454,84 +362,11 @@ pub enum TransportFactoryError {
     RouteStale,
 }
 
-/// Platform-owned negotiated WebRTC data channel.
-///
-/// Signalling, SDP, ICE and TURN remain outside the provider-neutral runtime.
-/// The platform only exposes a reliable/ordered byte channel and wakes the
-/// runtime when inbound data or channel state changes.
-pub trait WebRtcDataChannel: Send + Sync {
-    fn send(&self, payload: &[u8]) -> Result<(), String>;
-    fn try_receive(&self) -> Result<Option<Vec<u8>>, String>;
-    fn close(&self) -> Result<(), String>;
-    fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>);
-}
-
-/// Platform-owned WebRTC signalling/session boundary.
-pub trait WebRtcSessionProvider: Send + Sync {
-    /// Opaque local signalling hint advertised through pairing.
-    fn local_endpoint_hint(&self) -> Result<Vec<u8>, String>;
-    fn accept(&self) -> Result<Option<Arc<dyn WebRtcDataChannel>>, String>;
-    fn connect(&self, contact: &Contact) -> Result<Arc<dyn WebRtcDataChannel>, String>;
-    fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>);
-
-    /// Requests a provider-owned ICE/session refresh after a route becomes
-    /// stale. The default is a no-op for hosts whose SDK renegotiates
-    /// automatically; concrete Android/desktop bridges should override this
-    /// to trigger ICE gathering or a new DataChannel offer.
-    fn refresh_route(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Provider-owned commissioning projection. The default is deliberately
-    /// conservative: a host must override it when ICE/signaling readiness is
-    /// asynchronous, otherwise pairing remains pending until the host reports
-    /// a reachable session.
-    fn commissioning(&self) -> ProviderCommissioning {
-        ProviderCommissioning {
-            provider: TransportKind::WebRtc,
-            steps: vec![
-                CommissioningStep {
-                    stage: CommissioningStage::LocalRuntime,
-                    state: CommissioningState::Ready,
-                    required_for_local_shell: true,
-                    required_for_pairing: false,
-                },
-                CommissioningStep {
-                    stage: CommissioningStage::IncomingReachability,
-                    state: CommissioningState::Pending,
-                    required_for_local_shell: false,
-                    required_for_pairing: true,
-                },
-            ],
-            endpoint_summary: None,
-            route_state: crate::ProviderRouteState::Unavailable,
-            pairing_bootstrap: None,
-        }
-    }
-
-    /// Converts the platform-owned external-signaling hint into the common QR
-    /// bootstrap envelope. The default keeps SDP/ICE types out of the runtime
-    /// while making WebRTC pairing use the same bounded descriptor as Iroh.
-    fn pairing_bootstrap_descriptor(&self) -> Result<PairingBootstrapDescriptor, String> {
-        PairingBootstrapDescriptor::new("webrtc", self.local_endpoint_hint()?)
-            .map_err(|error| error.to_string())
-    }
-}
-
-/// Opaque signaling port used to establish WebRTC sessions and pairing slots.
-/// The platform owns WebSocket/HTTPS/ICE signaling; the application only
-/// supplies bounded bytes and never depends on a signaling library.
-pub trait WebRtcSignalingProvider: Send + Sync {
-    fn invalidate(&self);
-    fn reconnect(&self) -> Result<(), String>;
-    fn exchange(&self, request: &[u8], timeout: Duration) -> Result<Vec<u8>, String>;
-}
-
 /// Metadata used by manager and diagnostics without exposing provider bytes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransportSessionSnapshot {
     pub session_id: OpaqueId,
-    pub kind: TransportKind,
+    pub provider_id: ProviderId,
     pub path: TransportPath,
     pub last_activity_at: Option<Timestamp>,
 }
@@ -540,7 +375,7 @@ pub struct TransportSessionSnapshot {
 /// transport for a contact; fallback is selected only after the active one is
 /// closed.
 pub trait TransportManager: Send {
-    fn default_provider(&self) -> TransportKind;
+    fn default_provider(&self) -> ProviderId;
     fn active_session(&self, contact_id: OpaqueId) -> Option<TransportSessionSnapshot>;
     fn set_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>);
     fn next_wake(&self) -> Option<Duration>;
@@ -562,73 +397,15 @@ pub enum TransportError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::{
         CommissioningStage, CommissioningState, CommissioningStep, ProviderCommissioning,
-        ProviderCommissioningService, TransportKind, WebRtcDataChannel, WebRtcSessionProvider,
+        ProviderId,
     };
-
-    #[test]
-    fn wire_values_are_stable() {
-        for (kind, value) in [
-            (TransportKind::Tor, "tor"),
-            (TransportKind::Iroh, "iroh"),
-            (TransportKind::WebRtc, "webrtc"),
-            (TransportKind::Memory, "memory"),
-        ] {
-            assert_eq!(kind.wire_value(), value);
-            assert_eq!(TransportKind::from_wire(value), Ok(kind));
-        }
-    }
-
-    #[test]
-    fn deployment_requirements_belong_to_the_provider_definition() {
-        let tor = TransportKind::Tor.deployment_profile();
-        assert_eq!(tor.deployment_state, super::ProviderDeploymentState::Validated);
-        assert_eq!(tor.commissioning_service, ProviderCommissioningService::ManagedRendezvous);
-        assert!(tor.requires_service_readiness());
-        assert_eq!(tor.pairing_bootstrap, super::PairingBootstrapMode::ManagedSessionService);
-        assert_eq!(tor.startup_timeout, std::time::Duration::from_secs(15 * 60));
-        assert_eq!(tor.service_validation_timeout, std::time::Duration::from_secs(180));
-
-        let iroh = TransportKind::Iroh.deployment_profile();
-        assert_eq!(iroh.deployment_state, super::ProviderDeploymentState::Validated);
-        assert_eq!(iroh.commissioning_service, ProviderCommissioningService::None);
-        assert!(!iroh.requires_service_readiness());
-        assert_eq!(iroh.pairing_bootstrap, super::PairingBootstrapMode::DirectQr);
-        assert_eq!(iroh.startup_timeout, std::time::Duration::from_secs(45));
-        assert_eq!(iroh.service_validation_timeout, std::time::Duration::from_secs(45));
-        assert!(!iroh.features.pairing_short_code);
-        assert!(iroh.features.radio);
-        assert!(iroh.features.pairing_qr && iroh.features.pairing_full_link);
-        assert!(tor.features.pairing_short_code && tor.features.radio);
-        assert_eq!(TransportKind::selectable(), &[TransportKind::Tor, TransportKind::Iroh]);
-
-        let web_rtc = TransportKind::WebRtc.deployment_profile();
-        assert_eq!(web_rtc.deployment_state, super::ProviderDeploymentState::Hidden);
-        assert_eq!(web_rtc.commissioning_service, ProviderCommissioningService::ExternalSignaling);
-        assert!(web_rtc.requires_service_readiness());
-        assert_eq!(web_rtc.pairing_bootstrap, super::PairingBootstrapMode::ExternalSignaling);
-    }
-
-    #[test]
-    fn endpoint_validation_is_provider_owned() {
-        let onion = format!("{}.onion:443", "a".repeat(56));
-        assert!(TransportKind::Tor.deployment_profile().endpoint_is_valid(&onion));
-        assert!(!TransportKind::Tor.deployment_profile().endpoint_is_valid("https://signal.test"));
-        assert!(
-            TransportKind::WebRtc
-                .deployment_profile()
-                .endpoint_is_valid("wss://signal.test/session")
-        );
-        assert!(!TransportKind::WebRtc.deployment_profile().endpoint_is_valid("signal.test:443"));
-    }
 
     #[test]
     fn local_shell_does_not_wait_for_optional_incoming_reachability() {
         let commissioning = ProviderCommissioning {
-            provider: TransportKind::WebRtc,
+            provider: ProviderId::default(),
             steps: vec![
                 CommissioningStep {
                     stage: CommissioningStage::LocalRuntime,
@@ -650,33 +427,5 @@ mod tests {
 
         assert!(commissioning.local_shell_ready());
         assert!(commissioning.pairing_ready());
-    }
-
-    struct FakeWebRtcProvider;
-
-    impl WebRtcSessionProvider for FakeWebRtcProvider {
-        fn local_endpoint_hint(&self) -> Result<Vec<u8>, String> {
-            Ok(vec![9, 8, 7])
-        }
-
-        fn accept(&self) -> Result<Option<Arc<dyn WebRtcDataChannel>>, String> {
-            Ok(None)
-        }
-
-        fn connect(
-            &self,
-            _contact: &torca_contacts::Contact,
-        ) -> Result<Arc<dyn WebRtcDataChannel>, String> {
-            Err("not used".into())
-        }
-
-        fn set_waker(&self, _waker: Arc<dyn Fn() + Send + Sync>) {}
-    }
-
-    #[test]
-    fn web_rtc_signaling_hint_uses_the_common_pairing_bootstrap_envelope() {
-        let descriptor = FakeWebRtcProvider.pairing_bootstrap_descriptor().expect("descriptor");
-        assert_eq!(descriptor.provider(), "webrtc");
-        assert_eq!(descriptor.payload(), [9, 8, 7]);
     }
 }

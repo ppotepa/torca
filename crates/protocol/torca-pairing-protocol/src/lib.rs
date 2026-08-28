@@ -204,7 +204,7 @@ impl PairingEnvelope {
             return Err(PairingProtocolError::InvalidMagic);
         }
         let version = c.u16()?;
-        if version != 3 && version != 4 && version != VERSION {
+        if version != VERSION {
             return Err(PairingProtocolError::UnsupportedVersion(version));
         }
         let kind = c.u8()?;
@@ -263,7 +263,7 @@ fn encode_offer(o: &PairingOffer, out: &mut Vec<u8>) -> Result<(), PairingProtoc
     put_bytes(&o.transport_endpoint, out)?;
     Ok(())
 }
-fn decode_offer(c: &mut Cursor<'_>, version: u16) -> Result<PairingOffer, PairingProtocolError> {
+fn decode_offer(c: &mut Cursor<'_>, _version: u16) -> Result<PairingOffer, PairingProtocolError> {
     let identity_id = OpaqueId::from_bytes(c.array_16()?);
     let key_id = OpaqueId::from_bytes(c.array_16()?);
     let key_algorithm = c.u16()?;
@@ -271,14 +271,6 @@ fn decode_offer(c: &mut Cursor<'_>, version: u16) -> Result<PairingOffer, Pairin
     let key_generation = c.u32()?;
     let display_name = String::from_utf8(c.bytes(MAX_DISPLAY_NAME_LEN)?)
         .map_err(|_| PairingProtocolError::InvalidDisplayName)?;
-    let legacy_onion_endpoint = if version < 5 {
-        Some(
-            String::from_utf8(c.bytes(255)?)
-                .map_err(|_| PairingProtocolError::InvalidOnionAddress)?,
-        )
-    } else {
-        None
-    };
     let capability_id = OpaqueId::from_bytes(c.array_16()?);
     let transcript_nonce = c.array_32()?;
     let avatar = match c.u8()? {
@@ -294,19 +286,9 @@ fn decode_offer(c: &mut Cursor<'_>, version: u16) -> Result<PairingOffer, Pairin
         }),
         _ => return Err(PairingProtocolError::InvalidAvatar),
     };
-    let (transport_provider, mut transport_endpoint) = if version >= 4 {
-        let provider = String::from_utf8(c.bytes(MAX_TRANSPORT_PROVIDER_LEN)?)
-            .map_err(|_| PairingProtocolError::InvalidTransport)?;
-        let endpoint = c.bytes(MAX_TRANSPORT_ENDPOINT_LEN)?;
-        (provider, endpoint)
-    } else {
-        ("tor".to_owned(), Vec::new())
-    };
-    if transport_endpoint.is_empty() {
-        if let Some(onion_address) = legacy_onion_endpoint {
-            transport_endpoint = onion_address.into_bytes();
-        }
-    }
+    let transport_provider = String::from_utf8(c.bytes(MAX_TRANSPORT_PROVIDER_LEN)?)
+        .map_err(|_| PairingProtocolError::InvalidTransport)?;
+    let transport_endpoint = c.bytes(MAX_TRANSPORT_ENDPOINT_LEN)?;
     Ok(PairingOffer {
         identity_id,
         key_id,
@@ -392,7 +374,6 @@ pub enum PairingProtocolError {
     PairingIdMismatch,
     InvalidPublicKeyLength,
     InvalidDisplayName,
-    InvalidOnionAddress,
     InvalidAvatar,
     InvalidTransport,
     InvalidApprovalProofLength,
@@ -427,7 +408,7 @@ mod tests {
                 capability_id: OpaqueId::from_u128(4),
                 transcript_nonce: [9; 32],
                 avatar: None,
-                transport_provider: "tor".into(),
+                transport_provider: "iroh".into(),
                 transport_endpoint: format!("{}.onion", "a".repeat(56)).into_bytes(),
             })),
         }
@@ -480,46 +461,17 @@ mod tests {
     fn offer_carries_one_selected_transport_endpoint() {
         let mut envelope = offer(3);
         if let PairingPayload::Offer(ref mut value) = envelope.payload {
-            value.transport_provider = "webrtc".into();
+            value.transport_provider = "iroh".into();
             value.transport_endpoint = b"opaque-sdp-and-ice".to_vec();
         }
         let encoded = envelope.encode().expect("encode");
         let decoded = PairingEnvelope::decode(&encoded).expect("decode");
         assert_eq!(decoded, envelope);
         if let PairingPayload::Offer(value) = decoded.payload {
-            assert_eq!(value.transport_provider, "webrtc");
+            assert_eq!(value.transport_provider, "iroh");
             assert_eq!(value.transport_endpoint, b"opaque-sdp-and-ice");
         } else {
             panic!("expected offer");
         }
-    }
-
-    #[test]
-    fn version_four_tor_offer_migrates_legacy_onion_to_provider_endpoint() {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(super::MAGIC);
-        bytes.extend_from_slice(&4_u16.to_be_bytes());
-        bytes.push(super::PairingPayloadKind::Offer as u8);
-        bytes.extend_from_slice(&OpaqueId::from_u128(1).into_bytes());
-        bytes.extend_from_slice(&OpaqueId::from_u128(2).into_bytes());
-        bytes.extend_from_slice(&OpaqueId::from_u128(3).into_bytes());
-        bytes.extend_from_slice(&1_u16.to_be_bytes());
-        super::put_bytes(&[7; 32], &mut bytes).expect("public key");
-        bytes.extend_from_slice(&0_u32.to_be_bytes());
-        super::put_bytes(b"Orca", &mut bytes).expect("name");
-        let onion = format!("{}.onion", "a".repeat(56));
-        super::put_bytes(onion.as_bytes(), &mut bytes).expect("onion");
-        bytes.extend_from_slice(&OpaqueId::from_u128(4).into_bytes());
-        bytes.extend_from_slice(&[9; 32]);
-        bytes.push(0); // no avatar
-        super::put_bytes(b"tor", &mut bytes).expect("provider");
-        super::put_bytes(&[], &mut bytes).expect("legacy empty endpoint");
-
-        let decoded = PairingEnvelope::decode(&bytes).expect("decode v4 offer");
-        let PairingPayload::Offer(offer) = decoded.payload else {
-            panic!("expected offer");
-        };
-        assert_eq!(offer.transport_provider, "tor");
-        assert_eq!(offer.transport_endpoint, onion.into_bytes());
     }
 }

@@ -63,7 +63,6 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_public_key,
                     values.remote_key_generation,
                     values.remote_display_name,
-                    values.remote_onion_address,
                     values.remote_capability_id,
                     values.remote_avatar_schema,
                     values.remote_avatar_generator_version,
@@ -110,7 +109,6 @@ impl PairingRepository for SqlCipherPairingRepository {
                     values.remote_public_key,
                     values.remote_key_generation,
                     values.remote_display_name,
-                    values.remote_onion_address,
                     values.remote_capability_id,
                     values.remote_avatar_schema,
                     values.remote_avatar_generator_version,
@@ -157,7 +155,6 @@ struct Encoded {
     remote_public_key: Option<Vec<u8>>,
     remote_key_generation: Option<i64>,
     remote_display_name: Option<String>,
-    remote_onion_address: Option<String>,
     remote_capability_id: Option<Vec<u8>>,
     remote_avatar_schema: Option<i64>,
     remote_avatar_generator_version: Option<String>,
@@ -176,7 +173,6 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_public_key,
         remote_key_generation,
         remote_display_name,
-        remote_onion_address,
         remote_capability_id,
         remote_avatar_schema,
         remote_avatar_generator_version,
@@ -212,14 +208,6 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
             Some(proposal.public_identity.key().public_key().to_vec()),
             Some(i64::from(proposal.public_identity.generation())),
             Some(proposal.display_name.clone()),
-            Some(
-                proposal
-                    .route
-                    .provider_endpoint("tor")
-                    .and_then(|endpoint| std::str::from_utf8(endpoint).ok())
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
             Some(proposal.route.capability_id().into_bytes().to_vec()),
             avatar.0,
             avatar.1,
@@ -239,7 +227,7 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
             ),
         )
     } else {
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None, None, None, None, None)
     };
     Ok(Encoded {
         id: session.id().to_opaque().into_bytes().to_vec(),
@@ -255,7 +243,6 @@ fn encode(session: &PairingSession) -> Result<Encoded, PairingError> {
         remote_public_key,
         remote_key_generation,
         remote_display_name,
-        remote_onion_address,
         remote_capability_id,
         remote_avatar_schema,
         remote_avatar_generator_version,
@@ -283,14 +270,13 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
         row.get::<_, Option<Vec<u8>>>(10)?,
         row.get::<_, Option<i64>>(11)?,
         row.get::<_, Option<String>>(12)?,
-        row.get::<_, Option<String>>(13)?,
-        row.get::<_, Option<Vec<u8>>>(14)?,
-        row.get::<_, Option<i64>>(15)?,
+        row.get::<_, Option<Vec<u8>>>(13)?,
+        row.get::<_, Option<i64>>(14)?,
+        row.get::<_, Option<String>>(15)?,
         row.get::<_, Option<String>>(16)?,
-        row.get::<_, Option<String>>(17)?,
+        row.get::<_, Option<Vec<u8>>>(17)?,
         row.get::<_, Option<Vec<u8>>>(18)?,
-        row.get::<_, Option<Vec<u8>>>(19)?,
-        row.get::<_, Option<String>>(20)?,
+        row.get::<_, Option<String>>(19)?,
     ) {
         (
             Some(identity_id),
@@ -299,7 +285,6 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
             Some(public_key),
             Some(generation),
             display_name,
-            Some(onion),
             Some(capability),
             avatar_schema,
             avatar_generator_version,
@@ -323,15 +308,12 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
                 u32::try_from(generation).map_err(|_| rusqlite::Error::InvalidQuery)?,
             );
             let capability_id = OpaqueId::from_bytes(blob16(capability)?);
-            let mut endpoints = transport_endpoints_json
+            let endpoints = transport_endpoints_json
                 .as_deref()
                 .and_then(|json| {
                     serde_json::from_str::<std::collections::BTreeMap<String, Vec<u8>>>(json).ok()
                 })
                 .unwrap_or_default();
-            if !endpoints.contains_key("tor") && !onion.is_empty() {
-                endpoints.insert("tor".to_owned(), onion.into_bytes());
-            }
             let endpoints = endpoints
                 .into_iter()
                 .map(|(provider, endpoint)| {
@@ -384,9 +366,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
                 avatar,
             })
         }
-        (None, None, None, None, None, None, None, None, None, None, None, None, None, None) => {
-            None
-        }
+        (None, None, None, None, None, None, None, None, None, None, None, None, None) => None,
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     PairingSession::restore(
@@ -529,7 +509,7 @@ mod tests {
             route: ContactRoute::for_provider_endpoint(
                 OpaqueId::from_u128(23),
                 "tor",
-                ("b".repeat(56) + ".onion").into_bytes(),
+                vec![9, 8, 7, 6],
             )
             .expect("route"),
             avatar: Some(AvatarGenomeReference {

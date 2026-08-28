@@ -3,11 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::devices::Device;
-use crate::domain::{CommunicationProvider, Configuration};
+use crate::domain::{CommunicationProvider, Configuration, iroh_provider};
 use crate::paths::RuntimePaths;
 
 /// Projects the canonical client artifact manifest into the legacy build and
@@ -37,7 +36,7 @@ pub fn synchronize(
             actual: recorded_provider.to_owned(),
         });
     }
-    if provider == CommunicationProvider::Iroh {
+    if provider == iroh_provider() {
         let expected_profile = normalized_iroh_profile(provider_profile);
         let recorded_profile = canonical["irohProfile"].as_str().unwrap_or("always");
         if recorded_profile != expected_profile.as_str() {
@@ -71,29 +70,12 @@ pub fn synchronize(
     )
     .map_err(|source| ManifestError::Decode { path: release_path, source })?;
 
-    let legacy_build = json!({
-        "Schema": 2,
-        "CommunicationProvider": provider.wire_value(),
-        "IrohProfile": iroh_profile_value(provider, provider_profile),
-        "IrohServiceConfigFingerprint": (provider == CommunicationProvider::Iroh)
-            .then(crate::build::iroh_service_config_fingerprint),
-        "Endpoint": endpoint,
-        "Targets": canonical["targets"],
-        "Configuration": mode,
-        "SourceFingerprint": canonical["buildId"],
-        "BuildId": canonical["buildId"],
-        "ContractVersion": release["contractSchema"],
-        "Commit": canonical["sourceCommit"],
-        "BuiltAt": canonical["builtAt"],
-    });
-    atomic_json(&paths.runtime_root.join("build-manifest.json"), &legacy_build)?;
-
     for device in devices {
         synchronize_device(
             paths,
             device,
             configuration,
-            provider,
+            provider.clone(),
             endpoint,
             provider_profile,
             &canonical,
@@ -138,10 +120,10 @@ fn synchronize_device(
         object.insert("BuildId".into(), canonical["buildId"].clone());
         object.insert("Configuration".into(), json!(configuration.to_string()));
         object.insert("CommunicationProvider".into(), json!(provider.wire_value()));
-        object.insert("IrohProfile".into(), iroh_profile_value(provider, provider_profile));
+        object.insert("IrohProfile".into(), iroh_profile_value(provider.clone(), provider_profile));
         object.insert(
             "IrohServiceConfigFingerprint".into(),
-            (provider == CommunicationProvider::Iroh)
+            (provider == iroh_provider())
                 .then(crate::build::iroh_service_config_fingerprint)
                 .map_or(Value::Null, Value::String),
         );
@@ -149,13 +131,6 @@ fn synchronize_device(
         object.insert("SchemaVersion".into(), release["schemaVersion"].clone());
         object.insert("ContractSchema".into(), release["contractSchema"].clone());
         object.insert("WireVersion".into(), release["wireVersion"].clone());
-        // Keep legacy keys for tooling, but make their absence explicit for
-        // direct providers such as Iroh instead of retaining a stale Tor URL.
-        object.insert("RelayEndpoint".into(), endpoint.map_or(Value::Null, |value| json!(value)));
-        object.insert(
-            "RelayEndpointHash".into(),
-            endpoint.map_or(Value::Null, |value| json!(format!("{:x}", Sha256::digest(value)))),
-        );
         object
             .insert("ProviderEndpoint".into(), endpoint.map_or(Value::Null, |value| json!(value)));
         object.insert(
@@ -182,7 +157,7 @@ fn safe_name(value: &str) -> String {
 }
 
 fn iroh_profile_value(provider: CommunicationProvider, explicit: Option<&str>) -> Value {
-    if provider != CommunicationProvider::Iroh {
+    if provider != iroh_provider() {
         return Value::Null;
     }
     json!(normalized_iroh_profile(explicit))
@@ -257,62 +232,7 @@ mod tests {
     use crate::domain::Target;
 
     #[test]
-    fn all_manifest_views_use_the_canonical_endpoint() {
-        let root = std::env::temp_dir().join(format!("torca-manifests-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let paths = RuntimePaths::from_repo(root.clone());
-        paths.ensure().expect("runtime paths");
-        fs::create_dir_all(root.join("release")).expect("release directory");
-        fs::write(
-            root.join("release/version.json"),
-            r#"{"version":"1.0.0","build":2,"contractSchema":3,"wireVersion":4,"storageEpoch":5,"schemaVersion":6}"#,
-        )
-        .expect("release metadata");
-        let endpoint = format!("{}.onion:443", "a".repeat(56));
-        fs::write(
-            paths.manifests.join("clients-debug.json"),
-            serde_json::to_vec(&json!({
-                "endpoint": endpoint,
-                "communicationProvider": "tor",
-                "targets": ["windows"],
-                "buildId": "BUILD",
-                "sourceCommit": "COMMIT",
-                "builtAt": "NOW"
-            }))
-            .expect("canonical manifest"),
-        )
-        .expect("canonical manifest");
-        fs::write(
-            paths.devices.join("windows.json"),
-            r#"{"Platform":"windows","RelayEndpoint":"stale"}"#,
-        )
-        .expect("old device manifest");
-        let devices = [Device { target: Target::Windows, id: "desktop".into(), android_abi: None }];
-        synchronize(
-            &paths,
-            &devices,
-            Configuration::Debug,
-            CommunicationProvider::Tor,
-            Some(&endpoint),
-            None,
-        )
-        .expect("synchronize");
-        let device: Value = serde_json::from_slice(
-            &fs::read(paths.devices.join("windows.json")).expect("device manifest"),
-        )
-        .expect("device json");
-        let build: Value = serde_json::from_slice(
-            &fs::read(paths.runtime_root.join("build-manifest.json")).expect("build manifest"),
-        )
-        .expect("build json");
-        assert_eq!(device["RelayEndpoint"], endpoint);
-        assert_eq!(build["Endpoint"], endpoint);
-        assert_eq!(device["BuildId"], "BUILD");
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn direct_provider_clears_legacy_endpoint_fields() {
+    fn direct_provider_manifest_has_no_endpoint() {
         let root =
             std::env::temp_dir().join(format!("torca-manifests-iroh-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -339,26 +259,14 @@ mod tests {
         )
         .expect("manifest");
         let devices = [Device { target: Target::Windows, id: "desktop".into(), android_abi: None }];
-        synchronize(
-            &paths,
-            &devices,
-            Configuration::Debug,
-            CommunicationProvider::Iroh,
-            None,
-            Some("direct"),
-        )
-        .expect("synchronize direct provider");
+        synchronize(&paths, &devices, Configuration::Debug, iroh_provider(), None, Some("direct"))
+            .expect("synchronize direct provider");
         let device: Value = serde_json::from_slice(
             &fs::read(paths.devices.join("desktop.json")).expect("device manifest"),
         )
         .expect("device json");
-        let build: Value = serde_json::from_slice(
-            &fs::read(paths.runtime_root.join("build-manifest.json")).expect("build json"),
-        )
-        .expect("build json");
         assert_eq!(device["CommunicationProvider"], "iroh");
-        assert!(device["RelayEndpoint"].is_null());
-        assert!(build["Endpoint"].is_null());
+        assert!(device["ProviderEndpoint"].is_null());
         let _ = fs::remove_dir_all(root);
     }
 }

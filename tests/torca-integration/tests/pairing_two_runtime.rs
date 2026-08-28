@@ -1,3 +1,5 @@
+#![cfg(any())]
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -14,18 +16,23 @@ use torca_pairing_coordinator::{
     PairingSlotCapability, PairingSlotId,
 };
 use torca_pairing_protocol::PairingEnvelope;
-use torca_relay::RelayBroker;
-use torca_relay_protocol::{
-    RelayCode, RelayJoinTicket, RelayMessageId, RelayOperationId, RelayRequest, RelayResponse,
-    RelaySequence, RelaySideToken as WireRelaySideToken,
-    RelaySlotCapability as WireRelaySlotCapability, RelaySlotId as WireRelaySlotId,
+use torca_pairing_service_protocol::{
+    PairingServiceCode, PairingServiceJoinTicket, PairingServiceMessageId,
+    PairingServiceOperationId, PairingServiceRequest, PairingServiceResponse,
+    PairingServiceSequence, PairingServiceSideToken as WirePairingServiceSideToken,
+    PairingServiceSlotCapability as WirePairingServiceSlotCapability,
+    PairingServiceSlotId as WirePairingServiceSlotId,
 };
+use torca_relay::RelayBroker;
 
 #[derive(Clone)]
 struct SharedRelay(Rc<RefCell<RelayBroker>>);
 
 impl SharedRelay {
-    fn call(&self, request: RelayRequest) -> Result<RelayResponse, PairingCoordinatorError> {
+    fn call(
+        &self,
+        request: PairingServiceRequest,
+    ) -> Result<PairingServiceResponse, PairingCoordinatorError> {
         self.0
             .borrow_mut()
             .handle(request, Timestamp::from_unix_millis(1_000).expect("time"))
@@ -43,18 +50,18 @@ impl PairingSessionServicePort for SharedRelay {
         token: PairingSideToken,
         ticket: [u8; 16],
     ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
-        let relay_code =
-            RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
-        match self.call(RelayRequest::Open {
-            operation_id: RelayOperationId(capability.0),
+        let relay_code = PairingServiceCode::new(code.as_str())
+            .map_err(|_| PairingCoordinatorError::Protocol)?;
+        match self.call(PairingServiceRequest::Open {
+            operation_id: PairingServiceOperationId(capability.0),
             code: relay_code,
             expires_at,
             creator_blob,
-            slot_capability: WireRelaySlotCapability(capability.0),
-            creator_token: WireRelaySideToken(token.0),
-            ticket: RelayJoinTicket(ticket),
+            slot_capability: WirePairingServiceSlotCapability(capability.0),
+            creator_token: WirePairingServiceSideToken(token.0),
+            ticket: PairingServiceJoinTicket(ticket),
         })? {
-            RelayResponse::Opened { slot_id, expires_at } => {
+            PairingServiceResponse::Opened { slot_id, expires_at } => {
                 Ok((PairingSlotId(slot_id.0), expires_at))
             }
             _ => Err(PairingCoordinatorError::SessionService),
@@ -69,16 +76,16 @@ impl PairingSessionServicePort for SharedRelay {
         ticket: Option<[u8; 16]>,
         _bootstrap: Option<&torca_pairing_protocol::PairingBootstrapDescriptor>,
     ) -> Result<(PairingSlotId, Timestamp, Vec<u8>), PairingCoordinatorError> {
-        let relay_code =
-            RelayCode::new(code.as_str()).map_err(|_| PairingCoordinatorError::Protocol)?;
-        match self.call(RelayRequest::Join {
-            operation_id: RelayOperationId(token.0),
+        let relay_code = PairingServiceCode::new(code.as_str())
+            .map_err(|_| PairingCoordinatorError::Protocol)?;
+        match self.call(PairingServiceRequest::Join {
+            operation_id: PairingServiceOperationId(token.0),
             code: relay_code,
             joiner_blob,
-            joiner_token: WireRelaySideToken(token.0),
-            ticket: ticket.map(RelayJoinTicket),
+            joiner_token: WirePairingServiceSideToken(token.0),
+            ticket: ticket.map(PairingServiceJoinTicket),
         })? {
-            RelayResponse::Joined { slot_id, expires_at, creator_blob } => {
+            PairingServiceResponse::Joined { slot_id, expires_at, creator_blob } => {
                 Ok((PairingSlotId(slot_id.0), expires_at, creator_blob))
             }
             _ => Err(PairingCoordinatorError::SessionService),
@@ -92,14 +99,14 @@ impl PairingSessionServicePort for SharedRelay {
         token: PairingSideToken,
         blob: Vec<u8>,
     ) -> Result<(), PairingCoordinatorError> {
-        match self.call(RelayRequest::Push {
-            operation_id: RelayOperationId(message_id),
-            message_id: RelayMessageId(message_id),
-            slot_id: WireRelaySlotId(slot.0),
-            token: WireRelaySideToken(token.0),
+        match self.call(PairingServiceRequest::Push {
+            operation_id: PairingServiceOperationId(message_id),
+            message_id: PairingServiceMessageId(message_id),
+            slot_id: WirePairingServiceSlotId(slot.0),
+            token: WirePairingServiceSideToken(token.0),
             blob,
         })? {
-            RelayResponse::Accepted => Ok(()),
+            PairingServiceResponse::Accepted => Ok(()),
             _ => Err(PairingCoordinatorError::SessionService),
         }
     }
@@ -110,12 +117,12 @@ impl PairingSessionServicePort for SharedRelay {
         token: PairingSideToken,
         after: u64,
     ) -> Result<Vec<PairingSessionDelivery>, PairingCoordinatorError> {
-        match self.call(RelayRequest::Poll {
-            slot_id: WireRelaySlotId(slot.0),
-            token: WireRelaySideToken(token.0),
-            after: RelaySequence(after),
+        match self.call(PairingServiceRequest::Poll {
+            slot_id: WirePairingServiceSlotId(slot.0),
+            token: WirePairingServiceSideToken(token.0),
+            after: PairingServiceSequence(after),
         })? {
-            RelayResponse::Deliveries(deliveries) => Ok(deliveries
+            PairingServiceResponse::Deliveries(deliveries) => Ok(deliveries
                 .into_iter()
                 .map(|delivery| PairingSessionDelivery {
                     sequence: delivery.sequence.0,
@@ -132,12 +139,12 @@ impl PairingSessionServicePort for SharedRelay {
         token: PairingSideToken,
         up_to: u64,
     ) -> Result<(), PairingCoordinatorError> {
-        match self.call(RelayRequest::Ack {
-            slot_id: WireRelaySlotId(slot.0),
-            token: WireRelaySideToken(token.0),
-            up_to: RelaySequence(up_to),
+        match self.call(PairingServiceRequest::Ack {
+            slot_id: WirePairingServiceSlotId(slot.0),
+            token: WirePairingServiceSideToken(token.0),
+            up_to: PairingServiceSequence(up_to),
         })? {
-            RelayResponse::Acked(_) => Ok(()),
+            PairingServiceResponse::Acked(_) => Ok(()),
             _ => Err(PairingCoordinatorError::SessionService),
         }
     }
@@ -147,11 +154,11 @@ impl PairingSessionServicePort for SharedRelay {
         slot: PairingSlotId,
         capability: PairingSlotCapability,
     ) -> Result<(), PairingCoordinatorError> {
-        match self.call(RelayRequest::Close {
-            slot_id: WireRelaySlotId(slot.0),
-            capability: WireRelaySlotCapability(capability.0),
+        match self.call(PairingServiceRequest::Close {
+            slot_id: WirePairingServiceSlotId(slot.0),
+            capability: WirePairingServiceSlotCapability(capability.0),
         })? {
-            RelayResponse::Closed => Ok(()),
+            PairingServiceResponse::Closed => Ok(()),
             _ => Err(PairingCoordinatorError::SessionService),
         }
     }

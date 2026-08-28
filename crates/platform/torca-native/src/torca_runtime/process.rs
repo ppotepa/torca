@@ -16,7 +16,7 @@ use torca_runtime_policy::RuntimeEventHub;
 use crate::native_runtime::{ABI_OK, TorcaRuntime};
 
 const NATIVE_ABI: u16 = 1;
-const STORAGE_EPOCH: u16 = 2;
+const STORAGE_EPOCH: u16 = 3;
 const MAILBOX_CAPACITY: usize = 256;
 const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
@@ -37,10 +37,6 @@ const SOURCE_COMMIT: &str = match option_env!("TORCA_SOURCE_COMMIT") {
 const SOURCE_FINGERPRINT: &str = match option_env!("TORCA_SOURCE_FINGERPRINT") {
     Some(value) => value,
     None => "development",
-};
-const COMMUNICATION_PROVIDER: &str = match option_env!("TORCA_COMMUNICATION_PROVIDER") {
-    Some(value) => value,
-    None => "tor",
 };
 const PROVIDER_ENDPOINT_HASH: Option<&str> = option_env!("TORCA_PROVIDER_ENDPOINT_HASH");
 const IROH_PROFILE: Option<&str> = option_env!("TORCA_IROH_PROFILE");

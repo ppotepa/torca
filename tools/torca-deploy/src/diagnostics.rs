@@ -20,18 +20,8 @@ pub fn collect_runtime(
     // which made a failure impossible to diagnose reliably.
     let incident_root = paths.new_incident_dir();
     let _ = std::fs::create_dir_all(&incident_root);
-    let _ = std::fs::create_dir_all(incident_root.join("relay"));
-    let _ = std::fs::create_dir_all(incident_root.join("relay/state"));
+    let _ = std::fs::create_dir_all(incident_root.join("state"));
     write_manifest(paths, &incident_root, android_devices);
-    for (source, name) in [
-        (&paths.relay_endpoint, "relay_endpoint.txt"),
-        (&paths.relay_ready, "relay_ready.txt"),
-        (&paths.relay_status, "relay_status.json"),
-    ] {
-        if source.is_file() {
-            let _ = fs::copy(source, incident_root.join("relay/state").join(name));
-        }
-    }
     if paths.docker_compose.is_file() {
         if let Ok(output) = runner.run(&CommandSpec {
             program: "docker".into(),
@@ -150,8 +140,6 @@ fn write_manifest(paths: &RuntimePaths, incident_root: &Path, android_devices: &
             .unwrap_or_default()
             .as_millis(),
         "repoRoot": paths.repo_root.display().to_string(),
-        "relayEndpoint": paths.endpoint(),
-        "relayStatus": paths.relay_status.display().to_string(),
         "androidPackage": crate::android_target::package(),
         "androidLogsRoot": crate::android_target::logs_root(),
         "androidDevices": android_devices,

@@ -83,7 +83,7 @@ mod pairing_code_tests {
     }
 
     #[test]
-    fn rejects_legacy_and_ambiguous_alphabet_values() {
+    fn rejects_unsupported_and_ambiguous_alphabet_values() {
         assert_eq!(PairingCode::new("ABCDE"), Err(PairingError::InvalidCode));
         assert_eq!(PairingCode::new("ABCDEFG"), Err(PairingError::InvalidCode));
         assert_eq!(PairingCode::new("ABCU1!"), Err(PairingError::InvalidCode));

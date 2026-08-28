@@ -49,8 +49,8 @@ pub(crate) fn empty_snapshot_json() -> String {
     // worker finishes. It must still identify the compiled provider; using
     // `tor` here creates false rendezvous/relay diagnostics for Iroh.
     let provider = crate::transport_config::compiled_provider()
-        .map(|value| value.wire_value())
-        .unwrap_or("unknown");
+        .map(|value| value.as_str().to_owned())
+        .unwrap_or_else(|_| "unknown".to_owned());
     json!({
         "contractVersion": CONTRACT_VERSION,
         "identity": Value::Null,

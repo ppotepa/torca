@@ -6,7 +6,10 @@ use core::{fmt, str::FromStr};
 /// `_`. The owned representation keeps persisted routes independent of a
 /// compile-time registry.
 #[must_use]
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
+#[serde(transparent)]
 pub struct ProviderId(String);
 
 impl ProviderId {
@@ -32,11 +35,29 @@ impl ProviderId {
     pub fn into_string(self) -> String {
         self.0
     }
+
+    pub fn wire_value(&self) -> &str {
+        self.as_str()
+    }
+
+    pub fn from_wire(value: &str) -> Result<Self, InvalidProviderId> {
+        Self::new(value)
+    }
+
+    pub fn selectable() -> Vec<Self> {
+        vec![Self::default()]
+    }
 }
 
 impl AsRef<str> for ProviderId {
     fn as_ref(&self) -> &str {
         self.as_str()
+    }
+}
+
+impl Default for ProviderId {
+    fn default() -> Self {
+        Self::new("iroh").expect("static production provider id")
     }
 }
 

@@ -8,7 +8,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
     communication_lifecycle: &mut T,
     probes: &ProbeSupervisor,
     rendezvous_info: Option<&Arc<dyn RendezvousProbe>>,
-    rendezvous_health: Option<&RendezvousHealthHandle>,
+    rendezvous_health: Option<&PairingServiceHealthHandle>,
     transport_activity: &mut TransportActivityLedger,
     connectivity: &ConnectivityObserver,
     policy: &mut RuntimeGovernor,
@@ -250,7 +250,7 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
     }
 }
 
-fn wake_rendezvous(rendezvous_health: Option<&RendezvousHealthHandle>) {
+fn wake_rendezvous(rendezvous_health: Option<&PairingServiceHealthHandle>) {
     if let Some(rendezvous_health) = rendezvous_health {
         rendezvous_health.wake();
     }

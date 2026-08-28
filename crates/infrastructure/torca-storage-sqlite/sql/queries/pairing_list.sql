@@ -12,7 +12,6 @@ SELECT
     remote_public_key,
     remote_key_generation,
     remote_display_name,
-    remote_onion_address,
     remote_capability_id,
     remote_avatar_schema,
     remote_avatar_generator_version,

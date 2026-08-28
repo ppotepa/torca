@@ -1,6 +1,6 @@
 # Torca
 
-Torca is an experimental privacy-focused one-to-one messenger for Windows and Android. It uses one responsive Flutter client backed by one Rust application/runtime. Local identities, encrypted local state, pairing, delivery and security policy live in Rust; normal contact traffic is sent directly between Tor onion services rather than through a central message server.
+Torca is an experimental privacy-focused one-to-one messenger for Windows and Android. It uses one responsive Flutter client backed by one Rust application/runtime. Local identities, encrypted local state, pairing, delivery and security policy live in Rust; paired contact traffic uses authenticated Iroh peer sessions with direct paths or configured relay fallback, rather than a central message server.
 
 > **Project status:** Torca is security-sensitive alpha software. It is under active development, has not received an independent production security audit, and should not be treated as a finished high-risk communications product. Source-level validation, successful local builds and passing tests are useful engineering evidence, not a security certification or a substitute for real-device soak testing.
 
@@ -14,7 +14,7 @@ The current source includes:
 - operating-system protected-secret adapters for identity, storage and peer secrets;
 - short-lived pairing codes/QR with explicit local approval;
 - authenticated peer sessions and application-layer authenticated encryption;
-- direct peer delivery through Tor onion services after pairing;
+- direct peer delivery through Iroh after pairing;
 - durable message retry, delivered/read receipts and reply-to;
 - paged and searchable conversation history;
 - encrypted, resumable attachments;
@@ -27,9 +27,9 @@ Calls, groups, multi-device synchronization, public discovery and cloud backup a
 
 ## Security model at a glance
 
-Torca uses established cryptographic primitives and keeps secret ownership out of Flutter. Pairing establishes a protected pairwise relationship secret; peer payloads use authenticated encryption with fresh nonces and associated context. Radio Mode derives session-specific directional media keys from the protected pairwise relationship secret.
+Torca uses established cryptographic primitives and keeps secret ownership out of Flutter. Pairing establishes a protected pairwise relationship secret; peer payloads use authenticated encryption with fresh nonces and associated context. Radio Mode derives session-specific directional media keys from the protected pairwise relationship secret. Iroh direct connectivity is not an anonymity network: network-location exposure depends on the selected Iroh path/profile.
 
-The current message-key design **does not provide Signal-style forward secrecy or post-compromise security**. Compromise of a long-lived relationship secret can therefore have consequences beyond one message or session. Tor also does not eliminate traffic-analysis, timing-correlation, endpoint-compromise or denial-of-service risk.
+The current message-key design **does not provide Signal-style forward secrecy or post-compromise security**. Compromise of a long-lived relationship secret can therefore have consequences beyond one message or session. Iroh does not eliminate traffic-analysis, timing-correlation, endpoint-compromise or denial-of-service risk.
 
 Read [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) before making security claims or changing pairing, peer authentication, cryptography, storage, notifications, Radio Mode or platform boundaries.
 
@@ -44,7 +44,7 @@ torca-native C ABI
         |
 ClientApplicationRuntime + process-owned runtime
         |
-SQLCipher / crypto / files / peer link / embedded Arti Tor
+SQLCipher / crypto / files / peer link / Iroh transport
 ```
 
 The main ownership rule is simple: Flutter renders presentation-safe state and submits typed user intent; Rust owns identifiers, durable state, networking, cryptography and product/security rules. The dependency direction is enforced by repository policy checks, not only by documentation.
@@ -59,9 +59,9 @@ crates/foundation/        dependency-light primitives
 crates/domains/           product vocabulary and invariants
 crates/protocol/          bounded wire and pairing/peer/radio protocols
 crates/application/       use cases, ports, runtime coordination and policy
-crates/infrastructure/    SQLCipher, crypto, files, peer and Tor adapters
+crates/infrastructure/    SQLCipher, crypto, files, peer and Iroh adapters
 crates/platform/          contract, native ABI and OS adapters
-services/relay/           ephemeral pairing rendezvous service
+pairing service            ephemeral pairing exchange
 tests/torca-integration/  cross-crate integration journeys
 tools/torca-deploy/       canonical build/run/deploy/log workflow
 scripts/                  compatibility and validation helpers
@@ -86,7 +86,7 @@ cargo run -p torca-deploy -- logs --target all
 cargo run -p torca-deploy -- resume
 ```
 
-Use `--dry-run` where supported when you want to inspect a plan without changing devices or relay state. Destructive data resets and onion rotation should be deliberate actions, not incidental development steps.
+Use `--dry-run` where supported when you want to inspect a plan without changing devices. Destructive data resets should be deliberate actions, not incidental development steps.
 
 ## Validation
 

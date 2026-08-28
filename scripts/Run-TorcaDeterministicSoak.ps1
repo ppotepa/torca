@@ -24,11 +24,7 @@ try {
         'torca-peer-link',
         'torca-storage-sqlite'
     )
-    $providerPackage = switch ($CommunicationProvider) {
-        'tor' { 'torca-tor' }
-        'iroh' { 'torca-transport-iroh' }
-        'webrtc' { 'torca-transport-webrtc' }
-    }
+    $providerPackage = 'torca-transport-iroh'
     $packages += $providerPackage
 
     for ($iteration = 1; $iteration -le $Iterations; $iteration++) {

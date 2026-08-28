@@ -17,7 +17,6 @@ use torca_identity::{IdentityId, ProfileName};
 use torca_messaging::{MessageBody, MessageId, MessageReaction, ReplyReference};
 use torca_pairing::{PairingCode, PairingSessionId, PairingState};
 use torca_pairing_protocol::PairingBootstrapDescriptor;
-use torca_probing::{ProbeStatus, ProbeTarget};
 use torca_radio_coordinator::{HostRadioLifecycle, RadioProjection, SharedRadioCoordinator};
 use torca_runtime_policy::AttentionContext;
 use torca_runtime_policy::{BatteryPreferences, SystemEnergyState};
@@ -353,17 +352,12 @@ impl ClientApplicationRuntime {
     /// genome payload.
     pub fn avatar_genome_json(&self, identity_id: Option<&str>) -> Result<String, EngineError> {
         let record = if let Some(identity_id) = identity_id.filter(|value| !value.is_empty()) {
-            let opaque = identity_id
-                .parse::<OpaqueId>()
-                .map_err(|_| EngineError("avatar identity is invalid".into()))?;
+            let opaque = identity_id.parse::<OpaqueId>().map_err(|_| EngineError::Identity)?;
             self.application
                 .avatar_genome_for_identity(IdentityId::from_opaque(opaque))?
-                .ok_or_else(|| EngineError("contact avatar genome is unavailable".into()))?
+                .ok_or(EngineError::Unavailable)?
         } else {
-            self.application
-                .overview()?
-                .avatar_genome
-                .ok_or_else(|| EngineError("local avatar genome is not initialized".into()))?
+            self.application.overview()?.avatar_genome.ok_or(EngineError::InvalidState)?
         };
         Ok(serde_json::json!({
             "schema": record.schema_version,
@@ -505,54 +499,43 @@ impl ClientApplicationRuntime {
     pub fn network_snapshot(&self) -> Result<Option<NetworkSnapshot>, EngineError> {
         self.runtime
             .as_ref()
-            .map(|runtime| {
-                runtime
-                    .network_snapshot()
-                    .map_err(|_| EngineError("network snapshot unavailable".into()))
-            })
+            .map(|runtime| runtime.network_snapshot().map_err(|_| EngineError::Unavailable))
             .transpose()
     }
 
     pub fn diagnostics_json(&self) -> Result<String, EngineError> {
         self.runtime.as_ref().map_or_else(
             || Ok("{\"events\":[]}".into()),
-            |runtime| {
-                runtime
-                    .diagnostics_json()
-                    .map_err(|_| EngineError("diagnostics unavailable".into()))
-            },
+            |runtime| runtime.diagnostics_json().map_err(|_| EngineError::Unavailable),
         )
     }
 
     pub fn start_battery_observation(&self) -> Result<(), EngineError> {
         self.runtime
             .as_ref()
-            .ok_or_else(|| EngineError("runtime unavailable".into()))?
+            .ok_or(EngineError::Unavailable)?
             .start_battery_observation()
-            .map_err(|_| EngineError("battery observation unavailable".into()))
+            .map_err(|_| EngineError::Unavailable)
     }
 
     pub fn stop_battery_observation(&self) -> Result<(), EngineError> {
         self.runtime
             .as_ref()
-            .ok_or_else(|| EngineError("runtime unavailable".into()))?
+            .ok_or(EngineError::Unavailable)?
             .stop_battery_observation()
-            .map_err(|_| EngineError("battery observation unavailable".into()))
+            .map_err(|_| EngineError::Unavailable)
     }
 
     pub fn reset_battery_observation(&self) -> Result<(), EngineError> {
         self.runtime
             .as_ref()
-            .ok_or_else(|| EngineError("runtime unavailable".into()))?
+            .ok_or(EngineError::Unavailable)?
             .reset_battery_observation()
-            .map_err(|_| EngineError("battery observation unavailable".into()))
+            .map_err(|_| EngineError::Unavailable)
     }
 
     pub fn bootstrap_snapshot(&self) -> Result<BootstrapSnapshot, EngineError> {
-        self.bootstrap
-            .lock()
-            .map(|state| state.snapshot())
-            .map_err(|_| EngineError("bootstrap state unavailable".into()))
+        self.bootstrap.lock().map(|state| state.snapshot()).map_err(|_| EngineError::Unavailable)
     }
 
     pub fn snapshot_context(&self) -> Result<ApplicationSnapshotContext, EngineError> {
@@ -615,21 +598,8 @@ impl ClientApplicationRuntime {
         // not have a relay probe here.  This keeps the gate polymorphic: a
         // future provider can use a managed rendezvous service without being
         // hard-coded as Tor.
-        let managed_rendezvous =
-            network.communication.provider.deployment_profile().commissioning_service
-                == torca_transport_api::ProviderCommissioningService::ManagedRendezvous;
-        let relay_status = managed_rendezvous.then(|| {
-            network
-                .probes
-                .iter()
-                .find(|probe| {
-                    matches!(probe.target, ProbeTarget::PairingService | ProbeTarget::Relay)
-                })
-                .map(|probe| probe.status)
-                .unwrap_or(ProbeStatus::Unknown)
-        });
         let Ok(mut bootstrap) = self.bootstrap.lock() else {
-            return Err(EngineError("bootstrap state unavailable".into()));
+            return Err(EngineError::Unavailable);
         };
 
         for step in [
@@ -689,51 +659,11 @@ impl ClientApplicationRuntime {
                             }
                         }
                     }
-                    if managed_rendezvous {
-                        match relay_status.unwrap_or(ProbeStatus::Unknown) {
-                            ProbeStatus::Healthy => {
-                                if step_state(&bootstrap, BootstrapStepId::Rendezvous)
-                                    != Some(BootstrapStepState::Ready)
-                                {
-                                    bootstrap.begin(BootstrapStepId::Rendezvous);
-                                    bootstrap.complete(BootstrapStepId::Rendezvous);
-                                }
-                            }
-                            ProbeStatus::Failed
-                            | ProbeStatus::Unreachable
-                            | ProbeStatus::Degraded => {
-                                if step_state(&bootstrap, BootstrapStepId::Rendezvous)
-                                    != Some(BootstrapStepState::Degraded)
-                                {
-                                    bootstrap.begin(BootstrapStepId::Rendezvous);
-                                }
-                                bootstrap
-                                    .degrade(BootstrapStepId::Rendezvous, "RENDEZVOUS_UNREACHABLE");
-                            }
-                            ProbeStatus::Checking
-                            | ProbeStatus::Unknown
-                            | ProbeStatus::Disabled => {
-                                if matches!(
-                                    step_state(&bootstrap, BootstrapStepId::Rendezvous),
-                                    Some(BootstrapStepState::Pending | BootstrapStepState::Blocked)
-                                ) {
-                                    bootstrap.begin(BootstrapStepId::Rendezvous);
-                                    bootstrap.verify(BootstrapStepId::Rendezvous);
-                                }
-                            }
-                        }
-                    } else {
-                        // Direct providers have no managed rendezvous probe.
-                        // Keep the legacy compatibility step satisfied so it
-                        // cannot hold the UI in a provider-specific warm-up
-                        // state; provider-owned commissioning remains the
-                        // source of truth for actual readiness.
-                        if step_state(&bootstrap, BootstrapStepId::Rendezvous)
-                            != Some(BootstrapStepState::Ready)
-                        {
-                            bootstrap.begin(BootstrapStepId::Rendezvous);
-                            bootstrap.complete(BootstrapStepId::Rendezvous);
-                        }
+                    if step_state(&bootstrap, BootstrapStepId::Rendezvous)
+                        != Some(BootstrapStepState::Ready)
+                    {
+                        bootstrap.begin(BootstrapStepId::Rendezvous);
+                        bootstrap.complete(BootstrapStepId::Rendezvous);
                     }
                 }
                 torca_transport_api::CommissioningState::Failed
@@ -1634,8 +1564,7 @@ fn step_state(bootstrap: &BootstrapState, id: BootstrapStepId) -> Option<Bootstr
     bootstrap.snapshot().steps.into_iter().find(|step| step.id == id).map(|step| step.state)
 }
 
-fn stopped_network_snapshot(provider: torca_transport_api::TransportKind) -> NetworkSnapshot {
-    let profile = provider.deployment_profile();
+fn stopped_network_snapshot(provider: torca_foundation::ProviderId) -> NetworkSnapshot {
     NetworkSnapshot {
         communication: torca_transport_api::ProviderCommissioning {
             provider,
@@ -1644,13 +1573,13 @@ fn stopped_network_snapshot(provider: torca_transport_api::TransportKind) -> Net
                     stage: torca_transport_api::CommissioningStage::LocalRuntime,
                     state: torca_transport_api::CommissioningState::Pending,
                     required_for_local_shell: true,
-                    required_for_pairing: profile.features.incoming,
+                    required_for_pairing: true,
                 },
                 torca_transport_api::CommissioningStep {
                     stage: torca_transport_api::CommissioningStage::IncomingReachability,
                     state: torca_transport_api::CommissioningState::NotRequired,
                     required_for_local_shell: false,
-                    required_for_pairing: profile.features.incoming,
+                    required_for_pairing: true,
                 },
             ],
             endpoint_summary: None,
@@ -1670,11 +1599,8 @@ fn stopped_network_snapshot(provider: torca_transport_api::TransportKind) -> Net
     }
 }
 
-fn compiled_provider() -> torca_transport_api::TransportKind {
-    torca_transport_api::TransportKind::from_wire(
-        option_env!("TORCA_COMMUNICATION_PROVIDER").unwrap_or("memory"),
-    )
-    .unwrap_or(torca_transport_api::TransportKind::Memory)
+fn compiled_provider() -> torca_foundation::ProviderId {
+    torca_foundation::ProviderId::new("iroh").expect("production provider id")
 }
 
 fn timestamp(value: i64) -> Result<Timestamp, String> {

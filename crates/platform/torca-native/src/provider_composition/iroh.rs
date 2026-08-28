@@ -5,7 +5,6 @@ use torca_pairing_coordinator::{PairingCoordinator, PairingRuntime};
 use torca_pairing_driver::RuntimePairingDriver;
 use torca_provider_api::{ProviderRoute, ProviderRouteError, ProviderRouteState, ProviderRouting};
 use torca_runtime::PairingDriver;
-use torca_transport_api::TransportKind;
 use torca_transport_iroh::{IrohComposition, IrohPairingService, provider_runtime};
 
 use crate::composition::NativeCompositionError;
@@ -58,7 +57,7 @@ pub(crate) fn compose(
     let endpoint = composition.pairing.endpoint_slot();
     let routing: Arc<dyn ProviderRouting> = Arc::new(IrohRouting { endpoint });
     Ok(ProviderComponents {
-        provider: TransportKind::Iroh,
+        provider: ProviderId::new("iroh").expect("built-in provider id"),
         lifecycle: Box::new(composition.lifecycle),
         peer_transport_factory: Box::new(composition.transport_factory),
         pairing_factory: Box::new(IrohPairingFactory {

@@ -133,7 +133,7 @@ function Write-TorcaDeviceDeploymentManifest {
         ContractSchema = $Release.contractSchema
         WireVersion = $Release.wireVersion
         RelayEndpoint = $Endpoint
-        RelayEndpointHash = Get-TorcaSha256Text -Text $Endpoint
+        ProviderEndpointHash = Get-TorcaSha256Text -Text $Endpoint
         DeployedAt = [DateTime]::UtcNow.ToString('o')
         Verified = $true
     })

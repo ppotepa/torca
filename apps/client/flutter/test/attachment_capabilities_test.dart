@@ -53,7 +53,7 @@ void main() {
       'buildId': 'test-build',
       'sourceCommit': 'test-source',
       'sourceFingerprint': 'test-fingerprint',
-      'relayEndpointHash': 'test-relay',
+      'providerEndpointHash': null,
       'targetPlatform': 'test',
       'targetArchitecture': 'test',
       'contractSchema': 1,

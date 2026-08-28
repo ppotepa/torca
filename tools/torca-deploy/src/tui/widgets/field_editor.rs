@@ -7,5 +7,5 @@ pub fn describe(field: &FieldCapability) -> String {
         FieldAvailability::Disabled { reason } => format!("disabled: {reason}"),
         FieldAvailability::Hidden => "hidden".to_owned(),
     };
-    format!("{} [{state}] — {}", field.label, field.description)
+    format!("{} [{state}] â€” {}", field.label, field.description)
 }

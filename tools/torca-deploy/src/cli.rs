@@ -1,8 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::domain::{
-    BuildPolicy, ClientDataPolicy, CommunicationProvider, Configuration, DeployAction, DeployPlan,
-    LaunchPolicy, PrivacyPolicy, ProviderMaintenancePolicy, Target, ValidationLevel,
+    BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, LaunchPolicy,
+    PrivacyPolicy, ProviderMaintenancePolicy, Target, ValidationLevel, iroh_provider,
 };
 
 #[derive(Debug, Parser)]
@@ -32,8 +32,6 @@ pub enum Command {
     Rebuild(PlanArgs),
     /// Reset selected client data and redeploy; preserves provider identity by default.
     FullRedeploy(PlanArgs),
-    /// Relay-only operations.
-    Relay(RelayArgs),
     /// Continue the most recent interrupted deployment.
     Resume {
         #[arg(long)]
@@ -57,21 +55,9 @@ pub struct PlanArgs {
     pub configuration: ConfigurationArg,
     #[arg(long, value_enum, default_value = "if-required")]
     pub client_build: BuildPolicyArg,
-    #[arg(
-        long = "provider-service-build",
-        visible_alias = "relay-build",
-        alias = "relay_build",
-        value_enum,
-        default_value = "if-required"
-    )]
+    #[arg(long = "provider-service-build", value_enum, default_value = "if-required")]
     pub provider_service_build: BuildPolicyArg,
-    #[arg(
-        long = "provider-maintenance",
-        visible_alias = "onion",
-        alias = "relay_maintenance",
-        value_enum,
-        default_value = "ensure"
-    )]
+    #[arg(long = "provider-maintenance", value_enum, default_value = "ensure")]
     pub provider_maintenance: ProviderMaintenancePolicyArg,
     #[arg(long, value_enum, default_value = "preserve")]
     pub client_data: ClientDataPolicyArg,
@@ -82,9 +68,14 @@ pub struct PlanArgs {
     /// Android screen-capture policy. Strict is the default.
     #[arg(long, value_enum, default_value = "strict")]
     pub privacy: PrivacyArg,
-    /// Communication protocol selected for new peer sessions. Exactly one
-    /// protocol is used by a deployment; Tor remains the default.
-    #[arg(long, visible_alias = "communication-protocol", value_enum, default_value = "tor")]
+    /// Production communication provider. The alpha build is Iroh-only.
+    #[arg(
+        long,
+        visible_alias = "communication-protocol",
+        value_enum,
+        default_value = "iroh",
+        hide = true
+    )]
     pub communication_provider: CommunicationProviderArg,
     /// Provider-owned runtime profile. This remains opaque to the generic
     /// deploy domain; Iroh uses `always`, `direct` or `local`.
@@ -109,28 +100,6 @@ pub enum ThemeArg {
     Aurora,
     Amber,
     HighContrast,
-}
-
-#[derive(Debug, Args)]
-pub struct RelayArgs {
-    #[command(subcommand)]
-    pub action: RelayAction,
-    #[arg(long, value_enum, default_value = "debug")]
-    pub configuration: ConfigurationArg,
-    #[arg(long)]
-    pub dry_run: bool,
-}
-
-#[derive(Clone, Copy, Debug, Subcommand)]
-pub enum RelayAction {
-    Status,
-    Ensure,
-    Restart,
-    Repair,
-    Rotate {
-        #[arg(long)]
-        confirm_rotate: bool,
-    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -188,24 +157,17 @@ pub enum PrivacyArg {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum CommunicationProviderArg {
-    Tor,
     Iroh,
-    #[value(name = "web-rtc", alias = "webrtc")]
-    WebRtc,
 }
 
 impl PlanArgs {
     pub fn plan(&self, action: DeployAction) -> DeployPlan {
-        let communication_provider = match self.communication_provider {
-            CommunicationProviderArg::Tor => CommunicationProvider::Tor,
-            CommunicationProviderArg::Iroh => CommunicationProvider::Iroh,
-            CommunicationProviderArg::WebRtc => CommunicationProvider::WebRtc,
-        };
+        let communication_provider = iroh_provider();
         // Freeze the provider profile into the persisted deployment plan. A
         // resumed run must not silently change from direct to relay-backed
         // Iroh because the developer shell changed in the meantime.
         let provider_profile = self.provider_profile.clone().or_else(|| {
-            (communication_provider == CommunicationProvider::Iroh).then(|| {
+            (communication_provider == iroh_provider()).then(|| {
                 std::env::var("TORCA_IROH_PROFILE").unwrap_or_else(|_| "always".to_owned())
             })
         });
@@ -277,48 +239,21 @@ mod tests {
     }
 
     #[test]
-    fn communication_protocol_defaults_to_tor() {
+    fn communication_protocol_defaults_to_iroh() {
         let args = plan_args(&["torca-deploy", "plan"]);
-        assert!(matches!(
+        assert_eq!(
             args.plan(DeployAction::RedeployCurrent).communication_provider,
-            CommunicationProvider::Tor
-        ));
+            iroh_provider()
+        );
     }
 
     #[test]
     fn communication_protocol_can_be_selected_by_canonical_flag() {
         let args = plan_args(&["torca-deploy", "plan", "--communication-provider", "iroh"]);
-        assert!(matches!(
+        assert_eq!(
             args.plan(DeployAction::RedeployCurrent).communication_provider,
-            CommunicationProvider::Iroh
-        ));
-    }
-
-    #[test]
-    fn communication_protocol_alias_and_webrtc_alias_are_supported() {
-        let args = plan_args(&["torca-deploy", "plan", "--communication-protocol", "webrtc"]);
-        assert!(matches!(
-            args.plan(DeployAction::RedeployCurrent).communication_provider,
-            CommunicationProvider::WebRtc
-        ));
-    }
-
-    #[test]
-    fn legacy_relay_flag_aliases_remain_supported() {
-        let cli = Cli::try_parse_from([
-            "torca-deploy",
-            "plan",
-            "--relay_build",
-            "rebuild",
-            "--relay_maintenance",
-            "restart",
-        ])
-        .expect("legacy flags should parse");
-        let Command::Plan(args) = cli.command.expect("plan command") else {
-            panic!("expected plan command");
-        };
-        assert!(matches!(args.provider_service_build, BuildPolicyArg::Rebuild));
-        assert!(matches!(args.provider_maintenance, ProviderMaintenancePolicyArg::Restart));
+            iroh_provider()
+        );
     }
 
     #[test]
@@ -344,11 +279,5 @@ mod tests {
             args.plan(DeployAction::RedeployCurrent).provider_profile.as_deref(),
             Some("always")
         );
-    }
-
-    #[test]
-    fn incomplete_communication_provider_cannot_pass_plan_validation() {
-        let args = plan_args(&["torca-deploy", "plan", "--communication-provider", "webrtc"]);
-        assert!(args.plan(DeployAction::RedeployCurrent).validate().is_err());
     }
 }

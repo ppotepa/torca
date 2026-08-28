@@ -8,7 +8,7 @@ use torca_communication_driver::{
 };
 use torca_contacts::{ContactId, ContactRepository, ContactStatus, PeerCredentialRepository};
 use torca_crypto::{CryptoProvider, ProtectedSecretStore};
-use torca_foundation::{OpaqueId, Timestamp};
+use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
 use torca_peer_shared::SharedPeerLink;
 use torca_radio::RadioSessionId;
@@ -18,7 +18,6 @@ use torca_radio_coordinator::{
     SharedRadioCoordinator,
 };
 use torca_radio_protocol::{RadioControlCodec, RadioControlFrame};
-use torca_transport_api::TransportKind;
 
 use crate::SharedPeerCrypto;
 use crate::adapters::{load_contact, load_credential, open, seal};
@@ -33,7 +32,7 @@ pub struct PeerRadioControl<R, S, K, C, P> {
     link: SharedPeerLink<S, K>,
     crypto: SharedPeerCrypto<C, P>,
     local_identity: OpaqueId,
-    provider: TransportKind,
+    provider: ProviderId,
     queued: VecDeque<(ContactId, RadioControlFrame)>,
     next_attempt_at: Option<Instant>,
     retry_delay: Duration,
@@ -45,7 +44,7 @@ impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
         link: SharedPeerLink<S, K>,
         crypto: SharedPeerCrypto<C, P>,
         local_identity: OpaqueId,
-        provider: TransportKind,
+        provider: ProviderId,
     ) -> Self {
         Self {
             relationships,
@@ -143,7 +142,7 @@ where
                 eprintln!(
                     "torca-radio: control send failed contact={} provider={} retry_ms={} error={error:?}",
                     contact_id,
-                    self.provider.wire_value(),
+                    self.provider.as_str(),
                     self.retry_delay.as_millis(),
                 );
                 // Do not let one unavailable contact block control traffic
@@ -287,7 +286,7 @@ pub struct RelationshipRadioMedia<R, C, P> {
     relationships: R,
     crypto: SharedPeerCrypto<C, P>,
     local_identity: OpaqueId,
-    provider: TransportKind,
+    provider: ProviderId,
 }
 
 impl<R, C, P> RelationshipRadioMedia<R, C, P> {
@@ -295,7 +294,7 @@ impl<R, C, P> RelationshipRadioMedia<R, C, P> {
         relationships: R,
         crypto: SharedPeerCrypto<C, P>,
         local_identity: OpaqueId,
-        provider: TransportKind,
+        provider: ProviderId,
     ) -> Self {
         Self { relationships, crypto, local_identity, provider }
     }
@@ -314,7 +313,7 @@ where
             .flatten()
             .filter(|contact| contact.status() == ContactStatus::Active)
             .and_then(|contact| {
-                let provider_name = self.provider.wire_value().to_owned();
+                let provider_name = self.provider.as_str().to_owned();
                 let endpoint = contact.route().provider_endpoint(&provider_name)?;
                 // An empty opaque endpoint is not a usable provider route.
                 // Reject it at the directory boundary so every provider gets

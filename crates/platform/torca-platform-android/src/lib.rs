@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use torca_platform::{
     AppPaths, DeviceDescriptor, FileSecretStore, LifecycleCapabilities, PlatformServices,
-    ProtectedSecretStore, SecretNamespace, WebRtcSessionProvider, WebRtcSignalingProvider,
+    ProtectedSecretStore, SecretNamespace,
 };
 
 type SecretStoreFactory =
@@ -16,8 +16,6 @@ pub struct AndroidPlatformServices {
     pub device_id: String,
     pub installation_id: String,
     secret_store_factory: Option<SecretStoreFactory>,
-    webrtc_provider: Option<Arc<dyn WebRtcSessionProvider>>,
-    webrtc_signaling_provider: Option<Arc<dyn WebRtcSignalingProvider>>,
 }
 
 /// Rust-side handle for the Android Keystore bridge. The Android overlay owns
@@ -62,8 +60,6 @@ impl AndroidPlatformServices {
             device_id: "android-device".into(),
             installation_id: "android-install".into(),
             secret_store_factory: None,
-            webrtc_provider: None,
-            webrtc_signaling_provider: None,
         }
     }
 
@@ -72,20 +68,6 @@ impl AndroidPlatformServices {
         factory: impl Fn(SecretNamespace) -> Box<dyn ProtectedSecretStore> + Send + Sync + 'static,
     ) -> Self {
         self.secret_store_factory = Some(Arc::new(factory));
-        self
-    }
-
-    /// Injects the host-owned WebRTC signalling/DataChannel bridge.
-    pub fn with_webrtc_provider(mut self, provider: Arc<dyn WebRtcSessionProvider>) -> Self {
-        self.webrtc_provider = Some(provider);
-        self
-    }
-
-    pub fn with_webrtc_signaling_provider(
-        mut self,
-        provider: Arc<dyn WebRtcSignalingProvider>,
-    ) -> Self {
-        self.webrtc_signaling_provider = Some(provider);
         self
     }
 }
@@ -109,11 +91,5 @@ impl PlatformServices for AndroidPlatformServices {
     }
     fn lifecycle_capabilities(&self) -> LifecycleCapabilities {
         LifecycleCapabilities { background_runtime: true, notifications: true }
-    }
-    fn webrtc_session_provider(&self) -> Option<Arc<dyn WebRtcSessionProvider>> {
-        self.webrtc_provider.clone()
-    }
-    fn webrtc_signaling_provider(&self) -> Option<Arc<dyn WebRtcSignalingProvider>> {
-        self.webrtc_signaling_provider.clone()
     }
 }

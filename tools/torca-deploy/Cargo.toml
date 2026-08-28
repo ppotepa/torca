@@ -18,3 +18,5 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 torca-transport-api = { path = "../../crates/application/torca-transport-api" }
+torca-foundation = { path = "../../crates/foundation/torca-foundation" }
+torca-provider-api = { path = "../../crates/application/torca-provider-api" }

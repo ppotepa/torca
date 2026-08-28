@@ -12,11 +12,12 @@ use torca_pairing_coordinator::{
     PairingSlotCapability, PairingSlotId,
 };
 use torca_pairing_protocol::PairingBootstrapDescriptor;
-use torca_relay_protocol::{
-    RELAY_HEADER_LEN, RelayCode, RelayCodec, RelayDelivery, RelayMessageId, RelayRequest,
-    RelayResponse, RelaySequence, RelaySideToken, RelaySlotCapability, RelaySlotId,
+use torca_pairing_service_client::RendezvousClient;
+use torca_pairing_service_protocol::{
+    PAIRING_SERVICE_HEADER_LEN, PairingServiceCode, PairingServiceCodec, PairingServiceDelivery,
+    PairingServiceMessageId, PairingServiceRequest, PairingServiceResponse, PairingServiceSequence,
+    PairingServiceSideToken, PairingServiceSlotCapability, PairingServiceSlotId,
 };
-use torca_rendezvous_client::RendezvousClient;
 
 use crate::{
     IrohEndpointSlot, IrohIncomingRouter, IrohPairingServiceTransport, ProviderEndpointSlot,
@@ -29,16 +30,16 @@ struct Slot {
     expires_at: Timestamp,
     creator_blob: Vec<u8>,
     ticket: [u8; 16],
-    capability: RelaySlotCapability,
-    creator_token: RelaySideToken,
-    joiner_token: Option<RelaySideToken>,
-    creator_queue: VecDeque<RelayDelivery>,
-    joiner_queue: VecDeque<RelayDelivery>,
+    capability: PairingServiceSlotCapability,
+    creator_token: PairingServiceSideToken,
+    joiner_token: Option<PairingServiceSideToken>,
+    creator_queue: VecDeque<PairingServiceDelivery>,
+    joiner_queue: VecDeque<PairingServiceDelivery>,
     next_creator_sequence: u64,
     next_joiner_sequence: u64,
 }
 
-type Slots = Arc<Mutex<BTreeMap<RelaySlotId, Slot>>>;
+type Slots = Arc<Mutex<BTreeMap<PairingServiceSlotId, Slot>>>;
 
 /// Provider-owned direct pairing service. It uses the existing bounded slot
 /// semantics, but serves them over an Iroh ALPN instead of a relay socket.
@@ -103,14 +104,14 @@ impl IrohPairingService {
         &self,
         slot: PairingSlotId,
         token: PairingSideToken,
-    ) -> Result<RelaySlotId, PairingCoordinatorError> {
+    ) -> Result<PairingServiceSlotId, PairingCoordinatorError> {
         let Some((local_token, _)) = self.local.get(&slot) else {
             return Err(Self::local_error());
         };
         if local_token.0 != token.0 {
             return Err(Self::local_error());
         }
-        Ok(RelaySlotId(slot.0))
+        Ok(PairingServiceSlotId(slot.0))
     }
 }
 
@@ -131,15 +132,15 @@ impl PairingSessionServicePort for IrohPairingService {
         ticket: [u8; 16],
     ) -> Result<(PairingSlotId, Timestamp), PairingCoordinatorError> {
         purge_expired_slots(&self.slots);
-        let _ = RelayCode::new(code.as_str()).map_err(|_| Self::local_error())?;
-        let relay_slot = RelaySlotId(random_id());
+        let _ = PairingServiceCode::new(code.as_str()).map_err(|_| Self::local_error())?;
+        let relay_slot = PairingServiceSlotId(random_id());
         let slot = Slot {
             code: code.as_str().to_owned(),
             expires_at,
             creator_blob,
             ticket,
-            capability: RelaySlotCapability(capability.0),
-            creator_token: RelaySideToken(creator_token.0),
+            capability: PairingServiceSlotCapability(capability.0),
+            creator_token: PairingServiceSideToken(creator_token.0),
             joiner_token: None,
             creator_queue: VecDeque::new(),
             joiner_queue: VecDeque::new(),
@@ -174,9 +175,9 @@ impl PairingSessionServicePort for IrohPairingService {
             }
         })?;
         let mut client = RendezvousClient::new(transport, Duration::from_secs(15));
-        let relay_code = RelayCode::new(code.as_str()).map_err(|_| Self::local_error())?;
+        let relay_code = PairingServiceCode::new(code.as_str()).map_err(|_| Self::local_error())?;
         let (slot, expires_at, creator_blob) = client
-            .join(relay_code, joiner_blob, RelaySideToken(joiner_token.0), ticket)
+            .join(relay_code, joiner_blob, PairingServiceSideToken(joiner_token.0), ticket)
             .map_err(|_| Self::local_error())?;
         let pairing_slot = PairingSlotId(slot.0);
         self.remote.insert(pairing_slot, client);
@@ -193,7 +194,12 @@ impl PairingSessionServicePort for IrohPairingService {
         purge_expired_slots(&self.slots);
         if let Some(client) = self.remote.get_mut(&slot) {
             return client
-                .push(message_id, RelaySlotId(slot.0), RelaySideToken(token.0), blob)
+                .push(
+                    message_id,
+                    PairingServiceSlotId(slot.0),
+                    PairingServiceSideToken(token.0),
+                    blob,
+                )
                 .map_err(|_| Self::local_error());
         }
         let relay_slot = self.local_slot(slot, token)?;
@@ -215,9 +221,9 @@ impl PairingSessionServicePort for IrohPairingService {
             entry.next_creator_sequence = value.saturating_add(1);
             value
         };
-        queue.push_back(RelayDelivery {
-            sequence: RelaySequence(sequence),
-            message_id: RelayMessageId(message_id),
+        queue.push_back(PairingServiceDelivery {
+            sequence: PairingServiceSequence(sequence),
+            message_id: PairingServiceMessageId(message_id),
             blob,
         });
         Ok(())
@@ -232,7 +238,11 @@ impl PairingSessionServicePort for IrohPairingService {
         purge_expired_slots(&self.slots);
         if let Some(client) = self.remote.get_mut(&slot) {
             return client
-                .poll(RelaySlotId(slot.0), RelaySideToken(token.0), RelaySequence(after))
+                .poll(
+                    PairingServiceSlotId(slot.0),
+                    PairingServiceSideToken(token.0),
+                    PairingServiceSequence(after),
+                )
                 .map(|items| {
                     items
                         .into_iter()
@@ -271,7 +281,11 @@ impl PairingSessionServicePort for IrohPairingService {
         purge_expired_slots(&self.slots);
         if let Some(client) = self.remote.get_mut(&slot) {
             return client
-                .ack(RelaySlotId(slot.0), RelaySideToken(token.0), RelaySequence(up_to))
+                .ack(
+                    PairingServiceSlotId(slot.0),
+                    PairingServiceSideToken(token.0),
+                    PairingServiceSequence(up_to),
+                )
                 .map_err(|_| Self::local_error());
         }
         let relay_slot = self.local_slot(slot, token)?;
@@ -296,10 +310,10 @@ impl PairingSessionServicePort for IrohPairingService {
         purge_expired_slots(&self.slots);
         if let Some(mut client) = self.remote.remove(&slot) {
             return client
-                .close(RelaySlotId(slot.0), RelaySlotCapability(capability.0))
+                .close(PairingServiceSlotId(slot.0), PairingServiceSlotCapability(capability.0))
                 .map_err(|_| Self::local_error());
         }
-        let relay_slot = RelaySlotId(slot.0);
+        let relay_slot = PairingServiceSlotId(slot.0);
         let mut slots = self.slots.lock().map_err(|_| Self::local_error())?;
         if slots.get(&relay_slot).is_some_and(|entry| entry.capability.0 == capability.0) {
             slots.remove(&relay_slot);
@@ -321,8 +335,8 @@ impl PairingSessionServicePort for IrohPairingService {
         ticket: [u8; 16],
     ) -> Result<(), PairingCoordinatorError> {
         purge_expired_slots(&self.slots);
-        let relay_code = RelayCode::new(code.as_str()).map_err(|_| Self::local_error())?;
-        let relay_slot = RelaySlotId(slot.0);
+        let relay_code = PairingServiceCode::new(code.as_str()).map_err(|_| Self::local_error())?;
+        let relay_slot = PairingServiceSlotId(slot.0);
         let mut slots = self.slots.lock().map_err(|_| Self::local_error())?;
         if slots.contains_key(&relay_slot) {
             return Err(PairingCoordinatorError::SessionAlreadyExists);
@@ -334,8 +348,8 @@ impl PairingSessionServicePort for IrohPairingService {
                 expires_at,
                 creator_blob,
                 ticket,
-                capability: RelaySlotCapability(capability.0),
-                creator_token: RelaySideToken(creator_token.0),
+                capability: PairingServiceSlotCapability(capability.0),
+                creator_token: PairingServiceSideToken(creator_token.0),
                 joiner_token: None,
                 creator_queue: VecDeque::new(),
                 joiner_queue: VecDeque::new(),
@@ -396,33 +410,33 @@ async fn serve_connection(connection: Connection, slots: Slots) {
         let Ok((mut send, mut recv)) = connection.accept_bi().await else { return };
         let Ok(request) = read_request(&mut recv).await else { return };
         let response = process_request(request, &slots);
-        let Ok(frame) = RelayCodec::encode_response(&response) else { return };
+        let Ok(frame) = PairingServiceCodec::encode_response(&response) else { return };
         if send.write_all(&frame).await.is_err() || send.finish().is_err() {
             return;
         }
     }
 }
 
-async fn read_request(recv: &mut RecvStream) -> Result<RelayRequest, ()> {
-    let mut header = [0_u8; RELAY_HEADER_LEN];
+async fn read_request(recv: &mut RecvStream) -> Result<PairingServiceRequest, ()> {
+    let mut header = [0_u8; PAIRING_SERVICE_HEADER_LEN];
     recv.read_exact(&mut header).await.map_err(|_| ())?;
-    let length = RelayCodec::frame_len_from_header(&header).map_err(|_| ())?;
+    let length = PairingServiceCodec::frame_len_from_header(&header).map_err(|_| ())?;
     let mut frame = Vec::with_capacity(length);
     frame.extend_from_slice(&header);
-    let mut payload = vec![0_u8; length - RELAY_HEADER_LEN];
+    let mut payload = vec![0_u8; length - PAIRING_SERVICE_HEADER_LEN];
     recv.read_exact(&mut payload).await.map_err(|_| ())?;
     frame.extend_from_slice(&payload);
-    RelayCodec::decode_request(&frame).map_err(|_| ())
+    PairingServiceCodec::decode_request(&frame).map_err(|_| ())
 }
 
-fn process_request(request: RelayRequest, slots: &Slots) -> RelayResponse {
+fn process_request(request: PairingServiceRequest, slots: &Slots) -> PairingServiceResponse {
     // Pairing slots are intentionally in-memory and short-lived. Purging on
     // every request keeps expired invitations from accumulating when a peer
     // never sends the final Close, and ensures expired tokens cannot continue
     // to push/poll after the five-minute invitation window.
     purge_expired_slots(slots);
     match request {
-        RelayRequest::Open {
+        PairingServiceRequest::Open {
             code,
             expires_at,
             creator_blob,
@@ -431,7 +445,7 @@ fn process_request(request: RelayRequest, slots: &Slots) -> RelayResponse {
             ticket,
             ..
         } => {
-            let slot = RelaySlotId(random_id());
+            let slot = PairingServiceSlotId(random_id());
             let entry = Slot {
                 code: code.as_str().to_owned(),
                 expires_at,
@@ -448,29 +462,32 @@ fn process_request(request: RelayRequest, slots: &Slots) -> RelayResponse {
             if let Ok(mut map) = slots.lock() {
                 map.insert(slot, entry);
             }
-            RelayResponse::Opened { slot_id: slot, expires_at }
+            PairingServiceResponse::Opened { slot_id: slot, expires_at }
         }
-        RelayRequest::Join { code, joiner_blob, joiner_token, ticket, .. } => {
+        PairingServiceRequest::Join { code, joiner_blob, joiner_token, ticket, .. } => {
             let Ok(mut map) = slots.lock() else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             let Some((slot, entry)) = map.iter_mut().find(|(_, entry)| {
                 entry.code == code.as_str()
                     && entry.joiner_token.is_none()
-                    && entry.creator_blob.len() <= torca_relay_protocol::MAX_RELAY_BLOB_LEN
+                    && entry.creator_blob.len()
+                        <= torca_pairing_service_protocol::MAX_PAIRING_SERVICE_BLOB_LEN
                     && entry.expires_at >= current_timestamp()
                     && entry.ticket == ticket.map(|value| value.0).unwrap_or(entry.ticket)
             }) else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
-            if joiner_blob.len() > torca_relay_protocol::MAX_RELAY_BLOB_LEN
+            if joiner_blob.len() > torca_pairing_service_protocol::MAX_PAIRING_SERVICE_BLOB_LEN
                 || entry.creator_queue.len() >= MAX_QUEUE
             {
-                return RelayResponse::Error(torca_relay_protocol::RelayProtocolError::QueueFull);
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::QueueFull,
+                );
             }
             entry.joiner_token = Some(joiner_token);
             // The creator must receive the joiner's ephemeral public key as
@@ -479,37 +496,39 @@ fn process_request(request: RelayRequest, slots: &Slots) -> RelayResponse {
             // the authenticated pairing after approval.
             let sequence = entry.next_creator_sequence;
             entry.next_creator_sequence = entry.next_creator_sequence.saturating_add(1);
-            entry.creator_queue.push_back(RelayDelivery {
-                sequence: RelaySequence(sequence),
-                message_id: RelayMessageId(random_id()),
+            entry.creator_queue.push_back(PairingServiceDelivery {
+                sequence: PairingServiceSequence(sequence),
+                message_id: PairingServiceMessageId(random_id()),
                 blob: joiner_blob,
             });
-            RelayResponse::Joined {
+            PairingServiceResponse::Joined {
                 slot_id: *slot,
                 expires_at: entry.expires_at,
                 creator_blob: entry.creator_blob.clone(),
             }
         }
-        RelayRequest::Push { slot_id, token, message_id, blob, .. } => {
+        PairingServiceRequest::Push { slot_id, token, message_id, blob, .. } => {
             let Ok(mut map) = slots.lock() else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             let Some(entry) = map.get_mut(&slot_id) else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             let is_creator = entry.creator_token.0 == token.0;
             if !is_creator && entry.joiner_token.is_none_or(|value| value.0 != token.0) {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::Unauthorized,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::Unauthorized,
                 );
             }
             let queue = if is_creator { &mut entry.joiner_queue } else { &mut entry.creator_queue };
             if queue.len() >= MAX_QUEUE {
-                return RelayResponse::Error(torca_relay_protocol::RelayProtocolError::QueueFull);
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::QueueFull,
+                );
             }
             let sequence = if is_creator {
                 let value = entry.next_joiner_sequence;
@@ -520,71 +539,81 @@ fn process_request(request: RelayRequest, slots: &Slots) -> RelayResponse {
                 entry.next_creator_sequence += 1;
                 value
             };
-            queue.push_back(RelayDelivery { sequence: RelaySequence(sequence), message_id, blob });
-            RelayResponse::Accepted
+            queue.push_back(PairingServiceDelivery {
+                sequence: PairingServiceSequence(sequence),
+                message_id,
+                blob,
+            });
+            PairingServiceResponse::Accepted
         }
-        RelayRequest::Poll { slot_id, token, after } => {
+        PairingServiceRequest::Poll { slot_id, token, after } => {
             let Ok(map) = slots.lock() else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             let Some(entry) = map.get(&slot_id) else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             let is_creator = entry.creator_token.0 == token.0;
             if !is_creator && entry.joiner_token.is_none_or(|value| value.0 != token.0) {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::Unauthorized,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::Unauthorized,
                 );
             }
             let queue = if is_creator { &entry.creator_queue } else { &entry.joiner_queue };
-            RelayResponse::Deliveries(
+            PairingServiceResponse::Deliveries(
                 queue.iter().filter(|item| item.sequence.0 > after.0).cloned().collect(),
             )
         }
-        RelayRequest::Ack { slot_id, token, up_to } => {
+        PairingServiceRequest::Ack { slot_id, token, up_to } => {
             let Ok(mut map) = slots.lock() else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             let Some(entry) = map.get_mut(&slot_id) else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             let is_creator = entry.creator_token.0 == token.0;
             if !is_creator && entry.joiner_token.is_none_or(|value| value.0 != token.0) {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::Unauthorized,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::Unauthorized,
                 );
             }
             let queue = if is_creator { &mut entry.creator_queue } else { &mut entry.joiner_queue };
             while queue.front().is_some_and(|item| item.sequence.0 <= up_to.0) {
                 queue.pop_front();
             }
-            RelayResponse::Acked(up_to)
+            PairingServiceResponse::Acked(up_to)
         }
-        RelayRequest::Close { slot_id, capability } => {
+        PairingServiceRequest::Close { slot_id, capability } => {
             let Ok(mut map) = slots.lock() else {
-                return RelayResponse::Error(
-                    torca_relay_protocol::RelayProtocolError::SlotNotFound,
+                return PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound,
                 );
             };
             if map.get(&slot_id).is_some_and(|entry| entry.capability.0 == capability.0) {
                 map.remove(&slot_id);
-                RelayResponse::Closed
+                PairingServiceResponse::Closed
             } else {
-                RelayResponse::Error(torca_relay_protocol::RelayProtocolError::Unauthorized)
+                PairingServiceResponse::Error(
+                    torca_pairing_service_protocol::PairingServiceProtocolError::Unauthorized,
+                )
             }
         }
-        RelayRequest::Health => RelayResponse::Healthy,
-        RelayRequest::Info => RelayResponse::Info(
-            torca_relay_protocol::RelayInfo::new("torca-iroh", "direct", "direct")
-                .expect("static info"),
+        PairingServiceRequest::Health => PairingServiceResponse::Healthy,
+        PairingServiceRequest::Info => PairingServiceResponse::Info(
+            torca_pairing_service_protocol::PairingServiceInfo::new(
+                "torca-iroh",
+                "direct",
+                "direct",
+            )
+            .expect("static info"),
         ),
     }
 }
@@ -596,13 +625,15 @@ mod tests {
     #[test]
     fn direct_slot_server_preserves_bidirectional_queue_semantics() {
         let slots = Arc::new(Mutex::new(BTreeMap::new()));
-        let code = RelayCode::new("ABC123").expect("code");
-        let slot_capability = RelaySlotCapability(OpaqueId::from_bytes([3; 16]));
-        let creator_token = RelaySideToken(OpaqueId::from_bytes([1; 16]));
-        let joiner_token = RelaySideToken(OpaqueId::from_bytes([2; 16]));
+        let code = PairingServiceCode::new("ABC123").expect("code");
+        let slot_capability = PairingServiceSlotCapability(OpaqueId::from_bytes([3; 16]));
+        let creator_token = PairingServiceSideToken(OpaqueId::from_bytes([1; 16]));
+        let joiner_token = PairingServiceSideToken(OpaqueId::from_bytes([2; 16]));
         let opened = process_request(
-            RelayRequest::Open {
-                operation_id: torca_relay_protocol::RelayOperationId(OpaqueId::from_bytes([9; 16])),
+            PairingServiceRequest::Open {
+                operation_id: torca_pairing_service_protocol::PairingServiceOperationId(
+                    OpaqueId::from_bytes([9; 16]),
+                ),
                 code: code.clone(),
                 expires_at: Timestamp::from_unix_millis(
                     current_timestamp().to_unix_millis().saturating_add(60_000),
@@ -611,38 +642,50 @@ mod tests {
                 creator_blob: b"creator".to_vec(),
                 slot_capability,
                 creator_token,
-                ticket: torca_relay_protocol::RelayJoinTicket([4; 16]),
+                ticket: torca_pairing_service_protocol::PairingServiceJoinTicket([4; 16]),
             },
             &slots,
         );
-        let RelayResponse::Opened { slot_id, .. } = opened else { panic!("open response") };
+        let PairingServiceResponse::Opened { slot_id, .. } = opened else {
+            panic!("open response")
+        };
         let joined = process_request(
-            RelayRequest::Join {
-                operation_id: torca_relay_protocol::RelayOperationId(OpaqueId::from_bytes([8; 16])),
+            PairingServiceRequest::Join {
+                operation_id: torca_pairing_service_protocol::PairingServiceOperationId(
+                    OpaqueId::from_bytes([8; 16]),
+                ),
                 code,
                 joiner_blob: b"joiner".to_vec(),
                 joiner_token,
-                ticket: Some(torca_relay_protocol::RelayJoinTicket([4; 16])),
+                ticket: Some(torca_pairing_service_protocol::PairingServiceJoinTicket([4; 16])),
             },
             &slots,
         );
-        assert!(matches!(joined, RelayResponse::Joined { slot_id: id, .. } if id == slot_id));
+        assert!(
+            matches!(joined, PairingServiceResponse::Joined { slot_id: id, .. } if id == slot_id)
+        );
         let pushed = process_request(
-            RelayRequest::Push {
-                operation_id: torca_relay_protocol::RelayOperationId(OpaqueId::from_bytes([7; 16])),
-                message_id: RelayMessageId(OpaqueId::from_bytes([6; 16])),
+            PairingServiceRequest::Push {
+                operation_id: torca_pairing_service_protocol::PairingServiceOperationId(
+                    OpaqueId::from_bytes([7; 16]),
+                ),
+                message_id: PairingServiceMessageId(OpaqueId::from_bytes([6; 16])),
                 slot_id,
                 token: joiner_token,
                 blob: b"hello".to_vec(),
             },
             &slots,
         );
-        assert_eq!(pushed, RelayResponse::Accepted);
+        assert_eq!(pushed, PairingServiceResponse::Accepted);
         let polled = process_request(
-            RelayRequest::Poll { slot_id, token: creator_token, after: RelaySequence(0) },
+            PairingServiceRequest::Poll {
+                slot_id,
+                token: creator_token,
+                after: PairingServiceSequence(0),
+            },
             &slots,
         );
-        assert!(matches!(polled, RelayResponse::Deliveries(ref items) if items.len() == 2
+        assert!(matches!(polled, PairingServiceResponse::Deliveries(ref items) if items.len() == 2
                 && items[0].blob == b"joiner"
                 && items[1].blob == b"hello"));
     }
@@ -650,8 +693,8 @@ mod tests {
     #[test]
     fn expired_slots_are_purged_before_requests_are_served() {
         let slots = Arc::new(Mutex::new(BTreeMap::new()));
-        let slot_id = RelaySlotId(OpaqueId::from_bytes([7; 16]));
-        let token = RelaySideToken(OpaqueId::from_bytes([8; 16]));
+        let slot_id = PairingServiceSlotId(OpaqueId::from_bytes([7; 16]));
+        let token = PairingServiceSideToken(OpaqueId::from_bytes([8; 16]));
         slots.lock().expect("slots").insert(
             slot_id,
             Slot {
@@ -662,7 +705,7 @@ mod tests {
                 .expect("timestamp"),
                 creator_blob: Vec::new(),
                 ticket: [0; 16],
-                capability: RelaySlotCapability(OpaqueId::from_bytes([9; 16])),
+                capability: PairingServiceSlotCapability(OpaqueId::from_bytes([9; 16])),
                 creator_token: token,
                 joiner_token: None,
                 creator_queue: VecDeque::new(),
@@ -672,11 +715,15 @@ mod tests {
             },
         );
 
-        let response =
-            process_request(RelayRequest::Poll { slot_id, token, after: RelaySequence(0) }, &slots);
+        let response = process_request(
+            PairingServiceRequest::Poll { slot_id, token, after: PairingServiceSequence(0) },
+            &slots,
+        );
         assert!(matches!(
             response,
-            RelayResponse::Error(torca_relay_protocol::RelayProtocolError::SlotNotFound)
+            PairingServiceResponse::Error(
+                torca_pairing_service_protocol::PairingServiceProtocolError::SlotNotFound
+            )
         ));
         assert!(slots.lock().expect("slots").is_empty());
     }

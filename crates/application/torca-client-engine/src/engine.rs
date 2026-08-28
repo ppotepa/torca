@@ -34,7 +34,6 @@ use torca_pairing::{
 use torca_receipts::{InMemoryReceiptRepository, Receipt, ReceiptRepository};
 
 include!("engine/model.rs");
-include!("engine/legacy_error.rs");
 include!("engine/relationship_repository.rs");
 include!("engine/core.rs");
 include!("engine/dispatch.rs");

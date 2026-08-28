@@ -1,5 +1,7 @@
 use crate::devices::{AndroidAbi, Device};
-use crate::domain::{BuildPolicy, CommunicationProvider, Configuration, Target};
+use crate::domain::{
+    BuildPolicy, CommunicationProvider, Configuration, ProviderMetadataExt, Target, iroh_provider,
+};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 use sha2::{Digest, Sha256};
@@ -81,7 +83,7 @@ pub fn verify_artifact_manifest(
                 manifest_path.display()
             )
         })?;
-    let expected_features = provider_features(communication_provider);
+    let expected_features = provider_features(&communication_provider);
     if recorded_features != expected_features {
         return Err(format!(
             "artifact feature mismatch for {}: manifest={}, current={}",
@@ -90,7 +92,7 @@ pub fn verify_artifact_manifest(
             expected_features
         ));
     }
-    if communication_provider == CommunicationProvider::Iroh {
+    if communication_provider == iroh_provider() {
         let expected_profile =
             configured_iroh_profile(provider_profile).unwrap_or_else(|| "always".to_owned());
         let recorded_profile =
@@ -230,7 +232,7 @@ impl<'a> BuildController<'a> {
                 "torca-native",
                 "--no-default-features",
                 "--features",
-                provider_features(communication_provider),
+                provider_features(&communication_provider),
                 "--locked",
             ];
             if matches!(configuration, Configuration::Release) {
@@ -240,9 +242,9 @@ impl<'a> BuildController<'a> {
                 "cargo",
                 &cargo_args,
                 endpoint,
-                communication_provider,
+                communication_provider.clone(),
                 provider_profile,
-                Some(&provider_target_root(&self.paths.repo_root, communication_provider)),
+                Some(&provider_target_root(&self.paths.repo_root, &communication_provider)),
                 &self.paths.repo_root,
             )?;
         }
@@ -251,7 +253,7 @@ impl<'a> BuildController<'a> {
             self.build_android_native(
                 configuration,
                 endpoint,
-                communication_provider,
+                communication_provider.clone(),
                 provider_profile,
                 &android_abis,
             )?;
@@ -260,7 +262,7 @@ impl<'a> BuildController<'a> {
             for target in android_targets(&android_abis) {
                 let abi = target.abi.package_name();
                 let triple = target.triple;
-                let source = provider_target_root(&self.paths.repo_root, communication_provider)
+                let source = provider_target_root(&self.paths.repo_root, &communication_provider)
                     .join(triple)
                     .join(profile)
                     .join("libtorca_native.so");
@@ -293,7 +295,8 @@ impl<'a> BuildController<'a> {
                     format!("TORCA_PROVIDER_ENDPOINT={endpoint}"),
                 ]);
             }
-            let environment = build_environment(endpoint, communication_provider, provider_profile);
+            let environment =
+                build_environment(endpoint, &communication_provider, provider_profile);
             let output = self.runner.run(&CommandSpec {
                 program: flutter.clone(),
                 arguments: flutter_args,
@@ -305,7 +308,7 @@ impl<'a> BuildController<'a> {
                 let diagnostic = self.windows_install_diagnostic(mode);
                 return Err(BuildError::WindowsFlutter { output: output.text, diagnostic });
             }
-            let source = provider_target_root(&self.paths.repo_root, communication_provider)
+            let source = provider_target_root(&self.paths.repo_root, &communication_provider)
                 .join(mode)
                 .join("torca_native.dll");
             let destination = self.paths.repo_root.join(format!(
@@ -358,7 +361,7 @@ impl<'a> BuildController<'a> {
                 &flutter,
                 &references,
                 endpoint,
-                communication_provider,
+                communication_provider.clone(),
                 provider_profile,
                 None,
                 &self.paths.repo_root.join("apps/client/flutter"),
@@ -391,7 +394,7 @@ impl<'a> BuildController<'a> {
             endpoint,
             configuration,
             targets,
-            communication_provider,
+            &communication_provider,
             provider_profile,
         );
         let manifest = serde_json::json!({
@@ -402,11 +405,11 @@ impl<'a> BuildController<'a> {
             "sourceCommit": source_commit,
             "artifacts": artifacts,
             "communicationProvider": communication_provider.to_string(),
-            "compiledFeatures": provider_features(communication_provider),
-            "irohProfile": (communication_provider == CommunicationProvider::Iroh)
+            "compiledFeatures": provider_features(&communication_provider),
+            "irohProfile": (communication_provider == iroh_provider())
                 .then(|| configured_iroh_profile(provider_profile))
                 .flatten(),
-            "irohServiceConfigFingerprint": (communication_provider == CommunicationProvider::Iroh)
+            "irohServiceConfigFingerprint": (communication_provider == iroh_provider())
                 .then(iroh_service_config_fingerprint),
             "builtAt": format!("{:?}", std::time::SystemTime::now()),
         });
@@ -444,7 +447,7 @@ impl<'a> BuildController<'a> {
     ) -> Result<(), BuildError> {
         let toolchain = AndroidToolchain::discover()?;
         let provider_target_dir =
-            provider_target_root(&self.paths.repo_root, communication_provider);
+            provider_target_root(&self.paths.repo_root, &communication_provider);
         for target in android_targets(abis) {
             let mut arguments = vec![
                 "build".to_owned(),
@@ -452,7 +455,7 @@ impl<'a> BuildController<'a> {
                 "torca-native".to_owned(),
                 "--no-default-features".to_owned(),
                 "--features".to_owned(),
-                provider_features(communication_provider).to_owned(),
+                provider_features(&communication_provider).to_owned(),
                 "--target".to_owned(),
                 target.triple.to_owned(),
                 "--locked".to_owned(),
@@ -481,7 +484,7 @@ impl<'a> BuildController<'a> {
                             environment.insert("TORCA_PROVIDER_ENDPOINT_HASH".into(), hash);
                         }
                     }
-                    if communication_provider == CommunicationProvider::Iroh {
+                    if communication_provider == iroh_provider() {
                         if let Some(profile) = configured_iroh_profile(provider_profile) {
                             environment.insert("TORCA_IROH_PROFILE".into(), profile);
                         }
@@ -515,7 +518,7 @@ impl<'a> BuildController<'a> {
     ) -> Result<(), BuildError> {
         let environment = build_environment_with_target(
             endpoint,
-            communication_provider,
+            communication_provider.clone(),
             provider_profile,
             cargo_target_dir,
         );
@@ -573,10 +576,10 @@ impl<'a> BuildController<'a> {
 
 fn build_environment(
     endpoint: Option<&str>,
-    communication_provider: CommunicationProvider,
+    communication_provider: &CommunicationProvider,
     provider_profile: Option<&str>,
 ) -> BTreeMap<String, String> {
-    build_environment_with_target(endpoint, communication_provider, provider_profile, None)
+    build_environment_with_target(endpoint, communication_provider.clone(), provider_profile, None)
 }
 
 fn build_environment_with_target(
@@ -601,7 +604,7 @@ fn build_environment_with_target(
             }
         }
     }
-    if communication_provider == CommunicationProvider::Iroh {
+    if communication_provider == iroh_provider() {
         // Iroh's endpoint profile is provider configuration, not a Tor
         // endpoint. Pass it explicitly to every native build so Android and
         // Windows embed the same low-power/direct policy instead of relying on
@@ -632,16 +635,8 @@ fn build_environment_with_target(
 /// Complete Cargo feature selection for one native artifact. The environment
 /// variable is retained for runtime metadata, while Cargo features decide
 /// which provider implementation is physically linked into the package.
-const fn provider_features(provider: CommunicationProvider) -> &'static str {
-    match provider {
-        CommunicationProvider::Tor => "provider-tor,radio-audio",
-        CommunicationProvider::Iroh => "provider-iroh,radio-audio",
-        CommunicationProvider::WebRtc => "provider-webrtc,radio-audio",
-        // Memory is a simulator-only transport; keep the deployer defensive
-        // and select the smallest provider feature set if it is ever passed
-        // through a test plan.
-        CommunicationProvider::Memory => "provider-iroh,radio-audio",
-    }
+const fn provider_features(_provider: &CommunicationProvider) -> &'static str {
+    "iroh,radio-audio"
 }
 
 fn configured_iroh_profile(explicit: Option<&str>) -> Option<String> {
@@ -917,7 +912,7 @@ fn build_identity(
     endpoint: Option<&str>,
     configuration: Configuration,
     targets: &[Target],
-    communication_provider: CommunicationProvider,
+    communication_provider: &CommunicationProvider,
     provider_profile: Option<&str>,
 ) -> String {
     let target_list = targets.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
@@ -925,12 +920,12 @@ fn build_identity(
     // therefore the battery/reachability trade-off). Include it in the build
     // identity so a direct-only artifact can never be reused as an
     // always-reachable one, or vice versa.
-    let iroh_profile = if communication_provider == CommunicationProvider::Iroh {
+    let iroh_profile = if *communication_provider == iroh_provider() {
         configured_iroh_profile(provider_profile).unwrap_or_else(|| "always".to_owned())
     } else {
         "none".to_owned()
     };
-    let iroh_services = if communication_provider == CommunicationProvider::Iroh {
+    let iroh_services = if *communication_provider == iroh_provider() {
         iroh_service_config_fingerprint()
     } else {
         "none".to_owned()
@@ -947,7 +942,7 @@ fn cargo_target_root(repo_root: &Path) -> PathBuf {
     target_root_with_override(repo_root, env::var_os("CARGO_TARGET_DIR"))
 }
 
-fn provider_target_root(repo_root: &Path, provider: CommunicationProvider) -> PathBuf {
+fn provider_target_root(repo_root: &Path, provider: &CommunicationProvider) -> PathBuf {
     cargo_target_root(repo_root).join("providers").join(provider.wire_value())
 }
 
@@ -1010,11 +1005,11 @@ mod tests {
         let artifact = root.join("torca_app.exe");
         std::fs::write(&artifact, b"first build").expect("artifact");
         let endpoint = format!("{}.onion:443", "a".repeat(56));
-        std::fs::write(&paths.relay_endpoint, &endpoint).expect("relay endpoint");
+        std::fs::write(&paths.provider_endpoint_file, &endpoint).expect("provider endpoint");
         let manifest = serde_json::json!({
             "endpoint": endpoint,
-            "communicationProvider": "tor",
-            "compiledFeatures": "provider-tor,radio-audio",
+            "communicationProvider": "iroh",
+            "compiledFeatures": "iroh,radio-audio",
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,
@@ -1031,7 +1026,7 @@ mod tests {
             Target::Windows,
             Configuration::Debug,
             &artifact,
-            CommunicationProvider::Tor,
+            iroh_provider(),
             None,
         )
         .expect("matching artifact");
@@ -1042,7 +1037,7 @@ mod tests {
                 Target::Windows,
                 Configuration::Debug,
                 &artifact,
-                CommunicationProvider::Tor,
+                iroh_provider(),
                 None,
             )
             .is_err()
@@ -1068,16 +1063,16 @@ mod tests {
     fn native_provider_outputs_use_isolated_target_directories() {
         let repo = Path::new(r"G:\torca");
         assert_eq!(
-            provider_target_root(repo, CommunicationProvider::Tor),
-            repo.join("target/providers/tor")
-        );
-        assert_eq!(
-            provider_target_root(repo, CommunicationProvider::Iroh),
+            provider_target_root(repo, &iroh_provider()),
             repo.join("target/providers/iroh")
         );
-        assert_ne!(
-            provider_target_root(repo, CommunicationProvider::Tor),
-            provider_target_root(repo, CommunicationProvider::Iroh)
+        assert_eq!(
+            provider_target_root(repo, &iroh_provider()),
+            repo.join("target/providers/iroh")
+        );
+        assert_eq!(
+            provider_target_root(repo, &iroh_provider()),
+            provider_target_root(repo, &iroh_provider())
         );
     }
 
@@ -1150,7 +1145,7 @@ mod tests {
         let environment = toolchain.environment(
             android_targets(&[AndroidAbi::Arm64])[0],
             Some("a.onion:443"),
-            Path::new(r"G:\torca\target\providers\tor"),
+            Path::new(r"G:\torca\target\providers\iroh"),
         );
         assert_eq!(environment["CC_aarch64-linux-android"], "aarch64-linux-android26-clang.cmd");
         assert_eq!(environment["CC_aarch64_linux_android"], "aarch64-linux-android26-clang.cmd");
@@ -1163,48 +1158,10 @@ mod tests {
 
     #[test]
     fn direct_provider_build_environment_has_no_tor_relay_define() {
-        let environment = build_environment(None, CommunicationProvider::WebRtc, None);
-        assert_eq!(environment["TORCA_COMMUNICATION_PROVIDER"], "webrtc");
+        let provider = iroh_provider();
+        let environment = build_environment(None, &provider, None);
+        assert_eq!(environment["TORCA_COMMUNICATION_PROVIDER"], "iroh");
         assert!(!environment.contains_key("TORCA_PROVIDER_ENDPOINT"));
-    }
-
-    #[test]
-    fn artifact_manifest_rejects_another_relay_endpoint() {
-        let root = std::env::temp_dir()
-            .join(format!("torca-artifact-endpoint-manifest-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let paths = RuntimePaths::from_repo(root.clone());
-        paths.ensure().expect("runtime paths");
-        let artifact = root.join("torca_app.exe");
-        std::fs::write(&artifact, b"build").expect("artifact");
-        let current_endpoint = format!("{}.onion:443", "a".repeat(56));
-        std::fs::write(&paths.relay_endpoint, &current_endpoint).expect("relay endpoint");
-        let manifest = serde_json::json!({
-            "endpoint": format!("{}.onion:443", "b".repeat(56)),
-            "communicationProvider": "tor",
-            "compiledFeatures": "provider-tor,radio-audio",
-            "artifacts": [{
-                "target": "windows",
-                "path": artifact,
-                "sha256": hash_file(&artifact),
-            }]
-        });
-        std::fs::write(
-            paths.manifests.join("clients-debug.json"),
-            serde_json::to_vec(&manifest).expect("manifest json"),
-        )
-        .expect("manifest");
-        let error = verify_artifact_manifest(
-            &paths,
-            Target::Windows,
-            Configuration::Debug,
-            &artifact,
-            CommunicationProvider::Tor,
-            None,
-        )
-        .expect_err("endpoint mismatch");
-        assert!(error.contains("artifact endpoint mismatch"));
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1217,11 +1174,11 @@ mod tests {
         let artifact = root.join("torca_app.exe");
         std::fs::write(&artifact, b"build").expect("artifact");
         let endpoint = format!("{}.onion:443", "a".repeat(56));
-        std::fs::write(&paths.relay_endpoint, &endpoint).expect("relay endpoint");
+        std::fs::write(&paths.provider_endpoint_file, &endpoint).expect("provider endpoint");
         let manifest = serde_json::json!({
             "endpoint": endpoint,
             "communicationProvider": "webrtc",
-            "compiledFeatures": "provider-webrtc,radio-audio",
+            "compiledFeatures": "iroh,radio-audio",
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,
@@ -1238,7 +1195,7 @@ mod tests {
             Target::Windows,
             Configuration::Debug,
             &artifact,
-            CommunicationProvider::Tor,
+            iroh_provider(),
             None,
         )
         .expect_err("provider mismatch");

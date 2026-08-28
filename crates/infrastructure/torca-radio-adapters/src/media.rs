@@ -220,11 +220,11 @@ pub trait RadioMediaSystemFactory: Send {
 
 /// Explicit capability boundary for providers without a media route.
 pub struct UnsupportedRadioMediaSystemFactory {
-    provider: torca_transport_api::TransportKind,
+    provider: torca_foundation::ProviderId,
 }
 
 impl UnsupportedRadioMediaSystemFactory {
-    pub const fn new(provider: torca_transport_api::TransportKind) -> Self {
+    pub fn new(provider: torca_foundation::ProviderId) -> Self {
         Self { provider }
     }
 }

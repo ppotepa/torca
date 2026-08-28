@@ -4,10 +4,6 @@
 
 #[cfg(feature = "provider-iroh")]
 pub(crate) mod iroh;
-#[cfg(feature = "provider-tor")]
-pub(crate) mod tor;
-#[cfg(feature = "provider-webrtc")]
-pub(crate) mod webrtc;
 
 use std::sync::Arc;
 use std::{path::PathBuf, time::Duration};
@@ -20,17 +16,17 @@ use torca_pairing_coordinator::{PairingApprovalPort, PairingPeerSecretStore};
 use torca_provider_api::{ProviderDeploymentProfile, ProviderDescriptor, ProviderRouting};
 use torca_radio_adapters::RadioMediaSystemFactory;
 use torca_runtime::{CommunicationLifecycle, PairingDriver, RendezvousProbe};
-use torca_transport_api::{CommissioningObserver, PeerTransportFactory, TransportKind};
+use torca_transport_api::{CommissioningObserver, PeerTransportFactory};
 
 use crate::composition::NativeCompositionError;
 
 /// Dependencies supplied by the native host to the provider-owned pairing
 /// implementation. They deliberately carry no Tor, onion or relay type.
+#[allow(dead_code)]
 pub(crate) struct ProviderPairingInputs {
     pub engine: EngineHandle,
     pub approval: Box<dyn PairingApprovalPort + Send>,
     pub peer_secrets: Box<dyn PairingPeerSecretStore + Send>,
-    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub connectivity: ConnectivityObserver,
 }
 
@@ -50,7 +46,7 @@ pub(crate) struct ProviderComponents {
     /// Provider identity is carried with the composed bundle so the runtime
     /// cannot accidentally publish metadata for a different implementation
     /// than the one selected by deployment.
-    pub provider: TransportKind,
+    pub provider: ProviderId,
     pub lifecycle: Box<dyn CommunicationLifecycle>,
     pub peer_transport_factory: Box<dyn PeerTransportFactory>,
     pub routing: Arc<dyn ProviderRouting>,
@@ -62,19 +58,15 @@ pub(crate) struct ProviderComponents {
 /// Deployment-neutral inputs for the selected provider's commissioning.
 /// `rendezvous_endpoint` is optional because direct providers may instead
 /// obtain their signaling details through a platform adapter.
+#[allow(dead_code)]
 pub(crate) struct ProviderCompositionInputs {
-    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub data_dir: PathBuf,
     /// Provider-owned secret namespace. The selected adapter may persist an
     /// endpoint/signalling identity here; other providers never see it.
-    #[cfg_attr(not(feature = "provider-iroh"), allow(dead_code))]
     pub provider_secret_store: Box<dyn ProtectedSecretStore>,
     pub rendezvous_endpoint: Option<(String, u16)>,
-    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub startup_timeout: Duration,
-    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub now: torca_foundation::Timestamp,
-    #[cfg_attr(not(feature = "provider-tor"), allow(dead_code))]
     pub bootstrap_observer: CommissioningObserver,
 }
 
@@ -93,12 +85,8 @@ pub(crate) trait NativeCommunicationProviderPlugin: Send + Sync {
 
 fn provider_plugin(id: &ProviderId) -> Option<&'static dyn NativeCommunicationProviderPlugin> {
     match id.as_str() {
-        #[cfg(feature = "provider-tor")]
-        "tor" => Some(&tor::PLUGIN),
         #[cfg(feature = "provider-iroh")]
         "iroh" => Some(&iroh::PLUGIN),
-        #[cfg(feature = "provider-webrtc")]
-        "webrtc" => Some(&webrtc::PLUGIN),
         _ => None,
     }
 }
@@ -106,11 +94,9 @@ fn provider_plugin(id: &ProviderId) -> Option<&'static dyn NativeCommunicationPr
 /// The only native provider-selection boundary. The process runtime consumes
 /// its neutral result and never constructs a Tor/onion/relay component.
 pub(crate) fn compose_selected_provider(
-    provider: TransportKind,
+    provider_id: ProviderId,
     inputs: ProviderCompositionInputs,
 ) -> Result<ProviderComponents, NativeCompositionError> {
-    let provider_id = ProviderId::new(provider.wire_value())
-        .map_err(|_| NativeCompositionError::new("invalid selected provider identifier"))?;
     let plugin = provider_plugin(&provider_id).ok_or_else(|| {
         NativeCompositionError::new(format!(
             "communication provider '{}' is not included in this native artifact",
@@ -127,12 +113,12 @@ pub(crate) fn compose_selected_provider(
     if plugin.id() != provider_id || plugin.descriptor().id != provider_id {
         return Err(NativeCompositionError::new("provider plugin metadata mismatch"));
     }
-    if components.provider != provider || components.lifecycle.provider() != provider {
+    if components.provider != provider_id || components.lifecycle.provider_id() != provider_id {
         return Err(NativeCompositionError::new(format!(
             "provider composition mismatch: selected={}, bundle={}, lifecycle={}",
-            provider.wire_value(),
-            components.provider.wire_value(),
-            components.lifecycle.provider().wire_value(),
+            provider_id,
+            components.provider,
+            components.lifecycle.provider_id(),
         )));
     }
     Ok(components)
@@ -142,26 +128,20 @@ pub(crate) fn compose_selected_provider(
 /// intentionally do not parse or retain another provider's deployment
 /// endpoint: a direct provider must never inherit Tor's onion configuration.
 pub(crate) fn compiled_rendezvous_endpoint(
-    provider: TransportKind,
+    _provider: ProviderId,
 ) -> Result<Option<(String, u16)>, NativeCompositionError> {
-    match provider {
-        #[cfg(feature = "provider-tor")]
-        TransportKind::Tor => tor::compiled_rendezvous_endpoint().map(Some),
-        #[cfg(not(feature = "provider-tor"))]
-        TransportKind::Tor => Ok(None),
-        TransportKind::Iroh | TransportKind::WebRtc | TransportKind::Memory => Ok(None),
-    }
+    Ok(None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ProviderCompositionInputs, compose_selected_provider};
-    use torca_transport_api::TransportKind;
+    use torca_foundation::ProviderId;
 
     #[test]
     fn unavailable_provider_is_rejected_at_the_single_selection_boundary() {
         let result = compose_selected_provider(
-            TransportKind::Memory,
+            ProviderId::new("memory").expect("static provider id"),
             ProviderCompositionInputs {
                 data_dir: std::env::temp_dir().join("torca-provider-composition-test"),
                 provider_secret_store: Box::new(

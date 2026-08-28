@@ -1,12 +1,9 @@
 //! Process-wide, payload-free connectivity observations and projections.
 
 mod supervisor;
-pub use supervisor::{RelayHealthHandle, RelayHealthPort, RelayHealthSnapshot, RelayHealthWorker};
-/// Provider-neutral names for the optional commissioning service health lane.
-/// The older relay names remain exported for source compatibility only.
 pub use supervisor::{
-    RelayHealthHandle as RendezvousHealthHandle, RelayHealthPort as RendezvousHealthPort,
-    RelayHealthSnapshot as RendezvousHealthSnapshot, RelayHealthWorker as RendezvousHealthWorker,
+    PairingServiceHealthHandle, PairingServiceHealthPort, PairingServiceHealthSnapshot,
+    PairingServiceHealthWorker,
 };
 mod peer_supervisor;
 pub use peer_supervisor::{PeerProbeCandidate, PeerProbeRequest, PeerProbeSupervisor};
@@ -23,14 +20,9 @@ const EVENT_CAPACITY: usize = 1024;
 pub enum TransportLayer {
     /// Selected communication provider. New provider adapters record here.
     Communication,
-    /// Legacy spelling retained for Tor probes and older adapters. It maps to
-    /// the same neutral communication ledger as `Communication`.
-    Tor,
     /// Provider-owned short-lived service used to exchange pairing state.
     /// It may be a rendezvous relay, discovery service or signaling service.
     PairingService,
-    /// Legacy relay projection. New code records `PairingService`.
-    Relay,
     Peer(Option<OpaqueId>),
 }
 
@@ -117,9 +109,6 @@ pub struct ConnectivitySnapshot {
     /// Provider-neutral communication activity used by new presentation and
     /// diagnostics code.
     pub communication: ChannelSnapshot,
-    /// Legacy Tor projection. It mirrors `communication` until the old ABI is
-    /// removed.
-    pub tor: ChannelSnapshot,
     /// Provider-neutral pairing-service activity used by new UI and policy.
     pub pairing_service: ChannelSnapshot,
     /// Legacy relay projection. It mirrors `pairing_service` while older
@@ -189,8 +178,8 @@ impl ConnectivityObserver {
         ledger.cursor = ledger.cursor.saturating_add(1);
         let cursor = ledger.cursor;
         let channel = match layer {
-            TransportLayer::Communication | TransportLayer::Tor => &mut ledger.communication,
-            TransportLayer::PairingService | TransportLayer::Relay => &mut ledger.pairing_service,
+            TransportLayer::Communication => &mut ledger.communication,
+            TransportLayer::PairingService => &mut ledger.pairing_service,
             TransportLayer::Peer(_) => &mut ledger.peer,
         };
         if phase == OperationPhase::Started {
@@ -255,10 +244,9 @@ impl ConnectivityObserver {
             ledger.last_probes.insert(probe_key, signature);
         }
         let layer = match probe.target {
-            ProbeTarget::Communication
-            | ProbeTarget::IncomingReachability
-            | ProbeTarget::Tor
-            | ProbeTarget::OnionService => TransportLayer::Communication,
+            ProbeTarget::Communication | ProbeTarget::IncomingReachability => {
+                TransportLayer::Communication
+            }
             ProbeTarget::PairingService | ProbeTarget::Relay => TransportLayer::PairingService,
             ProbeTarget::Peer => TransportLayer::Peer(None),
             _ => return,
@@ -303,10 +291,10 @@ impl ConnectivityObserver {
     pub fn set_queued(&self, layer: TransportLayer, queued: u32) {
         if let Ok(mut ledger) = self.inner.lock() {
             match layer {
-                TransportLayer::Communication | TransportLayer::Tor => {
+                TransportLayer::Communication => {
                     ledger.communication.queued = queued;
                 }
-                TransportLayer::PairingService | TransportLayer::Relay => {
+                TransportLayer::PairingService => {
                     ledger.pairing_service.queued = queued;
                 }
                 TransportLayer::Peer(_) => ledger.peer.queued = queued,
@@ -318,7 +306,6 @@ impl ConnectivityObserver {
         let Ok(ledger) = self.inner.lock() else { return ConnectivitySnapshot::default() };
         ConnectivitySnapshot {
             communication: ledger.communication,
-            tor: ledger.communication,
             pairing_service: ledger.pairing_service,
             relay: ledger.pairing_service,
             peer: ledger.peer,
@@ -394,24 +381,5 @@ mod tests {
         assert_eq!(snapshot.relay.tx_sequence, 1);
         assert_eq!(snapshot.relay.rx_sequence, 1);
         assert_eq!(snapshot.relay.latency_ms, Some(9));
-    }
-
-    #[test]
-    fn legacy_tor_events_project_to_the_neutral_communication_channel() {
-        let observer = ConnectivityObserver::default();
-        observer.record(
-            TransportLayer::Tor,
-            Some(TransportDirection::Tx),
-            TransportOperation::Connect,
-            OperationPhase::Started,
-            None,
-            Timestamp::UNIX_EPOCH,
-            None,
-            None,
-        );
-
-        let snapshot = observer.snapshot();
-        assert_eq!(snapshot.communication.tx_sequence, 1);
-        assert_eq!(snapshot.tor, snapshot.communication);
     }
 }

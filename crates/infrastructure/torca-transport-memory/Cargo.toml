@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 torca-contacts = { path = "../../domains/torca-contacts" }
+torca-foundation = { path = "../../foundation/torca-foundation" }
 torca-transport-api = { path = "../../application/torca-transport-api" }
 
 [lints]

@@ -8,7 +8,9 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::domain::{DeployPlan, PlanDiff, PreflightReport, PrivacyPolicy, StepDisposition};
+use crate::domain::{
+    DeployPlan, PlanDiff, PreflightReport, PrivacyPolicy, ProviderMetadataExt, StepDisposition,
+};
 use crate::tui::{
     input::InputGuard,
     theme::{Theme, ThemeKind},
@@ -77,12 +79,12 @@ pub fn text_with_diff(plan: &DeployPlan, report: &PreflightReport, diff: &PlanDi
         .into_iter()
         .map(|step| {
             let marker = match step.disposition {
-                StepDisposition::Execute => "✓",
-                StepDisposition::Reuse => "→",
-                StepDisposition::Skip => "○",
-                StepDisposition::Blocked => "✗",
+                StepDisposition::Execute => "âœ“",
+                StepDisposition::Reuse => "â†’",
+                StepDisposition::Skip => "â—‹",
+                StepDisposition::Blocked => "âœ—",
             };
-            format!("{marker} {} — {}", step.label, step.reason)
+            format!("{marker} {} â€” {}", step.label, step.reason)
         })
         .collect::<Vec<_>>()
         .join("\n");

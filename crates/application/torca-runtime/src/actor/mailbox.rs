@@ -338,7 +338,7 @@ impl RuntimeHandle {
 pub struct RuntimeOwner {
     sender: SyncSender<RuntimeCommand>,
     join: Option<JoinHandle<()>>,
-    rendezvous_worker: Option<RendezvousHealthWorker>,
+    rendezvous_worker: Option<PairingServiceHealthWorker>,
 }
 
 enum RuntimeWait {

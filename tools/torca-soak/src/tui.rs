@@ -36,9 +36,8 @@ struct UiContext {
     phase: Mutex<String>,
     last_event: Mutex<String>,
     android_status: Mutex<String>,
-    relay_endpoint: Mutex<String>,
-    relay_health: Mutex<String>,
-    onion_state: Mutex<String>,
+    provider_health: Mutex<String>,
+    incoming_state: Mutex<String>,
     events: Mutex<VecDeque<String>>,
     logs: Mutex<VecDeque<String>>,
     run_root: Mutex<Option<PathBuf>>,
@@ -153,24 +152,14 @@ pub(crate) fn publish_event(event: &str, line: &Value) {
                 }
             }
         }
-        if matches!(event, "provider_ready" | "relay_ready") {
-            if let Some(endpoint) = data.get("endpoint").and_then(Value::as_str) {
-                if let Ok(mut value) = ctx.relay_endpoint.lock() {
-                    endpoint.clone_into(&mut value);
-                }
-            }
+        if event == "provider_ready" {
             if let Some(health) = data.get("health").and_then(Value::as_str) {
-                if let Ok(mut value) = ctx.relay_health.lock() {
+                if let Ok(mut value) = ctx.provider_health.lock() {
                     health.clone_into(&mut value);
                 }
             }
-            if let Some(onion) = data.get("onion").and_then(Value::as_str) {
-                if let Ok(mut value) = ctx.onion_state.lock() {
-                    onion.clone_into(&mut value);
-                }
-            }
             if let Some(incoming) = data.get("incoming").and_then(Value::as_str) {
-                if let Ok(mut value) = ctx.onion_state.lock() {
+                if let Ok(mut value) = ctx.incoming_state.lock() {
                     incoming.clone_into(&mut value);
                 }
             }
@@ -238,8 +227,7 @@ fn mark_incident(ctx: &UiContext) {
 fn event_phase(event: &str) -> Option<&'static str> {
     match event {
         "run_started" => Some("starting"),
-        "relay_starting" => Some("relay startup"),
-        "provider_ready" | "relay_ready" => Some("provider ready"),
+        "provider_ready" => Some("provider ready"),
         "android_preflight_started" | "android_ready" | "android_bridge_starting" => {
             Some("Android preflight")
         }
@@ -286,9 +274,8 @@ pub(crate) fn run(cli: Cli) -> Result<(), String> {
         phase: Mutex::new("starting".to_owned()),
         last_event: Mutex::new(String::new()),
         android_status: Mutex::new("not selected".to_owned()),
-        relay_endpoint: Mutex::new("pending".to_owned()),
-        relay_health: Mutex::new("starting".to_owned()),
-        onion_state: Mutex::new("unknown".to_owned()),
+        provider_health: Mutex::new("starting".to_owned()),
+        incoming_state: Mutex::new("unknown".to_owned()),
         events: Mutex::new(VecDeque::new()),
         logs: Mutex::new(VecDeque::new()),
         run_root: Mutex::new(None),
@@ -515,37 +502,14 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
         ListItem::new(format!(
             "Provider: {} [{}]",
             cli.communication_provider.wire_value(),
-            ctx.relay_health
+            ctx.provider_health
                 .lock()
-                .map(|value| {
-                    if crate::provider_requires_managed_service(cli.communication_provider) {
-                        value.clone()
-                    } else {
-                        "provider-owned".to_owned()
-                    }
-                })
+                .map(|value| value.clone())
                 .unwrap_or_else(|_| "unknown".to_owned())
         )),
         ListItem::new(format!(
             "Incoming: {}",
-            ctx.onion_state.lock().map(|value| value.clone()).unwrap_or_default()
-        )),
-        ListItem::new(format!(
-            "Provider endpoint: {}",
-            ctx.relay_endpoint
-                .lock()
-                .map(|value| {
-                    if value.is_empty() {
-                        if crate::provider_requires_managed_service(cli.communication_provider) {
-                            "pending".to_owned()
-                        } else {
-                            "provider-owned".to_owned()
-                        }
-                    } else {
-                        value.clone()
-                    }
-                })
-                .unwrap_or_else(|_| "unknown".to_owned())
+            ctx.incoming_state.lock().map(|value| value.clone()).unwrap_or_default()
         )),
         ListItem::new(format!(
             "Artifact: {}",
@@ -696,7 +660,7 @@ fn draw_logs(frame: &mut ratatui::Frame, area: Rect, ctx: &UiContext, scroll: us
     frame.render_widget(Clear, area);
     frame.render_widget(
         List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Timeline log — l back")),
+            .block(Block::default().borders(Borders::ALL).title("Timeline log â€” l back")),
         area,
     );
 }
@@ -708,7 +672,7 @@ mod tests {
 
     #[test]
     fn compact_keeps_json_utf8_safe_and_bounded() {
-        let value = json!("żółć".repeat(80));
+        let value = json!("Å¼Ã³Å‚Ä‡".repeat(80));
         let rendered = compact(&value);
         assert!(rendered.len() <= 103);
         assert!(rendered.is_char_boundary(rendered.len()));
@@ -718,7 +682,6 @@ mod tests {
     fn event_phase_groups_workload_and_recovery_events() {
         assert_eq!(event_phase("run_started"), Some("starting"));
         assert_eq!(event_phase("message_queued"), Some("workload"));
-        assert_eq!(event_phase("relay_fault_recovered"), Some("fault recovery"));
         assert_eq!(event_phase("cockpit_finished"), Some("completed"));
         assert_eq!(event_phase("backend_stderr"), None);
     }

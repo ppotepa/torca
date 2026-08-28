@@ -12,7 +12,7 @@ pub const fn migrations() -> &'static [Migration] {
     &MIGRATIONS
 }
 
-const MIGRATIONS: [Migration; 16] = [
+const MIGRATIONS: [Migration; 17] = [
     Migration {
         version: 1,
         name: "baseline",
@@ -92,6 +92,11 @@ const MIGRATIONS: [Migration; 16] = [
         version: 16,
         name: "notification_outbox",
         sql: include_str!("../sql/migrations/0016_notification_outbox.sql"),
+    },
+    Migration {
+        version: 17,
+        name: "iroh_only_routes",
+        sql: include_str!("../sql/migrations/0017_iroh_only_routes.sql"),
     },
 ];
 

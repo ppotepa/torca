@@ -8,7 +8,7 @@ fn maintain_runtime_health<
     pairing: &mut P,
     communication: &mut C,
     communication_lifecycle: &mut T,
-    rendezvous_health: Option<&RendezvousHealthHandle>,
+    rendezvous_health: Option<&PairingServiceHealthHandle>,
     policy: &mut RuntimeGovernor,
     health: &mut RuntimeHealthState,
     work: &mut RuntimeWorkState,
@@ -24,7 +24,7 @@ fn maintain_runtime_health<
     }
 
     let relay_snapshot = rendezvous_health
-        .map_or_else(RendezvousHealthSnapshot::default, RendezvousHealthHandle::snapshot);
+        .map_or_else(PairingServiceHealthSnapshot::default, PairingServiceHealthHandle::snapshot);
     let relay_probe_completed = relay_snapshot.probe_count > counters.last_relay_probe_count;
     if relay_probe_completed {
         diagnostics.count_by(
