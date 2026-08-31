@@ -1129,8 +1129,8 @@ class _TerminalPairingContent extends StatelessWidget {
       const SizedBox(height: 14),
       Text(
         completed
-            ? 'The contact was added securely. Open the private conversation now.'
-            : 'This invitation is no longer active. The other device will receive the same final state.',
+            ? context.strings.pairingCompletedMessage
+            : context.strings.pairingInactiveMessage,
         textAlign: TextAlign.center,
       ),
       const SizedBox(height: 20),

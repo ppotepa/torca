@@ -545,6 +545,12 @@ class TorcaStrings {
       : 'Messages are sent directly through the selected communication provider.';
   String get attachmentSyncing =>
       _pl ? 'Synchronizacja zalacznika…' : 'Attachment is syncing…';
+  String get pairingCompletedMessage => _pl
+      ? 'Kontakt został bezpiecznie dodany. Otworzyć teraz prywatną rozmowę?'
+      : 'The contact was added securely. Open the private conversation now.';
+  String get pairingInactiveMessage => _pl
+      ? 'To zaproszenie nie jest już aktywne. Drugie urządzenie otrzyma ten sam stan końcowy.'
+      : 'This invitation is no longer active. The other device will receive the same final state.';
   String get closeSearch => _pl ? 'Zamknij wyszukiwanie' : 'Close search';
   String get searchConversationHint =>
       _pl ? 'Szukaj w tej rozmowie' : 'Search this conversation';
