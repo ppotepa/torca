@@ -2012,10 +2012,13 @@ impl PeerTransportFactory for IrohTransportFactory {
     }
 
     fn preserves_sessions_on_network_change(&self) -> bool {
-        // QUIC/Iroh can migrate a live connection to the new network path;
-        // closing every session here would create a reconnect storm and lose
-        // the only authenticated channel on which to advertise the new route.
-        true
+        // Android can replace Wi-Fi with LTE without keeping the old UDP
+        // socket usable. In that case an apparently live QUIC session becomes
+        // a zombie: the peer link keeps it in `Ready`, while new envelopes
+        // never reach the peer. Iroh still refreshes its endpoint route in
+        // `network_changed`; let the peer link close and redial the session
+        // after that refresh. Durable delivery keeps queued messages safe.
+        false
     }
 
     fn set_waker(&self, waker: Arc<dyn Fn() + Send + Sync>) -> Result<(), TransportFactoryError> {

@@ -45,7 +45,7 @@ class TorcaForegroundService : Service() {
     }
     private val dataStallActive = AtomicBoolean(false)
     private var warmupWakeLock: PowerManager.WakeLock? = null
-    private var networkChangePending = false
+    @Volatile private var networkChangePending = false
     private val networkLock = Any()
     private var defaultNetwork: Network? = null
     private var defaultNetworkFingerprint: NetworkFingerprint? = null
@@ -54,7 +54,8 @@ class TorcaForegroundService : Service() {
     private val networkChangeRunnable = Runnable {
         networkChangePending = false
         if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
-            NativeRuntimeBridge.nativeLifecycleEvent("network_changed")
+            val accepted = NativeRuntimeBridge.nativeLifecycleEvent("network_changed")
+            Log.d(TAG, "network_changed dispatched to native accepted=$accepted")
         }
     }
     private val energyReceiver = object : BroadcastReceiver() {
@@ -295,7 +296,10 @@ class TorcaForegroundService : Service() {
             if (changed) defaultNetworkFingerprint = null
             changed
         }
-        if (changed) notifyNetworkChanged()
+        if (changed) {
+            Log.d(TAG, "default network available id=$network")
+            notifyNetworkChanged()
+        }
     }
 
     private fun observeLostNetwork(network: Network) {
@@ -305,7 +309,10 @@ class TorcaForegroundService : Service() {
             defaultNetworkFingerprint = null
             true
         }
-        if (lostDefault) notifyNetworkChanged()
+        if (lostDefault) {
+            Log.d(TAG, "default network lost id=$network")
+            notifyNetworkChanged()
+        }
     }
 
     private fun observeCapabilities(
@@ -343,7 +350,10 @@ class TorcaForegroundService : Service() {
                 }
             }
         }
-        if (routeReplaced) notifyNetworkChanged()
+        if (routeReplaced) {
+            Log.d(TAG, "network capabilities changed id=$network fingerprint=$fingerprint")
+            notifyNetworkChanged()
+        }
     }
 
     private fun pollMessageNotifications() {

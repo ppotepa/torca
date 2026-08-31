@@ -342,8 +342,11 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                 }
                 let now = current_timestamp().unwrap_or(Timestamp::UNIX_EPOCH);
                 pairing.network_changed(now);
-                communication.network_changed(now);
                 communication_lifecycle.network_changed(now);
+                // Invalidate/migrate the provider route before forcing peer
+                // sessions to reconnect. Otherwise the first reconnect can
+                // race the route refresh and dial through the old Wi-Fi path.
+                communication.network_changed(now);
                 record(
                     diagnostics,
                     sequence,
