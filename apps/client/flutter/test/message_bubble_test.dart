@@ -65,7 +65,7 @@ void main() {
     expect(outbound.width, lessThanOrEqualTo(282.3));
     // The footer stays inside the bubble border in both modern and terminal
     // appearances.
-    expect(outboundFooter.right, closeTo(outbound.right - 10 - 0.75, 0.1));
+    expect(outboundFooter.right, closeTo(outbound.right - 10 - 1.2, 0.1));
     expect(tester.takeException(), isNull);
   });
 
@@ -250,9 +250,7 @@ void main() {
     expect(opened, isTrue);
   });
 
-  testWidgets('grouped message keeps body and footer without repeated sender', (
-    tester,
-  ) async {
+  testWidgets('grouped message keeps sender, body and footer', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),
@@ -280,7 +278,56 @@ void main() {
       find.byKey(const ValueKey<String>('message-footer-grouped')),
       findsOneWidget,
     );
-    expect(find.text('You'), findsNothing);
+    expect(find.text('You'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('footer aggregates active reactions and hides inactive ones', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: const MessageDto(
+              id: 'reactions',
+              conversationId: '02',
+              body: 'React to this',
+              direction: 'inbound',
+              status: 'delivered',
+              createdAtMs: 1725106800000,
+            ),
+            reactions: const <ReactionDto>[
+              ReactionDto(
+                messageId: 'reactions',
+                conversationId: '02',
+                actorId: 'one',
+                emoji: '❤️',
+                active: true,
+              ),
+              ReactionDto(
+                messageId: 'reactions',
+                conversationId: '02',
+                actorId: 'two',
+                emoji: '❤️',
+                active: true,
+              ),
+              ReactionDto(
+                messageId: 'reactions',
+                conversationId: '02',
+                actorId: 'three',
+                emoji: '👍',
+                active: false,
+              ),
+            ],
+            onLongPress: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('❤️ 2'), findsOneWidget);
+    expect(find.text('👍'), findsNothing);
   });
 }

@@ -479,7 +479,7 @@ class _ConversationPaneState extends State<ConversationPane>
       }
       final reactionsByMessage = <String, List<ReactionDto>>{};
       for (final reaction in snapshot.reactions) {
-        if (!byId.containsKey(reaction.messageId)) continue;
+        if (!reaction.active || !byId.containsKey(reaction.messageId)) continue;
         (reactionsByMessage[reaction.messageId] ??= <ReactionDto>[]).add(
           reaction,
         );
@@ -652,16 +652,22 @@ class _ConversationPaneState extends State<ConversationPane>
                               showBody:
                                   !attachmentAnnouncement &&
                                   message.typedStatus != MessageStatus.deleted,
-                              // Show the sender only at the start of a visual
-                              // group. Repeating it in every one-to-one
-                              // message makes the bubble read like a card.
-                              senderLabel: grouped
-                                  ? null
-                                  : message.typedDirection ==
-                                        MessageDirection.outbound
+                              // Keep the sender visible in every message. The
+                              // compact group geometry still reduces spacing,
+                              // but never removes the identity cue.
+                              senderLabel:
+                                  message.typedDirection ==
+                                      MessageDirection.outbound
                                   ? context.strings.senderYou
                                   : contact?.displayName ??
                                         context.strings.contactLabel,
+                              senderColorKey:
+                                  message.typedDirection ==
+                                      MessageDirection.outbound
+                                  ? snapshot.identity?.id ?? 'local'
+                                  : contact?.remoteIdentityId ??
+                                        contact?.id ??
+                                        'remote',
                               compactTop: grouped,
                               onLongPress: () => _showMessageActions(message),
                               onSecondaryTapDown: (details) =>

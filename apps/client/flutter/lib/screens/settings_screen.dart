@@ -10,6 +10,7 @@ import '../settings/battery_preferences.dart';
 import '../settings/local_preferences.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_theme_mode.dart';
+import '../widgets/message_bubble.dart';
 import '../widgets/runtime_network_status.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -525,18 +526,26 @@ class _AppearancePreview extends StatelessWidget {
                 style: Theme.of(context).textTheme.labelSmall,
               ),
               const SizedBox(height: 8),
-              const _PreviewMessage(
-                body: 'Are we still meeting?',
-                time: '14:20',
+              MessageBubble(
+                message: const MessageDto(
+                  id: 'appearance-inbound-1',
+                  conversationId: 'appearance',
+                  body: 'Are we still meeting?',
+                  direction: 'inbound',
+                  status: 'delivered',
+                  createdAtMs: 1725106800000,
+                ),
+                senderLabel: context.strings.sampleContactName,
+                senderColorKey: 'appearance-contact',
+                onLongPress: () {},
               ),
               const SizedBox(height: 5),
               const _PreviewMessage(
                 body: 'Yes, give me 5 min.',
-                time: '14:21  ✓✓',
                 outbound: true,
               ),
               const SizedBox(height: 5),
-              const _PreviewMessage(body: 'Perfect!', time: '14:22'),
+              const _PreviewMessage(body: 'Perfect!'),
               const SizedBox(height: 10),
               TextField(
                 readOnly: true,
@@ -557,37 +566,28 @@ class _AppearancePreview extends StatelessWidget {
 class _PreviewMessage extends StatelessWidget {
   const _PreviewMessage({
     required this.body,
-    required this.time,
     this.outbound = false,
   });
 
   final String body;
-  final String time;
   final bool outbound;
 
   @override
-  Widget build(BuildContext context) => Align(
-    alignment: outbound ? Alignment.centerRight : Alignment.centerLeft,
-    child: Container(
-      constraints: const BoxConstraints(maxWidth: 250),
-      padding: const EdgeInsets.fromLTRB(10, 7, 8, 5),
-      decoration: BoxDecoration(
-        color: outbound
-            ? context.torcaColors.messageOutbound
-            : context.torcaColors.messageInbound,
-        border: context.torcaTokens.terminal
-            ? Border.all(color: Theme.of(context).colorScheme.outline)
-            : null,
-        borderRadius: BorderRadius.circular(context.torcaTokens.radiusLarge),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: <Widget>[
-          Text(body),
-          const SizedBox(height: 3),
-          Text(time, style: Theme.of(context).textTheme.labelSmall),
-        ],
-      ),
+  Widget build(BuildContext context) => MessageBubble(
+    message: MessageDto(
+      id: 'appearance-${body.hashCode}',
+      conversationId: 'appearance',
+      body: body,
+      direction: outbound ? 'outbound' : 'inbound',
+      status: 'delivered',
+      createdAtMs: 1725106800000,
+      sentAtMs: outbound ? 1725106800000 : null,
+      deliveredAtMs: outbound ? 1725106860000 : null,
     ),
+    senderLabel: outbound
+        ? context.strings.senderYou
+        : context.strings.sampleContactName,
+    senderColorKey: outbound ? 'appearance-local' : 'appearance-contact',
+    onLongPress: () {},
   );
 }
