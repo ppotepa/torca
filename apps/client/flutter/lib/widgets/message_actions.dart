@@ -15,16 +15,56 @@ enum MessageAction {
 }
 
 abstract final class MessageActionMenu {
+  static const List<String> quickReactions = <String>[
+    '\u{1F44D}',
+    '\u{2764}\u{FE0F}',
+    '\u{1F602}',
+    '\u{1F62E}',
+    '\u{1F622}',
+    '\u{1F64F}',
+  ];
+
   static Future<MessageAction?> showTouch(
     BuildContext context, {
     bool canCancel = false,
     bool canEdit = false,
     bool bookmarked = false,
+    ValueChanged<String>? onQuickReaction,
   }) => showModalBottomSheet<MessageAction>(
     context: context,
     builder: (context) => SafeArea(
       child: Wrap(
         children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(
+              children: quickReactions
+                  .map(
+                    (emoji) => Expanded(
+                      child: Semantics(
+                        button: true,
+                        label: '${context.strings.reactToMessage} $emoji',
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () {
+                            onQuickReaction?.call(emoji);
+                            Navigator.of(context).pop(MessageAction.react);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Text(
+                              emoji,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(fontSize: 22),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ),
           _tile(
             context,
             MessageAction.reply,

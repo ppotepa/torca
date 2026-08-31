@@ -14,10 +14,10 @@ void main() {
     );
 
     expect(find.byIcon(TorcaIconSet.modern.invitations), findsOneWidget);
-    expect(find.byIcon(TorcaIconSet.modern.link), findsOneWidget);
-    expect(find.byIcon(TorcaIconSet.modern.identity), findsOneWidget);
-    expect(find.byIcon(TorcaIconSet.modern.confirm), findsOneWidget);
-    expect(find.byIcon(TorcaIconSet.modern.online), findsOneWidget);
-    expect(find.byIcon(TorcaIconSet.modern.send), findsNWidgets(4));
+    expect(find.text('Awaiting approval'), findsOneWidget);
+    final progress = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(progress.value, 0.5);
   });
 }

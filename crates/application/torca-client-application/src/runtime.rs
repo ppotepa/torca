@@ -929,12 +929,12 @@ impl ClientApplicationRuntime {
             }
             ApplicationCommand::RemoveContact { contact_id } => {
                 if self.run_or_enqueue_operation(contact_id, PendingOperationKind::RemoveContact)? {
-                    let _ = self
-                        .application
-                        .dispatch(EngineCommand::RemoveContact {
-                            contact_id: ContactId::from_opaque(contact_id),
-                        })
-                        .map_err(string_error)?;
+                    // The communication relationship administrator owns the
+                    // atomic deletion of the contact, conversation, messages,
+                    // outbox, attachments and peer credential. The engine and
+                    // runtime repositories are projections over that same
+                    // durable store in production; dispatching a second remove
+                    // reports NotFound after a successful first deletion.
                     "contact_removed"
                 } else {
                     "contact_removal_queued"
@@ -1483,16 +1483,6 @@ impl ClientApplicationRuntime {
             })?;
             match result {
                 Ok(()) => {
-                    if matches!(&operation.kind, PendingOperationKind::RemoveContact) {
-                        let _ = self
-                            .application
-                            .dispatch(EngineCommand::RemoveContact {
-                                contact_id: ContactId::from_opaque(operation.resource_id),
-                            })
-                            .map_err(|error| {
-                                ApplicationError::operation_failed(error.to_string())
-                            })?;
-                    }
                     store.complete(operation.id).map_err(|_| {
                         ApplicationError::operation_failed(
                             "pending operation completion could not be saved".into(),

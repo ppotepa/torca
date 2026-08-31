@@ -741,7 +741,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                 Align(
                   child: TorcaDeviceAvatar(
                     key: const ValueKey<String>('profile-device-avatar'),
-                    label: 'Your device',
+                    label: context.strings.yourIdentity,
                     identityId: widget.identityId,
                     stableDevice: true,
                     size: avatarSize,
@@ -749,7 +749,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'THIS IS YOUR UGLY FACE',
+                  context.strings.yourIdentity,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.4,

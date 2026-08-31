@@ -1069,6 +1069,7 @@ class _ConversationPaneState extends State<ConversationPane>
                 (message.typedStatus == MessageStatus.queued ||
                     message.typedStatus == MessageStatus.failed),
             bookmarked: _bookmarkedMessageIds.contains(message.id),
+            onQuickReaction: (emoji) => _reactToMessage(message, emoji: emoji),
           )
         : await MessageActionMenu.showDesktop(
             context,
@@ -1175,52 +1176,56 @@ class _ConversationPaneState extends State<ConversationPane>
     }
   }
 
-  Future<void> _reactToMessage(MessageDto message) async {
+  Future<void> _reactToMessage(MessageDto message, {String? emoji}) async {
     final actorId = widget.gateway.snapshots.value.identity?.id;
     if (actorId == null || actorId.isEmpty) {
-      _showError('Local identity is not ready');
+      _showError(context.strings.localIdentityNotReady);
       return;
     }
-    final emoji = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          alignment: WrapAlignment.center,
-          children: <Widget>[
-            for (final value in const <String>[
-              '👍',
-              '❤️',
-              '😂',
-              '😮',
-              '😢',
-              '👏',
-            ])
-              IconButton(
-                icon: Text(value, style: const TextStyle(fontSize: 26)),
-                onPressed: () => Navigator.of(context).pop(value),
-                tooltip: value,
-              ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted || emoji == null) return;
+    final selectedEmoji =
+        emoji ??
+        await showModalBottomSheet<String>(
+          context: context,
+          builder: (context) => SafeArea(
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              children: <Widget>[
+                for (final value in MessageActionMenu.quickReactions)
+                  IconButton(
+                    icon: Text(value, style: const TextStyle(fontSize: 26)),
+                    onPressed: () => Navigator.of(context).pop(value),
+                    tooltip: value,
+                  ),
+              ],
+            ),
+          ),
+        );
+    if (!mounted || selectedEmoji == null) return;
     final existing = widget.gateway.snapshots.value.reactions.any(
       (reaction) =>
           reaction.messageId == message.id &&
           reaction.actorId == actorId &&
-          reaction.emoji == emoji &&
+          reaction.emoji == selectedEmoji &&
           reaction.active,
     );
-    await widget.gateway.execute(
+    final result = await widget.gateway.execute(
       SetMessageReactionCommandDto(
         messageIdHex: message.id,
         conversationIdHex: message.conversationId,
         actorIdHex: actorId,
-        emoji: emoji,
+        emoji: selectedEmoji,
         active: !existing,
       ),
     );
+    if (!result.ok && mounted) {
+      _showError(
+        BridgeErrorPresenter.localized(
+          context,
+          result,
+          fallback: context.strings.couldNotUpdateReaction,
+        ),
+      );
+    }
   }
 
   Future<void> _showMessageDetails(MessageDto message) => showDialog<void>(

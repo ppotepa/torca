@@ -16,17 +16,18 @@ class ContactActions {
     ContactDto contact,
   ) async {
     final strings = context.strings;
-    final controller = TextEditingController(text: contact.displayName);
+    var draft = contact.displayName;
     final value = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(strings.renameContact),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: contact.displayName,
           autofocus: true,
           maxLength: 64,
           decoration: InputDecoration(labelText: strings.localName),
-          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+          onChanged: (value) => draft = value,
+          onFieldSubmitted: (value) => Navigator.of(dialogContext).pop(value),
         ),
         actions: <Widget>[
           TextButton(
@@ -34,13 +35,12 @@ class ContactActions {
             child: Text(strings.cancel),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            onPressed: () => Navigator.of(dialogContext).pop(draft),
             child: Text(strings.save),
           ),
         ],
       ),
     );
-    controller.dispose();
     final name = value?.trim();
     if (name == null || name.isEmpty || !context.mounted) return false;
     return _execute(

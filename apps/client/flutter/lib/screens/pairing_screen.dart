@@ -440,6 +440,14 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     });
   }
 
+  Future<void> _cancelCreated(PairingDto pairing) async {
+    final result = await _run(
+      'pairing:${pairing.id}:cancel',
+      PairingAction.cancel.command(pairing.id),
+    );
+    if (result?.ok == true && mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) => AppModal(
     title: widget.mode == _PairingComposerMode.create
@@ -468,10 +476,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
                     'pairing:${pairing.id}:reject',
                     PairingAction.reject.command(pairing.id),
                   ),
-                  onCancel: () => _run(
-                    'pairing:${pairing.id}:cancel',
-                    PairingAction.cancel.command(pairing.id),
-                  ),
+                  onCancel: () => _cancelCreated(pairing),
                   onDone: pairing.typedState == PairingState.completed
                       ? () => Navigator.of(context).pop()
                       : null,

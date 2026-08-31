@@ -106,6 +106,7 @@ class TorcaStrings {
   String get messageQueued => _pl
       ? 'W kolejce — oczekiwanie na bezpośrednie połączenie'
       : 'Queued — waiting for a direct peer connection';
+  String get queued => _pl ? 'W kolejce' : 'Queued';
   String get deliveryFailed =>
       _pl ? 'Dostarczenie nieudane' : 'Delivery failed';
   String get bookmarkMessage => _pl ? 'Zapisz wiadomość' : 'Bookmark message';
@@ -206,6 +207,11 @@ class TorcaStrings {
       _pl ? 'Nie udało się odblokować kontaktu' : 'Could not unblock contact';
   String get couldNotRemoveContact =>
       _pl ? 'Nie udało się usunąć kontaktu' : 'Could not remove contact';
+  String get localIdentityNotReady => _pl
+      ? 'Lokalna tożsamość nie jest jeszcze gotowa'
+      : 'Local identity is not ready';
+  String get couldNotUpdateReaction =>
+      _pl ? 'Nie udało się wysłać reakcji' : 'Could not send reaction';
   String get incompatibleStorageEpoch => _pl
       ? 'Zaszyfrowany profil lokalny jest niezgodny. Jawnie zresetuj lokalne dane Torca przed kontynuowaniem.'
       : 'The encrypted local profile is incompatible. Reset local Torca data explicitly before continuing.';

@@ -1,73 +1,68 @@
 import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
+import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
+
 class PairingProgress extends StatelessWidget {
   const PairingProgress({required this.state, super.key});
 
   final String state;
 
-  static const _steps = <String>[
-    'Invitation',
-    'Peer joined',
-    'Verify',
-    'Approved',
-    'P2P ready',
-  ];
-
   @override
   Widget build(BuildContext context) {
-    final current = _stage(state);
-    final icons = <IconData>[
-      context.torcaIcons.invitations,
-      context.torcaIcons.link,
-      context.torcaIcons.identity,
-      context.torcaIcons.confirm,
-      context.torcaIcons.online,
-    ];
-    final terminalFailure = const {
-      'rejected',
-      'cancelled',
-      'expired',
-    }.contains(state);
+    final typedState = pairingStateFromWire(state);
+    final stage = _stage(typedState);
+    final terminalFailure = switch (typedState) {
+      PairingState.rejected ||
+      PairingState.cancelled ||
+      PairingState.expired => true,
+      _ => false,
+    };
+    final colors = Theme.of(context).colorScheme;
+    final icon = terminalFailure
+        ? context.torcaIcons.warning
+        : typedState == PairingState.completed
+        ? context.torcaIcons.success
+        : context.torcaIcons.invitations;
+    final label = context.strings.pairingStateLabel(typedState);
     return Semantics(
-      label: terminalFailure
-          ? 'Pairing ${state.toLowerCase()}'
-          : 'Pairing step ${current + 1} of ${_steps.length}: ${_steps[current]}',
-      child: Row(
-        children: List<Widget>.generate(_steps.length * 2 - 1, (position) {
-          if (position.isOdd) {
-            return Expanded(
-              child: Icon(
-                context.torcaIcons.send,
-                size: 18,
-                color: Theme.of(context).colorScheme.outline,
+      label: label,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(
+                icon,
+                size: 20,
+                color: terminalFailure ? colors.error : colors.primary,
               ),
-            );
-          }
-          final index = position ~/ 2;
-          final reached = !terminalFailure && index <= current;
-          return Expanded(
-            child: Tooltip(
-              message: _steps[index],
-              child: Icon(
-                icons[index],
-                size: 28,
-                color: reached
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.outline,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
               ),
-            ),
-          );
-        }),
+            ],
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: terminalFailure ? 1 : stage / 4,
+            color: terminalFailure ? colors.error : colors.primary,
+            backgroundColor: colors.surfaceContainerHighest,
+          ),
+        ],
       ),
     );
   }
 
-  static int _stage(String state) => switch (state) {
-    'peerjoined' || 'peer_joined' => 1,
-    'awaitingapproval' || 'awaiting_approval' => 2,
-    'approved' => 3,
-    'completed' => 4,
+  static int _stage(PairingState state) => switch (state) {
+    PairingState.peerJoined => 1,
+    PairingState.awaitingApproval => 2,
+    PairingState.approved => 3,
+    PairingState.completed => 4,
     _ => 0,
   };
 }

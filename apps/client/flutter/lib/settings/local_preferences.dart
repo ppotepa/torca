@@ -7,8 +7,9 @@ import '../theme/app_theme_mode.dart';
 import 'battery_preferences.dart';
 
 class LocalPreferences extends ChangeNotifier {
-  LocalPreferences({SharedPreferencesAsync? store})
-    : _store = _makeStore(store);
+  LocalPreferences({SharedPreferencesAsync? store, bool languageChosen = true})
+    : _store = _makeStore(store),
+      _languageChosen = languageChosen;
 
   final _PreferencesStore _store;
 
@@ -18,6 +19,7 @@ class LocalPreferences extends ChangeNotifier {
   static const _themeDensityKey = 'appearance.theme_density';
   static const _reduceMotionKey = 'appearance.reduce_motion';
   static const _localeModeKey = 'appearance.locale_mode';
+  static const _languageChosenKey = 'onboarding.language_chosen';
   static const _closeToTrayKey = 'desktop.close_to_tray';
   static const _audioInputDeviceKey = 'desktop.audio_input_device';
   static const _audioOutputDeviceKey = 'desktop.audio_output_device';
@@ -42,6 +44,10 @@ class LocalPreferences extends ChangeNotifier {
   TorcaAppearance _appearance = const TorcaAppearance();
   // English is the safe pre-load presentation; load() applies the persisted/system choice.
   AppLocaleMode _localeMode = AppLocaleMode.english;
+  // Tests and embedders that construct preferences without loading storage
+  // retain the historical direct-to-app behavior. Production load() replaces
+  // this with the durable onboarding value.
+  bool _languageChosen;
   bool _notificationsEnabled = true;
   bool _readReceiptsEnabled = true;
   bool _closeToTrayEnabled = true;
@@ -76,6 +82,7 @@ class LocalPreferences extends ChangeNotifier {
   AppThemeMode get themeMode => _themeMode;
   TorcaAppearance get appearance => _appearance;
   AppLocaleMode get localeMode => _localeMode;
+  bool get languageChosen => _languageChosen;
   bool get notificationsEnabled => _notificationsEnabled;
   bool get readReceiptsEnabled => _readReceiptsEnabled;
   bool get closeToTrayEnabled => _closeToTrayEnabled;
@@ -168,6 +175,7 @@ class LocalPreferences extends ChangeNotifier {
       reduceMotion: await _store.getBool(_reduceMotionKey) ?? false,
     );
     _localeMode = parseAppLocaleMode(await _store.getString(_localeModeKey));
+    _languageChosen = await _store.getBool(_languageChosenKey) ?? false;
     _closeToTrayEnabled = await _store.getBool(_closeToTrayKey) ?? true;
     _audioInputDeviceId = _nonEmpty(
       await _store.getString(_audioInputDeviceKey),
@@ -247,6 +255,16 @@ class LocalPreferences extends ChangeNotifier {
     notifyListeners();
     _notifyShellChanged();
     await _store.setString(_localeModeKey, value.storageValue);
+  }
+
+  Future<void> chooseInitialLanguage(AppLocaleMode value) async {
+    if (value == AppLocaleMode.system) return;
+    _localeMode = value;
+    _languageChosen = true;
+    notifyListeners();
+    _notifyShellChanged();
+    await _store.setString(_localeModeKey, value.storageValue);
+    await _store.setBool(_languageChosenKey, true);
   }
 
   void _queueAppearanceWrite() {

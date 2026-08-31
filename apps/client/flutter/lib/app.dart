@@ -12,6 +12,7 @@ import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
 import 'screens/diagnostics_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/language_selection_screen.dart';
 import 'screens/pairing_screen.dart';
 import 'screens/settings_screen.dart';
 import 'settings/local_preferences.dart';
@@ -410,11 +411,13 @@ class _TorcaAppState extends State<TorcaApp> {
           ),
         ),
       ),
-      home: HomeScreen(
-        gateway: widget.gateway,
-        preferences: widget.preferences,
-        onRetryBootstrap: widget.onRetryBootstrap,
-      ),
+      home: widget.preferences.languageChosen
+          ? HomeScreen(
+              gateway: widget.gateway,
+              preferences: widget.preferences,
+              onRetryBootstrap: widget.onRetryBootstrap,
+            )
+          : LanguageSelectionScreen(preferences: widget.preferences),
     ),
   );
 }

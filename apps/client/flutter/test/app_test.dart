@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/app.dart';
 import 'package:torca_app/gateway/engine_gateway.dart';
 import 'package:torca_app/generated/torca_contract.dart';
+import 'package:torca_app/localization/app_locale_mode.dart';
 import 'package:torca_app/navigation/app_navigation_controller.dart';
 import 'package:torca_app/screens/conversation_screen.dart';
 import 'package:torca_app/screens/pairing_screen.dart';
@@ -81,6 +82,43 @@ void main() {
       find.bySemanticsLabel('Torca pairing invitation QR code'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('creator can cancel an invitation and the modal closes', (
+    WidgetTester tester,
+  ) async {
+    const id = '00000000000000000000000000000084';
+    final gateway = FakeEngineGateway(
+      responses: <FakeGatewayResponse>[
+        FakeGatewayResponse.success(
+          kind: 'pairing_started',
+          resourceId: id,
+          inviteUri: 'torca://pair?v=2&code=STOP84',
+        ),
+        FakeGatewayResponse.success(kind: 'pairing_cancelled'),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () => showInvitationGeneratorModal(context, gateway),
+              child: const Text('Open generator'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open generator'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('Cancel invitation'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Your invitation'), findsNothing);
+    expect(gateway.commands.whereType<CancelPairingCommandDto>(), hasLength(1));
   });
 
   testWidgets(
@@ -291,13 +329,42 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Choose your nickname'), findsWidgets);
-    expect(find.text('THIS IS YOUR UGLY FACE'), findsOneWidget);
+    expect(find.text('Your identity'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('profile-device-avatar')),
       findsOneWidget,
     );
     expect(find.byType(TorcaDeviceAvatar), findsOneWidget);
     expect(find.text('Torca'), findsOneWidget);
+  });
+
+  testWidgets('language selection precedes profile setup and persists choice', (
+    WidgetTester tester,
+  ) async {
+    final preferences = LocalPreferences(languageChosen: false);
+    await tester.pumpWidget(
+      _app(
+        FakeEngineGateway(
+          initialSnapshot: const AppSnapshotDto(
+            identity: IdentityDto(id: 'local-device'),
+            bootstrapPhase: 'ready_for_profile',
+          ),
+        ),
+        preferences: preferences,
+      ),
+    );
+
+    expect(find.text('Choose your language'), findsOneWidget);
+    expect(find.text('🇬🇧'), findsOneWidget);
+    expect(find.text('🇵🇱'), findsOneWidget);
+    expect(find.text('Choose your nickname'), findsNothing);
+
+    await tester.tap(find.text('Polski'));
+    await tester.pumpAndSettle();
+
+    expect(preferences.languageChosen, isTrue);
+    expect(preferences.localeMode, AppLocaleMode.polish);
+    expect(find.text('Wybierz pseudonim'), findsWidgets);
   });
 
   testWidgets('settings are reachable from the shared app menu', (

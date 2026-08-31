@@ -40,6 +40,9 @@ class MessageBubble extends StatelessWidget {
     final background = outbound
         ? context.semanticColors.messageOutbound
         : context.semanticColors.messageInbound;
+    final borderColor = outbound
+        ? Theme.of(context).colorScheme.primary.withAlpha(150)
+        : Theme.of(context).colorScheme.outline.withAlpha(150);
     final alignment = outbound ? Alignment.centerRight : Alignment.centerLeft;
     final normalRadius = context.torcaTokens.radiusLarge;
     final tailRadius = context.torcaTokens.radiusSmall;
@@ -85,6 +88,13 @@ class MessageBubble extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(12, 10, 10, 7),
                       decoration: BoxDecoration(
                         color: background,
+                        boxShadow: <BoxShadow>[
+                          BoxShadow(
+                            color: borderColor,
+                            blurRadius: 0,
+                            spreadRadius: context.torcaTokens.borderWidth,
+                          ),
+                        ],
                         borderRadius: radius,
                       ),
                       child: Column(
