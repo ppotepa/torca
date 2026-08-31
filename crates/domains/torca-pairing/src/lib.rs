@@ -109,6 +109,7 @@ mod pairing_session_tests {
                 1,
             ),
             display_name: "Alice".to_owned(),
+            country_code: None,
             route: ContactRoute::for_provider_endpoint(
                 OpaqueId::from_u128(12),
                 "tor",
@@ -180,6 +181,7 @@ pub enum PairingState {
 pub struct PeerProposal {
     pub public_identity: PublicIdentity,
     pub display_name: String,
+    pub country_code: Option<String>,
     pub route: ContactRoute,
     /// Opaque, content-addressed avatar genome carried by the signed offer.
     pub avatar: Option<AvatarGenomeReference>,

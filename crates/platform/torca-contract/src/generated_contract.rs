@@ -23,6 +23,7 @@ pub const COMMANDS: &[&str] = &[
     "message.send",
     "message.retry",
     "message.cancel",
+    "message.delete",
     "message.edit",
     "message.reaction",
     "runtime.attention.set",

@@ -139,7 +139,14 @@ class MessageBubble extends StatelessWidget {
                             ),
                             const SizedBox(height: 7),
                           ],
-                          if (showBody) SelectableText(message.body),
+                          if (showBody)
+                            SelectableText(message.body)
+                          else if (message.typedStatus == MessageStatus.deleted)
+                            Text(
+                              context.strings.messageDeleted,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(fontStyle: FontStyle.italic),
+                            ),
                           if (reactions.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: 5),

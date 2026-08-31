@@ -187,6 +187,7 @@ mod tests {
         let result = runtime.execute(ApplicationCommand::UpdateProfile {
             display_name: "offline-user".into(),
             avatar_envelope_json: None,
+            country_code: None,
             at_ms: 1,
         });
 
@@ -224,6 +225,7 @@ mod tests {
             .execute(ApplicationCommand::UpdateProfile {
                 display_name: "avatar-user".into(),
                 avatar_envelope_json: Some(envelope.to_string()),
+                country_code: None,
                 at_ms: 1,
             })
             .expect("profile and avatar");

@@ -71,6 +71,9 @@ where
                 || "Torca".to_owned(),
                 |profile| profile.display_name().as_str().to_owned(),
             ),
+            country_code: identity
+                .profile()
+                .and_then(|profile| profile.country_code().map(str::to_owned)),
             public_identity: identity.public().clone(),
             capability_id: self.random_id()?,
             avatar: snapshot.avatar_genome.map(|record| AvatarEnvelope {

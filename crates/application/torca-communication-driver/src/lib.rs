@@ -18,8 +18,9 @@ use std::time::Duration;
 use attachment_scheduler::AttachmentJobScheduler;
 pub use error::{AttachmentFailureStage, CommunicationError};
 pub use policy::{
-    ATTACHMENT_MESSAGE_KIND, PROBE_MESSAGE_KIND, RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND,
-    RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND, classify_peer_health, plan_read_receipts,
+    ATTACHMENT_MESSAGE_KIND, MESSAGE_DELETION_MESSAGE_KIND, PROBE_MESSAGE_KIND,
+    RADIO_CONTROL_MESSAGE_KIND, REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND, TEXT_MESSAGE_KIND,
+    classify_peer_health, plan_read_receipts,
 };
 pub use ports::{
     AttachmentAdmission, AttachmentExportRuntime, AttachmentMaintenanceResult, AttachmentRuntime,
@@ -250,7 +251,10 @@ impl TorcaCommunicationDriver {
                 break;
             };
             match envelope.message_kind {
-                TEXT_MESSAGE_KIND | RECEIPT_MESSAGE_KIND | REACTION_MESSAGE_KIND => {
+                TEXT_MESSAGE_KIND
+                | RECEIPT_MESSAGE_KIND
+                | REACTION_MESSAGE_KIND
+                | MESSAGE_DELETION_MESSAGE_KIND => {
                     self.inbound.process(envelope, now)?;
                 }
                 ATTACHMENT_MESSAGE_KIND => self.process_attachment_inbound(envelope, now)?,
@@ -590,6 +594,17 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
     ) -> Result<(), RuntimeDriverError> {
         self.control.queue_reaction(contact_id, reaction, at).map_err(map_runtime)
     }
+    fn queue_message_deletion(
+        &mut self,
+        contact_id: ContactId,
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        self.control
+            .queue_message_deletion(contact_id, message_id, conversation_id, at)
+            .map_err(map_runtime)
+    }
 }
 
 impl RelationshipAdminPort for TorcaCommunicationDriver {
@@ -834,8 +849,21 @@ impl AttachmentExportPort for TorcaCommunicationDriver {
 
 enum ControlWork {
     Recover(Timestamp),
-    Maintenance { now: Timestamp, limit: usize },
-    Reaction { contact_id: ContactId, reaction: ReactionPayload, at: Timestamp },
+    Maintenance {
+        now: Timestamp,
+        limit: usize,
+    },
+    Reaction {
+        contact_id: ContactId,
+        reaction: ReactionPayload,
+        at: Timestamp,
+    },
+    MessageDeletion {
+        contact_id: ContactId,
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    },
 }
 
 struct ControlDeliveryBridge {
@@ -877,6 +905,15 @@ impl ControlDeliveryBridge {
                     ControlWork::Reaction { contact_id, reaction, at } => {
                         (runtime.queue_reaction(contact_id, reaction, at), at)
                     }
+                    ControlWork::MessageDeletion {
+                        contact_id,
+                        message_id,
+                        conversation_id,
+                        at,
+                    } => (
+                        runtime.queue_message_deletion(contact_id, message_id, conversation_id, at),
+                        at,
+                    ),
                 };
                 let next_delay = runtime.next_maintenance_delay(now);
                 let writes = runtime.database_write_count();
@@ -993,6 +1030,21 @@ impl ControlDeliveryRuntime for ControlDeliveryBridge {
         {
             state.contacts.push(contact_id);
         }
+        Ok(())
+    }
+    fn queue_message_deletion(
+        &mut self,
+        contact_id: ContactId,
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.dispatch(ControlWork::MessageDeletion {
+            contact_id,
+            message_id,
+            conversation_id,
+            at,
+        })?;
         Ok(())
     }
 }

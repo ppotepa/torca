@@ -102,7 +102,7 @@ fn identity_value(snapshot: &BridgeSnapshot) -> Value {
     match (&snapshot.identity_id, &snapshot.identity_name, &snapshot.identity_fingerprint) {
         (None, None, None) => Value::Null,
         (identity_id, display_name, fingerprint) => {
-            json!({ "id": identity_id, "displayName": display_name, "fingerprint": fingerprint })
+            json!({ "id": identity_id, "displayName": display_name, "fingerprint": fingerprint, "countryCode": snapshot.identity_country_code })
         }
     }
 }

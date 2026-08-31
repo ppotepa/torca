@@ -33,7 +33,13 @@ fn peer() -> PeerProposal {
         b"peerexample.onion".to_vec(),
     )
     .expect("peer route is valid");
-    PeerProposal { public_identity, display_name: "Remote device".to_owned(), route, avatar: None }
+    PeerProposal {
+        public_identity,
+        display_name: "Remote device".to_owned(),
+        country_code: None,
+        route,
+        avatar: None,
+    }
 }
 
 fn credential(contact_id: ContactId) -> PeerCredential {
@@ -84,6 +90,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
             contact_id,
             conversation_id,
             display_name: "Peer".into(),
+            country_code: None,
             credential: pairing_credential,
             at: ts(5),
         })
@@ -95,6 +102,7 @@ fn primary_journey_is_deterministic_across_bounded_components() {
                 contact_id,
                 conversation_id,
                 display_name: "Peer".into(),
+                country_code: None,
                 credential: pairing_credential,
                 at: ts(5),
             })

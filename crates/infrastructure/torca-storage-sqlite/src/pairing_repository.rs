@@ -362,6 +362,7 @@ fn decode_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairingSession> {
             Some(PeerProposal {
                 public_identity: identity,
                 display_name: display_name.unwrap_or_else(|| "New device".to_owned()),
+                country_code: None,
                 route,
                 avatar,
             })
@@ -465,6 +466,7 @@ mod tests {
                 2,
             ),
             display_name: "Remote Alice".to_owned(),
+            country_code: None,
             route: ContactRoute::for_provider_endpoint(
                 OpaqueId::from_u128(13),
                 "iroh",
@@ -506,6 +508,7 @@ mod tests {
                 1,
             ),
             display_name: "Avatar Alice".to_owned(),
+            country_code: None,
             route: ContactRoute::for_provider_endpoint(
                 OpaqueId::from_u128(23),
                 "tor",

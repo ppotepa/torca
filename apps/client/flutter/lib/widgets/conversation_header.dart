@@ -290,7 +290,7 @@ class ConversationHeader extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: <Widget>[
       Text(
-        name,
+        '${_countryFlag(value?.countryCode)}$name',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: compact
@@ -318,6 +318,13 @@ class ConversationHeader extends StatelessWidget {
               ),
     ],
   );
+
+  String _countryFlag(String? code) {
+    final normalized = code?.toUpperCase();
+    if (normalized == null || normalized.length != 2) return '';
+    return '${String.fromCharCode(0x1F1E6 + normalized.codeUnitAt(0) - 65)}'
+        '${String.fromCharCode(0x1F1E6 + normalized.codeUnitAt(1) - 65)} ';
+  }
 }
 
 class _InstantContactAction extends StatelessWidget {

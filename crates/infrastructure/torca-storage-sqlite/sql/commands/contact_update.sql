@@ -8,5 +8,6 @@ UPDATE contacts SET
     status = ?8,
     created_at_ms = ?9,
 updated_at_ms = ?10,
-transport_endpoints_json = ?11
+transport_endpoints_json = ?11,
+country_code = ?12
 WHERE contact_id = ?1;

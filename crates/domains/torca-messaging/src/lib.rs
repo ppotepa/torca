@@ -85,6 +85,7 @@ pub enum MessageStatus {
     Read,
     Failed,
     Cancelled,
+    Deleted,
 }
 /// Optional reply relationship.
 #[must_use]
@@ -409,6 +410,26 @@ impl Message {
         self.status = MessageStatus::Cancelled;
         self.updated_at = at;
         Ok(())
+    }
+    /// Redacts an outbound message for both peers. The delivery layer sends a
+    /// separate authenticated tombstone; the body remains only as a local
+    /// aggregate until the projection replaces it.
+    pub fn delete(&mut self, at: Timestamp) -> Result<(), MessageError> {
+        if self.direction != MessageDirection::Outbound
+            || matches!(self.status, MessageStatus::Cancelled | MessageStatus::Deleted)
+        {
+            return Err(MessageError::InvalidTransition);
+        }
+        self.status = MessageStatus::Deleted;
+        self.updated_at = at;
+        Ok(())
+    }
+    /// Applies a verified peer tombstone idempotently.
+    pub fn apply_deletion(&mut self, at: Timestamp) {
+        if self.status != MessageStatus::Deleted {
+            self.status = MessageStatus::Deleted;
+            self.updated_at = at;
+        }
     }
 }
 

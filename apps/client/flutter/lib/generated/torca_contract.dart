@@ -50,13 +50,14 @@ class BridgeResultDto {
 }
 
 class IdentityDto {
-  const IdentityDto({this.id, this.displayName, this.fingerprint});
+  const IdentityDto({this.id, this.displayName, this.fingerprint, this.countryCode});
   factory IdentityDto.fromJson(Map<String, dynamic> value) => IdentityDto(
     id: value['id'] as String?,
     displayName: value['displayName'] as String?,
     fingerprint: value['fingerprint'] as String?,
+    countryCode: value['countryCode'] as String?,
   );
-  final String? id, displayName;
+  final String? id, displayName, countryCode;
   final String? fingerprint;
 }
 
@@ -205,6 +206,7 @@ enum MessageStatus {
   read,
   failed,
   cancelled,
+  deleted,
   unknown,
 }
 
@@ -308,7 +310,8 @@ extension MessageStatusWire on MessageStatus {
     MessageStatus.delivered => 'delivered',
     MessageStatus.read => 'read',
     MessageStatus.failed => 'failed',
-    MessageStatus.cancelled => 'cancelled',
+  MessageStatus.cancelled => 'cancelled',
+  MessageStatus.deleted => 'deleted',
     MessageStatus.unknown => 'unknown',
   };
 }
@@ -322,6 +325,7 @@ MessageStatus messageStatusFromWire(String value) =>
       'read' => MessageStatus.read,
       'failed' => MessageStatus.failed,
       'cancelled' => MessageStatus.cancelled,
+      'deleted' => MessageStatus.deleted,
       _ => MessageStatus.unknown,
     };
 
@@ -362,6 +366,7 @@ class PairingDto {
     required this.remoteApproved,
     this.remoteIdentityId,
     this.remoteDisplayName,
+    this.remoteCountryCode,
     this.remoteFingerprint,
     this.remoteAvatarHash,
     this.remoteAvatarGeneratorVersion,
@@ -378,6 +383,7 @@ class PairingDto {
     remoteApproved: value['remoteApproved'] as bool? ?? false,
     remoteIdentityId: value['remoteIdentityId'] as String?,
     remoteDisplayName: value['remoteDisplayName'] as String?,
+    remoteCountryCode: value['remoteCountryCode'] as String?,
     remoteFingerprint: value['remoteFingerprint'] as String?,
     remoteAvatarHash: value['remoteAvatarHash'] as String?,
     remoteAvatarGeneratorVersion:
@@ -389,6 +395,7 @@ class PairingDto {
   final bool localApproved, remoteApproved;
   final String? remoteIdentityId,
       remoteDisplayName,
+      remoteCountryCode,
       remoteFingerprint,
       remoteAvatarHash,
       remoteAvatarGeneratorVersion,
@@ -562,6 +569,7 @@ class ContactDto {
     required this.id,
     this.remoteIdentityId = '',
     required this.displayName,
+    this.countryCode,
     this.transportProvider = 'unknown',
     this.endpointAvailable = false,
     required this.status,
@@ -580,6 +588,7 @@ class ContactDto {
       id: _requiredString(value, 'id'),
       remoteIdentityId: _requiredString(value, 'remoteIdentityId'),
       displayName: _requiredString(value, 'displayName'),
+      countryCode: value['countryCode'] as String?,
       transportProvider: value['transportProvider'] as String? ?? 'unknown',
       endpointAvailable: value['endpointAvailable'] as bool? ?? false,
       status: _requiredString(value, 'status'),
@@ -605,6 +614,7 @@ class ContactDto {
       availability,
       presenceState,
       verificationStatus;
+  final String? countryCode;
   final String? safetyNumber;
   final bool endpointAvailable;
   final PeerHealthDto peerHealth;
@@ -1192,9 +1202,11 @@ class UpdateProfileCommandDto extends BridgeCommandDto {
   const UpdateProfileCommandDto({
     required this.displayName,
     this.avatarEnvelope,
+    this.countryCode,
   });
   final String displayName;
   final Map<String, Object?>? avatarEnvelope;
+  final String? countryCode;
 }
 
 class CreatePairingCommandDto extends BridgeCommandDto {
@@ -1297,6 +1309,10 @@ class RetryMessageCommandDto extends BridgeCommandDto {
 
 class CancelMessageCommandDto extends BridgeCommandDto {
   const CancelMessageCommandDto({required this.messageIdHex});
+  final String messageIdHex;
+}
+class DeleteMessageCommandDto extends BridgeCommandDto {
+  const DeleteMessageCommandDto({required this.messageIdHex});
   final String messageIdHex;
 }
 
@@ -1587,6 +1603,7 @@ class RuntimeRequestDto {
       return _command('profile.set', <String, Object?>{
         'displayName': command.displayName,
         'avatarEnvelope': command.avatarEnvelope,
+        'countryCode': command.countryCode,
       });
     }
     if (command is CreatePairingCommandDto) {
@@ -1662,6 +1679,11 @@ class RuntimeRequestDto {
     }
     if (command is CancelMessageCommandDto) {
       return _command('message.cancel', <String, Object?>{
+        'messageIdHex': command.messageIdHex,
+      });
+    }
+    if (command is DeleteMessageCommandDto) {
+      return _command('message.delete', <String, Object?>{
         'messageIdHex': command.messageIdHex,
       });
     }

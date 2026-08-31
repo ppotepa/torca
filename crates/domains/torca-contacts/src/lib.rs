@@ -134,6 +134,7 @@ pub struct Contact {
     remote_identity: PublicIdentity,
     route: ContactRoute,
     status: ContactStatus,
+    country_code: Option<String>,
     created_at: Timestamp,
     updated_at: Timestamp,
 }
@@ -149,6 +150,7 @@ impl Contact {
             remote_identity,
             route,
             status: ContactStatus::Active,
+            country_code: None,
             created_at: at,
             updated_at: at,
         }
@@ -161,7 +163,7 @@ impl Contact {
         created_at: Timestamp,
         updated_at: Timestamp,
     ) -> Self {
-        Self { id, remote_identity, route, status, created_at, updated_at }
+        Self { id, remote_identity, route, status, country_code: None, created_at, updated_at }
     }
     pub const fn id(&self) -> ContactId {
         self.id
@@ -174,6 +176,12 @@ impl Contact {
     }
     pub const fn status(&self) -> ContactStatus {
         self.status
+    }
+    pub fn set_country_code(&mut self, country_code: Option<String>) {
+        self.country_code = country_code;
+    }
+    pub fn country_code(&self) -> Option<&str> {
+        self.country_code.as_deref()
     }
     pub const fn created_at(&self) -> Timestamp {
         self.created_at

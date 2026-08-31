@@ -634,6 +634,7 @@ mod tests {
                 LocalPairingContext {
                     public_identity: first.public_identity.clone(),
                     display_name: "Alice".into(),
+                    country_code: None,
                     capability_id: OpaqueId::from_u128(1_001),
                     avatar: None,
                     transport_provider: provider.as_str().into(),
@@ -647,6 +648,7 @@ mod tests {
                 LocalPairingContext {
                     public_identity: second.public_identity.clone(),
                     display_name: "Bob".into(),
+                    country_code: None,
                     capability_id: OpaqueId::from_u128(2_002),
                     avatar: None,
                     transport_provider: provider.as_str().into(),

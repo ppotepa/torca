@@ -71,6 +71,9 @@ where
             contact_id,
             conversation_id,
             display_name: display_name.clone(),
+            country_code: session
+                .remote_proposal()
+                .and_then(|proposal| proposal.country_code.clone()),
             credential,
             at: now,
         });
@@ -249,6 +252,7 @@ where
             public_key: key.public_key().to_vec(),
             key_generation: local.public_identity.generation(),
             display_name: local.display_name,
+            country_code: local.country_code,
             capability_id: local.capability_id,
             transcript_nonce,
             avatar: local.avatar,

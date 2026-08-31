@@ -96,6 +96,7 @@ pub enum ApplicationCommand {
     UpdateProfile {
         display_name: String,
         avatar_envelope_json: Option<String>,
+        country_code: Option<String>,
         at_ms: i64,
     },
     CreatePairing {
@@ -161,6 +162,10 @@ pub enum ApplicationCommand {
         at_ms: i64,
     },
     CancelMessage {
+        message_id: OpaqueId,
+        at_ms: i64,
+    },
+    DeleteMessage {
         message_id: OpaqueId,
         at_ms: i64,
     },
@@ -776,11 +781,20 @@ impl ClientApplicationRuntime {
                 "contact_availability_updated"
             }
             ApplicationCommand::AcknowledgeNewContacts => "contacts_acknowledged",
-            ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
+            ApplicationCommand::UpdateProfile {
+                display_name,
+                avatar_envelope_json,
+                country_code,
+                at_ms,
+            } => {
                 let display_name = ProfileName::new(display_name).map_err(string_error)?;
                 let value = self
                     .application
-                    .dispatch(EngineCommand::UpdateProfile { display_name, at: timestamp(at_ms)? })
+                    .dispatch(EngineCommand::UpdateProfile {
+                        display_name,
+                        country_code,
+                        at: timestamp(at_ms)?,
+                    })
                     .map_err(string_error)?;
                 if let Some(json) = avatar_envelope_json {
                     let record = parse_avatar_envelope(&json).map_err(string_error)?;
@@ -1037,6 +1051,44 @@ impl ClientApplicationRuntime {
                 if let Some(runtime) = self.runtime.as_ref() {
                     runtime.release_delivery(message_id);
                     runtime.wake_delivery();
+                }
+                result_kind(&value)
+            }
+            ApplicationCommand::DeleteMessage { message_id, at_ms } => {
+                let at = timestamp(at_ms)?;
+                let message = self
+                    .application
+                    .overview()
+                    .map_err(string_error)?
+                    .messages
+                    .into_iter()
+                    .find(|message| message.id() == MessageId::from_opaque(message_id))
+                    .ok_or_else(|| string_error("message not found"))?;
+                let value = self
+                    .application
+                    .dispatch(EngineCommand::DeleteMessage {
+                        message_id: MessageId::from_opaque(message_id),
+                        at,
+                    })
+                    .map_err(string_error)?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    if let Some(conversation) = self
+                        .application
+                        .overview()
+                        .map_err(string_error)?
+                        .conversations
+                        .into_iter()
+                        .find(|conversation| conversation.id() == message.conversation_id())
+                    {
+                        runtime
+                            .queue_message_deletion(
+                                conversation.contact_id(),
+                                message_id,
+                                message.conversation_id().to_opaque(),
+                                at,
+                            )
+                            .map_err(string_error)?;
+                    }
                 }
                 result_kind(&value)
             }

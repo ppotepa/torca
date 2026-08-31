@@ -8,7 +8,7 @@
       "profile.set", "pairing.create", "pairing.join", "pairing.approve",
       "pairing.reject", "pairing.cancel", "contact.rename", "contact.verify",
       "contact.verification.reset", "contact.block", "contact.unblock",
-      "contact.remove", "conversation.start", "conversation.clear", "conversation.archive", "conversation.restore", "message.send", "message.retry", "message.cancel", "message.edit", "message.reaction", "runtime.attention.set",
+      "contact.remove", "conversation.start", "conversation.clear", "conversation.archive", "conversation.restore", "message.send", "message.retry", "message.cancel", "message.delete", "message.edit", "message.reaction", "runtime.attention.set",
       "notifications.set", "privacy.read_receipts.set", "battery.preferences.set", "contact.availability.set", "contacts.acknowledge_new",
       "diagnostics.observation.start", "diagnostics.observation.stop", "diagnostics.observation.reset", "diagnostics.incident.mark",
       "conversation.read", "attachment.queue", "attachment.retry",

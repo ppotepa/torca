@@ -333,6 +333,13 @@ pub trait CommunicationDriver:
         reaction: ReactionPayload,
         at: Timestamp,
     ) -> Result<(), RuntimeDriverError>;
+    fn queue_message_deletion(
+        &mut self,
+        contact_id: ContactId,
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<(), RuntimeDriverError>;
 }
 /// Provider-neutral lifecycle owned by the selected communication stack.
 ///

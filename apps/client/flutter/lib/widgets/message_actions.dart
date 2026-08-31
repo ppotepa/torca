@@ -11,6 +11,7 @@ enum MessageAction {
   bookmark,
   edit,
   cancel,
+  delete,
   details,
 }
 
@@ -28,6 +29,7 @@ abstract final class MessageActionMenu {
     BuildContext context, {
     bool canCancel = false,
     bool canEdit = false,
+    bool canDelete = false,
     bool bookmarked = false,
     ValueChanged<String>? onQuickReaction,
   }) => showModalBottomSheet<MessageAction>(
@@ -111,6 +113,13 @@ abstract final class MessageActionMenu {
               context.torcaIcons.edit,
               context.strings.editMessage,
             ),
+          if (canDelete)
+            _tile(
+              context,
+              MessageAction.delete,
+              context.torcaIcons.remove,
+              context.strings.deleteMessage,
+            ),
           _tile(
             context,
             MessageAction.details,
@@ -127,6 +136,7 @@ abstract final class MessageActionMenu {
     Offset globalPosition, {
     bool canCancel = false,
     bool canEdit = false,
+    bool canDelete = false,
     bool bookmarked = false,
   }) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
@@ -204,6 +214,16 @@ abstract final class MessageActionMenu {
               contentPadding: EdgeInsets.zero,
               leading: Icon(context.torcaIcons.edit),
               title: Text(context.strings.editMessage),
+            ),
+          ),
+        if (canDelete)
+          PopupMenuItem(
+            value: MessageAction.delete,
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(context.torcaIcons.remove),
+              title: Text(context.strings.deleteMessage),
             ),
           ),
         PopupMenuItem(

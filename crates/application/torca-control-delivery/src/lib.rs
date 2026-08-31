@@ -15,6 +15,7 @@ pub enum ControlKind {
     Receipt = 1,
     Attachment = 2,
     Reaction = 3,
+    MessageDeletion = 4,
 }
 impl ControlKind {
     pub const fn from_storage(value: i64) -> Option<Self> {
@@ -22,6 +23,7 @@ impl ControlKind {
             1 => Some(Self::Receipt),
             2 => Some(Self::Attachment),
             3 => Some(Self::Reaction),
+            4 => Some(Self::MessageDeletion),
             _ => None,
         }
     }

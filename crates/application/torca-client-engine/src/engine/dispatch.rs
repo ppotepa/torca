@@ -44,8 +44,9 @@ where
                     .map_err(|_| EngineError::Identity)?;
                 Ok(EngineResult::IdentityCreated)
             }
-            EngineCommand::UpdateProfile { display_name, at } => {
-                let profile = Profile::new(display_name, None);
+            EngineCommand::UpdateProfile { display_name, country_code, at } => {
+                let profile = Profile::with_country(display_name, None, country_code)
+                    .map_err(|_| EngineError::Identity)?;
                 let (_identity, _event) = self
                     .identity
                     .update_profile(UpdateProfile { profile, at })
@@ -117,6 +118,7 @@ where
                 contact_id,
                 conversation_id,
                 display_name,
+                country_code: _country_code,
                 credential,
                 at,
             } => {
@@ -162,6 +164,8 @@ where
                     compressed_genome: avatar.compressed_genome.clone(),
                 });
                 let contact = Contact::new(contact_id, proposal.public_identity, proposal.route, at);
+                let mut contact = contact;
+                contact.set_country_code(proposal.country_code);
                 let conversation = DirectConversation::new(conversation_id, contact_id, at);
                 self.relationships.insert_pairing_result(
                     contact,
@@ -260,6 +264,25 @@ where
                     .map_err(|_| EngineError::Repository)?
                     .ok_or(EngineError::NotFound)?;
                 message.cancel(at).map_err(|_| EngineError::Messaging)?;
+                self.messages.update(message).map_err(|_| EngineError::Repository)?;
+                Ok(EngineResult::MessageUpdated { message_id })
+            }
+            EngineCommand::DeleteMessage { message_id, at } => {
+                let mut message = self.messages.get(message_id)
+                    .map_err(|_| EngineError::Repository)?
+                    .ok_or(EngineError::NotFound)?;
+                message.delete(at).map_err(|_| EngineError::Messaging)?;
+                self.messages.update(message).map_err(|_| EngineError::Repository)?;
+                Ok(EngineResult::MessageUpdated { message_id })
+            }
+            EngineCommand::ApplyMessageDeletion { message_id, at } => {
+                let mut message = self.messages.get(message_id)
+                    .map_err(|_| EngineError::Repository)?
+                    .ok_or(EngineError::NotFound)?;
+                if message.direction() != MessageDirection::Inbound {
+                    return Err(EngineError::InvalidState);
+                }
+                message.apply_deletion(at);
                 self.messages.update(message).map_err(|_| EngineError::Repository)?;
                 Ok(EngineResult::MessageUpdated { message_id })
             }

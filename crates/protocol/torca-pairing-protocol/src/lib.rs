@@ -20,7 +20,7 @@ pub const MAX_APPROVAL_PROOF_LEN: usize = 512;
 pub const MAX_AVATAR_PAYLOAD_LEN: usize = 32 * 1024;
 pub const MAX_AVATAR_VERSION_LEN: usize = 64;
 const MAGIC: &[u8; 4] = b"TRCP";
-const VERSION: u16 = 5;
+const VERSION: u16 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -42,6 +42,7 @@ pub struct PairingOffer {
     pub public_key: Vec<u8>,
     pub key_generation: u32,
     pub display_name: String,
+    pub country_code: Option<String>,
     pub capability_id: OpaqueId,
     pub transcript_nonce: [u8; 32],
     pub avatar: Option<AvatarEnvelope>,
@@ -99,6 +100,12 @@ impl PairingOffer {
         }
         if let Some(avatar) = &self.avatar {
             avatar.validate()?;
+        }
+        if let Some(country) = &self.country_code
+            && country != "UNKNOWN"
+            && (country.len() != 2 || !country.bytes().all(|byte| byte.is_ascii_uppercase()))
+        {
+            return Err(PairingProtocolError::InvalidCountryCode);
         }
         Ok(())
     }
@@ -259,6 +266,13 @@ fn encode_offer(o: &PairingOffer, out: &mut Vec<u8>) -> Result<(), PairingProtoc
             put_bytes(&avatar.compressed_genome, out)?;
         }
     }
+    match &o.country_code {
+        None => out.push(0),
+        Some(country) => {
+            out.push(1);
+            put_bytes(country.as_bytes(), out)?;
+        }
+    }
     put_bytes(o.transport_provider.as_bytes(), out)?;
     put_bytes(&o.transport_endpoint, out)?;
     Ok(())
@@ -286,6 +300,14 @@ fn decode_offer(c: &mut Cursor<'_>, _version: u16) -> Result<PairingOffer, Pairi
         }),
         _ => return Err(PairingProtocolError::InvalidAvatar),
     };
+    let country_code = match c.u8()? {
+        0 => None,
+        1 => Some(
+            String::from_utf8(c.bytes(16)?)
+                .map_err(|_| PairingProtocolError::InvalidCountryCode)?,
+        ),
+        _ => return Err(PairingProtocolError::InvalidCountryCode),
+    };
     let transport_provider = String::from_utf8(c.bytes(MAX_TRANSPORT_PROVIDER_LEN)?)
         .map_err(|_| PairingProtocolError::InvalidTransport)?;
     let transport_endpoint = c.bytes(MAX_TRANSPORT_ENDPOINT_LEN)?;
@@ -296,6 +318,7 @@ fn decode_offer(c: &mut Cursor<'_>, _version: u16) -> Result<PairingOffer, Pairi
         public_key,
         key_generation,
         display_name,
+        country_code,
         capability_id,
         transcript_nonce,
         avatar,
@@ -374,6 +397,7 @@ pub enum PairingProtocolError {
     PairingIdMismatch,
     InvalidPublicKeyLength,
     InvalidDisplayName,
+    InvalidCountryCode,
     InvalidAvatar,
     InvalidTransport,
     InvalidApprovalProofLength,
@@ -405,6 +429,7 @@ mod tests {
                 public_key: vec![7; 32],
                 key_generation: 0,
                 display_name: "Orca".into(),
+                country_code: None,
                 capability_id: OpaqueId::from_u128(4),
                 transcript_nonce: [9; 32],
                 avatar: None,

@@ -72,6 +72,7 @@ fn bridge_command(
         "profile.set" => Ok(BridgeCommand::UpdateProfile {
             display_name: text("displayName")?,
             avatar_envelope_json: payload.get("avatarEnvelope").map(serde_json::Value::to_string),
+            country_code: payload.get("countryCode").and_then(Value::as_str).map(str::to_owned),
             at_ms: now()?,
         }),
         "runtime.attention.set" => Ok(BridgeCommand::SetAttention {
@@ -161,6 +162,10 @@ fn bridge_command(
             Ok(BridgeCommand::RetryMessage { message_id_hex: text("messageIdHex")?, at_ms: now()? })
         }
         "message.cancel" => Ok(BridgeCommand::CancelMessage {
+            message_id_hex: text("messageIdHex")?,
+            at_ms: now()?,
+        }),
+        "message.delete" => Ok(BridgeCommand::DeleteMessage {
             message_id_hex: text("messageIdHex")?,
             at_ms: now()?,
         }),

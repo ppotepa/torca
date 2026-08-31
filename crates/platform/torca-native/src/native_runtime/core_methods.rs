@@ -38,6 +38,7 @@ fn bridge_operation_name(command: &torca_contract::BridgeCommand) -> &'static st
         QueueMessage { .. } => "message.send",
         RetryMessage { .. } => "message.retry",
         CancelMessage { .. } => "message.cancel",
+        DeleteMessage { .. } => "message.delete",
         EditMessage { .. } => "message.edit",
         SetMessageReaction { .. } => "message.reaction",
         MarkConversationRead { .. } => "conversation.read",
@@ -399,6 +400,9 @@ pub(crate) fn execute_with_request_id(
         }
         torca_contract::BridgeCommand::CancelMessage { message_id_hex, .. } => {
             Some(("message.cancel".to_owned(), message_id_hex.clone()))
+        }
+        torca_contract::BridgeCommand::DeleteMessage { message_id_hex, .. } => {
+            Some(("message.delete".to_owned(), message_id_hex.clone()))
         }
         _ => None,
     };

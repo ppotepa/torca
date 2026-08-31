@@ -69,6 +69,7 @@ pub enum BridgeCommand {
     UpdateProfile {
         display_name: String,
         avatar_envelope_json: Option<String>,
+        country_code: Option<String>,
         at_ms: i64,
     },
     CreatePairing {
@@ -134,6 +135,10 @@ pub enum BridgeCommand {
         at_ms: i64,
     },
     CancelMessage {
+        message_id_hex: String,
+        at_ms: i64,
+    },
+    DeleteMessage {
         message_id_hex: String,
         at_ms: i64,
     },
@@ -215,6 +220,8 @@ pub struct BridgeSnapshot {
     pub contract_version: u16,
     #[serde(skip)]
     pub identity_name: Option<String>,
+    #[serde(skip)]
+    pub identity_country_code: Option<String>,
     #[serde(skip)]
     pub identity_id: Option<String>,
     #[serde(skip)]
@@ -370,6 +377,7 @@ pub struct BridgePairing {
     pub remote_approved: bool,
     pub remote_identity_id: Option<String>,
     pub remote_display_name: Option<String>,
+    pub remote_country_code: Option<String>,
     pub remote_fingerprint: Option<String>,
     pub remote_avatar_hash: Option<String>,
     pub remote_avatar_generator_version: Option<String>,
@@ -435,6 +443,7 @@ pub struct BridgeContact {
     pub id: String,
     pub remote_identity_id: String,
     pub display_name: String,
+    pub country_code: Option<String>,
     /// The provider selected when this relationship was paired. Its endpoint
     /// remains opaque and never crosses the UI boundary.
     pub transport_provider: String,
@@ -576,9 +585,17 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         | BridgeCommand::MarkIncident => {
             return Err("diagnostics command must be handled by the native runtime".into());
         }
-        BridgeCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms } => {
-            ApplicationCommand::UpdateProfile { display_name, avatar_envelope_json, at_ms }
-        }
+        BridgeCommand::UpdateProfile {
+            display_name,
+            avatar_envelope_json,
+            country_code,
+            at_ms,
+        } => ApplicationCommand::UpdateProfile {
+            display_name,
+            avatar_envelope_json,
+            country_code,
+            at_ms,
+        },
         BridgeCommand::CreatePairing { session_id_hex } => {
             ApplicationCommand::CreatePairing { session_id: parse_id(&session_id_hex)? }
         }
@@ -660,6 +677,9 @@ pub fn decode_application_command(command: BridgeCommand) -> Result<ApplicationC
         }
         BridgeCommand::CancelMessage { message_id_hex, at_ms } => {
             ApplicationCommand::CancelMessage { message_id: parse_id(&message_id_hex)?, at_ms }
+        }
+        BridgeCommand::DeleteMessage { message_id_hex, at_ms } => {
+            ApplicationCommand::DeleteMessage { message_id: parse_id(&message_id_hex)?, at_ms }
         }
         BridgeCommand::EditMessage { message_id_hex, body, at_ms } => {
             ApplicationCommand::EditMessage { message_id: parse_id(&message_id_hex)?, body, at_ms }
@@ -797,7 +817,11 @@ pub fn bridge_message_from_domain(message: Message) -> BridgeMessage {
     BridgeMessage {
         id: message.id().to_string(),
         conversation_id: message.conversation_id().to_string(),
-        body: message.body().as_str().to_owned(),
+        body: if message.status() == MessageStatus::Deleted {
+            String::new()
+        } else {
+            message.body().as_str().to_owned()
+        },
         direction: message_direction_name(message.direction()).into(),
         status: message_status_name(message.status()).into(),
         reply_to_message_id: message.reply_to().map(|reply| reply.message_id.to_string()),
@@ -828,6 +852,7 @@ pub const fn message_status_name(value: MessageStatus) -> &'static str {
         MessageStatus::Read => "read",
         MessageStatus::Failed => "failed",
         MessageStatus::Cancelled => "cancelled",
+        MessageStatus::Deleted => "deleted",
     }
 }
 
@@ -1048,6 +1073,9 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     let identity_name = snapshot.identity.as_ref().and_then(|identity| {
         identity.profile().map(|profile| profile.display_name().as_str().to_owned())
     });
+    let identity_country_code = snapshot.identity.as_ref().and_then(|identity| {
+        identity.profile().and_then(|profile| profile.country_code().map(str::to_owned))
+    });
     let identity_id =
         snapshot.identity.as_ref().map(|identity| identity.public().identity_id().to_string());
     // Root snapshots deliberately omit message history. Conversation page and
@@ -1080,6 +1108,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
     BridgeSnapshot {
         contract_version: CONTRACT_VERSION,
         identity_name,
+        identity_country_code,
         identity_id,
         identity_fingerprint,
         communication_provider,
@@ -1268,6 +1297,9 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     remote_display_name: pairing
                         .remote_proposal()
                         .map(|proposal| proposal.display_name.clone()),
+                    remote_country_code: pairing
+                        .remote_proposal()
+                        .and_then(|proposal| proposal.country_code.clone()),
                     remote_fingerprint: remote_identity.map(|value| value.1),
                     remote_avatar_hash: pairing
                         .remote_proposal()
@@ -1336,6 +1368,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                     id: contact.id().to_string(),
                     remote_identity_id: contact.remote_identity().identity_id().to_string(),
                     display_name,
+                    country_code: contact.country_code().map(str::to_owned),
                     transport_provider: network.communication.provider.as_str().to_owned(),
                     endpoint_available: contact
                         .route()

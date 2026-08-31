@@ -165,8 +165,9 @@ impl IdentityRepository for SqlCipherStore {
                     key_generation: row.get(4)?,
                     display_name: row.get(5)?,
                     avatar_reference: row.get(6)?,
-                    created_at_ms: row.get(7)?,
-                    updated_at_ms: row.get(8)?,
+                    country_code: row.get(7)?,
+                    created_at_ms: row.get(8)?,
+                    updated_at_ms: row.get(9)?,
                 })
             })
             .optional()
@@ -180,6 +181,7 @@ impl IdentityRepository for SqlCipherStore {
         let avatar =
             identity.profile().and_then(|profile| profile.avatar().map(AvatarReference::as_str));
         let display_name = identity.profile().map(|profile| profile.display_name().as_str());
+        let country_code = identity.profile().and_then(|profile| profile.country_code());
         self.backend
             .connection()
             .execute(
@@ -192,6 +194,7 @@ impl IdentityRepository for SqlCipherStore {
                     i64::from(identity.public().generation()),
                     display_name,
                     avatar,
+                    country_code,
                     identity.created_at().to_unix_millis(),
                     identity.updated_at().to_unix_millis(),
                 ],
@@ -209,6 +212,7 @@ impl IdentityRepository for SqlCipherStore {
         let avatar =
             identity.profile().and_then(|profile| profile.avatar().map(AvatarReference::as_str));
         let display_name = identity.profile().map(|profile| profile.display_name().as_str());
+        let country_code = identity.profile().and_then(|profile| profile.country_code());
         let changed = self
             .backend
             .connection()
@@ -221,6 +225,7 @@ impl IdentityRepository for SqlCipherStore {
                     i64::from(identity.public().generation()),
                     display_name,
                     avatar,
+                    country_code,
                     identity.updated_at().to_unix_millis(),
                     i64::from(expected_generation),
                 ],
@@ -256,6 +261,7 @@ impl ContactRepository for SqlCipherStore {
                     created_at_ms: row.get(7)?,
                     updated_at_ms: row.get(8)?,
                     transport_endpoints_json: row.get(9)?,
+                    country_code: row.get(10)?,
                 })
             })
             .optional()
@@ -290,6 +296,7 @@ impl ContactRepository for SqlCipherStore {
                     created_at_ms: row.get(8)?,
                     updated_at_ms: row.get(9)?,
                     transport_endpoints_json: row.get(10)?,
+                    country_code: row.get(11)?,
                 })
             })
             .map_err(|_| ContactError::RepositoryFailure)?;
@@ -575,6 +582,7 @@ struct IdentityRow {
     key_generation: i64,
     display_name: Option<String>,
     avatar_reference: Option<String>,
+    country_code: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
 }
@@ -603,7 +611,10 @@ impl IdentityRow {
                     self.avatar_reference.clone().map(AvatarReference::new).transpose().map_err(
                         |error| data_error(&format!("invalid avatar reference: {error}")),
                     )?;
-                Ok::<Profile, IdentityRepositoryError>(Profile::new(name, avatar))
+                Ok::<Profile, IdentityRepositoryError>(
+                    Profile::with_country(name, avatar, self.country_code.clone())
+                        .map_err(|error| data_error(&format!("invalid country code: {error}")))?,
+                )
             })
             .transpose()?;
         let created_at = Timestamp::from_unix_millis(self.created_at_ms)
@@ -632,6 +643,7 @@ struct ContactRow {
     created_at_ms: i64,
     updated_at_ms: i64,
     transport_endpoints_json: String,
+    country_code: Option<String>,
 }
 
 impl ContactRow {
@@ -677,7 +689,10 @@ impl ContactRow {
             .map_err(|_| ContactError::RepositoryFailure)?;
         let updated_at = Timestamp::from_unix_millis(self.updated_at_ms)
             .map_err(|_| ContactError::RepositoryFailure)?;
-        Ok(Contact::restore(contact_id, remote_identity, route, status, created_at, updated_at))
+        let mut contact =
+            Contact::restore(contact_id, remote_identity, route, status, created_at, updated_at);
+        contact.set_country_code(self.country_code);
+        Ok(contact)
     }
 }
 
@@ -742,6 +757,7 @@ fn execute_contact(
                 contact.created_at().to_unix_millis(),
                 contact.updated_at().to_unix_millis(),
                 transport_endpoints_json,
+                contact.country_code(),
             ],
         )
         .map_err(|_| ContactError::RepositoryFailure)?;

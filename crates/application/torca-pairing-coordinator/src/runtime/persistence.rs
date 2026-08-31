@@ -33,6 +33,7 @@ fn peer_proposal(offer: &PairingOffer) -> Result<PeerProposal, PairingRuntimeErr
     Ok(PeerProposal {
         public_identity,
         display_name: offer.display_name.clone(),
+        country_code: offer.country_code.clone(),
         route,
         avatar: offer.avatar.as_ref().map(|avatar| AvatarGenomeReference {
             schema_version: avatar.schema,

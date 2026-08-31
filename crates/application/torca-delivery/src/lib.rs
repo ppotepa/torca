@@ -459,6 +459,7 @@ pub enum ApplicationPayloadKind {
     Text,
     Receipt,
     Reaction,
+    MessageDeletion,
 }
 
 #[must_use]
@@ -499,6 +500,14 @@ pub struct ReactionPayload {
     pub active: bool,
     pub at: Timestamp,
 }
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MessageDeletionPayload {
+    pub message_id: OpaqueId,
+    pub conversation_id: OpaqueId,
+    pub contact_id: OpaqueId,
+    pub at: Timestamp,
+}
 
 #[must_use]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -506,6 +515,7 @@ pub enum ApplicationPayload {
     Text(TextPayload),
     Receipt(ReceiptPayload),
     Reaction(ReactionPayload),
+    MessageDeletion(MessageDeletionPayload),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -582,6 +592,13 @@ impl ApplicationPayloadCodec {
                 let emoji = reaction.emoji.as_bytes();
                 output.extend_from_slice(&(emoji.len() as u32).to_be_bytes());
                 output.extend_from_slice(emoji);
+            }
+            ApplicationPayload::MessageDeletion(deletion) => {
+                output.push(4);
+                output.extend_from_slice(deletion.message_id.as_bytes());
+                output.extend_from_slice(deletion.conversation_id.as_bytes());
+                output.extend_from_slice(deletion.contact_id.as_bytes());
+                output.extend_from_slice(&deletion.at.to_unix_millis().to_be_bytes());
             }
         }
         Ok(output)
@@ -671,6 +688,12 @@ impl ApplicationPayloadCodec {
                     at,
                 })
             }
+            4 => ApplicationPayload::MessageDeletion(MessageDeletionPayload {
+                message_id: cursor.id()?,
+                conversation_id: cursor.id()?,
+                contact_id: cursor.id()?,
+                at: timestamp(cursor.i64()?)?,
+            }),
             value => return Err(ApplicationPayloadError::UnknownKind(value)),
         };
         if !cursor.is_empty() {
@@ -736,5 +759,23 @@ impl<'a> PayloadCursor<'a> {
     }
     const fn is_empty(&self) -> bool {
         self.offset == self.input.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApplicationPayload, ApplicationPayloadCodec, MessageDeletionPayload};
+    use torca_foundation::{OpaqueId, Timestamp};
+
+    #[test]
+    fn message_deletion_tombstone_round_trips() {
+        let payload = ApplicationPayload::MessageDeletion(MessageDeletionPayload {
+            message_id: OpaqueId::from_u128(1),
+            conversation_id: OpaqueId::from_u128(2),
+            contact_id: OpaqueId::from_u128(3),
+            at: Timestamp::from_unix_millis(42).expect("timestamp"),
+        });
+        let encoded = ApplicationPayloadCodec::encode(&payload).expect("encode");
+        assert_eq!(ApplicationPayloadCodec::decode(&encoded).expect("decode"), payload);
     }
 }

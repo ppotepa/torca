@@ -88,6 +88,11 @@ class MessageStatusIndicator extends StatelessWidget {
     label: context.strings.cancelled,
     isError: true,
   ),
+  MessageStatus.deleted => (
+    icon: context.torcaIcons.remove,
+    label: context.strings.messageDeleted,
+    isError: false,
+  ),
   MessageStatus.unknown => (
     icon: context.torcaIcons.info,
     label: context.strings.unavailable,

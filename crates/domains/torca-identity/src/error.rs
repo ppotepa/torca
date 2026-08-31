@@ -15,6 +15,8 @@ pub enum ProfileError {
     AvatarReferenceTooLong { actual: usize },
     /// Public key bytes were empty.
     EmptyPublicKey,
+    /// Country code is neither ISO alpha-2 nor UNKNOWN.
+    InvalidCountryCode,
 }
 
 impl fmt::Display for ProfileError {

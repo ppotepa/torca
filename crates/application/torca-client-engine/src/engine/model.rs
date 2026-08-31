@@ -4,7 +4,7 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EngineCommand {
     CreateIdentity { identity_id: IdentityId, profile: Option<Profile>, at: Timestamp },
-    UpdateProfile { display_name: ProfileName, at: Timestamp },
+    UpdateProfile { display_name: ProfileName, country_code: Option<String>, at: Timestamp },
     SetAvatarGenome { record: AvatarGenomeRecord, at: Timestamp },
     StartPairing { session_id: PairingSessionId, code: PairingCode, expires_at: Timestamp },
     JoinPairing { session_id: PairingSessionId, code: PairingCode, expires_at: Timestamp },
@@ -19,6 +19,7 @@ pub enum EngineCommand {
         contact_id: ContactId,
         conversation_id: ConversationId,
         display_name: String,
+        country_code: Option<String>,
         credential: PeerCredential,
         at: Timestamp,
     },
@@ -35,6 +36,8 @@ pub enum EngineCommand {
         at: Timestamp,
     },
     CancelMessage { message_id: MessageId, at: Timestamp },
+    DeleteMessage { message_id: MessageId, at: Timestamp },
+    ApplyMessageDeletion { message_id: MessageId, at: Timestamp },
     EditMessage { message_id: MessageId, body: MessageBody, at: Timestamp },
     SetMessageReaction { reaction: MessageReaction },
     BeginMessageSend { message_id: MessageId, at: Timestamp },

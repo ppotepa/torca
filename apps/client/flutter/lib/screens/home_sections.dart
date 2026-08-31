@@ -717,6 +717,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
   final TextEditingController controller = TextEditingController();
   String? _error;
   bool _submitting = false;
+  String _countryCode = 'UNKNOWN';
 
   @override
   void dispose() {
@@ -785,6 +786,31 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                   onSubmitted: _submitting ? null : (_) => _saveProfile(),
                 ),
                 const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _countryCode,
+                  decoration: InputDecoration(
+                    labelText: context.strings.country,
+                  ),
+                  items: <DropdownMenuItem<String>>[
+                    DropdownMenuItem(
+                      value: 'UNKNOWN',
+                      child: Text('📍 ${context.strings.unknownCountry}'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'PL',
+                      child: Text('🇵🇱 ${context.strings.polishCountry}'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'GB',
+                      child: Text('🇬🇧 ${context.strings.englishCountry}'),
+                    ),
+                  ],
+                  onChanged: _submitting
+                      ? null
+                      : (value) =>
+                            setState(() => _countryCode = value ?? 'UNKNOWN'),
+                ),
+                const SizedBox(height: 12),
                 FilledButton(
                   onPressed: _submitting ? null : _saveProfile,
                   child: Text(
@@ -831,6 +857,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
         UpdateProfileCommandDto(
           displayName: displayName,
           avatarEnvelope: avatarEnvelope,
+          countryCode: _countryCode,
         ),
       );
     } on Object catch (error) {

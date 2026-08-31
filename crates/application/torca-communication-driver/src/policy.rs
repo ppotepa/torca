@@ -21,6 +21,7 @@ enum ApplicationMessageKind {
     Probe = 4,
     RadioControl = 5,
     Reaction = 6,
+    MessageDeletion = 7,
 }
 impl ApplicationMessageKind {
     const fn as_u16(self) -> u16 {
@@ -33,6 +34,7 @@ pub const RECEIPT_MESSAGE_KIND: u16 = ApplicationMessageKind::Receipt.as_u16();
 pub const ATTACHMENT_MESSAGE_KIND: u16 = ApplicationMessageKind::Attachment.as_u16();
 pub const PROBE_MESSAGE_KIND: u16 = ApplicationMessageKind::Probe.as_u16();
 pub const RADIO_CONTROL_MESSAGE_KIND: u16 = ApplicationMessageKind::RadioControl.as_u16();
+pub const MESSAGE_DELETION_MESSAGE_KIND: u16 = ApplicationMessageKind::MessageDeletion.as_u16();
 pub const REACTION_MESSAGE_KIND: u16 = ApplicationMessageKind::Reaction.as_u16();
 
 pub fn classify_peer_health(

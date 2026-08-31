@@ -22,6 +22,7 @@ enum RuntimeCommand {
     QueueAttachment(AttachmentSendRequest, Sender<Result<(), RuntimeDriverError>>),
     QueueOutbound(MessageId, CommandId, Timestamp, Sender<Result<(), RuntimeDriverError>>),
     QueueReaction(ContactId, ReactionPayload, Timestamp, Sender<Result<(), RuntimeDriverError>>),
+    QueueMessageDeletion(ContactId, OpaqueId, OpaqueId, Timestamp, Sender<Result<(), RuntimeDriverError>>),
     RetryAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     CancelAttachment(OpaqueId, Sender<Result<(), RuntimeDriverError>>),
     ExportAttachment(AttachmentId, PathBuf, Sender<Result<(), RuntimeDriverError>>),
@@ -83,6 +84,7 @@ impl RuntimeCommand {
                 | Self::RetryAttachment(..)
                 | Self::CancelAttachment(..)
                 | Self::QueueReaction(..)
+                | Self::QueueMessageDeletion(..)
                 | Self::MarkConversationRead(..)
                 | Self::WakeDelivery(..)
                 | Self::ReleaseDelivery(_)
@@ -199,6 +201,17 @@ impl RuntimeHandle {
     ) -> Result<(), RuntimeDriverError> {
         request_command(&self.sender, |r| {
             RuntimeCommand::QueueReaction(contact_id, reaction, at, r)
+        })
+    }
+    pub fn queue_message_deletion(
+        &self,
+        contact_id: ContactId,
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<(), RuntimeDriverError> {
+        request_command(&self.sender, |r| {
+            RuntimeCommand::QueueMessageDeletion(contact_id, message_id, conversation_id, at, r)
         })
     }
     pub fn retry_attachment(&self, id: OpaqueId) -> Result<(), RuntimeDriverError> {
@@ -399,6 +412,7 @@ fn command_requires_network(command: &RuntimeCommand) -> bool {
             | RuntimeCommand::MarkConversationRead(..)
             | RuntimeCommand::QueueAttachment(..)
             | RuntimeCommand::QueueReaction(..)
+            | RuntimeCommand::QueueMessageDeletion(..)
             | RuntimeCommand::RetryAttachment(..)
             | RuntimeCommand::CancelAttachment(..)
     )

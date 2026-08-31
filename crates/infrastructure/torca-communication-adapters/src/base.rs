@@ -11,9 +11,9 @@ use crate::{application_envelope, application_peer_state, peer_envelope};
 use torca_client_engine::{EngineCommand, EngineHandle};
 use torca_communication_driver::{
     CommunicationError, ControlDeliveryRuntime, InboundEnvelope, InboundMessagingRuntime,
-    PeerActivityEvidence, PeerConnectionStatus, PeerLinkRuntime, REACTION_MESSAGE_KIND,
-    RECEIPT_MESSAGE_KIND, ReadStateRuntime, TEXT_MESSAGE_KIND, TextDeliveryRuntime,
-    plan_read_receipts,
+    MESSAGE_DELETION_MESSAGE_KIND, PeerActivityEvidence, PeerConnectionStatus, PeerLinkRuntime,
+    REACTION_MESSAGE_KIND, RECEIPT_MESSAGE_KIND, ReadStateRuntime, TEXT_MESSAGE_KIND,
+    TextDeliveryRuntime, plan_read_receipts,
 };
 use torca_contacts::{
     Contact, ContactId, ContactRepository, PeerCredential, PeerCredentialRepository,
@@ -27,7 +27,7 @@ use torca_crypto::{Ciphertext, CryptoProvider, ManagedPeerSecrets, Nonce, Protec
 use torca_delivery::{
     ApplicationPayload, ApplicationPayloadCodec, DeliveryAck, DeliveryReceiptKind,
     DeliveryTransport, DeliveryTransportError, DeliveryWorker, DurableDeliveryStore,
-    InboundMessageStore, ReactionPayload, ReceiptPayload, TextPayload,
+    InboundMessageStore, MessageDeletionPayload, ReactionPayload, ReceiptPayload, TextPayload,
 };
 use torca_foundation::{CommandId, OpaqueId, Timestamp};
 use torca_messaging::{Message, MessageBody, MessageId, ReplyReference};
@@ -310,6 +310,38 @@ impl<T: ControlTransport + Send + 'static> SharedControlWorker<T> {
             Err(_) => Err(CommunicationError::Control),
         }
     }
+    pub fn ensure_message_deletion(
+        &self,
+        contact_id: ContactId,
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        let job_id = OpaqueId::from_u128(
+            u128::from_be_bytes(message_id.into_bytes())
+                ^ u128::from(at.to_unix_millis().unsigned_abs()),
+        );
+        let payload = ApplicationPayloadCodec::encode(&ApplicationPayload::MessageDeletion(
+            MessageDeletionPayload {
+                message_id,
+                conversation_id,
+                contact_id: contact_id.to_opaque(),
+                at,
+            },
+        ))
+        .map_err(|_| CommunicationError::Control)?;
+        let result = self.inner.lock().map_err(|_| CommunicationError::Control)?.queue(
+            job_id,
+            contact_id.to_opaque(),
+            ControlKind::MessageDeletion,
+            &payload,
+            at,
+        );
+        match result {
+            Ok(()) | Err(ControlDeliveryError::Duplicate) => Ok(()),
+            Err(_) => Err(CommunicationError::Control),
+        }
+    }
 }
 impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedControlWorker<T> {
     fn recover(&mut self, now: Timestamp) -> Result<(), CommunicationError> {
@@ -366,6 +398,15 @@ impl<T: ControlTransport + Send + 'static> ControlDeliveryRuntime for SharedCont
         at: Timestamp,
     ) -> Result<(), CommunicationError> {
         self.ensure_reaction(contact_id, reaction, at)
+    }
+    fn queue_message_deletion(
+        &mut self,
+        contact_id: ContactId,
+        message_id: OpaqueId,
+        conversation_id: OpaqueId,
+        at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        self.ensure_message_deletion(contact_id, message_id, conversation_id, at)
     }
 }
 
@@ -547,7 +588,10 @@ where
     P: ProtectedSecretStore,
 {
     fn send_control(&mut self, job: &ControlJob) -> Result<ControlAck, ControlTransportError> {
-        if !matches!(job.kind, ControlKind::Receipt | ControlKind::Reaction) {
+        if !matches!(
+            job.kind,
+            ControlKind::Receipt | ControlKind::Reaction | ControlKind::MessageDeletion
+        ) {
             return Err(ControlTransportError);
         }
         let contact_id = ContactId::from_opaque(job.contact_id);
@@ -559,10 +603,10 @@ where
             &self.crypto,
             credential.secret_handle(),
             job.job_id,
-            if job.kind == ControlKind::Reaction {
-                REACTION_MESSAGE_KIND
-            } else {
-                RECEIPT_MESSAGE_KIND
+            match job.kind {
+                ControlKind::Reaction => REACTION_MESSAGE_KIND,
+                ControlKind::MessageDeletion => MESSAGE_DELETION_MESSAGE_KIND,
+                _ => RECEIPT_MESSAGE_KIND,
             },
             self.local_identity_id,
             contact.remote_identity().identity_id().to_opaque(),
@@ -573,10 +617,10 @@ where
             .send_envelope(
                 contact_id,
                 job.job_id,
-                if job.kind == ControlKind::Reaction {
-                    REACTION_MESSAGE_KIND
-                } else {
-                    RECEIPT_MESSAGE_KIND
+                match job.kind {
+                    ControlKind::Reaction => REACTION_MESSAGE_KIND,
+                    ControlKind::MessageDeletion => MESSAGE_DELETION_MESSAGE_KIND,
+                    _ => RECEIPT_MESSAGE_KIND,
                 },
                 encrypted,
             )
@@ -721,6 +765,21 @@ where
                 let _ = self
                     .engine
                     .dispatch(EngineCommand::SetMessageReaction { reaction: domain })
+                    .map_err(|_| CommunicationError::Engine)?;
+                self.link
+                    .send_ack(contact.id(), envelope.envelope_id, AckStatus::Accepted)
+                    .map_err(|_| CommunicationError::Peer)
+            }
+            (MESSAGE_DELETION_MESSAGE_KIND, ApplicationPayload::MessageDeletion(deletion)) => {
+                if deletion.contact_id != contact.id().to_opaque() {
+                    return self.reject(&envelope);
+                }
+                let _ = self
+                    .engine
+                    .dispatch(EngineCommand::ApplyMessageDeletion {
+                        message_id: MessageId::from_opaque(deletion.message_id),
+                        at: deletion.at,
+                    })
                     .map_err(|_| CommunicationError::Engine)?;
                 self.link
                     .send_ack(contact.id(), envelope.envelope_id, AckStatus::Accepted)

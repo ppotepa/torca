@@ -565,6 +565,7 @@ const fn encode_status(value: MessageStatus) -> i64 {
         MessageStatus::Read => 4,
         MessageStatus::Failed => 5,
         MessageStatus::Cancelled => 6,
+        MessageStatus::Deleted => 7,
     }
 }
 fn decode_status(value: i64) -> Result<MessageStatus, MessageError> {
@@ -576,6 +577,7 @@ fn decode_status(value: i64) -> Result<MessageStatus, MessageError> {
         4 => Ok(MessageStatus::Read),
         5 => Ok(MessageStatus::Failed),
         6 => Ok(MessageStatus::Cancelled),
+        7 => Ok(MessageStatus::Deleted),
         _ => Err(MessageError::RepositoryFailure),
     }
 }

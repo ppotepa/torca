@@ -153,6 +153,13 @@ fn handle_command<P: PairingDriver, C: CommunicationDriver, T: CommunicationLife
             }
             let _ = r.send(result);
         }
+        RuntimeCommand::QueueMessageDeletion(contact_id, message_id, conversation_id, at, r) => {
+            let result = communication.queue_message_deletion(contact_id, message_id, conversation_id, at);
+            if result.is_ok() {
+                communication.wake_delivery();
+            }
+            let _ = r.send(result);
+        }
         RuntimeCommand::RetryAttachment(id, r) => {
             let result = communication.retry_attachment(id, now);
             if result.is_ok() {

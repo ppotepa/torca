@@ -139,6 +139,7 @@ const fn encode_status(value: MessageStatus) -> i64 {
         MessageStatus::Read => 4,
         MessageStatus::Failed => 5,
         MessageStatus::Cancelled => 6,
+        MessageStatus::Deleted => 7,
     }
 }
 fn backend_error(error: StorageBackendError) -> DurableDeliveryError {

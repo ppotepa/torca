@@ -3,6 +3,7 @@
 pub struct LocalPairingContext {
     pub public_identity: PublicIdentity,
     pub display_name: String,
+    pub country_code: Option<String>,
     pub capability_id: OpaqueId,
     pub avatar: Option<AvatarEnvelope>,
     pub transport_provider: String,

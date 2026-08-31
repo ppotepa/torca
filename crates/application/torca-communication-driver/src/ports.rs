@@ -154,6 +154,15 @@ pub trait ControlDeliveryRuntime: Send {
     ) -> Result<(), CommunicationError> {
         Err(CommunicationError::Control)
     }
+    fn queue_message_deletion(
+        &mut self,
+        _contact_id: ContactId,
+        _message_id: OpaqueId,
+        _conversation_id: OpaqueId,
+        _at: Timestamp,
+    ) -> Result<(), CommunicationError> {
+        Err(CommunicationError::Control)
+    }
 }
 
 pub trait InboundMessagingRuntime: Send {

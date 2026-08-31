@@ -112,12 +112,31 @@ impl AvatarReference {
 pub struct Profile {
     display_name: ProfileName,
     avatar: Option<AvatarReference>,
+    country_code: Option<String>,
 }
 
 impl Profile {
     /// Creates a profile.
     pub const fn new(display_name: ProfileName, avatar: Option<AvatarReference>) -> Self {
-        Self { display_name, avatar }
+        Self { display_name, avatar, country_code: None }
+    }
+    /// Creates a profile with an optional ISO 3166-1 alpha-2 country code.
+    /// `unknown` is used when the user explicitly declines to disclose a country.
+    pub fn with_country(
+        display_name: ProfileName,
+        avatar: Option<AvatarReference>,
+        country_code: Option<String>,
+    ) -> Result<Self, ProfileError> {
+        let country_code = country_code
+            .map(|value| value.trim().to_ascii_uppercase())
+            .filter(|value| !value.is_empty());
+        if let Some(value) = &country_code
+            && value != "UNKNOWN"
+            && (value.len() != 2 || !value.bytes().all(|byte| byte.is_ascii_uppercase()))
+        {
+            return Err(ProfileError::InvalidCountryCode);
+        }
+        Ok(Self { display_name, avatar, country_code })
     }
     /// Returns the display name.
     pub const fn display_name(&self) -> &ProfileName {
@@ -126,6 +145,10 @@ impl Profile {
     /// Returns the optional avatar reference.
     pub const fn avatar(&self) -> Option<&AvatarReference> {
         self.avatar.as_ref()
+    }
+    /// Returns the optional shared country code.
+    pub fn country_code(&self) -> Option<&str> {
+        self.country_code.as_deref()
     }
 }
 

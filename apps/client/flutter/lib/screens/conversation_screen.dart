@@ -649,7 +649,9 @@ class _ConversationPaneState extends State<ConversationPane>
                               // (which contains a path/hash) as chat content.
                               // A typed AttachmentDto is rendered below; until
                               // it arrives, show a safe synchronizing state.
-                              showBody: !attachmentAnnouncement,
+                              showBody:
+                                  !attachmentAnnouncement &&
+                                  message.typedStatus != MessageStatus.deleted,
                               senderLabel:
                                   message.typedDirection ==
                                       MessageDirection.outbound
@@ -1069,6 +1071,10 @@ class _ConversationPaneState extends State<ConversationPane>
                 (message.typedStatus == MessageStatus.queued ||
                     message.typedStatus == MessageStatus.failed),
             bookmarked: _bookmarkedMessageIds.contains(message.id),
+            canDelete:
+                message.typedDirection == MessageDirection.outbound &&
+                message.typedStatus != MessageStatus.cancelled &&
+                message.typedStatus != MessageStatus.deleted,
             onQuickReaction: (emoji) => _reactToMessage(message, emoji: emoji),
           )
         : await MessageActionMenu.showDesktop(
@@ -1083,6 +1089,10 @@ class _ConversationPaneState extends State<ConversationPane>
                 (message.typedStatus == MessageStatus.queued ||
                     message.typedStatus == MessageStatus.failed),
             bookmarked: _bookmarkedMessageIds.contains(message.id),
+            canDelete:
+                message.typedDirection == MessageDirection.outbound &&
+                message.typedStatus != MessageStatus.cancelled &&
+                message.typedStatus != MessageStatus.deleted,
           );
     if (!mounted || action == null) return;
     await _applyMessageAction(message, action);
@@ -1171,6 +1181,37 @@ class _ConversationPaneState extends State<ConversationPane>
             );
           }
         });
+      case MessageAction.delete:
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(context.strings.deleteMessageTitle),
+            content: Text(context.strings.deleteMessage),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(context.strings.close),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(context.strings.deleteMessage),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        final result = await widget.gateway.execute(
+          DeleteMessageCommandDto(messageIdHex: message.id),
+        );
+        if (!result.ok && mounted) {
+          _showError(
+            BridgeErrorPresenter.localized(
+              context,
+              result,
+              fallback: context.strings.operationFailed,
+            ),
+          );
+        }
       case MessageAction.details:
         await _showMessageDetails(message);
     }
