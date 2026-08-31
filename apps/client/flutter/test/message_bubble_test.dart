@@ -69,6 +69,61 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('message body and footer stay visible across parity widths', (
+    tester,
+  ) async {
+    const widths = <double>[320, 360, 390, 430, 600, 768, 960, 1200, 1440];
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    tester.view.devicePixelRatio = 1;
+
+    for (final width in widths) {
+      for (final appearance in <TorcaAppearance>[
+        const TorcaAppearance(),
+        const TorcaAppearance(
+          family: TorcaThemeFamily.terminal,
+          variant: TorcaThemeVariant.terminalTokyoNight,
+        ),
+      ]) {
+        tester.view.physicalSize = Size(width, 800);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.dark(appearance),
+            home: Scaffold(
+              body: MessageBubble(
+                message: const MessageDto(
+                  id: 'responsive',
+                  conversationId: 'conversation',
+                  body:
+                      'A long message with a URL https://example.test/path and emoji 🎙️',
+                  direction: 'inbound',
+                  status: 'delivered',
+                  createdAtMs: 1000,
+                ),
+                senderLabel: 'Contact',
+                onLongPress: () {},
+              ),
+            ),
+          ),
+        );
+
+        final bubble = tester.getRect(
+          find.byKey(const ValueKey<String>('message-bubble-responsive')),
+        );
+        expect(bubble.right, lessThanOrEqualTo(width + .1));
+        expect(
+          find.byKey(const ValueKey<String>('message-content-responsive')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey<String>('message-footer-responsive')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
   for (final appearance in <TorcaAppearance>[
     const TorcaAppearance(),
     const TorcaAppearance(
