@@ -307,6 +307,8 @@ void main() {
     await tester.tap(find.byType(TextField));
     await tester.pump(const Duration(milliseconds: 80));
 
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.textInputAction, TextInputAction.done);
     expect(tester.testTextInput.isVisible, isTrue);
     await tester.enterText(find.byType(TextField), 'AB12CD3');
     expect(find.text('AB12CD3'), findsOneWidget);

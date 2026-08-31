@@ -316,13 +316,19 @@ where
         if session.state() == PairingState::Cancelled {
             return Ok(());
         }
-        self.coordinator.push(
-            session_id,
-            &PairingEnvelope {
-                pairing_id: self.coordinator.context(session_id)?.0,
-                payload: PairingPayload::Cancellation(PairingCancellation),
-            },
-        )?;
+        // A creator may be cancelled while the invitation is still open. No
+        // joiner means no remote ephemeral key exists yet, so there is no
+        // encrypted envelope we can send. Local cancellation is still valid;
+        // once a joiner has introduced its key, notify it before closing.
+        if self.coordinator.has_remote_public_key(session_id)? {
+            self.coordinator.push(
+                session_id,
+                &PairingEnvelope {
+                    pairing_id: self.coordinator.context(session_id)?.0,
+                    payload: PairingPayload::Cancellation(PairingCancellation),
+                },
+            )?;
+        }
         let _ = self
             .engine
             .dispatch(EngineCommand::CancelPairing { session_id })

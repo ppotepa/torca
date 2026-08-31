@@ -91,6 +91,28 @@ impl IrohRouting {
         torca_transport_iroh::encode_endpoint_addr(&address)
             .map_err(|_| ProviderRouteError::Invalid)
     }
+
+    fn pairing_endpoint_bytes(&self) -> Result<Vec<u8>, ProviderRouteError> {
+        if !self.endpoint.route_is_fresh() {
+            return Err(ProviderRouteError::Stale);
+        }
+        // Do not wait for `Endpoint::online()` here. It waits for a completed
+        // relay handshake and can block the command for a mobile network
+        // transition. The endpoint slot adds configured relay candidates to
+        // the immutable invitation while Iroh connects in the background.
+        let address = self.endpoint.address_for_pairing().ok_or(ProviderRouteError::Unavailable)?;
+        if address.is_empty() {
+            return Err(ProviderRouteError::Unavailable);
+        }
+        eprintln!(
+            "torca-iroh: pairing bootstrap route direct_routes={} relay_routes={} profile={}",
+            address.ip_addrs().count(),
+            address.relay_urls().count(),
+            self.endpoint.profile().wire_value(),
+        );
+        torca_transport_iroh::encode_endpoint_addr(&address)
+            .map_err(|_| ProviderRouteError::Invalid)
+    }
 }
 
 impl ProviderRouting for IrohRouting {
@@ -123,11 +145,7 @@ impl ProviderRouting for IrohRouting {
         &self,
     ) -> Result<Option<torca_pairing_protocol::PairingBootstrapDescriptor>, ProviderRouteError>
     {
-        let endpoint = match self.endpoint_bytes() {
-            Ok(endpoint) => endpoint,
-            Err(ProviderRouteError::Unavailable) => return Ok(None),
-            Err(error) => return Err(error),
-        };
+        let endpoint = self.pairing_endpoint_bytes()?;
         torca_pairing_protocol::PairingBootstrapDescriptor::new("iroh", endpoint)
             .map(Some)
             .map_err(|_| ProviderRouteError::Invalid)
@@ -163,5 +181,20 @@ mod tests {
     fn iroh_composition_is_provider_owned_and_self_contained() {
         let result = compose(Box::new(InMemoryProtectedSecretStore::default()));
         assert!(result.is_ok(), "Iroh composition failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn iroh_pairing_bootstrap_is_available_after_composition() {
+        let result =
+            compose(Box::new(InMemoryProtectedSecretStore::default())).expect("Iroh composition");
+        let bootstrap = result
+            .routing
+            .pairing_bootstrap()
+            .expect("Iroh pairing bootstrap")
+            .expect("Iroh pairing bootstrap descriptor");
+        assert_eq!(bootstrap.provider(), "iroh");
+        let address = torca_transport_iroh::decode_endpoint_addr(bootstrap.payload())
+            .expect("decode Iroh pairing bootstrap");
+        assert!(!address.is_empty(), "pairing bootstrap must contain a transport address");
     }
 }

@@ -754,7 +754,12 @@ class _JoinCard extends StatelessWidget {
             // but committed characters never reach the controller).  The
             // typed-code/URI parser performs normalization and validation
             // after editing, so pasted QR URIs remain supported as well.
-            textInputAction: TextInputAction.join,
+            // `TextInputAction.join` is not part of Android's supported IME
+            // actions and asserts as soon as this focused field attaches to
+            // the platform input connection. `done` preserves the intended
+            // submit affordance on every supported platform; `onSubmitted`
+            // still owns the actual pairing action.
+            textInputAction: TextInputAction.done,
             decoration: InputDecoration(
               labelText: context.strings.invitationCode,
               hintText: 'ABC123',

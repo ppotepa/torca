@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use iroh::endpoint::Endpoint;
-use iroh::{EndpointAddr, SecretKey};
+use iroh::{EndpointAddr, SecretKey, TransportAddr, Watcher};
 use tokio::runtime::Runtime;
 use tokio::time::{Duration, timeout};
 use torca_crypto::{ProtectedSecretStore, ProtectedSecretStoreError};
@@ -42,6 +42,7 @@ pub struct IrohEndpointSlot {
     secret: SecretKey,
     profile: IrohEndpointProfile,
     local_only: bool,
+    relay_urls: Vec<iroh::RelayUrl>,
 }
 
 impl IrohEndpointSlot {
@@ -52,6 +53,7 @@ impl IrohEndpointSlot {
         profile: IrohEndpointProfile,
         local_only: bool,
     ) -> ProviderEndpointSlot {
+        let relay_urls = pairing_relay_urls(profile);
         Arc::new(Self {
             endpoint: Mutex::new(Some(endpoint)),
             notify: Arc::new(tokio::sync::Notify::new()),
@@ -63,6 +65,7 @@ impl IrohEndpointSlot {
             secret,
             profile,
             local_only,
+            relay_urls,
         })
     }
 
@@ -141,6 +144,25 @@ impl IrohEndpointSlot {
         self.current().map(|endpoint| endpoint.addr())
     }
 
+    /// Returns an address suitable for a new pairing invitation.
+    ///
+    /// `Endpoint::addr()` is intentionally optimistic and can contain only
+    /// local interface addresses until Iroh has selected a home relay. A QR
+    /// invitation is immutable, so include the relay candidates configured
+    /// for this endpoint immediately instead of blocking on `Endpoint::online`
+    /// (which waits for a successful WAN handshake and may pend indefinitely
+    /// on a mobile network transition).
+    pub fn address_for_pairing(&self) -> Option<EndpointAddr> {
+        self.current().map(|endpoint| {
+            let mut address = endpoint.addr();
+            let relay_statuses = endpoint.home_relay_status().get();
+            address = address.with_addrs(
+                relay_statuses.into_iter().map(|status| TransportAddr::Relay(status.url().clone())),
+            );
+            address.with_addrs(self.relay_urls.iter().cloned().map(TransportAddr::Relay))
+        })
+    }
+
     pub(super) fn deactivate(&self) {
         let endpoint = self.endpoint.lock().ok().and_then(|mut slot| slot.take());
         if let Some(endpoint) = endpoint {
@@ -179,6 +201,27 @@ impl IrohEndpointSlot {
         self.notify.notify_waiters();
         Ok(())
     }
+}
+
+fn pairing_relay_urls(profile: IrohEndpointProfile) -> Vec<iroh::RelayUrl> {
+    if !profile.supports_incoming_reachability()
+        || configured_flag(COMPILED_IROH_DISABLE_RELAY, "TORCA_IROH_DISABLE_RELAY")
+        || configured_flag(COMPILED_IROH_DISABLE_DISCOVERY, "TORCA_IROH_DISABLE_DISCOVERY")
+    {
+        return Vec::new();
+    }
+
+    let service_config = IrohServiceConfig::from_environment(profile).unwrap_or_default();
+    if !service_config.relay_urls.is_empty() {
+        return service_config.relay_urls;
+    }
+    if service_config.is_custom() {
+        // A custom discovery-only deployment deliberately disables the relay
+        // worker in `bind_endpoint_from_secret`.
+        return Vec::new();
+    }
+
+    iroh::endpoint::default_relay_mode().relay_map().urls()
 }
 
 /// Protected-store handle for the Iroh endpoint identity. It is independent

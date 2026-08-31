@@ -415,8 +415,20 @@ impl IrohIncomingRouter {
                         task_router.clear_pending();
                         break;
                     }
-                    let Ok(accepted) = incoming.accept() else { continue };
-                    let Ok(connection) = accepted.await else { continue };
+                    let accepted = match incoming.accept() {
+                        Ok(accepted) => accepted,
+                        Err(error) => {
+                            eprintln!("torca-iroh: incoming handshake rejected: {error}");
+                            continue;
+                        }
+                    };
+                    let connection = match accepted.await {
+                        Ok(connection) => connection,
+                        Err(error) => {
+                            eprintln!("torca-iroh: incoming handshake failed: {error}");
+                            continue;
+                        }
+                    };
                     match connection.alpn() {
                         value if value == PAIRING_ALPN => {
                             if let Ok(mut entries) = task_router.pairing.lock() {
@@ -655,10 +667,23 @@ impl PairingServiceTransport for IrohPairingServiceTransport {
         let endpoint = self.endpoint.current().ok_or_else(|| {
             Self::transport_error(PairingServiceTransportFailureKind::Unavailable, false)
         })?;
-        let connection =
-            self.runtime.block_on(endpoint.connect(self.remote.clone(), PAIRING_ALPN)).map_err(
-                |_| Self::transport_error(PairingServiceTransportFailureKind::Unavailable, false),
-            )?;
+        let direct_routes = self.remote.ip_addrs().count();
+        let relay_routes = self.remote.relay_urls().count();
+        eprintln!(
+            "torca-iroh: pairing dial started direct_routes={direct_routes} relay_routes={relay_routes}"
+        );
+        let connection = self
+            .runtime
+            .block_on(endpoint.connect(self.remote.clone(), PAIRING_ALPN))
+            .map_err(|error| {
+                eprintln!(
+                    "torca-iroh: pairing dial failed direct_routes={direct_routes} relay_routes={relay_routes}: {error}"
+                );
+                Self::transport_error(PairingServiceTransportFailureKind::Unavailable, false)
+            })?;
+        eprintln!(
+            "torca-iroh: pairing dial connected direct_routes={direct_routes} relay_routes={relay_routes}"
+        );
         self.connection = Some(connection);
         Ok(())
     }

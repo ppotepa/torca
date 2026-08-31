@@ -199,6 +199,21 @@ where
         self.rendezvous.push(message_id, session.slot, session.token, encode_encrypted(&encrypted))
     }
 
+    /// Returns whether the remote endpoint has already introduced its
+    /// ephemeral public key to this session. A creator can be cancelled before
+    /// a joiner connects; in that state there is no key with which to encrypt
+    /// a cancellation envelope, but the local session must still be allowed
+    /// to close.
+    pub fn has_remote_public_key(
+        &self,
+        session_id: PairingSessionId,
+    ) -> Result<bool, PairingCoordinatorError> {
+        self.sessions
+            .get(&session_id)
+            .map(|session| session.remote_public_key.is_some())
+            .ok_or(PairingCoordinatorError::SessionNotFound)
+    }
+
     pub fn derive_peer_secret(
         &self,
         session_id: PairingSessionId,

@@ -87,11 +87,19 @@ impl IrohPairingService {
         if !self.endpoint.route_is_fresh() {
             return Err("Iroh endpoint route is migrating".to_owned());
         }
-        let address =
-            self.endpoint.address().ok_or_else(|| "Iroh endpoint is dormant".to_owned())?;
+        let address = self
+            .endpoint
+            .address_for_pairing()
+            .ok_or_else(|| "Iroh endpoint is dormant".to_owned())?;
         if address.is_empty() {
             return Err("Iroh endpoint has no dialable transport address yet".into());
         }
+        eprintln!(
+            "torca-iroh: pairing invitation route direct_routes={} relay_routes={} profile={}",
+            address.ip_addrs().count(),
+            address.relay_urls().count(),
+            self.endpoint.profile().wire_value(),
+        );
         let payload = crate::encode_endpoint_addr(&address).map_err(|error| error.to_string())?;
         PairingBootstrapDescriptor::new("iroh", payload).map_err(|error| error.to_string())
     }
@@ -178,7 +186,10 @@ impl PairingSessionServicePort for IrohPairingService {
         let relay_code = PairingServiceCode::new(code.as_str()).map_err(|_| Self::local_error())?;
         let (slot, expires_at, creator_blob) = client
             .join(relay_code, joiner_blob, PairingServiceSideToken(joiner_token.0), ticket)
-            .map_err(|_| Self::local_error())?;
+            .map_err(|error| {
+                eprintln!("torca-iroh: pairing join failed: {error}");
+                Self::local_error()
+            })?;
         let pairing_slot = PairingSlotId(slot.0);
         self.remote.insert(pairing_slot, client);
         Ok((pairing_slot, expires_at, creator_blob))
@@ -407,8 +418,20 @@ async fn serve_connection(connection: Connection, slots: Slots) {
     // generic "endpoint not ready" error by the UI. Keep accepting streams
     // until the peer closes the connection.
     loop {
-        let Ok((mut send, mut recv)) = connection.accept_bi().await else { return };
-        let Ok(request) = read_request(&mut recv).await else { return };
+        let (mut send, mut recv) = match connection.accept_bi().await {
+            Ok(streams) => streams,
+            Err(error) => {
+                eprintln!("torca-iroh: pairing stream accept ended: {error}");
+                return;
+            }
+        };
+        let request = match read_request(&mut recv).await {
+            Ok(request) => request,
+            Err(()) => {
+                eprintln!("torca-iroh: pairing request decode failed");
+                return;
+            }
+        };
         let response = process_request(request, &slots);
         let Ok(frame) = PairingServiceCodec::encode_response(&response) else { return };
         if send.write_all(&frame).await.is_err() || send.finish().is_err() {

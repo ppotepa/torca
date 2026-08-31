@@ -140,19 +140,11 @@ where
         session_id: PairingSessionId,
         now: Timestamp,
     ) -> Result<PairingInvitationView, RuntimeDriverError> {
-        // A creator can open and persist the provider-owned pairing slot
-        // before its advertised route is available.  This is important for
-        // direct providers such as Iroh: endpoint discovery may complete a
-        // moment after the local runtime is ready.  Keep the invitation alive
-        // with its code/ticket and let maintenance publish the local offer;
-        // the contract projection will add the provider bootstrap as soon as
-        // it becomes available.  A real provider error still fails the
-        // command, while `Pending` is deliberately non-fatal for creators.
-        let bootstrap = match self.routing.pairing_bootstrap() {
-            Ok(value) => value,
-            Err(ProviderRouteError::Unavailable) => None,
-            Err(error) => return Err(map_route_error(error)),
-        };
+        // A QR is an immutable route snapshot. Publishing it without the
+        // provider bootstrap cannot be repaired later by a contract snapshot,
+        // and produces invitations which only appear to work on the same LAN.
+        // Keep route-unavailable retryable, but do not expose a broken URI.
+        let bootstrap = self.routing.pairing_bootstrap().map_err(map_route_error)?;
         let invitation = self
             .runtime
             .create_invitation_pending_route_with_bootstrap(session_id, now, bootstrap.as_ref())
