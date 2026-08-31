@@ -16,19 +16,34 @@ class ConversationContainer extends StatelessWidget {
   final Widget footer;
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Theme.of(context).colorScheme.surface,
-    child: ClipRect(
-      child: Column(
-        children: <Widget>[
-          if (header != null) header!,
-          Expanded(child: content),
-          const Divider(height: 1),
-          footer,
-        ],
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final chatBackground =
+        theme.extension<TorcaSemanticColors>()?.chatBackground ??
+        theme.colorScheme.surface;
+    return ColoredBox(
+      color: theme.colorScheme.surface,
+      child: ClipRect(
+        child: Column(
+          children: <Widget>[
+            if (header != null) header!,
+            Expanded(
+              child: ColoredBox(
+                // The timeline uses the page background from the appearance
+                // spec. Keeping it distinct from the header/composer surface
+                // makes the inbound/outbound bubble colors readable in every
+                // modern and terminal palette.
+                color: chatBackground,
+                child: content,
+              ),
+            ),
+            const Divider(height: 1),
+            footer,
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// Shared composer surface for both the mobile route and desktop pane.

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/theme/app_theme.dart';
 import 'package:torca_app/widgets/message_bubble.dart';
+import 'package:torca_ui/torca_ui.dart';
 
 void main() {
   testWidgets('Android message bubbles align to opposite gutters', (
@@ -62,9 +63,54 @@ void main() {
     expect(outbound.right, closeTo(348, 0.1));
     expect(inbound.width, lessThanOrEqualTo(282.3));
     expect(outbound.width, lessThanOrEqualTo(282.3));
-    expect(outboundFooter.right, closeTo(outbound.right - 10, 0.1));
+    // The footer stays inside the bubble border in both modern and terminal
+    // appearances.
+    expect(outboundFooter.right, closeTo(outbound.right - 10 - 0.75, 0.1));
     expect(tester.takeException(), isNull);
   });
+
+  for (final appearance in <TorcaAppearance>[
+    const TorcaAppearance(),
+    const TorcaAppearance(
+      family: TorcaThemeFamily.terminal,
+      variant: TorcaThemeVariant.terminalTokyoNight,
+    ),
+  ]) {
+    testWidgets(
+      'message has visible body and footer in ${appearance.family.name}',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.dark(appearance),
+            home: Scaffold(
+              body: MessageBubble(
+                message: const MessageDto(
+                  id: 'body-footer',
+                  conversationId: 'conversation',
+                  body: 'A message body',
+                  direction: 'outbound',
+                  status: 'delivered',
+                  createdAtMs: 1000,
+                ),
+                onLongPress: () {},
+              ),
+            ),
+          ),
+        );
+
+        expect(
+          find.byKey(const ValueKey<String>('message-body-body-footer')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey<String>('message-footer-body-footer')),
+          findsOneWidget,
+        );
+        expect(find.text('A message body'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets('message bubble presents reply time and delivery state', (
     tester,
