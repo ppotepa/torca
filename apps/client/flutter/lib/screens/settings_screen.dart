@@ -540,18 +540,16 @@ class _AppearancePreview extends StatelessWidget {
                 compactBottom: true,
                 onLongPress: () {},
               ),
-              const SizedBox(height: 5),
               const _PreviewMessage(
                 body: 'I will be there shortly.',
                 showSender: false,
               ),
-              const SizedBox(height: 5),
+              const SizedBox(height: 8),
               const _PreviewMessage(
                 body: 'Yes, give me 5 min.',
                 outbound: true,
                 compactBottom: true,
               ),
-              const SizedBox(height: 5),
               const _PreviewMessage(
                 body: 'Perfect!',
                 outbound: true,

@@ -82,7 +82,7 @@ void main() {
     expect(tester.widget<Text>(find.text('You')).textAlign, TextAlign.right);
     // The footer stays inside the bubble border in both modern and terminal
     // appearances.
-    expect(outboundFooter.right, closeTo(outbound.right - 10, 0.1));
+    expect(outboundFooter.right, closeTo(outbound.right - 4, 0.1));
     expect(tester.takeException(), isNull);
   });
 
@@ -134,6 +134,112 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('body dominates equal compact metadata bars', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: const MessageDto(
+              id: 'proportions',
+              conversationId: 'conversation',
+              body: 'A readable message body',
+              direction: 'outbound',
+              status: 'sent',
+              createdAtMs: 1000,
+              sentAtMs: 1000,
+            ),
+            onLongPress: () {},
+          ),
+        ),
+      ),
+    );
+
+    final header = tester.getRect(
+      find.byKey(const ValueKey<String>('message-header-proportions')),
+    );
+    final body = tester.getRect(
+      find.byKey(const ValueKey<String>('message-body-section-proportions')),
+    );
+    final footer = tester.getRect(
+      find.byKey(const ValueKey<String>('message-footer-section-proportions')),
+    );
+
+    expect(header.height, 24);
+    expect(footer.height, header.height);
+    expect(body.height, greaterThanOrEqualTo(52));
+    expect(body.height, greaterThan(header.height));
+  });
+
+  testWidgets('every appearance keeps directional themed message surfaces', (
+    tester,
+  ) async {
+    for (final variant in TorcaThemeVariant.values) {
+      for (final brightness in Brightness.values) {
+        final appearance = TorcaAppearance(
+          family: variant.family,
+          variant: variant,
+        );
+        final theme = brightness == Brightness.dark
+            ? AppTheme.dark(appearance)
+            : AppTheme.light(appearance);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: Scaffold(
+              body: Column(
+                children: <Widget>[
+                  MessageBubble(
+                    message: const MessageDto(
+                      id: 'themed-inbound',
+                      conversationId: 'conversation',
+                      body: 'Inbound',
+                      direction: 'inbound',
+                      status: 'delivered',
+                      createdAtMs: 1000,
+                    ),
+                    senderColorKey: 'contact',
+                    onLongPress: () {},
+                  ),
+                  MessageBubble(
+                    message: const MessageDto(
+                      id: 'themed-outbound',
+                      conversationId: 'conversation',
+                      body: 'Outbound',
+                      direction: 'outbound',
+                      status: 'sent',
+                      createdAtMs: 1000,
+                      sentAtMs: 1000,
+                    ),
+                    senderColorKey: 'local',
+                    onLongPress: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        Color sectionColor(String section, String id) {
+          final container = tester.widget<Container>(
+            find.byKey(ValueKey<String>('message-$section-$id')),
+          );
+          return (container.decoration! as BoxDecoration).color!;
+        }
+
+        final inboundBody = sectionColor('body-section', 'themed-inbound');
+        final outboundBody = sectionColor('body-section', 'themed-outbound');
+        expect(inboundBody, isNot(outboundBody));
+        expect(sectionColor('header', 'themed-inbound'), isNot(inboundBody));
+        expect(
+          sectionColor('footer-section', 'themed-inbound'),
+          isNot(inboundBody),
+        );
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
 
   testWidgets('message body and footer stay visible across parity widths', (
     tester,
@@ -394,7 +500,7 @@ void main() {
     expect(find.text('Second'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('message-header-block-second')),
-      findsOneWidget,
+      findsNothing,
     );
   });
 

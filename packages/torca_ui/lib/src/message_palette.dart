@@ -7,19 +7,6 @@ import 'semantic_colors.dart';
 /// The key is an identity/contact id rather than a list position, so the same
 /// author keeps the same accent after snapshots, restarts and sorting changes.
 abstract final class TorcaMessagePalette {
-  // Direction-specific families guarantee that both sides of a conversation
-  // remain distinguishable even when their stable identity hashes collide.
-  static const List<Color> _outboundAccents = <Color>[
-    Color(0xFF229ED9),
-    Color(0xFF526ED3),
-    Color(0xFF7656B5),
-  ];
-  static const List<Color> _inboundAccents = <Color>[
-    Color(0xFF2E9D72),
-    Color(0xFFB7791F),
-    Color(0xFFD05A6E),
-  ];
-
   static ({
     Color surface,
     Color header,
@@ -34,39 +21,43 @@ abstract final class TorcaMessagePalette {
   resolve(BuildContext context, String key, {required bool outbound}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final accents = outbound ? _outboundAccents : _inboundAccents;
-    final index = _stableIndex(key, accents.length);
-    final accent = accents[index];
-    final background =
-        theme.extension<TorcaSemanticColors>()?.chatBackground ??
-        scheme.surface;
-    // Message cards are intentionally built from three solid surfaces.  The
-    // accent is identity-specific, while the blend levels keep the hierarchy
-    // legible in both light and dark themes without relying on a card border.
-    final header = Color.alphaBlend(accent.withValues(alpha: .82), background);
-    final body = Color.alphaBlend(accent.withValues(alpha: .28), background);
-    final footer = Color.alphaBlend(accent.withValues(alpha: .16), background);
+    final semantic = theme.extension<TorcaSemanticColors>();
+    final background = semantic?.chatBackground ?? scheme.surface;
+    final directionBase = outbound
+        ? semantic?.messageOutbound ?? scheme.primaryContainer
+        : semantic?.messageInbound ?? scheme.surfaceContainerHighest;
+    // Identity only nudges a theme-owned direction color. This keeps every
+    // author deterministic without importing foreign hues into Gruvbox,
+    // Tokyo Night, Forest, Graphite or the other appearance palettes.
+    final identityStep = _stableIndex(key, 5);
+    final identityMix = .04 + identityStep * .015;
+    final identityAccent = outbound ? scheme.primary : scheme.tertiary;
+    final body = Color.lerp(directionBase, identityAccent, identityMix)!;
+    // The three surfaces form one message. Their contrast is deliberately
+    // close: content dominates while the metadata bars remain subordinate.
+    final header = Color.lerp(body, scheme.onSurface, .10)!;
+    final footer = Color.lerp(body, background, .09)!;
     final surface = body;
-    final headerForeground =
-        ThemeData.estimateBrightnessForColor(header) == Brightness.dark
-        ? Colors.white
-        : Colors.black87;
-    final foreground =
-        ThemeData.estimateBrightnessForColor(surface) == Brightness.dark
-        ? Colors.white
-        : Colors.black87;
+    final headerForeground = _foregroundFor(header);
+    final foreground = _foregroundFor(surface);
+    final footerForeground = _foregroundFor(footer);
     return (
       surface: surface,
       header: header,
       body: body,
       footer: footer,
-      connector: accent.withValues(alpha: .78),
-      border: accent,
+      connector: Color.lerp(body, scheme.onSurface, .16)!,
+      border: Color.lerp(body, scheme.onSurface, .20)!,
       headerForeground: headerForeground,
       foreground: foreground,
-      muted: foreground.withValues(alpha: .72),
+      muted: footerForeground.withValues(alpha: .76),
     );
   }
+
+  static Color _foregroundFor(Color color) =>
+      ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+      ? Colors.white
+      : Colors.black87;
 
   static int _stableIndex(String value, int length) {
     var hash = 0x811c9dc5;

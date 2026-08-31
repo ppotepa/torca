@@ -134,88 +134,53 @@ class MessageBubble extends StatelessWidget {
                                   ),
                                   color: palette.connector,
                                 ),
-                              Container(
-                                key: ValueKey<String>(
-                                  'message-header-${message.id}',
-                                ),
-                                padding: const EdgeInsets.fromLTRB(
-                                  12,
-                                  8,
-                                  10,
-                                  6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: palette.header,
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: radius.topLeft,
-                                    topRight: radius.topRight,
+                              if (showSender)
+                                Container(
+                                  key: ValueKey<String>(
+                                    'message-header-${message.id}',
+                                  ),
+                                  height: 24,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: palette.header,
+                                    borderRadius: BorderRadius.only(
+                                      topLeft: radius.topLeft,
+                                      topRight: radius.topRight,
+                                    ),
+                                  ),
+                                  alignment: outbound
+                                      ? Alignment.centerRight
+                                      : Alignment.centerLeft,
+                                  child: Text(
+                                    sender,
+                                    textAlign: outbound
+                                        ? TextAlign.right
+                                        : TextAlign.left,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          color: palette.headerForeground,
+                                          height: 1,
+                                        ),
                                   ),
                                 ),
-                                child: Row(
-                                  children: <Widget>[
-                                    if (outbound)
-                                      IconButton(
-                                        key: ValueKey<String>(
-                                          'message-actions-${message.id}',
-                                        ),
-                                        tooltip: context.strings.messageActions,
-                                        onPressed: onLongPress,
-                                        color: palette.headerForeground,
-                                        icon: Icon(context.torcaIcons.more),
-                                        visualDensity: VisualDensity.compact,
-                                        constraints: const BoxConstraints(
-                                          minWidth: 32,
-                                          minHeight: 32,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                      ),
-                                    Expanded(
-                                      child: showSender
-                                          ? Text(
-                                              sender,
-                                              textAlign: outbound
-                                                  ? TextAlign.right
-                                                  : TextAlign.left,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .labelMedium
-                                                  ?.copyWith(
-                                                    fontWeight: FontWeight.w800,
-                                                    color: palette
-                                                        .headerForeground,
-                                                  ),
-                                            )
-                                          : const SizedBox.shrink(),
-                                    ),
-                                    if (!outbound)
-                                      IconButton(
-                                        key: ValueKey<String>(
-                                          'message-actions-${message.id}',
-                                        ),
-                                        tooltip: context.strings.messageActions,
-                                        onPressed: onLongPress,
-                                        color: palette.headerForeground,
-                                        icon: Icon(context.torcaIcons.more),
-                                        visualDensity: VisualDensity.compact,
-                                        constraints: const BoxConstraints(
-                                          minWidth: 32,
-                                          minHeight: 32,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                      ),
-                                  ],
-                                ),
-                              ),
                               Container(
                                 key: ValueKey<String>(
                                   'message-body-section-${message.id}',
                                 ),
+                                constraints: const BoxConstraints(
+                                  minHeight: 52,
+                                ),
                                 padding: const EdgeInsets.fromLTRB(
                                   12,
-                                  10,
-                                  10,
+                                  12,
+                                  12,
                                   10,
                                 ),
                                 decoration: BoxDecoration(color: palette.body),
@@ -259,6 +224,51 @@ class MessageBubble extends StatelessWidget {
                                               fontStyle: FontStyle.italic,
                                             ),
                                       ),
+                                    if (reactionCounts.isNotEmpty) ...<Widget>[
+                                      const SizedBox(height: 9),
+                                      Wrap(
+                                        spacing: 5,
+                                        runSpacing: 4,
+                                        children: <Widget>[
+                                          for (final entry
+                                              in reactionCounts.entries)
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 7,
+                                                    vertical: 3,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: palette.footer,
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                      context
+                                                              .torcaTokens
+                                                              .terminal
+                                                          ? 0
+                                                          : 10,
+                                                    ),
+                                              ),
+                                              child: Text(
+                                                entry.value > 1
+                                                    ? '${entry.key} ${entry.value}'
+                                                    : entry.key,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .labelSmall
+                                                    ?.copyWith(
+                                                      color: palette.muted,
+                                                      height: 1,
+                                                    ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ],
+                                    if (footer.isNotEmpty) ...<Widget>[
+                                      const SizedBox(height: 9),
+                                      ...footer,
+                                    ],
                                   ],
                                 ),
                               ),
@@ -266,11 +276,9 @@ class MessageBubble extends StatelessWidget {
                                 key: ValueKey<String>(
                                   'message-footer-section-${message.id}',
                                 ),
-                                padding: const EdgeInsets.fromLTRB(
-                                  12,
-                                  8,
-                                  10,
-                                  9,
+                                height: 24,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
                                 ),
                                 decoration: BoxDecoration(
                                   color: palette.footer,
@@ -279,64 +287,39 @@ class MessageBubble extends StatelessWidget {
                                     bottomRight: radius.bottomRight,
                                   ),
                                 ),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
+                                child: Row(
+                                  key: ValueKey<String>(
+                                    'message-footer-${message.id}',
+                                  ),
                                   children: <Widget>[
-                                    if (reactionCounts.isNotEmpty)
-                                      Wrap(
-                                        spacing: 4,
-                                        children: <Widget>[
-                                          for (final entry
-                                              in reactionCounts.entries)
-                                            Chip(
-                                              label: Text(
-                                                entry.value > 1
-                                                    ? '${entry.key} ${entry.value}'
-                                                    : entry.key,
-                                              ),
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                              materialTapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                              backgroundColor: palette.footer,
-                                              labelStyle: TextStyle(
-                                                color: palette.foreground,
-                                              ),
-                                            ),
-                                        ],
+                                    if (outbound)
+                                      _MessageActionButton(
+                                        messageId: message.id,
+                                        color: palette.muted,
+                                        onPressed: onLongPress,
                                       ),
-                                    if (footer.isNotEmpty) ...<Widget>[
-                                      if (reactionCounts.isNotEmpty)
-                                        const SizedBox(height: 5),
-                                      ...footer,
-                                    ],
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: Row(
-                                        key: ValueKey<String>(
-                                          'message-footer-${message.id}',
+                                    if (outbound) const Spacer(),
+                                    if (outbound && message.sentAtMs != null)
+                                      _LifecycleTimeline(message: message)
+                                    else ...<Widget>[
+                                      MessageTimestamp(
+                                        milliseconds: message.createdAtMs,
+                                      ),
+                                      if (outbound) ...<Widget>[
+                                        const SizedBox(width: 5),
+                                        MessageStatusIndicator(
+                                          status: message.typedStatus,
                                         ),
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: <Widget>[
-                                          if (outbound &&
-                                              message.sentAtMs != null)
-                                            _LifecycleTimeline(message: message)
-                                          else ...<Widget>[
-                                            MessageTimestamp(
-                                              milliseconds: message.createdAtMs,
-                                            ),
-                                            if (outbound) ...<Widget>[
-                                              const SizedBox(width: 5),
-                                              MessageStatusIndicator(
-                                                status: message.typedStatus,
-                                              ),
-                                            ],
-                                          ],
-                                        ],
+                                      ],
+                                    ],
+                                    if (!outbound) ...<Widget>[
+                                      const Spacer(),
+                                      _MessageActionButton(
+                                        messageId: message.id,
+                                        color: palette.muted,
+                                        onPressed: onLongPress,
                                       ),
-                                    ),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -354,6 +337,34 @@ class MessageBubble extends StatelessWidget {
       },
     );
   }
+}
+
+class _MessageActionButton extends StatelessWidget {
+  const _MessageActionButton({
+    required this.messageId,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final String messageId;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: ValueKey<String>('message-actions-$messageId'),
+    tooltip: context.strings.messageActions,
+    onPressed: onPressed,
+    color: color,
+    icon: Icon(context.torcaIcons.more, size: 14),
+    style: IconButton.styleFrom(
+      fixedSize: const Size.square(22),
+      minimumSize: const Size.square(22),
+      maximumSize: const Size.square(22),
+      padding: EdgeInsets.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
+  );
 }
 
 enum _LifecycleKind { sent, delivered, read }
