@@ -1,7 +1,7 @@
 use crate::domain::{
     BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, DeployRun,
     FieldAvailability, FieldCapability, FieldId, LaunchPolicy, PlanCapabilities, PreflightReport,
-    PrivacyPolicy, ProviderMetadataExt, Target, ValidationLevel, iroh_provider,
+    PrivacyPolicy, ProviderMetadataExt, RunTarget, ValidationLevel, iroh_provider,
 };
 use crate::executor::DeployProgress;
 
@@ -239,7 +239,7 @@ pub enum FailureAction {
 impl WizardModel {
     pub fn new(plan: DeployPlan) -> Self {
         let mut model = Self {
-            plan,
+            plan: plan.normalized(),
             fields: Vec::new(),
             focused: 0,
             screen: WizardScreen::Provider,
@@ -308,17 +308,24 @@ impl WizardModel {
             return;
         }
         match field {
-            FieldId::Targets => {
-                let current = match self.plan.targets.as_slice() {
-                    [Target::Windows] => 0_i8,
-                    [Target::Android] => 1,
-                    _ => 2,
+            FieldId::Targets => {}
+            FieldId::RunWindows | FieldId::RunAndroid | FieldId::RunEmulator => {
+                let target = match field {
+                    FieldId::RunWindows => RunTarget::Windows,
+                    FieldId::RunAndroid => RunTarget::Android,
+                    FieldId::RunEmulator => RunTarget::Emulator,
+                    _ => unreachable!(),
                 };
-                match (current + direction).rem_euclid(3) {
-                    0 => self.plan.targets = vec![Target::Windows],
-                    1 => self.plan.targets = vec![Target::Android],
-                    _ => self.plan.targets = crate::planner::all_client_targets(),
+                let selected = self.plan.run_targets.contains(&target);
+                if selected && self.plan.run_targets.len() == 1 {
+                    return;
                 }
+                if selected {
+                    self.plan.run_targets.retain(|current| *current != target);
+                } else {
+                    self.plan.run_targets.push(target);
+                }
+                self.plan = self.plan.clone().normalized();
             }
             FieldId::Configuration => {
                 self.plan.configuration = if self.plan.configuration == Configuration::Debug {
@@ -405,9 +412,12 @@ enum FieldSection {
 const fn field_section(id: FieldId) -> FieldSection {
     match id {
         FieldId::ProviderProfile => FieldSection::Connection,
-        FieldId::Targets | FieldId::Configuration | FieldId::ClientBuild => {
-            FieldSection::TargetAndBuild
-        }
+        FieldId::Targets
+        | FieldId::RunWindows
+        | FieldId::RunAndroid
+        | FieldId::RunEmulator
+        | FieldId::Configuration
+        | FieldId::ClientBuild => FieldSection::TargetAndBuild,
         FieldId::ClientData | FieldId::Privacy => FieldSection::DataAndPrivacy,
         FieldId::Validation | FieldId::Launch => FieldSection::VerifyAndStart,
     }
@@ -417,12 +427,15 @@ const fn field_order(id: FieldId) -> u8 {
     match id {
         FieldId::ProviderProfile => 0,
         FieldId::Targets => 1,
-        FieldId::Configuration => 2,
-        FieldId::ClientBuild => 3,
-        FieldId::ClientData => 4,
-        FieldId::Privacy => 5,
-        FieldId::Validation => 6,
-        FieldId::Launch => 7,
+        FieldId::RunWindows => 1,
+        FieldId::RunAndroid => 2,
+        FieldId::RunEmulator => 3,
+        FieldId::Configuration => 4,
+        FieldId::ClientBuild => 5,
+        FieldId::ClientData => 6,
+        FieldId::Privacy => 7,
+        FieldId::Validation => 8,
+        FieldId::Launch => 9,
     }
 }
 
@@ -563,20 +576,31 @@ mod tests {
     }
 
     #[test]
-    fn cycling_focused_target_updates_only_supported_target_sets() {
+    fn cycling_focused_target_updates_runtime_checkbox_sets() {
         let mut model = WizardModel::new(DeployPlan::normal(
             DeployAction::RedeployCurrent,
             vec![Target::Windows],
             Configuration::Debug,
         ));
         model.move_focus(1);
-        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+        model.move_focus(1);
+        assert_eq!(
+            model.focused_field().map(|field| field.capability.id),
+            Some(FieldId::RunAndroid)
+        );
         model.cycle_focused(1);
-        assert_eq!(model.plan.targets, vec![Target::Android]);
-        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+        assert_eq!(model.plan.run_targets, vec![RunTarget::Windows, RunTarget::Android]);
+        assert!(model.plan.targets.contains(&Target::Android));
+        assert_eq!(
+            model.focused_field().map(|field| field.capability.id),
+            Some(FieldId::RunAndroid)
+        );
         model.cycle_focused(1);
-        assert_eq!(model.plan.targets, crate::planner::all_client_targets());
-        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+        assert_eq!(model.plan.run_targets, vec![RunTarget::Windows]);
+        assert_eq!(
+            model.focused_field().map(|field| field.capability.id),
+            Some(FieldId::RunAndroid)
+        );
     }
 
     #[test]
@@ -613,7 +637,10 @@ mod tests {
 
         model.set_action(DeployAction::RunInstalled);
 
-        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+        assert_eq!(
+            model.focused_field().map(|field| field.capability.id),
+            Some(FieldId::RunWindows)
+        );
     }
 
     #[test]
@@ -628,7 +655,9 @@ mod tests {
             ids,
             vec![
                 FieldId::ProviderProfile,
-                FieldId::Targets,
+                FieldId::RunWindows,
+                FieldId::RunAndroid,
+                FieldId::RunEmulator,
                 FieldId::Configuration,
                 FieldId::ClientBuild,
                 FieldId::ClientData,

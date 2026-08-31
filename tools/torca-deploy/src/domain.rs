@@ -42,6 +42,9 @@ use thiserror::Error;
 #[serde(rename_all = "snake_case")]
 pub enum FieldId {
     Targets,
+    RunWindows,
+    RunAndroid,
+    RunEmulator,
     Configuration,
     ClientBuild,
     ClientData,
@@ -177,6 +180,28 @@ impl fmt::Display for Target {
     }
 }
 
+/// A deployable runtime destination.  Android is the physical-device choice;
+/// Emulator is deliberately separate even though both consume the Android
+/// artifact.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunTarget {
+    Windows,
+    #[default]
+    Android,
+    Emulator,
+}
+
+impl fmt::Display for RunTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Windows => "windows",
+            Self::Android => "android device",
+            Self::Emulator => "android emulator",
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeployAction {
@@ -248,6 +273,10 @@ pub enum PrivacyPolicy {
 pub struct DeployPlan {
     pub action: DeployAction,
     pub targets: Vec<Target>,
+    /// Runtime destinations selected by the user. Empty values from older
+    /// persisted plans are derived from `targets` by `normalized`.
+    #[serde(default)]
+    pub run_targets: Vec<RunTarget>,
     /// Optional exact host/device id for deterministic deployments.
     #[serde(default)]
     pub device: Option<String>,
@@ -273,6 +302,7 @@ impl DeployPlan {
         Self {
             action,
             targets,
+            run_targets: Vec::new(),
             device: None,
             configuration,
             client_build: BuildPolicy::IfRequired,
@@ -286,6 +316,13 @@ impl DeployPlan {
 
     pub fn validate(&self) -> Result<(), PlanError> {
         if self.targets.is_empty() {
+            return Err(PlanError::NoTargets);
+        }
+        if self.run_targets.iter().any(|target| {
+            matches!(target, RunTarget::Windows) && !self.targets.contains(&Target::Windows)
+                || matches!(target, RunTarget::Android | RunTarget::Emulator)
+                    && !self.targets.contains(&Target::Android)
+        }) {
             return Err(PlanError::NoTargets);
         }
         if let Some(profile) = self.provider_profile.as_deref() {
@@ -305,6 +342,29 @@ impl DeployPlan {
     /// Applies invariants which are implied by the selected operation.  Keeping
     /// these defaults in the domain means the TUI and the CLI cannot drift.
     pub fn normalized(mut self) -> Self {
+        if self.run_targets.is_empty() {
+            self.run_targets = self
+                .targets
+                .iter()
+                .filter_map(|target| match target {
+                    Target::Windows => Some(RunTarget::Windows),
+                    Target::Android => Some(RunTarget::Android),
+                })
+                .collect();
+        }
+        if self.run_targets.contains(&RunTarget::Windows)
+            && !self.targets.contains(&Target::Windows)
+        {
+            self.targets.push(Target::Windows);
+        }
+        if self
+            .run_targets
+            .iter()
+            .any(|target| matches!(target, RunTarget::Android | RunTarget::Emulator))
+            && !self.targets.contains(&Target::Android)
+        {
+            self.targets.push(Target::Android);
+        }
         if self.action == DeployAction::RunInstalled {
             self.client_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
@@ -350,13 +410,17 @@ impl DeployPlan {
                     values,
                 });
             };
-        add(
-            FieldId::Targets,
-            FieldAvailability::Editable,
-            "Targets",
-            "Clients and devices affected by this plan.",
-            Vec::new(),
-        );
+        for (id, label, description) in [
+            (FieldId::RunWindows, "Windows", "Run the Windows client."),
+            (
+                FieldId::RunAndroid,
+                "Android device",
+                "Run on an authorized physical Android device.",
+            ),
+            (FieldId::RunEmulator, "Android emulator", "Run on an available ADB Android emulator."),
+        ] {
+            add(id, FieldAvailability::Editable, label, description, Vec::new());
+        }
         add(
             FieldId::Configuration,
             if matches!(plan.action, DeployAction::CollectLogs | DeployAction::RunInstalled) {
@@ -779,6 +843,30 @@ mod tests {
         let mut relaxed = plan;
         relaxed.privacy = PrivacyPolicy::AllowCapture;
         assert_eq!(relaxed.normalized().privacy, PrivacyPolicy::AllowCapture);
+    }
+
+    #[test]
+    fn legacy_platform_targets_normalize_to_runtime_destinations() {
+        let plan = DeployPlan::normal(
+            DeployAction::FullRedeploy,
+            vec![Target::Windows, Target::Android],
+            Configuration::Debug,
+        )
+        .normalized();
+        assert_eq!(plan.run_targets, vec![RunTarget::Windows, RunTarget::Android]);
+    }
+
+    #[test]
+    fn emulator_destination_keeps_android_artifact_target() {
+        let mut plan = DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Windows],
+            Configuration::Debug,
+        );
+        plan.run_targets = vec![RunTarget::Emulator];
+        let plan = plan.normalized();
+        assert!(plan.targets.contains(&Target::Android));
+        assert!(plan.validate().is_ok());
     }
 
     #[test]

@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::domain::{
     BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, LaunchPolicy,
-    PrivacyPolicy, Target, ValidationLevel,
+    PrivacyPolicy, RunTarget, Target, ValidationLevel,
 };
 
 #[derive(Debug, Parser)]
@@ -51,6 +51,9 @@ pub struct PlanArgs {
     /// Device id to deploy; wireless ADB mDNS collision counters are tolerated.
     #[arg(long)]
     pub device: Option<String>,
+    /// Runtime destination(s). Repeat for multiple destinations.
+    #[arg(long = "run-target", value_enum)]
+    pub run_targets: Vec<RunTargetArg>,
     #[arg(long, value_enum, default_value = "debug")]
     pub configuration: ConfigurationArg,
     #[arg(long, value_enum, default_value = "if-required")]
@@ -93,6 +96,12 @@ pub enum TargetArg {
     Windows,
     Android,
     All,
+}
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum RunTargetArg {
+    Windows,
+    Android,
+    Emulator,
 }
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum ConfigurationArg {
@@ -141,13 +150,39 @@ impl PlanArgs {
         let provider_profile = self.provider_profile.clone().or_else(|| {
             Some(std::env::var("TORCA_IROH_PROFILE").unwrap_or_else(|_| "always".to_owned()))
         });
+        let mut targets = match self.target {
+            TargetArg::Windows => vec![Target::Windows],
+            TargetArg::Android => vec![Target::Android],
+            TargetArg::All => vec![Target::Windows, Target::Android],
+        };
+        let run_targets = self
+            .run_targets
+            .iter()
+            .map(|target| match target {
+                RunTargetArg::Windows => {
+                    if !targets.contains(&Target::Windows) {
+                        targets.push(Target::Windows);
+                    }
+                    RunTarget::Windows
+                }
+                RunTargetArg::Android => {
+                    if !targets.contains(&Target::Android) {
+                        targets.push(Target::Android);
+                    }
+                    RunTarget::Android
+                }
+                RunTargetArg::Emulator => {
+                    if !targets.contains(&Target::Android) {
+                        targets.push(Target::Android);
+                    }
+                    RunTarget::Emulator
+                }
+            })
+            .collect();
         DeployPlan {
             action,
-            targets: match self.target {
-                TargetArg::Windows => vec![Target::Windows],
-                TargetArg::Android => vec![Target::Android],
-                TargetArg::All => vec![Target::Windows, Target::Android],
-            },
+            targets,
+            run_targets,
             device: self.device.clone(),
             configuration: match self.configuration {
                 ConfigurationArg::Debug => Configuration::Debug,
@@ -210,5 +245,14 @@ mod tests {
             args.plan(DeployAction::RedeployCurrent).provider_profile.as_deref(),
             Some("always")
         );
+    }
+
+    #[test]
+    fn explicit_runtime_targets_are_carried_into_the_plan() {
+        let args =
+            plan_args(&["torca-deploy", "plan", "--target", "windows", "--run-target", "emulator"]);
+        let plan = args.plan(DeployAction::FullRedeploy);
+        assert_eq!(plan.run_targets, vec![RunTarget::Emulator]);
+        assert!(plan.targets.contains(&Target::Android));
     }
 }

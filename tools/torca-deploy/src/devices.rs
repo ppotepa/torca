@@ -1,4 +1,4 @@
-use crate::domain::Target;
+use crate::domain::{RunTarget, Target};
 use crate::paths::RuntimePaths;
 use crate::process::{CommandRunner, CommandSpec, ProcessError};
 use std::io::{self, IsTerminal, Write};
@@ -58,6 +58,48 @@ pub fn select_device(
         1 => Ok(selected),
         _ => Err(DeviceError::RequestedDeviceAmbiguous(requested.to_owned())),
     }
+}
+
+pub fn is_android_emulator(id: &str) -> bool {
+    id.starts_with("emulator-")
+}
+
+/// Apply the runtime destination checkboxes after platform discovery.
+pub fn select_run_targets(
+    devices: Vec<Device>,
+    requested: &[RunTarget],
+) -> Result<Vec<Device>, DeviceError> {
+    if requested.is_empty() {
+        return Ok(devices);
+    }
+    let selected = devices
+        .into_iter()
+        .filter(|device| match device.target {
+            Target::Windows => requested.contains(&RunTarget::Windows),
+            Target::Android => {
+                if is_android_emulator(&device.id) {
+                    requested.contains(&RunTarget::Emulator)
+                } else {
+                    requested.contains(&RunTarget::Android)
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    for target in requested {
+        let found = selected.iter().any(|device| match target {
+            RunTarget::Windows => device.target == Target::Windows,
+            RunTarget::Android => {
+                device.target == Target::Android && !is_android_emulator(&device.id)
+            }
+            RunTarget::Emulator => {
+                device.target == Target::Android && is_android_emulator(&device.id)
+            }
+        });
+        if !found {
+            return Err(DeviceError::RequestedRunTargetUnavailable(*target));
+        }
+    }
+    Ok(selected)
 }
 impl<'a> DeviceController<'a> {
     pub fn new(paths: &'a RuntimePaths, runner: &'a dyn CommandRunner) -> Self {
@@ -215,14 +257,19 @@ pub enum DeviceError {
     RequestedDeviceUnavailable(String),
     #[error("requested device `{0}` matches more than one available Android transport")]
     RequestedDeviceAmbiguous(String),
+    #[error("requested {0} runtime destination is unavailable")]
+    RequestedRunTargetUnavailable(RunTarget),
     #[error("Android device {device} uses unsupported ABI `{abi}`")]
     UnsupportedAndroidAbi { device: String, abi: String },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AndroidAbi, Device, parse_adb_devices, select_device, stable_android_device_id};
-    use crate::domain::Target;
+    use super::{
+        AndroidAbi, Device, is_android_emulator, parse_adb_devices, select_device,
+        select_run_targets, stable_android_device_id,
+    };
+    use crate::domain::{RunTarget, Target};
 
     #[test]
     fn parser_accepts_ready_transports_only() {
@@ -232,6 +279,25 @@ mod tests {
             + "ready-device\tdevice product:pixel\n";
 
         assert_eq!(parse_adb_devices(&output), vec!["ready-device"]);
+    }
+
+    #[test]
+    fn runtime_targets_separate_physical_android_from_emulator() {
+        let devices = vec![
+            Device {
+                target: Target::Android,
+                id: "phone:5555".into(),
+                android_abi: Some(AndroidAbi::Arm64),
+            },
+            Device {
+                target: Target::Android,
+                id: "emulator-5554".into(),
+                android_abi: Some(AndroidAbi::X86_64),
+            },
+        ];
+        assert!(is_android_emulator("emulator-5554"));
+        assert_eq!(select_run_targets(devices.clone(), &[RunTarget::Emulator]).unwrap().len(), 1);
+        assert_eq!(select_run_targets(devices, &[RunTarget::Android]).unwrap().len(), 1);
     }
 
     #[test]

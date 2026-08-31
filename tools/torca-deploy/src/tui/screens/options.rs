@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::domain::{ClientDataPolicy, DeployPlan, FieldAvailability, FieldId, Target};
+use crate::domain::{ClientDataPolicy, DeployPlan, FieldAvailability, FieldId, RunTarget};
 use crate::tui::{
     input::InputGuard,
     model::{WizardModel, build_policy_label, launch_label, privacy_label, validation_label},
@@ -49,6 +49,7 @@ pub fn edit_plan(
                 KeyCode::PageUp => scroll = scroll.saturating_sub(5),
                 KeyCode::Left => model.cycle_focused(-1),
                 KeyCode::Right => model.cycle_focused(1),
+                KeyCode::Char(' ') => model.cycle_focused(1),
                 KeyCode::Enter => return Ok(Some(model.plan.normalized())),
                 _ => {}
             }
@@ -120,7 +121,19 @@ fn options_lines(model: &WizardModel, theme: Theme) -> Vec<Line<'static>> {
         (
             "TARGET & BUILD",
             vec![
-                row(model, FieldId::Targets, "Targets", targets_label(&plan.targets)),
+                row(model, FieldId::RunWindows, "Run Windows", &checkbox(plan, RunTarget::Windows)),
+                row(
+                    model,
+                    FieldId::RunAndroid,
+                    "Run Android device",
+                    &checkbox(plan, RunTarget::Android),
+                ),
+                row(
+                    model,
+                    FieldId::RunEmulator,
+                    "Run Android emulator",
+                    &checkbox(plan, RunTarget::Emulator),
+                ),
                 row(
                     model,
                     FieldId::Configuration,
@@ -257,12 +270,9 @@ fn profile_label(plan: &DeployPlan) -> &str {
     plan.provider_profile.as_deref().unwrap_or("default")
 }
 
-fn targets_label(targets: &[Target]) -> &'static str {
-    match targets {
-        [Target::Windows] => "Windows",
-        [Target::Android] => "Android",
-        _ => "Windows + Android",
-    }
+fn checkbox(plan: &DeployPlan, target: RunTarget) -> String {
+    let selected = plan.clone().normalized().run_targets.contains(&target);
+    format!("[{}]", if selected { 'x' } else { ' ' })
 }
 
 fn data_label(policy: ClientDataPolicy) -> &'static str {

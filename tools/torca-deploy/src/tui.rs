@@ -230,7 +230,14 @@ fn last_plan_lines(plan: Option<&DeployPlan>, theme: Theme) -> Vec<Line<'static>
             )),
         ];
     };
-    let targets = plan.targets.iter().map(ToString::to_string).collect::<Vec<_>>().join(" + ");
+    let targets = plan
+        .clone()
+        .normalized()
+        .run_targets
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" + ");
     let rows = [
         ("Action", plan.action.to_string(), theme.accent),
         ("Targets", targets, theme.info),

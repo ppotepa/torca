@@ -160,7 +160,11 @@ impl DeployExecutor {
         let paths = RuntimePaths::from_repo(self.store.paths().repo_root.clone());
         match DeviceController::new(&paths, self.runner.as_ref()).discover(&plan.targets) {
             Ok(devices) => {
-                let selected = crate::devices::select_device(devices, plan.device.as_deref());
+                let selected = crate::devices::select_run_targets(
+                    devices,
+                    &plan.clone().normalized().run_targets,
+                )
+                .and_then(|devices| crate::devices::select_device(devices, plan.device.as_deref()));
                 match selected {
                     Ok(devices) => report.checks.push(PreflightCheck {
                         name: "Devices".into(),
@@ -316,8 +320,12 @@ impl DeployExecutor {
             let discovered = DeviceController::new(&paths, self.runner.as_ref())
                 .discover_with_retry(&run.plan.targets)
                 .map_err(DeployError::Devices)?;
-            crate::devices::select_device(discovered, run.plan.device.as_deref())
-                .map_err(DeployError::Devices)?
+            crate::devices::select_run_targets(
+                discovered,
+                &run.plan.clone().normalized().run_targets,
+            )
+            .and_then(|devices| crate::devices::select_device(devices, run.plan.device.as_deref()))
+            .map_err(DeployError::Devices)?
         };
         if matches!(run.plan.action, crate::domain::DeployAction::CollectLogs) {
             let android = devices

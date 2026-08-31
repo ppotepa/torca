@@ -1,4 +1,4 @@
-use crate::domain::{DeployPlan, Target};
+use crate::domain::{DeployPlan, RunTarget, Target};
 
 /// The single normalization boundary shared by interactive and scripted runs.
 pub fn normalize(plan: DeployPlan) -> DeployPlan {
@@ -7,6 +7,10 @@ pub fn normalize(plan: DeployPlan) -> DeployPlan {
 
 pub fn all_client_targets() -> Vec<Target> {
     vec![Target::Windows, Target::Android]
+}
+
+pub fn all_run_targets() -> Vec<RunTarget> {
+    vec![RunTarget::Windows, RunTarget::Android, RunTarget::Emulator]
 }
 
 #[cfg(test)]
