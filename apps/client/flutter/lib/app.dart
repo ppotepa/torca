@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 import 'gateway/engine_gateway.dart';
 import 'generated/torca_contract.dart';
@@ -348,8 +349,9 @@ class _TorcaAppState extends State<TorcaApp> {
       title: 'Torca',
       debugShowCheckedModeBanner: false,
       locale: widget.preferences.localeMode.locale,
-      supportedLocales: TorcaStrings.supportedLocales,
+      supportedLocales: TorcaLocaleRegistry.locales,
       localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+        TorcaLocalizations.delegate,
         TorcaStrings.delegate,
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

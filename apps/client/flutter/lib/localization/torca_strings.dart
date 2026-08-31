@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 import '../generated/torca_contract.dart';
 
@@ -8,14 +9,7 @@ class TorcaStrings {
 
   final Locale locale;
 
-  static const supportedLocales = <Locale>[
-    Locale('en'),
-    Locale('pl'),
-    Locale('de'),
-    Locale('es'),
-    Locale('fr'),
-    Locale('uk'),
-  ];
+  static const supportedLocales = TorcaLocaleRegistry.locales;
   static const LocalizationsDelegate<TorcaStrings> delegate =
       _TorcaStringsDelegate();
 
@@ -1160,6 +1154,7 @@ class TorcaStrings {
 }
 
 extension TorcaStringsContext on BuildContext {
+  /// Compatibility adapter for features that have not migrated yet.
   TorcaStrings get strings => TorcaStrings.of(this);
 }
 

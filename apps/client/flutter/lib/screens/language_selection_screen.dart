@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../localization/app_locale_mode.dart';
-import '../localization/torca_strings.dart';
+import '../localization/torca_l10n_context.dart';
 import '../settings/local_preferences.dart';
 
 class LanguageSelectionScreen extends StatefulWidget {
@@ -42,7 +42,7 @@ class _LanguageSelectionScreenState extends State<LanguageSelectionScreen> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  context.strings.chooseLanguage,
+                  context.l10n.chooseLanguage,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),

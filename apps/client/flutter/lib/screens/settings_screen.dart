@@ -4,6 +4,7 @@ import 'package:torca_ui/torca_ui.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../localization/app_locale_mode.dart';
+import '../localization/torca_l10n_context.dart';
 import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
 import '../settings/battery_preferences.dart';
@@ -25,9 +26,8 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final strings = context.strings;
     return Scaffold(
-      appBar: RuntimeAppBar(title: Text(strings.settings)),
+      appBar: RuntimeAppBar(title: Text(context.l10n.settingsTitle)),
       body: ListenableBuilder(
         listenable: preferences,
         builder: (context, _) {
@@ -43,7 +43,7 @@ class SettingsScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                 children: <Widget>[
                   Text(
-                    strings.appearance,
+                    context.l10n.appearanceTitle,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
@@ -164,7 +164,7 @@ class SettingsScreen extends StatelessWidget {
                   _BatterySettingsCard(preferences: preferences),
                   const SizedBox(height: 24),
                   Text(
-                    strings.language,
+                    context.l10n.languageTitle,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
@@ -173,7 +173,7 @@ class SettingsScreen extends StatelessWidget {
                       children: AppLocaleMode.values
                           .map(
                             (mode) => TorcaRadioTile<AppLocaleMode>(
-                              title: Text(_localeLabel(strings, mode)),
+                              title: Text(_localeLabel(context, mode)),
                               value: mode,
                               groupValue: preferences.localeMode,
                               onChanged: (value) {
@@ -187,7 +187,7 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    strings.privacy,
+                    context.l10n.privacyTitle,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
@@ -202,14 +202,14 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    strings.notifications,
+                    context.l10n.notificationsTitle,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
                   Card(
                     child: TorcaSwitchTile(
                       secondary: Icon(context.torcaIcons.notifications),
-                      title: Text(strings.enableNotifications),
+                      title: Text(context.l10n.enableNotifications),
                       subtitle: Text(strings.notificationPrivacy),
                       value: preferences.notificationsEnabled,
                       onChanged: preferences.setNotificationsEnabled,
@@ -235,7 +235,7 @@ class SettingsScreen extends StatelessWidget {
                     Card(
                       child: TorcaSwitchTile(
                         secondary: Icon(context.torcaIcons.save),
-                        title: Text(strings.closeToTray),
+                        title: Text(context.l10n.closeToTray),
                         subtitle: Text(strings.closeToTrayDescription),
                         value: preferences.closeToTrayEnabled,
                         onChanged: preferences.setCloseToTrayEnabled,
@@ -257,9 +257,9 @@ class SettingsScreen extends StatelessWidget {
     AppThemeMode.dark => strings.dark,
   };
 
-  String _localeLabel(TorcaStrings strings, AppLocaleMode mode) =>
+  String _localeLabel(BuildContext context, AppLocaleMode mode) =>
       mode == AppLocaleMode.system
-      ? '${mode.flag} ${strings.languageSystem}'
+      ? '${mode.flag} ${context.l10n.systemLanguage}'
       : '${mode.flag} ${mode.nativeName}';
 }
 

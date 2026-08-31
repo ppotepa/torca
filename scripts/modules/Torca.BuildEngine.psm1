@@ -230,6 +230,16 @@ function Invoke-TorcaValidation {
     Push-Location $script:FlutterRoot
     try {
         Invoke-TorcaExternal 'Flutter dependencies' { flutter pub get }
+        $localizationRoot = Join-Path $script:RepoRoot 'packages/torca_l10n'
+        Push-Location $localizationRoot
+        try {
+            Invoke-TorcaExternal 'Localization catalog validation' {
+                dart run tool/verify_catalogs.dart
+            }
+            Invoke-TorcaExternal 'Localization code generation' { flutter gen-l10n }
+        } finally {
+            Pop-Location
+        }
         Invoke-TorcaExternal 'Flutter analysis' { flutter analyze }
         Invoke-TorcaExternal 'Flutter tests' { flutter test }
     } finally {
@@ -325,6 +335,16 @@ function Invoke-TorcaQuickValidation {
     }
     Push-Location $script:FlutterRoot
     try {
+        $localizationRoot = Join-Path $script:RepoRoot 'packages/torca_l10n'
+        Push-Location $localizationRoot
+        try {
+            Invoke-TorcaExternal 'Localization catalog validation' {
+                dart run tool/verify_catalogs.dart
+            }
+            Invoke-TorcaExternal 'Localization code generation' { flutter gen-l10n }
+        } finally {
+            Pop-Location
+        }
         Invoke-TorcaExternal 'Flutter analysis' { flutter analyze }
     } finally {
         Pop-Location

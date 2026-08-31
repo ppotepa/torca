@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:torca_attachment_processing/torca_attachment_processing.dart';
 import 'package:torca_avatar/torca_avatar.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import 'app.dart';
@@ -319,9 +320,10 @@ class _StartupScreen extends StatelessWidget {
     debugShowCheckedModeBanner: false,
     theme: ThemeData.dark(useMaterial3: true),
     localizationsDelegates: const <LocalizationsDelegate<Object>>[
+      TorcaLocalizations.delegate,
       TorcaStrings.delegate,
     ],
-    supportedLocales: TorcaStrings.supportedLocales,
+    supportedLocales: TorcaLocaleRegistry.locales,
     home: Scaffold(
       body: SafeArea(
         child: Center(
@@ -347,7 +349,7 @@ class _StartupScreen extends StatelessWidget {
                 const SizedBox(height: 20),
                 FilledButton(
                   onPressed: onRetry,
-                  child: Text(TorcaStrings.of(context).retryNow),
+                  child: Text(context.strings.retryNow),
                 ),
               ],
             ],

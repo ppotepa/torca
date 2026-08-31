@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 enum AppLocaleMode {
   system,
@@ -31,25 +32,13 @@ extension AppLocaleModeValue on AppLocaleMode {
     AppLocaleMode.ukrainian => const Locale('uk'),
   };
 
-  String get nativeName => switch (this) {
-    AppLocaleMode.system => 'System',
-    AppLocaleMode.english => 'English',
-    AppLocaleMode.polish => 'Polski',
-    AppLocaleMode.german => 'Deutsch',
-    AppLocaleMode.spanish => 'Español',
-    AppLocaleMode.french => 'Français',
-    AppLocaleMode.ukrainian => 'Українська',
-  };
+  String get nativeName => this == AppLocaleMode.system
+      ? 'System'
+      : TorcaLocaleRegistry.find(locale!)!.nativeName;
 
-  String get flag => switch (this) {
-    AppLocaleMode.system => '🌐',
-    AppLocaleMode.english => '🇬🇧',
-    AppLocaleMode.polish => '🇵🇱',
-    AppLocaleMode.german => '🇩🇪',
-    AppLocaleMode.spanish => '🇪🇸',
-    AppLocaleMode.french => '🇫🇷',
-    AppLocaleMode.ukrainian => '🇺🇦',
-  };
+  String get flag => this == AppLocaleMode.system
+      ? '🌐'
+      : TorcaLocaleRegistry.find(locale!)!.flag;
 
   String get selectionPrompt => switch (this) {
     AppLocaleMode.system || AppLocaleMode.english => 'Choose your language',

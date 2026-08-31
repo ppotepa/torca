@@ -863,6 +863,13 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
+  torca_l10n:
+    dependency: "direct main"
+    description:
+      path: "../../../packages/torca_l10n"
+      relative: true
+    source: path
+    version: "0.1.0"
   torca_ui:
     dependency: "direct main"
     description:

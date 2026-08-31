@@ -30,6 +30,8 @@ dependencies:
     path: ../../../packages/torca_avatar
   torca_attachment_processing:
     path: ../../../packages/torca_attachment_processing
+  torca_l10n:
+    path: ../../../packages/torca_l10n
 
 dev_dependencies:
   flutter_test:
