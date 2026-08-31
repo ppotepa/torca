@@ -794,15 +794,21 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                   items: <DropdownMenuItem<String>>[
                     DropdownMenuItem(
                       value: 'UNKNOWN',
-                      child: Text('📍 ${context.strings.unknownCountry}'),
+                      child: Text(
+                        '\u{1F4CD} ${context.strings.unknownCountry}',
+                      ),
                     ),
                     DropdownMenuItem(
                       value: 'PL',
-                      child: Text('🇵🇱 ${context.strings.polishCountry}'),
+                      child: Text(
+                        '\u{1F1F5}\u{1F1F1} ${context.strings.polishCountry}',
+                      ),
                     ),
                     DropdownMenuItem(
                       value: 'GB',
-                      child: Text('🇬🇧 ${context.strings.englishCountry}'),
+                      child: Text(
+                        '\u{1F1EC}\u{1F1E7} ${context.strings.englishCountry}',
+                      ),
                     ),
                   ],
                   onChanged: _submitting

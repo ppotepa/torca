@@ -56,6 +56,8 @@ class TorcaStrings {
   String get light => _pl ? 'Jasny' : 'Light';
   String get dark => _pl ? 'Ciemny' : 'Dark';
   String get language => _pl ? 'Język' : 'Language';
+  String get chooseLanguage => _pl ? 'Wybierz język' : 'Choose your language';
+  String get chooseLanguagePolish => 'Wybierz język';
   String get languageSystem => _pl ? 'Język systemowy' : 'System language';
   String get languageEnglish => _pl ? 'Angielski' : 'English';
   String get languagePolish => _pl ? 'Polski' : 'Polish';
@@ -267,7 +269,7 @@ class TorcaStrings {
       ? 'Jakość połączenia $quality$rtt'
       : 'Connection quality $quality$rtt';
   String get yourIdentity => _pl ? 'Twoja tożsamość' : 'Your identity';
-  String get country => _pl ? 'Skad jestes?' : 'Where are you from?';
+  String get country => _pl ? 'Skąd jesteś?' : 'Where are you from?';
   String get unknownCountry => _pl ? 'Nie podano' : 'Unknown';
   String get polishCountry => _pl ? 'Polska' : 'Poland';
   String get englishCountry => _pl ? 'Anglia' : 'England';
