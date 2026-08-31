@@ -10,6 +10,7 @@ Notable Torca changes are recorded here from this documentation baseline forward
 - A maintained validation-evidence index separating dated reports from current project status.
 - A changelog workflow for future release notes.
 - A single maintained `0.3` roadmap focused on UX/UI stabilization, broken-flow repair, responsive/accessibility quality and visual regression coverage.
+- A framework-free interactive `0.3` UI maquette under `docs/maquettes/view/` with class-based screens, in-memory state, deterministic scenarios, responsive/theme/locale controls and a component UI Lab.
 
 ### Changed
 

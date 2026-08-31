@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Torca 0.3 UI maquette</title>
+  <link rel="stylesheet" href="styles/reset.css">
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/theme.css">
+  <link rel="stylesheet" href="styles/layout.css">
+  <link rel="stylesheet" href="styles/components.css">
+  <link rel="stylesheet" href="styles/responsive.css">
+</head>
+<body data-theme="modern-ocean" data-mode="dark" data-density="comfortable" data-viewport="fluid">
+  <div id="devbar" class="devbar" aria-label="Maquette controls"></div>
+  <main id="stage" class="stage">
+    <div class="viewport-canvas">
+      <div id="app" class="app-root" aria-live="polite"></div>
+    </div>
+  </main>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="assertive"></div>
+
+  <script src="core/namespace.js"></script>
+  <script src="core/i18n.js"></script>
+  <script src="core/store.js"></script>
+  <script src="core/router.js"></script>
+  <script src="core/screen.js"></script>
+  <script src="fixtures/base.js"></script>
+  <script src="fixtures/scenarios.js"></script>
+  <script src="components/icons.js"></script>
+  <script src="components/ui.js"></script>
+  <script src="components/shell.js"></script>
+  <script src="components/chat.js"></script>
+  <script src="screens/chats-screen.js"></script>
+  <script src="screens/conversation-screen.js"></script>
+  <script src="screens/contacts-screen.js"></script>
+  <script src="screens/contact-details-screen.js"></script>
+  <script src="screens/invitations-screen.js"></script>
+  <script src="screens/settings-screen.js"></script>
+  <script src="screens/diagnostics-screen.js"></script>
+  <script src="screens/ui-lab-screen.js"></script>
+  <script src="core/app.js"></script>
+  <script src="bootstrap.js"></script>
+</body>
+</html>
