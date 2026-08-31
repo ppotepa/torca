@@ -1,6 +1,6 @@
 # Torca documentation
 
-This directory contains the maintained documentation for the current Torca codebase plus clearly separated dated evidence. The goal is one canonical place per kind of information, not a growing set of competing status/plan files.
+This directory contains the maintained documentation for the current Torca codebase plus clearly separated roadmap and dated evidence. The goal is one canonical place per kind of information, not a growing set of competing status/plan files.
 
 ## Current-state documentation
 
@@ -20,6 +20,12 @@ This directory contains the maintained documentation for the current Torca codeb
 | [`versioning-and-releases.md`](versioning-and-releases.md) | product/build/compatibility versions, tags and release discipline |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | notable changes from the documentation baseline forward |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | contribution, architecture, validation and documentation rules |
+
+## Active release roadmap
+
+[`ROADMAP.md`](ROADMAP.md) is the single maintained release roadmap. The current roadmap targets the `0.3` UX/UI stabilization and polish track: design-system hardening, conversations, navigation/home, pairing/contacts, settings/diagnostics, responsive/accessibility work and final visual regression/release polish.
+
+A roadmap item describes intended work, not current implementation state or validation evidence. Completed behavior must be reflected in the appropriate current-state document; detailed temporary task checklists belong in issues/commits rather than additional roadmap files.
 
 ## Architecture decisions
 
@@ -50,10 +56,11 @@ When information disagrees, use this order:
 3. current-state architecture/security/privacy/operations documentation;
 4. `STATUS.md` and this index;
 5. accepted ADRs for rationale/history;
-6. dated validation reports for evidence about the run they describe;
-7. Git history for retired plans/handoffs.
+6. `ROADMAP.md` for intended future release work only;
+7. dated validation reports for evidence about the run they describe;
+8. Git history for retired implementation plans/handoffs.
 
-A plan saying that work was intended, or a test file existing, is not evidence that the current commit passed a gate.
+A roadmap saying that work is intended, or a test file existing, is not evidence that the current commit passed a gate.
 
 ## Documentation rules
 
@@ -67,6 +74,6 @@ Document durable current behavior and boundaries:
 - compatibility/versioning rules; and
 - evidence required for claims.
 
-Avoid copying volatile inventories such as exact test totals, migration counts, CI job counts, full class lists or timeout constants unless the number itself is a compatibility contract.
+Keep future release direction in the one maintained `ROADMAP.md`. Avoid copying volatile inventories such as exact test totals, migration counts, CI job counts, full class lists or timeout constants unless the number itself is a compatibility contract.
 
-Temporary implementation plans belong in GitHub issues/PRs or another explicitly temporary work surface. When the work lands, move durable conclusions into the appropriate canonical page and let Git history preserve the plan.
+Temporary implementation checklists belong in GitHub issues/commits. When the work lands, move durable conclusions into the appropriate canonical page and let Git history preserve the temporary plan.
