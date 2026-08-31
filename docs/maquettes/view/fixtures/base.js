@@ -3,14 +3,43 @@
   Torca.fixtures.baseState = function baseState() {
     const now = Date.now();
     return {
-      profile: { id:'me', displayName:'Paweł', fingerprint:'9E7A 31C8 54D0 6B2F', version:'0.3-maquette' },
-      ui: { locale:'pl', theme:'modern-ocean', mode:'dark', density:'comfortable', viewport:'fluid', scenario:'normal', reduceMotion:false },
-      runtime: { provider:'iroh', state:'ready', path:'direct', peersReady:2, queue:0, batteryMode:'automatic', build:'0.3-maquette', contract:25, storageEpoch:3 },
-      preferences: { readReceipts:true, notifications:true, closeToTray:true, batteryMode:'automatic', metered:'pause-large' },
+      profile: {
+        id:'me', displayName:'Paweł', fingerprint:'9E7A 31C8 54D0 6B2F', version:'0.2.0-alpha.0', build:1,
+        sourceCommit:'2c584fc', sourceFingerprint:'maquette-reference', contract:25, wire:1, storageEpoch:3, nativeAbi:1
+      },
+      ui: {
+        locale:'pl', theme:'modern-ocean', mode:'dark', density:'comfortable', viewport:'fluid', scenario:'normal', reduceMotion:false,
+        live:true, logsPaused:false, diagnosticsTab:'runtime', logLevel:'all'
+      },
+      runtime: {
+        provider:'iroh', providerProfile:'always', state:'ready', path:'direct', routeState:'fresh', endpoint:'iroh:endpoint:…7d2a', peersReady:2, queue:0,
+        batteryMode:'automatic', build:'0.3-maquette', contract:25, storageEpoch:3, bytesTx:184320, bytesRx:512440,
+        communication:{state:'ready',txSeq:7,rxSeq:11,txActive:false,rxActive:false,latency:21,queued:0,inFlight:0,code:'IROH_READY'},
+        peer:{state:'ready',txSeq:5,rxSeq:9,txActive:false,rxActive:false,latency:24,queued:0,inFlight:0,code:'P2P_READY'},
+        rendezvous:{state:'idle',txSeq:1,rxSeq:1,txActive:false,rxActive:false,latency:null,queued:0,inFlight:0,code:'PAIRING_IDLE'},
+        batteryObservation:{active:false,totalWork:0,energyScore:0,wakeSources:{communication:0,lifecycle:0,delivery:0,radio:0}},
+        whyAwake:{leases:0,leaseReasons:{},scheduledWork:{},nextDeadline:null},
+        incidents:[],
+        logs:[
+          {id:'l1',at:now-42_000,level:'INFO',subsystem:'runtime',message:'application runtime ready'},
+          {id:'l2',at:now-39_000,level:'INFO',subsystem:'iroh',message:'provider route fresh · profile always'},
+          {id:'l3',at:now-31_000,level:'DEBUG',subsystem:'peer',message:'authenticated peer Alice ready · 23 ms'},
+          {id:'l4',at:now-18_000,level:'TRACE',subsystem:'runtime',message:'idle · no application deadline'}
+        ],
+        bootstrap:{phase:'ready',progress:1,startedAt:now-18_000,steps:[
+          {id:'storage',label:'localStorage',state:'ready',progress:100},
+          {id:'identity',label:'deviceIdentity',state:'ready',progress:100},
+          {id:'communication',label:'communicationRuntime',state:'ready',progress:100}
+        ]}
+      },
+      preferences: {
+        readReceipts:true, notifications:true, closeToTray:true, batteryMode:'automatic', allowDelayedBackgroundDelivery:true,
+        metered:'pause-large', visualActivity:'follow-system', reduceMotion:false, audioInput:'system', audioOutput:'system'
+      },
       contacts: [
-        { id:'alice', name:'Alice', initials:'AL', online:true, blocked:false, verified:true, identityChanged:false, lastSeen:now-30_000, route:'direct', safety:'1572 4418 8319 2205 7211 0394' },
-        { id:'jan', name:'Jan Kowalski', initials:'JK', online:false, blocked:false, verified:false, identityChanged:false, lastSeen:now-3_600_000, route:'relay', safety:'6880 1202 4419 3301 5982 1044' },
-        { id:'marta', name:'Marta Zielińska', initials:'MZ', online:true, blocked:false, verified:true, identityChanged:false, lastSeen:now-90_000, route:'direct', safety:'2044 9120 6421 7883 0156 2270' }
+        { id:'alice', name:'Alice', initials:'AL', online:true, blocked:false, verified:true, identityChanged:false, lastSeen:now-30_000, route:'direct', safety:'1572 4418 8319 2205 7211 0394', instant:true, radioEnabled:false, peerHealth:{state:'ready',quality:'excellent',rtt:23,lastSuccess:now-18_000,failures:0,reconnectAttempt:0} },
+        { id:'jan', name:'Jan Kowalski', initials:'JK', online:false, blocked:false, verified:false, identityChanged:false, lastSeen:now-3_600_000, route:'relay', safety:'6880 1202 4419 3301 5982 1044', instant:false, radioEnabled:false, peerHealth:{state:'reconnecting',quality:'fair',rtt:92,lastSuccess:now-3_600_000,failures:2,reconnectAttempt:3} },
+        { id:'marta', name:'Marta Zielińska', initials:'MZ', online:true, blocked:false, verified:true, identityChanged:false, lastSeen:now-90_000, route:'direct', safety:'2044 9120 6421 7883 0156 2270', instant:false, radioEnabled:true, peerHealth:{state:'ready',quality:'good',rtt:37,lastSuccess:now-44_000,failures:0,reconnectAttempt:0} }
       ],
       conversations: [
         { id:'c-alice', contactId:'alice', lastMessage:'Jasne, podeślę Ci to wieczorem.', lastAt:now-62_000, direction:'in', unread:2, pinned:true, muted:false, draft:false },
@@ -32,7 +61,10 @@
       pairings: [
         { id:'p1', role:'creator', state:'open', code:'7KQ2FD', invite:'torca://pair?provider=iroh&code=7KQ2FD&bootstrap=DEMO', expiresAt:now+4*60_000, remoteName:null }
       ],
-      transfers: [ { id:'t1', name:'design-reference.png', state:'complete', progress:100 } ],
+      transfers: [
+        { id:'t1', name:'design-reference.png', direction:'out', state:'complete', progress:100, size:'1.8 MB' },
+        { id:'t2', name:'voice-note.opus', direction:'in', state:'complete', progress:100, size:'184 KB' }
+      ],
       alerts: []
     };
   };

@@ -1,0 +1,8 @@
+(function (Torca) {
+  'use strict';
+  class BootstrapScreen extends Torca.core.Screen {
+    render(){const r=this.app.store.state.runtime;const b=r.bootstrap;const t=Torca.i18n.t.bind(Torca.i18n);const ready=b.steps.filter((x)=>x.state==='ready').length;const progress=Math.round((b.steps.reduce((sum,x)=>sum+x.progress,0)/(b.steps.length*100))*100);const steps=b.steps.map((step)=>`<div class="bootstrap-step"><span class="bootstrap-step__state ${step.state}">${step.state==='ready'?Torca.components.icon('check','sm'):Torca.components.icon('clock','sm')}</span><div><strong>${Torca.util.escape(t(step.label))}</strong><small>${step.progress}% · ${Torca.util.escape(step.state)}</small></div></div>`).join('');return `<div class="standalone-surface"><div class="standalone-network">${Torca.components.networkMonitor(r,true)}</div><section class="bootstrap-card"><div class="identity-glyph">${Torca.components.icon('identity','lg')}</div><h1>${Torca.util.escape(t('preparingPrivateSpace'))}</h1><p>${Torca.util.escape(t('preparingPrivateSpaceBody'))}</p>${Torca.components.progress(progress)}<small>${ready} / ${b.steps.length} ${Torca.util.escape(t('secureChecks'))}</small><div class="bootstrap-steps">${steps}</div><div class="profile-actions">${Torca.components.button(t('retryNow'),'retry','data-bootstrap-retry','outline')}${Torca.components.button('Simulate ready','check','data-bootstrap-ready','primary')}</div></section></div>`;}
+    bind(){this.on('[data-bootstrap-retry]','click',()=>Torca.components.toast('Bootstrap retry requested'));this.on('[data-bootstrap-ready]','click',()=>{this.app.setScenario('normal');this.app.router.navigate('/chats');});}
+  }
+  Torca.screens.BootstrapScreen=BootstrapScreen;
+}(window.Torca));

@@ -1,0 +1,8 @@
+(function (Torca) {
+  'use strict';
+  class IdentityScreen extends Torca.core.Screen {
+    render(){const p=this.app.store.state.profile;const t=Torca.i18n.t.bind(Torca.i18n);const body=`<div class="screen-scroll"><div class="page narrow"><div class="card identity-card"><div class="identity-glyph">${Torca.components.icon('identity','lg')}</div><h2>${Torca.util.escape(p.displayName||'Torca user')}</h2><p class="muted">Local installation identity</p><div class="section-title">Fingerprint</div><div class="identity-fingerprint">${Torca.util.escape(p.fingerprint)}</div><div class="profile-actions">${Torca.components.button('Copy fingerprint','copy','data-copy-fingerprint','outline')}${Torca.components.button(t('settings'),'settings','data-route="/settings"','outline')}</div></div><div class="card detail-list">${Torca.components.detailRow(t('productVersion'),`${p.version}+${p.build}`)}${Torca.components.detailRow(t('sourceCommit'),p.sourceCommit)}${Torca.components.detailRow(t('contract'),String(p.contract))}${Torca.components.detailRow(t('storageEpoch'),String(p.storageEpoch))}</div><p class="page-note">Private keys and relationship secrets are intentionally absent from this presentation surface.</p></div></div>`;return Torca.components.shell(this.app,{title:t('identity'),leading:Torca.components.iconButton('back','Back','data-route="/chats"'),body});}
+    bind(){Torca.components.bindShell(this.root,this.app);this.on('[data-route]','click',(e)=>{e.preventDefault();this.app.router.navigate(e.currentTarget.dataset.route);});this.on('[data-copy-fingerprint]','click',()=>Torca.components.toast('Fingerprint copied (mock)'));}
+  }
+  Torca.screens.IdentityScreen=IdentityScreen;
+}(window.Torca));

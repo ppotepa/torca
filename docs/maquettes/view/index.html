@@ -11,14 +11,11 @@
   <link rel="stylesheet" href="styles/layout.css">
   <link rel="stylesheet" href="styles/components.css">
   <link rel="stylesheet" href="styles/responsive.css">
+  <link rel="stylesheet" href="styles/parity.css">
 </head>
-<body data-theme="modern-ocean" data-mode="dark" data-density="comfortable" data-viewport="fluid">
+<body data-theme="modern-ocean" data-mode="dark" data-density="comfortable" data-viewport="fluid" data-live="true">
   <div id="devbar" class="devbar" aria-label="Maquette controls"></div>
-  <main id="stage" class="stage">
-    <div class="viewport-canvas">
-      <div id="app" class="app-root" aria-live="polite"></div>
-    </div>
-  </main>
+  <main id="stage" class="stage"><div class="viewport-canvas"><div id="app" class="app-root" aria-live="polite"></div></div></main>
   <div id="modal-root"></div>
   <div id="toast-root" class="toast-root" aria-live="assertive"></div>
 
@@ -31,15 +28,21 @@
   <script src="fixtures/scenarios.js"></script>
   <script src="components/icons.js"></script>
   <script src="components/ui.js"></script>
+  <script src="components/network.js"></script>
   <script src="components/shell.js"></script>
   <script src="components/chat.js"></script>
+  <script src="screens/bootstrap-screen.js"></script>
+  <script src="screens/profile-setup-screen.js"></script>
   <script src="screens/chats-screen.js"></script>
   <script src="screens/conversation-screen.js"></script>
   <script src="screens/contacts-screen.js"></script>
   <script src="screens/contact-details-screen.js"></script>
+  <script src="screens/connection-details-screen.js"></script>
   <script src="screens/invitations-screen.js"></script>
+  <script src="screens/identity-screen.js"></script>
   <script src="screens/settings-screen.js"></script>
   <script src="screens/diagnostics-screen.js"></script>
+  <script src="screens/about-screen.js"></script>
   <script src="screens/ui-lab-screen.js"></script>
   <script src="core/app.js"></script>
   <script src="bootstrap.js"></script>

@@ -11,13 +11,14 @@ Open [`view/index.html`](view/index.html) directly in a browser. There is no npm
 The top development toolbar lets you switch:
 
 - phone/tablet/desktop/wide/fluid viewport frames;
-- deterministic application scenarios;
-- Modern and Terminal theme variants;
+- deterministic application scenarios, including startup and first-profile states;
+- Modern and Terminal theme variants, including Gruvbox, Tokyo Night and Catppuccin terminal palettes;
 - light/dark mode;
-- compact/comfortable density; and
-- Polish/English locale.
+- compact/comfortable density;
+- Polish/English locale; and
+- **LIVE / PAUSE** mock telemetry mode.
 
-Press `~` to hide/show the toolbar.
+`LIVE` is a maquette-only simulation control. It drives fake LINK/TX/RX activity, bounded diagnostic log events and battery-observation counters. It is not a product networking mode. Press `~` to hide/show the toolbar.
 
 ## Structure
 
@@ -27,31 +28,67 @@ view/
   bootstrap.js
   core/         application host, router, store and base Screen class
   fixtures/     deterministic in-memory product states/scenarios
-  components/   reusable shell/chat/icon/UI primitives
+  components/   reusable shell/chat/icon/network/UI primitives
   screens/      class-based screen instances
-  styles/       tokens, themes, layout, components and responsive rules
+  styles/       tokens, themes, layout, components, parity and responsive rules
 ```
 
 Every routed screen is an instance of a class derived from `Torca.core.Screen`. `Torca.core.Router` creates those instances from hash routes. `Torca.core.Store` is the one in-memory state container.
 
-## Current routes
+## Current routes and surfaces
 
-- `#/chats`
-- `#/chat/:conversationId`
-- `#/contacts`
-- `#/contact/:contactId`
-- `#/invitations`
-- `#/settings`
-- `#/diagnostics`
-- `#/lab`
+- `#/bootstrap` — startup/warm-up reference with provider monitor;
+- `#/profile` — first local profile setup;
+- `#/chats`;
+- `#/chat/:conversationId` — conversation, LINK/TX/RX, Instant Contact, Radio, replies and transfers;
+- `#/contacts`;
+- `#/contact/:contactId` — relationship identity, Safety Number, shared files and contact controls;
+- `#/connection/:contactId` — peer quality, RTT, reconnect state and route details;
+- `#/invitations` — create/join/approval pairing flows;
+- `#/identity` — local installation identity/build-safe presentation;
+- `#/settings` — appearance, language, privacy, battery/availability, metered transfer, visual activity, audio and desktop preferences;
+- `#/diagnostics` — Battery / Runtime / Logs / Incident engineering cockpit;
+- `#/about`;
+- `#/lab` — component/state and semantic-icon catalogue.
 
-The app includes working mock interactions for sending/delivery/read transitions, replies, mock attachments, contact verification, pairing create/join/approval, settings/theme changes and scenario switching.
+The normal shell intentionally exposes only Chats, Contacts and Invitations as primary navigation. Transfer Center and the application overflow menu live in the header; Identity, Diagnostics, Settings and About are secondary surfaces, matching the product hierarchy more closely.
+
+## Network monitor
+
+The maquette mirrors the production Ethernet-style transport monitor instead of reducing connectivity to one online dot. Provider and P2P rows each expose:
+
+```text
+LINK  TX  RX
+```
+
+`LINK` is steady/pulsing according to connection state. `TX` and `RX` are independent short activity flashes. The monitor is global in normal application chrome and is repeated in the conversation header and diagnostic cockpit where the real UI exposes transport context.
+
+## Theme parity
+
+The theme family changes product geometry as well as color:
+
+- **Modern** uses restrained rounding, circular avatars and smooth outline icons;
+- **Terminal** uses square avatars/controls/badges/LEDs, zero-radius cards, terminal typography and a more angular icon treatment.
+
+The semantic icon catalogue follows the vocabulary of the production `TorcaIconSet` so a theme may change visual style without changing the meaning of actions or states.
+
+## Diagnostics parity
+
+The diagnostics mock is always reachable in the maquette even though the production app may gate it by build mode. It includes:
+
+- Battery observation start/stop/reset and wake-source counters;
+- Runtime provider/route/queue/peer telemetry plus LINK/TX/RX;
+- bounded redacted log stream with level filtering and pause/resume;
+- route refresh, transfer/build surfaces;
+- self-test, incident marking and mock diagnostics export.
+
+All values are fixtures. No diagnostic control invokes native code from the maquette.
 
 ## Scenario philosophy
 
 A scenario describes presentation state, not protocol behavior. For example the maquette may set a message to `delivered`, but JavaScript is not allowed to define the real production rules that make a message delivered.
 
-Keep fixtures deterministic and add scenarios for visual/flow problems such as long text, offline/reconnect, transfer progress, pairing attention, identity change or empty data. Do not recreate Iroh, storage, pairing crypto, retry policy or durable state machines here.
+Keep fixtures deterministic and add scenarios for visual/flow problems such as long text, offline/reconnect, transfer progress, pairing attention, identity change, bootstrap, first profile or empty data. Do not recreate Iroh, storage, pairing crypto, retry policy or durable state machines here.
 
 ## Mapping to Flutter
 
