@@ -267,14 +267,37 @@ fn actor_loop(
     state: &mut ActorState,
     event_hub: Arc<RuntimeEventHub>,
 ) {
+    let mut maintenance_turns: u64 = 0;
     loop {
         let message = match state.next_maintenance_delay() {
             Some(timeout) => match receiver.recv_timeout(timeout) {
                 Ok(message) => message,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if state.maintain() {
+                    maintenance_turns = maintenance_turns.saturating_add(1);
+                    let changed = state.maintain();
+                    if maintenance_turns % 1000 == 0 {
+                        state.runtime.log(
+                            "runtime",
+                            Level::Debug,
+                            "maintenance",
+                            "RUNTIME_MAINTENANCE_RATE",
+                            &format!(
+                                "maintenanceTurns={maintenance_turns} changed={changed}"
+                            ),
+                        );
+                    }
+                    if changed {
                         state.revision = state.revision.saturating_add(1);
                         event_hub.publish(state.revision);
+                    } else {
+                        // A stale due deadline must not turn the actor into a
+                        // zero-timeout busy loop. The maintenance operation
+                        // may legitimately make no observable progress (for
+                        // example after an already-rescheduled failure), so
+                        // yield a bounded amount of time before checking it
+                        // again. Normal commands still wake the actor through
+                        // the mailbox on the next iteration.
+                        std::thread::sleep(Duration::from_millis(50));
                     }
                     continue;
                 }

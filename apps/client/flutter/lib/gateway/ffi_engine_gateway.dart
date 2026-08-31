@@ -695,6 +695,8 @@ void _workerMainImpl(List<Object?> arguments) {
   var waiterWakeups = 0;
   var snapshotDecodes = 0;
   var snapshotChanges = 0;
+  var consecutiveImmediateWakeups = 0;
+  DateTime? lastSnapshotSentAt;
   var fallbackDegradedReported = false;
   var disposed = false;
   Duration fallbackDelay() {
@@ -769,15 +771,23 @@ void _workerMainImpl(List<Object?> arguments) {
           if (pollSnapshot is Map) {
             final snapshot = pollSnapshot;
             final encoded = jsonEncode(snapshot);
-            if (encoded != lastSnapshotJson) {
+            final changed = encoded != lastSnapshotJson;
+            if (changed) {
               lastSnapshotJson = encoded;
               snapshotChanges++;
             }
-            // A revision waiter can remain quiet indefinitely while the
-            // provider is healthy and idle. Emit the unchanged snapshot as a
-            // heartbeat so the UI freshness indicator measures observation,
-            // not only state mutation.
-            target.send(encoded);
+            // Idle runtimes do not need to cross the isolate boundary on
+            // every observation. Keep a sparse heartbeat for freshness, but
+            // only publish a full snapshot when it changed. This also makes
+            // a revision flood observable without multiplying JSON work.
+            final now = DateTime.now();
+            final shouldEmit = changed || lastSnapshotSentAt == null ||
+                now.difference(lastSnapshotSentAt!) >=
+                    const Duration(seconds: 5);
+            if (shouldEmit) {
+              target.send(encoded);
+              lastSnapshotSentAt = now;
+            }
           }
           final events = poll['events'];
           if (events is List) {
@@ -807,11 +817,10 @@ void _workerMainImpl(List<Object?> arguments) {
         waiter.send(<String, Object?>{
           'revision': runtimeRevision,
           'cursor': notificationCursor,
-          // The bounded wait doubles as a low-frequency observation heartbeat.
-          // Provider changes still wake it immediately; idle runtimes emit a
-          // snapshot heartbeat so the UI can distinguish healthy idleness
-          // from a dead polling loop.
-          'timeoutMs': 2000,
+          // Five seconds is only a safety heartbeat. Provider changes still
+          // wake the waiter immediately, while unchanged snapshots stay in
+          // the native/worker boundary instead of being rebuilt every 2s.
+          'timeoutMs': 5000,
           'reply': reply.sendPort,
         });
         reply.first
@@ -823,9 +832,19 @@ void _workerMainImpl(List<Object?> arguments) {
                 final waitResult = value is int ? value : -1;
                 if (waitResult == 1 || waitResult == 0) {
                   fallbackFailures = 0;
-                  if (waitResult == 1) waiterWakeups++;
+                  if (waitResult == 1) {
+                    waiterWakeups++;
+                    consecutiveImmediateWakeups++;
+                  } else {
+                    consecutiveImmediateWakeups = 0;
+                  }
                   fallbackDegradedReported = false;
-                  snapshotTimer = Timer(Duration.zero, pollSnapshot);
+                  final delay = consecutiveImmediateWakeups > 10
+                      ? const Duration(milliseconds: 100)
+                      : consecutiveImmediateWakeups > 3
+                          ? const Duration(milliseconds: 10)
+                          : Duration.zero;
+                  snapshotTimer = Timer(delay, pollSnapshot);
                 } else {
                   snapshotTimer = Timer(fallbackDelay(), pollSnapshot);
                 }

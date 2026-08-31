@@ -229,6 +229,12 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
             }
         }
         hot_loop.observe_wait(wait_started.elapsed(), &runtime_wait, &scheduling);
+        if hot_loop.should_backoff() {
+            // A stale zero-deadline or mailbox wake must not monopolize a
+            // native worker. Keep command latency bounded while yielding
+            // enough time for the underlying state/worker to make progress.
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let command_health = matches!(
             &runtime_wait,
             RuntimeWait::Command(command) if command.requires_health_maintenance()
@@ -742,6 +748,10 @@ struct RuntimeHotLoopGuard {
 }
 
 impl RuntimeHotLoopGuard {
+    fn should_backoff(&self) -> bool {
+        self.rapid_turns >= 100
+    }
+
     fn observe_wait(
         &mut self,
         waited: std::time::Duration,

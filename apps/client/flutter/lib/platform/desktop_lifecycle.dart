@@ -20,6 +20,8 @@ class DesktopLifecycle with WindowListener, TrayListener {
   bool _quitting = false;
   bool _disposed = false;
   bool _windowBackgrounded = false;
+  Timer? _trayUpdateTimer;
+  String? _lastTraySignature;
 
   Future<void> initialize() async {
     if (!Platform.isWindows || _disposed) return;
@@ -28,9 +30,9 @@ class DesktopLifecycle with WindowListener, TrayListener {
     // A tray-launched process may already be minimized before the first
     // window event reaches Flutter. Seed the shared avatar clock from the
     // actual window state so it never starts an animation ticker in that case.
-    AvatarFrameClock.instance.setWindowVisible(
-      !await windowManager.isMinimized(),
-    );
+    final initiallyMinimized = await windowManager.isMinimized();
+    _windowBackgrounded = initiallyMinimized;
+    AvatarFrameClock.instance.setWindowVisible(!initiallyMinimized);
     windowManager.addListener(this);
     trayManager.addListener(this);
     final executable = Platform.resolvedExecutable;
@@ -47,11 +49,16 @@ class DesktopLifecycle with WindowListener, TrayListener {
     );
     _eventSubscription = gateway.events.listen(_runtimeEvent);
     preferences.addListener(_preferencesChanged);
+    if (initiallyMinimized) {
+      unawaited(gateway.sendLifecycle('backgrounded'));
+    }
   }
 
   Future<void> dispose() async {
     if (!Platform.isWindows || _disposed) return;
     _disposed = true;
+    _trayUpdateTimer?.cancel();
+    _trayUpdateTimer = null;
     await _eventSubscription?.cancel();
     _eventSubscription = null;
     preferences.removeListener(_preferencesChanged);
@@ -79,13 +86,21 @@ class DesktopLifecycle with WindowListener, TrayListener {
   }
 
   void _preferencesChanged() {
-    if (!_quitting && !_disposed) unawaited(_updateTrayMenu());
+    _scheduleTrayMenuUpdate();
   }
 
   void _runtimeEvent(RuntimeEventDto event) {
     if (!Platform.isWindows || _quitting || _disposed) return;
-    unawaited(_updateTrayMenu());
+    _scheduleTrayMenuUpdate();
     if (preferences.notificationsEnabled) unawaited(_notify(event));
+  }
+
+  void _scheduleTrayMenuUpdate() {
+    if (!Platform.isWindows || _quitting || _disposed) return;
+    _trayUpdateTimer ??= Timer(const Duration(milliseconds: 250), () {
+      _trayUpdateTimer = null;
+      unawaited(_updateTrayMenu());
+    });
   }
 
   Future<void> _updateTrayMenu() async {
@@ -96,6 +111,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
           (contact) => contact.peerHealth.typedState == TransportState.ready,
         )
         .length;
+    final signature =
+        '${snapshot.communicationProvider}|${snapshot.communicationState}|$readyPeers';
+    if (signature == _lastTraySignature) return;
+    _lastTraySignature = signature;
     await trayManager.setContextMenu(
       Menu(
         items: <MenuItem>[

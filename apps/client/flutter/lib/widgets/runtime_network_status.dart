@@ -114,7 +114,11 @@ class RuntimeNetworkStatus extends StatefulWidget {
 }
 
 class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
-  static const _staleAfterTicks = 3;
+  // Snapshot heartbeats are intentionally sparse while the runtime is idle.
+  // Keep the stale boundary above the five-second bridge heartbeat without
+  // introducing a periodic UI timer.
+  static const _staleAfter = Duration(seconds: 8);
+  static const _staleAfterTicks = 1;
   var _ticksSinceObservation = 0;
   Timer? _freshnessTimer;
 
@@ -137,7 +141,7 @@ class _RuntimeNetworkStatusState extends State<RuntimeNetworkStatus> {
   /// would wake the UI every second even while the snapshot is unchanged.
   void _scheduleFreshnessExpiry() {
     _freshnessTimer?.cancel();
-    _freshnessTimer = Timer(const Duration(seconds: _staleAfterTicks), () {
+    _freshnessTimer = Timer(_staleAfter, () {
       if (mounted) setState(() => _ticksSinceObservation = _staleAfterTicks);
     });
   }
@@ -336,7 +340,11 @@ class _TransportLightState extends State<_TransportLight>
 
   void _syncBreathing() {
     if (_animationsEnabled && _isPulsingLink(widget.indicator.typedState)) {
-      if (!_breathing.isAnimating) _breathing.repeat(reverse: true);
+      // A permanent 60 FPS ticker while a provider is warming up is both
+      // visually noisy and needlessly expensive on desktop and mobile. A
+      // short one-shot pulse still communicates a state observation without
+      // keeping the Flutter renderer active indefinitely.
+      if (!_breathing.isAnimating) _breathing.forward(from: 0);
     } else {
       _breathing.stop();
       _breathing.value = 0;

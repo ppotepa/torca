@@ -46,7 +46,7 @@ void main() {
 
     expect(find.bySemanticsLabel(RegExp('monitoring stale')), findsNothing);
 
-    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(seconds: 9));
 
     expect(find.bySemanticsLabel(RegExp('monitoring stale')), findsOneWidget);
   });
