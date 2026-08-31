@@ -1178,6 +1178,7 @@ MessageStatus _messageStatus(String value) => switch (value) {
   'read' => MessageStatus.read,
   'failed' => MessageStatus.failed,
   'cancelled' => MessageStatus.cancelled,
+  'deleted' => MessageStatus.deleted,
   _ => MessageStatus.unknown,
 };
 

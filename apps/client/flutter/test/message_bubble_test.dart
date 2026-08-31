@@ -380,4 +380,48 @@ void main() {
     expect(find.text('❤️ 2'), findsOneWidget);
     expect(find.text('👍'), findsNothing);
   });
+
+  testWidgets('grouped deleted messages keep body and footer sections', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark(
+          const TorcaAppearance(family: TorcaThemeFamily.terminal),
+        ),
+        home: Scaffold(
+          body: MessageBubble(
+            message: const MessageDto(
+              id: 'deleted-grouped',
+              conversationId: '02',
+              body: 'Secret text',
+              direction: 'inbound',
+              status: 'deleted',
+              createdAtMs: 1000,
+            ),
+            showBody: false,
+            compactTop: true,
+            compactBottom: true,
+            showSender: false,
+            senderLabel: 'Alex',
+            onLongPress: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Secret text'), findsNothing);
+    expect(find.text('Message deleted'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('message-body-section-deleted-grouped')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey<String>('message-footer-section-deleted-grouped'),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
