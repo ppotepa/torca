@@ -55,6 +55,14 @@ class MessageBubble extends StatelessWidget {
       context,
       senderColorKey ?? (outbound ? 'local' : 'remote'),
     );
+    final sender =
+        senderLabel ??
+        (outbound ? context.strings.senderYou : context.strings.senderContact);
+    final semanticBody = showBody
+        ? message.body
+        : message.typedStatus == MessageStatus.deleted
+        ? context.strings.messageDeleted
+        : context.strings.attachmentMessagePending;
     final alignment = outbound ? Alignment.centerRight : Alignment.centerLeft;
     final normalRadius = context.torcaTokens.radiusLarge;
     final tailRadius = context.torcaTokens.radiusSmall;
@@ -90,9 +98,8 @@ class MessageBubble extends StatelessWidget {
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxBubbleWidth),
               child: Semantics(
-                label: outbound
-                    ? context.strings.outgoingMessage
-                    : context.strings.incomingMessage,
+                container: true,
+                label: '$sender: $semanticBody',
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onSecondaryTapDown: onSecondaryTapDown,
@@ -138,12 +145,7 @@ class MessageBubble extends StatelessWidget {
                                   Expanded(
                                     child: showSender
                                         ? Text(
-                                            senderLabel ??
-                                                (outbound
-                                                    ? context.strings.senderYou
-                                                    : context
-                                                          .strings
-                                                          .senderContact),
+                                            sender,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: Theme.of(context)
