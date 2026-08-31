@@ -35,6 +35,10 @@ class TorcaForegroundService : Service() {
     // native event hub until a notification arrives instead of polling.
     private val notificationThread = HandlerThread("TorcaNotificationWaiter")
     private lateinit var notificationHandler: Handler
+    // The notification handler intentionally blocks in nativeWaitForNotification;
+    // network callbacks therefore need their own queue for debounced wakeups.
+    private val networkThread = HandlerThread("TorcaNetworkEvents")
+    private lateinit var networkHandler: Handler
     @Volatile private var stopping = false
     private var notificationCursor = 0L
     private var notificationRuntimeId = ""
@@ -45,14 +49,14 @@ class TorcaForegroundService : Service() {
     }
     private val dataStallActive = AtomicBoolean(false)
     private var warmupWakeLock: PowerManager.WakeLock? = null
-    @Volatile private var networkChangePending = false
+    private val networkChangePending = AtomicBoolean(false)
     private val networkLock = Any()
     private var defaultNetwork: Network? = null
     private var defaultNetworkFingerprint: NetworkFingerprint? = null
     private var lastMetered: Boolean? = null
     private var lastValidated: Boolean? = null
     private val networkChangeRunnable = Runnable {
-        networkChangePending = false
+        networkChangePending.set(false)
         if (NativeRuntimeBridge.nativeRuntimeAvailable()) {
             val accepted = NativeRuntimeBridge.nativeLifecycleEvent("network_changed")
             Log.d(TAG, "network_changed dispatched to native accepted=$accepted")
@@ -138,6 +142,8 @@ class TorcaForegroundService : Service() {
         super.onCreate()
         notificationThread.start()
         notificationHandler = Handler(notificationThread.looper)
+        networkThread.start()
+        networkHandler = Handler(networkThread.looper)
         notificationCursor = getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
             .getLong(NOTIFICATION_CURSOR, 0L)
         notificationRuntimeId = getSharedPreferences(NOTIFICATION_CURSOR_PREFERENCES, MODE_PRIVATE)
@@ -286,16 +292,16 @@ class TorcaForegroundService : Service() {
         connectivityDiagnosticsExecutor.shutdownNow()
         runCatching { unregisterReceiver(energyReceiver) }
         notificationHandler.removeCallbacks(notificationWaiter)
-        notificationHandler.removeCallbacks(networkChangeRunnable)
+        networkHandler.removeCallbacks(networkChangeRunnable)
         runCatching { NativeRuntimeBridge.nativeCancelRevisionWait() }
         notificationThread.quitSafely()
+        networkThread.quitSafely()
         super.onDestroy()
     }
 
     private fun notifyNetworkChanged() {
-        if (networkChangePending) return
-        networkChangePending = true
-        notificationHandler.postDelayed(networkChangeRunnable, NETWORK_CHANGE_DEBOUNCE_MS)
+        if (!networkChangePending.compareAndSet(false, true)) return
+        networkHandler.postDelayed(networkChangeRunnable, NETWORK_CHANGE_DEBOUNCE_MS)
     }
 
     private fun observeAvailableNetwork(network: Network) {
