@@ -537,6 +537,7 @@ class _AppearancePreview extends StatelessWidget {
                 ),
                 senderLabel: context.strings.sampleContactName,
                 senderColorKey: 'appearance-contact',
+                compactBottom: true,
                 onLongPress: () {},
               ),
               const SizedBox(height: 5),
@@ -548,6 +549,7 @@ class _AppearancePreview extends StatelessWidget {
               const _PreviewMessage(
                 body: 'Yes, give me 5 min.',
                 outbound: true,
+                compactBottom: true,
               ),
               const SizedBox(height: 5),
               const _PreviewMessage(
@@ -577,11 +579,13 @@ class _PreviewMessage extends StatelessWidget {
     required this.body,
     this.outbound = false,
     this.showSender = true,
+    this.compactBottom = false,
   });
 
   final String body;
   final bool outbound;
   final bool showSender;
+  final bool compactBottom;
 
   @override
   Widget build(BuildContext context) => MessageBubble(
@@ -601,6 +605,7 @@ class _PreviewMessage extends StatelessWidget {
     senderColorKey: outbound ? 'appearance-local' : 'appearance-contact',
     showSender: showSender,
     compactTop: !showSender,
+    compactBottom: compactBottom,
     onLongPress: () {},
   );
 }

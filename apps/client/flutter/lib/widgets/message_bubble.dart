@@ -18,6 +18,7 @@ class MessageBubble extends StatelessWidget {
     this.reactions = const <ReactionDto>[],
     this.showBody = true,
     this.compactTop = false,
+    this.compactBottom = false,
     this.showSender = true,
     this.senderLabel,
     this.senderColorKey,
@@ -33,6 +34,7 @@ class MessageBubble extends StatelessWidget {
   final List<ReactionDto> reactions;
   final bool showBody;
   final bool compactTop;
+  final bool compactBottom;
   final bool showSender;
   final String? senderLabel;
   final String? senderColorKey;
@@ -63,8 +65,12 @@ class MessageBubble extends StatelessWidget {
       topRight: Radius.circular(
         compactTop && outbound ? tailRadius : normalRadius,
       ),
-      bottomLeft: Radius.circular(outbound ? normalRadius : tailRadius),
-      bottomRight: Radius.circular(outbound ? tailRadius : normalRadius),
+      bottomLeft: Radius.circular(
+        compactBottom ? tailRadius : (outbound ? normalRadius : tailRadius),
+      ),
+      bottomRight: Radius.circular(
+        compactBottom ? tailRadius : (outbound ? tailRadius : normalRadius),
+      ),
     );
 
     return LayoutBuilder(
@@ -77,7 +83,7 @@ class MessageBubble extends StatelessWidget {
             horizontalGutter,
             compactTop ? 1 : 4,
             horizontalGutter,
-            4,
+            compactBottom ? 1 : 4,
           ),
           child: Align(
             alignment: alignment,

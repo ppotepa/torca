@@ -618,6 +618,22 @@ class _ConversationPaneState extends State<ConversationPane>
                             !showUnread &&
                             (message.createdAtMs - previous.createdAtMs).abs() <
                                 5 * 60 * 1000;
+                        final next = index + 1 < messages.length
+                            ? messages[index + 1]
+                            : null;
+                        final nextShowDate =
+                            next != null && !sameDay(message, next);
+                        final nextShowUnread =
+                            next != null &&
+                            !_searching &&
+                            next.id == _unreadBoundaryMessageId;
+                        final groupedBelow =
+                            next != null &&
+                            next.direction == message.direction &&
+                            !nextShowDate &&
+                            !nextShowUnread &&
+                            (next.createdAtMs - message.createdAtMs).abs() <
+                                5 * 60 * 1000;
                         final quoted = message.replyToMessageId == null
                             ? null
                             : byId[message.replyToMessageId];
@@ -670,6 +686,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                         contact?.id ??
                                         'remote',
                               compactTop: grouped,
+                              compactBottom: groupedBelow,
                               onLongPress: () => _showMessageActions(message),
                               onSecondaryTapDown: (details) =>
                                   _showMessageActions(
