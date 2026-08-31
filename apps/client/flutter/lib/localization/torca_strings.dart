@@ -551,6 +551,9 @@ class TorcaStrings {
   String get pairingInactiveMessage => _pl
       ? 'To zaproszenie nie jest już aktywne. Drugie urządzenie otrzyma ten sam stan końcowy.'
       : 'This invitation is no longer active. The other device will receive the same final state.';
+  String get pairingQrSemanticLabel => _pl
+      ? 'Kod QR zaproszenia do parowania Torca'
+      : 'Torca pairing invitation QR code';
   String get closeSearch => _pl ? 'Zamknij wyszukiwanie' : 'Close search';
   String get searchConversationHint =>
       _pl ? 'Szukaj w tej rozmowie' : 'Search this conversation';

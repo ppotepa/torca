@@ -1062,7 +1062,7 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
             data: widget.uri,
             size: 200,
             backgroundColor: Colors.white,
-            semanticsLabel: 'Torca pairing invitation QR code',
+            semanticsLabel: context.strings.pairingQrSemanticLabel,
           ),
         ),
         const SizedBox(height: 12),
