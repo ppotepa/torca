@@ -1,63 +1,92 @@
 # Communication transport
 
-Torca keeps application protocol and network reachability separate. The
-application/domain layers consume provider-neutral routes and byte-stream
-ports; infrastructure owns the concrete transport.
+Torca separates **product/application protocols** from **network reachability**. Application/domain code consumes provider-neutral routing and peer byte-stream contracts; infrastructure owns the concrete provider.
 
-## Current provider matrix
+Iroh is the sole production communication provider. Memory is a deterministic test implementation. Tor and the unfinished WebRTC adapter are retired from the active product graph.
 
-| Provider | Production use | Pairing bootstrap | Messages | Attachments | Radio |
-| --- | --- | --- | --- | --- | --- |
-| Iroh | sole production provider | direct QR/full-link route | yes | yes | yes |
-| Memory | test double only | in-memory fixture | test-only | test-only | no |
+## Provider matrix
 
-Iroh owns endpoint identity, route generations, incoming routing, pairing
-transport, authenticated peer byte transport and direct/relay path selection.
-Memory exists to make application and conformance tests deterministic; it is
-not a production composition.
+| Provider | Production | Pairing/bootstrap | Peer traffic | Purpose |
+| --- | --- | --- | --- | --- |
+| Iroh | yes | QR/full-link commissioning using Iroh route material | messages, controls, attachments and Radio | production reachability |
+| Memory | no | deterministic fixture | test-only | unit/integration/conformance tests |
 
-## Provider-neutral contract
+There is no runtime provider picker in the product UI and no dynamic plugin loader. Production native composition builds the Iroh implementation behind neutral ports.
 
-The application boundary exposes only stable provider identity, opaque routes,
-provider routing metadata and `PeerTransportFactory` byte-stream ports. The
-native composition is the single point that constructs Iroh. Higher layers do
-not depend on QUIC, relay protocol details or provider-specific endpoint
-formats.
+## Provider-neutral application contract
 
-Provider-specific deployment configuration is interpreted only at provider
-composition. An Iroh route is persisted as opaque data keyed by provider and
-relationship, with no Tor-era onion column or fallback vocabulary in the
-application contract.
+Upper layers work with concepts such as:
+
+- stable `ProviderId` identity;
+- opaque provider route/routing metadata;
+- provider lifecycle/capability information; and
+- peer byte-stream/transport factories used by the authenticated peer layer.
+
+Upper layers must not depend on Iroh endpoint types, QUIC objects, relay protocol details, socket addresses or provider-specific serialized route formats.
+
+Provider routes are reachability data, not Torca contact identity. Peer authentication/relationship capability remains authoritative after a transport connects.
+
+## Responsibility split
+
+| Responsibility | Owner |
+| --- | --- |
+| contact/relationship identity and approval | Torca domain/application |
+| pairing cryptography and peer credential semantics | Torca application/crypto/protocol layers |
+| durable delivery/retry/receipts/attachments | Torca application + repositories |
+| authenticated peer-session/application framing | peer-link/application protocol stack |
+| endpoint identity, provider route material, dial/accept | Iroh infrastructure |
+| direct vs Iroh relay path selection | Iroh/provider configuration/runtime behavior |
+| platform lifecycle and final composition | native/platform layer |
+
+This split prevents a transport change from redefining the meaning of a contact or message.
 
 ## Iroh lifecycle
 
-The Iroh component binds a persisted endpoint identity, publishes the route
-needed for pairing, accepts incoming streams and dials persisted peer routes.
-Route generations prevent stale discovery data from being treated as fresh;
-the peer-link handshake remains authoritative before application traffic is
-accepted.
+The Iroh component owns a persisted endpoint identity, publishes route/bootstrap material needed for commissioning, accepts incoming streams and dials persisted peer routes.
 
-Direct Iroh connectivity can expose network-location metadata. Relay paths,
-when selected by Iroh, improve reachability but do not provide anonymity.
-Transport privacy must therefore be described separately from message
-encryption and authentication.
+Route generations/freshness prevent stale discovery data from being silently treated as current. Network/provider route state can change while a durable relationship remains valid. Successful provider connection alone is not proof of the expected Torca peer; the authenticated peer layer verifies the relationship.
 
-## Shared behavior above transport
+Runtime waiting is demand/event/deadline driven. The application should not add a parallel fixed keepalive/reconnect loop simply because Iroh is present.
 
-The selected transport does not redefine contact identity, peer
-authentication, application-layer encryption, durable queues, receipts,
-attachments, conversation persistence, contact verification or Flutter
-navigation. A transport changes reachability and commissioning, not the
-meaning of a Torca relationship or message.
+## Iroh profiles
 
-## Adding another provider
+Current tooling recognizes Iroh profiles including:
 
-Before a future provider can enter production composition it must implement
-the neutral byte-stream and route ports, provide lifecycle and pairing
-bootstrap events, wire platform composition without leaking provider types,
-and pass `torca-provider-conformance` plus the platform/device evidence
-required for the release claim. Until then, Memory remains the only test
-double and Iroh remains the only production provider.
+- `always` — normal reachability profile used where broader incoming reachability/relay services are desired;
+- `direct` — direct-oriented profile used when relay/discovery overhead is intentionally avoided and a usable direct route exists; and
+- `local` — lab-only/local validation profile.
 
-See [`ARCHITECTURE.md`](../ARCHITECTURE.md) for layer ownership and
-[`testing.md`](testing.md) for evidence language.
+Profiles are reachability/deployment choices, not distinct Torca product providers. Exact service configuration is part of build/deployment metadata and should be read from source/tool help for the current implementation.
+
+## Network privacy
+
+Torca application-layer encryption protects content independently of the selected Iroh path, but Iroh is **not an anonymity network**.
+
+A direct path can reveal network-location metadata to the paired peer and network observers. Iroh relay use changes which parties see particular network endpoints but does not create Tor-style anonymity or remove timing/traffic-analysis risk.
+
+Security/privacy documentation must therefore distinguish:
+
+- who can read/authenticate Torca content; from
+- who can observe network location, timing, volume and reachability metadata.
+
+See [`security/threat-model.md`](security/threat-model.md).
+
+## Pairing/bootstrap
+
+Pairing uses bounded invitation/bootstrap capabilities. The UI renders the invitation forms supported by the active Iroh composition; current production flow is QR/full-link based rather than a Tor-era onion/managed-relay model.
+
+Pairing-service protocol/client code, where used by commissioning, is not the normal conversation message path and must not become a central account, presence or mailbox service.
+
+## Adding a future provider
+
+A provider is not production-ready until it:
+
+1. implements the neutral provider/peer transport contracts;
+2. owns its concrete routing/endpoint types entirely below the application boundary;
+3. supports bounded commissioning/lifecycle behavior;
+4. defines capability and network-metadata/privacy semantics;
+5. passes `torca-provider-conformance` and relevant integration tests;
+6. is wired through native/platform composition without provider branches in Flutter; and
+7. has platform/network/device evidence appropriate to the release claim.
+
+Until those conditions are met, Iroh remains the sole production provider and Memory remains test-only.

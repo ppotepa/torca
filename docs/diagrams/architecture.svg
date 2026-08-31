@@ -1,62 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" role="img" aria-labelledby="title desc">
   <title id="title">Torca current architecture</title>
-  <desc id="desc">Flutter presentation flows through the generated gateway into a process-owned Rust runtime, application and domain layers, then into storage and one selected communication provider: Tor or Iroh for normal deployments, with WebRTC hidden and memory test-only.</desc>
+  <desc id="desc">One Flutter client crosses a generated native platform boundary into the layered Rust application. Application ports are provider-neutral. SQLCipher, crypto and files are infrastructure, Iroh is the sole production communication provider, and Memory is test-only.</desc>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
-    </marker>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#334155"/></marker>
     <style>
-      .bg{fill:#f8fafc}.box{fill:#fff;stroke:#334155;stroke-width:2}.soft{fill:#eef2ff;stroke:#475569;stroke-width:2}.provider{fill:#ecfeff;stroke:#0f766e;stroke-width:2}.hidden{fill:#f8fafc;stroke:#94a3b8;stroke-width:2;stroke-dasharray:8 7}.storage{fill:#fefce8;stroke:#a16207;stroke-width:2}.title{font:700 28px system-ui,sans-serif;fill:#0f172a}.h{font:700 17px system-ui,sans-serif;fill:#0f172a}.t{font:14px system-ui,sans-serif;fill:#334155}.small{font:12px system-ui,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:2.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:7 6;fill:none;marker-end:url(#arrow)}
+      .bg{fill:#f8fafc}.box{fill:#fff;stroke:#334155;stroke-width:2}.soft{fill:#eef2ff;stroke:#475569;stroke-width:2}.core{fill:#f1f5f9;stroke:#64748b;stroke-width:2}.infra{fill:#fefce8;stroke:#a16207;stroke-width:2}.provider{fill:#ecfeff;stroke:#0f766e;stroke-width:2}.test{fill:#f8fafc;stroke:#94a3b8;stroke-width:2;stroke-dasharray:8 7}.title{font:700 28px system-ui,sans-serif;fill:#0f172a}.h{font:700 17px system-ui,sans-serif;fill:#0f172a}.t{font:14px system-ui,sans-serif;fill:#334155}.small{font:12px system-ui,sans-serif;fill:#475569}.line{stroke:#334155;stroke-width:2.5;fill:none;marker-end:url(#arrow)}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:7 6;fill:none;marker-end:url(#arrow)}
     </style>
   </defs>
-  <rect class="bg" width="1200" height="760" rx="24"/>
+  <rect class="bg" width="1200" height="820" rx="24"/>
   <text class="title" x="52" y="58">Torca — current system ownership</text>
 
-  <rect class="soft" x="70" y="100" width="1060" height="92" rx="16"/>
-  <text class="h" x="100" y="134">Flutter presentation — Windows + Android</text>
-  <text class="t" x="100" y="160">Widgets • navigation • transient UI state • local presentation preferences • typed user intent</text>
+  <rect class="soft" x="70" y="95" width="1060" height="88" rx="16"/>
+  <text class="h" x="100" y="129">Flutter presentation — Windows + Android</text>
+  <text class="t" x="100" y="155">Responsive UI • navigation • transient interaction • presentation preferences • typed user intent</text>
 
-  <rect class="box" x="390" y="225" width="420" height="82" rx="14"/>
-  <text class="h" x="420" y="258">EngineGateway + generated contract</text>
-  <text class="t" x="420" y="283">Commands • snapshots • runtime events • diagnostics • capabilities</text>
+  <rect class="box" x="310" y="215" width="580" height="90" rx="14"/>
+  <text class="h" x="340" y="250">Platform/native boundary</text>
+  <text class="t" x="340" y="276">EngineGateway • generated contract • torca-native ABI • Windows/Android host services</text>
 
-  <rect class="soft" x="275" y="342" width="650" height="150" rx="18"/>
-  <text class="h" x="310" y="377">Process-owned Rust application/runtime</text>
-  <text class="t" x="310" y="407">ClientApplicationRuntime + presentation read models</text>
-  <text class="t" x="310" y="433">Single-writer client engine + durable domain transitions</text>
-  <text class="t" x="310" y="459">Runtime: pairing • delivery • connectivity • attachments • Radio • diagnostics</text>
+  <rect class="soft" x="245" y="345" width="710" height="132" rx="18"/>
+  <text class="h" x="280" y="380">Application + process-owned runtime</text>
+  <text class="t" x="280" y="408">Use cases • commands/queries • durable delivery • pairing • connectivity • diagnostics</text>
+  <text class="t" x="280" y="434">Provider-neutral ports • runtime/power policy • presentation-safe projections</text>
+  <text class="small" x="280" y="458">Event/deadline driven; Flutter polling is not a correctness scheduler</text>
 
-  <rect class="storage" x="70" y="548" width="300" height="126" rx="16"/>
-  <text class="h" x="100" y="582">Local infrastructure</text>
-  <text class="t" x="100" y="610">SQLCipher repositories</text>
-  <text class="t" x="100" y="634">Protected secret stores</text>
-  <text class="t" x="100" y="658">Encrypted files + logging</text>
+  <rect class="core" x="70" y="530" width="315" height="126" rx="16"/>
+  <text class="h" x="100" y="564">Core contracts</text>
+  <text class="t" x="100" y="592">foundation • domains • protocol</text>
+  <text class="t" x="100" y="618">product invariants + bounded wire contracts</text>
+  <text class="small" x="100" y="640">independent of concrete providers/OS/UI</text>
 
-  <rect class="provider" x="430" y="548" width="230" height="126" rx="16"/>
-  <text class="h" x="460" y="582">Tor provider</text>
-  <text class="t" x="460" y="610">Embedded Arti / onion</text>
-  <text class="t" x="460" y="634">Managed pairing rendezvous</text>
-  <text class="small" x="460" y="658">selectable • default</text>
+  <rect class="infra" x="445" y="530" width="300" height="126" rx="16"/>
+  <text class="h" x="475" y="564">Local infrastructure</text>
+  <text class="t" x="475" y="592">SQLCipher repositories • crypto</text>
+  <text class="t" x="475" y="618">protected secrets • files • logging</text>
+  <text class="small" x="475" y="640">implements inward-facing ports</text>
 
-  <rect class="provider" x="700" y="548" width="230" height="126" rx="16"/>
-  <text class="h" x="730" y="582">Iroh provider</text>
-  <text class="t" x="730" y="610">QUIC / direct path</text>
-  <text class="t" x="730" y="634">Direct QR/full-link pairing</text>
-  <text class="small" x="730" y="658">selectable</text>
+  <rect class="provider" x="805" y="530" width="325" height="126" rx="16"/>
+  <text class="h" x="835" y="564">Iroh provider — production</text>
+  <text class="t" x="835" y="592">endpoint identity • opaque routes • dial/accept</text>
+  <text class="t" x="835" y="618">direct / Iroh relay reachability</text>
+  <text class="small" x="835" y="640">transport reachability; not Torca peer identity</text>
 
-  <rect class="hidden" x="970" y="548" width="160" height="126" rx="16"/>
-  <text class="h" x="995" y="582">Other adapters</text>
-  <text class="t" x="995" y="610">WebRTC — hidden</text>
-  <text class="t" x="995" y="634">Memory — test</text>
-  <text class="small" x="995" y="658">not normal deployment</text>
+  <rect class="test" x="805" y="695" width="325" height="70" rx="14"/>
+  <text class="h" x="835" y="724">Memory provider — tests only</text>
+  <text class="small" x="835" y="748">deterministic conformance/integration fixture</text>
 
-  <path class="line" d="M600 192 L600 225"/>
-  <path class="line" d="M600 307 L600 342"/>
-  <path class="line" d="M430 492 C350 520 270 520 220 548"/>
-  <path class="line" d="M560 492 L545 548"/>
-  <path class="line" d="M670 492 L815 548"/>
-  <path class="dash" d="M790 492 C900 518 1000 514 1050 548"/>
+  <path class="line" d="M600 183 V215"/>
+  <path class="line" d="M600 305 V345"/>
+  <path class="line" d="M420 477 C340 505 280 505 230 530"/>
+  <path class="line" d="M600 477 V530"/>
+  <path class="line" d="M780 477 C860 502 920 505 965 530"/>
+  <path class="dash" d="M965 656 V695"/>
 
-  <text class="small" x="408" y="523">one selected communication provider per deployment</text>
-  <text class="small" x="70" y="718">Provider transport changes reachability/metadata; Torca identity, peer authentication, encryption, persistence and product workflows stay shared.</text>
+  <text class="small" x="70" y="790">Tor and unfinished WebRTC are retired from the active product graph. A future provider must stay behind the neutral boundary and pass conformance + release evidence.</text>
 </svg>

@@ -1,11 +1,10 @@
 # Runtime operations and diagnostics
 
-This page covers the current build/deploy/runtime operational model. It is not a release checklist; exact deployment evidence belongs to the run/CI artifacts that produced it.
+This page describes the maintained build/deploy/runtime operational model. It is not a release checklist; exact run evidence belongs to the artifacts/logs that produced it.
 
 ## Deployment owner
 
-`torca-deploy` is the canonical planner/executor for local build, deploy, run,
-logs and resume operations.
+`torca-deploy` is the canonical planner/executor for local build, install, launch, logs, reset policy and resume:
 
 ```powershell
 cargo run -p torca-deploy
@@ -22,93 +21,101 @@ cargo run -p torca-deploy -- logs --target all
 cargo run -p torca-deploy -- resume
 ```
 
-The deployer invokes Docker/Cargo/Flutter/ADB through typed process adapters. PowerShell helpers remain compatibility/validation utilities rather than a second deployment architecture.
+Use command help for exact flags. PowerShell helpers remain policy/compatibility/measurement utilities rather than a second deployment architecture.
 
-## Durable deploy state
+## Deploy checkpoints
 
-Deploy runs/checkpoints live under:
+Deployment state is written below `.torca/deploy/`, including the current checkpoint and per-run event history. Checkpoints include plan/build identity so interrupted work can be deliberately resumed and stale/incompatible plans rejected.
 
-```text
-.torca/deploy/current.json
-.torca/deploy/runs/<run-id>.json
-.torca/deploy/runs/<run-id>.events.jsonl
-```
+A built artifact, discovered device or partially completed step is not proof that a deployment succeeded.
 
-A partially completed deployment should be understood through the checkpoint/events and resumed or deliberately restarted. Do not infer success merely because an artifact was built or a device was discovered.
+## Release/artifact identity
 
-## Provider-aware deployment
+[`../release/version.json`](../release/version.json) declares product/build/channel and compatibility metadata used by packaging/manifests. Deployment manifests project this identity together with target/configuration/provider/profile and artifact hashes/build metadata.
 
-Every deployment plan uses Iroh as its sole production communication provider.
-Memory is available only as a deterministic test double. Iroh does not require
-the removed managed Tor rendezvous service.
+Artifact reuse must fail on incompatible provider/profile/build metadata rather than silently deploying the wrong native/client pair. See [`versioning-and-releases.md`](versioning-and-releases.md).
 
-Artifact reuse is provider-aware. A build for a different provider must be rejected instead of silently reused.
+## Production provider
+
+Iroh is the sole production communication provider; Memory is test-only. Iroh endpoint identity/provider route state is owned by native/infrastructure composition.
+
+The application distinguishes local readiness from provider reachability. Temporary network/provider degradation must not make usable encrypted local state unavailable.
 
 ## Startup readiness
 
-Runtime startup has separate notions of local/application readiness and communication reachability.
+Flutter opens the FFI gateway, initializes the Rust application/runtime and reports `flutter_gateway_ready` after it has decoded a successful initial application response. Platform host integrations attach after this boundary.
 
-Flutter opens the FFI gateway, initializes the Rust application/runtime and sends `flutter_gateway_ready` after it has successfully decoded the initial application response. This prevents host/deployer logic from treating a native actor that merely exists as proof that the Flutter application can use it.
+A provider can still be degraded after local readiness. Health UIs and deployment diagnostics should report those states separately.
 
-A network provider can still be degraded after local state becomes usable. Local encrypted history should not disappear behind a provider warm-up/error state.
+## Installed data compatibility
 
-## Lifecycle
+Structured client data uses SQLCipher-backed storage. Startup validates the storage epoch before normal migrations. An incompatible epoch is rejected explicitly rather than silently interpreted as current data.
 
-Android attaches a runtime lifecycle observer after gateway readiness; Windows initializes desktop lifecycle/tray behavior. Presentation lifecycle changes must not create a second independent native runtime.
+If an installed profile is incompatible, follow the migration/reset policy for that change. Do not workaround the compatibility guard by manually editing metadata or deleting isolated tables.
 
-Runtime work is driven by durable demand, communication evidence and deadlines. Idle UI polling must not be a correctness dependency for retry, pairing or incoming work.
+## Lifecycle and background work
 
-## Diagnostics surfaces
+Windows and Android feed lifecycle state into the same process-owned Rust runtime. Screens, notification callbacks and platform services must not create independent runtimes.
 
-The gateway exposes structured diagnostics and log-tail requests; the Flutter diagnostics screen presents runtime-safe information. The deployer can collect target logs/diagnostic artifacts for incident/validation work.
+Runtime work is driven by durable demand, provider/platform events and deadlines. Idle UI polling must not be required for retry, pairing or incoming work.
 
-Diagnostics may include operational data such as:
+Battery/background policy and Iroh reachability profile are separate concepts. A lower-reachability profile can reduce network work but must not be used to hide an application hot loop.
 
-- provider/commissioning state;
-- build/source metadata;
-- connection/transport health;
-- queue/retry counters and timing;
-- lifecycle/power observations;
-- bounded errors/log tails; and
-- platform/device identifiers needed to explain a run.
+## Diagnostics
 
-Diagnostics must not intentionally contain message/attachment plaintext, Radio audio, identity private keys, database keys, relationship secrets or reusable pairing capabilities.
+The native/application boundary exposes structured diagnostics and bounded log-tail collection. Useful diagnostics can include:
 
-## Build/runtime mismatch
+- source/build/product/provider/profile identity;
+- provider/route/connection health;
+- durable queue/retry state and bounded timing counters;
+- runtime wake/deadline/power observations;
+- lifecycle/background observations; and
+- redacted errors needed to explain a run.
 
-Flutter explicitly recognizes native-library symbol/procedure mismatch failures and reports that the installed DLL/SO is from another build. Fix the deployed artifact set; do not mask this state by retrying against an incompatible native library indefinitely.
+Diagnostics must not intentionally include message/attachment plaintext, Radio audio, private identity keys, database keys, relationship secrets or reusable invitation capabilities. Treat collected bundles as potentially sensitive operational artifacts anyway.
 
-## Android capture privacy
+## Common failure classes
 
-Strict capture protection is the default. `--privacy allow-capture` is an explicit development choice that changes the Android window capture flag only. Treat logs/screenshots produced in that mode as potentially sensitive test artifacts.
+| Symptom | Operational response |
+| --- | --- |
+| native symbol/procedure/ABI mismatch | deploy a matching Flutter/native artifact set; do not retry indefinitely against an incompatible library |
+| provider/network degraded while local data opens | inspect Iroh/profile/route diagnostics without resetting local identity/history |
+| pending message after transient network failure | preserve durable state; inspect delivery/provider health because retry ownership is Rust-side |
+| pairing fails/expires | preserve first failure evidence; inspect bounded invitation/route/provider state rather than repeatedly recreating identities |
+| incompatible storage epoch | use the documented migration/reset decision for that version; do not bypass the guard |
+| unexplained CPU/battery activity | isolate Flutter/runtime/Iroh/thread/wake owner with soak/measurement tooling before adding sleeps or wider polling intervals |
+
+## Android privacy and signing
+
+Android screen capture is blocked by default. The explicit development `--privacy allow-capture` option changes the OS secure-window behavior only; it does not change Torca encryption or Iroh transport privacy. Screenshots/logs produced in this mode can contain sensitive test data.
+
+The current Android release Gradle configuration uses debug signing. It is suitable for development iteration only and must be replaced by a production signing/provenance process before public release.
 
 ## Reset and destructive actions
 
-Client data reset is a deliberate operation. It may remove identity, encrypted
-history and provider cache/secret state.
+Client reset is deliberate and can remove identity, encrypted history, relationship/provider route state and cached secrets. Ordinary rebuild/deploy work should preserve data unless the test explicitly requires a clean profile.
 
-Never make destructive reset an incidental prerequisite for ordinary rebuild/deploy unless the change being tested requires a clean identity/storage state.
+Do not reset repeatedly during incident capture: it destroys the evidence needed to diagnose retry/storage/provider lifecycle failures.
 
-## Soak/incident artifacts
+## Soak and incident artifacts
 
-The soak cockpit writes run artifacts below `.torca/soak` by default and can retain fixture metadata for repeatable scenarios. A manifest states what was requested; verdict/report evidence states what actually happened.
+Soak/measurement tooling writes ignored local evidence under `.torca/`. A useful incident/soak record captures:
 
-When collecting an incident or soak artifact:
+1. exact source commit/build/product/provider/profile/platform/device;
+2. scenario and relevant lifecycle/network conditions;
+3. first relevant failure and bounded redacted diagnostics;
+4. whether the peer/device was simulated, emulator-based or physical; and
+5. the final verdict, including incomplete/aborted state.
 
-1. record the exact source commit/build/provider/platform/device;
-2. preserve the first relevant failure rather than repeatedly resetting the environment;
-3. collect structured diagnostics/logs without adding user payloads;
-4. distinguish environment/setup failure from product/protocol failure; and
-5. state whether the result came from a simulated peer, host process or real device.
+Dated reports promoted into `docs/validation/` must preserve this context and remain historical snapshots.
 
-## Recovery principle
-
-Failures should be explicit, bounded and recoverable where possible:
+## Recovery principles
 
 - unsent durable work remains Rust-owned;
-- provider failure does not hand retry ownership to Flutter;
-- stale provider/host bridges are cleared across runtime generations;
-- pairing sessions expire/fail instead of pretending unavailable bootstrap is healthy; and
-- deploy checkpoints support deliberate resume after interrupted host/device operations.
+- provider failure does not transfer retry ownership to Flutter;
+- stale provider/host state is generation-bounded and recoverable;
+- pairing sessions expire/fail explicitly rather than pretending unavailable bootstrap is healthy;
+- local encrypted state remains usable whenever local initialization succeeds; and
+- deploy checkpoints support deliberate recovery after interrupted host/device operations.
 
-See [`testing.md`](testing.md) for validation levels and [`transport.md`](transport.md) for provider-specific commissioning behavior.
+See [`testing.md`](testing.md) for evidence terms and [`transport.md`](transport.md) for provider behavior.

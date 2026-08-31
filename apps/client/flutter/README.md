@@ -2,19 +2,19 @@
 
 This directory contains Torca's single presentation client for the supported Windows and Android hosts.
 
-Flutter owns responsive layout, navigation, transient interaction state and presentation preferences. It communicates with the Rust application through `EngineGateway` and the generated Torca contract. Production startup opens the native runtime; it must not silently substitute an in-memory business implementation when native startup fails.
+Flutter owns responsive layout, navigation, transient interaction state, localization/theme preferences and translation of user interactions into typed `EngineGateway` requests. Production startup opens the native Rust runtime; it must not silently substitute an in-memory business implementation when native startup fails.
 
-Keep platform detection/integration under the intended platform boundary and native dynamic-library handling in the FFI gateway. Do not move persistence, identifiers, durable retry/outbox policy, pairing cryptography, peer secrets, Tor lifecycle or security policy into Dart.
+Durable state, identifiers, pairing completion, retry/outbox policy, cryptography, peer secrets, provider lifecycle/routing and security policy stay in Rust.
 
 ## Development
 
-Use the repository-level Rust workflow rather than maintaining per-platform build recipes here:
+Use the repository-level deployment workflow for normal build/run/deploy work:
 
 ```powershell
 cargo run -p torca-deploy
 ```
 
-For source-level Flutter checks:
+For Flutter source checks:
 
 ```powershell
 flutter pub get
@@ -22,23 +22,31 @@ flutter analyze
 flutter test
 ```
 
-The repository CI also checks Dart formatting and generated contract drift. Platform artifact builds should use `torca-deploy` so they exercise the same native composition/packaging path used elsewhere in the project.
+Supported platform artifact builds should use the repository deployment path so the native composition/packaging is exercised consistently.
 
 ## Generated contract
 
-The Dart DTO/state surface under `lib/generated` is generated from the canonical Torca contract. Change the canonical schema/generator input and regenerate; do not hand-maintain a divergent Dart protocol model.
+`lib/generated` is generated from the canonical Torca contract. Change the canonical schema/generator input and regenerate/check it; do not hand-maintain a divergent Dart business/protocol model.
 
-Flutter should render typed application state and submit user intent. It must not infer durable use-case success by diffing unrelated snapshots or reconstruct versioned wire formats such as pairing URIs.
+Flutter should render typed projections and submit user intent. It must not infer durable success from unrelated snapshot changes or reconstruct versioned invitation/wire formats itself.
 
 ## Platform behavior
 
-Windows and Android may differ for genuine OS capabilities such as lifecycle, protected secret stores, notifications, deep links, screen-capture controls and microphone permission. Product workflows remain shared.
+Windows and Android may differ for genuine OS capabilities such as lifecycle, protected secret stores, notifications, deep links, secure-window behavior, microphone permission and installation/device integration. Product workflows remain shared.
 
-Android screen capture is blocked by default by the platform host. The deployment tool can explicitly allow capture for a local test run; that option changes the OS window flag only and does not weaken Torca's message encryption or transport rules.
+Android screen capture is blocked by default. The deployment tool can explicitly allow capture for a local test run; this changes the OS window flag only and does not weaken Torca message encryption or Iroh transport rules.
+
+## Communication provider
+
+Iroh is the sole production provider and is composed below the Flutter/native boundary. Flutter can render presentation-safe provider/network status and capabilities, but it does not select/implement providers or own route/reconnect policy.
+
+Memory is test-only. Tor/WebRTC are not active product providers.
 
 ## Further reading
 
 - [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md) — ownership and dependency rules.
-- [`../../../CONTRIBUTING.md`](../../../CONTRIBUTING.md) — contributor workflow and validation policy.
-- [`../../../docs/STATUS.md`](../../../docs/STATUS.md) — current maturity and validation state.
-- [`../../../SECURITY.md`](../../../SECURITY.md) — security guarantees and non-guarantees.
+- [`../../../docs/app-flows.md`](../../../docs/app-flows.md) — current application journeys.
+- [`../../../docs/transport.md`](../../../docs/transport.md) — provider/Iroh boundary.
+- [`../../../docs/development.md`](../../../docs/development.md) — repository workflow.
+- [`../../../docs/testing.md`](../../../docs/testing.md) — validation/evidence rules.
+- [`../../../SECURITY.md`](../../../SECURITY.md) — security guarantees and limits.

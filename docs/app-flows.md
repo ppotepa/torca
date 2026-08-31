@@ -1,6 +1,6 @@
 # Application flows
 
-This page describes the current product/runtime journeys as ownership flows. Exact DTO fields and screen implementation details remain source contracts.
+This page describes current user/runtime journeys in terms of ownership. Exact DTO fields, screen names and protocol bytes remain source contracts.
 
 ![Torca application flows](diagrams/app-flows.svg)
 
@@ -8,132 +8,130 @@ This page describes the current product/runtime journeys as ownership flows. Exa
 
 ```text
 Flutter process starts
-  -> load local presentation preferences
+  -> load presentation preferences
   -> open FfiEngineGateway
-  -> initialize process-owned Rust runtime
-  -> select/compose deployment communication provider
-  -> build first application projection
+  -> initialize torca-native / process-owned Rust runtime
+  -> open/validate local durable state
+  -> compose the production Iroh provider
+  -> build the first application projection
   -> Flutter decodes successful initialization
   -> send lifecycle: flutter_gateway_ready
-  -> attach deep links + platform lifecycle/notifications/desktop services
-  -> render HomeScreen
+  -> attach deep links + platform lifecycle/notifications/desktop integration
+  -> render application UI
 ```
 
-`flutter_gateway_ready` is the application-level readiness boundary used by the client host. A provider may still report degraded network reachability after local state is ready.
+`flutter_gateway_ready` is the application-level readiness boundary used by the client host. Local/application readiness and network reachability are deliberately different states: usable encrypted local history must not disappear behind Iroh reachability warm-up or temporary network degradation.
 
-If initialization fails, the bootstrap shows a retryable startup surface. Native library/build mismatches are surfaced explicitly; the app does not silently replace the native runtime with an in-memory business implementation.
-
-## Join an invitation
-
-The Contacts/global add-contact action and a pairing deep link converge on the same join composer.
-
-```text
-user opens add contact OR app receives pairing link
-  -> shared join invitation modal
-  -> parse provider invitation/bootstrap material
-  -> application starts/join pairing session
-  -> provider establishes rendezvous/direct bootstrap
-  -> encrypted pairing exchange
-  -> creator receives approval decision surface
-  -> explicit approval/rejection
-  -> relationship/contact persisted
-  -> snapshots update
-  -> UI shows contact-added feedback
-```
-
-Provider bootstrap differs:
-
-- Iroh publishes bounded direct bootstrap material for QR/full-link input.
-- Iroh uses direct bootstrap material and advertises QR/full-link rather than short-code-only pairing.
-
-The UI does not infer pairing completion merely because a screen closed; the durable contact comes from Rust state.
+If native initialization fails, the client shows an explicit retryable startup failure. It does not silently substitute an in-memory business implementation.
 
 ## Create an invitation
 
-Invitation creation belongs to the Invitations/pairing surface rather than the global join action.
-
 ```text
 user chooses create invitation
-  -> application creates pairing session
-  -> selected provider creates commissioning/bootstrap state
-  -> UI renders QR/link/capabilities supported by provider
-  -> remote joins
-  -> creator is prompted for explicit decision
-  -> accept -> durable contact
+  -> Rust application creates pairing session
+  -> Iroh provider publishes bounded bootstrap/route material
+  -> UI renders supported QR/full-link invitation
+  -> remote joins using the invitation capability
+  -> encrypted pairing exchange authenticates relationship material
+  -> creator receives explicit approval/rejection decision
+  -> accept -> durable relationship/contact persisted
   -> reject/cancel/expire -> no relationship
 ```
 
-Incoming creator decisions are presented through one modal registry so the same pairing session is not opened twice when snapshots/navigation/platform events race.
+Invitation/bootstrap material is a commissioning capability, not the durable identity of a contact. Expired/stale route material must not be treated as a successfully paired peer.
+
+## Join an invitation
+
+The add-contact action and a pairing deep link converge on the same application-owned join flow.
+
+```text
+user opens add contact OR app receives pairing link
+  -> shared join UI parses bounded invitation input
+  -> Rust application starts/joins pairing session
+  -> Iroh establishes commissioning/bootstrap transport
+  -> encrypted pairing exchange
+  -> remote creator makes explicit decision
+  -> accepted relationship/contact persisted
+  -> application projection changes
+  -> Flutter renders the durable result
+```
+
+Flutter does not infer pairing success because a dialog closed or a network request returned. The persisted relationship projected by Rust is authoritative.
 
 ## Open a conversation
 
-Home/navigation requests carry a conversation identifier. `TorcaApp` resolves the identifier against the current projection, then pushes `ConversationScreen`.
-
-Conversation history is loaded through a paged Rust query. Search is also a Rust query. Flutter does not own or locally filter the complete durable message history.
+Navigation carries a conversation identifier. Flutter asks the Rust facade for paged conversation state/history and search results; it does not load and locally filter the entire durable history as the normal path.
 
 ## Send a message
 
 ![Message delivery ownership](diagrams/message-delivery.svg)
 
 ```text
-composer user intent
-  -> typed bridge command
-  -> Rust application/engine validates and persists outbound state
-  -> durable delivery worker chooses selected provider peer transport
+composer intent
+  -> typed EngineGateway command
+  -> application validates intent
+  -> durable message/outbox state is persisted
+  -> runtime delivery owns retry/demand
   -> authenticated peer session + application-layer encryption
-  -> provider byte stream
+  -> provider-neutral peer byte stream
+  -> Iroh direct/relay transport
   -> remote validates/decrypts/deduplicates/persists
-  -> acknowledgement/receipt state returns
-  -> local snapshots/events update
+  -> acknowledgement/receipt returns
+  -> local durable state + projection update
   -> Flutter renders status
 ```
 
-A network error leaves retry ownership in Rust. Flutter never becomes the durable outbox.
+Network failure leaves retry ownership in Rust. Flutter is never the durable outbox.
 
 ## Read receipts
 
-Read-receipt preference is synchronized with the runtime. When enabled, application-owned read state produces durable/control delivery as required by the protocol. UI widgets render the resulting message/read projection.
+Read-receipt preference is synchronized with the runtime. When enabled, application-owned read state creates protocol/control work as required. Flutter renders the resulting projection; it does not fabricate delivered/read success from UI visibility alone.
 
 ## Attachments
 
 ```text
 user selects source file
-  -> Flutter supplies explicit user intent/path
-  -> Rust validates limits and imports/manages application-controlled state
-  -> encrypted/resumable transfer follows paired peer boundary
-  -> progress/cancel/resume are runtime-owned
+  -> Flutter submits explicit path/user intent
+  -> Rust validates capability/limits and imports application-controlled state
+  -> encrypted/resumable transfer uses the paired peer boundary
+  -> progress/cancel/resume remain runtime-owned
   -> recipient persists transfer state
-  -> explicit open/export action creates user-visible output
+  -> explicit user open/export creates user-visible output
 ```
 
-Capabilities and limits come from the runtime/build contract rather than hard-coded UI assumptions.
+Generated/runtime capabilities are authoritative for limits and supported operations; Flutter must not hard-code a second protocol capability model.
 
 ## Radio Mode
 
-Radio Mode is mutual-consent and half-duplex.
+Radio Mode is experimental, mutual-consent and half-duplex.
 
 ```text
 user enables/accepts Radio with contact
-  -> application owns consent/session state
-  -> platform grants microphone permission before capture
-  -> application owns floor/burst rules and session key derivation
-  -> provider-owned Radio media factory carries encrypted media
-  -> release/background/session close stops transmission
+  -> application owns consent/session/floor state
+  -> platform obtains microphone permission before capture
+  -> application owns burst/floor rules and key derivation
+  -> Iroh-backed media transport carries encrypted media
+  -> release/background/session close stops capture/transmission as required
 ```
 
-Iroh advertises Radio support. Memory remains a deterministic test double and
-does not participate in the production Radio flow.
+Radio is not a separate contact identity or provider. It runs within the approved relationship and shared runtime lifecycle.
 
 ## Notifications and deep links
 
-Runtime events are exposed through a narrow event stream/cursor contract. Android notification routing and deep-link routing translate platform-originated interactions into the same application navigation requests used inside the app. Platform code does not become a second message/contact store.
+Runtime events are exposed through the narrow generated/event boundary. Android notification routing, deep links and Windows host interactions translate OS-originated actions into the same application intents/navigation requests used inside the client. Platform code does not become a second message/contact database.
+
+## Background and connectivity lifecycle
+
+Platform lifecycle changes feed the Rust runtime. Runtime policy combines lifecycle, durable demand, communication evidence and deadlines to decide what work should remain active. Idle presentation polling is not a correctness dependency.
+
+A route/network change can degrade or refresh Iroh reachability without invalidating the durable Torca relationship. Stale provider routes are not trusted as peer identity; authenticated peer/session checks remain authoritative.
 
 ## Settings
 
-Local presentation settings remain in Flutter preferences where appropriate. Settings that affect runtime/security behavior (notifications, read receipts, audio devices, battery/background policy) are synchronized through runtime commands; Flutter then reconciles with the authoritative runtime projection.
+Presentation-only preferences stay in Flutter/platform preferences where appropriate. Settings that affect runtime/security/background behavior are synchronized through runtime commands and reflected back through authoritative projections.
 
 ## Diagnostics
 
-The diagnostics screen and deployer request structured runtime diagnostics/log tails from `EngineGateway`/native tooling. Diagnostics should remain operational/redacted and must not become a route for message/attachment plaintext, Radio audio, private keys or relationship secrets.
+Diagnostics expose bounded operational state such as provider health, queues, runtime/power counters and redacted errors. They must not intentionally contain message/attachment plaintext, Radio audio, private identity keys, database keys, relationship secrets or reusable pairing capabilities.
 
-See [`operations.md`](operations.md) for collection and recovery workflow.
+See [`operations.md`](operations.md) for incident/recovery workflow.

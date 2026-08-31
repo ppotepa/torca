@@ -1,133 +1,111 @@
 # Testing and validation
 
-Torca uses layered evidence. A source test, a platform build and a real-device soak answer different questions; documentation and pull requests should name exactly which evidence exists.
+Torca uses layered evidence. A unit/integration test, a platform build, a host scenario and a real-device soak answer different questions. Change reports and release notes must name the evidence that actually exists.
 
-## CI baseline
+The executable CI definition is `.github/workflows/validate.yml`; this document describes the stable validation model rather than duplicating every current job/flag.
 
-`.github/workflows/validate.yml` currently defines four jobs.
-
-### Rust core
-
-```powershell
-./scripts/modules/Torca.SourcePolicy.ps1 -RepoRoot .
-cargo fmt --all -- --check
-cargo check --workspace --all-targets --all-features --locked
-cargo clippy --workspace --all-targets --all-features --locked -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
-cargo test --workspace --all-targets --all-features --locked
-cargo test --locked -p torca-runtime idle_scheduler_has_no_application_deadline
-cargo test --locked -p torca-runtime-policy idle_governor_has_no_scheduled_work_or_active_leases
-cargo run --locked -p torca-deploy -- full-redeploy --target all --configuration debug --dry-run
-```
-
-### Flutter/bridge contract
-
-From/against `apps/client/flutter` the workflow resolves packages, checks Dart formatting, verifies generated contract drift, runs `flutter analyze` and `flutter test`.
-
-Contract drift check:
-
-```powershell
-cargo run -p torca-contract-gen -- --check apps/client/flutter/lib/generated/torca_contract.dart
-```
-
-### Platform builds
-
-After core/Flutter gates pass, CI builds:
-
-- Windows debug client; and
-- Android debug client.
-
-The build jobs validate the Iroh-only production composition. Provider
-conformance and device soak are separate evidence.
-
-## Evidence levels
+## Evidence vocabulary
 
 Use these terms precisely:
 
-- **implemented** — source path is present/composed.
-- **source-validated** — named static/unit/integration gates were executed and passed.
-- **platform-built** — a named platform artifact was built successfully.
-- **host-tested** — scenario executed against local process/simulated peers.
-- **device-validated** — scenario executed on named physical/emulated device(s).
-- **soak-validated** — bounded long-running scenario completed with its verdict/evidence requirements.
+- **implemented** — the source path is present and composed.
+- **source-validated** — named static/unit/integration checks were executed and passed.
+- **platform-built** — a named target artifact was built successfully.
+- **host-tested** — a scenario executed against local host processes/simulated peers.
+- **device-validated** — a scenario executed on named physical/emulated device(s).
+- **soak-validated** — a bounded long-running scenario completed with its stated verdict/evidence rules.
 - **CI-green** — the referenced workflow run for the referenced commit completed successfully.
-- **audited** — only an actual independent security review may justify this term.
+- **signed** — the referenced artifact was produced with the intended production signing identity/process.
+- **audited** — only an actual independent security review justifies this term.
 
-Do not turn the existence of a test or workflow into a passing result.
+The existence of a test, script or workflow does not mean it passed for the current commit.
 
-## Flutter coverage areas
+## Validation layers
 
-The Flutter test suite includes current surfaces around pairing, conversations/history, attachments/capabilities, diagnostics/runtime status, read receipts, voice clips/Radio-related widgets, transfer UI, navigation, theming and platform behavior abstractions.
+### Rust/domain/application
 
-When changing a durable workflow, pair widget/unit tests with Rust/application coverage; a Dart test alone should not become the proof for a Rust-owned state machine.
+Prefer focused deterministic tests for domain invariants, protocols, application state machines, retry/deadline behavior, provider-neutral ports, storage compatibility and negative/failure paths.
 
-## Rust/integration coverage
+Workspace-level checks are appropriate before landing broad changes. The CI workflow remains the source of truth for the exact current command matrix.
 
-The Rust workspace includes unit/contract tests across domain, protocol, application, transport, infrastructure and platform composition plus `tests/torca-integration` for cross-crate journeys.
+### Generated contract and Flutter
 
-Provider changes should test:
+Contract changes require generator drift checks plus affected Rust/Flutter tests. Flutter presentation changes require analysis/tests and platform execution when the behavior depends on real host lifecycle/permissions/window integration.
 
-- deployment profile/manifest behavior;
-- native provider selection/composition;
-- commissioning lifecycle;
-- pairing bootstrap and invalid-input behavior;
-- peer transport framing/connection lifecycle;
-- capability projection; and
-- no silent fallback to another provider.
+A Dart/widget test is not sufficient evidence for a Rust-owned durable/security state machine.
 
-## Soak cockpit
+### Provider/integration
 
-`torca-soak` is the current orchestrator. With no arguments it can open the interactive workflow; CLI flags support automation.
+Provider changes should cover:
+
+- native production composition;
+- Iroh profile/build metadata;
+- pairing/bootstrap lifecycle and invalid inputs;
+- route freshness/generation behavior;
+- peer transport connect/read/write/failure lifecycle;
+- no silent fallback to a different provider; and
+- provider conformance.
+
+Memory is appropriate for deterministic tests; it is not a substitute for Iroh network evidence.
+
+### Platform/device
+
+Windows/Android behavior that depends on OS lifecycle, protected storage, notifications, permissions, network migration or background execution needs target-specific evidence. A successful cross-platform source test is not the same as a device run.
+
+## Minimum evidence by change
+
+| Change | Minimum deterministic evidence | Additional evidence when relevant |
+| --- | --- | --- |
+| domain/application logic | focused Rust tests + affected workspace checks | integration/soak for timing/network behavior |
+| Flutter presentation | `flutter analyze` + focused/all Flutter tests | target platform run for host-specific behavior |
+| generated/native contract | generator check + Rust/Flutter tests | Windows/Android build/runtime for ABI changes |
+| storage/schema | repository/migration/compatibility tests | restart/upgrade profile scenario when installed data matters |
+| Iroh/provider transport | provider tests + conformance + integration | real network/device reachability/migration scenario |
+| pairing/security protocol | positive + negative protocol/application tests + threat-model review | cross-peer/device journey |
+| Android lifecycle/background/permissions | affected source tests + Android build | emulator/physical Android validation |
+| Windows lifecycle/tray | affected source tests + Windows build | Windows runtime validation |
+| power/background policy | deterministic scheduler/governor tests | controlled physical-device power/lifecycle soak |
+
+## Soak runner
+
+`torca-soak` is the maintained validation orchestrator:
 
 ```powershell
 cargo run -p torca-soak
 ```
 
-Current scenarios include:
+Use its current `--help` output for exact scenarios/flags. Current scenarios cover deterministic/runtime labs, active messaging, idle battery and connectivity-style validation.
 
-- `runtime-lab` — multi-process production-runtime lab with isolated fake-peer profiles;
-- `deterministic` — repeated deterministic Rust suite;
-- `active-messaging` — Android plus fake peers exchanging real messages through the production runtime;
-- `idle-battery` — physical Android idle/battery measurement; and
-- `connectivity` — Android network loss/recovery loop.
+A soak report must identify at least the source/build, scenario, target/device, provider/profile, duration/repetitions and verdict. Interrupted/incomplete runs are not green.
 
-The soak CLI exercises Iroh profiles and the Memory test double where a
-deterministic fixture is appropriate. Direct Iroh reachability and relay
-fallback are separate runtime evidence, not anonymity guarantees.
+## Power/battery evidence
 
-Examples should be derived from `cargo run -p torca-soak -- --help` when exact flags matter. Do not keep a second hand-maintained SOAK1/SOAK2/battery checklist as the source of truth.
+CPU percentage is not battery energy. Power claims should control device/network/screen state, distinguish debug/release artifacts, use repeated measurements and retain enough diagnostics to explain app/runtime/provider activity.
 
-## What to run for common changes
+For idle/background work the architectural expectation is event/deadline-driven behavior: no app-owned periodic polling/reconnect/database work should continue merely because the client is installed or a contact exists. If periodic activity appears, isolate its owner before changing arbitrary sleep intervals.
 
-| Change | Minimum deterministic evidence | Additional evidence when behavior is platform/network sensitive |
-| --- | --- | --- |
-| domain/application logic | focused Rust tests + relevant workspace checks | integration/soak if timing/networked |
-| Flutter presentation | `flutter analyze`, focused/all Flutter tests | target platform run for host behavior |
-| generated contract | generator check + Rust/Flutter tests | target builds if ABI/native behavior changes |
-| provider transport | provider tests + application/runtime integration | real/provider network scenario |
-| pairing/security protocol | negative/protocol/application tests + threat-model review | cross-peer/device journey |
-| Android lifecycle/notifications/permissions | relevant Rust/Flutter tests + Android build | physical/emulated Android validation |
-| Windows lifecycle/tray | relevant Rust/Flutter tests + Windows build | Windows runtime validation |
-| power/background policy | runtime policy tests | timed device battery/lifecycle soak |
-
-## Pull-request reporting
-
-A useful validation section states commands and outcomes, for example:
-
-```text
-Validated:
-- cargo test -p torca-transport-iroh
-- cargo test -p torca-integration <focused-test>
-- flutter analyze
-
-Not run:
-- Windows build
-- Android/Iroh real-device soak
-```
-
-This is stronger than “tests pass” because reviewers can distinguish coverage from missing evidence.
+Physical Android measurements are required for Android battery claims; emulator CPU is useful diagnostic evidence but not calibrated energy usage.
 
 ## Security validation
 
-Security-sensitive changes require negative/failure tests as well as happy paths. Fuzzing/property/bounded-input tests are appropriate around externally supplied wire/pairing/attachment data, but their presence still does not replace independent review.
+Security-sensitive changes need negative/failure tests as well as happy paths. Bounded-input, fuzz/property testing can be useful around externally supplied pairing/wire/attachment inputs but does not replace design review or independent audit.
 
-See [`../SECURITY.md`](../SECURITY.md) and [`security/threat-model.md`](security/threat-model.md).
+Review/update [`../SECURITY.md`](../SECURITY.md) and [`security/threat-model.md`](security/threat-model.md) when trust boundaries or claims change.
+
+## Reporting results
+
+Prefer exact reporting:
+
+```text
+Validated:
+- <command/scenario and outcome>
+
+Not run:
+- <platform/device/soak/audit gate>
+```
+
+This is stronger than “tests pass” because it exposes both coverage and missing evidence.
+
+## Dated evidence
+
+Reports under [`validation/`](validation/) are immutable historical evidence for the run they describe. Use [`validation/README.md`](validation/README.md) before citing them as current evidence.

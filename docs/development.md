@@ -1,18 +1,18 @@
 # Development
 
-Torca is a Rust workspace plus a Flutter client. Use the typed Rust deployment tool as the canonical build/run/deploy entry point instead of building a parallel script workflow.
+Torca is a Rust workspace plus one shared Flutter client. Use the Rust deployment tool as the canonical build/run/deploy entry point and keep implementation aligned with the architecture boundaries in [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
-## Toolchain baseline
+## Toolchain sources of truth
 
-The workspace currently pins/declares:
+Do not maintain a second prose copy of exact tool versions. Use:
 
-- Rust `1.97.1`, edition 2024;
-- Flutter `3.44.x` in CI (`3.44.7` in the workflow);
-- Dart SDK compatible with the Flutter app's `>=3.12.0 <4.0.0` constraint;
-- Java 17 for Android CI builds; and
-- platform build dependencies required by Flutter/Rust for Windows or Android.
+- `rust-toolchain.toml` and root `Cargo.toml` for Rust/toolchain requirements;
+- `Cargo.lock` for resolved Rust dependencies;
+- `apps/client/flutter/pubspec.yaml` and `pubspec.lock` for Flutter/Dart/package constraints;
+- Android Gradle files for Java/Android build requirements; and
+- `.github/workflows/validate.yml` for the currently automated CI environment.
 
-Use `Cargo.lock` and Flutter package resolution committed/current for reproducible project work.
+When these files change, update prose only if the workflow/requirement meaning changes.
 
 ## Canonical entry point
 
@@ -22,9 +22,7 @@ From the repository root:
 cargo run -p torca-deploy
 ```
 
-No subcommand opens the Ratatui wizard. The CLI uses the same planner/executor for repeatable automation.
-
-Common commands:
+No subcommand opens the interactive deployment UI. CLI subcommands use the same planner/executor. Representative commands are:
 
 ```powershell
 cargo run -p torca-deploy -- status
@@ -36,21 +34,13 @@ cargo run -p torca-deploy -- logs --target all
 cargo run -p torca-deploy -- resume
 ```
 
-Use `--dry-run` where supported to inspect a plan without invoking Docker, Flutter, Cargo or ADB actions.
-
-## Provider selection
-
-Iroh is the sole production communication provider. Provider profile metadata
-is carried through the deployment plan/artifacts and validated by native
-startup; Memory is reserved for deterministic tests.
-
-Do not add provider branching in Flutter. Provider capabilities are exposed through runtime/build metadata. See [`transport.md`](transport.md).
+Use command help for exact current flags and `--dry-run` where supported to inspect a normalized plan without changing host/devices.
 
 ## Flutter client
 
-The Flutter application lives at `apps/client/flutter` and is shared by Windows and Android.
+The shared client lives under `apps/client/flutter`.
 
-Typical UI-only workflow:
+For presentation-only work:
 
 ```powershell
 cd apps/client/flutter
@@ -59,76 +49,71 @@ flutter analyze
 flutter test
 ```
 
-Generated contract code under `lib/generated` is not an independent source of product rules. Contract changes should be made at the canonical Rust/schema boundary and regenerated/checked through `torca-contract-gen`.
+Flutter owns responsive presentation/navigation/transient interaction. Product workflows, durable state, provider lifecycle, storage and security-sensitive decisions stay in Rust.
 
 ## Rust workspace
 
-The root workspace groups code by architectural responsibility rather than by platform feature:
+The workspace layers are:
 
-- `foundation` — primitives;
-- `domains` — product state/invariants;
-- `protocol` — bounded wire formats;
-- `application` — use cases/runtime/ports;
-- `infrastructure` — concrete storage/crypto/network adapters;
-- `platform` — native/OS composition.
+- `foundation` — dependency-light primitives;
+- `protocol` — bounded external/wire contracts;
+- `domains` — product vocabulary/invariants;
+- `application` — use cases, ports, read models and runtime policy;
+- `infrastructure` — concrete storage/crypto/files/provider adapters; and
+- `platform` — generated/native boundary plus Windows/Android composition.
 
-Before adding a dependency, preserve inward dependency direction. Source-policy scripts in `scripts/modules` enforce important restrictions and run in CI.
+Preserve inward dependency direction. Architecture/source policy scripts under `scripts/modules` are executable guardrails, not optional conventions.
 
-## Build artifacts and deploy checkpoints
+## Provider composition
 
-`torca-deploy` owns build/deploy orchestration. Deployment checkpoints are stored below `.torca/deploy/` and are intended to make resume/recovery explicit rather than hiding partial device state.
+Iroh is the sole production communication provider. Memory is test-only. Production provider selection is static composition; do not add provider branching to Flutter.
 
-Artifact/provider metadata is checked before reuse/install so a binary built for another provider is not silently deployed into the wrong plan.
+Iroh profile/configuration can be part of build/deploy metadata. Artifact reuse must respect that metadata so an artifact built for another profile/configuration is not silently reused.
 
-## Android notes
+See [`transport.md`](transport.md).
 
-Use `--device <adb-serial>` when a workflow must target exactly one Android device. The deployer keeps reset/install/launch actions scoped to that serial.
+## Generated contract
 
-Android capture protection is strict by default. The explicit development option:
+The Flutter/native boundary is generated from the canonical Torca contract. Change the canonical schema/input and regenerate/check the outputs; do not hand-maintain a divergent Dart protocol model.
 
-```powershell
-cargo run -p torca-deploy -- run --target android --privacy allow-capture
-```
-
-changes the Android secure-window/capture behavior only. It does not weaken message encryption or change the selected communication provider. Never describe an allow-capture test build as capture-protected.
-
-## Windows notes
-
-The Windows host participates in the same Flutter/Rust application. Desktop lifecycle/tray integration is initialized after the native gateway is ready; business logic must not migrate into the Windows runner merely because a behavior is desktop-specific.
-
-## Generated/public contract
-
-The Flutter/native boundary is typed. `EngineGateway` exposes snapshots, runtime events, commands, diagnostics and optional capability interfaces. Keep private keys, relationship secrets and durable security state out of DTOs.
-
-Run generated contract drift checks whenever the schema changes:
+A normal check is:
 
 ```powershell
 cargo run -p torca-contract-gen -- --check apps/client/flutter/lib/generated/torca_contract.dart
 ```
 
-## Adding a feature
+Keep private keys, database keys, relationship secrets and other non-presentation state out of contract DTOs/logs.
 
-A normal feature should follow this direction:
+## Feature placement
+
+A normal feature should move in this direction:
 
 ```text
-product invariant/domain model
+product invariant / domain concept
   -> application command/query/port
-  -> infrastructure/platform implementation if needed
+  -> infrastructure/platform implementation when required
   -> generated presentation contract
   -> Flutter rendering/interaction
 ```
 
-Do not begin by creating a Flutter state machine for a durable/security-sensitive workflow and then mirror it in Rust.
+Do not start a durable/security workflow as a Flutter state machine and then mirror it in Rust. Do not put product policy into SQL repositories, Iroh adapters or OS hosts simply because they execute the final side effect.
 
-## Documentation changes
+## Data and SQL
 
-Current-state docs are intentionally consolidated. Update:
+Operational/business SQL is owned by storage infrastructure and should remain parameterized and bounded. Use repository/read-model APIs from upper layers. Versioned schema compatibility and storage epoch rules are described in [`versioning-and-releases.md`](versioning-and-releases.md).
 
-- `ARCHITECTURE.md` for ownership/dependency/process changes;
-- `docs/transport.md` for provider composition/capability changes;
-- `docs/app-flows.md` for product/runtime flow changes;
-- `SECURITY.md` / threat model / `PRIVACY.md` for security/privacy boundary changes;
-- this file for canonical developer workflow changes; and
-- `docs/testing.md` when evidence gates change.
+## Deploy state and local artifacts
 
-Do not add a new long-lived plan/checklist file when GitHub issues/PRs/history can carry temporary implementation work.
+`torca-deploy` owns build/deploy checkpoints under `.torca/deploy/`; soak/measurement tools write their own ignored local artifacts under `.torca/`. These are local run/evidence outputs and are not sources of product truth.
+
+Destructive data reset must be an explicit choice. Normal iteration should preserve identity/history unless a clean-profile scenario is the thing being tested.
+
+## Documentation/changelog discipline
+
+When behavior changes, update the existing canonical page listed in [`README.md`](README.md). Notable user/developer/compatibility/security changes also update [`../CHANGELOG.md`](../CHANGELOG.md) under `Unreleased`.
+
+Use [`versioning-and-releases.md`](versioning-and-releases.md) for product/build/contract/storage/wire/ABI changes. Temporary implementation plans should not become long-lived competing documentation.
+
+## Validation
+
+Run the narrowest deterministic checks that prove the change, then expand according to [`testing.md`](testing.md). Source checks, platform builds, device runs and soak evidence are different claims.

@@ -1,11 +1,13 @@
 # Tests
 
-Torca uses tests at several layers rather than treating one end-to-end suite as the only source of confidence.
+Torca validates behavior at several layers rather than treating one end-to-end suite as the only source of confidence.
 
-The Rust workspace contains focused domain/application/infrastructure tests. `tests/torca-integration` is the cross-component test package for coherent journeys that span multiple crates. Flutter has its own widget/contract behavior tests, and CI defines separate source/Rust, Flutter/contract and supported-platform build gates.
+The Rust workspace contains focused domain/protocol/application/infrastructure tests. `tests/torca-integration` contains cross-component journeys spanning multiple crates. Flutter has widget/contract behavior tests, while supported-platform builds and device/soak scenarios provide different evidence.
 
-Prefer the lowest test layer that can reproduce a behavior deterministically. Use controlled/fake adapters for retry, failure, restart and state-machine scenarios; use real Windows/Android/Tor end-to-end validation for behavior that depends on actual OS/network integration.
+Prefer the lowest layer that reproduces a behavior deterministically. Use controlled/fake adapters for retry, failure, restart and state-machine scenarios. Use real Windows/Android/Iroh network/device validation when the behavior depends on actual OS, reachability, background execution or power behavior.
 
-No documentation statement should claim a release/platform gate passed unless it was actually executed.
+Memory-provider tests do not prove Iroh reachability, and emulator CPU does not prove physical Android battery usage.
 
-See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for the normal validation workflow.
+No documentation/change report should claim a platform/release gate passed unless it was actually executed for the referenced source/artifact.
+
+See [`../docs/testing.md`](../docs/testing.md) for evidence terminology and the maintained validation matrix.
