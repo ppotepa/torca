@@ -561,7 +561,7 @@ class _AppearancePreview extends StatelessWidget {
               TextField(
                 readOnly: true,
                 decoration: InputDecoration(
-                hintText: context.strings.message,
+                  hintText: context.strings.message,
                   prefixIcon: Icon(context.torcaIcons.attachment),
                   suffixIcon: Icon(context.torcaIcons.send),
                 ),

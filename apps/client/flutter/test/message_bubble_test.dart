@@ -413,7 +413,9 @@ void main() {
     expect(find.text('Secret text'), findsNothing);
     expect(find.text('Message deleted'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey<String>('message-body-section-deleted-grouped')),
+      find.byKey(
+        const ValueKey<String>('message-body-section-deleted-grouped'),
+      ),
       findsOneWidget,
     );
     expect(
