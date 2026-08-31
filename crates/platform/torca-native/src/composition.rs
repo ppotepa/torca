@@ -9,7 +9,7 @@ use torca_platform::{PlatformServices, SecretNamespace};
 use torca_storage_sqlite::{
     SqlCipherMessageStore, SqlCipherNotificationStore, SqlCipherPairingRepository,
     SqlCipherPendingOperationStore, SqlCipherReceiptStore, SqlCipherSecurityProjection,
-    SqlCipherSettingsStore, SqlCipherStore,
+    SqlCipherSettingsStore, SqlCipherStore, prepare_database,
 };
 
 pub(crate) use crate::database_key::{DATABASE_KEY_HANDLE, load_or_create_database_key};
@@ -57,6 +57,9 @@ fn spawn_production_engine_for(
         DATABASE_KEY_HANDLE,
         RustCryptoProvider,
     )?;
+
+    prepare_database(&database_path, &database_key)
+        .map_err(|error| storage_error("prepare encrypted storage", &error))?;
 
     let identity_repository = SqlCipherStore::open(&database_path, &database_key)
         .map_err(|error| storage_error("open identity repository", &error))?;

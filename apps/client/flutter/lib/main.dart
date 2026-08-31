@@ -377,7 +377,7 @@ Future<EngineGateway> _openNativeGateway({
     // Keep the provider/bootstrap failure visible in Android logcat.  The
     // generic startup screen is intentionally user-friendly, but without the
     // structured result here a failed first snapshot looked identical to a
-    // slow Tor/Iroh warm-up and the native runtime was shut down before the
+    // slow provider warm-up and the native runtime was shut down before the
     // real cause could be diagnosed.
     debugPrint(
       'Torca native runtime initialization failed: '
@@ -396,7 +396,10 @@ Future<EngineGateway> _openNativeGateway({
     if (!nativeGateway.isAvailable) await nativeGateway.shutdown();
     await nativeGateway.dispose();
     return StartupFailureGateway(
-      result.error ?? 'native Torca engine failed to initialize',
+      result.errorCode == 'INCOMPATIBLE_STORAGE_EPOCH'
+          ? 'The encrypted local profile was created by an incompatible version. '
+                'Reset the local Torca data explicitly before starting this release.'
+          : result.error ?? 'native Torca engine failed to initialize',
     );
   } on Object catch (error) {
     await onInitializationFailed?.call();
@@ -406,6 +409,10 @@ Future<EngineGateway> _openNativeGateway({
 
 String _formatNativeGatewayFailure(Object error) {
   final detail = '$error';
+  if (detail.contains('INCOMPATIBLE_STORAGE_EPOCH')) {
+    return 'The encrypted local profile is incompatible with this release. '
+        'Reset the local Torca data explicitly and start again.';
+  }
   if (detail.contains('lookup symbol') ||
       detail.contains('procedure could not be found') ||
       detail.contains('Error code 127')) {

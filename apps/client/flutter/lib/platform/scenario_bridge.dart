@@ -156,13 +156,19 @@ class ScenarioBridge implements ScenarioBridgeController {
       case 'profile.set':
         final identityId =
             _gateway.snapshots.value.identity?.id ?? 'local-device';
-        final avatar = await AvatarRepository.instance.envelopeForDevice(
-          identityId,
-        );
+        Map<String, Object?>? avatarEnvelope;
+        try {
+          final avatar = await AvatarRepository.instance.envelopeForDevice(
+            identityId,
+          );
+          avatarEnvelope =
+              jsonDecode(jsonEncode(avatar.toJson())) as Map<String, Object?>;
+        } on Object {
+          avatarEnvelope = null;
+        }
         command = UpdateProfileCommandDto(
           displayName: _string(request, 'displayName'),
-          avatarEnvelope:
-              jsonDecode(jsonEncode(avatar.toJson())) as Map<String, Object?>,
+          avatarEnvelope: avatarEnvelope,
         );
       case 'contact.rename':
         command = RenameContactCommandDto(
@@ -231,15 +237,14 @@ class ScenarioBridge implements ScenarioBridgeController {
         'runtimeId': snapshot.runtimeId,
         'revision': snapshot.revision,
         'bootstrapPhase': snapshot.bootstrapPhase,
-        'torState': snapshot.torState,
         'transport': <String, Object?>{
-          'tor': <String, Object?>{
-            'state': snapshot.transport.tor.state,
-            'code': snapshot.transport.tor.code,
+          'communication': <String, Object?>{
+            'state': snapshot.transport.communication.state,
+            'code': snapshot.transport.communication.code,
           },
-          'relay': <String, Object?>{
-            'state': snapshot.transport.relay.state,
-            'code': snapshot.transport.relay.code,
+          'rendezvous': <String, Object?>{
+            'state': snapshot.transport.rendezvous.state,
+            'code': snapshot.transport.rendezvous.code,
           },
           'peer': <String, Object?>{
             'state': snapshot.transport.peer.state,

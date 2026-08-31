@@ -59,7 +59,7 @@ void main() {
       monitor(
         const AppSnapshotDto(
           transport: TransportStatusDto(
-            relay: TransportIndicatorDto(
+            rendezvous: TransportIndicatorDto(
               state: 'healthy',
               txSequence: 1,
               rxSequence: 1,
@@ -69,13 +69,13 @@ void main() {
       ),
     );
 
-    expect(ledLabel(tester, 'Relay-tx-led'), 'TX activity');
-    expect(ledLabel(tester, 'Relay-rx-led'), 'RX activity');
+    expect(ledLabel(tester, 'Rendezvous-tx-led'), 'TX activity');
+    expect(ledLabel(tester, 'Rendezvous-rx-led'), 'RX activity');
 
     await tester.pump(const Duration(milliseconds: 250));
 
-    expect(ledLabel(tester, 'Relay-tx-led'), 'TX idle');
-    expect(ledLabel(tester, 'Relay-rx-led'), 'RX idle');
+    expect(ledLabel(tester, 'Rendezvous-tx-led'), 'TX idle');
+    expect(ledLabel(tester, 'Rendezvous-rx-led'), 'RX idle');
   });
 
   testWidgets('reduce motion keeps network activity indicators static', (
@@ -91,7 +91,7 @@ void main() {
       reducedMotionMonitor(
         const AppSnapshotDto(
           transport: TransportStatusDto(
-            relay: TransportIndicatorDto(
+            rendezvous: TransportIndicatorDto(
               state: 'healthy',
               txSequence: 1,
               rxSequence: 1,
@@ -101,8 +101,8 @@ void main() {
       ),
     );
 
-    expect(ledLabel(tester, 'Relay-tx-led'), 'TX idle');
-    expect(ledLabel(tester, 'Relay-rx-led'), 'RX idle');
+    expect(ledLabel(tester, 'Rendezvous-tx-led'), 'TX idle');
+    expect(ledLabel(tester, 'Rendezvous-rx-led'), 'RX idle');
   });
 
   testWidgets('direct providers use one generic communication indicator', (
@@ -124,11 +124,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey<String>('tor-status-light')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey<String>('relay-status-light')),
+      find.byKey(const ValueKey<String>('rendezvous-status-light')),
       findsNothing,
     );
   });

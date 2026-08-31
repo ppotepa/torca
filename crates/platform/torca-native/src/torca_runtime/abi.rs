@@ -34,13 +34,30 @@ pub unsafe extern "C" fn torca_runtime_invoke(
             .ok()
             .and_then(|value| value.get("requestId").and_then(Value::as_str).map(str::to_owned))
             .unwrap_or_default();
+        let storage_epoch_incompatible = handle
+            .inner
+            .startup_error
+            .as_deref()
+            .is_some_and(|error| error.contains("INCOMPATIBLE_STORAGE_EPOCH"));
+        let (code, category, retryable, message_key) = if storage_epoch_incompatible {
+            (
+                "INCOMPATIBLE_STORAGE_EPOCH",
+                "storage",
+                false,
+                "storage.epoch.incompatible",
+            )
+        } else {
+            ("RUNTIME_STARTUP_FAILED", "runtime", true, "runtime.startup.failed")
+        };
         // Keep the ABI response useful when the actor cannot start.  The old
         // response only contained a localization key, which made every
         // provider failure look identical in Flutter ("runtime not ready")
         // and forced us to guess from logcat.  Composition errors are already
         // redacted at their source; expose the bounded diagnostic only in
         // debug builds so release builds retain the generic contract.
-        let diagnostic = if cfg!(debug_assertions) {
+        let diagnostic = if storage_epoch_incompatible {
+            "installed storage is incompatible; explicit reset required".to_owned()
+        } else if cfg!(debug_assertions) {
             handle
                 .inner
                 .startup_error
@@ -61,12 +78,13 @@ pub unsafe extern "C" fn torca_runtime_invoke(
             "revision": 0,
             "snapshot": Value::Null,
             "error": {
-                "code": "RUNTIME_STARTUP_FAILED",
-                "category": "runtime",
+                "code": code,
+                "category": category,
                 "severity": "error",
-                "retryable": true,
-                "messageKey": "runtime.startup.failed",
+                "retryable": retryable,
+                "messageKey": message_key,
                 "message": diagnostic,
+                "resetRequired": storage_epoch_incompatible,
                 "diagnosticId": secure_id_hex().unwrap_or_default()
             },
             "timing": { "queuedMs": 0, "executionMs": 0 }

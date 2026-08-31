@@ -45,7 +45,16 @@ pub(crate) const ABI_OK: i32 = 0;
 pub(crate) const ABI_ERROR: i32 = -1;
 pub(crate) const ABI_CLOSED: i32 = -2;
 const NETWORK_RETRY_DELAY: Duration = Duration::from_secs(5);
-const NETWORK_START_OBSERVE_TIMEOUT: Duration = Duration::from_secs(120);
+// A provider startup attempt must produce a terminal result quickly enough for
+// the host UI to offer retry.  The provider itself owns tighter operation
+// timeouts (for example Iroh endpoint bind), while this is the composition
+// level safety net for platform-specific hangs.
+const NETWORK_START_OBSERVE_TIMEOUT: Duration = Duration::from_secs(30);
+// Startup progress is event-driven, but a full bounded mailbox can reject an
+// InternalWake. A short poll exists only while the provider worker is active,
+// preventing a lost wake from turning a sub-second composition into a wait
+// for the 30-second safety deadline.
+const NETWORK_START_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const NETWORK_MAX_ATTEMPTS: u32 = 3;
 const INCOMING_REACHABILITY_PROGRESS_STALL_AFTER: Duration = Duration::from_secs(120);
 
@@ -103,8 +112,8 @@ pub struct TorcaRuntime {
     host_failures: u32,
     host_state_hint: CommunicationState,
     network_changed_pending: bool,
-    last_onion_log_state: Option<(String, Option<String>)>,
-    last_relay_log_state: Option<(String, Option<String>)>,
+    last_incoming_log_state: Option<(String, Option<String>)>,
+    last_rendezvous_log_state: Option<(String, Option<String>)>,
     last_peer_log_state: HashMap<String, (String, u32)>,
     last_message_log_state: HashMap<String, (String, u32)>,
     last_attachment_log_state: HashMap<String, (String, u64, u32)>,

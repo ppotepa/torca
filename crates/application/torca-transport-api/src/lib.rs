@@ -123,6 +123,16 @@ pub enum CommissioningState {
     Failed,
 }
 
+/// Presentation-safe copy supplied by the provider plugin for one warm-up
+/// stage. These strings are deliberately descriptive rather than actionable:
+/// retry policy and readiness remain typed fields on `CommissioningStep`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommissioningPresentation {
+    pub label: &'static str,
+    pub pending_summary: &'static str,
+    pub ready_summary: &'static str,
+}
+
 /// One displayable commissioning stage supplied by the active provider.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CommissioningStep {
@@ -132,6 +142,9 @@ pub struct CommissioningStep {
     pub required_for_local_shell: bool,
     /// Pairing can use the provider only after this stage is ready.
     pub required_for_pairing: bool,
+    /// Optional provider-owned wording for the warm-up UI. Application code
+    /// supplies a provider-neutral fallback when a test double omits it.
+    pub presentation: Option<CommissioningPresentation>,
 }
 
 /// Snapshot consumed by bootstrap projection, diagnostics and deploy health.
@@ -405,19 +418,21 @@ mod tests {
     #[test]
     fn local_shell_does_not_wait_for_optional_incoming_reachability() {
         let commissioning = ProviderCommissioning {
-            provider: ProviderId::default(),
+            provider: ProviderId::new("iroh").expect("static test provider"),
             steps: vec![
                 CommissioningStep {
                     stage: CommissioningStage::LocalRuntime,
                     state: CommissioningState::Ready,
                     required_for_local_shell: true,
                     required_for_pairing: true,
+                    presentation: None,
                 },
                 CommissioningStep {
                     stage: CommissioningStage::IncomingReachability,
                     state: CommissioningState::Pending,
                     required_for_local_shell: false,
                     required_for_pairing: false,
+                    presentation: None,
                 },
             ],
             endpoint_summary: None,

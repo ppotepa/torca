@@ -88,7 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showBuildInfo(
     ClientBuildInfo? client,
-    RelayInfoDto? relay,
+    PairingServiceInfoDto? pairingService,
   ) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
@@ -124,21 +124,21 @@ class _HomeScreenState extends State<HomeScreen> {
             const Divider(),
             _buildDetail(
               'Provider service version',
-              relay?.productVersion ?? 'unavailable',
+              pairingService?.productVersion ?? 'unavailable',
             ),
             _buildDetail(
               'Provider service build',
-              relay?.buildId ?? 'not used by this provider',
+              pairingService?.buildId ?? 'not used by this provider',
             ),
             _buildDetail(
               'Provider service commit',
-              relay?.sourceCommit ?? 'not used by this provider',
+              pairingService?.sourceCommit ?? 'not used by this provider',
             ),
             _buildDetail(
-              'Relay protocol',
-              relay == null
+              'Pairing service protocol',
+              pairingService == null
                   ? 'not used by this provider'
-                  : '${relay.protocolVersion}',
+                  : '${pairingService.protocolVersion}',
             ),
           ],
         ),
@@ -184,7 +184,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final buildInfo = widget.gateway is BuildInfoProvider
           ? (widget.gateway as BuildInfoProvider).buildInfo
           : null;
-      final relayInfo = snapshot.transport.relayInfo;
+      final pairingServiceInfo = snapshot.transport.pairingServiceInfo;
       return AdaptiveAppShell(
         title: snapshot.identity?.displayName ?? 'Torca',
         showRuntimeStatus:
@@ -193,10 +193,10 @@ class _HomeScreenState extends State<HomeScreen> {
         buildLabel:
             'f ${_shortBuild(_buildId)} / '
             'r ${_shortBuild(buildInfo?.buildId ?? '—')}',
-        serviceLabel: relayInfo == null
-            ? (snapshot.communicationProvider == 'tor' ? 'relay —' : 'svc —')
-            : 'rel ${_shortBuild(relayInfo.buildId)}',
-        onBuildInfo: () => _showBuildInfo(buildInfo, relayInfo),
+        serviceLabel: pairingServiceInfo == null
+            ? 'svc —'
+            : 'svc ${_shortBuild(pairingServiceInfo.buildId)}',
+        onBuildInfo: () => _showBuildInfo(buildInfo, pairingServiceInfo),
         selectedIndex: _section.index,
         onDestinationSelected: (index) {
           final section = _HomeSection.values[index];

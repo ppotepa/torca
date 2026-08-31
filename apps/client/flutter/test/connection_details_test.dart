@@ -38,8 +38,7 @@ void main() {
           ContactDto(
             id: '01',
             displayName: 'Alice',
-            transportProvider: 'tor',
-            onionAddress: 'alice.onion',
+            transportProvider: 'iroh',
             status: 'active',
             connectionState: 'ready',
             peerHealth: PeerHealthDto(
@@ -65,7 +64,7 @@ void main() {
     expect(find.text('Alice'), findsOneWidget);
     expect(find.text('Good'), findsWidgets);
     expect(find.text('721 ms'), findsWidgets);
-    expect(find.text('Direct P2P over Tor'), findsOneWidget);
+    expect(find.text('Direct Iroh contact'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
   });
 }

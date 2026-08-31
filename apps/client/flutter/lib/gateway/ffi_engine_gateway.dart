@@ -676,7 +676,8 @@ void _workerMainImpl(List<Object?> arguments) {
   final bindings = _WorkerBindings(library);
   final metadata = bindings.metadata();
   if (metadata['nativeAbi'] != torcaNativeAbiVersion ||
-      metadata['contractSchema'] != torcaContractVersion) {
+      metadata['contractSchema'] != torcaContractVersion ||
+      metadata['storageEpoch'] != torcaStorageEpoch) {
     throw StateError('native runtime metadata is incompatible');
   }
   const expectedBuildId = String.fromEnvironment('TORCA_BUILD_ID');
@@ -771,8 +772,12 @@ void _workerMainImpl(List<Object?> arguments) {
             if (encoded != lastSnapshotJson) {
               lastSnapshotJson = encoded;
               snapshotChanges++;
-              target.send(encoded);
             }
+            // A revision waiter can remain quiet indefinitely while the
+            // provider is healthy and idle. Emit the unchanged snapshot as a
+            // heartbeat so the UI freshness indicator measures observation,
+            // not only state mutation.
+            target.send(encoded);
           }
           final events = poll['events'];
           if (events is List) {
@@ -802,11 +807,11 @@ void _workerMainImpl(List<Object?> arguments) {
         waiter.send(<String, Object?>{
           'revision': runtimeRevision,
           'cursor': notificationCursor,
-          // Zero is the native condvar wait: wake only for a revision/cursor
-          // change or explicit cancellation. Disposal cancels the waiter
-          // before releasing the runtime handle, so idle Flutter has no
-          // compatibility polling wakeups.
-          'timeoutMs': 0,
+          // The bounded wait doubles as a low-frequency observation heartbeat.
+          // Provider changes still wake it immediately; idle runtimes emit a
+          // snapshot heartbeat so the UI can distinguish healthy idleness
+          // from a dead polling loop.
+          'timeoutMs': 2000,
           'reply': reply.sendPort,
         });
         reply.first
@@ -816,9 +821,9 @@ void _workerMainImpl(List<Object?> arguments) {
                 reply.close();
                 if (disposed) return;
                 final waitResult = value is int ? value : -1;
-                if (waitResult == 1) {
+                if (waitResult == 1 || waitResult == 0) {
                   fallbackFailures = 0;
-                  waiterWakeups++;
+                  if (waitResult == 1) waiterWakeups++;
                   fallbackDegradedReported = false;
                   snapshotTimer = Timer(Duration.zero, pollSnapshot);
                 } else {

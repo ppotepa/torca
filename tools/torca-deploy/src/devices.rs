@@ -31,7 +31,10 @@ pub struct DeviceController<'a> {
     runner: &'a dyn CommandRunner,
 }
 
-/// Restrict discovered devices to an exact user-requested id.
+/// Restrict discovered devices to a user-requested id. Wireless ADB mDNS can
+/// append a collision counter such as ` (2)` to the service instance between
+/// sessions. Prefer an exact match, then accept one unambiguous match after
+/// removing only that volatile counter from an Android mDNS serial.
 pub fn select_device(
     devices: Vec<Device>,
     requested: Option<&str>,
@@ -39,11 +42,22 @@ pub fn select_device(
     let Some(requested) = requested else {
         return Ok(devices);
     };
-    let selected = devices.into_iter().filter(|device| device.id == requested).collect::<Vec<_>>();
-    if selected.is_empty() {
-        return Err(DeviceError::RequestedDeviceUnavailable(requested.to_owned()));
+    if let Some(exact) = devices.iter().find(|device| device.id == requested) {
+        return Ok(vec![exact.clone()]);
     }
-    Ok(selected)
+    let requested_stable = stable_android_device_id(requested);
+    let selected = devices
+        .into_iter()
+        .filter(|device| {
+            device.target == Target::Android
+                && stable_android_device_id(&device.id) == requested_stable
+        })
+        .collect::<Vec<_>>();
+    match selected.len() {
+        0 => Err(DeviceError::RequestedDeviceUnavailable(requested.to_owned())),
+        1 => Ok(selected),
+        _ => Err(DeviceError::RequestedDeviceAmbiguous(requested.to_owned())),
+    }
 }
 impl<'a> DeviceController<'a> {
     pub fn new(paths: &'a RuntimePaths, runner: &'a dyn CommandRunner) -> Self {
@@ -152,13 +166,41 @@ fn parse_adb_devices(output: &str) -> Vec<String> {
         .lines()
         .skip_while(|line| line.trim() != "List of devices attached")
         .skip(1)
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let id = fields.next()?;
-            let state = fields.next()?;
-            (state == "device").then(|| id.to_owned())
-        })
+        .filter_map(parse_adb_device_line)
         .collect()
+}
+
+fn parse_adb_device_line(line: &str) -> Option<String> {
+    const STATES: [&str; 6] =
+        ["device", "offline", "unauthorized", "recovery", "sideload", "bootloader"];
+    let mut offset = 0;
+    for field in line.split_whitespace() {
+        let relative = line[offset..].find(field)?;
+        let start = offset + relative;
+        offset = start + field.len();
+        if STATES.contains(&field) {
+            let id = line[..start].trim_end();
+            return (field == "device" && !id.is_empty()).then(|| id.to_owned());
+        }
+    }
+    None
+}
+
+fn stable_android_device_id(id: &str) -> String {
+    const MDNS_SUFFIX: &str = "._adb-tls-connect._tcp";
+    let Some(prefix) = id.strip_suffix(MDNS_SUFFIX) else {
+        return id.to_owned();
+    };
+    let Some((base, counter)) = prefix.rsplit_once(" (") else {
+        return id.to_owned();
+    };
+    let Some(counter) = counter.strip_suffix(')') else {
+        return id.to_owned();
+    };
+    if counter.is_empty() || !counter.bytes().all(|byte| byte.is_ascii_digit()) {
+        return id.to_owned();
+    }
+    format!("{base}{MDNS_SUFFIX}")
 }
 
 #[derive(Debug, Error)]
@@ -171,13 +213,15 @@ pub enum DeviceError {
     RequestedTargetUnavailable(Target),
     #[error("requested device `{0}` is unavailable")]
     RequestedDeviceUnavailable(String),
+    #[error("requested device `{0}` matches more than one available Android transport")]
+    RequestedDeviceAmbiguous(String),
     #[error("Android device {device} uses unsupported ABI `{abi}`")]
     UnsupportedAndroidAbi { device: String, abi: String },
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AndroidAbi, Device, parse_adb_devices, select_device};
+    use super::{AndroidAbi, Device, parse_adb_devices, select_device, stable_android_device_id};
     use crate::domain::Target;
 
     #[test]
@@ -200,6 +244,14 @@ mod tests {
     }
 
     #[test]
+    fn parser_preserves_windows_mdns_collision_suffix_with_spaces() {
+        let id = "adb-85Z5AIGU79XSLZMZ-RUuyXh (2)._adb-tls-connect._tcp";
+        let output = format!("List of devices attached\n{id}   device\n");
+
+        assert_eq!(parse_adb_devices(&output), vec![id]);
+    }
+
+    #[test]
     fn exact_device_selection_is_opt_in() {
         let devices = vec![
             Device {
@@ -218,5 +270,35 @@ mod tests {
             select_device(devices, Some("phone-b")).expect("selected device")[0].id,
             "phone-b"
         );
+    }
+
+    #[test]
+    fn wireless_adb_selection_accepts_a_changed_mdns_collision_counter() {
+        let requested = "adb-85Z5AIGU79XSLZMZ-RUuyXh._adb-tls-connect._tcp";
+        let current = "adb-85Z5AIGU79XSLZMZ-RUuyXh (2)._adb-tls-connect._tcp";
+        let devices = vec![Device {
+            target: Target::Android,
+            id: current.into(),
+            android_abi: Some(AndroidAbi::Arm64),
+        }];
+
+        let selected = select_device(devices, Some(requested)).expect("stable mDNS match");
+        assert_eq!(selected[0].id, current);
+        assert_eq!(stable_android_device_id(current), requested);
+    }
+
+    #[test]
+    fn wireless_adb_fallback_rejects_ambiguous_matches() {
+        let requested = "adb-phone._adb-tls-connect._tcp";
+        let devices = [1, 2]
+            .into_iter()
+            .map(|counter| Device {
+                target: Target::Android,
+                id: format!("adb-phone ({counter})._adb-tls-connect._tcp"),
+                android_abi: Some(AndroidAbi::Arm64),
+            })
+            .collect();
+
+        assert!(select_device(devices, Some(requested)).is_err());
     }
 }

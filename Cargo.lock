@@ -4524,6 +4524,7 @@ dependencies = [
  "torca-peer-link",
  "torca-peer-protocol",
  "torca-receipts",
+ "torca-runtime",
  "torca-transport-api",
  "torca-transport-iroh",
  "torca-transport-memory",

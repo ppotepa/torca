@@ -88,13 +88,9 @@ class TorcaStrings {
   String get retryNow => _pl ? 'Spróbuj ponownie' : 'Retry now';
   String get retrying => _pl ? 'Ponawianie…' : 'Retrying…';
   String get blocked => _pl ? 'Zablokowany' : 'Blocked';
-  String get directTorContact =>
-      _pl ? 'Bezpośredni kontakt Tor' : 'Direct Tor contact';
   String providerName(String provider) => switch (provider.toLowerCase()) {
     'iroh' => 'Iroh',
-    'webrtc' => 'WebRTC',
     'memory' => _pl ? 'Testowa pamięć' : 'Memory test',
-    'tor' => 'Tor',
     _ => provider.isEmpty ? (_pl ? 'Komunikacja' : 'Communication') : provider,
   };
   String directProviderContact(String provider) => _pl
@@ -122,7 +118,6 @@ class TorcaStrings {
   String get connection => _pl ? 'Połączenie' : 'Connection';
   String get state => _pl ? 'Stan' : 'State';
   String get quality => _pl ? 'Jakość' : 'Quality';
-  String get onionAddress => _pl ? 'Adres onion' : 'Onion address';
   String get connectionDetails =>
       _pl ? 'Szczegóły połączenia' : 'Connection details';
   String get contactActions => _pl ? 'Akcje kontaktu' : 'Contact actions';
@@ -173,38 +168,9 @@ class TorcaStrings {
       _pl ? 'Nie udało się odblokować kontaktu' : 'Could not unblock contact';
   String get couldNotRemoveContact =>
       _pl ? 'Nie udało się usunąć kontaktu' : 'Could not remove contact';
-  String get relayNotReady => _pl
-      ? 'Parowanie będzie dostępne, gdy wybrany provider komunikacji będzie gotowy.'
-      : 'Pairing is unavailable until the selected communication provider is ready.';
-  String get relayDegraded => _pl
-      ? 'Relay ponownie nawiązuje połączenie. Spróbuj za chwilę.'
-      : 'The relay is reconnecting. Try again shortly.';
-  String communicationProviderNotReady(String provider) {
-    final normalized = provider.trim().toLowerCase();
-    final label = switch (normalized) {
-      'tor' => 'Tor',
-      'iroh' => 'Iroh',
-      'webrtc' => 'WebRTC',
-      _ => provider.trim().isEmpty ? 'communication provider' : provider.trim(),
-    };
-    return _pl
-        ? 'Provider komunikacji ($label) nie jest jeszcze gotowy.'
-        : 'The $label communication provider is not ready yet.';
-  }
-
-  String communicationProviderReconnecting(String provider) {
-    final normalized = provider.trim().toLowerCase();
-    final label = switch (normalized) {
-      'tor' => 'Tor',
-      'iroh' => 'Iroh',
-      'webrtc' => 'WebRTC',
-      _ => provider.trim().isEmpty ? 'communication provider' : provider.trim(),
-    };
-    return _pl
-        ? 'Provider komunikacji ($label) ponownie nawiazuje polaczenie. Sprobuj za chwile.'
-        : 'The $label communication provider is reconnecting. Try again shortly.';
-  }
-
+  String get incompatibleStorageEpoch => _pl
+      ? 'Zaszyfrowany profil lokalny jest niezgodny. Jawnie zresetuj lokalne dane Torca przed kontynuowaniem.'
+      : 'The encrypted local profile is incompatible. Reset local Torca data explicitly before continuing.';
   String get profileNotReady => _pl
       ? 'Bezpieczny profil nie jest jeszcze gotowy.'
       : 'The secure profile is not ready yet.';
@@ -247,7 +213,6 @@ class TorcaStrings {
   String get yourIdentity => _pl ? 'Twoja tożsamość' : 'Your identity';
   String get localIdentity => _pl ? 'Tożsamość lokalna' : 'Local identity';
   String get displayName => _pl ? 'Nazwa wyświetlana' : 'Display name';
-  String get torState => _pl ? 'Stan Tor' : 'Tor state';
   String get unavailable => _pl ? 'Niedostępne' : 'Unavailable';
   String get applicationMenu => _pl ? 'Menu aplikacji' : 'Application menu';
   String get newPairing => _pl ? 'Nowe parowanie' : 'New pairing';
@@ -403,9 +368,9 @@ class TorcaStrings {
       ? '$name zaakceptował(a) zaproszenie'
       : '$name accepted your join request';
   String get closeTooltip => _pl ? 'Zamknij' : 'Close';
-  String buildTooltip(String build, String relay) => _pl
-      ? 'Build $build\nWersja usługi providera: $relay'
-      : 'Torca build $build\nProvider service: $relay';
+  String buildTooltip(String build, String providerService) => _pl
+      ? 'Build $build\nWersja usługi providera: $providerService'
+      : 'Torca build $build\nProvider service: $providerService';
   String buildLabel(String build) => _pl ? 'build $build' : 'build $build';
   String get secureRuntimeNotReady => _pl
       ? 'Bezpieczne srodowisko nie jest gotowe'
@@ -416,9 +381,7 @@ class TorcaStrings {
   String runtimeNotReadyDiagnostic(String provider) {
     final normalized = provider.trim().toLowerCase();
     final label = switch (normalized) {
-      'tor' => 'Tor',
       'iroh' => 'Iroh',
-      'webrtc' => 'WebRTC',
       _ => provider.trim().isEmpty ? 'communication provider' : provider.trim(),
     };
     return _pl
@@ -438,7 +401,6 @@ class TorcaStrings {
       : 'Redacted developer event stream';
   String get diagnosticsStream =>
       _pl ? 'Strumien diagnostyczny' : 'Diagnostics stream';
-  String get directP2pOverTor => 'Direct P2P over Tor';
   String get excellent => _pl ? 'Doskonaly' : 'Excellent';
   String get good => _pl ? 'Dobry' : 'Good';
   String get fair => _pl ? 'Sredni' : 'Fair';
@@ -632,25 +594,12 @@ class TorcaStrings {
   String get connecting => _pl ? 'Laczenie' : 'Connecting';
   String get reconnecting => _pl ? 'Ponowne laczenie' : 'Reconnecting';
   String get peerOffline => _pl ? 'Kontakt offline' : 'Peer is offline';
-  String get connectingPeerThroughTor =>
-      _pl ? 'Laczenie z kontaktem przez Tor' : 'Connecting to peer through Tor';
-  String get reconnectingPeerThroughTor => _pl
-      ? 'Ponowne laczenie z kontaktem przez Tor'
-      : 'Reconnecting to peer through Tor';
-  String get torReady => _pl ? 'Tor gotowy' : 'Tor ready';
-  String get torStarting => _pl ? 'Tor uruchamia sie' : 'Tor starting';
-  String get torReconnecting =>
-      _pl ? 'Tor ponownie sie laczy' : 'Tor reconnecting';
-  String torStateLabel(String state) =>
-      'Tor: ${state.isEmpty ? 'offline' : state}';
   String get p2pShort => 'P2P';
-  String get torShort => 'Tor';
   String get startingShort => _pl ? 'Start' : 'Starting';
   String get reconnectingShort => _pl ? 'Laczenie' : 'Reconnecting';
   String get offlineShort => 'Offline';
   String get nativeBridge => _pl ? 'Most natywny' : 'Native bridge';
   String get localIdentityCheck => _pl ? 'Lokalna tozsamosc' : 'Local identity';
-  String get onionService => _pl ? 'Usluga onion' : 'Onion service';
   String get directPeers => _pl ? 'Bezposrednie wezly' : 'Direct peers';
   String get noContactsPaired =>
       _pl ? 'Brak sparowanych kontaktow' : 'No contacts paired';
@@ -662,7 +611,6 @@ class TorcaStrings {
   String get notInitialized => _pl ? 'Nie zainicjalizowano' : 'Not initialized';
   String get loaded => _pl ? 'Zaladowano' : 'Loaded';
   String get published => _pl ? 'Opublikowano' : 'Published';
-  String get noOnionAddress => _pl ? 'Brak adresu onion' : 'No onion address';
   String get redactedHealthEventsReadable => _pl
       ? 'Zanonimizowane zdarzenia zdrowia czytelne'
       : 'Redacted health events readable';

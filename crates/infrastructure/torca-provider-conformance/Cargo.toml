@@ -22,6 +22,7 @@ torca-pairing-protocol = { path = "../../protocol/torca-pairing-protocol" }
 torca-peer-link = { path = "../torca-peer-link" }
 torca-peer-protocol = { path = "../../protocol/torca-peer-protocol" }
 torca-receipts = { path = "../../domains/torca-receipts" }
+torca-runtime = { path = "../../application/torca-runtime" }
 torca-pairing-service-protocol = { path = "../../protocol/torca-pairing-service-protocol" }
 torca-transport-iroh = { path = "../torca-transport-iroh" }
 torca-transport-memory = { path = "../torca-transport-memory" }

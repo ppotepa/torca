@@ -43,21 +43,11 @@ impl ProviderId {
     pub fn from_wire(value: &str) -> Result<Self, InvalidProviderId> {
         Self::new(value)
     }
-
-    pub fn selectable() -> Vec<Self> {
-        vec![Self::default()]
-    }
 }
 
 impl AsRef<str> for ProviderId {
     fn as_ref(&self) -> &str {
         self.as_str()
-    }
-}
-
-impl Default for ProviderId {
-    fn default() -> Self {
-        Self::new("iroh").expect("static production provider id")
     }
 }
 

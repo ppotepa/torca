@@ -183,7 +183,7 @@ class TorcaForegroundService : Service() {
         val notification = builder
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle("Torca")
-.setContentText("Private messaging over Iroh is active")
+            .setContentText("Private messaging over Iroh is active")
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(
@@ -209,7 +209,7 @@ class TorcaForegroundService : Service() {
         }
         // The service is the process-level owner of the native runtime. Flutter only
         // observes the same runtime through FFI; it must not be the sole starter,
-// otherwise a restarted foreground service can remain alive without the provider.
+        // otherwise a restarted foreground service can remain alive without Tor.
         Thread {
             warmupWakeLock = getSystemService(PowerManager::class.java)?.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
@@ -243,7 +243,7 @@ class TorcaForegroundService : Service() {
                             batteryStatus == BatteryManager.BATTERY_STATUS_FULL
                         ) "charging_on" else "charging_off",
                     )
-// Re-arm provider reachability against the network that actually
+                    // Re-arm relay probing against the network that actually
                     // exists after service startup (Wi-Fi may have changed
                     // while the process was being restored).
                     notifyNetworkChanged()
@@ -436,7 +436,7 @@ class TorcaForegroundService : Service() {
                 "Torca background messaging",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-description = "Keeps private Iroh messaging active while Torca is in the background"
+                description = "Keeps private Tor messaging active while Torca is in the background"
                 setShowBadge(false)
             },
         )
@@ -450,7 +450,7 @@ description = "Keeps private Iroh messaging active while Torca is in the backgro
                 "Private messages",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-description = "New private Torca message notifications"
+                description = "New private Torca message notifications"
                 setShowBadge(true)
             },
         )

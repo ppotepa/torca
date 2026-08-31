@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::domain::{
     BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, LaunchPolicy,
-    PrivacyPolicy, ProviderMaintenancePolicy, Target, ValidationLevel, iroh_provider,
+    PrivacyPolicy, Target, ValidationLevel,
 };
 
 #[derive(Debug, Parser)]
@@ -28,7 +28,7 @@ pub enum Command {
     Run(PlanArgs),
     /// Deploy current or rebuilt artifacts.
     Deploy(PlanArgs),
-    /// Rebuild clients and relay, preserving client data and relay identity.
+    /// Rebuild clients while preserving client data.
     Rebuild(PlanArgs),
     /// Reset selected client data and redeploy; preserves provider identity by default.
     FullRedeploy(PlanArgs),
@@ -39,7 +39,7 @@ pub enum Command {
     },
     /// Collect logs from all selected devices.
     Logs(PlanArgs),
-    /// Build client artifacts without starting relay or devices.
+    /// Build client artifacts without starting devices.
     Build(PlanArgs),
 }
 
@@ -48,17 +48,13 @@ pub enum Command {
 pub struct PlanArgs {
     #[arg(long, value_enum, default_value = "all")]
     pub target: TargetArg,
-    /// Exact device id to deploy; without it all ready devices are selected.
+    /// Device id to deploy; wireless ADB mDNS collision counters are tolerated.
     #[arg(long)]
     pub device: Option<String>,
     #[arg(long, value_enum, default_value = "debug")]
     pub configuration: ConfigurationArg,
     #[arg(long, value_enum, default_value = "if-required")]
     pub client_build: BuildPolicyArg,
-    #[arg(long = "provider-service-build", value_enum, default_value = "if-required")]
-    pub provider_service_build: BuildPolicyArg,
-    #[arg(long = "provider-maintenance", value_enum, default_value = "ensure")]
-    pub provider_maintenance: ProviderMaintenancePolicyArg,
     #[arg(long, value_enum, default_value = "preserve")]
     pub client_data: ClientDataPolicyArg,
     #[arg(long, value_enum, default_value = "quick")]
@@ -68,17 +64,7 @@ pub struct PlanArgs {
     /// Android screen-capture policy. Strict is the default.
     #[arg(long, value_enum, default_value = "strict")]
     pub privacy: PrivacyArg,
-    /// Production communication provider. The alpha build is Iroh-only.
-    #[arg(
-        long,
-        visible_alias = "communication-protocol",
-        value_enum,
-        default_value = "iroh",
-        hide = true
-    )]
-    pub communication_provider: CommunicationProviderArg,
-    /// Provider-owned runtime profile. This remains opaque to the generic
-    /// deploy domain; Iroh uses `always`, `direct` or `local`.
+    /// Iroh runtime profile: `always`, `direct` or `local`.
     #[arg(long = "provider-profile", visible_alias = "iroh-profile")]
     pub provider_profile: Option<String>,
     #[arg(long)]
@@ -121,13 +107,6 @@ pub enum BuildPolicyArg {
     Rebuild,
 }
 #[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum ProviderMaintenancePolicyArg {
-    Ensure,
-    Restart,
-    Repair,
-    Rotate,
-}
-#[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum ClientDataPolicyArg {
     Preserve,
     #[value(name = "reset-profile")]
@@ -155,21 +134,12 @@ pub enum PrivacyArg {
     AllowCapture,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum CommunicationProviderArg {
-    Iroh,
-}
-
 impl PlanArgs {
     pub fn plan(&self, action: DeployAction) -> DeployPlan {
-        let communication_provider = iroh_provider();
-        // Freeze the provider profile into the persisted deployment plan. A
-        // resumed run must not silently change from direct to relay-backed
-        // Iroh because the developer shell changed in the meantime.
+        // Freeze the Iroh profile into the persisted deployment plan so a
+        // resumed run cannot silently change routing policy.
         let provider_profile = self.provider_profile.clone().or_else(|| {
-            (communication_provider == iroh_provider()).then(|| {
-                std::env::var("TORCA_IROH_PROFILE").unwrap_or_else(|_| "always".to_owned())
-            })
+            Some(std::env::var("TORCA_IROH_PROFILE").unwrap_or_else(|_| "always".to_owned()))
         });
         DeployPlan {
             action,
@@ -187,19 +157,6 @@ impl PlanArgs {
                 BuildPolicyArg::Reuse => BuildPolicy::Reuse,
                 BuildPolicyArg::IfRequired => BuildPolicy::IfRequired,
                 BuildPolicyArg::Rebuild => BuildPolicy::Rebuild,
-            },
-            provider_service_build: match self.provider_service_build {
-                BuildPolicyArg::Reuse => BuildPolicy::Reuse,
-                BuildPolicyArg::IfRequired => BuildPolicy::IfRequired,
-                BuildPolicyArg::Rebuild => BuildPolicy::Rebuild,
-            },
-            provider_maintenance: match self.provider_maintenance {
-                ProviderMaintenancePolicyArg::Ensure => ProviderMaintenancePolicy::Ensure,
-                ProviderMaintenancePolicyArg::Restart => ProviderMaintenancePolicy::Restart,
-                ProviderMaintenancePolicyArg::Repair => {
-                    ProviderMaintenancePolicy::RepairDirectoryCache
-                }
-                ProviderMaintenancePolicyArg::Rotate => ProviderMaintenancePolicy::RotateIdentity,
             },
             client_data: match self.client_data {
                 ClientDataPolicyArg::Preserve => ClientDataPolicy::Preserve,
@@ -220,7 +177,6 @@ impl PlanArgs {
                 PrivacyArg::Strict => PrivacyPolicy::Strict,
                 PrivacyArg::AllowCapture => PrivacyPolicy::AllowCapture,
             },
-            communication_provider,
             provider_profile,
         }
     }
@@ -239,33 +195,8 @@ mod tests {
     }
 
     #[test]
-    fn communication_protocol_defaults_to_iroh() {
-        let args = plan_args(&["torca-deploy", "plan"]);
-        assert_eq!(
-            args.plan(DeployAction::RedeployCurrent).communication_provider,
-            iroh_provider()
-        );
-    }
-
-    #[test]
-    fn communication_protocol_can_be_selected_by_canonical_flag() {
-        let args = plan_args(&["torca-deploy", "plan", "--communication-provider", "iroh"]);
-        assert_eq!(
-            args.plan(DeployAction::RedeployCurrent).communication_provider,
-            iroh_provider()
-        );
-    }
-
-    #[test]
     fn provider_profile_is_carried_by_the_plan() {
-        let args = plan_args(&[
-            "torca-deploy",
-            "plan",
-            "--communication-provider",
-            "iroh",
-            "--provider-profile",
-            "direct-only",
-        ]);
+        let args = plan_args(&["torca-deploy", "plan", "--provider-profile", "direct-only"]);
         assert_eq!(
             args.plan(DeployAction::RedeployCurrent).provider_profile.as_deref(),
             Some("direct-only")
@@ -274,7 +205,7 @@ mod tests {
 
     #[test]
     fn iroh_gets_a_stable_default_profile_in_the_plan() {
-        let args = plan_args(&["torca-deploy", "plan", "--communication-provider", "iroh"]);
+        let args = plan_args(&["torca-deploy", "plan"]);
         assert_eq!(
             args.plan(DeployAction::RedeployCurrent).provider_profile.as_deref(),
             Some("always")

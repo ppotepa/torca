@@ -38,7 +38,6 @@ void main() {
       const contact = ContactDto(
         id: '00000000000000000000000000000001',
         displayName: 'Peer',
-        onionAddress: 'example.onion',
         status: 'active',
         connectionState: 'ready',
         peerHealth: health,
@@ -83,9 +82,9 @@ void main() {
     'provider-neutral readiness and contact routes decode without onion data',
     () {
       final snapshot = AppSnapshotDto.fromJson(<String, dynamic>{
-        'communicationProvider': 'webrtc',
+        'communicationProvider': 'iroh',
         'communicationState': 'ready',
-        'endpointSummary': 'signalling ready',
+        'endpointSummary': 'Iroh ready',
         'transport': <String, dynamic>{
           'communication': <String, dynamic>{'state': 'ready'},
         },
@@ -94,8 +93,7 @@ void main() {
             'id': '00000000000000000000000000000001',
             'remoteIdentityId': '00000000000000000000000000000002',
             'displayName': 'Peer',
-            'onionAddress': '',
-            'transportProvider': 'webrtc',
+            'transportProvider': 'iroh',
             'endpointAvailable': true,
             'status': 'active',
             'connectionState': 'ready',
@@ -103,9 +101,9 @@ void main() {
         ],
       });
 
-      expect(snapshot.communicationProvider, 'webrtc');
+      expect(snapshot.communicationProvider, 'iroh');
       expect(snapshot.transport.communication.state, 'ready');
-      expect(snapshot.contacts.single.transportProvider, 'webrtc');
+      expect(snapshot.contacts.single.transportProvider, 'iroh');
       expect(snapshot.contacts.single.endpointAvailable, isTrue);
     },
   );

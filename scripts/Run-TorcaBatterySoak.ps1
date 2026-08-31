@@ -11,7 +11,6 @@ param(
     [Parameter(Mandatory = $false)][switch]$RequireScreenOff,
     [Parameter(Mandatory = $false)][switch]$CollectNativeDiagnostics,
     [Parameter(Mandatory = $false)][string]$NativeLogRoot,
-    [Parameter(Mandatory = $false)][ValidateSet('tor', 'iroh', 'webrtc')][string]$CommunicationProvider = 'iroh',
     [Parameter(Mandatory = $false)][ValidateSet('always', 'direct', 'local')][string]$ProviderProfile = 'direct',
     [Parameter(Mandatory = $false)][ValidateRange(1, 3)][int]$AutoDeployAttempts = 2,
     [Parameter(Mandatory = $false)][switch]$ValidateAfter
@@ -135,13 +134,8 @@ function Ensure-PackageInstalled {
             'deploy', '--target', 'android', '--device', $DeviceId,
             '--configuration', 'debug', '--client-build', 'if-required',
             '--client-data', 'preserve', '--validation', 'quick', '--launch', 'restart',
-            '--communication-provider', $CommunicationProvider
+            '--provider-profile', $ProviderProfile
         )
-        if ($CommunicationProvider -eq 'iroh') {
-            $deployArguments += @('--provider-profile', $ProviderProfile)
-        } elseif ($CommunicationProvider -eq 'tor') {
-            $deployArguments += @('--relay-build', 'if-required', '--onion', 'ensure')
-        }
         Write-Host "--- Android auto-deploy attempt $attempt/$AutoDeployAttempts (live output) ---"
         Push-Location $repoRoot
         try {
@@ -235,8 +229,8 @@ $started = Get-Date
     powerSourceBefore = $powerSourceBefore
     batteryLevelBefore = $batteryLevelBefore
     appPid = $appPid
-    communicationProvider = $CommunicationProvider
-    providerProfile = if ($CommunicationProvider -eq 'iroh') { $ProviderProfile } else { $null }
+    communicationProvider = 'iroh'
+    providerProfile = $ProviderProfile
     screenStateAtStart = if ($RequireScreenOff) { 'dozing_or_asleep' } else { 'unspecified' }
     startedAt = $started.ToString('o')
     scenario = 'warm-start then background idle'

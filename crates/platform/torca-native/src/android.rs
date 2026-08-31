@@ -183,6 +183,36 @@ pub(crate) fn database_path() -> Result<PathBuf, ProtectedSecretStoreError> {
 pub(crate) fn log_root_path() -> Result<PathBuf, ProtectedSecretStoreError> {
     string_method("logRootPath").map(PathBuf::from)
 }
+
+/// Mirrors redaction-safe native lifecycle events into logcat. Release APKs
+/// cannot be inspected with `run-as`, so provider startup remains diagnosable
+/// without exposing private routes or message content.
+pub(crate) fn log_event(
+    domain: &str,
+    level: &str,
+    code: &str,
+    message: &str,
+) -> Result<(), ProtectedSecretStoreError> {
+    with_env(|env| {
+        let domain = JObject::from(env.new_string(domain)?);
+        let level = JObject::from(env.new_string(level)?);
+        let code = JObject::from(env.new_string(code)?);
+        let message = JObject::from(env.new_string(message)?);
+        let class = bridge_class(env)?;
+        env.call_static_method(
+            class,
+            "reportNativeEvent",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+            &[
+                JValue::Object(&domain),
+                JValue::Object(&level),
+                JValue::Object(&code),
+                JValue::Object(&message),
+            ],
+        )?;
+        Ok(())
+    })
+}
 fn string_method(method: &str) -> Result<String, ProtectedSecretStoreError> {
     with_env(|env| {
         let class = bridge_class(env)?;

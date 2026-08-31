@@ -2,7 +2,7 @@
 // Generated from: crates/platform/torca-contract/schema/torca_contract.json
 
 pub const SCHEMA_VERSION: u16 = 1;
-pub const CONTRACT_VERSION: u16 = 23;
+pub const CONTRACT_VERSION: u16 = 25;
 pub const COMMANDS: &[&str] = &[
     "profile.set",
     "pairing.create",

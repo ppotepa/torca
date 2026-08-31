@@ -16,7 +16,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
-use crate::{Cli, CommunicationProvider, FaultProfile, FixtureMode, Scenario, Workload};
+use crate::{Cli, FaultProfile, FixtureMode, Scenario, Workload};
 
 const SCENARIOS: [(Scenario, &str, &str); 5] = [
     (
@@ -55,7 +55,6 @@ enum Field {
     RequireScreenOff,
     NativeDiagnostics,
     Fixture,
-    Provider,
 }
 
 pub(crate) fn choose_plan() -> Result<Option<Cli>, String> {
@@ -139,16 +138,13 @@ fn edit_plan(
     let mut native_diagnostics = true;
     let mut fixture =
         if scenario == Scenario::ActiveMessaging { FixtureMode::Auto } else { FixtureMode::None };
-    // New physical soak runs always measure the production Iroh provider.
-    let mut provider = CommunicationProvider::default();
     loop {
         let device = devices.get(device_index).map_or("none detected", String::as_str);
         terminal.draw(|frame| {
             let text = format!(
-                "Scenario: {}\n\n{} Android: {device}\n{} Provider: {provider:?}\n{} Duration: {duration_minutes} min\n{} Fake peers: {peers}\n{} Fixture: {fixture:?}\n{} Require unplugged: {require_unplugged}\n{} Require screen off: {require_screen_off}\n{} Native diagnostics: {native_diagnostics}\n\nLeft/Right change   Tab/Up/Down field   Enter start   Esc back",
+                "Scenario: {}\n\n{} Android: {device}\n   Provider: Iroh\n{} Duration: {duration_minutes} min\n{} Fake peers: {peers}\n{} Fixture: {fixture:?}\n{} Require unplugged: {require_unplugged}\n{} Require screen off: {require_screen_off}\n{} Native diagnostics: {native_diagnostics}\n\nLeft/Right change   Tab/Up/Down field   Enter start   Esc back",
                 scenario_label(scenario),
                 marker(matches!(field, Field::Device)),
-                marker(matches!(field, Field::Provider)),
                 marker(matches!(field, Field::Duration)),
                 marker(matches!(field, Field::Peers)),
                 marker(matches!(field, Field::Fixture)),
@@ -205,19 +201,6 @@ fn edit_plan(
                             (FixtureMode::Reuse, false) => FixtureMode::Auto,
                         };
                     }
-                    Field::Provider => {
-                        let providers = CommunicationProvider::selectable();
-                        let current =
-                            providers.iter().position(|value| *value == provider).unwrap_or(0);
-                        let next = if increase {
-                            (current + 1) % providers.len()
-                        } else if current == 0 {
-                            providers.len() - 1
-                        } else {
-                            current - 1
-                        };
-                        provider = providers[next].clone();
-                    }
                     Field::RequireUnplugged => require_unplugged = !require_unplugged,
                     Field::RequireScreenOff => require_screen_off = !require_screen_off,
                     Field::NativeDiagnostics => native_diagnostics = !native_diagnostics,
@@ -245,7 +228,6 @@ fn edit_plan(
                     preserve_profiles: false,
                     fake_peers: peers,
                     duration_seconds: duration_minutes * 60,
-                    communication_provider: provider.clone(),
                     workload: Workload::Balanced,
                     radio: false,
                     fault_profile: if scenario == Scenario::ActiveMessaging {
@@ -285,9 +267,8 @@ fn review_plan(
         terminal.draw(|frame| {
             let android = plan.android.as_deref().unwrap_or("not required");
             let text = format!(
-                "Scenario: {}\nAndroid: {android}\nProvider: {:?}\nDuration: {} min\nFake peers: {}\nFixture: {:?}\nAuto deploy: {}\nUnplugged required: {}\nScreen off required: {}\nNative diagnostics: {}\nValidation: {}\n\nEnter starts the soak. Esc returns to configuration.",
+                "Scenario: {}\nAndroid: {android}\nProvider: Iroh\nDuration: {} min\nFake peers: {}\nFixture: {:?}\nAuto deploy: {}\nUnplugged required: {}\nScreen off required: {}\nNative diagnostics: {}\nValidation: {}\n\nEnter starts the soak. Esc returns to configuration.",
                 scenario_label(plan.scenario),
-                plan.communication_provider,
                 plan.duration_seconds.div_ceil(60),
                 plan.fake_peers,
                 plan.fixture,
@@ -355,8 +336,7 @@ fn next_field(field: Field) -> Field {
         Field::Device => Field::Duration,
         Field::Duration => Field::Peers,
         Field::Peers => Field::Fixture,
-        Field::Fixture => Field::Provider,
-        Field::Provider => Field::RequireUnplugged,
+        Field::Fixture => Field::RequireUnplugged,
         Field::RequireUnplugged => Field::RequireScreenOff,
         Field::RequireScreenOff => Field::NativeDiagnostics,
         Field::NativeDiagnostics => Field::Device,
@@ -369,8 +349,7 @@ fn previous_field(field: Field) -> Field {
         Field::Duration => Field::Device,
         Field::Peers => Field::Duration,
         Field::Fixture => Field::Peers,
-        Field::Provider => Field::Fixture,
-        Field::RequireUnplugged => Field::Provider,
+        Field::RequireUnplugged => Field::Fixture,
         Field::RequireScreenOff => Field::RequireUnplugged,
         Field::NativeDiagnostics => Field::RequireScreenOff,
     }

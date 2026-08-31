@@ -229,13 +229,35 @@ fn advance_runtime_start(&mut self) {
     } else if self.host_start.is_some()
         && self.host_start_deadline.is_some_and(|deadline| Instant::now() >= deadline)
     {
+        // Detach the receiver so a wedged provider worker cannot keep the
+        // commissioning screen in an eternal "starting" state. The worker
+        // observes the dropped channel and shuts down any late-created owner.
+        self.host_start = None;
         self.host_start_deadline = None;
+        self.host_failures = self.host_failures.saturating_add(1);
+        let retry_exhausted = self.host_failures >= NETWORK_MAX_ATTEMPTS;
+        self.host_state_hint = if retry_exhausted {
+            CommunicationState::Failed
+        } else {
+            CommunicationState::Degraded
+        };
+        self.host_status_code = Some(if retry_exhausted {
+            "COMMUNICATION_FAILED"
+        } else {
+            "COMMUNICATION_RETRYING"
+        }.into());
+        self.host_status_summary = Some(if retry_exhausted {
+            "The communication provider did not finish starting; retry or restart the application"
+        } else {
+            "The communication provider took too long to start; retrying"
+        }.into());
+        self.host_retry_at = (!retry_exhausted).then(|| Instant::now() + Duration::from_secs(5));
         self.log(
             "bootstrap",
             Level::Warn,
             "runtime",
-            "RUNTIME_START_SLOW",
-            "Production network runtime is still bootstrapping after 120 seconds",
+            "RUNTIME_START_TIMEOUT",
+            "Production network runtime startup timed out",
         );
     }
     if self.host.is_none()
@@ -283,6 +305,17 @@ fn is_closed(&self) -> bool {
 }
 
 pub(crate) fn log(&self, domain: &str, level: Level, component: &str, code: &str, message: &str) {
+    #[cfg(target_os = "android")]
+    {
+        let level_name = match level {
+            Level::Trace => "trace",
+            Level::Debug => "debug",
+            Level::Info => "info",
+            Level::Warn => "warn",
+            Level::Error => "error",
+        };
+        let _ = crate::composition::android::log_event(domain, level_name, code, message);
+    }
     if let Some(logger) = &self.logger {
         let _ = logger.event(domain, level, component, code, message);
     }

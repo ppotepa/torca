@@ -58,7 +58,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
   @override
   Widget build(BuildContext context) => PopScope(
     // Network completion continues in the runtime; it must never trap the user
-    // inside a modal while relay or peer connectivity is recovering.
+    // inside a modal while rendezvous or peer connectivity is recovering.
     canPop: true,
     child: Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),

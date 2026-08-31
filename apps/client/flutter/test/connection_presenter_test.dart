@@ -11,7 +11,7 @@ void main() {
         blocked: false,
         icons: icons,
       ).label,
-      'Direct P2P over Tor',
+      'Direct Iroh contact',
     );
     expect(
       ConnectionStatePresenter.peer(
@@ -47,15 +47,15 @@ void main() {
     );
   });
 
-  test('Tor states have one canonical presentation mapping', () {
-    expect(ConnectionStatePresenter.tor('ready', icons).label, 'Tor ready');
+  test('Iroh states have one canonical presentation mapping', () {
+    expect(ConnectionStatePresenter.iroh('ready', icons).label, 'Iroh ready');
     expect(
-      ConnectionStatePresenter.tor('starting', icons).label,
-      'Tor starting',
+      ConnectionStatePresenter.iroh('starting', icons).label,
+      'Iroh starting',
     );
     expect(
-      ConnectionStatePresenter.tor('reconnecting', icons).label,
-      'Tor reconnecting',
+      ConnectionStatePresenter.iroh('reconnecting', icons).label,
+      'Iroh reconnecting',
     );
   });
 

@@ -322,19 +322,21 @@ mod tests {
         // endpoint may still be publishing while the application shell is
         // already safe to expose.
         let projection = torca_transport_api::ProviderCommissioning {
-            provider: torca_foundation::ProviderId::default(),
+            provider: torca_foundation::ProviderId::new("iroh").expect("static test provider"),
             steps: vec![
                 torca_transport_api::CommissioningStep {
                     stage: torca_transport_api::CommissioningStage::LocalRuntime,
                     state: torca_transport_api::CommissioningState::Ready,
                     required_for_local_shell: true,
                     required_for_pairing: true,
+                    presentation: None,
                 },
                 torca_transport_api::CommissioningStep {
                     stage: torca_transport_api::CommissioningStage::IncomingReachability,
                     state: torca_transport_api::CommissioningState::Pending,
                     required_for_local_shell: false,
                     required_for_pairing: false,
+                    presentation: None,
                 },
             ],
             endpoint_summary: None,
@@ -422,12 +424,13 @@ mod tests {
     fn provider_without_incoming_requirement_can_unlock_local_profile() {
         let mut state = BootstrapState::new();
         let commissioning = torca_transport_api::ProviderCommissioning {
-            provider: torca_foundation::ProviderId::default(),
+            provider: torca_foundation::ProviderId::new("iroh").expect("static test provider"),
             steps: vec![torca_transport_api::CommissioningStep {
                 stage: torca_transport_api::CommissioningStage::LocalRuntime,
                 state: torca_transport_api::CommissioningState::Ready,
                 required_for_local_shell: true,
                 required_for_pairing: true,
+                presentation: None,
             }],
             endpoint_summary: Some("iroh:test".into()),
             route_state: torca_transport_api::ProviderRouteState::Fresh,

@@ -11,22 +11,22 @@ pub fn summary_with_width(report: &PreflightReport, width: usize) -> String {
         .iter()
         .map(|check| {
             let marker = match check.status {
-                CheckStatus::Pass => "âœ“",
+                CheckStatus::Pass => "[OK]",
                 CheckStatus::Warn => "!",
-                CheckStatus::Fail => "âœ—",
-                CheckStatus::Skipped => "â—‹",
+                CheckStatus::Fail => "[X]",
+                CheckStatus::Skipped => "[ ]",
             };
             match check.remediation.as_deref() {
                 Some(remediation) => {
                     format!(
-                        "{marker} {} â€” {}\n  remediation: {}",
+                        "{marker} {} - {}\n  remediation: {}",
                         crate::tui::layout::ellipsize(&check.name, detail_width / 3),
                         crate::tui::layout::ellipsize(&check.detail, detail_width),
                         crate::tui::layout::ellipsize(remediation, detail_width),
                     )
                 }
                 None => format!(
-                    "{marker} {} â€” {}",
+                    "{marker} {} - {}",
                     crate::tui::layout::ellipsize(&check.name, detail_width / 3),
                     crate::tui::layout::ellipsize(&check.detail, detail_width),
                 ),

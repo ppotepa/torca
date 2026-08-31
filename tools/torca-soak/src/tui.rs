@@ -501,7 +501,7 @@ fn draw(frame: &mut ratatui::Frame, ctx: &UiContext, cli: &Cli, show_logs: bool,
         )),
         ListItem::new(format!(
             "Provider: {} [{}]",
-            cli.communication_provider.wire_value(),
+            "iroh",
             ctx.provider_health
                 .lock()
                 .map(|value| value.clone())

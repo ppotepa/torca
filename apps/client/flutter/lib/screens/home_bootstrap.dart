@@ -98,7 +98,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
     final color = Theme.of(context).colorScheme;
     // The active provider owns its commissioning stages. Keep the legacy
     // list only as a migration fallback for snapshots produced by older
-    // native binaries; never make onion/reachability a Flutter requirement.
+    // native binaries; never make route reachability a Flutter requirement.
     final steps = widget.snapshot.bootstrapSteps.isEmpty
         ? const <String>[
             'local_storage',
@@ -192,7 +192,8 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 for (final step in projectedSteps)
                                   _BootstrapStepTile(
                                     step: step,
-                                    label: _bootstrapLabel(step.id),
+                                    label:
+                                        step.label ?? _bootstrapLabel(step.id),
                                     elapsed: _elapsedFor(step),
                                     retryRemaining: _retryRemaining(step),
                                   ),
@@ -389,6 +390,14 @@ class _BootstrapStepTile extends StatelessWidget {
     final id = step.id;
     final value = step.typedState;
     final code = step.code;
+    final providerSummary = step.summary;
+    if (providerSummary != null &&
+        providerSummary.isNotEmpty &&
+        (value == BootstrapStepState.running ||
+            value == BootstrapStepState.verifying ||
+            value == BootstrapStepState.ready)) {
+      return providerSummary;
+    }
     if (value == BootstrapStepState.running ||
         value == BootstrapStepState.verifying) {
       if (id == 'communication_runtime') {

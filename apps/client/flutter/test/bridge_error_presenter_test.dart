@@ -11,7 +11,7 @@ void main() {
     expect(result.errorCode, 'network_unavailable');
     expect(
       BridgeErrorPresenter.message(result),
-      'The secure Tor peer connection is currently unavailable.',
+      'The Iroh peer connection is currently unavailable.',
     );
   });
 
@@ -30,12 +30,12 @@ void main() {
   test('localization keys are never rendered as user-facing text', () {
     const result = BridgeResultDto(
       ok: false,
-      kind: 'error:RELAY_NOT_READY',
-      messageKey: 'relay.not_ready',
+      kind: 'error:RUNTIME_UNAVAILABLE',
+      messageKey: 'runtime.unavailable',
     );
     expect(
       BridgeErrorPresenter.message(result),
-      'Pairing is unavailable until the selected communication provider is ready.',
+      'The Iroh communication runtime is currently unavailable.',
     );
   });
 

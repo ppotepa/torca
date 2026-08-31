@@ -9,9 +9,7 @@ class ConnectionIndicator extends StatelessWidget {
   const ConnectionIndicator({
     required this.state,
     required this.blocked,
-    // Kept for widgets compiled against the legacy contract. Screens that
-    // render a contact always pass its provider explicitly.
-    this.provider = 'tor',
+    this.provider = 'iroh',
     this.showLabel = true,
     super.key,
   });

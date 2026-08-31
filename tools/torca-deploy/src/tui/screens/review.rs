@@ -8,9 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::domain::{
-    DeployPlan, PlanDiff, PreflightReport, PrivacyPolicy, ProviderMetadataExt, StepDisposition,
-};
+use crate::domain::{DeployPlan, PlanDiff, PreflightReport, PrivacyPolicy, StepDisposition};
 use crate::tui::{
     input::InputGuard,
     theme::{Theme, ThemeKind},
@@ -79,32 +77,27 @@ pub fn text_with_diff(plan: &DeployPlan, report: &PreflightReport, diff: &PlanDi
         .into_iter()
         .map(|step| {
             let marker = match step.disposition {
-                StepDisposition::Execute => "âœ“",
-                StepDisposition::Reuse => "â†’",
-                StepDisposition::Skip => "â—‹",
-                StepDisposition::Blocked => "âœ—",
+                StepDisposition::Execute => "[OK]",
+                StepDisposition::Reuse => "[->]",
+                StepDisposition::Skip => "[ ]",
+                StepDisposition::Blocked => "[X]",
             };
-            format!("{marker} {} â€” {}", step.label, step.reason)
+            format!("{marker} {} - {}", step.label, step.reason)
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let provider = plan.communication_provider.descriptor();
     let normalization = if diff.changes.is_empty() {
         String::new()
     } else {
         format!("\n\nAutomatic normalization\n{}", diff.changes.join("\n"))
     };
     format!(
-        "Action: {}\nTargets: {}\nDevices: {}\nBuild: {}\nCommunication protocol: {}\n  {}\nProvider profile: {}\nProvider service: {}\nProvider maintenance: {:?}\nPrivacy: {}\n\nSteps\n{}{}\n\nPress y to execute, n/Esc to cancel",
+        "Action: {}\nTargets: {}\nDevices: {}\nBuild: {}\nProvider: Iroh\nIroh profile: {}\nPrivacy: {}\n\nSteps\n{}{}\n\nPress y to execute, n/Esc to cancel",
         plan.action,
         if targets.is_empty() { "none" } else { &targets },
         devices,
         plan.configuration,
-        plan.communication_provider.protocol_label(),
-        provider.description,
         plan.provider_profile.as_deref().unwrap_or("default"),
-        if provider.managed_service { "managed" } else { "none" },
-        plan.provider_maintenance,
         privacy_label(plan.privacy),
         steps,
         normalization

@@ -101,7 +101,7 @@ class DesktopLifecycle with WindowListener, TrayListener {
         items: <MenuItem>[
           MenuItem(key: 'show', label: 'Show Torca'),
           MenuItem(
-            key: 'tor-status',
+            key: 'provider-status',
             label:
                 '${snapshot.communicationProvider.toUpperCase()}: ${_communicationLabel(snapshot.communicationState)}',
           ),

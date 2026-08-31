@@ -8,7 +8,7 @@ use crate::composition::NativeCompositionError;
 #[cfg(windows)]
 pub(crate) fn windows_app_root() -> Result<PathBuf, NativeCompositionError> {
     // A laboratory peer runs in a separate process and must never share a
-    // profile, identity, SQLite database or Tor cache with the desktop host.
+    // profile, identity, SQLite database or provider cache with the desktop host.
     // Normal clients do not set this value and retain the stable LocalAppData
     // location. The override is deliberately process-scoped, never persisted.
     let root = if let Some(root) = std::env::var_os("TORCA_APP_ROOT") {

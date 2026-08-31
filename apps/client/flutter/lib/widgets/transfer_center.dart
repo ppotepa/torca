@@ -288,8 +288,7 @@ class _PendingOperationRow extends StatelessWidget {
       PendingOperationDependency.communication => 'transport',
       PendingOperationDependency.communicationAndRendezvous =>
         'transport + rendezvous',
-      PendingOperationDependency.relay => 'service',
-      PendingOperationDependency.torOnionAndRelay => 'service',
+      PendingOperationDependency.rendezvous => 'rendezvous',
       PendingOperationDependency.runtime => 'runtime',
       PendingOperationDependency.network => 'network',
       PendingOperationDependency.unknown => null,

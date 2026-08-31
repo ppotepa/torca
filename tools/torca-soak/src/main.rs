@@ -17,7 +17,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
-use torca_deploy::domain::CommunicationProvider;
 
 mod events;
 mod report;
@@ -38,11 +37,6 @@ enum Scenario {
     RuntimeLab,
     /// Repeated deterministic Rust test suite.
     Deterministic,
-}
-
-fn parse_communication_provider(value: &str) -> Result<CommunicationProvider, String> {
-    CommunicationProvider::from_wire(value.trim().to_ascii_lowercase().as_str())
-        .map_err(|_| format!("unsupported communication provider '{value}'"))
 }
 
 #[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
@@ -96,9 +90,6 @@ pub(crate) struct Cli {
     fake_peers: usize,
     #[arg(long, default_value_t = 1800)]
     duration_seconds: u64,
-    /// Communication provider used by Android and isolated lab peers.
-    #[arg(long, value_parser = parse_communication_provider, default_value = "iroh")]
-    communication_provider: CommunicationProvider,
     #[arg(long, value_enum, default_value_t = Workload::Balanced)]
     workload: Workload,
     /// Include the high-cost Radio path in the workload. Disabled by default
@@ -567,15 +558,6 @@ fn run() -> Result<(), String> {
     {
         cli.fault_profile = FaultProfile::None;
     }
-    if cli.communication_provider.as_str() != "iroh" {
-        return Err("the alpha soak runner supports Iroh only".into());
-    }
-    if cli.radio && cli.communication_provider.as_str() != "iroh" {
-        return Err(format!(
-            "radio workload is not supported by communication provider '{}'",
-            cli.communication_provider.wire_value()
-        ));
-    }
     let auto_fixture_requested = cli.fixture == FixtureMode::Auto;
     if auto_fixture_requested {
         // Active Messaging is a measurement scenario and must not inherit
@@ -694,15 +676,9 @@ fn run_battery_harness(cli: &Cli) -> Result<(), String> {
         "-NativeLogRoot".to_owned(),
         format!("/sdcard/Android/data/{}/files/torca/logs", android_package()),
         "-CommunicationProvider".to_owned(),
-        cli.communication_provider.wire_value().to_owned(),
+        "iroh".to_owned(),
     ];
-    if cli.communication_provider.as_str() == "iroh" {
-        args.extend([
-            "-ProviderProfile".to_owned(),
-            iroh_profile_for_soak(cli.communication_provider.clone(), cli.scenario)
-                .unwrap_or_else(|| "direct".to_owned()),
-        ]);
-    }
+    args.extend(["-ProviderProfile".to_owned(), iroh_profile_for_soak(cli.scenario)]);
     if cli.require_unplugged {
         args.push("-RequireUnplugged".to_owned());
     }
@@ -894,8 +870,8 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         workload: format!("{:?}", cli.workload),
         radio: cli.radio,
         fault_profile: format!("{:?}", cli.fault_profile),
-        communication_provider: cli.communication_provider.wire_value().to_owned(),
-        iroh_profile: iroh_profile_for_soak(cli.communication_provider.clone(), cli.scenario),
+        communication_provider: "iroh".to_owned(),
+        iroh_profile: Some(iroh_profile_for_soak(cli.scenario)),
         fixture: format!("{:?}", cli.fixture),
         fixture_name: cli.fixture_name.clone(),
         started_at_ms: started.as_millis(),
@@ -920,18 +896,18 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         &mut timeline,
         "provider_ready",
         serde_json::json!({
-            "provider": cli.communication_provider.wire_value(),
+            "provider": "iroh",
             "endpoint": endpoint.as_deref().unwrap_or_default(),
             "health": "ready",
             "service": if provider_requires_service { "managed" } else { "provider_owned" },
             "serviceRequired": provider_requires_service,
-            "incoming": if provider_requires_service { "onion_pending" } else { "provider_owned" }
+            "incoming": if provider_requires_service { "route_pending" } else { "provider_owned" }
         }),
     )?;
 
-    let iroh_profile = iroh_profile_for_soak(cli.communication_provider.clone(), cli.scenario);
+    let iroh_profile = Some(iroh_profile_for_soak(cli.scenario));
     let peer_executable = if cli.bot_host.is_none() {
-        build_lab_peer(&cli.repo_root, cli.communication_provider.clone(), iroh_profile.as_deref())?
+        build_lab_peer(&cli.repo_root, iroh_profile.as_deref())?
     } else {
         cli.lab_peer.clone().unwrap_or_else(default_lab_peer_path)
     };
@@ -957,7 +933,6 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
                     serial,
                     !cli.preserve_profiles && cli.fixture != FixtureMode::Reuse,
                     reuse_built_artifact,
-                    cli.communication_provider.clone(),
                     iroh_profile.as_deref(),
                 ) {
                     Ok(()) => break,
@@ -1058,7 +1033,7 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
         record(
             &mut timeline,
             "provider_ready",
-            serde_json::json!({"peer": peer.name(), "provider": cli.communication_provider.wire_value()}),
+            serde_json::json!({"peer": peer.name(), "provider": "iroh"}),
         )?;
     }
 
@@ -1107,9 +1082,8 @@ fn run_scenario_inner(cli: Cli) -> Result<(), String> {
                 .iter_mut()
                 .find(|peer| matches!(peer, Participant::Android(_)))
                 .ok_or("Android participant missing from reusable fixture")?;
-            // The relationship already exists in a reusable fixture. Relay is
-            // only needed for the original pairing transaction; workload
-            // recovery needs local Tor, not a fresh rendezvous publication.
+            // The relationship already exists in a reusable fixture. A fresh
+            // rendezvous publication is unnecessary for workload recovery.
             wait_for_provider_ready(android)?;
             record(&mut timeline, "fixture_reused", serde_json::json!({"name": cli.fixture_name}))?;
         } else {
@@ -1482,18 +1456,13 @@ fn wait_for_android_preflight_retry(serial: &str, error: &str) -> bool {
     false
 }
 
-fn build_lab_peer(
-    repo_root: &Path,
-    provider: CommunicationProvider,
-    iroh_profile: Option<&str>,
-) -> Result<PathBuf, String> {
+fn build_lab_peer(repo_root: &Path, iroh_profile: Option<&str>) -> Result<PathBuf, String> {
     // `cargo run -p torca-soak` already owns Cargo's workspace target lock.
     // Building the peer into that same target from inside the orchestrator
     // deadlocks before rustc starts. A provider/profile-specific target also
-    // prevents a Tor binary from being accidentally reused for Iroh.
+    // prevents a binary for another provider from being reused for Iroh.
     let profile_key = iroh_profile.map_or_else(|| "default".to_owned(), sanitize_profile_key);
-    let target_dir =
-        repo_root.join(".torca/soak/build").join(provider.wire_value()).join(profile_key);
+    let target_dir = repo_root.join(".torca/soak/build/iroh").join(profile_key);
     let target_dir_argument = target_dir.to_string_lossy().into_owned();
     fs::create_dir_all(&target_dir)
         .map_err(|error| format!("create lab peer target directory: {error}"))?;
@@ -2038,26 +2007,22 @@ fn pairing_join_payload(pairing: &serde_json::Value) -> Result<serde_json::Value
             "provider": provider,
             "payloadHex": payload_hex,
         });
-    } else if provider.is_some_and(|value| value != "tor") {
-        return Err(format!(
-            "direct provider invitation is missing its bootstrap descriptor: {uri}"
-        ));
+    } else {
+        return Err(format!("provider invitation is missing its bootstrap descriptor: {uri}"));
     }
     Ok(payload)
 }
 
-/// Pairing writes the invitation to the relay. Do not create it while the
-/// local Tor process is merely `LOCAL_READY`: that command can be accepted
-/// locally and then remain invisible forever if the secure relay lane is still
-/// warming up. The fixture deploy therefore gates pairing on real relay
-/// evidence, not only on the aggregate bootstrap phase.
+/// Pairing publishes the invitation through the provider rendezvous path.
+/// Gate fixture creation on both communication and rendezvous evidence so a
+/// locally accepted command cannot produce an invitation invisible to peers.
 fn wait_for_pairing_network(peer: &mut Participant) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut attempt = 0u32;
     let mut last_phase = "unknown".to_owned();
     let mut last_provider = "unknown".to_owned();
     let mut last_communication = "unknown".to_owned();
-    let mut last_relay = "unknown".to_owned();
+    let mut last_rendezvous = "unknown".to_owned();
     let mut last_error = String::new();
     while Instant::now() < deadline && !tui::cancel_requested() {
         attempt = attempt.saturating_add(1);
@@ -2082,26 +2047,16 @@ fn wait_for_pairing_network(peer: &mut Participant) -> Result<(), String> {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("unknown")
                     .clone_into(&mut last_communication);
-                if last_provider == "tor" {
-                    snapshot
-                        .pointer("/snapshot/transport/tor/state")
-                        .or_else(|| snapshot.pointer("/transport/tor/state"))
-                        .or_else(|| snapshot.pointer("/snapshot/torState"))
-                        .or_else(|| snapshot.get("torState"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown")
-                        .clone_into(&mut last_communication);
-                }
                 snapshot
-                    .pointer("/snapshot/transport/relay/state")
-                    .or_else(|| snapshot.pointer("/transport/relay/state"))
+                    .pointer("/snapshot/transport/rendezvous/state")
+                    .or_else(|| snapshot.pointer("/transport/rendezvous/state"))
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("unknown")
-                    .clone_into(&mut last_relay);
+                    .clone_into(&mut last_rendezvous);
                 let provider_ready = matches!(last_communication.as_str(), "ready" | "healthy");
-                let provider_route_ready =
-                    last_provider != "tor" || matches!(last_relay.as_str(), "ready" | "healthy");
-                if provider_ready && provider_route_ready {
+                let rendezvous_ready =
+                    matches!(last_rendezvous.as_str(), "ready" | "healthy" | "inactive");
+                if provider_ready && rendezvous_ready {
                     return Ok(());
                 }
                 last_error.clear();
@@ -2111,14 +2066,13 @@ fn wait_for_pairing_network(peer: &mut Participant) -> Result<(), String> {
         tui::controlled_sleep(Duration::from_secs(2));
     }
     Err(format!(
-        "{} pairing network did not become ready within 300s: phase={last_phase} provider={last_provider} communication={last_communication} relay={last_relay}; last_error={last_error}",
+        "{} pairing network did not become ready within 300s: phase={last_phase} provider={last_provider} communication={last_communication} rendezvous={last_rendezvous}; last_error={last_error}",
         peer.name()
     ))
 }
 
-/// A reused relationship must not be gated on relay publication. Once the
-/// local Tor runtime is ready, the existing onion peer session can recover
-/// independently and the workload can exercise that path.
+/// A reused relationship is independent of publishing a new pairing
+/// invitation. Once communication is ready, its persisted route can recover.
 fn wait_for_provider_ready(peer: &mut Participant) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(180);
     let mut attempt = 0u32;
@@ -2194,7 +2148,7 @@ fn wait_for_pairing_invitation(
     let mut latest = initial.clone();
     let mut attempt = 0u32;
     let mut last_error = None;
-    let mut relay_degraded_since = None;
+    let mut rendezvous_degraded_since = None;
     let mut observed_once = false;
     // A ready provider returns the complete invitation in the command
     // response.  Prefer that authoritative response over waiting for a
@@ -2287,28 +2241,26 @@ fn wait_for_pairing_invitation(
             Ok(snapshot) => {
                 latest = snapshot;
                 last_error = None;
-                let relay_state = latest
-                    .pointer("/snapshot/transport/relay/state")
+                let rendezvous_state = latest
+                    .pointer("/snapshot/transport/rendezvous/state")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default();
-                if relay_state == "degraded" {
-                    let since = relay_degraded_since.get_or_insert_with(Instant::now);
+                if rendezvous_state == "degraded" {
+                    let since = rendezvous_degraded_since.get_or_insert_with(Instant::now);
                     if since.elapsed() >= Duration::from_secs(20) {
                         return Err(format!(
-                            "{} pairing stopped: relay remained degraded for 20s; transport={}",
+                            "{} pairing stopped: rendezvous remained degraded for 20s; transport={}",
                             peer.name(),
-                            latest.pointer("/snapshot/transport/relay").unwrap_or(&latest)
+                            latest.pointer("/snapshot/transport/rendezvous").unwrap_or(&latest)
                         ));
                     }
                 } else {
-                    relay_degraded_since = None;
+                    rendezvous_degraded_since = None;
                 }
             }
             Err(error) => {
-                // A cold Arti bootstrap can temporarily occupy the production
-                // runtime actor longer than the lab peer's bounded 5-second
-                // query timeout. Pairing itself is asynchronous, so one busy
-                // snapshot is not evidence that the operation or runtime died.
+                // A cold provider bootstrap can temporarily occupy the runtime
+                // actor longer than the lab peer's bounded query timeout.
                 last_error = Some(error);
             }
         }
@@ -2663,7 +2615,6 @@ fn ensure_android_deployed(
     serial: &str,
     clean: bool,
     reuse_built_artifact: bool,
-    provider: CommunicationProvider,
     iroh_profile: Option<&str>,
 ) -> Result<(), String> {
     let state = Command::new("adb")
@@ -2676,14 +2627,9 @@ fn ensure_android_deployed(
             String::from_utf8_lossy(&state.stdout).trim()
         ));
     }
-    if let Err(error) = run_typed_android_deploy(
-        repo_root,
-        serial,
-        clean,
-        reuse_built_artifact,
-        provider,
-        iroh_profile,
-    ) {
+    if let Err(error) =
+        run_typed_android_deploy(repo_root, serial, clean, reuse_built_artifact, iroh_profile)
+    {
         let context = android_preflight_context(serial);
         return Err(format!("{error}; android_preflight={context}"));
     }
@@ -2720,7 +2666,6 @@ fn run_typed_android_deploy(
     serial: &str,
     clean: bool,
     reuse_built_artifact: bool,
-    provider: CommunicationProvider,
     iroh_profile: Option<&str>,
 ) -> Result<(), String> {
     let paths = torca_deploy::persistence::DeployPaths {
@@ -2745,8 +2690,6 @@ fn run_typed_android_deploy(
         // supported Android ABI, which is unnecessary for an interactive soak.
         build_plan.device = Some(serial.to_owned());
         build_plan.client_build = torca_deploy::domain::BuildPolicy::Rebuild;
-        build_plan.provider_service_build = torca_deploy::domain::BuildPolicy::Reuse;
-        build_plan.communication_provider = provider.clone();
         build_plan.provider_profile = iroh_profile.map(str::to_owned);
         build_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
         build_plan.launch = torca_deploy::domain::LaunchPolicy::Skip;
@@ -2765,14 +2708,12 @@ fn run_typed_android_deploy(
     );
     install_plan.device = Some(serial.to_owned());
     install_plan.client_build = torca_deploy::domain::BuildPolicy::Reuse;
-    install_plan.provider_service_build = torca_deploy::domain::BuildPolicy::Reuse;
-    install_plan.communication_provider = provider;
     install_plan.provider_profile = iroh_profile.map(str::to_owned);
     install_plan.validation = torca_deploy::domain::ValidationLevel::Skip;
     install_plan.client_data = if clean {
         // A clean soak profile must remove contacts/messages and fixture
-        // state, but preserve provider caches (especially Tor/Iroh directory
-        // data) so the measurement does not include an avoidable cold start.
+        // state, but preserve provider caches so the measurement does not
+        // include an avoidable cold start.
         torca_deploy::domain::ClientDataPolicy::ResetProfile
     } else {
         torca_deploy::domain::ClientDataPolicy::Preserve
@@ -3009,13 +2950,10 @@ fn wait_for_profile_setup(peer: &mut Participant) -> Result<(), String> {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("unknown")
                     .clone_into(&mut last_phase);
-                // Profile data is local durable state and does not require the
-                // onion publication to reach READY. A cold Arti bootstrap can
-                // legitimately keep onion publication in its 600s grace
-                // window, so blocking here would make a deterministic fixture
-                // impossible to provision. Identity presence proves that the
-                // local storage/runtime bootstrap has completed enough for the
-                // idempotent profile command; pairing remains network-gated.
+                // Profile data is local durable state and does not require
+                // rendezvous publication. Identity presence proves that local
+                // storage/runtime bootstrap completed far enough for the
+                // idempotent command; pairing remains network-gated.
                 if snapshot_identity(&snapshot).is_some()
                     && !matches!(last_phase.as_str(), "failed" | "idle")
                 {
@@ -3436,18 +3374,15 @@ fn spawn_peer_parts(
 }
 
 /// Returns the provider-owned profile used by soak clients. Active Messaging
-/// needs the relay/discovery fallback so a physical Android can reach host or
+/// needs the rendezvous/discovery fallback so a physical Android can reach host or
 /// remote bots across NAT; RuntimeLab deliberately stays loopback-only. The
 /// idle scenario uses direct-only to measure the lowest provider overhead.
 /// `TORCA_SOAK_IROH_PROFILE` is an explicit escape hatch for controlled runs.
-fn iroh_profile_for_soak(provider: CommunicationProvider, scenario: Scenario) -> Option<String> {
-    if provider.as_str() != "iroh" {
-        return None;
-    }
+fn iroh_profile_for_soak(scenario: Scenario) -> String {
     std::env::var("TORCA_SOAK_IROH_PROFILE")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| Some(default_iroh_profile(scenario).to_owned()))
+        .unwrap_or_else(|| default_iroh_profile(scenario).to_owned())
 }
 
 const fn default_iroh_profile(scenario: Scenario) -> &'static str {
@@ -3487,11 +3422,11 @@ fn record(file: &mut File, event: &str, data: serde_json::Value) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, CommunicationProvider, FixtureIdentity, FixtureManifest, Scenario,
-        android_package_for_soak, contact_count, conversation_count, default_iroh_profile,
-        package_path_present, pairing_by_id, parse_launchable_activity,
-        snapshot_attachment_available, snapshot_contains_message, snapshot_identity,
-        snapshot_radio_is_remote_active, validate_android_fixture_contacts, validate_fixture_name,
+        Cli, FixtureIdentity, FixtureManifest, Scenario, android_package_for_soak, contact_count,
+        conversation_count, default_iroh_profile, package_path_present, pairing_by_id,
+        parse_launchable_activity, snapshot_attachment_available, snapshot_contains_message,
+        snapshot_identity, snapshot_radio_is_remote_active, validate_android_fixture_contacts,
+        validate_fixture_name,
     };
     use clap::Parser;
     use serde_json::json;
@@ -3500,12 +3435,6 @@ mod tests {
     fn cli_defaults_to_click_and_play_active_messaging() {
         let cli = Cli::try_parse_from(["torca-soak"]).expect("default CLI should parse");
         assert_eq!(cli.scenario, Scenario::ActiveMessaging);
-        assert_eq!(cli.communication_provider, CommunicationProvider::default());
-    }
-
-    #[test]
-    fn soak_provider_gate_matches_available_native_compositions() {
-        assert_eq!(CommunicationProvider::selectable(), vec![CommunicationProvider::default()]);
     }
 
     #[test]
@@ -3527,13 +3456,7 @@ mod tests {
         assert_eq!(default_iroh_profile(Scenario::ActiveMessaging), "always");
         assert_eq!(default_iroh_profile(Scenario::RuntimeLab), "local");
         assert_eq!(default_iroh_profile(Scenario::IdleBattery), "direct");
-        assert_eq!(
-            super::iroh_profile_for_soak(
-                CommunicationProvider::default(),
-                Scenario::ActiveMessaging
-            ),
-            Some("always".to_owned())
-        );
+        assert_eq!(super::iroh_profile_for_soak(Scenario::ActiveMessaging), "always");
     }
 
     #[test]

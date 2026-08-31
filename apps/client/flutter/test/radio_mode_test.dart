@@ -59,7 +59,6 @@ const _contactId = '00000000000000000000000000000001';
 const _contact = ContactDto(
   id: _contactId,
   displayName: 'Alice',
-  onionAddress: 'alice.onion',
   status: 'active',
   connectionState: 'ready',
 );
@@ -205,8 +204,8 @@ void main() {
   ) async {
     const snapshot = AppSnapshotDto(
       transport: TransportStatusDto(
-        tor: TransportIndicatorDto(state: 'ready'),
-        relay: TransportIndicatorDto(state: 'healthy'),
+        communication: TransportIndicatorDto(state: 'ready'),
+        rendezvous: TransportIndicatorDto(state: 'healthy'),
         peer: TransportIndicatorDto(state: 'ready'),
       ),
     );
@@ -233,7 +232,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey<String>('relay-status-light')),
+      find.byKey(const ValueKey<String>('rendezvous-status-light')),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);

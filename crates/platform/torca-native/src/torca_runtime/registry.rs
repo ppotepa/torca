@@ -39,7 +39,7 @@ fn metadata() -> &'static [u8] {
             "sourceFingerprint": SOURCE_FINGERPRINT,
             "nativeAbi": NATIVE_ABI,
             "contractSchema": CONTRACT_VERSION,
-            "storageEpoch": STORAGE_EPOCH,
+            "storageEpoch": torca_storage_sqlite::STORAGE_EPOCH,
             "schemaVersion": 1,
             "wireVersion": 1,
             "communicationProvider": provider,

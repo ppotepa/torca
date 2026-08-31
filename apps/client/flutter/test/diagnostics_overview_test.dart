@@ -16,14 +16,11 @@ void main() {
             diagnosticsReadable: true,
             snapshot: AppSnapshotDto(
               identity: IdentityDto(displayName: 'Alice'),
-              communicationProvider: 'tor',
-              torState: 'ready',
-              onionAddress: 'alice.onion',
+              communicationProvider: 'iroh',
               contacts: <ContactDto>[
                 ContactDto(
                   id: '01',
                   displayName: 'Peer',
-                  onionAddress: 'peer.onion',
                   status: 'active',
                   connectionState: 'ready',
                   peerHealth: PeerHealthDto(state: 'ready', quality: 'good'),
@@ -36,8 +33,8 @@ void main() {
     );
 
     expect(find.text('Native bridge'), findsOneWidget);
-    expect(find.text('Tor'), findsOneWidget);
-    expect(find.text('Onion service'), findsOneWidget);
+    expect(find.text('Iroh'), findsOneWidget);
+    expect(find.text('Provider route'), findsOneWidget);
     expect(find.text('Direct peers'), findsOneWidget);
     expect(find.text('Diagnostics stream'), findsOneWidget);
     expect(find.text('1 of 1 direct peer links ready'), findsOneWidget);

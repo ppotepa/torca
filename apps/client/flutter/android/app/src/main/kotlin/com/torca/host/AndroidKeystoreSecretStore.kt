@@ -163,6 +163,9 @@ object AndroidKeystoreBridge {
             error("could not create Torca runtime directory")
         }
         check(nativeBindRuntime()) { "could not bind Android runtime bridge" }
+        check(nativeInitializeAudioContext(appContext)) {
+            "could not initialize Android native context"
+        }
     }
 
     @JvmStatic
@@ -189,6 +192,17 @@ object AndroidKeystoreBridge {
         Log.e("TorcaRuntime", message)
     }
 
+    @JvmStatic
+    fun reportNativeEvent(domain: String, level: String, code: String, message: String) {
+        val text = "domain=$domain code=$code message=$message"
+        when (level.lowercase()) {
+            "error" -> Log.e("TorcaRuntime", text)
+            "warn" -> Log.w("TorcaRuntime", text)
+            "debug", "trace" -> Log.d("TorcaRuntime", text)
+            else -> Log.i("TorcaRuntime", text)
+        }
+    }
+
     private fun store(namespace: String): AndroidKeystoreSecretStore = when (namespace) {
         "database" -> databaseSecrets
         "identity" -> identitySecrets
@@ -197,4 +211,5 @@ object AndroidKeystoreBridge {
     }
 
     @JvmStatic external fun nativeBindRuntime(): Boolean
+    @JvmStatic external fun nativeInitializeAudioContext(context: Context): Boolean
 }

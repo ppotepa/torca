@@ -206,7 +206,6 @@ void main() {
             ContactDto(
               id: 'contact-81',
               displayName: 'Bob',
-              onionAddress: 'bob.onion:443',
               status: 'active',
               connectionState: 'connecting',
             ),
@@ -284,7 +283,6 @@ void main() {
         FakeEngineGateway(
           initialSnapshot: const AppSnapshotDto(
             identity: IdentityDto(id: 'local-device'),
-            torState: 'ready',
             bootstrapPhase: 'ready_for_profile',
           ),
         ),
@@ -315,6 +313,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Notifications'), findsOneWidget);
     expect(find.text('Enable notifications'), findsOneWidget);
+  });
+
+  testWidgets('warm-up renders provider-owned commissioning presentation', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        FakeEngineGateway(
+          initialSnapshot: const AppSnapshotDto(
+            communicationProvider: 'iroh',
+            bootstrapPhase: 'starting',
+            bootstrapSteps: <BootstrapStepDto>[
+              BootstrapStepDto(
+                id: 'communication_runtime',
+                state: 'verifying',
+                label: 'Iroh endpoint',
+                summary: 'Binding the encrypted Iroh endpoint…',
+                progress: 40,
+                attempt: 1,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Iroh endpoint · attempt 1'), findsOneWidget);
+    expect(find.text('Binding the encrypted Iroh endpoint…'), findsOneWidget);
+    expect(find.text('40%'), findsOneWidget);
   });
 
   testWidgets('Android settings remain responsive while changing theme', (
@@ -377,19 +405,17 @@ void main() {
 
     const profileReady = AppSnapshotDto(
       identity: IdentityDto(displayName: 'Alice'),
-      torState: 'ready',
       transport: TransportStatusDto(
-        tor: TransportIndicatorDto(state: 'ready'),
-        relay: TransportIndicatorDto(state: 'healthy'),
+        communication: TransportIndicatorDto(state: 'ready'),
+        rendezvous: TransportIndicatorDto(state: 'healthy'),
       ),
       bootstrapPhase: 'ready',
     );
     const invitationCreated = AppSnapshotDto(
       identity: IdentityDto(displayName: 'Alice'),
-      torState: 'ready',
       transport: TransportStatusDto(
-        tor: TransportIndicatorDto(state: 'ready'),
-        relay: TransportIndicatorDto(state: 'healthy'),
+        communication: TransportIndicatorDto(state: 'ready'),
+        rendezvous: TransportIndicatorDto(state: 'healthy'),
       ),
       pairings: <PairingDto>[
         PairingDto(
@@ -446,10 +472,9 @@ void main() {
   ) async {
     const incoming = AppSnapshotDto(
       identity: IdentityDto(displayName: 'Alice'),
-      torState: 'ready',
       transport: TransportStatusDto(
-        tor: TransportIndicatorDto(state: 'ready'),
-        relay: TransportIndicatorDto(state: 'healthy'),
+        communication: TransportIndicatorDto(state: 'ready'),
+        rendezvous: TransportIndicatorDto(state: 'healthy'),
       ),
       pairings: <PairingDto>[
         PairingDto(
@@ -493,10 +518,9 @@ void main() {
       addTearDown(() => registry.release(pairingId));
       const incoming = AppSnapshotDto(
         identity: IdentityDto(displayName: 'Alice'),
-        torState: 'ready',
         transport: TransportStatusDto(
-          tor: TransportIndicatorDto(state: 'ready'),
-          relay: TransportIndicatorDto(state: 'healthy'),
+          communication: TransportIndicatorDto(state: 'ready'),
+          rendezvous: TransportIndicatorDto(state: 'healthy'),
         ),
         pairings: <PairingDto>[
           PairingDto(

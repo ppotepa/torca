@@ -2,7 +2,7 @@ use torca_runtime_policy::{BatteryPreferences, EffectiveBatteryPolicy, SystemEne
 
 /// Native-owned cache of host facts and persisted preference input. The cache
 /// does not control executors: `RuntimeOwner` receives these inputs and owns
-/// the effective policy it applies to Tor and communication.
+/// the effective policy it applies to communication.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BatteryPolicyState {
     pub preferences: BatteryPreferences,

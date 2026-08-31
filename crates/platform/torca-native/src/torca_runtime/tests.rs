@@ -15,7 +15,7 @@ mod tests {
         }
         assert!(value.get("providerEndpointHash").is_some());
         assert_eq!(value["nativeAbi"], NATIVE_ABI);
-        assert_eq!(value["storageEpoch"], STORAGE_EPOCH);
+        assert_eq!(value["storageEpoch"], torca_storage_sqlite::STORAGE_EPOCH);
         assert_eq!(value["contractSchema"], CONTRACT_VERSION);
         assert_eq!(
             value["capabilities"]["maxAttachmentBytes"],

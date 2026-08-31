@@ -57,6 +57,7 @@ void main() {
       'targetPlatform': 'test',
       'targetArchitecture': 'test',
       'contractSchema': 1,
+      'storageEpoch': 3,
       'wireVersion': 1,
       'capabilities': <String, dynamic>{
         'maxAttachmentBytes': 10,

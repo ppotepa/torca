@@ -115,7 +115,18 @@ impl<'a> DataController<'a> {
                         "no_backup/torca/protected-secrets",
                     ],
                 )?;
-                if output.success { Ok(()) } else { Err(DataError::Command(output.text)) }
+                if output.success {
+                    Ok(())
+                } else if output.text.to_ascii_lowercase().contains("not debuggable") {
+                    // A package left by a release build cannot use `run-as`.
+                    // The deployment is explicitly destructive, so clear the
+                    // package through Package Manager as a safe fallback.
+                    let clear =
+                        self.command(&device.id, &["shell", "pm", "clear", package_name])?;
+                    if clear.success { Ok(()) } else { Err(DataError::Command(clear.text)) }
+                } else {
+                    Err(DataError::Command(output.text))
+                }
             }
             ClientDataPolicy::ResetAll => {
                 let output = self.command(&device.id, &["shell", "pm", "clear", package_name])?;
@@ -195,12 +206,16 @@ mod tests {
     #[derive(Default)]
     struct RecordingRunner {
         commands: Mutex<Vec<CommandSpec>>,
+        run_as_not_debuggable: bool,
     }
 
     impl CommandRunner for RecordingRunner {
         fn run(&self, command: &CommandSpec) -> Result<CommandOutput, ProcessError> {
             self.commands.lock().expect("commands").push(command.clone());
-            let text = if command.arguments.ends_with(&[
+            let is_run_as = command.arguments.contains(&"run-as".into());
+            let text = if is_run_as && self.run_as_not_debuggable {
+                "run-as: package not debuggable: com.torca.torca_app\n".into()
+            } else if command.arguments.ends_with(&[
                 "shell".into(),
                 "pm".into(),
                 "list".into(),
@@ -211,7 +226,11 @@ mod tests {
             } else {
                 String::new()
             };
-            Ok(CommandOutput { success: true, status: Some(0), text })
+            Ok(CommandOutput {
+                success: !(is_run_as && self.run_as_not_debuggable),
+                status: Some(i32::from(is_run_as && self.run_as_not_debuggable)),
+                text,
+            })
         }
     }
 
@@ -245,6 +264,31 @@ mod tests {
                 "no_backup/torca/data",
                 "no_backup/torca/protected-secrets",
             ]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn android_profile_reset_falls_back_to_pm_clear_for_release_package() {
+        let root =
+            std::env::temp_dir().join(format!("torca-data-release-test-{}", std::process::id()));
+        let paths = RuntimePaths::from_repo(root.clone());
+        let runner = RecordingRunner { run_as_not_debuggable: true, ..Default::default() };
+        let device = Device {
+            target: Target::Android,
+            id: "phone".into(),
+            android_abi: Some(AndroidAbi::Arm64),
+        };
+
+        DataController::new(&paths, &runner)
+            .reset(&[device], ClientDataPolicy::ResetProfile)
+            .expect("release package reset");
+
+        let commands = runner.commands.lock().expect("commands");
+        assert_eq!(commands.len(), 4);
+        assert_eq!(
+            commands[3].arguments,
+            ["-s", "phone", "shell", "pm", "clear", "com.torca.torca_app"]
         );
         let _ = std::fs::remove_dir_all(root);
     }

@@ -7,6 +7,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 mod backend;
 mod catalog;
+mod compatibility;
 mod control_outbox;
 mod durable;
 mod durable_sqlcipher;
@@ -31,6 +32,7 @@ pub use catalog::{
     SqlStatement, contact_sql, conversation_sql, identity_sql, messaging_sql, peer_credential_sql,
     receipt_sql,
 };
+pub use compatibility::{StorageCompatibilityError, prepare_database};
 pub use control_outbox::SqlCipherControlOutbox;
 pub use durable::{
     DurableDeliveryError, DurableDeliveryStore, InMemoryDurableDeliveryStore, OutboxRecord,

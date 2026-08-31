@@ -6,8 +6,6 @@ param(
     [string]$Configuration = 'debug',
     [ValidateSet('Full', 'Quick', 'Skip')]
     [string]$Validation = 'Full',
-[ValidateSet('iroh')]
-    [string]$CommunicationProvider,
     [ValidateSet('always', 'direct', 'local')]
     [string]$ProviderProfile,
     [switch]$CI
@@ -16,16 +14,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-if ($PSBoundParameters.ContainsKey('CommunicationProvider')) {
-    $env:TORCA_COMMUNICATION_PROVIDER = $CommunicationProvider
-}
+$env:TORCA_COMMUNICATION_PROVIDER = 'iroh'
 if ($PSBoundParameters.ContainsKey('ProviderProfile')) {
-    if ($env:TORCA_COMMUNICATION_PROVIDER -ne 'iroh') {
-        throw 'ProviderProfile is only valid when CommunicationProvider is iroh.'
-    }
     $env:TORCA_IROH_PROFILE = $ProviderProfile
-} elseif ($env:TORCA_COMMUNICATION_PROVIDER -eq 'iroh' -and
-    [string]::IsNullOrWhiteSpace([string]$env:TORCA_IROH_PROFILE)) {
+} elseif ([string]::IsNullOrWhiteSpace([string]$env:TORCA_IROH_PROFILE)) {
     # Direct invocations must still embed a deterministic profile. The Rust
     # deployer supplies this explicitly; the script keeps the same default for
     # developers who call build.ps1 without the wizard.
@@ -65,31 +57,18 @@ foreach ($requiredCommand in @('Get-TorcaBuildId', 'Get-TorcaBuildSourceFingerpr
 if ($Target -ne 'check' -and
     ($env:TORCA_ORCHESTRATED -ne '1' -or [string]::IsNullOrWhiteSpace($env:TORCA_BUILD_ID))) {
     $release = Get-Content (Join-Path $root 'release/version.json') -Raw | ConvertFrom-Json
-    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'iroh' }
     $endpoint = [string]$env:TORCA_PROVIDER_ENDPOINT
     # The selected provider owns endpoint interpretation. The shared build
     # path embeds only a generic provider endpoint and configuration hash.
-    $env:TORCA_COMMUNICATION_PROVIDER = $provider
     $env:TORCA_PROVIDER_ENDPOINT = $endpoint
     $env:TORCA_BUILD_ID = Get-TorcaBuildId -RepoRoot $root -Endpoint $endpoint -Target $Target -Configuration $Configuration
     $env:TORCA_PRODUCT_VERSION = [string]$release.version
     $env:TORCA_SOURCE_FINGERPRINT = Get-TorcaBuildSourceFingerprint -RepoRoot $root
     $env:TORCA_SOURCE_COMMIT = ((git -C $root rev-parse HEAD 2>$null | Out-String).Trim())
     if ([string]::IsNullOrWhiteSpace($env:TORCA_SOURCE_COMMIT)) { $env:TORCA_SOURCE_COMMIT = 'working-tree' }
-    if ($provider -eq 'tor') {
-        $endpointSha = [System.Security.Cryptography.SHA256]::Create()
-        try {
-            $env:TORCA_PROVIDER_ENDPOINT_HASH = [BitConverter]::ToString(
-                $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($endpoint))
-            ).Replace('-', '').ToLowerInvariant()
-        } finally { $endpointSha.Dispose() }
-    } else {
-        # Direct providers do not have a managed rendezvous endpoint. Clear a
-        # value inherited from a previous Tor build so stale metadata cannot
-        # make the runtime look partially configured.
-        Remove-Item Env:TORCA_PROVIDER_ENDPOINT_HASH -ErrorAction SilentlyContinue
-    }
+    # Iroh does not consume a managed deployment endpoint. Clear inherited
+    # metadata so a previous environment cannot make this build look partial.
+    Remove-Item Env:TORCA_PROVIDER_ENDPOINT_HASH -ErrorAction SilentlyContinue
 }
 Import-Module $module -Force -ErrorAction Stop -Verbose:$false
 if (-not (Get-Command Invoke-TorcaBuild -ErrorAction SilentlyContinue)) {

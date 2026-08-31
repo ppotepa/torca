@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 const CONTRACT_VERSION_MARKER: &str = "__TORCA_CONTRACT_VERSION__";
+const STORAGE_EPOCH_MARKER: &str = "__TORCA_STORAGE_EPOCH__";
 
 fn main() {
     let schema_path = PathBuf::from("crates/platform/torca-contract/schema/torca_contract.json");
@@ -44,6 +45,24 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let release_path = PathBuf::from("release/version.json");
+    let release_template = fs::read_to_string(&release_path).unwrap_or_else(|error| {
+        eprintln!("missing release manifest {}: {error}", release_path.display());
+        std::process::exit(1);
+    });
+    let release_value: serde_json::Value =
+        serde_json::from_str(&release_template).unwrap_or_else(|error| {
+            eprintln!("release manifest is not valid JSON: {error}");
+            std::process::exit(1);
+        });
+    let storage_epoch = release_value
+        .get("storageEpoch")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            eprintln!("release manifest storageEpoch is missing or invalid");
+            std::process::exit(1);
+        });
     let expected_path = PathBuf::from("crates/platform/torca-contract/schema/torca_contract.dart");
     let template = fs::read_to_string(&expected_path).unwrap_or_else(|error| {
         eprintln!("missing contract projection {}: {error}", expected_path.display());
@@ -53,17 +72,12 @@ fn main() {
         eprintln!("canonical contract projection is incomplete: {error}");
         std::process::exit(1);
     });
-    let expected =
-        render_dart_template(&template, contract_version.unwrap()).unwrap_or_else(|error| {
+    let expected = render_dart_template(&template, contract_version.unwrap(), storage_epoch)
+        .unwrap_or_else(|error| {
             eprintln!("{error}: {}", expected_path.display());
             std::process::exit(1);
         });
     let rust_path = PathBuf::from("crates/platform/torca-contract/src/generated_contract.rs");
-    let release_path = PathBuf::from("release/version.json");
-    let release_template = fs::read_to_string(&release_path).unwrap_or_else(|error| {
-        eprintln!("missing release manifest {}: {error}", release_path.display());
-        std::process::exit(1);
-    });
     let release_expected = render_release_manifest(&release_template, contract_version.unwrap())
         .unwrap_or_else(|error| {
             eprintln!("{error}: {}", release_path.display());
@@ -144,14 +158,26 @@ fn render_rust_contract(
     )
 }
 
-fn render_dart_template(template: &str, contract_version: u64) -> Result<String, String> {
+fn render_dart_template(
+    template: &str,
+    contract_version: u64,
+    storage_epoch: u64,
+) -> Result<String, String> {
     let marker_count = template.matches(CONTRACT_VERSION_MARKER).count();
     if marker_count != 1 {
         return Err(format!(
             "contract Dart template must contain exactly one {CONTRACT_VERSION_MARKER} marker; found {marker_count}"
         ));
     }
-    Ok(template.replace(CONTRACT_VERSION_MARKER, &contract_version.to_string()))
+    let storage_marker_count = template.matches(STORAGE_EPOCH_MARKER).count();
+    if storage_marker_count != 1 {
+        return Err(format!(
+            "contract Dart template must contain exactly one {STORAGE_EPOCH_MARKER} marker; found {storage_marker_count}"
+        ));
+    }
+    Ok(template
+        .replace(CONTRACT_VERSION_MARKER, &contract_version.to_string())
+        .replace(STORAGE_EPOCH_MARKER, &storage_epoch.to_string()))
 }
 
 /// Keep the hand-authored projection from silently regressing to raw wire
@@ -207,17 +233,25 @@ mod tests {
     #[test]
     fn renders_contract_version_from_the_only_marker() {
         assert_eq!(
-            render_dart_template("const v = __TORCA_CONTRACT_VERSION__;", 17),
-            Ok("const v = 17;".into())
+            render_dart_template(
+                "const v = __TORCA_CONTRACT_VERSION__; const e = __TORCA_STORAGE_EPOCH__;",
+                17,
+                3,
+            ),
+            Ok("const v = 17; const e = 3;".into())
         );
     }
 
     #[test]
     fn rejects_missing_or_duplicate_contract_version_markers() {
-        assert!(render_dart_template("const v = 17;", 17).is_err());
+        assert!(render_dart_template("const v = 17;", 17, 3).is_err());
         assert!(
-            render_dart_template("__TORCA_CONTRACT_VERSION__ __TORCA_CONTRACT_VERSION__", 17)
-                .is_err()
+            render_dart_template(
+                "__TORCA_CONTRACT_VERSION__ __TORCA_CONTRACT_VERSION__ __TORCA_STORAGE_EPOCH__",
+                17,
+                3,
+            )
+            .is_err()
         );
     }
 

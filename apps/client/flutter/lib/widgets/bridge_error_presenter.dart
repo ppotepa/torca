@@ -2,7 +2,6 @@ import 'package:flutter/widgets.dart';
 
 import '../generated/torca_contract.dart';
 import '../localization/torca_strings.dart';
-import 'runtime_network_status.dart';
 
 abstract final class BridgeErrorPresenter {
   /// Returns a localized user-facing message without exposing the native
@@ -13,27 +12,15 @@ abstract final class BridgeErrorPresenter {
     BuildContext context,
     BridgeResultDto result, {
     String? fallback,
-    String? provider,
   }) {
     if (result.ok) return '';
     final strings = TorcaStrings.of(context);
-    final activeProvider =
-        provider ??
-        RuntimeStatusScope.maybeOf(
-          context,
-        )?.gateway.snapshots.value.communicationProvider ??
-        'tor';
     final code = (result.errorCode ?? result.messageKey ?? '')
         .trim()
         .toLowerCase()
         .replaceAll('.', '_');
     final message = switch (code) {
-      'relay_not_ready' => strings.communicationProviderNotReady(
-        activeProvider,
-      ),
-      'relay_degraded' => strings.communicationProviderReconnecting(
-        activeProvider,
-      ),
+      'incompatible_storage_epoch' => strings.incompatibleStorageEpoch,
       'profile_not_ready' => strings.profileNotReady,
       'identity_changed' => strings.identityChanged,
       'pairing_expired' => strings.pairingExpired,
@@ -73,7 +60,7 @@ abstract final class BridgeErrorPresenter {
   static String message(
     BridgeResultDto result, {
     String fallback = 'The operation could not be completed.',
-    String provider = 'tor',
+    String provider = 'iroh',
   }) {
     if (result.ok) return '';
     final code = (result.errorCode ?? result.messageKey ?? '')
@@ -81,10 +68,8 @@ abstract final class BridgeErrorPresenter {
         .toLowerCase()
         .replaceAll('.', '_');
     final typed = switch (code) {
-      'relay_not_ready' =>
-        'Pairing is unavailable until the selected communication provider is ready.',
-      'relay_degraded' =>
-        'Pairing is temporarily unavailable while the communication provider reconnects.',
+      'incompatible_storage_epoch' =>
+        'The encrypted local profile is incompatible. Reset local Torca data explicitly before continuing.',
       'profile_not_ready' =>
         'The secure runtime is not ready for profile setup.',
       'identity_changed' =>
@@ -162,14 +147,10 @@ abstract final class BridgeErrorPresenter {
 
   static String _networkUnavailableMessage(String provider) {
     final normalized = provider.trim().toLowerCase();
-    if (normalized.isEmpty || normalized == 'tor') {
-      // Keep the legacy wording for callers that do not yet have a provider
-      // snapshot. It is also the stable message used by older clients.
-      return 'The secure Tor peer connection is currently unavailable.';
-    }
+    if (normalized.isEmpty)
+      return 'The peer connection is currently unavailable.';
     final label = switch (normalized) {
       'iroh' => 'Iroh',
-      'webrtc' => 'WebRTC',
       _ => provider.trim(),
     };
     return 'The $label peer connection is currently unavailable.';
@@ -178,9 +159,7 @@ abstract final class BridgeErrorPresenter {
   static String _providerLabel(String provider) {
     final normalized = provider.trim().toLowerCase();
     return switch (normalized) {
-      'tor' => 'Torca/Tor',
       'iroh' => 'Iroh',
-      'webrtc' => 'WebRTC',
       _ => provider.trim().isEmpty ? 'Torca' : provider.trim(),
     };
   }

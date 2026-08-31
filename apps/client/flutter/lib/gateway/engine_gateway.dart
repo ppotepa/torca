@@ -87,6 +87,7 @@ class ClientBuildInfo {
     required this.targetPlatform,
     required this.targetArchitecture,
     required this.contractSchema,
+    required this.storageEpoch,
     required this.wireVersion,
     this.capabilities = const ClientCapabilitiesDto(),
   });
@@ -155,6 +156,7 @@ class ClientBuildInfo {
       targetPlatform: requiredString('targetPlatform'),
       targetArchitecture: requiredString('targetArchitecture'),
       contractSchema: requiredInt('contractSchema'),
+      storageEpoch: requiredInt('storageEpoch'),
       wireVersion: requiredInt('wireVersion'),
       capabilities: ClientCapabilitiesDto.fromJson(
         capabilities as Map<String, dynamic>? ?? const <String, dynamic>{},
@@ -173,9 +175,9 @@ class ClientBuildInfo {
   final String targetPlatform;
   final String targetArchitecture;
   final int contractSchema;
+  final int storageEpoch;
   final int wireVersion;
   final ClientCapabilitiesDto capabilities;
-
 }
 
 abstract interface class BuildInfoProvider {

@@ -17,7 +17,8 @@ Map<String, dynamic> _metadata({
   'providerEndpointHash': providerEndpointHash,
   'targetPlatform': 'android',
   'targetArchitecture': 'aarch64',
-  'contractSchema': 23,
+  'contractSchema': 25,
+  'storageEpoch': 3,
   'wireVersion': 1,
 };
 

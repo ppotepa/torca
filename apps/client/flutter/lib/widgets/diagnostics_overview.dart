@@ -96,15 +96,11 @@ class DiagnosticsOverview extends StatelessWidget {
 
   String _providerDisplayName(String provider) {
     final normalized = provider.trim().toLowerCase();
-    if (normalized.isEmpty || normalized == 'tor') return 'Tor';
-    if (normalized == 'iroh') return 'Iroh';
-    if (normalized == 'webrtc') return 'WebRTC';
+    if (normalized.isEmpty || normalized == 'iroh') return 'Iroh';
     return provider.trim().isEmpty ? 'Communication' : provider.trim();
   }
 
-  String _routeLabel(String provider) => provider.trim().toLowerCase() == 'tor'
-      ? 'Onion service'
-      : 'Provider route';
+  String _routeLabel(String provider) => 'Provider route';
 }
 
 class _HealthCard extends StatelessWidget {

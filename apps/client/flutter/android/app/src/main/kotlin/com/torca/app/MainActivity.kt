@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.WindowManager
 import com.torca.host.AndroidKeystoreBridge
 import com.torca.host.TorcaForegroundService
@@ -15,6 +16,9 @@ import io.flutter.plugin.common.MethodChannel
 /** Thin Android activity; product workflows live in the shared Flutter/Rust client. */
 class MainActivity : FlutterActivity() {
     private var notificationChannel: MethodChannel? = null
+    private var deviceChannel: MethodChannel? = null
+    private var audioChannel: MethodChannel? = null
+    private var pendingMicrophoneResult: MethodChannel.Result? = null
     private var pendingConversationId: String? = null
 
     companion object {
@@ -60,6 +64,78 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+        deviceChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "torca/device",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "stableDeviceId" -> {
+                        val identifier = Settings.Secure.getString(
+                            contentResolver,
+                            Settings.Secure.ANDROID_ID,
+                        )
+                        if (identifier.isNullOrBlank()) {
+                            result.error(
+                                "UNAVAILABLE",
+                                "Android stable device identifier is unavailable",
+                                null,
+                            )
+                        } else {
+                            result.success(identifier)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        audioChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "torca/audio",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasMicrophonePermission" -> result.success(
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                            checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED,
+                    )
+                    "requestMicrophonePermission" -> requestMicrophonePermission(result)
+                    else -> result.notImplemented()
+                }
+            }
+        }
+    }
+
+    private fun requestMicrophonePermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        if (pendingMicrophoneResult != null) {
+            result.error("BUSY", "A microphone permission request is already active", null)
+            return
+        }
+        pendingMicrophoneResult = result
+        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1002)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        if (requestCode == 1002) {
+            val result = pendingMicrophoneResult
+            pendingMicrophoneResult = null
+            result?.success(
+                grantResults.isNotEmpty() &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED,
+            )
+        }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -183,7 +183,7 @@ class TorcaForegroundService : Service() {
         val notification = builder
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle("Torca")
-            .setContentText("Private messaging over Tor is active")
+            .setContentText("Private messaging over Iroh is active")
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(

@@ -35,6 +35,9 @@ impl DeployPaths {
     pub fn current_path(&self) -> PathBuf {
         self.state_root.join("current.json")
     }
+    pub fn last_plan_path(&self) -> PathBuf {
+        self.state_root.join("last-plan.json")
+    }
     pub fn run_path(&self, run_id: &str) -> PathBuf {
         self.runs_root().join(format!("{run_id}.json"))
     }
@@ -123,7 +126,26 @@ impl StateStore {
     }
 
     pub fn load_last_plan(&self) -> Result<Option<crate::domain::DeployPlan>, PersistenceError> {
+        let path = self.paths.last_plan_path();
+        if path.exists() || backup_path(&path).exists() {
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(primary) => {
+                    fs::read(backup_path(&path)).map_err(|_| PersistenceError::Read(primary))?
+                }
+            };
+            return serde_json::from_slice(&bytes).map(Some).map_err(PersistenceError::Deserialize);
+        }
         self.load_last_run().map(|run| run.map(|run| run.plan))
+    }
+
+    /// Persist the most recently accepted deployment configuration separately
+    /// from the resumable execution checkpoint. This lets the next wizard
+    /// start restore the user's choices even when preflight blocks execution.
+    pub fn save_last_plan(&self, plan: &crate::domain::DeployPlan) -> Result<(), PersistenceError> {
+        fs::create_dir_all(&self.paths.state_root).map_err(PersistenceError::Write)?;
+        let bytes = serde_json::to_vec_pretty(plan).map_err(PersistenceError::Serialize)?;
+        atomic_write(&self.paths.last_plan_path(), &bytes)
     }
 
     pub fn has_resumable_run(&self) -> Result<bool, PersistenceError> {
@@ -266,6 +288,29 @@ mod tests {
             store.load_last_plan().expect("load last plan").expect("plan").action,
             DeployAction::RedeployCurrent
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_last_plan_survives_without_creating_a_run() {
+        let root =
+            std::env::temp_dir().join(format!("torca-deploy-explicit-last-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DeployPaths { repo_root: root.clone(), state_root: root.join(".torca/deploy") };
+        let store = StateStore::new(paths);
+        let plan = DeployPlan::normal(
+            DeployAction::FullRedeploy,
+            vec![Target::Android],
+            Configuration::Release,
+        );
+
+        store.save_last_plan(&plan).expect("save last plan");
+
+        let restored = store.load_last_plan().expect("load last plan").expect("plan");
+        assert_eq!(restored.action, DeployAction::FullRedeploy);
+        assert_eq!(restored.targets, vec![Target::Android]);
+        assert_eq!(restored.configuration, Configuration::Release);
+        assert!(!store.has_resumable_run().expect("no run exists"));
         let _ = fs::remove_dir_all(root);
     }
 

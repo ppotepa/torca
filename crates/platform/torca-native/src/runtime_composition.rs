@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use torca_client_engine::EngineHandle;
 use torca_communication_adapters::{
@@ -48,6 +47,7 @@ fn spawn_runtime_for(
             summary: summary.to_owned(),
         });
     };
+    report(5, "PLATFORM_INITIALIZING", "Initializing platform services");
     // A failed/retried startup must not inherit a bridge owned by the previous
     // runtime generation when the host no longer provides one.
     let configured_provider = crate::transport_config::compiled_provider().map_err(|error| {
@@ -55,12 +55,12 @@ fn spawn_runtime_for(
     })?;
     // Provider adapters may compile while their complete commissioning,
     // rendezvous and platform lifecycle are still under construction. Do not
-    // silently start Tor in that case: the artifact must fail before it
-    // creates an identity or network side effect under the wrong provider
-    // assumption. `torca-deploy` keeps these providers hidden until this gate
-    // is removed alongside their real composition.
+    // silently substitute another adapter in that case: the artifact must
+    // fail before it creates identity or network side effects under the wrong
+    // provider assumption.
     crate::transport_config::ensure_deployment_ready(&configured_provider)
         .map_err(NativeCompositionError::new)?;
+    report(10, "PROVIDER_CONFIGURATION_READY", "Iroh provider configuration is ready");
     let paths = platform.app_paths();
     let database_path = paths.data.join("torca.db");
     let mut database_store = platform.open_secret_store(SecretNamespace::Storage);
@@ -72,18 +72,15 @@ fn spawn_runtime_for(
     let identity = engine_identity(&engine)?;
     let key_id = identity.public().key().key_id();
     let identity_id = identity.public().identity_id().to_opaque();
+    report(20, "PROVIDER_IDENTITY_READY", "Iroh provider identity is ready");
 
     let rendezvous_endpoint =
         crate::provider_composition::compiled_rendezvous_endpoint(configured_provider.clone())?;
     let provider = compose_selected_provider(
         configured_provider.clone(),
         ProviderCompositionInputs {
-            data_dir: paths.data.clone(),
             provider_secret_store: platform.open_secret_store(SecretNamespace::Runtime),
             rendezvous_endpoint,
-            startup_timeout: Duration::from_secs(45),
-            now: current_timestamp()?,
-            bootstrap_observer,
         },
     )?;
     report(35, "PROVIDER_COMPOSED", "Selected communication provider composed");
@@ -140,7 +137,6 @@ fn spawn_runtime_for(
             RustCryptoProvider,
             platform.open_secret_store(SecretNamespace::Runtime),
         )),
-        connectivity: connectivity.clone(),
     })?;
     report(80, "PAIRING_COMPOSED", "Pairing driver composed");
     let pairing = PairingWorkerDriver::spawn(pairing)
@@ -166,14 +162,4 @@ fn engine_identity(
         .map_err(|_| NativeCompositionError::new("load local identity failed"))?
         .identity
         .ok_or_else(|| NativeCompositionError::new("local identity is not initialized"))
-}
-
-fn current_timestamp() -> Result<torca_foundation::Timestamp, NativeCompositionError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| NativeCompositionError::new("system clock is before Unix epoch"))?;
-    let millis = i64::try_from(duration.as_millis())
-        .map_err(|_| NativeCompositionError::new("system timestamp is out of range"))?;
-    torca_foundation::Timestamp::from_unix_millis(millis)
-        .map_err(|_| NativeCompositionError::new("system timestamp is invalid"))
 }

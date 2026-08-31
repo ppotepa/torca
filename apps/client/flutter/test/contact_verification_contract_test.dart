@@ -6,7 +6,6 @@ void main() {
     const contact = ContactDto(
       id: '1',
       displayName: 'Alice',
-      onionAddress: 'example.onion',
       status: 'active',
       connectionState: 'ready',
     );
@@ -18,7 +17,6 @@ void main() {
     const contact = ContactDto(
       id: '1',
       displayName: 'Alice',
-      onionAddress: 'example.onion',
       status: 'active',
       connectionState: 'ready',
       verificationStatus: 'verified',

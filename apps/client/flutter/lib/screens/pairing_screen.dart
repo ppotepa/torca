@@ -194,7 +194,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
 
   Future<void> _create() async {
     // A retry must reconcile the existing invitation instead of creating a
-    // second relay slot. This also makes the modal idempotent across transient
+    // second service slot. This also makes the modal idempotent across transient
     // Flutter rebuilds and activity recreation.
     if (_createdSessionId != null || _operations.isActive('pairing:create')) {
       return;

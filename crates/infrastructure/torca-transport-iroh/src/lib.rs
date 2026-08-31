@@ -5,20 +5,18 @@
 //! stay outside this crate; peer protocol and E2EE remain unchanged.
 
 use std::collections::VecDeque;
-use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use iroh::EndpointAddr;
 use iroh::endpoint::{Connection, Endpoint, RecvStream, SendStream};
-use iroh::{EndpointAddr, SecretKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex as AsyncMutex;
 use torca_contacts::Contact;
 use torca_crypto::{ProtectedSecretStore, ProtectedSecretStoreError};
 use torca_foundation::{ProviderId, Timestamp};
-use torca_identity::KeyId;
 use torca_pairing_protocol::PairingBootstrapDescriptor;
 use torca_pairing_service_client::{
     PairingServiceTransport, PairingServiceTransportError, PairingServiceTransportFailureKind,
@@ -31,14 +29,26 @@ use torca_runtime::{
     CommunicationLifecycle, CommunicationState, IncomingReachabilityState, RuntimeDriverError,
 };
 use torca_transport_api::{
-    CommissioningStage, CommissioningState, CommissioningStep, EnergyClass, LatencyClass,
-    PeerTransport, PeerTransportError, PeerTransportFactory, ProviderCommissioning,
+    CommissioningPresentation, CommissioningStage, CommissioningState, CommissioningStep,
+    LatencyClass, PeerTransport, PeerTransportError, PeerTransportFactory, ProviderCommissioning,
     ProviderRouteState, ProviderRuntimeDiagnostics, ProviderTransport, TransportCapabilities,
     TransportFactoryError, TransportPath, TransportTopology,
 };
 
+mod endpoint;
 mod pairing;
+mod profile;
+use endpoint::bind_endpoint_from_secret;
+pub use endpoint::{
+    IROH_ENDPOINT_SECRET_HANDLE, IROH_PAIRING_SECRET_HANDLE, IrohEndpointSlot, IrohIdentityError,
+    ProviderEndpoint, ProviderEndpointSlot, bind_endpoint, provider_runtime,
+};
 pub use pairing::IrohPairingService;
+pub use profile::IrohEndpointProfile;
+
+#[cfg(test)]
+use profile::IrohServiceConfig;
+use profile::{COMPILED_IROH_LOCAL_ONLY, COMPILED_IROH_RUNTIME_THREADS, configured_flag};
 
 const ALPN: &[u8] = b"torca/peer/1";
 const NETWORK_CHANGE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -51,179 +61,6 @@ fn iroh_provider_id() -> ProviderId {
     ProviderId::new("iroh").expect("static provider id")
 }
 
-/// Deployment-time Iroh endpoint policy. This is intentionally provider-local:
-/// the generic runtime asks for availability/dormancy, while the endpoint
-/// builder decides which discovery and relay services are appropriate for the
-/// selected deployment profile.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum IrohEndpointProfile {
-    /// Publicly reachable baseline using the N0 relay and address lookup.
-    AlwaysReachable,
-    /// Keep direct addressing but do not publish/resolve through address
-    /// lookup or maintain a relay connection. A peer must receive a complete
-    /// endpoint address out of band.
-    DirectOnly,
-    /// No relay and no address lookup. Intended for local tests or explicit
-    /// battery experiments; it cannot provide background reachability.
-    LocalOnly,
-}
-
-impl IrohEndpointProfile {
-    /// Parses the provider-local profile used by deployment and diagnostics.
-    /// Unknown values deliberately fall back to the interoperable profile.
-    pub fn from_wire(value: &str) -> Self {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "direct" | "direct-only" => Self::DirectOnly,
-            "local" | "local-only" => Self::LocalOnly,
-            _ => Self::AlwaysReachable,
-        }
-    }
-
-    pub const fn wire_value(self) -> &'static str {
-        match self {
-            Self::AlwaysReachable => "always",
-            Self::DirectOnly => "direct",
-            Self::LocalOnly => "local",
-        }
-    }
-
-    /// Relative energy class for scheduling and diagnostics. This is not a
-    /// physical battery measurement: direct/local avoid discovery and relay
-    /// maintenance, while always keeps those services available.
-    pub const fn energy_class(self) -> EnergyClass {
-        match self {
-            Self::DirectOnly | Self::LocalOnly => EnergyClass::Low,
-            Self::AlwaysReachable => EnergyClass::Medium,
-        }
-    }
-
-    /// Whether this profile has an incoming-reachability service to monitor.
-    /// Direct/local profiles intentionally have no relay or address lookup;
-    /// treating their permanently-empty `home_relay_status` as a pending
-    /// online probe would create an endless retry task and false warm-up UI.
-    pub const fn supports_incoming_reachability(self) -> bool {
-        matches!(self, Self::AlwaysReachable)
-    }
-
-    fn from_environment() -> Self {
-        // Deployment passes the profile to Cargo, so packaged clients carry
-        // an immutable profile that matches their artifact manifest. Only an
-        // unconfigured development binary may use the process environment at
-        // runtime; otherwise a stale host variable could silently change the
-        // battery/reachability policy after artifact verification.
-        option_env!("TORCA_IROH_PROFILE")
-            .map(str::to_owned)
-            .or_else(|| std::env::var("TORCA_IROH_PROFILE").ok())
-            .map(|value| Self::from_wire(&value))
-            .unwrap_or(Self::AlwaysReachable)
-    }
-
-    fn apply(self, builder: iroh::endpoint::Builder) -> iroh::endpoint::Builder {
-        match self {
-            Self::AlwaysReachable => builder,
-            // Direct-only is an explicit low-power/offline-discovery profile:
-            // disable both the address-lookup publisher and the relay map so
-            // Iroh does not keep a home-relay task alive in the background.
-            // The endpoint address must then be exchanged out of band.
-            Self::DirectOnly => {
-                builder.clear_address_lookup().relay_mode(iroh::RelayMode::Disabled)
-            }
-            Self::LocalOnly => builder.clear_address_lookup().relay_mode(iroh::RelayMode::Disabled),
-        }
-    }
-}
-
-/// Provider-owned service configuration for the relay-backed Iroh profile.
-///
-/// The direct and local profiles deliberately ignore these services: adding a
-/// relay or public lookup endpoint to those profiles would silently defeat
-/// their low-power/offline contract. Values are read once while the endpoint
-/// is created, never from the application or FFI boundary.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct IrohServiceConfig {
-    relay_urls: Vec<iroh::RelayUrl>,
-    pkarr_url: Option<url::Url>,
-}
-
-const COMPILED_IROH_RELAY_URLS: Option<&str> = option_env!("TORCA_IROH_RELAY_URLS");
-const COMPILED_IROH_PKARR_URL: Option<&str> = option_env!("TORCA_IROH_PKARR_URL");
-const COMPILED_IROH_DISABLE_RELAY: Option<&str> = option_env!("TORCA_IROH_DISABLE_RELAY");
-const COMPILED_IROH_DISABLE_DISCOVERY: Option<&str> = option_env!("TORCA_IROH_DISABLE_DISCOVERY");
-const COMPILED_IROH_LOCAL_ONLY: Option<&str> = option_env!("TORCA_IROH_LOCAL_ONLY");
-const COMPILED_IROH_RUNTIME_THREADS: Option<&str> = option_env!("TORCA_IROH_RUNTIME_THREADS");
-
-fn configured_flag(compiled: Option<&str>, key: &str) -> bool {
-    compiled
-        .map(|value| {
-            matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
-        })
-        .or_else(|| {
-            std::env::var(key).ok().map(|value| {
-                matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
-            })
-        })
-        .unwrap_or(false)
-}
-
-impl IrohServiceConfig {
-    fn from_environment(profile: IrohEndpointProfile) -> Result<Self, IrohIdentityError> {
-        if !profile.supports_incoming_reachability() {
-            return Ok(Self::default());
-        }
-
-        let relay_value = COMPILED_IROH_RELAY_URLS
-            .map(str::to_owned)
-            .or_else(|| std::env::var("TORCA_IROH_RELAY_URLS").ok());
-        let pkarr_value = COMPILED_IROH_PKARR_URL
-            .map(str::to_owned)
-            .or_else(|| std::env::var("TORCA_IROH_PKARR_URL").ok());
-        Self::from_values(
-            profile,
-            relay_value.as_deref(),
-            pkarr_value.as_deref().filter(|value| !value.trim().is_empty()),
-        )
-    }
-
-    fn from_values(
-        profile: IrohEndpointProfile,
-        relay_value: Option<&str>,
-        pkarr_value: Option<&str>,
-    ) -> Result<Self, IrohIdentityError> {
-        if !profile.supports_incoming_reachability() {
-            return Ok(Self::default());
-        }
-
-        let relay_urls = relay_value
-            .into_iter()
-            .flat_map(|value| {
-                value.split(',').map(str::trim).map(str::to_owned).collect::<Vec<_>>()
-            })
-            .filter(|value| !value.is_empty())
-            .map(|value| {
-                value.parse::<iroh::RelayUrl>().map_err(|error| {
-                    IrohIdentityError::Bind(format!(
-                        "invalid TORCA_IROH_RELAY_URLS entry '{value}': {error}"
-                    ))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let pkarr_url = pkarr_value
-            .map(str::to_owned)
-            .map(|value| {
-                value.parse::<url::Url>().map_err(|error| {
-                    IrohIdentityError::Bind(format!(
-                        "invalid TORCA_IROH_PKARR_URL '{value}': {error}"
-                    ))
-                })
-            })
-            .transpose()?;
-        Ok(Self { relay_urls, pkarr_url })
-    }
-
-    fn is_custom(&self) -> bool {
-        !self.relay_urls.is_empty() || self.pkarr_url.is_some()
-    }
-}
 const MAX_FRAME: usize = MAX_PEER_DATA_LEN;
 const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const PEER_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -245,301 +82,6 @@ impl Drop for OnlineProbeGuard {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
     }
-}
-
-/// Provider-owned endpoint handle used only by the native composition layer
-/// to lazily encode current route/bootstrap metadata. It never crosses the
-/// application or FFI boundary.
-pub type ProviderEndpoint = Endpoint;
-
-/// Shared, replaceable endpoint owned by the Iroh provider. Factories only
-/// borrow a clone for the duration of a dial; they never own the lifecycle.
-/// This allows the runtime to close an idle endpoint and recreate it later
-/// without changing the stable endpoint identity.
-pub type ProviderEndpointSlot = Arc<IrohEndpointSlot>;
-
-pub struct IrohEndpointSlot {
-    endpoint: Mutex<Option<Endpoint>>,
-    notify: Arc<tokio::sync::Notify>,
-    terminated: AtomicBool,
-    generation: AtomicU64,
-    route_generation: Arc<AtomicU64>,
-    route_stale: Arc<AtomicBool>,
-    runtime: Arc<Runtime>,
-    secret: SecretKey,
-    profile: IrohEndpointProfile,
-    local_only: bool,
-}
-
-impl IrohEndpointSlot {
-    fn new(
-        endpoint: Endpoint,
-        runtime: Arc<Runtime>,
-        secret: SecretKey,
-        profile: IrohEndpointProfile,
-        local_only: bool,
-    ) -> ProviderEndpointSlot {
-        Arc::new(Self {
-            endpoint: Mutex::new(Some(endpoint)),
-            notify: Arc::new(tokio::sync::Notify::new()),
-            terminated: AtomicBool::new(false),
-            generation: AtomicU64::new(0),
-            route_generation: Arc::new(AtomicU64::new(0)),
-            route_stale: Arc::new(AtomicBool::new(false)),
-            runtime,
-            secret,
-            profile,
-            local_only,
-        })
-    }
-
-    /// Creates a slot for tests which already provide an endpoint. The
-    /// endpoint's own secret key is retained so dormancy/reactivation has the
-    /// same identity as production composition.
-    fn static_endpoint(endpoint: Endpoint, runtime: Arc<Runtime>) -> ProviderEndpointSlot {
-        let secret = endpoint.secret_key().clone();
-        Self::new(endpoint, runtime, secret, IrohEndpointProfile::AlwaysReachable, false)
-    }
-
-    pub fn current(&self) -> Option<Endpoint> {
-        self.endpoint.lock().ok().and_then(|slot| slot.clone())
-    }
-
-    /// Monotonically increasing endpoint generation. A generation changes
-    /// whenever the provider closes or recreates its endpoint; consumers can
-    /// use it to reject work that captured a stale endpoint before dormancy
-    /// or a provider restart.
-    pub fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
-    }
-
-    /// Returns the generation of the currently advertised endpoint address.
-    /// Iroh may change that address without replacing the endpoint (for
-    /// example after Wi-Fi/LTE migration or relay selection), so callers must
-    /// not use the endpoint generation as a route freshness signal. A network
-    /// transition increments this generation immediately and marks the route
-    /// stale; callers must check `route_is_fresh` before advertising it.
-    pub fn route_generation(&self) -> u64 {
-        self.route_generation.load(Ordering::Acquire)
-    }
-
-    /// Returns whether the current endpoint address is safe to advertise.
-    /// Network migration invalidates the old address before Iroh has finished
-    /// selecting the replacement route.
-    pub fn route_is_fresh(&self) -> bool {
-        !self.route_stale.load(Ordering::Acquire)
-    }
-
-    /// Shared route-staleness marker for transports created by this slot.
-    /// Keeping the atomic behind the slot lets a network callback invalidate
-    /// a transport that is already queued for a dial without exposing any
-    /// Iroh-specific state to the generic peer link.
-    fn route_stale_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.route_stale)
-    }
-
-    /// Returns the immutable deployment profile used when binding this slot.
-    /// Policy/diagnostics use this instead of guessing battery cost from an
-    /// endpoint address or from the provider name.
-    pub fn profile(&self) -> IrohEndpointProfile {
-        self.profile
-    }
-
-    fn is_terminated(&self) -> bool {
-        self.terminated.load(Ordering::Acquire)
-    }
-
-    async fn wait_current(&self) -> Option<Endpoint> {
-        loop {
-            if let Some(endpoint) = self.current() {
-                return Some(endpoint);
-            }
-            if self.terminated.load(Ordering::Acquire) {
-                return None;
-            }
-            self.notify.notified().await;
-        }
-    }
-
-    fn address(&self) -> Option<EndpointAddr> {
-        self.current().map(|endpoint| endpoint.addr())
-    }
-
-    fn deactivate(&self) {
-        let endpoint = self.endpoint.lock().ok().and_then(|mut slot| slot.take());
-        if let Some(endpoint) = endpoint {
-            self.route_stale.store(true, Ordering::Release);
-            self.generation.fetch_add(1, Ordering::AcqRel);
-            self.route_generation.fetch_add(1, Ordering::AcqRel);
-            self.runtime.block_on(endpoint.close());
-        }
-        self.notify.notify_waiters();
-    }
-
-    fn terminate(&self) {
-        self.terminated.store(true, Ordering::Release);
-        self.deactivate();
-    }
-
-    fn activate(&self) -> Result<(), IrohIdentityError> {
-        if self.terminated.load(Ordering::Acquire) {
-            return Err(IrohIdentityError::Bind("endpoint slot is terminated".to_owned()));
-        }
-        if self.current().is_some() {
-            return Ok(());
-        }
-        let endpoint = bind_endpoint_from_secret(
-            &self.runtime,
-            self.secret.clone(),
-            self.profile,
-            self.local_only,
-        )?;
-        if let Ok(mut slot) = self.endpoint.lock() {
-            *slot = Some(endpoint);
-            self.route_stale.store(false, Ordering::Release);
-            self.generation.fetch_add(1, Ordering::AcqRel);
-            self.route_generation.fetch_add(1, Ordering::AcqRel);
-        }
-        self.notify.notify_waiters();
-        Ok(())
-    }
-}
-
-/// Protected-store handle for the Iroh endpoint identity. It is independent
-/// from Torca's user identity: Iroh uses it to keep its network route stable
-/// across process restarts.
-pub const IROH_ENDPOINT_SECRET_HANDLE: KeyId = KeyId::from_u128(0x746f7263615f69726f685f6570);
-pub const IROH_PAIRING_SECRET_HANDLE: KeyId = KeyId::from_u128(0x746f7263615f70616972696e675f31);
-
-/// Redaction-safe Iroh endpoint identity persistence failure.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum IrohIdentityError {
-    Store(ProtectedSecretStoreError),
-    InvalidStoredKey,
-    Bind(String),
-}
-
-impl fmt::Display for IrohIdentityError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Store(_) => formatter.write_str("protected Iroh endpoint identity store failed"),
-            Self::InvalidStoredKey => {
-                formatter.write_str("protected Iroh endpoint identity is invalid")
-            }
-            Self::Bind(error) => write!(formatter, "Iroh endpoint bind failed: {error}"),
-        }
-    }
-}
-
-/// Binds a provider-owned endpoint with a stable identity.  Native composition
-/// calls this once per runtime; the application never constructs an Iroh
-/// endpoint or handles its secret key directly.
-fn bind_endpoint_with_handle(
-    runtime: &Runtime,
-    store: &mut dyn ProtectedSecretStore,
-    handle: KeyId,
-) -> Result<Endpoint, IrohIdentityError> {
-    let secret = match store.load(handle)? {
-        Some(mut bytes) => {
-            let key_result: Result<[u8; 32], _> = bytes.as_slice().try_into();
-            bytes.fill(0);
-            let key = key_result.map_err(|_| IrohIdentityError::InvalidStoredKey)?;
-            iroh::SecretKey::from_bytes(&key)
-        }
-        None => {
-            let secret = iroh::SecretKey::generate();
-            let mut bytes = secret.to_bytes();
-            let result = store.insert(handle, &bytes);
-            bytes.fill(0);
-            result?;
-            secret
-        }
-    };
-    let profile = IrohEndpointProfile::from_environment();
-    let local_only = configured_flag(COMPILED_IROH_LOCAL_ONLY, "TORCA_IROH_LOCAL_ONLY")
-        || matches!(profile, IrohEndpointProfile::LocalOnly);
-    bind_endpoint_from_secret(runtime, secret, profile, local_only)
-}
-
-fn bind_endpoint_from_secret(
-    runtime: &Runtime,
-    secret: SecretKey,
-    profile: IrohEndpointProfile,
-    local_only: bool,
-) -> Result<Endpoint, IrohIdentityError> {
-    let service_config = IrohServiceConfig::from_environment(profile)?;
-    // Packaged artifacts use the values embedded by this crate's build script;
-    // an unconfigured development build may still use process environment.
-    // This prevents a host shell from silently changing an already verified
-    // artifact's routing/energy policy after deployment.
-    let disable_relay = configured_flag(COMPILED_IROH_DISABLE_RELAY, "TORCA_IROH_DISABLE_RELAY");
-    let disable_discovery =
-        configured_flag(COMPILED_IROH_DISABLE_DISCOVERY, "TORCA_IROH_DISABLE_DISCOVERY");
-    // Minimal is important for custom deployments: starting from N0 would
-    // silently retain public N0 lookup services when only one custom service
-    // was configured. Direct/local also start from Minimal so an offline
-    // profile never constructs unused discovery/relay workers.
-    let use_minimal = !matches!(profile, IrohEndpointProfile::AlwaysReachable)
-        || service_config.is_custom()
-        || disable_relay
-        || disable_discovery;
-    let base = if use_minimal {
-        Endpoint::builder(iroh::endpoint::presets::Minimal)
-    } else {
-        Endpoint::builder(iroh::endpoint::presets::N0)
-    };
-    let mut builder = profile.apply(base).secret_key(secret).alpns(vec![
-        ALPN.to_vec(),
-        PAIRING_ALPN.to_vec(),
-        RADIO_ALPN.to_vec(),
-    ]);
-
-    if profile.supports_incoming_reachability() && !disable_relay {
-        if !service_config.relay_urls.is_empty() {
-            builder = builder.relay_mode(iroh::RelayMode::custom(service_config.relay_urls));
-        } else if use_minimal {
-            // A custom discovery-only deployment still needs an explicit
-            // relay decision. Keeping this disabled avoids an accidental
-            // fallback to public N0 relays.
-            builder = builder.relay_mode(iroh::RelayMode::Disabled);
-        }
-    } else if disable_relay {
-        builder = builder.relay_mode(iroh::RelayMode::Disabled);
-    }
-
-    if profile.supports_incoming_reachability()
-        && !disable_discovery
-        && let Some(pkarr_url) = service_config.pkarr_url
-    {
-        builder = builder
-            .address_lookup(iroh::address_lookup::PkarrPublisher::builder(pkarr_url.clone()))
-            .address_lookup(iroh::address_lookup::PkarrResolver::builder(pkarr_url));
-    } else if disable_discovery || (profile.supports_incoming_reachability() && use_minimal) {
-        builder = builder.clear_address_lookup();
-    }
-    // The laboratory runner starts several peers in one process namespace.
-    // A loopback bind makes their bootstrap descriptor immediately routable
-    // and deterministic without depending on the host's Wi-Fi/NAT interface.
-    // Production deployments use the normal all-interface bind. Do not call
-    // `clear_ip_transports` here: that disables every direct IP route, leaving
-    // a provider with an endpoint identity but no usable transport when no
-    // relay is configured.
-    let bind_addr = if local_only { "127.0.0.1:0" } else { "0.0.0.0:0" };
-    let builder =
-        builder.bind_addr(bind_addr).map_err(|error| IrohIdentityError::Bind(error.to_string()))?;
-    runtime.block_on(builder.bind()).map_err(|error| IrohIdentityError::Bind(error.to_string()))
-}
-
-pub fn bind_endpoint(
-    runtime: &Runtime,
-    store: &mut dyn ProtectedSecretStore,
-) -> Result<Endpoint, IrohIdentityError> {
-    bind_endpoint_with_handle(runtime, store, IROH_ENDPOINT_SECRET_HANDLE)
-}
-
-/// Builds the bounded provider-owned runtime used by native composition.
-pub fn provider_runtime() -> Result<Runtime, IrohIdentityError> {
-    build_provider_runtime()
 }
 
 /// Complete provider-owned communication composition for a direct Iroh
@@ -1280,8 +822,7 @@ type Inbound = Arc<(Mutex<VecDeque<Result<Vec<u8>, PeerTransportError>>>, Condva
 ///
 /// Binding an endpoint is enough to make the local runtime usable.  Iroh's
 /// `online` future independently confirms that endpoint discovery/relay
-/// infrastructure is available for incoming reachability.  This is purposely
-/// not translated into Tor/onion vocabulary.
+/// infrastructure is available for incoming reachability.
 pub struct IrohLifecycle {
     endpoint: ProviderEndpointSlot,
     runtime: Arc<Runtime>,
@@ -1293,6 +834,9 @@ pub struct IrohLifecycle {
     /// Prevents a network callback and a foreground command from spawning
     /// overlapping `online()` futures for the same endpoint generation.
     online_probe_in_flight: Arc<AtomicBool>,
+    /// Serializes provider online reports across network generations. A new
+    /// generation waits for the cancelled report instead of losing its wake.
+    online_probe_serial: Arc<tokio::sync::Mutex<()>>,
     /// Cancels an in-flight online report when demand is withdrawn or the
     /// platform network generation changes.
     online_probe_cancel: Arc<tokio::sync::Notify>,
@@ -1317,6 +861,7 @@ impl IrohLifecycle {
         dormant: &Arc<AtomicBool>,
         reachability_demand: &Arc<AtomicBool>,
         probe_in_flight: &Arc<AtomicBool>,
+        probe_serial: &Arc<tokio::sync::Mutex<()>>,
         probe_cancel: &Arc<tokio::sync::Notify>,
         route_generation: &Arc<AtomicU64>,
         generation: &Arc<AtomicU64>,
@@ -1330,6 +875,7 @@ impl IrohLifecycle {
         let dormant = Arc::clone(dormant);
         let reachability_demand = Arc::clone(reachability_demand);
         let probe_in_flight = Arc::clone(probe_in_flight);
+        let probe_serial = Arc::clone(probe_serial);
         let probe_cancel = Arc::clone(probe_cancel);
         let route_generation = Arc::clone(route_generation);
         let generation = Arc::clone(generation);
@@ -1337,6 +883,10 @@ impl IrohLifecycle {
         let probe_attempts = Arc::clone(probe_attempts);
         let probe_failures = Arc::clone(probe_failures);
         runtime.spawn(async move {
+            // A replacement probe must wait for the cancelled generation to
+            // release the endpoint. Returning while the old probe is in
+            // flight can lose the only post-migration reachability attempt.
+            let _serial_guard = probe_serial.lock().await;
             // `Endpoint::online` has no timeout and can otherwise leave the
             // provider stuck in Publishing forever on a captive/offline
             // network. A bounded probe keeps commissioning responsive and
@@ -1348,13 +898,7 @@ impl IrohLifecycle {
             {
                 return;
             }
-            // A network event and a demand transition can arrive together.
-            // Only one report may own the endpoint at a time; the later wake
-            // observes the result through the atomics and does not duplicate
-            // the cellular/relay work.
-            if probe_in_flight.swap(true, Ordering::AcqRel) {
-                return;
-            }
+            probe_in_flight.store(true, Ordering::Release);
             let _probe_guard = OnlineProbeGuard(probe_in_flight);
             let mut retry_delay = Duration::from_secs(30);
             let mut attempts = 0_u32;
@@ -1427,6 +971,7 @@ impl IrohLifecycle {
         let online = Arc::new(AtomicBool::new(false));
         let reachability_demand = Arc::new(AtomicBool::new(false));
         let online_probe_in_flight = Arc::new(AtomicBool::new(false));
+        let online_probe_serial = Arc::new(tokio::sync::Mutex::new(()));
         let online_probe_cancel = Arc::new(tokio::sync::Notify::new());
         let stopped = Arc::new(AtomicBool::new(false));
         let dormant = Arc::new(AtomicBool::new(false));
@@ -1441,6 +986,7 @@ impl IrohLifecycle {
             online,
             reachability_demand,
             online_probe_in_flight,
+            online_probe_serial,
             online_probe_cancel,
             stopped,
             dormant,
@@ -1626,6 +1172,7 @@ impl CommunicationLifecycle for IrohLifecycle {
                 &self.dormant,
                 &self.reachability_demand,
                 &self.online_probe_in_flight,
+                &self.online_probe_serial,
                 &self.online_probe_cancel,
                 &self.endpoint.route_generation,
                 &self.network_generation,
@@ -1668,6 +1215,7 @@ impl CommunicationLifecycle for IrohLifecycle {
                 &self.dormant,
                 &self.reachability_demand,
                 &self.online_probe_in_flight,
+                &self.online_probe_serial,
                 &self.online_probe_cancel,
                 &self.endpoint.route_generation,
                 &self.network_generation,
@@ -1730,6 +1278,7 @@ impl CommunicationLifecycle for IrohLifecycle {
                 &self.dormant,
                 &self.reachability_demand,
                 &self.online_probe_in_flight,
+                &self.online_probe_serial,
                 &self.online_probe_cancel,
                 &self.endpoint.route_generation,
                 &self.network_generation,
@@ -1801,9 +1350,13 @@ impl CommunicationLifecycle for IrohLifecycle {
         };
         let incoming = match self.incoming_reachability_state() {
             IncomingReachabilityState::Reachable => CommissioningState::Ready,
-            IncomingReachabilityState::Publishing | IncomingReachabilityState::Unknown => {
-                CommissioningState::Pending
-            }
+            IncomingReachabilityState::Publishing => CommissioningState::Pending,
+            // Iroh proves public reachability only while the runtime has a
+            // matching demand (pairing, durable receive, etc.). An idle
+            // endpoint is already commissioned for the local shell; treating
+            // suppressed probing as Pending leaves the warm-up UI spinning
+            // forever with no operation capable of completing that probe.
+            IncomingReachabilityState::Unknown => CommissioningState::NotRequired,
             IncomingReachabilityState::Degraded => CommissioningState::Degraded,
             IncomingReachabilityState::Failed => CommissioningState::Failed,
             IncomingReachabilityState::Stopped => CommissioningState::NotRequired,
@@ -1816,6 +1369,11 @@ impl CommunicationLifecycle for IrohLifecycle {
                     state: local,
                     required_for_local_shell: true,
                     required_for_pairing: true,
+                    presentation: Some(CommissioningPresentation {
+                        label: "Iroh endpoint",
+                        pending_summary: "Binding the encrypted Iroh endpoint…",
+                        ready_summary: "Iroh endpoint is ready",
+                    }),
                 },
                 CommissioningStep {
                     stage: CommissioningStage::IncomingReachability,
@@ -1827,6 +1385,11 @@ impl CommunicationLifecycle for IrohLifecycle {
                     // invitation into a "warming up" gate.  The join path
                     // performs the authoritative reachability attempt.
                     required_for_pairing: false,
+                    presentation: Some(CommissioningPresentation {
+                        label: "Iroh reachability",
+                        pending_summary: "Publishing a fresh Iroh route…",
+                        ready_summary: "Iroh route can receive connections",
+                    }),
                 },
             ],
             endpoint_summary: self.local_endpoint_summary(),
@@ -3143,6 +2706,11 @@ mod tests {
         );
         lifecycle.set_reachability_demand(false);
         assert_eq!(lifecycle.runtime_diagnostics().online_probe_attempts, Some(0));
+        assert_eq!(
+            lifecycle.commissioning().step(CommissioningStage::IncomingReachability),
+            CommissioningState::NotRequired,
+            "suppressed demand is a completed provider choice, not an endless warm-up"
+        );
         lifecycle.shutdown();
     }
 

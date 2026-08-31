@@ -20,10 +20,9 @@ class FakeEngineGateway implements EngineGateway, PairingUriParser {
        _parsedPairingCodes = ListQueue<String?>.of(parsedPairingCodes);
 
   static const AppSnapshotDto _readyWithoutProfile = AppSnapshotDto(
-    torState: 'ready',
     transport: TransportStatusDto(
-      tor: TransportIndicatorDto(state: 'ready'),
-      relay: TransportIndicatorDto(state: 'healthy'),
+      communication: TransportIndicatorDto(state: 'ready'),
+      rendezvous: TransportIndicatorDto(state: 'healthy'),
     ),
     bootstrapPhase: 'ready',
   );

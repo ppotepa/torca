@@ -57,12 +57,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     match command {
         Command::Status => match executor.resume(ExecutionMode::DryRun) {
-            Ok(run) => println!(
-                "run={} stage={:?} endpoint={}",
-                run.run_id,
-                run.stage,
-                run.provider_endpoint.unwrap_or_else(|| "unknown".into())
-            ),
+            Ok(run) => println!("run={} stage={:?}", run.run_id, run.stage),
             Err(_) => println!("No resumable Torca deployment checkpoint found."),
         },
         Command::Resume { dry_run } => {
@@ -194,19 +189,16 @@ fn show_and_execute_with_options(
     let show_steps = options.show_steps || mode == ExecutionMode::DryRun;
     plan.validate()?;
     println!(
-        "Plan: {}\n  targets: {:?}\n  device: {:?}\n  configuration: {}\n  client build: {:?}\n  provider service build: {:?}\n  provider maintenance: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  communication protocol: {}\n  provider profile: {:?}\n  mode: {:?}",
+        "Plan: {}\n  targets: {:?}\n  device: {:?}\n  configuration: {}\n  client build: {:?}\n  client data: {:?}\n  validation: {:?}\n  launch: {:?}\n  privacy: {:?}\n  provider: Iroh\n  Iroh profile: {:?}\n  mode: {:?}",
         plan.action,
         plan.targets,
         plan.device,
         plan.configuration,
         plan.client_build,
-        plan.provider_service_build,
-        plan.provider_maintenance,
         plan.client_data,
         plan.validation,
         plan.launch,
         plan.privacy,
-        plan.communication_provider,
         plan.provider_profile,
         mode
     );
@@ -214,16 +206,16 @@ fn show_and_execute_with_options(
         println!("  steps:");
         for step in plan.planned_steps() {
             let marker = match (step.disposition, no_color) {
-                (torca_deploy::domain::StepDisposition::Execute, false) => "Ã¢Å“â€œ",
-                (torca_deploy::domain::StepDisposition::Reuse, false) => "Ã¢â€ â€™",
-                (torca_deploy::domain::StepDisposition::Skip, false) => "Ã¢â€”â€¹",
-                (torca_deploy::domain::StepDisposition::Blocked, false) => "Ã¢Å“â€”",
+                (torca_deploy::domain::StepDisposition::Execute, false) => "[OK]",
+                (torca_deploy::domain::StepDisposition::Reuse, false) => "[->]",
+                (torca_deploy::domain::StepDisposition::Skip, false) => "[ ]",
+                (torca_deploy::domain::StepDisposition::Blocked, false) => "[X]",
                 (torca_deploy::domain::StepDisposition::Execute, true) => "[ok]",
                 (torca_deploy::domain::StepDisposition::Reuse, true) => "[reuse]",
                 (torca_deploy::domain::StepDisposition::Skip, true) => "[skip]",
                 (torca_deploy::domain::StepDisposition::Blocked, true) => "[blocked]",
             };
-            println!("    {marker} {} Ã¢â‚¬â€ {}", step.label, step.reason);
+            println!("    {marker} {} - {}", step.label, step.reason);
         }
     }
     if options.preflight {
@@ -273,9 +265,9 @@ fn show_and_execute_with_options(
 
 fn step_marker(disposition: torca_deploy::domain::StepDisposition) -> &'static str {
     match disposition {
-        torca_deploy::domain::StepDisposition::Execute => "Ã¢Å“â€œ",
-        torca_deploy::domain::StepDisposition::Reuse => "Ã¢â€ â€™",
-        torca_deploy::domain::StepDisposition::Skip => "Ã¢â€”â€¹",
-        torca_deploy::domain::StepDisposition::Blocked => "Ã¢Å“â€”",
+        torca_deploy::domain::StepDisposition::Execute => "[OK]",
+        torca_deploy::domain::StepDisposition::Reuse => "[->]",
+        torca_deploy::domain::StepDisposition::Skip => "[ ]",
+        torca_deploy::domain::StepDisposition::Blocked => "[X]",
     }
 }

@@ -3,8 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 
 use crate::domain::{
-    CheckStatus, DeployPlan, DeployRun, DeployStage, PreflightCheck, PreflightReport,
-    ProviderMetadataExt,
+    CheckStatus, DeployPlan, DeployRun, DeployStage, PreflightCheck, PreflightReport, iroh_provider,
 };
 use crate::persistence::{PersistenceError, StateStore};
 use crate::process::{CommandRunner, ProcessError, SystemCommandRunner};
@@ -147,11 +146,8 @@ impl DeployExecutor {
         if !report.can_execute {
             return report;
         }
-        if matches!(
-            plan.action,
-            crate::domain::DeployAction::ProviderMaintenance
-                | crate::domain::DeployAction::BuildArtifacts
-        ) && plan.device.is_none()
+        if matches!(plan.action, crate::domain::DeployAction::BuildArtifacts)
+            && plan.device.is_none()
         {
             report.checks.push(PreflightCheck {
                 name: "Devices".into(),
@@ -231,13 +227,6 @@ impl DeployExecutor {
         if self.cancelled(&mut run, cancellation) {
             return Err(DeployError::Cancelled);
         }
-        if run.plan.needs_provider_service() {
-            run.advance(
-                DeployStage::ProviderServicePrepared,
-                "starting typed deployment transaction",
-            );
-            self.checkpoint(&run)?;
-        }
         if let Err(error) = self.run_native_orchestrator(&mut run, cancellation) {
             run.stage = DeployStage::Interrupted;
             run.message = Some(error.to_string());
@@ -247,7 +236,6 @@ impl DeployExecutor {
         if self.cancelled(&mut run, cancellation) {
             return Err(DeployError::Cancelled);
         }
-        run.provider_endpoint = None;
         if !matches!(run.plan.action, crate::domain::DeployAction::CollectLogs)
             && !matches!(run.plan.launch, crate::domain::LaunchPolicy::Skip)
         {
@@ -361,7 +349,7 @@ impl DeployExecutor {
                     run.plan.configuration,
                     run.plan.client_build,
                     endpoint.as_deref(),
-                    run.plan.communication_provider.clone(),
+                    iroh_provider(),
                     run.plan.provider_profile.as_deref(),
                 )
                 .map_err(DeployError::Build)?;
@@ -399,7 +387,6 @@ impl DeployExecutor {
                 crate::domain::DeployAction::RunInstalled
                     | crate::domain::DeployAction::CollectLogs
                     | crate::domain::DeployAction::BuildArtifacts
-                    | crate::domain::DeployAction::ProviderMaintenance
             )
         {
             if self.cancelled(run, cancellation) {
@@ -410,7 +397,7 @@ impl DeployExecutor {
                     .install(
                         device,
                         run.plan.configuration,
-                        run.plan.communication_provider.clone(),
+                        iroh_provider(),
                         run.plan.provider_profile.as_deref(),
                     )
                     .map_err(DeployError::Install)?;
@@ -447,7 +434,7 @@ impl DeployExecutor {
                                 device,
                                 run.plan.configuration,
                                 run.plan.privacy,
-                                run.plan.communication_provider.clone(),
+                                iroh_provider(),
                                 run.plan.provider_profile.as_deref(),
                                 matches!(run.plan.launch, crate::domain::LaunchPolicy::Restart),
                             )
@@ -468,32 +455,17 @@ impl DeployExecutor {
             };
             for (device, receipt) in receipts {
                 launch
-                    .wait_network_ready(
-                        device,
-                        receipt,
-                        run.plan.validation,
-                        run.plan.communication_provider.clone(),
-                    )
+                    .wait_network_ready(device, receipt, run.plan.validation, iroh_provider())
                     .map_err(DeployError::Launch)?;
             }
         }
         if !matches!(run.plan.action, crate::domain::DeployAction::CollectLogs) {
             let endpoint = endpoint.as_deref();
-            if run
-                .plan
-                .communication_provider
-                .deployment_profile()
-                .commissioning_service
-                .is_managed()
-                && endpoint.is_none()
-            {
-                return Err(DeployError::MissingEndpoint);
-            }
             crate::manifests::synchronize(
                 &paths,
                 &devices,
                 run.plan.configuration,
-                run.plan.communication_provider.clone(),
+                iroh_provider(),
                 endpoint,
                 run.plan.provider_profile.as_deref(),
             )
@@ -527,12 +499,8 @@ pub enum DeployError {
     DiagnosticsEmpty,
     #[error("deployment manifest synchronization failed: {0}")]
     Manifest(crate::manifests::ManifestError),
-    #[error("deployment manifest synchronization requires a provider endpoint")]
-    MissingEndpoint,
     #[error("deployment cancellation requested")]
     Cancelled,
-    #[error("deployment endpoint changed while resuming; expected {expected}, found {actual}")]
-    EndpointMismatch { expected: String, actual: String },
 }
 
 #[cfg(test)]

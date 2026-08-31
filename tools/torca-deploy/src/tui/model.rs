@@ -1,8 +1,7 @@
 use crate::domain::{
-    BuildPolicy, ClientDataPolicy, CommunicationProvider, Configuration, DeployAction, DeployPlan,
-    DeployRun, FieldAvailability, FieldCapability, FieldId, LaunchPolicy, PlanCapabilities,
-    PreflightReport, PrivacyPolicy, ProviderMaintenancePolicy, ProviderMetadataExt, Target,
-    ValidationLevel, iroh_provider,
+    BuildPolicy, ClientDataPolicy, Configuration, DeployAction, DeployPlan, DeployRun,
+    FieldAvailability, FieldCapability, FieldId, LaunchPolicy, PlanCapabilities, PreflightReport,
+    PrivacyPolicy, ProviderMetadataExt, Target, ValidationLevel, iroh_provider,
 };
 use crate::executor::DeployProgress;
 
@@ -23,101 +22,11 @@ pub struct WizardField {
     pub capability: FieldCapability,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Field {
-    Target,
-    Configuration,
-    ClientBuild,
-    ProviderServiceBuild,
-    ClientData,
-    ProviderMaintenance,
-    Privacy,
-    CommunicationProvider,
-    ProviderProfile,
-    Validation,
-    Launch,
-}
-
-pub fn draft_plan(
-    action: DeployAction,
-    target: u8,
-    configuration: Configuration,
-    client_build: BuildPolicy,
-    provider_service_build: BuildPolicy,
-    client_data: ClientDataPolicy,
-    provider_maintenance: ProviderMaintenancePolicy,
-    privacy: PrivacyPolicy,
-    communication_provider: CommunicationProvider,
-    provider_profile: Option<String>,
-    validation: ValidationLevel,
-    launch: LaunchPolicy,
-) -> DeployPlan {
-    let targets = match target {
-        1 => vec![Target::Windows],
-        2 => vec![Target::Android],
-        _ => crate::planner::all_client_targets(),
-    };
-    let mut plan = DeployPlan::normal(action, targets, configuration);
-    plan.client_build = client_build;
-    plan.provider_service_build = provider_service_build;
-    plan.client_data = client_data;
-    plan.provider_maintenance = provider_maintenance;
-    plan.privacy = privacy;
-    plan.communication_provider = communication_provider;
-    plan.provider_profile = provider_profile;
-    plan.validation = validation;
-    plan.launch = launch;
-    plan
-}
-
-pub fn field_id(field: Field) -> FieldId {
-    match field {
-        Field::Target => FieldId::Targets,
-        Field::Configuration => FieldId::Configuration,
-        Field::ClientBuild => FieldId::ClientBuild,
-        Field::ProviderServiceBuild => FieldId::ProviderServiceBuild,
-        Field::ClientData => FieldId::ClientData,
-        Field::ProviderMaintenance => FieldId::ProviderMaintenance,
-        Field::Privacy => FieldId::Privacy,
-        Field::CommunicationProvider => FieldId::CommunicationProvider,
-        Field::ProviderProfile => FieldId::ProviderProfile,
-        Field::Validation => FieldId::Validation,
-        Field::Launch => FieldId::Launch,
-    }
-}
-
 pub fn privacy_label(policy: PrivacyPolicy) -> &'static str {
     match policy {
         PrivacyPolicy::Strict => "Strict (block screenshots/recording)",
         PrivacyPolicy::AllowCapture => "Allow screenshots/recording",
     }
-}
-
-pub fn field_is_editable(plan: &DeployPlan, field: Field) -> bool {
-    WizardModel::new(plan.clone()).is_editable(field_id(field))
-}
-
-pub fn next_field_for_plan(current: Field, plan: &DeployPlan, direction: i8) -> Field {
-    let mut field = current;
-    for _ in 0..10 {
-        field = if direction >= 0 { next_field(field) } else { previous_field(field) };
-        if field_is_editable(plan, field) {
-            return field;
-        }
-    }
-    current
-}
-
-pub fn provider_profile_description(
-    provider: CommunicationProvider,
-    profile: &str,
-) -> &'static str {
-    provider
-        .descriptor()
-        .profiles
-        .iter()
-        .find(|candidate| candidate.id == profile)
-        .map_or("provider default", |candidate| candidate.description)
 }
 
 pub fn build_policy_label(policy: BuildPolicy) -> &'static str {
@@ -183,38 +92,6 @@ pub fn cycle_launch(policy: LaunchPolicy, direction: i8) -> LaunchPolicy {
     }
 }
 
-fn next_field(field: Field) -> Field {
-    match field {
-        Field::Target => Field::Configuration,
-        Field::Configuration => Field::ClientBuild,
-        Field::ClientBuild => Field::ProviderServiceBuild,
-        Field::ProviderServiceBuild => Field::ClientData,
-        Field::ClientData => Field::ProviderMaintenance,
-        Field::ProviderMaintenance => Field::Privacy,
-        Field::Privacy => Field::CommunicationProvider,
-        Field::CommunicationProvider => Field::ProviderProfile,
-        Field::ProviderProfile => Field::Validation,
-        Field::Validation => Field::Launch,
-        Field::Launch => Field::Target,
-    }
-}
-
-fn previous_field(field: Field) -> Field {
-    match field {
-        Field::Target => Field::Launch,
-        Field::Configuration => Field::Target,
-        Field::ClientBuild => Field::Configuration,
-        Field::ProviderServiceBuild => Field::ClientBuild,
-        Field::ClientData => Field::ProviderServiceBuild,
-        Field::ProviderMaintenance => Field::ClientData,
-        Field::Privacy => Field::ProviderMaintenance,
-        Field::CommunicationProvider => Field::Privacy,
-        Field::ProviderProfile => Field::CommunicationProvider,
-        Field::Validation => Field::ProviderProfile,
-        Field::Launch => Field::Validation,
-    }
-}
-
 pub fn cycle_data(current: ClientDataPolicy, direction: i8) -> ClientDataPolicy {
     let index = match current {
         ClientDataPolicy::Preserve => 0,
@@ -228,31 +105,8 @@ pub fn cycle_data(current: ClientDataPolicy, direction: i8) -> ClientDataPolicy 
     }
 }
 
-pub fn cycle_target(current: u8, direction: i8) -> u8 {
-    match (current, direction > 0) {
-        (0, false) => 2,
-        (1, false) => 0,
-        (2, false) => 1,
-        (0, true) => 1,
-        (1, true) => 2,
-        (2, true) => 0,
-        _ => 0,
-    }
-}
-
-pub fn cycle_provider(current: CommunicationProvider, direction: i8) -> CommunicationProvider {
-    let providers = [iroh_provider()];
-    let index = providers.iter().position(|provider| *provider == current).unwrap_or(0);
-    let next = (index as i8 + direction).rem_euclid(providers.len() as i8) as usize;
-    providers[next].clone()
-}
-
-pub fn cycle_provider_profile(
-    provider: CommunicationProvider,
-    current: &str,
-    direction: i8,
-) -> Option<String> {
-    let profiles = provider.descriptor().profiles;
+pub fn cycle_provider_profile(current: &str, direction: i8) -> Option<String> {
+    let profiles = iroh_provider().descriptor().profiles;
     if profiles.is_empty() {
         return None;
     }
@@ -260,30 +114,6 @@ pub fn cycle_provider_profile(
     Some(
         profiles[(index as i8 + direction).rem_euclid(profiles.len() as i8) as usize].id.to_owned(),
     )
-}
-
-pub fn cycle_provider_maintenance(
-    provider: CommunicationProvider,
-    current: ProviderMaintenancePolicy,
-    direction: i8,
-) -> ProviderMaintenancePolicy {
-    let options = provider.descriptor().maintenance;
-    if options.is_empty() {
-        return ProviderMaintenancePolicy::Ensure;
-    }
-    let current = match current {
-        ProviderMaintenancePolicy::Ensure => torca_transport_api::MaintenanceOption::Ensure,
-        ProviderMaintenancePolicy::Restart => torca_transport_api::MaintenanceOption::Restart,
-        ProviderMaintenancePolicy::RepairDirectoryCache
-        | ProviderMaintenancePolicy::RotateIdentity => {
-            torca_transport_api::MaintenanceOption::Restart
-        }
-    };
-    let index = options.iter().position(|option| *option == current).unwrap_or(0);
-    match options[(index as i8 + direction).rem_euclid(options.len() as i8) as usize] {
-        torca_transport_api::MaintenanceOption::Ensure => ProviderMaintenancePolicy::Ensure,
-        torca_transport_api::MaintenanceOption::Restart => ProviderMaintenancePolicy::Restart,
-    }
 }
 
 pub fn marker(active: bool) -> &'static str {
@@ -437,6 +267,7 @@ impl WizardModel {
     }
 
     pub fn rebuild_fields(&mut self) {
+        let previous = self.focused_field().map(|field| field.capability.id);
         self.fields = self
             .plan
             .capabilities()
@@ -444,18 +275,24 @@ impl WizardModel {
             .into_iter()
             .map(|capability| WizardField { capability })
             .collect();
-        self.focused = self.first_focusable().unwrap_or(0);
+        self.fields.sort_by_key(|field| field_order(field.capability.id));
+        self.focused = previous
+            .and_then(|id| self.focusable_index(id))
+            .or_else(|| {
+                previous.and_then(|id| {
+                    let section = field_section(id);
+                    self.fields.iter().position(|field| {
+                        field_section(field.capability.id) == section
+                            && is_focusable(&field.capability.availability)
+                    })
+                })
+            })
+            .or_else(|| self.first_focusable())
+            .unwrap_or(0);
     }
 
     pub fn set_action(&mut self, action: DeployAction) {
         self.plan.action = action;
-        self.plan = self.plan.clone().normalized();
-        self.rebuild_fields();
-        self.preflight = None;
-    }
-
-    pub fn set_provider(&mut self, provider: crate::domain::CommunicationProvider) {
-        self.plan.communication_provider = provider;
         self.plan = self.plan.clone().normalized();
         self.rebuild_fields();
         self.preflight = None;
@@ -493,17 +330,6 @@ impl WizardModel {
             FieldId::ClientBuild => {
                 self.plan.client_build = cycle_build_policy(self.plan.client_build, direction);
             }
-            FieldId::ProviderServiceBuild => {
-                self.plan.provider_service_build =
-                    cycle_build_policy(self.plan.provider_service_build, direction);
-            }
-            FieldId::ProviderMaintenance => {
-                self.plan.provider_maintenance = cycle_provider_maintenance(
-                    self.plan.communication_provider.clone(),
-                    self.plan.provider_maintenance,
-                    direction,
-                );
-            }
             FieldId::ClientData => {
                 self.plan.client_data = cycle_data(self.plan.client_data, direction);
             }
@@ -514,16 +340,8 @@ impl WizardModel {
                     PrivacyPolicy::Strict
                 }
             }
-            FieldId::CommunicationProvider => {
-                self.set_provider(cycle_provider(
-                    self.plan.communication_provider.clone(),
-                    direction,
-                ));
-                return;
-            }
             FieldId::ProviderProfile => {
                 self.plan.provider_profile = cycle_provider_profile(
-                    self.plan.communication_provider.clone(),
                     self.plan.provider_profile.as_deref().unwrap_or_default(),
                     direction,
                 );
@@ -568,6 +386,44 @@ impl WizardModel {
     fn first_focusable(&self) -> Option<usize> {
         self.fields.iter().position(|field| is_focusable(&field.capability.availability))
     }
+
+    fn focusable_index(&self, id: FieldId) -> Option<usize> {
+        self.fields.iter().position(|field| {
+            field.capability.id == id && is_focusable(&field.capability.availability)
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FieldSection {
+    Connection,
+    TargetAndBuild,
+    DataAndPrivacy,
+    VerifyAndStart,
+}
+
+const fn field_section(id: FieldId) -> FieldSection {
+    match id {
+        FieldId::ProviderProfile => FieldSection::Connection,
+        FieldId::Targets | FieldId::Configuration | FieldId::ClientBuild => {
+            FieldSection::TargetAndBuild
+        }
+        FieldId::ClientData | FieldId::Privacy => FieldSection::DataAndPrivacy,
+        FieldId::Validation | FieldId::Launch => FieldSection::VerifyAndStart,
+    }
+}
+
+const fn field_order(id: FieldId) -> u8 {
+    match id {
+        FieldId::ProviderProfile => 0,
+        FieldId::Targets => 1,
+        FieldId::Configuration => 2,
+        FieldId::ClientBuild => 3,
+        FieldId::ClientData => 4,
+        FieldId::Privacy => 5,
+        FieldId::Validation => 6,
+        FieldId::Launch => 7,
+    }
 }
 
 fn is_focusable(availability: &FieldAvailability) -> bool {
@@ -586,7 +442,10 @@ mod tests {
             vec![Target::Windows],
             Configuration::Debug,
         ));
-        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+        assert_eq!(
+            model.focused_field().map(|field| field.capability.id),
+            Some(FieldId::ProviderProfile)
+        );
         assert!(
             model
                 .fields
@@ -687,7 +546,6 @@ mod tests {
             Configuration::Debug,
         ));
         assert!(!model.is_editable(FieldId::ClientBuild));
-        assert!(!model.is_editable(FieldId::ProviderServiceBuild));
         assert!(model.is_editable(FieldId::Validation));
         assert!(model.is_editable(FieldId::Launch));
         assert_eq!(cycle_validation(ValidationLevel::Full, 1), ValidationLevel::Skip);
@@ -695,16 +553,12 @@ mod tests {
     }
 
     #[test]
-    fn provider_change_normalizes_managed_service_and_rebuilds_capabilities() {
-        let mut model = WizardModel::new(DeployPlan::normal(
+    fn iroh_profile_capability_is_present() {
+        let model = WizardModel::new(DeployPlan::normal(
             DeployAction::FullRedeploy,
             vec![Target::Windows, Target::Android],
             Configuration::Debug,
         ));
-        model.set_provider(iroh_provider());
-        assert_eq!(model.plan.communication_provider, iroh_provider());
-        assert!(!model.plan.communication_provider.descriptor().managed_service);
-        assert!(!model.is_editable(FieldId::ProviderServiceBuild));
         assert!(model.capability(FieldId::ProviderProfile).is_some());
     }
 
@@ -715,10 +569,73 @@ mod tests {
             vec![Target::Windows],
             Configuration::Debug,
         ));
+        model.move_focus(1);
         assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
         model.cycle_focused(1);
         assert_eq!(model.plan.targets, vec![Target::Android]);
+        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
         model.cycle_focused(1);
         assert_eq!(model.plan.targets, crate::planner::all_client_targets());
+        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+    }
+
+    #[test]
+    fn dynamic_rebuild_keeps_focus_on_the_same_visible_field() {
+        let mut model = WizardModel::new(DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Android],
+            Configuration::Debug,
+        ));
+        model.focused = model
+            .fields
+            .iter()
+            .position(|field| field.capability.id == FieldId::Privacy)
+            .expect("privacy field");
+
+        model.cycle_focused(1);
+
+        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Privacy));
+        assert_eq!(model.plan.privacy, PrivacyPolicy::AllowCapture);
+    }
+
+    #[test]
+    fn hidden_field_falls_back_to_first_editable_field_in_its_section() {
+        let mut model = WizardModel::new(DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Windows],
+            Configuration::Debug,
+        ));
+        model.focused = model
+            .fields
+            .iter()
+            .position(|field| field.capability.id == FieldId::Configuration)
+            .expect("configuration field");
+
+        model.set_action(DeployAction::RunInstalled);
+
+        assert_eq!(model.focused_field().map(|field| field.capability.id), Some(FieldId::Targets));
+    }
+
+    #[test]
+    fn focus_navigation_order_matches_the_rendered_sections() {
+        let model = WizardModel::new(DeployPlan::normal(
+            DeployAction::RedeployCurrent,
+            vec![Target::Windows],
+            Configuration::Debug,
+        ));
+        let ids = model.fields.iter().map(|field| field.capability.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                FieldId::ProviderProfile,
+                FieldId::Targets,
+                FieldId::Configuration,
+                FieldId::ClientBuild,
+                FieldId::ClientData,
+                FieldId::Privacy,
+                FieldId::Validation,
+                FieldId::Launch,
+            ]
+        );
     }
 }

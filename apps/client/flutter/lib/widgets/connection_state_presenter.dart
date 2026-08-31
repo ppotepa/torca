@@ -27,17 +27,13 @@ abstract final class ConnectionStatePresenter {
     required String state,
     required bool blocked,
     required TorcaIconSet icons,
-    String provider = 'tor',
+    String provider = 'iroh',
     TorcaStrings? strings,
   }) {
     final labels = strings ?? const TorcaStrings(Locale('en'));
-    final providerLabel = provider.isEmpty ? 'tor' : provider;
-    final directLabel = providerLabel == 'tor'
-        ? labels.directP2pOverTor
-        : labels.directProviderContact(providerLabel);
-    final directTooltip = providerLabel == 'tor'
-        ? labels.directP2pOverTor
-        : labels.directProviderContact(providerLabel);
+    final providerLabel = provider.isEmpty ? 'iroh' : provider;
+    final directLabel = labels.directProviderContact(providerLabel);
+    final directTooltip = labels.directProviderContact(providerLabel);
     if (blocked) {
       return ConnectionPresentation(
         label: labels.blocked,
@@ -58,18 +54,14 @@ abstract final class ConnectionStatePresenter {
       'connecting' || 'handshaking' => ConnectionPresentation(
         label: labels.connecting,
         shortLabel: labels.connecting,
-        tooltip: providerLabel == 'tor'
-            ? labels.connectingPeerThroughTor
-            : labels.connectingPeerThrough(providerLabel),
+        tooltip: labels.connectingPeerThrough(providerLabel),
         icon: icons.reconnect,
         tone: ConnectionTone.connecting,
       ),
       'reconnecting' => ConnectionPresentation(
         label: labels.reconnecting,
         shortLabel: labels.reconnecting,
-        tooltip: providerLabel == 'tor'
-            ? labels.reconnectingPeerThroughTor
-            : labels.reconnectingPeerThrough(providerLabel),
+        tooltip: labels.reconnectingPeerThrough(providerLabel),
         icon: icons.reconnect,
         tone: ConnectionTone.connecting,
       ),
@@ -83,7 +75,7 @@ abstract final class ConnectionStatePresenter {
     };
   }
 
-  static ConnectionPresentation tor(
+  static ConnectionPresentation iroh(
     String state,
     TorcaIconSet icons, [
     TorcaStrings? strings,
@@ -91,7 +83,7 @@ abstract final class ConnectionStatePresenter {
     final labels = strings ?? const TorcaStrings(Locale('en'));
     return provider(
       state: state,
-      provider: 'tor',
+      provider: 'iroh',
       icons: icons,
       strings: labels,
     );

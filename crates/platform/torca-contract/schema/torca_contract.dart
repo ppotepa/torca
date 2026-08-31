@@ -4,6 +4,7 @@
 import 'dart:convert';
 
 const int torcaContractVersion = __TORCA_CONTRACT_VERSION__;
+const int torcaStorageEpoch = __TORCA_STORAGE_EPOCH__;
 const int torcaNativeAbiVersion = 1;
 
 class ContractDecodeException extends FormatException {
@@ -63,6 +64,8 @@ class BootstrapStepDto {
   const BootstrapStepDto({
     required this.id,
     required this.state,
+    this.label,
+    this.summary,
     this.code,
     this.progress = 0,
     this.attempt = 0,
@@ -74,6 +77,8 @@ class BootstrapStepDto {
       BootstrapStepDto(
         id: _requiredString(value, 'id'),
         state: _requiredString(value, 'state'),
+        label: value['label'] as String?,
+        summary: value['summary'] as String?,
         code: value['code'] as String?,
         progress: _integer(value['progress']),
         attempt: _integer(value['attempt']),
@@ -82,7 +87,7 @@ class BootstrapStepDto {
         retryAtMs: (value['retryAtMs'] as num?)?.toInt(),
       );
   final String id, state;
-  final String? code;
+  final String? label, summary, code;
   final int progress, attempt;
   final int? startedAtMs, lastProgressAtMs, retryAtMs;
 
@@ -220,7 +225,7 @@ enum PendingOperationState { queued, retrying, unknown }
 
 enum PendingOperationDependency {
   /// The selected communication provider is not ready yet. New payloads
-  /// should use this provider-neutral dependency instead of naming Tor.
+  /// should use this provider-neutral dependency instead of naming a provider.
   provider,
 
   /// The selected provider's transport path is required.
@@ -229,10 +234,7 @@ enum PendingOperationDependency {
   /// The selected provider's transport and rendezvous/signalling path are
   /// required (the rendezvous mechanism is provider-owned).
   communicationAndRendezvous,
-
-  /// Legacy compatibility value emitted by older runtimes.
-  torOnionAndRelay,
-  relay,
+  rendezvous,
   runtime,
   network,
   unknown,
@@ -480,20 +482,18 @@ class TransportStatusDto {
   const TransportStatusDto({
     this.communication = const TransportIndicatorDto(state: 'stopped'),
     this.providerRouteState = 'unavailable',
-    this.tor = const TransportIndicatorDto(state: 'stopped'),
-    this.relay = const TransportIndicatorDto(),
+    this.rendezvous = const TransportIndicatorDto(),
     this.peer = const TransportIndicatorDto(state: 'disconnected'),
     this.peersReady = 0,
     this.peersTotal = 0,
-    this.relayInfo,
+    this.pairingServiceInfo,
   });
   factory TransportStatusDto.fromJson(Map<String, dynamic> value) {
     final communication = value['communication'];
     final providerRouteState = value['providerRouteState'];
-    final tor = value['tor'];
-    final relay = value['relay'];
+    final rendezvous = value['rendezvous'];
     final peer = value['peer'];
-    final relayInfo = value['relayInfo'];
+    final pairingServiceInfo = value['pairingServiceInfo'];
     return TransportStatusDto(
       communication: communication is Map<String, dynamic>
           ? TransportIndicatorDto.fromJson(
@@ -502,44 +502,42 @@ class TransportStatusDto {
             )
           : const TransportIndicatorDto(state: 'stopped'),
       providerRouteState: providerRouteState as String? ?? 'unavailable',
-      tor: tor is Map<String, dynamic>
-          ? TransportIndicatorDto.fromJson(tor, fallbackState: 'stopped')
-          : const TransportIndicatorDto(state: 'stopped'),
-      relay: relay is Map<String, dynamic>
-          ? TransportIndicatorDto.fromJson(relay)
+      rendezvous: rendezvous is Map<String, dynamic>
+          ? TransportIndicatorDto.fromJson(rendezvous)
           : const TransportIndicatorDto(),
       peer: peer is Map<String, dynamic>
           ? TransportIndicatorDto.fromJson(peer, fallbackState: 'disconnected')
           : const TransportIndicatorDto(state: 'disconnected'),
       peersReady: _integer(value['peersReady']),
       peersTotal: _integer(value['peersTotal']),
-      relayInfo: relayInfo is Map<String, dynamic>
-          ? RelayInfoDto.fromJson(relayInfo)
+      pairingServiceInfo: pairingServiceInfo is Map<String, dynamic>
+          ? PairingServiceInfoDto.fromJson(pairingServiceInfo)
           : null,
     );
   }
-  final TransportIndicatorDto communication, tor, relay, peer;
+  final TransportIndicatorDto communication, rendezvous, peer;
   final String providerRouteState;
   final int peersReady, peersTotal;
-  final RelayInfoDto? relayInfo;
+  final PairingServiceInfoDto? pairingServiceInfo;
 
   ProviderRouteState get typedProviderRouteState =>
       _providerRouteState(providerRouteState);
 }
 
-class RelayInfoDto {
-  const RelayInfoDto({
+class PairingServiceInfoDto {
+  const PairingServiceInfoDto({
     required this.productVersion,
     required this.buildId,
     required this.sourceCommit,
     required this.protocolVersion,
   });
-  factory RelayInfoDto.fromJson(Map<String, dynamic> value) => RelayInfoDto(
-    productVersion: _requiredString(value, 'productVersion'),
-    buildId: _requiredString(value, 'buildId'),
-    sourceCommit: _requiredString(value, 'sourceCommit'),
-    protocolVersion: _integer(value['protocolVersion']),
-  );
+  factory PairingServiceInfoDto.fromJson(Map<String, dynamic> value) =>
+      PairingServiceInfoDto(
+        productVersion: _requiredString(value, 'productVersion'),
+        buildId: _requiredString(value, 'buildId'),
+        sourceCommit: _requiredString(value, 'sourceCommit'),
+        protocolVersion: _integer(value['protocolVersion']),
+      );
   final String productVersion, buildId, sourceCommit;
   final int protocolVersion;
 }
@@ -566,7 +564,6 @@ class ContactDto {
     required this.displayName,
     this.transportProvider = 'unknown',
     this.endpointAvailable = false,
-    this.onionAddress,
     required this.status,
     required this.connectionState,
     this.availability = 'unknown',
@@ -585,7 +582,6 @@ class ContactDto {
       displayName: _requiredString(value, 'displayName'),
       transportProvider: value['transportProvider'] as String? ?? 'unknown',
       endpointAvailable: value['endpointAvailable'] as bool? ?? false,
-      onionAddress: value['onionAddress'] as String?,
       status: _requiredString(value, 'status'),
       connectionState: _requiredString(value, 'connectionState'),
       availability: value['availability'] as String? ?? 'unknown',
@@ -609,7 +605,7 @@ class ContactDto {
       availability,
       presenceState,
       verificationStatus;
-  final String? onionAddress, safetyNumber;
+  final String? safetyNumber;
   final bool endpointAvailable;
   final PeerHealthDto peerHealth;
   final int? verifiedAtMs;
@@ -833,8 +829,7 @@ class PendingOperationDto {
     'communication' => PendingOperationDependency.communication,
     'communication_and_rendezvous' =>
       PendingOperationDependency.communicationAndRendezvous,
-    'tor_onion_and_relay' => PendingOperationDependency.torOnionAndRelay,
-    'relay' => PendingOperationDependency.relay,
+    'rendezvous' => PendingOperationDependency.rendezvous,
     'runtime' => PendingOperationDependency.runtime,
     'network' => PendingOperationDependency.network,
     _ => PendingOperationDependency.unknown,
@@ -1029,10 +1024,8 @@ class AppSnapshotDto {
     this.communicationProvider = 'unknown',
     this.communicationState = 'stopped',
     this.endpointSummary,
-    this.torState = 'stopped',
     this.transport = const TransportStatusDto(),
     this.navigationBadges = const NavigationBadgesDto(),
-    this.onionAddress,
     this.pairings = const [],
     this.contacts = const [],
     this.conversations = const [],
@@ -1062,14 +1055,12 @@ class AppSnapshotDto {
           value['communicationProvider'] as String? ?? 'unknown',
       communicationState: value['communicationState'] as String? ?? 'stopped',
       endpointSummary: value['endpointSummary'] as String?,
-      torState: value['torState'] as String? ?? 'stopped',
       transport: transport is Map<String, dynamic>
           ? TransportStatusDto.fromJson(transport)
           : const TransportStatusDto(),
       navigationBadges: navigationBadges is Map<String, dynamic>
           ? NavigationBadgesDto.fromJson(navigationBadges)
           : const NavigationBadgesDto(),
-      onionAddress: value['onionAddress'] as String?,
       pairings: _objects(
         value['pairings'],
       ).map(PairingDto.fromJson).toList(growable: false),
@@ -1106,10 +1097,8 @@ class AppSnapshotDto {
   final IdentityDto? identity;
   final String communicationProvider, communicationState;
   final String? endpointSummary;
-  final String torState;
   final TransportStatusDto transport;
   final NavigationBadgesDto navigationBadges;
-  final String? onionAddress;
   final List<PairingDto> pairings;
   final List<ContactDto> contacts;
   final List<ConversationDto> conversations;

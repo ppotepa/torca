@@ -113,7 +113,7 @@ class ConversationSummaryTile extends StatelessWidget {
             ConnectionIndicator(
               state: contact?.availabilityIndicatorState ?? 'disconnected',
               blocked: blocked,
-              provider: contact?.transportProvider ?? 'tor',
+              provider: contact?.transportProvider ?? 'iroh',
               showLabel: false,
             ),
             if (contact != null)

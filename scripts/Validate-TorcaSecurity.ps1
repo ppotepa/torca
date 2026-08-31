@@ -5,6 +5,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Cargo writes normal compilation progress to stderr. Keep native exit codes as
+# the authority so PowerShell does not turn successful progress into an error.
+$PSNativeCommandUseErrorActionPreference = $false
 $scriptRoot = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { (Get-Location).Path } else { $PSScriptRoot }
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = (Resolve-Path (Join-Path $scriptRoot '..')).Path }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = (Join-Path $scriptRoot '../artifacts/security') }
@@ -39,13 +42,26 @@ try {
     $packages = @('torca-crypto', 'torca-peer-protocol', 'torca-pairing-protocol', 'torca-storage-sqlite')
     $arguments = @('test', '--locked')
     foreach ($package in $packages) { $arguments += @('-p', $package) }
-    & cargo @arguments 2>&1 | Tee-Object -FilePath (Join-Path $output 'security-tests.txt')
-    if ($LASTEXITCODE -ne 0) { throw 'Security-sensitive package tests failed.' }
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & cargo @arguments 2>&1 | Tee-Object -FilePath (Join-Path $output 'security-tests.txt')
+        $securityTestExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    if ($securityTestExitCode -ne 0) { throw 'Security-sensitive package tests failed.' }
 
     $audit = Get-Command cargo-audit -ErrorAction SilentlyContinue
     if ($audit) {
-        & cargo audit 2>&1 | Tee-Object -FilePath (Join-Path $output 'cargo-audit.txt')
-        if ($LASTEXITCODE -ne 0) { throw 'cargo audit reported a blocking advisory.' }
+        try {
+            $ErrorActionPreference = 'Continue'
+            & cargo audit 2>&1 | Tee-Object -FilePath (Join-Path $output 'cargo-audit.txt')
+            $cargoAuditExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
+        if ($cargoAuditExitCode -ne 0) { throw 'cargo audit reported a blocking advisory.' }
     }
     else {
         'cargo-audit not installed; dependency advisory scan not executed.' |

@@ -6,25 +6,8 @@ $script:FlutterRoot = Join-Path $script:RepoRoot 'apps/client/flutter'
 $script:DartSchema = Join-Path $script:RepoRoot 'crates/platform/torca-contract/schema/torca_contract.dart'
 $script:CargoNdkVersion = '4.1.2'
 
-function Get-TorcaProviderFeatures {
-    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'iroh' }
-    switch ($provider.ToLowerInvariant()) {
-        'iroh' { return 'iroh,radio-audio' }
-        'webrtc' { return 'iroh,radio-audio' }
-        default { throw "Unsupported communication provider '$provider'." }
-    }
-}
-
 function Get-TorcaProviderTargetRoot {
-    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'iroh' }
-    Join-Path $script:RepoRoot (Join-Path 'target/providers' $provider.ToLowerInvariant())
-}
-
-function Test-TorcaProviderNeedsEndpoint {
-    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    return $false
+    Join-Path $script:RepoRoot 'target/providers/iroh'
 }
 
 function Invoke-TorcaExternal {
@@ -78,6 +61,13 @@ function Assert-TorcaReleaseMetadata {
     if ($null -eq $contractSchema.contractVersion -or
         [int]$contractSchema.contractVersion -ne [int]$release.contractSchema) {
         throw 'Canonical contract schema version does not match release/version.json.'
+    }
+
+    $storageSource = Get-Content (Join-Path $script:RepoRoot 'crates/infrastructure/torca-storage-sqlite/src/lib.rs') -Raw
+    $storageMatch = [Regex]::Match($storageSource, '(?m)^pub const STORAGE_EPOCH:\s*u16\s*=\s*(\d+);$')
+    if (-not $storageMatch.Success -or
+        [int]$storageMatch.Groups[1].Value -ne [int]$release.storageEpoch) {
+        throw 'Native storage epoch does not match release/version.json.'
     }
 
     Write-Host "Release metadata consistent: $($release.version)+$($release.build)"
@@ -227,19 +217,12 @@ function Invoke-TorcaValidation {
         if ($env:OS -eq 'Windows_NT') { $rustFlags = "$rustFlags -C link-arg=/IGNORE:4099" }
         $env:RUSTFLAGS = "$rustFlags -A warnings".Trim()
         Invoke-TorcaExternal 'Rust check' { cargo check --workspace --all-targets --locked }
-        Invoke-TorcaExternal 'Iroh provider isolation check' {
-            cargo check -p torca-native --no-default-features --features iroh,radio-audio --locked
-        }
-        Invoke-TorcaExternal 'WebRTC provider isolation check' {
-            cargo check -p torca-native --no-default-features --features iroh,radio-audio --locked
-        }
+        Invoke-TorcaExternal 'Iroh native check' { cargo check -p torca-native --locked }
         Invoke-TorcaExternal 'Rust clippy' {
             cargo clippy --workspace --all-targets --locked -- -A warnings -A clippy::all -A clippy::pedantic -D clippy::correctness -D clippy::suspicious -D clippy::perf
         }
         Invoke-TorcaExternal 'Rust tests' { cargo test --workspace --all-targets --locked }
-        Invoke-TorcaExternal 'Iroh provider tests' {
-            cargo test -p torca-native --no-default-features --features iroh,radio-audio --locked
-        }
+        Invoke-TorcaExternal 'Iroh native tests' { cargo test -p torca-native --locked }
     } finally {
         $env:RUSTFLAGS = $oldRustFlags
     }
@@ -338,7 +321,7 @@ function Invoke-TorcaQuickValidation {
         cargo run -p torca-contract-gen -- --check apps/client/flutter/lib/generated/torca_contract.dart
     }
     Invoke-TorcaExternal 'Rust native check' {
-        cargo check -p torca-native --no-default-features --features (Get-TorcaProviderFeatures) --locked
+        cargo check -p torca-native --locked
     }
     Push-Location $script:FlutterRoot
     try {
@@ -549,11 +532,9 @@ function Build-TorcaNative {
             $env:RUSTFLAGS = "$rustFlags -C link-arg=/IGNORE:4099".Trim()
             $env:CARGO_TARGET_DIR = Get-TorcaProviderTargetRoot
             if ($Configuration -eq 'release') {
-                $features = Get-TorcaProviderFeatures
-                Invoke-TorcaExternal 'Rust native Windows release' { cargo build -p torca-native --release --no-default-features --features $features --locked }
+                Invoke-TorcaExternal 'Rust native Windows release' { cargo build -p torca-native --release --locked }
             } else {
-                $features = Get-TorcaProviderFeatures
-                Invoke-TorcaExternal 'Rust native Windows debug' { cargo build -p torca-native --no-default-features --features $features --locked }
+                Invoke-TorcaExternal 'Rust native Windows debug' { cargo build -p torca-native --locked }
             }
         } finally {
             $env:RUSTFLAGS = $oldRustFlags
@@ -620,7 +601,7 @@ function Build-TorcaNative {
             Set-Item -Path ("Env:AR_$($androidTarget.Triple)") -Value 'llvm-ar'
             Set-Item -Path ("Env:RANLIB_$($androidTarget.Triple)") -Value 'llvm-ranlib'
             Remove-Item -Path ("Env:CFLAGS_$($androidTarget.Triple)") -ErrorAction SilentlyContinue
-            $cargoArguments = @('build', '-p', 'torca-native', '--no-default-features', '--features', (Get-TorcaProviderFeatures), '--target', $androidTarget.Triple, '--locked')
+            $cargoArguments = @('build', '-p', 'torca-native', '--target', $androidTarget.Triple, '--locked')
             if ($Configuration -eq 'release') { $cargoArguments += '--release' }
             Invoke-TorcaExternal "Rust native Android $Configuration $($androidTarget.Abi)" { cargo @cargoArguments }
             $profile = if ($Configuration -eq 'release') { 'release' } else { 'debug' }
@@ -722,7 +703,7 @@ function Build-TorcaFlutterTarget {
                 Remove-Item -LiteralPath $staleApk.FullName -Force
             }
             Write-Host "==> Flutter Android $Configuration ABI packages"
-            & flutter build apk --$Configuration --split-per-abi @dartDefine
+            & flutter build apk --$Configuration --split-per-abi --flavor normal @dartDefine
             $flutterExit = $LASTEXITCODE
             # Flavor-aware Flutter versions place split APKs under
             # outputs/apk/normal/release instead of flutter-apk. Normalize
@@ -1005,8 +986,8 @@ function Invoke-TorcaDeploy {
                     foreach ($staleApk in @(Get-ChildItem $apkOutput -Filter '*.apk' -ErrorAction SilentlyContinue)) {
                         Remove-Item -LiteralPath $staleApk.FullName -Force
                     }
-                    Invoke-TorcaExternal 'Android split APKs' { flutter build apk --release --split-per-abi }
-                    Invoke-TorcaExternal 'Android app bundle' { flutter build appbundle --release }
+                    Invoke-TorcaExternal 'Android split APKs' { flutter build apk --release --split-per-abi --flavor normal }
+                    Invoke-TorcaExternal 'Android app bundle' { flutter build appbundle --release --flavor normal }
                 } finally {
                     Pop-Location
                 }
@@ -1016,7 +997,7 @@ function Invoke-TorcaDeploy {
                         Assert-TorcaAndroidPackage -Apk $_.FullName
                         Copy-Item $_.FullName (Join-Path $androidTarget $_.Name) -Force
                     }
-                $bundle = Join-Path $script:FlutterRoot 'build/app/outputs/bundle/release/app-release.aab'
+                $bundle = Join-Path $script:FlutterRoot 'build/app/outputs/bundle/normalRelease/app-normal-release.aab'
                 if (Test-Path $bundle) {
                     Copy-Item $bundle (Join-Path $androidTarget 'Torca.aab') -Force
                 }

@@ -242,9 +242,7 @@ class _TorcaAppState extends State<TorcaApp> {
     // Bound the prompt history and allow a newly created invitation reusing a
     // session id after terminal cleanup to notify normally.
     final activePairingIds = pairings.map((pairing) => pairing.id).toSet();
-    _pairingPromptsShown.removeWhere(
-      (id, _) => !activePairingIds.contains(id),
-    );
+    _pairingPromptsShown.removeWhere((id, _) => !activePairingIds.contains(id));
     if (!mounted || _pairingPromptOpen || _scheduledPairingPromptId != null) {
       return;
     }

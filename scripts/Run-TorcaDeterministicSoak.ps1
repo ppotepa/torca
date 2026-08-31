@@ -1,8 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)][int]$Iterations = 25,
-    [Parameter(Mandatory = $false)][string]$RepoRoot,
-    [Parameter(Mandatory = $false)][ValidateSet('tor', 'iroh', 'webrtc')][string]$CommunicationProvider = 'iroh'
+    [Parameter(Mandatory = $false)][string]$RepoRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +28,7 @@ try {
 
     for ($iteration = 1; $iteration -le $Iterations; $iteration++) {
         $started = Get-Date
-        Write-Host "Deterministic soak iteration $iteration/$Iterations (provider=$CommunicationProvider)"
+        Write-Host "Deterministic soak iteration $iteration/$Iterations (provider=iroh)"
         $arguments = @('test', '--locked')
         foreach ($package in $packages) {
             $arguments += @('-p', $package)
@@ -38,16 +37,11 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "Deterministic soak failed at iteration $iteration."
         }
-        # Compile and exercise the native composition with exactly the same
-        # provider feature isolation used by deployment. This catches a
-        # provider-specific regression without linking the other transport.
-        $nativeArguments = @(
-            'test', '--locked', '-p', 'torca-native', '--no-default-features',
-            '--features', "provider-$CommunicationProvider,radio-audio"
-        )
+        # Exercise the same default native composition used by deployment.
+        $nativeArguments = @('test', '--locked', '-p', 'torca-native')
         & cargo @nativeArguments
         if ($LASTEXITCODE -ne 0) {
-            throw "Native $CommunicationProvider soak failed at iteration $iteration."
+            throw "Native Iroh soak failed at iteration $iteration."
         }
         $elapsed = (Get-Date) - $started
         Write-Host ("Iteration {0} passed in {1:n1}s" -f $iteration, $elapsed.TotalSeconds)

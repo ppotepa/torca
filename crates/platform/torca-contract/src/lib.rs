@@ -219,8 +219,7 @@ pub struct BridgeSnapshot {
     pub identity_id: Option<String>,
     #[serde(skip)]
     pub identity_fingerprint: Option<String>,
-    /// Selected provider and its generic readiness state. New presentation
-    /// code must use these fields rather than the legacy Tor projection.
+    /// Selected provider and its generic readiness state.
     pub communication_provider: String,
     pub communication_state: String,
     pub endpoint_summary: Option<String>,
@@ -348,6 +347,8 @@ pub struct NotificationEvent {
 pub struct BridgeBootstrapStep {
     pub id: String,
     pub state: String,
+    pub label: Option<String>,
+    pub summary: Option<String>,
     pub code: Option<String>,
     pub progress: u8,
     pub attempt: u32,
@@ -406,17 +407,16 @@ pub struct BridgeTransportIndicator {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BridgeTransportStatus {
-    /// Provider-neutral aggregate. `tor` is retained until older clients are
-    /// migrated to this field.
+    /// Provider-neutral aggregate communication state.
     pub communication: BridgeTransportIndicator,
     /// Provider-owned route freshness. This is distinct from communication
-    /// readiness and remains valid for Tor, Iroh and future providers.
+    /// readiness and remains valid for Iroh and future providers.
     pub provider_route_state: String,
-    pub relay: BridgeTransportIndicator,
+    pub rendezvous: BridgeTransportIndicator,
     pub peer: BridgeTransportIndicator,
     pub peers_ready: u32,
     pub peers_total: u32,
-    pub relay_info: Option<BridgePairingServiceInfo>,
+    pub pairing_service_info: Option<BridgePairingServiceInfo>,
 }
 
 #[must_use]
@@ -1013,6 +1013,23 @@ fn bootstrap_step_id(id: BootstrapStepId) -> &'static str {
     }
 }
 
+fn commissioning_stage_for_bootstrap_step(
+    id: BootstrapStepId,
+) -> Option<torca_transport_api::CommissioningStage> {
+    match id {
+        BootstrapStepId::CommunicationRuntime => {
+            Some(torca_transport_api::CommissioningStage::LocalRuntime)
+        }
+        BootstrapStepId::IncomingReachability => {
+            Some(torca_transport_api::CommissioningStage::IncomingReachability)
+        }
+        BootstrapStepId::Rendezvous => {
+            Some(torca_transport_api::CommissioningStage::PairingRendezvous)
+        }
+        _ => None,
+    }
+}
+
 /// Pure wire projection: application owns the snapshot context and this
 /// function only converts it to contract DTOs. No use-case or readiness policy
 /// belongs here.
@@ -1097,7 +1114,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
                 torca_transport_api::ProviderRouteState::Unavailable => "unavailable",
             }
             .to_owned(),
-            relay: BridgeTransportIndicator {
+            rendezvous: BridgeTransportIndicator {
                 state: relay_state,
                 code: relay_code,
                 latency_ms: relay_latency_ms,
@@ -1157,7 +1174,7 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
             },
             peers_ready: network.connectivity.peers_ready,
             peers_total: network.connectivity.peers_total,
-            relay_info: network.relay_info.map(|info| BridgePairingServiceInfo {
+            pairing_service_info: network.relay_info.map(|info| BridgePairingServiceInfo {
                 product_version: info.product_version,
                 build_id: info.build_id,
                 source_commit: info.source_commit,
@@ -1168,25 +1185,43 @@ pub fn bridge_snapshot_from_application(context: ApplicationSnapshotContext) -> 
         bootstrap_steps: bootstrap_snapshot
             .steps
             .into_iter()
-            .filter(|step| {
-                matches!(
+            .filter(|step| match commissioning_stage_for_bootstrap_step(step.id) {
+                Some(stage) => {
+                    network.communication.steps.iter().any(|candidate| candidate.stage == stage)
+                }
+                None => matches!(
                     step.id,
-                    BootstrapStepId::SecureStorage
-                        | BootstrapStepId::DeviceIdentity
-                        | BootstrapStepId::CommunicationRuntime
-                        | BootstrapStepId::IncomingReachability
-                        | BootstrapStepId::Rendezvous
-                )
+                    BootstrapStepId::SecureStorage | BootstrapStepId::DeviceIdentity
+                ),
             })
-            .map(|step| BridgeBootstrapStep {
-                id: bootstrap_step_id(step.id).into(),
-                state: bootstrap_step_state_name(step.state).into(),
-                code: step.diagnostic_code,
-                progress: u8::from(step.state == BootstrapStepState::Ready) * 100,
-                attempt: step.attempt,
-                started_at_ms: None,
-                last_progress_at_ms: None,
-                retry_at_ms: None,
+            .map(|step| {
+                let presentation = commissioning_stage_for_bootstrap_step(step.id)
+                    .and_then(|stage| {
+                        network
+                            .communication
+                            .steps
+                            .iter()
+                            .find(|candidate| candidate.stage == stage)
+                    })
+                    .and_then(|candidate| candidate.presentation);
+                BridgeBootstrapStep {
+                    id: bootstrap_step_id(step.id).into(),
+                    state: bootstrap_step_state_name(step.state).into(),
+                    label: presentation.map(|value| value.label.into()),
+                    summary: presentation.map(|value| {
+                        if step.state == BootstrapStepState::Ready {
+                            value.ready_summary.into()
+                        } else {
+                            value.pending_summary.into()
+                        }
+                    }),
+                    code: step.diagnostic_code,
+                    progress: u8::from(step.state == BootstrapStepState::Ready) * 100,
+                    attempt: step.attempt,
+                    started_at_ms: None,
+                    last_progress_at_ms: None,
+                    retry_at_ms: None,
+                }
             })
             .collect(),
         pairings: snapshot

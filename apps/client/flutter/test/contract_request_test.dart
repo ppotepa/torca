@@ -88,7 +88,6 @@ void main() {
     expect(
       () => ContactDto.fromJson(<String, dynamic>{
         'id': 'contact-1',
-        'onionAddress': '${'a' * 56}.onion',
         'status': 'active',
         'connectionState': 'disconnected',
       }),

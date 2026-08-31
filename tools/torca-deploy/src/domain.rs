@@ -44,11 +44,8 @@ pub enum FieldId {
     Targets,
     Configuration,
     ClientBuild,
-    ProviderServiceBuild,
-    ProviderMaintenance,
     ClientData,
     Privacy,
-    CommunicationProvider,
     ProviderProfile,
     Validation,
     Launch,
@@ -96,7 +93,6 @@ pub struct PlanCapabilities {
 pub enum StepId {
     DiscoverDevices,
     Preflight,
-    ProviderService,
     BuildArtifacts,
     ResetClientData,
     InstallClients,
@@ -188,7 +184,6 @@ pub enum DeployAction {
     RedeployCurrent,
     Rebuild,
     FullRedeploy,
-    ProviderMaintenance,
     CollectLogs,
     BuildArtifacts,
 }
@@ -200,7 +195,6 @@ impl fmt::Display for DeployAction {
             Self::RedeployCurrent => "redeploy current artifacts",
             Self::Rebuild => "rebuild",
             Self::FullRedeploy => "full redeploy",
-            Self::ProviderMaintenance => "provider maintenance",
             Self::CollectLogs => "collect logs",
             Self::BuildArtifacts => "build artifacts",
         })
@@ -213,19 +207,6 @@ pub enum BuildPolicy {
     Reuse,
     IfRequired,
     Rebuild,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-/// Provider-owned maintenance requested for a managed commissioning service.
-///
-/// Provider lifecycle maintenance requested by an explicit deployment plan.
-pub enum ProviderMaintenancePolicy {
-    #[default]
-    Ensure,
-    Restart,
-    RepairDirectoryCache,
-    RotateIdentity,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -272,20 +253,12 @@ pub struct DeployPlan {
     pub device: Option<String>,
     pub configuration: Configuration,
     pub client_build: BuildPolicy,
-    pub provider_service_build: BuildPolicy,
-    #[serde(default)]
-    pub provider_maintenance: ProviderMaintenancePolicy,
     pub client_data: ClientDataPolicy,
     pub validation: ValidationLevel,
     pub launch: LaunchPolicy,
     #[serde(default)]
     pub privacy: PrivacyPolicy,
-    /// Exactly one provider is selected for new sessions by each deployment.
-    #[serde(default)]
-    pub communication_provider: CommunicationProvider,
-    /// Optional provider-owned runtime profile. The deployer treats this as
-    /// opaque configuration; the selected provider validates its values at
-    /// the composition boundary. Iroh currently accepts `always`, `direct`
+    /// Optional Iroh runtime profile. Accepted values are `always`, `direct`
     /// and `local`.
     #[serde(default)]
     pub provider_profile: Option<String>,
@@ -303,71 +276,27 @@ impl DeployPlan {
             device: None,
             configuration,
             client_build: BuildPolicy::IfRequired,
-            provider_service_build: BuildPolicy::IfRequired,
-            provider_maintenance: ProviderMaintenancePolicy::Ensure,
             client_data: ClientDataPolicy::Preserve,
             validation: ValidationLevel::Quick,
             launch: LaunchPolicy::Restart,
             privacy: PrivacyPolicy::Strict,
-            communication_provider: iroh_provider(),
             provider_profile: None,
         }
     }
 
     pub fn validate(&self) -> Result<(), PlanError> {
-        if self.targets.is_empty() && !matches!(self.action, DeployAction::ProviderMaintenance) {
+        if self.targets.is_empty() {
             return Err(PlanError::NoTargets);
-        }
-        if self.action == DeployAction::ProviderMaintenance
-            && !self.communication_provider.deployment_profile().commissioning_service.is_managed()
-        {
-            return Err(PlanError::UnsupportedProviderMaintenance {
-                provider: self.communication_provider.clone(),
-            });
-        }
-        if self.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity {
-            if self.communication_provider != iroh_provider() {
-                return Err(PlanError::UnsupportedProviderMaintenance {
-                    provider: self.communication_provider.clone(),
-                });
-            }
-            if self.client_build != BuildPolicy::Rebuild
-                || self.provider_service_build != BuildPolicy::Rebuild
-            {
-                return Err(PlanError::RotationRequiresRebuild);
-            }
-            if self.targets.len() != 2
-                || !self.targets.contains(&Target::Windows)
-                || !self.targets.contains(&Target::Android)
-            {
-                return Err(PlanError::RotationRequiresAllTargets);
-            }
-        }
-        if !self.communication_provider.deployment_profile().is_deployment_ready() {
-            return Err(PlanError::ProviderNotReady(self.communication_provider.clone()));
         }
         if let Some(profile) = self.provider_profile.as_deref() {
             if profile.trim().is_empty() {
-                return Err(PlanError::InvalidProviderProfile {
-                    provider: self.communication_provider.clone(),
-                    profile: profile.to_owned(),
-                });
+                return Err(PlanError::InvalidProviderProfile { profile: profile.to_owned() });
             }
-            if self.communication_provider == iroh_provider()
-                && !matches!(
-                    profile.trim().to_ascii_lowercase().as_str(),
-                    "always"
-                        | "always-reachable"
-                        | "direct"
-                        | "direct-only"
-                        | "local"
-                        | "local-only"
-                )
-            {
-                return Err(PlanError::InvalidProviderProfile {
-                    provider: self.communication_provider.clone(),
-                    profile: profile.to_owned(),
-                });
+            if !matches!(
+                profile.trim().to_ascii_lowercase().as_str(),
+                "always" | "always-reachable" | "direct" | "direct-only" | "local" | "local-only"
+            ) {
+                return Err(PlanError::InvalidProviderProfile { profile: profile.to_owned() });
             }
         }
         Ok(())
@@ -378,51 +307,28 @@ impl DeployPlan {
     pub fn normalized(mut self) -> Self {
         if self.action == DeployAction::RunInstalled {
             self.client_build = BuildPolicy::Reuse;
-            self.provider_service_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Restart;
         }
         if self.action == DeployAction::CollectLogs {
             self.client_build = BuildPolicy::Reuse;
-            self.provider_service_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Skip;
         }
         if self.action == DeployAction::BuildArtifacts {
-            self.provider_service_build = BuildPolicy::Reuse;
             self.client_data = ClientDataPolicy::Preserve;
             self.launch = LaunchPolicy::Skip;
         }
         if self.action == DeployAction::Rebuild {
             self.client_build = BuildPolicy::Rebuild;
-            self.provider_service_build = BuildPolicy::Rebuild;
         }
         if self.action == DeployAction::FullRedeploy {
             self.client_build = BuildPolicy::Rebuild;
-            self.provider_service_build = BuildPolicy::Rebuild;
-        }
-        if self.action == DeployAction::ProviderMaintenance {
-            self.client_build = BuildPolicy::Reuse;
-            self.client_data = ClientDataPolicy::Preserve;
-            self.launch = LaunchPolicy::Skip;
-        }
-        if self.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity {
-            self.action = DeployAction::FullRedeploy;
-            self.targets = vec![Target::Windows, Target::Android];
-            self.client_build = BuildPolicy::Rebuild;
-            self.provider_service_build = BuildPolicy::Rebuild;
         }
         if self.action == DeployAction::FullRedeploy
             && self.client_data == ClientDataPolicy::Preserve
         {
             self.client_data = ClientDataPolicy::ResetProfile;
-        }
-        // Direct providers do not own a deployer-managed service. Persisting a
-        // stale relay build policy on an Iroh plan is misleading and can make
-        // a resumed run appear to require server work that must never happen.
-        if !self.communication_provider.deployment_profile().commissioning_service.is_managed() {
-            self.provider_service_build = BuildPolicy::Reuse;
-            self.provider_maintenance = ProviderMaintenancePolicy::Ensure;
         }
         self
     }
@@ -432,9 +338,7 @@ impl DeployPlan {
     /// cannot disagree about an implied value.
     pub fn capabilities(&self) -> PlanCapabilities {
         let plan = self.clone().normalized();
-        let managed =
-            plan.communication_provider.deployment_profile().commissioning_service.is_managed();
-        let descriptor = plan.communication_provider.descriptor();
+        let descriptor = iroh_provider().descriptor();
         let mut fields = Vec::new();
         let mut add =
             |id, availability, label: &str, description: &str, values: Vec<ValueOption>| {
@@ -448,23 +352,14 @@ impl DeployPlan {
             };
         add(
             FieldId::Targets,
-            if plan.action == DeployAction::ProviderMaintenance {
-                FieldAvailability::Hidden
-            } else {
-                FieldAvailability::Editable
-            },
+            FieldAvailability::Editable,
             "Targets",
             "Clients and devices affected by this plan.",
             Vec::new(),
         );
         add(
             FieldId::Configuration,
-            if matches!(
-                plan.action,
-                DeployAction::CollectLogs
-                    | DeployAction::RunInstalled
-                    | DeployAction::ProviderMaintenance
-            ) {
+            if matches!(plan.action, DeployAction::CollectLogs | DeployAction::RunInstalled) {
                 FieldAvailability::Hidden
             } else {
                 FieldAvailability::Editable
@@ -473,25 +368,23 @@ impl DeployPlan {
             "Build configuration.",
             vec![option("debug", "Debug", false), option("release", "Release", false)],
         );
-        let build_availability =
-            if matches!(plan.action, DeployAction::CollectLogs | DeployAction::ProviderMaintenance)
-            {
-                FieldAvailability::Hidden
-            } else if plan.action == DeployAction::RunInstalled {
-                FieldAvailability::ReadOnly {
-                    reason: "This action reuses installed or existing artifacts.".into(),
-                }
-            } else if plan.action == DeployAction::RedeployCurrent {
-                FieldAvailability::ReadOnly {
-                    reason: "Redeploy uses the current verified artifacts when possible.".into(),
-                }
-            } else if matches!(plan.action, DeployAction::Rebuild | DeployAction::FullRedeploy) {
-                FieldAvailability::ReadOnly {
-                    reason: "This action requires rebuilding client artifacts.".into(),
-                }
-            } else {
-                FieldAvailability::Editable
-            };
+        let build_availability = if matches!(plan.action, DeployAction::CollectLogs) {
+            FieldAvailability::Hidden
+        } else if plan.action == DeployAction::RunInstalled {
+            FieldAvailability::ReadOnly {
+                reason: "This action reuses installed or existing artifacts.".into(),
+            }
+        } else if plan.action == DeployAction::RedeployCurrent {
+            FieldAvailability::ReadOnly {
+                reason: "Redeploy uses the current verified artifacts when possible.".into(),
+            }
+        } else if matches!(plan.action, DeployAction::Rebuild | DeployAction::FullRedeploy) {
+            FieldAvailability::ReadOnly {
+                reason: "This action requires rebuilding client artifacts.".into(),
+            }
+        } else {
+            FieldAvailability::Editable
+        };
         add(
             FieldId::ClientBuild,
             build_availability,
@@ -503,73 +396,12 @@ impl DeployPlan {
                 option("rebuild", "Rebuild", false),
             ],
         );
-        let service_availability = if !managed {
-            FieldAvailability::Disabled {
-                reason: "This provider has no deployer-managed service.".into(),
-            }
-        } else if matches!(plan.action, DeployAction::RunInstalled) {
-            FieldAvailability::ReadOnly {
-                reason: "Run installed reuses the existing provider service.".into(),
-            }
-        } else if matches!(plan.action, DeployAction::Rebuild | DeployAction::FullRedeploy) {
-            FieldAvailability::ReadOnly {
-                reason: "This action requires rebuilding the provider service.".into(),
-            }
-        } else if matches!(plan.action, DeployAction::CollectLogs | DeployAction::BuildArtifacts) {
-            FieldAvailability::Hidden
-        } else {
-            FieldAvailability::Editable
-        };
-        add(
-            FieldId::ProviderServiceBuild,
-            service_availability,
-            "Provider service build",
-            "Build the provider-owned service when supported.",
-            vec![
-                option("reuse", "Reuse", false),
-                option("if_required", "If required", false),
-                option("rebuild", "Rebuild", false),
-            ],
-        );
-        let maintenance_availability = if !managed {
-            FieldAvailability::Disabled {
-                reason: "This provider has no deployer-managed service.".into(),
-            }
-        } else if matches!(
-            plan.action,
-            DeployAction::FullRedeploy | DeployAction::ProviderMaintenance
-        ) {
-            FieldAvailability::Editable
-        } else {
-            FieldAvailability::Hidden
-        };
-        add(
-            FieldId::ProviderMaintenance,
-            maintenance_availability,
-            "Provider maintenance",
-            "Managed provider service operation.",
-            descriptor
-                .maintenance
-                .iter()
-                .map(|maintenance| {
-                    option(
-                        maintenance.wire_value(),
-                        maintenance.label(),
-                        matches!(maintenance, torca_transport_api::MaintenanceOption::Restart),
-                    )
-                })
-                .collect(),
-        );
-        let data_availability = if matches!(
-            plan.action,
-            DeployAction::RunInstalled
-                | DeployAction::CollectLogs
-                | DeployAction::ProviderMaintenance
-        ) {
-            FieldAvailability::ReadOnly { reason: "This action preserves client data.".into() }
-        } else {
-            FieldAvailability::Editable
-        };
+        let data_availability =
+            if matches!(plan.action, DeployAction::RunInstalled | DeployAction::CollectLogs) {
+                FieldAvailability::ReadOnly { reason: "This action preserves client data.".into() }
+            } else {
+                FieldAvailability::Editable
+            };
         add(
             FieldId::ClientData,
             data_availability,
@@ -598,16 +430,6 @@ impl DeployPlan {
             ],
         );
         add(
-            FieldId::CommunicationProvider,
-            FieldAvailability::Editable,
-            "Provider",
-            plan.communication_provider.protocol_label(),
-            [iroh_provider()]
-                .iter()
-                .map(|provider| option(provider.wire_value(), provider.protocol_label(), false))
-                .collect(),
-        );
-        add(
             FieldId::ProviderProfile,
             if descriptor.profiles.is_empty() {
                 FieldAvailability::Hidden
@@ -629,12 +451,7 @@ impl DeployPlan {
         );
         add(
             FieldId::Validation,
-            if matches!(
-                plan.action,
-                DeployAction::CollectLogs
-                    | DeployAction::ProviderMaintenance
-                    | DeployAction::RunInstalled
-            ) {
+            if matches!(plan.action, DeployAction::CollectLogs | DeployAction::RunInstalled) {
                 FieldAvailability::Hidden
             } else {
                 FieldAvailability::Editable
@@ -649,8 +466,7 @@ impl DeployPlan {
         );
         add(
             FieldId::Launch,
-            if matches!(plan.action, DeployAction::CollectLogs | DeployAction::ProviderMaintenance)
-            {
+            if matches!(plan.action, DeployAction::CollectLogs) {
                 FieldAvailability::Hidden
             } else {
                 FieldAvailability::Editable
@@ -663,8 +479,7 @@ impl DeployPlan {
                 option("restart", "Restart", false),
             ],
         );
-        let destructive = !matches!(plan.client_data, ClientDataPolicy::Preserve)
-            || plan.provider_maintenance == ProviderMaintenancePolicy::RotateIdentity;
+        let destructive = !matches!(plan.client_data, ClientDataPolicy::Preserve);
         PlanCapabilities {
             fields,
             destructive,
@@ -685,16 +500,8 @@ impl DeployPlan {
             planned_step(
                 StepId::DiscoverDevices,
                 "Discover devices",
-                if plan.action == DeployAction::ProviderMaintenance {
-                    StepDisposition::Skip
-                } else {
-                    StepDisposition::Execute
-                },
-                if plan.action == DeployAction::ProviderMaintenance {
-                    "maintenance does not require client device discovery"
-                } else {
-                    "selected targets"
-                },
+                StepDisposition::Execute,
+                "selected targets",
             ),
             planned_step(
                 StepId::Preflight,
@@ -703,20 +510,6 @@ impl DeployPlan {
                 "validate plan and environment",
             ),
         ];
-        steps.push(planned_step(
-            StepId::ProviderService,
-            "Provider service",
-            if plan.needs_provider_service() {
-                StepDisposition::Execute
-            } else {
-                StepDisposition::Skip
-            },
-            if plan.needs_provider_service() {
-                "managed by selected provider"
-            } else {
-                "selected provider has no deployer-managed service"
-            },
-        ));
         if matches!(plan.client_build, BuildPolicy::Rebuild | BuildPolicy::IfRequired)
             && !matches!(plan.action, DeployAction::RunInstalled | DeployAction::CollectLogs)
         {
@@ -761,10 +554,7 @@ impl DeployPlan {
             "Install clients",
             if matches!(plan.action, DeployAction::RunInstalled | DeployAction::BuildArtifacts) {
                 StepDisposition::Reuse
-            } else if matches!(
-                plan.action,
-                DeployAction::CollectLogs | DeployAction::ProviderMaintenance
-            ) {
+            } else if matches!(plan.action, DeployAction::CollectLogs) {
                 StepDisposition::Skip
             } else {
                 StepDisposition::Execute
@@ -775,8 +565,6 @@ impl DeployPlan {
                 "artifact-only action does not install"
             } else if plan.action == DeployAction::CollectLogs {
                 "log collection does not install clients"
-            } else if plan.action == DeployAction::ProviderMaintenance {
-                "provider maintenance does not install clients"
             } else {
                 "install selected artifacts"
             },
@@ -795,10 +583,7 @@ impl DeployPlan {
             StepId::ValidateRuntime,
             "Validate runtime",
             if matches!(plan.validation, ValidationLevel::Skip)
-                || matches!(
-                    plan.action,
-                    DeployAction::CollectLogs | DeployAction::ProviderMaintenance
-                )
+                || matches!(plan.action, DeployAction::CollectLogs)
             {
                 StepDisposition::Skip
             } else {
@@ -839,7 +624,7 @@ impl DeployPlan {
         checks.push(PreflightCheck {
             name: "Provider profile".into(),
             status: CheckStatus::Pass,
-            detail: plan.communication_provider.protocol_label().into(),
+            detail: iroh_provider().protocol_label().into(),
             remediation: None,
         });
         let can_execute = checks.iter().all(|check| check.status != CheckStatus::Fail);
@@ -864,10 +649,8 @@ impl DeployPlan {
         compare!(action);
         compare!(targets);
         compare!(client_build);
-        compare!(provider_service_build);
         compare!(client_data);
         compare!(launch);
-        compare!(provider_maintenance);
         PlanDiff { changes }
     }
 
@@ -879,24 +662,6 @@ impl DeployPlan {
         let payload = serde_json::to_vec(&normalized).unwrap_or_default();
         let digest = Sha256::digest(payload);
         digest.iter().map(|byte| format!("{byte:02x}")).collect()
-    }
-
-    pub fn needs_provider_service(&self) -> bool {
-        self.communication_provider.deployment_profile().commissioning_service.is_managed()
-            && !matches!(
-                self.action,
-                DeployAction::RunInstalled
-                    | DeployAction::CollectLogs
-                    | DeployAction::BuildArtifacts
-            )
-    }
-
-    /// Compatibility alias for older callers. New deploy orchestration must
-    /// use the provider-neutral name because Iroh/WebRTC do not necessarily
-    /// have a relay service.
-    #[deprecated(note = "use needs_provider_service")]
-    pub fn needs_relay(&self) -> bool {
-        self.needs_provider_service()
     }
 }
 
@@ -917,16 +682,8 @@ fn planned_step(
 pub enum PlanError {
     #[error("a client deployment requires at least one target")]
     NoTargets,
-    #[error("provider identity rotation requires provider and client rebuilds")]
-    RotationRequiresRebuild,
-    #[error("provider identity rotation requires Windows and Android to be selected")]
-    RotationRequiresAllTargets,
-    #[error("communication provider '{0}' is not ready for deployment")]
-    ProviderNotReady(CommunicationProvider),
-    #[error("provider '{provider}' does not support the selected maintenance action")]
-    UnsupportedProviderMaintenance { provider: CommunicationProvider },
-    #[error("provider '{provider}' does not support profile '{profile}'")]
-    InvalidProviderProfile { provider: CommunicationProvider, profile: String },
+    #[error("Iroh does not support profile '{profile}'")]
+    InvalidProviderProfile { profile: String },
     #[error("deployment checkpoint does not match the normalized plan")]
     PlanFingerprintMismatch,
 }
@@ -935,9 +692,6 @@ pub enum PlanError {
 #[serde(rename_all = "snake_case")]
 pub enum DeployStage {
     Planned,
-    ProviderServicePrepared,
-    ProviderServiceReachable,
-    ProviderEndpointVerified,
     ArtifactsBuilt,
     ClientDataReset,
     ClientsInstalled,
@@ -965,7 +719,6 @@ pub struct DeployRun {
     #[serde(default)]
     pub plan_fingerprint: String,
     pub stage: DeployStage,
-    pub provider_endpoint: Option<String>,
     pub completed: Vec<DeployStage>,
     pub message: Option<String>,
 }
@@ -986,7 +739,6 @@ impl DeployRun {
             plan,
             plan_fingerprint,
             stage: DeployStage::Planned,
-            provider_endpoint: None,
             completed: Vec::new(),
             message: None,
         }
@@ -1030,67 +782,12 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_provider_is_rejected_before_deployment() {
-        let mut plan = DeployPlan::normal(
-            DeployAction::RedeployCurrent,
-            vec![Target::Android],
-            Configuration::Debug,
-        );
-        // Iroh is a validated direct provider; WebRTC still requires a host
-        // session/signaling binding and must be rejected until those exist.
-        plan.communication_provider = iroh_provider();
-        assert!(plan.validate().is_ok());
-    }
-
-    #[test]
-    fn relay_requirement_is_provider_metadata_not_an_action_assumption() {
-        let plan = DeployPlan::normal(
-            DeployAction::RedeployCurrent,
-            vec![Target::Android],
-            Configuration::Debug,
-        );
-        assert!(!plan.needs_provider_service());
-
-        let mut direct = plan.clone();
-        direct.communication_provider = iroh_provider();
-        assert!(!direct.needs_provider_service());
-
-        let mut direct = plan;
-        direct.communication_provider = iroh_provider();
-        assert!(!direct.needs_provider_service());
-    }
-
-    #[test]
-    fn direct_provider_normalization_never_requests_managed_service_work() {
-        let mut plan = DeployPlan::normal(
-            DeployAction::FullRedeploy,
-            vec![Target::Android],
-            Configuration::Debug,
-        );
-        plan.communication_provider = iroh_provider();
-        plan.provider_service_build = BuildPolicy::Rebuild;
-        plan.provider_maintenance = ProviderMaintenancePolicy::Restart;
-        let normalized = plan.normalized();
-        assert_eq!(normalized.provider_service_build, BuildPolicy::Reuse);
-        assert_eq!(normalized.provider_maintenance, ProviderMaintenancePolicy::Ensure);
-    }
-
-    #[test]
-    fn direct_provider_maintenance_is_rejected_instead_of_building_clients() {
-        let mut plan =
-            DeployPlan::normal(DeployAction::ProviderMaintenance, vec![], Configuration::Debug);
-        plan.communication_provider = iroh_provider();
-        assert!(matches!(plan.validate(), Err(PlanError::UnsupportedProviderMaintenance { .. })));
-    }
-
-    #[test]
     fn iroh_profile_is_validated_at_the_deployment_boundary() {
         let mut plan = DeployPlan::normal(
             DeployAction::RedeployCurrent,
             vec![Target::Android],
             Configuration::Debug,
         );
-        plan.communication_provider = iroh_provider();
         plan.provider_profile = Some("direct-only".into());
         assert!(plan.validate().is_ok());
         plan.provider_profile = Some("unknown".into());
@@ -1098,13 +795,12 @@ mod tests {
     }
 
     #[test]
-    fn capabilities_are_populated_from_the_selected_provider_descriptor() {
-        let mut plan = DeployPlan::normal(
+    fn capabilities_expose_iroh_profiles() {
+        let plan = DeployPlan::normal(
             DeployAction::FullRedeploy,
             vec![Target::Android],
             Configuration::Debug,
         );
-        plan.communication_provider = iroh_provider();
         let capabilities = plan.capabilities();
         let profile = capabilities
             .fields
@@ -1116,40 +812,6 @@ mod tests {
             profile.values.iter().map(|value| value.value.as_str()).collect::<Vec<_>>(),
             ["always", "direct", "local"]
         );
-        let maintenance = capabilities
-            .fields
-            .iter()
-            .find(|field| field.id == FieldId::ProviderMaintenance)
-            .expect("iroh maintenance capability");
-        assert!(maintenance.values.is_empty());
-        assert!(matches!(maintenance.availability, FieldAvailability::Disabled { .. }));
-    }
-
-    #[test]
-    fn provider_maintenance_reuses_client_artifacts_and_skips_client_build_step() {
-        let plan =
-            DeployPlan::normal(DeployAction::ProviderMaintenance, Vec::new(), Configuration::Debug);
-        let normalized = plan.normalized();
-        assert_eq!(normalized.client_build, BuildPolicy::Reuse);
-        let build = normalized
-            .planned_steps()
-            .into_iter()
-            .find(|step| step.id == StepId::BuildArtifacts)
-            .expect("client build step");
-        assert_eq!(build.disposition, StepDisposition::Skip);
-        let install = normalized
-            .planned_steps()
-            .into_iter()
-            .find(|step| step.id == StepId::InstallClients)
-            .expect("client install step");
-        assert_eq!(install.disposition, StepDisposition::Skip);
-        let capability = normalized
-            .capabilities()
-            .fields
-            .into_iter()
-            .find(|field| field.id == FieldId::ClientBuild)
-            .expect("client build capability");
-        assert_eq!(capability.availability, FieldAvailability::Hidden);
     }
 
     #[test]
@@ -1202,27 +864,6 @@ mod tests {
         assert!(steps.iter().any(|step| {
             step.id == StepId::InstallClients && step.disposition == StepDisposition::Reuse
         }));
-    }
-
-    #[test]
-    fn direct_provider_exposes_disabled_service_with_reason() {
-        let mut plan = DeployPlan::normal(
-            DeployAction::FullRedeploy,
-            vec![Target::Windows],
-            Configuration::Debug,
-        );
-        plan.communication_provider = iroh_provider();
-        let service = plan
-            .capabilities()
-            .fields
-            .into_iter()
-            .find(|field| field.id == FieldId::ProviderServiceBuild)
-            .unwrap();
-        assert!(matches!(service.availability, FieldAvailability::Disabled { .. }));
-        assert!(
-            plan.planned_steps().iter().any(|step| step.id == StepId::ProviderService
-                && step.disposition == StepDisposition::Skip)
-        );
     }
 
     #[test]

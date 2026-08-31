@@ -19,8 +19,22 @@ abstract final class AvatarDeviceSeed {
   /// Returns a pseudonymous, application-scoped seed stable across reinstall.
   /// The raw platform identifier never leaves this process and is never put in
   /// pairing/contact payloads; only the generated avatar genome is exchanged.
-  static Future<String> resolve({String? fallbackIdentity}) =>
-      _resolved ??= _resolve(fallbackIdentity);
+  static Future<String> resolve({String? fallbackIdentity}) {
+    final cached = _resolved;
+    if (cached != null) return cached;
+    final future = _resolve(fallbackIdentity);
+    _resolved = future;
+    // Do not permanently poison this cache after a transient platform or I/O
+    // failure. A later profile retry must be able to resolve the identifier
+    // again after Android has finished attaching its channels.
+    future.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {
+        if (identical(_resolved, future)) _resolved = null;
+      },
+    );
+    return future;
+  }
 
   static Future<String> _resolve(String? fallbackIdentity) async {
     String? raw = _platformIdentifierOverride;
@@ -30,6 +44,8 @@ abstract final class AvatarDeviceSeed {
     } else if (Platform.isAndroid) {
       try {
         raw = await _channel.invokeMethod<String>('stableDeviceId');
+      } on MissingPluginException {
+        raw = null;
       } on PlatformException {
         raw = null;
       }

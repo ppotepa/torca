@@ -59,40 +59,25 @@ impl TorcaRuntime {
             .iter()
             .find(|step| step.id == "incoming_reachability")
             .map(|step| (step.state.clone(), step.code.clone()));
-        // A managed rendezvous is a Tor-specific capability. Direct
-        // providers may retain the legacy compatibility step in the durable
-        // bootstrap model, but must not emit relay/rendezvous diagnostics.
-        // During the first snapshot the application projection can still carry
-        // its legacy default before the selected provider has published its
-        // commissioning state. Use the compiled provider as the authority so
-        // a direct provider (Iroh/WebRTC) never emits Tor-only rendezvous
-        // diagnostics during that short bootstrap window.
-        let selected_provider = crate::transport_config::compiled_provider()
-            .map(|provider| provider.as_str().to_owned())
-            .unwrap_or_else(|_| snapshot.communication_provider.clone());
-        let rendezvous = (selected_provider == "tor")
-            .then(|| {
-                snapshot
-                    .bootstrap_steps
-                    .iter()
-                    .find(|step| step.id == "rendezvous")
-                    .map(|step| (step.state.clone(), step.code.clone()))
-            })
-            .flatten();
+        let rendezvous = snapshot
+            .bootstrap_steps
+            .iter()
+            .find(|step| step.id == "rendezvous")
+            .map(|step| (step.state.clone(), step.code.clone()));
 
         if let Some(current) = incoming.as_ref()
-            && self.last_onion_log_state.as_ref() != Some(current)
+            && self.last_incoming_log_state.as_ref() != Some(current)
         {
             let (level, code, message) = network_transition_event("INCOMING", current);
             self.log("communication", level, "incoming_reachability", &code, &message);
-            self.last_onion_log_state = Some(current.clone());
+            self.last_incoming_log_state = Some(current.clone());
         }
         if let Some(current) = rendezvous.as_ref()
-            && self.last_relay_log_state.as_ref() != Some(current)
+            && self.last_rendezvous_log_state.as_ref() != Some(current)
         {
             let (level, code, message) = network_transition_event("RENDEZVOUS", current);
             self.log("communication", level, "rendezvous", &code, &message);
-            self.last_relay_log_state = Some(current.clone());
+            self.last_rendezvous_log_state = Some(current.clone());
         }
         for contact in &snapshot.contacts {
             let current =
@@ -247,6 +232,7 @@ impl TorcaRuntime {
         // deadlines remain as one-shot safety deadlines.
         [
             pending,
+            self.host_start.as_ref().map(|_| NETWORK_START_POLL_INTERVAL),
             self.host_start_deadline
                 .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now())),
             self.host_retry_at
@@ -258,15 +244,13 @@ impl TorcaRuntime {
     }
 
     pub(crate) fn maintain_native_startup(&mut self) -> bool {
-        if self.host_start.is_none() {
-            return false;
-        }
         let before = (
             self.host.is_some(),
             self.host_progress,
             self.host_status_code.clone(),
             self.host_state_hint,
             self.host_start.is_some(),
+            self.host_retry_at,
         );
         self.advance_runtime_start();
         let after = (
@@ -275,6 +259,7 @@ impl TorcaRuntime {
             self.host_status_code.clone(),
             self.host_state_hint,
             self.host_start.is_some(),
+            self.host_retry_at,
         );
         if before == after {
             return false;

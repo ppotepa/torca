@@ -1,19 +1,16 @@
-use std::{fmt::Write, io};
+use std::io;
 
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::Rect,
-    style::Style,
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::domain::{
-    ClientDataPolicy, CommunicationProvider, Configuration, DeployAction, DeployPlan,
-    FieldAvailability, FieldId, ProviderMaintenancePolicy, ProviderMetadataExt, Target,
-    iroh_provider,
-};
+use crate::domain::{ClientDataPolicy, DeployPlan, FieldAvailability, FieldId, Target};
 use crate::tui::{
     input::InputGuard,
     model::{WizardModel, build_policy_label, launch_label, privacy_label, validation_label},
@@ -32,24 +29,11 @@ pub fn summary(model: &WizardModel) -> String {
 
 pub fn edit_plan(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    action: DeployAction,
-    theme_kind: ThemeKind,
-    no_color: bool,
-) -> io::Result<Option<DeployPlan>> {
-    edit_plan_for_provider(terminal, action, iroh_provider(), theme_kind, no_color)
-}
-
-pub fn edit_plan_for_provider(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    action: DeployAction,
-    provider: CommunicationProvider,
+    plan: DeployPlan,
     theme_kind: ThemeKind,
     no_color: bool,
 ) -> io::Result<Option<DeployPlan>> {
     let theme = if no_color { Theme::monochrome() } else { Theme::for_kind(theme_kind) };
-    let mut plan =
-        DeployPlan::normal(action, crate::planner::all_client_targets(), Configuration::Debug);
-    plan.communication_provider = provider;
     let mut model = WizardModel::new(plan.normalized());
     model.screen = crate::tui::model::WizardScreen::Options;
     let mut input = InputGuard::default();
@@ -74,18 +58,14 @@ pub fn edit_plan_for_provider(
 
 fn render(frame: &mut Frame<'_>, area: Rect, model: &WizardModel, theme: Theme, scroll: usize) {
     let columns = crate::tui::layout::columns(area);
-    let text = options_text(model);
+    let lines = options_lines(model, theme);
+    let visible = visible_lines(lines, columns[0].height.saturating_sub(2), scroll);
     frame.render_widget(
-        Paragraph::new(crate::tui::layout::viewport(
-            &text,
-            columns[0].height.saturating_sub(2),
-            scroll,
-        ))
-        .style(Style::default().fg(theme.text).bg(theme.panel))
-        .block(
+        Paragraph::new(visible).style(Style::default().bg(theme.panel)).block(
             Block::default()
-                .title("Options Â· Provider â†’ Action â†’ Options")
-                .borders(Borders::ALL),
+                .title(" 2. Configure deployment ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.accent)),
         ),
         columns[0],
     );
@@ -102,27 +82,40 @@ fn render(frame: &mut Frame<'_>, area: Rect, model: &WizardModel, theme: Theme, 
             },
         );
         frame.render_widget(
-            Paragraph::new(context)
-                .style(Style::default().fg(theme.info).bg(theme.panel))
-                .block(Block::default().title("Context").borders(Borders::ALL)),
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    model
+                        .focused_field()
+                        .map_or("Plan", |field| field.capability.label.as_str())
+                        .to_owned(),
+                    Style::default().fg(theme.selected).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(context, Style::default().fg(theme.text))),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Left/Right change  |  Tab move  |  Enter preflight",
+                    Style::default().fg(theme.success),
+                )),
+            ])
+            .style(Style::default().bg(theme.panel))
+            .block(
+                Block::default()
+                    .title(" 3. Context and next step ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.info)),
+            ),
             columns[1],
         );
     }
 }
 
-fn options_text(model: &WizardModel) -> String {
+fn options_lines(model: &WizardModel, theme: Theme) -> Vec<Line<'static>> {
     let plan = &model.plan;
-    let provider = plan.communication_provider.descriptor();
     let sections = [
         (
             "CONNECTION",
-            vec![
-                row(model, FieldId::ProviderProfile, "Provider profile", profile_label(plan)),
-                format!(
-                    "  Provider service: {}",
-                    if provider.managed_service { "managed" } else { "not required" }
-                ),
-            ],
+            vec![row(model, FieldId::ProviderProfile, "Iroh profile", profile_label(plan))],
         ),
         (
             "TARGET & BUILD",
@@ -140,12 +133,6 @@ fn options_text(model: &WizardModel) -> String {
                     "Client build",
                     build_policy_label(plan.client_build),
                 ),
-                row(
-                    model,
-                    FieldId::ProviderServiceBuild,
-                    "Provider build",
-                    build_policy_label(plan.provider_service_build),
-                ),
             ],
         ),
         (
@@ -162,39 +149,81 @@ fn options_text(model: &WizardModel) -> String {
                 row(model, FieldId::Launch, "Launch", launch_label(plan.launch)),
             ],
         ),
-        (
-            "MAINTENANCE",
-            vec![row(
-                model,
-                FieldId::ProviderMaintenance,
-                "Provider maintenance",
-                maintenance_label(plan.provider_maintenance),
-            )],
-        ),
     ];
-    let mut output = format!(
-        "Provider: {}\n{}\n\nAction: {}\n\n",
-        provider.label, provider.description, plan.action
-    );
+    let mut output = vec![
+        Line::from(vec![
+            Span::styled("Provider      ", Style::default().fg(theme.muted)),
+            Span::styled("Iroh", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("Action        ", Style::default().fg(theme.muted)),
+            Span::styled(
+                plan.action.to_string(),
+                Style::default().fg(theme.selected).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+    ];
     for (title, section) in sections {
         let visible: Vec<_> = section.into_iter().filter(|line| !line.is_empty()).collect();
         if !visible.is_empty() {
-            output.push_str(title);
-            output.push('\n');
-            output.push_str(&visible.join("\n"));
-            output.push_str("\n\n");
+            output.push(Line::from(Span::styled(
+                title,
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )));
+            output.extend(visible.into_iter().map(|line| styled_row(line, theme)));
+            output.push(Line::from(""));
         }
     }
     let capabilities = model.capabilities();
-    write!(
-        output,
-        "Plan: {} steps Â· {} min Â· {}\n\nâ†/â†’ change   Tab/â†‘/â†“ focus   Enter review   Esc back",
-        capabilities.estimated_work.steps,
-        capabilities.estimated_work.minutes,
-        if capabilities.destructive { "DESTRUCTIVE" } else { "non-destructive" }
-    )
-    .expect("writing to a String cannot fail");
+    output.push(Line::from(vec![
+        Span::styled("PLAN  ", Style::default().fg(theme.muted)),
+        Span::styled(
+            format!(
+                "{} steps / about {} min",
+                capabilities.estimated_work.steps, capabilities.estimated_work.minutes
+            ),
+            Style::default().fg(theme.info),
+        ),
+        Span::styled(
+            if capabilities.destructive { "  DESTRUCTIVE" } else { "  SAFE" },
+            Style::default()
+                .fg(if capabilities.destructive { theme.danger } else { theme.success })
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    output.push(Line::from(""));
+    output.push(Line::from(Span::styled(
+        "Left/Right change   Tab/Up/Down focus   Enter review   Esc back",
+        Style::default().fg(theme.muted),
+    )));
     output
+}
+
+fn styled_row(row: String, theme: Theme) -> Line<'static> {
+    let active = row.starts_with('>');
+    let color = if active { theme.selected } else { theme.text };
+    Line::from(Span::styled(
+        row,
+        Style::default().fg(color).add_modifier(if active {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        }),
+    ))
+}
+
+fn visible_lines(
+    lines: Vec<Line<'static>>,
+    height: u16,
+    requested_offset: usize,
+) -> Vec<Line<'static>> {
+    let capacity = usize::from(height.max(1));
+    let max_offset = lines.len().saturating_sub(capacity);
+    let offset = requested_offset.min(max_offset);
+    lines.into_iter().skip(offset).take(capacity).collect()
 }
 
 fn row(model: &WizardModel, id: FieldId, label: &str, value: &str) -> String {
@@ -209,8 +238,8 @@ fn row(model: &WizardModel, id: FieldId, label: &str, value: &str) -> String {
     };
     let status = match &field.availability {
         FieldAvailability::Editable => String::new(),
-        FieldAvailability::ReadOnly { reason } => format!(" â€” {reason}"),
-        FieldAvailability::Disabled { reason } => format!(" â€” unavailable: {reason}"),
+        FieldAvailability::ReadOnly { reason } => format!(" - {reason}"),
+        FieldAvailability::Disabled { reason } => format!(" - unavailable: {reason}"),
         FieldAvailability::Hidden => String::new(),
     };
     format!("{marker} {label}: {value}{status}")
@@ -241,14 +270,5 @@ fn data_label(policy: ClientDataPolicy) -> &'static str {
         ClientDataPolicy::Preserve => "Preserve",
         ClientDataPolicy::ResetProfile => "Reset profile",
         ClientDataPolicy::ResetAll => "Reset all",
-    }
-}
-
-fn maintenance_label(policy: ProviderMaintenancePolicy) -> &'static str {
-    match policy {
-        ProviderMaintenancePolicy::Ensure => "Ensure",
-        ProviderMaintenancePolicy::Restart => "Restart",
-        ProviderMaintenancePolicy::RepairDirectoryCache => "Repair directory cache",
-        ProviderMaintenancePolicy::RotateIdentity => "Rotate identity",
     }
 }

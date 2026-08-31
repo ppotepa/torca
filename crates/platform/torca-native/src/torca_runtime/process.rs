@@ -16,7 +16,6 @@ use torca_runtime_policy::RuntimeEventHub;
 use crate::native_runtime::{ABI_OK, TorcaRuntime};
 
 const NATIVE_ABI: u16 = 1;
-const STORAGE_EPOCH: u16 = 3;
 const MAILBOX_CAPACITY: usize = 256;
 const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);

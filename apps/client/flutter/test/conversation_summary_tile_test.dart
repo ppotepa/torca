@@ -22,7 +22,6 @@ void main() {
       id: 'p1',
       remoteIdentityId: 'alice-device',
       displayName: 'Alice',
-      onionAddress: 'example.onion',
       status: 'active',
       connectionState: 'ready',
     );

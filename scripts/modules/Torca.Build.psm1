@@ -135,16 +135,12 @@ function Get-TorcaExistingBuildManifest {
         if (-not $manifest) { continue }
         if ([string]$manifest.Endpoint -ne $Endpoint -or [string]$manifest.Configuration -ne $Configuration) { continue }
         if (-not (@($manifest.Targets) -contains $candidateTarget)) { continue }
-        $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-        if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
-        if ($provider.ToLowerInvariant() -eq 'iroh') {
-            $expectedProfile = Get-TorcaIrohProfile
-            $recordedProfile = if ($manifest.PSObject.Properties.Name -contains 'irohProfile' -and
-                -not [string]::IsNullOrWhiteSpace([string]$manifest.irohProfile)) {
-                [string]$manifest.irohProfile
-            } else { 'always' }
-            if ($recordedProfile -ne $expectedProfile) { continue }
-        }
+        $expectedProfile = Get-TorcaIrohProfile
+        $recordedProfile = if ($manifest.PSObject.Properties.Name -contains 'irohProfile' -and
+            -not [string]::IsNullOrWhiteSpace([string]$manifest.irohProfile)) {
+            [string]$manifest.irohProfile
+        } else { 'always' }
+        if ($recordedProfile -ne $expectedProfile) { continue }
         if (-not (Test-TorcaClientArtifactsExist -RepoRoot $Paths.RepoRoot -Target $Target -Configuration $Configuration)) { continue }
         return $manifest
     }
@@ -162,15 +158,11 @@ function Test-TorcaBuildRequired {
     if (-not $manifest) { return $true }
     if ([string]$manifest.Endpoint -ne $Endpoint -or [string]$manifest.Configuration -ne $Configuration) { return $true }
     if (-not (@($manifest.Targets) -contains $Target)) { return $true }
-    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
-    if ($provider.ToLowerInvariant() -eq 'iroh') {
-        $recordedProfile = if ($manifest.PSObject.Properties.Name -contains 'irohProfile' -and
-            -not [string]::IsNullOrWhiteSpace([string]$manifest.irohProfile)) {
-            [string]$manifest.irohProfile
-        } else { 'always' }
-        if ($recordedProfile -ne (Get-TorcaIrohProfile)) { return $true }
-    }
+    $recordedProfile = if ($manifest.PSObject.Properties.Name -contains 'irohProfile' -and
+        -not [string]::IsNullOrWhiteSpace([string]$manifest.irohProfile)) {
+        [string]$manifest.irohProfile
+    } else { 'always' }
+    if ($recordedProfile -ne (Get-TorcaIrohProfile)) { return $true }
     if ([string]$manifest.SourceFingerprint -ne (Get-TorcaBuildSourceFingerprint -RepoRoot $Paths.RepoRoot)) { return $true }
     if ([string]$manifest.BuildId -ne (Get-TorcaBuildId -RepoRoot $Paths.RepoRoot -Endpoint $Endpoint -Target $Target -Configuration $Configuration)) { return $true }
     if (-not (Test-TorcaClientArtifactsExist -RepoRoot $Paths.RepoRoot -Target $Target -Configuration $Configuration)) { return $true }
@@ -184,10 +176,8 @@ function Get-TorcaBuildId {
         [string]$Target,
         [string]$Configuration
     )
-    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
-    $profile = if ($provider.ToLowerInvariant() -eq 'iroh') { Get-TorcaIrohProfile } else { 'none' }
-    $payload = "$(Get-TorcaBuildSourceFingerprint -RepoRoot $RepoRoot)|$Endpoint|$Target|$Configuration|$provider|$profile"
+    $profile = Get-TorcaIrohProfile
+    $payload = "$(Get-TorcaBuildSourceFingerprint -RepoRoot $RepoRoot)|$Endpoint|$Target|$Configuration|iroh|$profile"
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
         return [BitConverter]::ToString(
@@ -225,11 +215,7 @@ function Invoke-TorcaClientBuild {
                 $endpointSha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Endpoint))
             ).Replace('-', '').ToLowerInvariant()
         } finally { $endpointSha.Dispose() }
-        $buildProviderArgs = @{}
-        if (-not [string]::IsNullOrWhiteSpace([string]$env:TORCA_COMMUNICATION_PROVIDER)) {
-            $buildProviderArgs['CommunicationProvider'] = [string]$env:TORCA_COMMUNICATION_PROVIDER
-        }
-        & (Join-Path $RepoRoot 'scripts/build.ps1') -Target $Target -Configuration $Configuration -Validation $Validation @buildProviderArgs
+        & (Join-Path $RepoRoot 'scripts/build.ps1') -Target $Target -Configuration $Configuration -Validation $Validation
         if ($LASTEXITCODE -ne 0) { throw "Build failed with code $LASTEXITCODE." }
     } finally {
         $env:TORCA_IROH_ENDPOINT = $old; $env:TORCA_ORCHESTRATED = $oldOrchestrated; $env:TORCA_BUILD_ID = $oldBuildId
@@ -476,12 +462,8 @@ function Wait-TorcaClientLaunch {
     $lastDetail = ''
     $lastReported = ''
     $processObserved = $false
-    # The legacy PowerShell runner must use the same provider-neutral readiness
-    # contract as torca-deploy.  NETWORK_READY/TOR_READY are compatibility
-    # evidence for Tor only; direct providers publish COMMUNICATION_READY.
-    $selectedProvider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($selectedProvider)) { $selectedProvider = 'tor' }
-    $providerReadyCode = if ($selectedProvider -eq 'tor') { 'NETWORK_READY' } else { 'COMMUNICATION_READY' }
+    $selectedProvider = 'iroh'
+    $providerReadyCode = 'COMMUNICATION_READY'
     do {
         if ($Platform -eq 'windows') {
             if ($ExpectedWindowsProcessId) {
@@ -537,7 +519,7 @@ function Wait-TorcaClientLaunch {
                         $failure = $events | Where-Object { $_.code -eq 'RUNTIME_START_FAILED' } | Select-Object -Last 1
                         $providerReady = $events | Where-Object { $_.code -eq $providerReadyCode } | Select-Object -Last 1
                         $localReady = $events | Where-Object { $_.code -in @('LOCAL_READY', 'FLUTTER_GATEWAY_READY') } | Select-Object -Last 1
-                        if ($providerReady -or ($selectedProvider -ne 'tor' -and $localReady)) {
+                        if ($providerReady -or $localReady) {
                             Write-Host "Windows communication health verified: PID $($process[0].Id), provider=$selectedProvider, build=$($run.build_id), state=$providerReadyCode" -ForegroundColor Green
                             return
                         }
@@ -567,7 +549,7 @@ function Wait-TorcaClientLaunch {
                 $remoteLog = $logFiles | Select-Object -Last 1
                 $events = if ($remoteLog) { (& adb -s $Device shell tail -n 80 $remoteLog 2>$null | Out-String) } else { '' }
                 if ($events -match ('"code"\s*:\s*"' + [Regex]::Escape($providerReadyCode) + '"') -or
-                    ($selectedProvider -ne 'tor' -and $events -match '"code"\s*:\s*"(LOCAL_READY|FLUTTER_GATEWAY_READY)"')) {
+                    $events -match '"code"\s*:\s*"(LOCAL_READY|FLUTTER_GATEWAY_READY)"') {
                     Write-Host "Android communication health verified on ${Device}: PID $pid, provider=$selectedProvider, state=$providerReadyCode" -ForegroundColor Green
                     return
                 }
@@ -622,15 +604,9 @@ function Write-TorcaBuildManifest {
     $scopedPaths = Get-TorcaScopedBuildPaths -Paths $Paths -Target $manifestTarget -Configuration $Configuration
     $commit = (& git -C $Paths.RepoRoot rev-parse HEAD 2>$null)
     $release = Get-Content (Join-Path $Paths.RepoRoot 'release/version.json') -Raw | ConvertFrom-Json
-    $provider = [string]$env:TORCA_COMMUNICATION_PROVIDER
-    if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'tor' }
-    $irohProfile = if ($provider.ToLowerInvariant() -eq 'iroh') { Get-TorcaIrohProfile } else { $null }
-    $compiledFeatures = switch ($provider.ToLowerInvariant()) {
-        'tor' { 'iroh,radio-audio' }
-        'iroh' { 'iroh,radio-audio' }
-        'webrtc' { 'iroh,radio-audio' }
-        default { throw "Unsupported communication provider '$provider'." }
-    }
+    $provider = 'iroh'
+    $irohProfile = Get-TorcaIrohProfile
+    $compiledFeatures = 'cargo-default'
     $manifest = [pscustomobject]@{
         Schema = 1; Endpoint = $Endpoint; Targets = @($Targets); Configuration = $Configuration
         communicationProvider = $provider; compiledFeatures = $compiledFeatures; irohProfile = $irohProfile

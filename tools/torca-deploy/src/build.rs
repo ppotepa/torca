@@ -83,7 +83,7 @@ pub fn verify_artifact_manifest(
                 manifest_path.display()
             )
         })?;
-    let expected_features = provider_features(&communication_provider);
+    let expected_features = native_feature_set();
     if recorded_features != expected_features {
         return Err(format!(
             "artifact feature mismatch for {}: manifest={}, current={}",
@@ -116,6 +116,25 @@ pub fn verify_artifact_manifest(
                 artifact.display(),
                 recorded_services,
                 expected_services
+            ));
+        }
+    }
+    if let Ok(current_fingerprint) = env::var("TORCA_SOURCE_FINGERPRINT") {
+        let recorded_fingerprint = manifest
+            .get("sourceFingerprint")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "artifact manifest {} does not record source fingerprint",
+                    manifest_path.display()
+                )
+            })?;
+        if recorded_fingerprint != current_fingerprint {
+            return Err(format!(
+                "artifact source fingerprint mismatch for {}: manifest={}, current={}",
+                artifact.display(),
+                recorded_fingerprint,
+                current_fingerprint
             ));
         }
     }
@@ -226,15 +245,7 @@ impl<'a> BuildController<'a> {
             crate::windows_client::WorkspaceWindowsClient::new(self.paths, self.runner)
                 .stop()
                 .map_err(BuildError::StopRunningClient)?;
-            let mut cargo_args = vec![
-                "build",
-                "-p",
-                "torca-native",
-                "--no-default-features",
-                "--features",
-                provider_features(&communication_provider),
-                "--locked",
-            ];
+            let mut cargo_args = vec!["build", "-p", "torca-native", "--locked"];
             if matches!(configuration, Configuration::Release) {
                 cargo_args.push("--release");
             }
@@ -389,26 +400,58 @@ impl<'a> BuildController<'a> {
             }
         }
         let source_commit = self.source_commit();
+        // The commit alone is insufficient while the deployer is used from a
+        // dirty worktree. The build scripts compute a canonical source
+        // fingerprint and pass it through; include it in both the manifest
+        // and build identity so reuse cannot cross source revisions.
+        let source_fingerprint =
+            env::var("TORCA_SOURCE_FINGERPRINT").unwrap_or_else(|_| "unknown".to_owned());
         let build_id = build_identity(
             &source_commit,
+            &source_fingerprint,
             endpoint,
             configuration,
             targets,
             &communication_provider,
             provider_profile,
         );
+        let mut native_artifacts = Vec::new();
+        if targets.contains(&Target::Windows) {
+            let path = provider_target_root(&self.paths.repo_root, &communication_provider)
+                .join(mode)
+                .join("torca_native.dll");
+            native_artifacts.push(serde_json::json!({
+                "target": "windows",
+                "path": path,
+                "sha256": hash_file(&path),
+            }));
+        }
+        if targets.contains(&Target::Android) {
+            for target in android_targets(&selected_android_abis(devices)) {
+                let path = provider_target_root(&self.paths.repo_root, &communication_provider)
+                    .join(target.triple)
+                    .join(mode)
+                    .join("libtorca_native.so");
+                native_artifacts.push(serde_json::json!({
+                    "target": target.abi.package_name(),
+                    "path": path,
+                    "sha256": hash_file(&path),
+                }));
+            }
+        }
         let manifest = serde_json::json!({
             "configuration": configuration.to_string(),
             "targets": targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "endpoint": endpoint,
             "buildId": build_id,
             "sourceCommit": source_commit,
+            "sourceFingerprint": source_fingerprint,
             "artifacts": artifacts,
+            "nativeArtifacts": native_artifacts,
             "communicationProvider": communication_provider.to_string(),
-            "compiledFeatures": provider_features(&communication_provider),
+            "compiledFeatures": native_feature_set(),
             "irohProfile": (communication_provider == iroh_provider())
-                .then(|| configured_iroh_profile(provider_profile))
-                .flatten(),
+                .then(|| configured_iroh_profile(provider_profile).unwrap_or_else(|| "always".into())),
             "irohServiceConfigFingerprint": (communication_provider == iroh_provider())
                 .then(iroh_service_config_fingerprint),
             "builtAt": format!("{:?}", std::time::SystemTime::now()),
@@ -453,9 +496,6 @@ impl<'a> BuildController<'a> {
                 "build".to_owned(),
                 "-p".to_owned(),
                 "torca-native".to_owned(),
-                "--no-default-features".to_owned(),
-                "--features".to_owned(),
-                provider_features(&communication_provider).to_owned(),
                 "--target".to_owned(),
                 target.triple.to_owned(),
                 "--locked".to_owned(),
@@ -632,11 +672,10 @@ fn build_environment_with_target(
     environment
 }
 
-/// Complete Cargo feature selection for one native artifact. The environment
-/// variable is retained for runtime metadata, while Cargo features decide
-/// which provider implementation is physically linked into the package.
-const fn provider_features(_provider: &CommunicationProvider) -> &'static str {
-    "iroh,radio-audio"
+/// Native artifacts intentionally use `torca-native`'s Cargo defaults. Keeping
+/// the selection in the native crate prevents deployer/native feature drift.
+const fn native_feature_set() -> &'static str {
+    "cargo-default"
 }
 
 fn configured_iroh_profile(explicit: Option<&str>) -> Option<String> {
@@ -909,6 +948,7 @@ fn hash_file(path: &std::path::Path) -> Option<String> {
 
 fn build_identity(
     source_commit: &str,
+    source_fingerprint: &str,
     endpoint: Option<&str>,
     configuration: Configuration,
     targets: &[Target],
@@ -931,9 +971,9 @@ fn build_identity(
         "none".to_owned()
     };
     let material = format!(
-        "{source_commit}\n{}\n{configuration}\n{target_list}\n{communication_provider}\n{}\n{iroh_profile}\n{iroh_services}",
+        "{source_commit}\n{source_fingerprint}\n{}\n{configuration}\n{target_list}\n{communication_provider}\n{}\n{iroh_profile}\n{iroh_services}",
         endpoint.unwrap_or("no-rendezvous-endpoint"),
-        provider_features(communication_provider)
+        native_feature_set()
     );
     format!("{:X}", Sha256::digest(material.as_bytes()))
 }
@@ -1009,7 +1049,7 @@ mod tests {
         let manifest = serde_json::json!({
             "endpoint": endpoint,
             "communicationProvider": "iroh",
-            "compiledFeatures": "iroh,radio-audio",
+            "compiledFeatures": "cargo-default",
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,
@@ -1178,7 +1218,7 @@ mod tests {
         let manifest = serde_json::json!({
             "endpoint": endpoint,
             "communicationProvider": "webrtc",
-            "compiledFeatures": "iroh,radio-audio",
+            "compiledFeatures": "cargo-default",
             "artifacts": [{
                 "target": "windows",
                 "path": artifact,

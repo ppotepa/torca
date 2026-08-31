@@ -662,14 +662,22 @@ class _ProfileSetupState extends State<_ProfileSetup> {
     Object? failure;
     try {
       final identityId = widget.identityId ?? 'local-device';
-      final avatar = await AvatarRepository.instance.envelopeForDevice(
-        identityId,
-      );
+      Map<String, Object?>? avatarEnvelope;
+      try {
+        final avatar = await AvatarRepository.instance.envelopeForDevice(
+          identityId,
+        );
+        avatarEnvelope =
+            jsonDecode(jsonEncode(avatar.toJson())) as Map<String, Object?>;
+      } on Object {
+        // Avatar generation is presentation-only. A platform identifier or
+        // renderer failure must never prevent saving the user's profile.
+        avatarEnvelope = null;
+      }
       result = await widget.gateway.execute(
         UpdateProfileCommandDto(
           displayName: displayName,
-          avatarEnvelope:
-              jsonDecode(jsonEncode(avatar.toJson())) as Map<String, Object?>,
+          avatarEnvelope: avatarEnvelope,
         ),
       );
     } on Object catch (error) {
