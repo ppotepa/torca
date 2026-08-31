@@ -229,6 +229,9 @@ class TorcaStrings {
       : 'This contact is blocked. Unblock the contact to send a message.';
   String get pairingExpired =>
       _pl ? 'Zaproszenie wygasło.' : 'The pairing invitation has expired.';
+
+  String invitationExpiresIn(String countdown) =>
+      _pl ? 'Wygasa za $countdown' : 'Expires in $countdown';
   String get itemAlreadyExists =>
       _pl ? 'Ten element już istnieje.' : 'This item already exists.';
   String get itemNotFound => _pl

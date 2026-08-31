@@ -1036,13 +1036,13 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
   }
 
   String get _countdown {
-    if (_remaining.isNegative) return 'Expired';
+    if (_remaining.isNegative) return context.strings.pairingExpired;
     final minutes = _remaining.inMinutes.toString().padLeft(2, '0');
     final seconds = _remaining.inSeconds
         .remainder(60)
         .toString()
         .padLeft(2, '0');
-    return 'Expires in $minutes:$seconds';
+    return context.strings.invitationExpiresIn('$minutes:$seconds');
   }
 
   @override
