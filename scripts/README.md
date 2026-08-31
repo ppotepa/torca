@@ -17,31 +17,27 @@ cargo run -p torca-deploy -- status
 cargo run -p torca-deploy -- plan --target all --configuration debug
 cargo run -p torca-deploy -- run --target all
 cargo run -p torca-deploy -- deploy --target all --configuration debug
-cargo run -p torca-deploy -- deploy --target all --configuration debug --communication-provider iroh
 cargo run -p torca-deploy -- rebuild --target all --configuration debug
 cargo run -p torca-deploy -- full-redeploy --target all --configuration debug
-cargo run -p torca-deploy -- relay status
 cargo run -p torca-deploy -- logs --target all
 cargo run -p torca-deploy -- resume
 ```
 
-Use `--dry-run` on plan-based commands when you want to inspect execution without changing the host, relay or devices.
+Use `--dry-run` on plan-based commands when you want to inspect execution without changing the host or devices.
 
 The plan model makes destructive choices explicit. In particular:
 
 - client data defaults to preservation for normal work;
 - full redeploy is the deliberate client-reset path;
-- onion identity rotation is explicit and requires coordinated relay/client handling;
+- Iroh endpoint identity is persisted and managed by the native runtime;
 - Android screen capture is blocked by default (`--privacy strict`); and
 - `--privacy allow-capture` is a local-development opt-out from the Android window capture flag, not a transport/security change.
 
 See `cargo run -p torca-deploy -- --help` and the subcommand help for the current option set rather than copying every flag into long-lived documentation.
 
-Tor and Iroh are selectable production providers. Exactly one provider is
-compiled into a client deployment; the runtime never silently falls back to
-Tor. The compatibility build/run helpers also accept
-`-CommunicationProvider tor|iroh|webrtc`, but provider-aware deployment should
-remain on the Rust entry point above.
+Iroh is the sole production provider and Memory is test-only. The compatibility
+scripts are retained for validation and historical workflows; provider-aware
+deployment should use the Rust entry point above.
 
 ## What the Rust tool owns
 
@@ -49,9 +45,8 @@ remain on the Rust entry point above.
 
 - target/device discovery;
 - plan normalization and destructive-action policy;
-- source-aware client/relay builds;
+- source-aware client builds;
 - installation and launch;
-- relay lifecycle operations;
 - durable deployment checkpoints/resume;
 - runtime health waits; and
 - diagnostic collection.
@@ -80,14 +75,14 @@ Use the Rust collector for the current incident format:
 cargo run -p torca-deploy -- logs --target all
 ```
 
-Each collection creates a fresh incident directory instead of mixing new evidence with older runs. See [`../docs/diagnostics.md`](../docs/diagnostics.md) for the current producer and bundle layout.
+Each collection creates a fresh incident directory instead of mixing new evidence with older runs. See [`../docs/operations.md`](../docs/operations.md) for the current producer and bundle layout.
 
 ## Related documentation
 
 - [`../README.md`](../README.md) — product overview and developer entry point.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor and validation rules.
 - [`../docs/STATUS.md`](../docs/STATUS.md) — current maturity/validation status.
-- [`../docs/FINALIZE_MANUAL_RUNBOOK.md`](../docs/FINALIZE_MANUAL_RUNBOOK.md) — real-device acceptance procedure.
+- [`../docs/testing.md`](../docs/testing.md) — real-device and automated validation guidance.
 
 ## Background Iroh benchmark
 

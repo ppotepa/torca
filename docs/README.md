@@ -1,72 +1,55 @@
 # Torca documentation
 
-Torca keeps a small set of maintained documents plus a few detailed engineering ledgers. This page explains which document answers which question and prevents release plans, progress notes and evergreen architecture/security documentation from competing as sources of truth.
+This directory contains the maintained documentation for the current codebase. It deliberately avoids release-plan ledgers and completed implementation checklists; Git history is the archive for those records.
 
-## Start here
+## Documentation map
 
-- [`../README.md`](../README.md) — product overview, current capabilities and canonical development entry point.
-- [`STATUS.md`](STATUS.md) — concise maturity, validation and remaining-confidence summary.
-- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor workflow, ownership rules and documentation policy.
+| Document | Use it for |
+| --- | --- |
+| [`../README.md`](../README.md) | product overview, current capabilities and repository map |
+| [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | ownership, layering, runtime and provider composition |
+| [`app-flows.md`](app-flows.md) | startup, pairing, messaging and diagnostics flows |
+| [`transport.md`](transport.md) | Iroh transport boundary and provider-neutral capabilities |
+| [`development.md`](development.md) | local development and repository workflow |
+| [`testing.md`](testing.md) | automated, platform, integration and soak validation |
+| [`operations.md`](operations.md) | deploy/runtime lifecycle, diagnostics and recovery |
+| [`STATUS.md`](STATUS.md) | concise current maturity and implementation status |
+| [`../SECURITY.md`](../SECURITY.md) | security goals, guarantees and non-guarantees |
+| [`security/threat-model.md`](security/threat-model.md) | assets, trust boundaries and threat review triggers |
+| [`../PRIVACY.md`](../PRIVACY.md) | current data handling and provider-dependent network privacy |
+| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | contribution and documentation rules |
 
-## Maintained evergreen documents
+## Diagrams
 
-These describe long-lived behavior and should be updated when the corresponding product boundary changes:
+- [`diagrams/architecture.svg`](diagrams/architecture.svg) — client/runtime/provider system view.
+- [`diagrams/app-flows.svg`](diagrams/app-flows.svg) — startup, pairing and conversation entry paths.
+- [`diagrams/message-delivery.svg`](diagrams/message-delivery.svg) — outbound/inbound message ownership and feedback loop.
 
-- [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — component ownership, dependency direction, client/relay split and runtime model.
-- [`../SECURITY.md`](../SECURITY.md) — current security posture, guarantees, limits and reporting guidance.
-- [`security/threat-model.md`](security/threat-model.md) — assets, trust boundaries, threats, controls and review triggers.
-- [`../PRIVACY.md`](../PRIVACY.md) — local data, network data, notifications/diagnostics and user choices.
-- [`../ROADMAP.md`](../ROADMAP.md) — long-lived product and engineering direction.
-- [`diagnostics.md`](diagnostics.md) — current diagnostic producers and the Rust deployer collection contract.
-- [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) — principal dependency attribution guidance.
+The SVGs are source-controlled documentation assets with embedded titles/descriptions and no external dependencies.
 
-When an evergreen document disagrees with the current source, treat the source and enforced/generated contracts as authoritative and fix the documentation.
+## Source-of-truth order
 
-## Current engineering handoff
+When documentation and implementation disagree:
 
-- [`../0.3.md`](../0.3.md) — current architecture-track plan and invariants.
-- [`STATUS.md`](STATUS.md) — detailed implementation and validation status.
+1. checked-in source, generated contracts and tests;
+2. enforced architecture/source policies;
+3. maintained architecture/security/privacy documentation;
+4. this documentation index/status material;
+5. Git history for retired plans and validation ledgers.
 
-The `0.3` label is a planning/work-track label. The package version in `Cargo.toml` is separate build metadata; neither label by itself establishes release maturity.
-
-## Focused working records
-
-These are useful design/acceptance records, but they are not evergreen product specifications:
-
-- [`architecture/runtime-control.md`](architecture/runtime-control.md) — canonical attention/demand/evidence/deadline runtime contract.
-- [`validation/runtime-power.md`](validation/runtime-power.md) — runtime power validation and soak protocol.
-- [`../CONNECTIVITY_HARDENING.md`](../CONNECTIVITY_HARDENING.md) — connectivity supervision invariants and implementation notes.
-- [`plans/BATTERY1.md`](plans/BATTERY1.md) — current runtime/power implementation plan.
-- [`FINALIZE_MANUAL_RUNBOOK.md`](FINALIZE_MANUAL_RUNBOOK.md) — real-device manual acceptance procedure.
-
-These files may contain dated checkpoints or historical implementation detail. Once a principle becomes stable, move the durable conclusion into the appropriate evergreen document instead of treating the working record as a permanent specification.
-
-## Navigation READMEs
-
-Short README files under `apps`, `crates`, `services`, `tests` and similar top-level directories are navigation aids. They should explain ownership and point back to the maintained architecture rather than re-document individual APIs or duplicate build instructions.
+A dated plan or old acceptance checklist is never evidence that the current binary passed that gate.
 
 ## Documentation rules
 
-Prefer documenting stable facts such as:
+Document stable current behavior:
 
-- what Torca is and is not trying to be;
-- which layer owns a responsibility;
-- which trust boundary is crossed;
-- why the client/relay split exists;
-- which workflow is canonical for contributors;
-- security and privacy guarantees/non-guarantees; and
-- what evidence is required before a validation claim is made.
+- responsibility and dependency direction;
+- trust boundaries and security/privacy consequences;
+- user/runtime flows;
+- supported/selectable provider state;
+- canonical build/deploy/test entry points; and
+- the evidence required for a validation claim.
 
-Avoid maintaining prose copies of rapidly changing implementation details such as exact schema/contract versions, migration counts, timeout constants, generated DTO field lists, complete crate inventories, temporary refactor names or test counts. Those are better represented by source, generated schemas, tests, CI configuration and Git history.
+Avoid duplicating rapidly changing details such as exact schema numbers, migration counts, timeout constants, complete class inventories or test totals. Link to source when such details are the real contract.
 
-## Status and validation language
-
-Use precise evidence language:
-
-- **implemented** means the source path is present and composed;
-- **source-validated** means named static/build/test gates were actually run;
-- **platform-built** means the named platform artifact was built;
-- **device-validated** means the named scenario was exercised on real devices; and
-- **audited** should only be used for an actual independent security review.
-
-Do not turn a checked box in a planning document into a stronger claim than the evidence supports.
+When a temporary plan finishes, delete it from the maintained docs after moving any durable conclusion into the appropriate current-state page. Git history preserves the plan without forcing future readers to decide whether it is still authoritative.

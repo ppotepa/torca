@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" role="img" aria-labelledby="title desc">
+  <title id="title">Torca application flows</title>
+  <desc id="desc">Three current flows: startup from Flutter bootstrap to home, pairing through shared join or invitation creation into explicit approval and durable contact state, and conversation navigation into Rust-owned delivery.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#475569"/></marker>
+    <style>
+      .bg{fill:#f8fafc}.lane{fill:#fff;stroke:#cbd5e1;stroke-width:2}.step{fill:#eef2ff;stroke:#475569;stroke-width:2}.decision{fill:#ecfeff;stroke:#0f766e;stroke-width:2}.durable{fill:#fefce8;stroke:#a16207;stroke-width:2}.title{font:700 28px system-ui,sans-serif;fill:#0f172a}.h{font:700 18px system-ui,sans-serif;fill:#0f172a}.t{font:13px system-ui,sans-serif;fill:#334155}.small{font:12px system-ui,sans-serif;fill:#475569}.line{stroke:#475569;stroke-width:2;fill:none;marker-end:url(#a)}
+    </style>
+  </defs>
+  <rect class="bg" width="1200" height="820" rx="24"/>
+  <text class="title" x="48" y="54">Torca — startup, pairing and conversation flows</text>
+
+  <rect class="lane" x="45" y="85" width="1110" height="205" rx="18"/>
+  <text class="h" x="70" y="118">1. Startup</text>
+  <rect class="step" x="85" y="150" width="180" height="72" rx="12"/><text class="t" x="105" y="180">TorcaBootstrap</text><text class="small" x="105" y="201">load preferences</text>
+  <rect class="step" x="325" y="150" width="190" height="72" rx="12"/><text class="t" x="345" y="180">FfiEngineGateway</text><text class="small" x="345" y="201">open + initialize</text>
+  <rect class="step" x="575" y="150" width="200" height="72" rx="12"/><text class="t" x="595" y="180">Native runtime</text><text class="small" x="595" y="201">compose selected provider</text>
+  <rect class="decision" x="835" y="150" width="210" height="72" rx="12"/><text class="t" x="855" y="180">Application ready</text><text class="small" x="855" y="201">flutter_gateway_ready</text>
+  <path class="line" d="M265 186 H325"/><path class="line" d="M515 186 H575"/><path class="line" d="M775 186 H835"/>
+  <text class="small" x="85" y="254">Then attach deep links, Android lifecycle/notifications or Windows desktop lifecycle, and render HomeScreen.</text>
+
+  <rect class="lane" x="45" y="315" width="1110" height="265" rx="18"/>
+  <text class="h" x="70" y="348">2. Pairing</text>
+  <rect class="step" x="80" y="390" width="200" height="80" rx="12"/><text class="t" x="100" y="420">Join entry</text><text class="small" x="100" y="442">add-contact or deep link</text>
+  <rect class="step" x="80" y="490" width="200" height="62" rx="12"/><text class="t" x="100" y="518">Create invitation</text><text class="small" x="100" y="538">Invitations surface</text>
+  <rect class="step" x="355" y="415" width="210" height="92" rx="12"/><text class="t" x="375" y="445">Provider bootstrap</text><text class="small" x="375" y="467">Tor: managed session</text><text class="small" x="375" y="486">Iroh: direct QR/link</text>
+  <rect class="step" x="640" y="415" width="200" height="92" rx="12"/><text class="t" x="660" y="445">Encrypted pairing</text><text class="small" x="660" y="467">identity + route + capability</text><text class="small" x="660" y="486">shared application flow</text>
+  <rect class="decision" x="915" y="415" width="180" height="92" rx="12"/><text class="t" x="935" y="445">Explicit decision</text><text class="small" x="935" y="467">accept / reject</text><text class="small" x="935" y="486">creator prompt</text>
+  <path class="line" d="M280 430 C315 430 320 448 355 448"/><path class="line" d="M280 521 C315 521 320 480 355 480"/><path class="line" d="M565 461 H640"/><path class="line" d="M840 461 H915"/>
+  <rect class="durable" x="915" y="525" width="180" height="38" rx="10"/><text class="small" x="944" y="549">durable contact state</text>
+  <path class="line" d="M1005 507 V525"/>
+
+  <rect class="lane" x="45" y="605" width="1110" height="165" rx="18"/>
+  <text class="h" x="70" y="638">3. Conversation</text>
+  <rect class="step" x="90" y="670" width="190" height="64" rx="12"/><text class="t" x="110" y="699">Open conversation</text><text class="small" x="110" y="719">navigation request</text>
+  <rect class="step" x="350" y="670" width="190" height="64" rx="12"/><text class="t" x="370" y="699">Paged Rust history</text><text class="small" x="370" y="719">search/query provider</text>
+  <rect class="step" x="610" y="670" width="190" height="64" rx="12"/><text class="t" x="630" y="699">Composer intent</text><text class="small" x="630" y="719">typed bridge command</text>
+  <rect class="durable" x="870" y="670" width="210" height="64" rx="12"/><text class="t" x="890" y="699">Rust durable delivery</text><text class="small" x="890" y="719">provider transport + receipts</text>
+  <path class="line" d="M280 702 H350"/><path class="line" d="M540 702 H610"/><path class="line" d="M800 702 H870"/>
+</svg>

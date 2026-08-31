@@ -115,12 +115,13 @@ The main maintained documents are:
 - [`SECURITY.md`](SECURITY.md) — security guarantees, limits and reporting guidance;
 - [`docs/security/threat-model.md`](docs/security/threat-model.md) — assets, trust boundaries and threats;
 - [`PRIVACY.md`](PRIVACY.md) — local/network data behavior and user choices;
-- [`ROADMAP.md`](ROADMAP.md) — long-lived product and engineering direction;
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contributor workflow and documentation rules;
-- [`0.3.md`](0.3.md) — current architecture-track plan; and
+- [`docs/development.md`](docs/development.md) — local development workflow;
+- [`docs/testing.md`](docs/testing.md) — automated and device validation; and
 - [`docs/STATUS.md`](docs/STATUS.md) — current engineering and validation status.
 
-Focused plans such as [`docs/plans/BATTERY1.md`](docs/plans/BATTERY1.md) provide current implementation intent, but they do not override evergreen architecture/security documents or actual source/validation evidence.
+Operational details live in [`docs/operations.md`](docs/operations.md), while
+transport boundaries are described in [`docs/transport.md`](docs/transport.md).
 
 Planning labels such as “0.3” and the Cargo package version serve different purposes and can move at different times. Do not infer release maturity from either label alone.
 
