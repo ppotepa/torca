@@ -51,7 +51,7 @@
   "buildAndConnectionInfo": "Build & connection info",
   "buildLabel": "build {build}",
   "buildServiceSummary": "{build} {service}",
-  "buildTooltip": "Torca build {build}\\nProvider service: {service}",
+  "buildTooltip": "Torca build {build}\\nProvider service: {providerService}",
   "cancel": "Скасувати",
   "cancelInvitation": "Cancel invitation",
   "cancelMessage": "Cancel Message",
@@ -197,7 +197,7 @@
   "joinRequestWaiting": "Join Request Waiting",
   "joinedInvitation": "Joined invitation",
   "jumpToLatest": "Jump to latest message",
-  "language": "Language",
+  "language": "Мова",
   "languageEnglish": "English",
   "languagePolish": "Polish",
   "languageSystem": "System language",
@@ -404,7 +404,7 @@
   "senderYou": "You",
   "sendingSecurely": "Sending securely",
   "sent": "Sent",
-  "settings": "Settings",
+  "settings": "Налаштування",
   "settingsTitle": "Налаштування",
   "sharedMedia": "Shared Media",
   "sharedMediaCount": "{count}",
@@ -456,5 +456,122 @@
   "yesterday": "Yesterday",
   "yourIdentity": "Your identity",
   "yourInvitation": "Your invitation",
-  "zeroDelayDeadlines": "Zero Delay Deadlines"
+  "zeroDelayDeadlines": "Zero Delay Deadlines",
+  "@bootstrapAttempt": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "attempt": {
+        "type": "int"
+      }
+    }
+  },
+  "@bootstrapProgress": {
+    "placeholders": {
+      "ready": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "@connectingPeerThrough": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@connectionEvidenceNote": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@directProviderContact": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@messageTooLong": {
+    "placeholders": {
+      "maximum": {
+        "type": "int"
+      }
+    }
+  },
+  "@providerName": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@providerReady": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@providerReconnecting": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@providerStarting": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@providerStateLabel": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      },
+      "state": {
+        "type": "String"
+      }
+    }
+  },
+  "@reconnectingPeerThrough": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "@remoteIdentity": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "@sharedMediaCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@searchResultsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

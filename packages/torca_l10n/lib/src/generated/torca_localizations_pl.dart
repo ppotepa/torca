@@ -15,34 +15,34 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get accept => 'Akceptuj';
 
   @override
-  String get activeDemands => 'Active Demands';
+  String get activeDemands => 'Aktywne zapotrzebowania';
 
   @override
   String get activeInvitationsDescription =>
       'Aktywne zaproszenia i prosby o parowanie pojawia sie tutaj.';
 
   @override
-  String get activeLeases => 'Active Leases';
+  String get activeLeases => 'Aktywne dzierżawy';
 
   @override
-  String get activeTransfers => 'Active Transfers';
+  String get activeTransfers => 'Aktywne';
 
   @override
-  String get allOperations => 'All Operations';
+  String get allOperations => 'Wszystko';
 
   @override
-  String get allowAll => 'Allow All';
+  String get allowAll => 'Zezwalaj na wszystko';
 
   @override
   String get allowDelayedBackgroundDelivery =>
-      'Allow Delayed Background Delivery';
+      'Zezwalaj na opóźnione dostarczanie w tle';
 
   @override
   String get allowDelayedBackgroundDeliveryDescription =>
-      'Allow Delayed Background Delivery Description';
+      'Wymagane, aby tryb automatyczny lub oszczędzania baterii mógł wstrzymać runtime komunikacji, gdy aplikacja jest bezczynna.';
 
   @override
-  String get alwaysAvailable => 'Always Available';
+  String get alwaysAvailable => 'Zawsze dostępny';
 
   @override
   String get appearance => 'Wygląd';
@@ -54,7 +54,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get applicationMenu => 'Menu aplikacji';
 
   @override
-  String get archiveConversation => 'Archive Conversation';
+  String get archiveConversation => 'Archiwizuj rozmowę';
 
   @override
   String get attachFiles => 'Dołącz pliki';
@@ -101,34 +101,36 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   }
 
   @override
-  String get audio => 'Audio';
+  String get audio => 'Dźwięk';
 
   @override
-  String get audioDeviceUnavailable => 'Audio Device Unavailable';
+  String get audioDeviceUnavailable =>
+      'Nie można użyć wybranego urządzenia audio.';
 
   @override
-  String get audioOutput => 'Audio Output';
+  String get audioOutput => 'Wyjście audio';
 
   @override
-  String get automatic => 'Automatic';
+  String get automatic => 'Automatycznie';
 
   @override
-  String get availabilityMode => 'Availability Mode';
+  String get availabilityMode => 'Tryb dostępności';
 
   @override
-  String get batteryAvailability => 'Battery Availability';
+  String get batteryAvailability => 'Bateria i dostępność';
 
   @override
-  String get batteryObservation => 'Battery Observation';
+  String get batteryObservation => 'Obserwacja baterii';
 
   @override
-  String get batterySaver => 'Battery Saver';
+  String get batterySaver => 'Oszczędzanie baterii';
 
   @override
-  String get batterySettingsDescription => 'Battery Settings Description';
+  String get batterySettingsDescription =>
+      'Wybierz, kiedy Torca może odroczyć pracę w tle. Przychodzące zadania nigdy nie są po cichu odrzucane.';
 
   @override
-  String get batteryTab => 'Battery Tab';
+  String get batteryTab => 'Bateria';
 
   @override
   String get blockContact => 'Zablokuj kontakt';
@@ -139,26 +141,27 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
 
   @override
   String blockContactTitle(Object name) {
-    return 'Zablokowac kontakt $name?';
+    return 'Zablokować kontakt $name?';
   }
 
   @override
   String get blocked => 'Zablokowany';
 
   @override
-  String get blockedSendBlocked => 'Blocked Send Blocked';
+  String get blockedSendBlocked =>
+      'Kontakt jest zablokowany. Odblokuj go, aby wysłać wiadomość.';
 
   @override
-  String get bookmarkMessage => 'Bookmark Message';
+  String get bookmarkMessage => 'Zapisz wiadomość';
 
   @override
-  String bootstrapAttempt(Object attempt, Object label) {
-    return '$label $attempt';
+  String bootstrapAttempt(String label, int attempt) {
+    return '$label · próba $attempt';
   }
 
   @override
-  String bootstrapProgress(Object elapsed, Object ready, Object total) {
-    return '$ready $total $elapsed';
+  String bootstrapProgress(int ready, int total, String elapsed) {
+    return '$ready z $total kontroli bezpieczeństwa ukończonych  •  $elapsed';
   }
 
   @override
@@ -188,8 +191,8 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   }
 
   @override
-  String buildTooltip(Object build, Object service) {
-    return 'Build $build\\nUsluga providera: $service';
+  String buildTooltip(Object build, Object providerService) {
+    return 'Build $build\nWersja usługi providera: $providerService';
   }
 
   @override
@@ -199,7 +202,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get cancelInvitation => 'Anuluj zaproszenie';
 
   @override
-  String get cancelMessage => 'Cancel Message';
+  String get cancelMessage => 'Anuluj wiadomosc';
 
   @override
   String get cancelRequest => 'Anuluj zadanie';
@@ -208,13 +211,13 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get cancelled => 'Anulowano';
 
   @override
-  String get chats => 'Chats';
+  String get chats => 'Rozmowy';
 
   @override
   String get checkingInvitation => 'Sprawdzanie zaproszenia...';
 
   @override
-  String get chooseConversation => 'Choose Conversation';
+  String get chooseConversation => 'Wybierz rozmowę';
 
   @override
   String get chooseLanguage => 'Wybierz język';
@@ -226,16 +229,17 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get chooseNickname => 'Wybierz pseudonim';
 
   @override
-  String get clearConversationHistory => 'Clear Conversation History';
+  String get clearConversationHistory => 'Wyczyść historię rozmowy';
 
   @override
-  String get clearSearch => 'Clear Search';
+  String get clearSearch => 'Wyczysc wyszukiwanie';
 
   @override
   String get close => 'Zamknij';
 
   @override
-  String get closeInvitationDescription => 'Close Invitation Description';
+  String get closeInvitationDescription =>
+      'Możesz zamknąć to okno i korzystać z aplikacji. Zaproszenie pojawi się tutaj automatycznie, gdy połączenie będzie gotowe.';
 
   @override
   String get closeScanner => 'Zamknij skaner';
@@ -254,28 +258,28 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get closeTooltip => 'Zamknij';
 
   @override
-  String get collapseNavigation => 'Collapse Navigation';
+  String get collapseNavigation => 'Zwiń nawigację';
 
   @override
-  String get comfortableDensity => 'Gestosc wygodna';
+  String get comfortableDensity => 'Gęstość wygodna';
 
   @override
-  String get communicationProvider => 'Communication Provider';
+  String get communicationProvider => 'Provider komunikacji';
 
   @override
-  String get communicationState => 'Communication State';
+  String get communicationState => 'Stan komunikacji';
 
   @override
-  String get compactDensity => 'Gestosc kompaktowa';
+  String get compactDensity => 'Gęstość kompaktowa';
 
   @override
-  String get completedTransfers => 'Completed Transfers';
+  String get completedTransfers => 'Zakończone';
 
   @override
   String get connecting => 'Laczenie';
 
   @override
-  String connectingPeerThrough(Object provider) {
+  String connectingPeerThrough(String provider) {
     return '$provider';
   }
 
@@ -289,13 +293,13 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get connectionDetailsTitle => 'Szczegoly polaczenia';
 
   @override
-  String connectionEvidenceNote(Object provider) {
+  String connectionEvidenceNote(String provider) {
     return '$provider';
   }
 
   @override
   String connectionQuality(Object quality, Object rtt) {
-    return '$quality $rtt';
+    return 'Jakość połączenia $quality$rtt';
   }
 
   @override
@@ -306,7 +310,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
 
   @override
   String contactAcceptedJoin(Object name) {
-    return '$name zaakceptowal(a) zaproszenie';
+    return '$name zaakceptował(a) zaproszenie';
   }
 
   @override
@@ -314,17 +318,18 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
 
   @override
   String contactAddedToContacts(Object name) {
-    return '$name dodano do kontakt�w';
+    return '$name dodano do kontaktów';
   }
 
   @override
   String get contactBlocked => 'Kontakt jest zablokowany';
 
   @override
-  String get contactConnected => 'Contact Connected';
+  String get contactConnected => 'Kontakt połączony';
 
   @override
-  String get contactConnectedDescription => 'Contact Connected Description';
+  String get contactConnectedDescription =>
+      'Zaproszenie zostało zaakceptowane, a kontakt jest gotowy do rozmowy.';
 
   @override
   String get contactDetails => 'Szczegoly kontaktu';
@@ -356,7 +361,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get continueLabel => 'Dalej';
 
   @override
-  String get contract => 'Contract';
+  String get contract => 'Kontrakt';
 
   @override
   String get contractDecodeFailed =>
@@ -366,7 +371,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get contractSnapshotReadable => 'Snapshot kontraktu czytelny';
 
   @override
-  String get conversationActions => 'Conversation Actions';
+  String get conversationActions => 'Akcje rozmowy';
 
   @override
   String get copy => 'Kopiuj';
@@ -375,13 +380,13 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get copyCode => 'Kopiuj zaproszenie';
 
   @override
-  String get copyFingerprint => 'Copy Fingerprint';
+  String get copyFingerprint => 'Kopiuj odcisk';
 
   @override
   String get couldNotBlockContact => 'Nie udało się zablokować kontaktu';
 
   @override
-  String get couldNotForwardMessage => 'Could Not Forward Message';
+  String get couldNotForwardMessage => 'Nie udało się przekazać wiadomości';
 
   @override
   String get couldNotQueueAttachment =>
@@ -394,27 +399,27 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get couldNotRenameContact => 'Nie udało się zmienić nazwy kontaktu';
 
   @override
-  String get couldNotSaveNickname => 'Could Not Save Nickname';
+  String get couldNotSaveNickname => 'Nie udało się zapisać pseudonimu';
 
   @override
   String couldNotStartConversation(Object name) {
-    return '$name';
+    return 'Nie udało się rozpocząć rozmowy z $name.';
   }
 
   @override
-  String get couldNotStartRadio => 'Could Not Start Radio';
+  String get couldNotStartRadio => 'Nie udalo sie rozpoczac transmisji';
 
   @override
   String get couldNotUnblockContact => 'Nie udało się odblokować kontaktu';
 
   @override
-  String get couldNotUpdateRadio => 'Could Not Update Radio';
+  String get couldNotUpdateRadio => 'Nie udalo sie zmienic trybu radio';
 
   @override
-  String get couldNotUpdateReaction => 'Could Not Update Reaction';
+  String get couldNotUpdateReaction => 'Nie udało się wysłać reakcji';
 
   @override
-  String get country => 'Country';
+  String get country => 'Skąd jesteś?';
 
   @override
   String get createInvitationForContact =>
@@ -432,14 +437,14 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
 
   @override
   String defaultAudioDevice(Object name) {
-    return '$name';
+    return '$name (domyślne)';
   }
 
   @override
-  String get deleteMessage => 'Delete Message';
+  String get deleteMessage => 'Usun dla obu stron';
 
   @override
-  String get deleteMessageTitle => 'Delete Message Title';
+  String get deleteMessageTitle => 'Usunac wiadomosc?';
 
   @override
   String get delivered => 'Dostarczono';
@@ -452,7 +457,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
 
   @override
   String deviceFingerprint(Object fingerprint) {
-    return '$fingerprint';
+    return 'Odcisk urządzenia\n$fingerprint';
   }
 
   @override
@@ -473,7 +478,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get directPeers => 'Bezposrednie wezly';
 
   @override
-  String directProviderContact(Object provider) {
+  String directProviderContact(String provider) {
     return '$provider';
   }
 
@@ -481,16 +486,16 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get displayName => 'Nazwa wyświetlana';
 
   @override
-  String get documentTransfers => 'Document Transfers';
+  String get documentTransfers => 'Dokumenty';
 
   @override
   String get done => 'Gotowe';
 
   @override
-  String get draft => 'Draft';
+  String get draft => 'Szkic';
 
   @override
-  String get editMessage => 'Edit Message';
+  String get editMessage => 'Edytuj wiadomosc';
 
   @override
   String get emoji => 'Emoji';
@@ -505,7 +510,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get endpoint => 'Endpoint';
 
   @override
-  String get englishCountry => 'English Country';
+  String get englishCountry => 'Anglia';
 
   @override
   String get enterSixCharacterCode =>
@@ -515,7 +520,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get excellent => 'Doskonaly';
 
   @override
-  String get expandNavigation => 'Expand Navigation';
+  String get expandNavigation => 'Rozwiń nawigację';
 
   @override
   String get exportDiagnostics => 'Eksportuj diagnostyke';
@@ -524,31 +529,31 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get exportFailed => 'Eksport nieudany';
 
   @override
-  String get exportTorcaDiagnostics => 'Export Torca Diagnostics';
+  String get exportTorcaDiagnostics => 'Eksportuj diagnostykę Torca';
 
   @override
   String get fair => 'Sredni';
 
   @override
-  String get fileTransfers => 'File Transfers';
+  String get fileTransfers => 'Pliki';
 
   @override
-  String get finalizingContact => 'Finalizing Contact';
+  String get finalizingContact => 'Finalizowanie bezpiecznego kontaktu…';
 
   @override
-  String get fingerprint => 'Fingerprint';
+  String get fingerprint => 'Odcisk';
 
   @override
-  String get fingerprintCopied => 'Fingerprint Copied';
+  String get fingerprintCopied => 'Odcisk skopiowany';
 
   @override
-  String get focusedOnly => 'Focused Only';
+  String get focusedOnly => 'Animuj tylko aktywne widoki';
 
   @override
-  String get followSystem => 'Follow System';
+  String get followSystem => 'Zgodnie z ustawieniami systemu';
 
   @override
-  String get forwardMessage => 'Forward Message';
+  String get forwardMessage => 'Przekaż wiadomość';
 
   @override
   String forwardNoAvailableAttachments(Object count) {
@@ -561,7 +566,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   }
 
   @override
-  String get fullAnimation => 'Full Animation';
+  String get fullAnimation => 'Pełna animacja';
 
   @override
   String get generateInvitation => 'Wygeneruj zaproszenie';
@@ -573,44 +578,48 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get good => 'Dobry';
 
   @override
-  String get holdToRecordVoiceClip => 'Hold To Record Voice Clip';
+  String get holdToRecordVoiceClip => 'Przytrzymaj, aby nagrac klip glosowy';
 
   @override
-  String get identicalDeadlineReplacements => 'Identical Deadline Replacements';
+  String get identicalDeadlineReplacements => 'Identyczne zastąpienia terminów';
 
   @override
-  String get identity => 'Identity';
+  String get identity => 'Tożsamość';
 
   @override
   String get identityChanged =>
       'Tożsamość kontaktu uległa zmianie. Sprawdź numer bezpieczeństwa.';
 
   @override
-  String get identityChangedSendBlocked => 'Identity Changed Send Blocked';
+  String get identityChangedSendBlocked =>
+      'Wysyłanie jest wstrzymane do czasu ponownej weryfikacji kontaktu.';
 
   @override
-  String get incidentDescription => 'Incident Description';
+  String get incidentDescription =>
+      'Uruchom autotest, oznacz bieżący stan i wyeksportuj zanonimizowany zrzut diagnostyczny. Treści wiadomości, załączniki, audio i sekrety nie są dołączane.';
 
   @override
-  String get incidentSnapshotSaved => 'Incident Snapshot Saved';
+  String get incidentSnapshotSaved =>
+      'Zrzut incydentu zapisano w lokalnej diagnostyce tego uruchomienia.';
 
   @override
-  String get incidentTab => 'Incident Tab';
+  String get incidentTab => 'Incydent';
 
   @override
-  String get incidentTools => 'Incident Tools';
+  String get incidentTools => 'Narzędzia incydentu';
 
   @override
   String get incomingMessage => 'Wiadomość przychodząca';
 
   @override
-  String get incompatibleStorageEpoch => 'Incompatible Storage Epoch';
+  String get incompatibleStorageEpoch =>
+      'Zaszyfrowany profil lokalny jest niezgodny. Jawnie zresetuj lokalne dane Torca przed kontynuowaniem.';
 
   @override
-  String get instantMode => 'Instant Mode';
+  String get instantMode => 'Tryb natychmiastowego polaczenia';
 
   @override
-  String get instantModeEnabled => 'Instant Mode Enabled';
+  String get instantModeEnabled => 'Tryb natychmiastowego polaczenia wlaczony';
 
   @override
   String get invalidInput => 'Podana wartość jest nieprawidłowa.';
@@ -619,16 +628,16 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get invitationCode => 'Kod zaproszenia';
 
   @override
-  String get invitationCodeCopied => 'Pelne zaproszenie skopiowane';
+  String get invitationCodeCopied => 'Pełne zaproszenie skopiowane';
 
   @override
   String invitationCodeLabel(Object code) {
-    return '$code';
+    return 'Kod $code';
   }
 
   @override
   String invitationExpiresIn(Object countdown) {
-    return '$countdown';
+    return 'Wygasa za $countdown';
   }
 
   @override
@@ -666,7 +675,8 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get joinInvitation => 'Dolacz do zaproszenia';
 
   @override
-  String get joinRequestWaiting => 'Join Request Waiting';
+  String get joinRequestWaiting =>
+      'Twoje żądanie czeka na weryfikację i akceptację przez właściciela zaproszenia.';
 
   @override
   String get joinedInvitation => 'Dolaczone zaproszenie';
@@ -694,20 +704,20 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
 
   @override
   String lastSeenAt(Object time) {
-    return '$time';
+    return 'Ostatnio $time';
   }
 
   @override
   String get lastSuccessfulProbe => 'Ostatnia udana sonda';
 
   @override
-  String get leaseReasons => 'Lease Reasons';
+  String get leaseReasons => 'Powody dzierżaw';
 
   @override
   String get light => 'Jasny';
 
   @override
-  String get loadCurrentRunLogs => 'Load Current Run Logs';
+  String get loadCurrentRunLogs => 'Wczytaj logi bieżącego uruchomienia';
 
   @override
   String get loaded => 'Zaladowano';
@@ -719,46 +729,47 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get localIdentityCheck => 'Lokalna tozsamosc';
 
   @override
-  String get localIdentityNotReady => 'Local Identity Not Ready';
+  String get localIdentityNotReady =>
+      'Lokalna tożsamość nie jest jeszcze gotowa';
 
   @override
   String get localName => 'Nazwa lokalna';
 
   @override
-  String get logsTab => 'Logs Tab';
+  String get logsTab => 'Logi';
 
   @override
-  String get markConversationRead => 'Mark Conversation Read';
+  String get markConversationRead => 'Oznacz jako przeczytane';
 
   @override
-  String get markIncident => 'Mark Incident';
+  String get markIncident => 'Oznacz incydent';
 
   @override
-  String get mediaTransfers => 'Media Transfers';
+  String get mediaTransfers => 'Media';
 
   @override
   String get message => 'Wiadomość';
 
   @override
-  String get messageActions => 'Message Actions';
+  String get messageActions => 'Akcje wiadomości';
 
   @override
-  String get messageCancelled => 'Message Cancelled';
+  String get messageCancelled => 'Wiadomosc anulowana';
 
   @override
   String get messageCopied => 'Wiadomosc skopiowana';
 
   @override
-  String get messageDeleted => 'Message Deleted';
+  String get messageDeleted => 'Wiadomosc usunieta';
 
   @override
   String get messageDetails => 'Szczegoly wiadomosci';
 
   @override
-  String get messageEdited => 'Message Edited';
+  String get messageEdited => 'Wiadomosc zmieniona';
 
   @override
-  String get messageForwarded => 'Message Forwarded';
+  String get messageForwarded => 'Wiadomość przekazana';
 
   @override
   String get messageQueued =>
@@ -771,43 +782,45 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get messageSenderYou => 'Ty';
 
   @override
-  String messageTooLong(Object maximum) {
-    return '$maximum';
+  String messageTooLong(int maximum) {
+    return 'Wiadomość może mieć maksymalnie $maximum znaków.';
   }
 
   @override
-  String get meteredTransfers => 'Metered Transfers';
+  String get meteredTransfers => 'Transfery w sieci taryfowej';
 
   @override
-  String get microphone => 'Microphone';
+  String get microphone => 'Mikrofon';
 
   @override
-  String get microphonePermissionRequired => 'Microphone Permission Required';
+  String get microphonePermissionRequired =>
+      'Dostep do mikrofonu jest wymagany do nadawania.';
 
   @override
   String get modern => 'Nowoczesny';
 
   @override
-  String get muteConversation => 'Mute Conversation';
+  String get muteConversation => 'Wycisz rozmowę';
 
   @override
   String get nativeBridge => 'Most natywny';
 
   @override
-  String get nativeLogTails => 'Native Log Tails';
+  String get nativeLogTails => 'Logi natywne';
 
   @override
-  String get nativeLogTailsDescription => 'Native Log Tails Description';
+  String get nativeLogTailsDescription =>
+      'Wczytuje ograniczony, zanonimizowany fragment bieżących logów natywnych. Odczyt nie uruchamia ciągłego monitorowania.';
 
   @override
   String get networkUnavailable =>
-      'Wybrane polaczenie komunikacyjne jest obecnie niedostepne.';
+      'Wybrane połączenie komunikacyjne jest obecnie niedostępne.';
 
   @override
   String get never => 'Nigdy';
 
   @override
-  String get newContact => 'New Contact';
+  String get newContact => 'Nowy kontakt';
 
   @override
   String get newDevice => 'Nowe urządzenie';
@@ -825,22 +838,23 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get newPrivateMessage => 'Nowa prywatna wiadomość';
 
   @override
-  String get nextDeadline => 'Next Deadline';
+  String get nextDeadline => 'Następny termin';
 
   @override
   String get nickname => 'Pseudonim';
 
   @override
-  String get nicknameIntro => 'Nickname Intro';
+  String get nicknameIntro =>
+      'Bezpieczny provider komunikacji jest gotowy. Ta nazwa będzie widoczna dla kontaktów.';
 
   @override
-  String get nicknameRequired => 'Nickname Required';
+  String get nicknameRequired => 'Pseudonim jest wymagany';
 
   @override
-  String get noActiveTransfers => 'No Active Transfers';
+  String get noActiveTransfers => 'Brak aktywnych transferow.';
 
   @override
-  String get noChatsMatch => 'No Chats Match';
+  String get noChatsMatch => 'Brak rozmow pasujacych do wyszukiwania';
 
   @override
   String get noContactsPaired => 'Brak sparowanych kontaktow';
@@ -849,13 +863,14 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get noContactsYet => 'Brak kontaktow';
 
   @override
-  String get noForwardableContent => 'No Forwardable Content';
+  String get noForwardableContent =>
+      'Ta wiadomość nie zawiera treści możliwej do przekazania.';
 
   @override
   String get noInvitations => 'Brak zaproszen';
 
   @override
-  String get noMatchingMessages => 'No Matching Messages';
+  String get noMatchingMessages => 'Brak pasujących wiadomości.';
 
   @override
   String get noMessagesYet => 'Brak wiadomosci';
@@ -884,23 +899,24 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get notificationsTitle => 'Powiadomienia';
 
   @override
-  String get observationRecording => 'Observation Recording';
+  String get observationRecording => 'rejestrowanie';
 
   @override
   String get observationRecordingDescription =>
-      'Observation Recording Description';
+      'Rejestrowanie zmian od punktu bazowego obserwacji.';
 
   @override
-  String get observationState => 'Observation State';
+  String get observationState => 'Stan';
 
   @override
-  String get observationStopped => 'Observation Stopped';
+  String get observationStopped => 'zatrzymano';
 
   @override
-  String get observationStoppedDescription => 'Observation Stopped Description';
+  String get observationStoppedDescription =>
+      'Uruchom przed scenariuszem bezczynności lub odzyskiwania, aby zapisać nową pracę.';
 
   @override
-  String get observationWork => 'Observation Work';
+  String get observationWork => 'Praca';
 
   @override
   String get offlineShort => 'Offline';
@@ -921,7 +937,8 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get operationFailed => 'Nie udało się wykonać operacji.';
 
   @override
-  String get originalMessageUnavailable => 'Original Message Unavailable';
+  String get originalMessageUnavailable =>
+      'Oryginalna wiadomość jest niedostępna';
 
   @override
   String get outgoingMessage => 'Wiadomość wychodząca';
@@ -940,53 +957,67 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
       'Dla tego providera zeskanuj kod QR albo wklej pelne zaproszenie.';
 
   @override
-  String get pairingCompletedMessage => 'Pairing Completed Message';
+  String get pairingCompletedMessage =>
+      'Kontakt został bezpiecznie dodany. Otworzyć teraz prywatną rozmowę?';
 
   @override
   String get pairingExpired => 'Zaproszenie wygasło.';
 
   @override
-  String get pairingInactiveMessage => 'Pairing Inactive Message';
+  String get pairingInactiveMessage =>
+      'To zaproszenie nie jest już aktywne. Drugie urządzenie otrzyma ten sam stan końcowy.';
 
   @override
   String get pairingProviderMismatch =>
       'To zaproszenie pochodzi od innego providera komunikacji.';
 
   @override
-  String get pairingQrSemanticLabel => 'Pairing Qr Semantic Label';
+  String get pairingQrSemanticLabel => 'Kod QR zaproszenia do parowania Torca';
 
   @override
   String get pairingRequestDescription =>
       'To urządzenie dołączyło do Twojego zaproszenia. Sprawdź dane kontaktu przed akceptacją.';
 
   @override
-  String pairingStateLabel(Object state) {
-    return '$state';
+  String pairingStateLabel(String state) {
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'open': 'Otwarte',
+      'peer_joined': 'Kontakt dolaczyl',
+      'awaiting_approval': 'Czeka na akceptacje',
+      'approved': 'Zaakceptowane',
+      'completed': 'Polaczone',
+      'rejected': 'Odrzucone',
+      'cancelled': 'Anulowane',
+      'expired': 'Wygasle',
+      'unknown': 'Nieznany stan',
+      'other': 'Nieznany stan',
+    });
+    return '$_temp0';
   }
 
   @override
-  String get pauseAll => 'Pause All';
+  String get pauseAll => 'Wstrzymuj wszystkie transfery';
 
   @override
-  String get pauseLarge => 'Pause Large';
+  String get pauseLarge => 'Wstrzymuj duże pliki';
 
   @override
   String get peerOffline => 'Kontakt offline';
 
   @override
-  String get peerState => 'Peer State';
+  String get peerState => 'Stan P2P';
 
   @override
-  String get pendingOperations => 'Pending Operations';
+  String get pendingOperations => 'Oczekujące';
 
   @override
-  String get pinConversation => 'Pin Conversation';
+  String get pinConversation => 'Przypnij rozmowę';
 
   @override
-  String get playVoiceMessage => 'Play Voice Message';
+  String get playVoiceMessage => 'Odtworz wiadomosc glosowa';
 
   @override
-  String get polishCountry => 'Polish Country';
+  String get polishCountry => 'Polska';
 
   @override
   String get poor => 'Slaby';
@@ -995,11 +1026,11 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get preparingDownload => 'Przygotowanie pobierania';
 
   @override
-  String get preparingPrivateSpace => 'Preparing Private Space';
+  String get preparingPrivateSpace => 'Przygotowywanie prywatnej przestrzeni';
 
   @override
   String get preparingPrivateSpaceDescription =>
-      'Preparing Private Space Description';
+      'Konfigurowanie szyfrowanego magazynu i bezpiecznej komunikacji. Możesz pozostawić ten ekran otwarty.';
 
   @override
   String get preparingSecureCopy => 'Przygotowanie bezpiecznej kopii';
@@ -1017,7 +1048,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get privacyTitle => 'Prywatność';
 
   @override
-  String get productVersion => 'Product Version';
+  String get productVersion => 'Wersja produktu';
 
   @override
   String get profileNotReady => 'Bezpieczny profil nie jest jeszcze gotowy.';
@@ -1026,33 +1057,33 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get providerEndpoint => 'Endpoint providera';
 
   @override
-  String get providerEndpointAvailable => 'Provider Endpoint Available';
+  String get providerEndpointAvailable => 'Dostępny';
 
   @override
-  String get providerEndpointUnavailable => 'Provider Endpoint Unavailable';
+  String get providerEndpointUnavailable => 'Niedostępny';
 
   @override
-  String providerName(Object provider) {
+  String providerName(String provider) {
     return '$provider';
   }
 
   @override
-  String providerReady(Object provider) {
+  String providerReady(String provider) {
     return '$provider';
   }
 
   @override
-  String providerReconnecting(Object provider) {
+  String providerReconnecting(String provider) {
     return '$provider';
   }
 
   @override
-  String providerStarting(Object provider) {
+  String providerStarting(String provider) {
     return '$provider';
   }
 
   @override
-  String providerStateLabel(Object provider, Object state) {
+  String providerStateLabel(String provider, String state) {
     return '$provider $state';
   }
 
@@ -1063,69 +1094,80 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get quality => 'Jakość';
 
   @override
-  String get queued => 'Queued';
+  String get queued => 'W kolejce';
 
   @override
-  String get radioChannelInterrupted => 'Radio Channel Interrupted';
+  String get radioChannelInterrupted => 'Kanal radio zostal przerwany';
 
   @override
-  String get radioChannelReady => 'Radio Channel Ready';
+  String get radioChannelReady => 'Prywatny kanal radio jest gotowy';
 
   @override
-  String get radioChannelRestored => 'Radio Channel Restored';
+  String get radioChannelRestored => 'Kanal radio zostal przywrocony';
 
   @override
-  String get radioConnecting => 'Radio Connecting';
+  String get radioConnecting => 'Laczenie prywatnego kanalu audio...';
 
   @override
   String radioDisabledBy(Object actor) {
-    return '$actor';
+    return '$actor wylaczyl(a) tryb radio';
   }
 
   @override
   String radioEnabledBy(Object actor) {
-    return '$actor';
+    return '$actor wlaczyl(a) tryb radio';
   }
 
   @override
-  String get radioMode => 'Radio Mode';
+  String get radioMode => 'Tryb radio';
 
   @override
-  String get radioModeDescription => 'Radio Mode Description';
+  String get radioModeDescription =>
+      'Krotkie, maksymalnie 10-sekundowe transmisje PTT. Radio dziala dopiero, gdy obie strony je wlacza.';
 
   @override
-  String get radioReady => 'Radio Ready';
+  String get radioReady => 'Przytrzymaj, aby mowic';
 
   @override
   String radioReceiving(Object name) {
-    return '$name';
+    return '$name nadaje';
   }
 
   @override
-  String get radioReconnecting => 'Radio Reconnecting';
+  String get radioReconnecting => 'Radio laczy sie ponownie...';
 
   @override
-  String get radioRequestingFloor => 'Radio Requesting Floor';
+  String get radioRequestingFloor => 'Rezerwowanie kanalu...';
 
   @override
-  String get radioTransmitting => 'Radio Transmitting';
+  String get radioTransmitting => 'Nadajesz';
 
   @override
-  String radioTransportFailure(Object code) {
-    return '$code';
+  String radioTransportFailure(String code) {
+    String _temp0 = intl.Intl.selectLogic(code, {
+      'endpoint_unavailable': 'brak punktu koncowego',
+      'connect_timeout': 'przekroczono czas laczenia',
+      'stream_reset': 'strumien zostal przerwany',
+      'idle_timeout': 'kanal wygasl podczas bezczynnosci',
+      'network_changed': 'zmienila sie siec',
+      'worker_unavailable': 'worker audio jest niedostepny',
+      'protocol': 'blad protokolu',
+      'other': 'nieznany blad transportu',
+    });
+    return 'Radio: $_temp0';
   }
 
   @override
-  String get radioUnavailable => 'Radio Unavailable';
+  String get radioUnavailable => 'Radio jest chwilowo niedostepne';
 
   @override
-  String get radioWaitingForPeer => 'Radio Waiting For Peer';
+  String get radioWaitingForPeer => 'Oczekiwanie, az kontakt wlaczy radio';
 
   @override
   String get rawDiagnostics => 'Surowa diagnostyka';
 
   @override
-  String get reactToMessage => 'React To Message';
+  String get reactToMessage => 'Reakcja';
 
   @override
   String get read => 'Odczytano';
@@ -1134,7 +1176,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get receivingSecurely => 'Bezpieczny odbior';
 
   @override
-  String get recentEmoji => 'Recent Emoji';
+  String get recentEmoji => 'Ostatnio używane';
 
   @override
   String get recentInvitations => 'Ostatnie zaproszenia';
@@ -1146,7 +1188,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get reconnecting => 'Ponowne laczenie';
 
   @override
-  String reconnectingPeerThrough(Object provider) {
+  String reconnectingPeerThrough(String provider) {
     return '$provider';
   }
 
@@ -1154,7 +1196,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get reconnectingShort => 'Laczenie';
 
   @override
-  String get recordingTransfers => 'Recording Transfers';
+  String get recordingTransfers => 'Nagrania';
 
   @override
   String get redactedDeveloperEventStream =>
@@ -1165,7 +1207,8 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
       'Zanonimizowane zdarzenia zdrowia czytelne';
 
   @override
-  String get redactedSchedulerDescription => 'Redacted Scheduler Description';
+  String get redactedSchedulerDescription =>
+      'Zanonimizowane wyjaśnienie harmonogramu; identyfikatory kontaktów nie są tutaj wyświetlane.';
 
   @override
   String get reduceMotion => 'Ogranicz ruch';
@@ -1174,21 +1217,21 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get refresh => 'Odswiez';
 
   @override
-  String get refreshProviderRoute => 'Refresh Provider Route';
+  String get refreshProviderRoute => 'Odśwież trasę providera';
 
   @override
-  String get regressionScore => 'Regression Score';
+  String get regressionScore => 'Wynik regresji';
 
   @override
   String get reject => 'Odrzuc';
 
   @override
-  String remoteIdentity(Object id) {
+  String remoteIdentity(String id) {
     return 'Tozsamosc $id';
   }
 
   @override
-  String get remoteIdentityTitle => 'Remote Identity Title';
+  String get remoteIdentityTitle => 'Tożsamość zdalna';
 
   @override
   String get remove => 'Usuń';
@@ -1197,7 +1240,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get removeAttachment => 'Usun zalacznik';
 
   @override
-  String get removeBookmark => 'Remove Bookmark';
+  String get removeBookmark => 'Usuń zakładkę';
 
   @override
   String get removeContact => 'Usuń kontakt';
@@ -1208,7 +1251,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
 
   @override
   String removeContactTitle(Object name) {
-    return 'Usunac kontakt $name?';
+    return 'Usunąć kontakt $name?';
   }
 
   @override
@@ -1218,16 +1261,16 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get reply => 'Odpowiedź';
 
   @override
-  String get resetBaseline => 'Reset Baseline';
+  String get resetBaseline => 'Zresetuj punkt bazowy';
 
   @override
-  String get resetVerification => 'Reset Verification';
+  String get resetVerification => 'Resetuj weryfikację';
 
   @override
-  String get restartApplication => 'Restart Application';
+  String get restartApplication => 'Uruchom aplikację ponownie';
 
   @override
-  String get restoreConversation => 'Restore Conversation';
+  String get restoreConversation => 'Przywróć rozmowę';
 
   @override
   String get retry => 'Ponów';
@@ -1245,19 +1288,20 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get roundTrip => 'Opoznienie';
 
   @override
-  String get route => 'Route';
+  String get route => 'Trasa providera';
 
   @override
-  String get routeRefreshRequested => 'Route Refresh Requested';
+  String get routeRefreshRequested => 'Zażądano odświeżenia trasy providera.';
 
   @override
-  String get routeRefreshRequired => 'Route Refresh Required';
+  String get routeRefreshRequired =>
+      'Trasa połączenia jest odświeżana. Spróbuj ponownie za chwilę.';
 
   @override
   String get runSelfTest => 'Uruchom test';
 
   @override
-  String get runtimeHealth => 'Runtime Health';
+  String get runtimeHealth => 'Stan runtime';
 
   @override
   String runtimeNotReadyDiagnostic(Object provider) {
@@ -1269,7 +1313,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
       'Nie udalo sie przygotowac lokalnego szyfrowanego runtime. Tozsamosc nie zostala zmieniona.';
 
   @override
-  String get runtimeTab => 'Runtime Tab';
+  String get runtimeTab => 'Runtime';
 
   @override
   String get runtimeUnavailable =>
@@ -1294,26 +1338,26 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get saveAttachment => 'Zapisz zalacznik';
 
   @override
-  String get saving => 'Saving';
+  String get saving => 'Zapisywanie…';
 
   @override
   String get scanQr => 'Skanuj QR';
 
   @override
-  String get scheduledWork => 'Scheduled Work';
+  String get scheduledWork => 'Zaplanowana praca';
 
   @override
-  String get searchChats => 'Search Chats';
+  String get searchChats => 'Szukaj rozmow';
 
   @override
-  String get searchConversationHint => 'Search Conversation Hint';
+  String get searchConversationHint => 'Szukaj w tej rozmowie';
 
   @override
   String get searchMessages => 'Szukaj wiadomosci';
 
   @override
-  String searchResultsCount(Object count) {
-    return '$count';
+  String searchResultsCount(int count) {
+    return 'Wyniki: $count';
   }
 
   @override
@@ -1351,24 +1395,24 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get settingsTitle => 'Ustawienia';
 
   @override
-  String get sharedMedia => 'Shared Media';
+  String get sharedMedia => 'Wspólne pliki i multimedia';
 
   @override
-  String sharedMediaCount(Object count) {
+  String sharedMediaCount(int count) {
     return '$count';
   }
 
   @override
-  String get sourceCommit => 'Source Commit';
+  String get sourceCommit => 'Commit źródłowy';
 
   @override
   String get startConversation => 'Rozpocznij rozmowę';
 
   @override
-  String get startObservation => 'Start Observation';
+  String get startObservation => 'Rozpocznij obserwację';
 
   @override
-  String get startingSecureNetwork => 'Uruchamianie bezpiecznej sieci…';
+  String get startingSecureNetwork => 'Uruchamianie komunikacji…';
 
   @override
   String get startingShort => 'Start';
@@ -1377,16 +1421,16 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get state => 'Stan';
 
   @override
-  String get staticIdle => 'Static Idle';
+  String get staticIdle => 'Statycznie podczas bezczynności';
 
   @override
   String get status => 'Stan';
 
   @override
-  String get stopObservation => 'Stop Observation';
+  String get stopObservation => 'Zatrzymaj obserwację';
 
   @override
-  String get storageEpoch => 'Storage Epoch';
+  String get storageEpoch => 'Epoka magazynu';
 
   @override
   String get storageFailure =>
@@ -1396,7 +1440,7 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get system => 'System';
 
   @override
-  String get systemDefaultAudioDevice => 'System Default Audio Device';
+  String get systemDefaultAudioDevice => 'Domyślne urządzenie systemowe';
 
   @override
   String get systemLanguage => 'Język systemowy';
@@ -1414,13 +1458,13 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get transferFailed => 'Wysylanie nieudane';
 
   @override
-  String get transfers => 'Transfers';
+  String get transfers => 'Transfery';
 
   @override
   String get transport => 'Transport';
 
   @override
-  String get typeToSearchConversation => 'Type To Search Conversation';
+  String get typeToSearchConversation => 'Wpisz tekst, aby przeszukać rozmowę.';
 
   @override
   String get unavailable => 'Niedostępne';
@@ -1432,59 +1476,60 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get unknown => 'Nieznany';
 
   @override
-  String get unknownCountry => 'Unknown Country';
+  String get unknownCountry => 'Nie podano';
 
   @override
-  String get unmuteConversation => 'Unmute Conversation';
+  String get unmuteConversation => 'Włącz powiadomienia';
 
   @override
-  String get unpinConversation => 'Unpin Conversation';
+  String get unpinConversation => 'Odepnij rozmowę';
 
   @override
-  String get unverified => 'Unverified';
+  String get unverified => 'Niezweryfikowany';
 
   @override
-  String get variant => 'Variant';
+  String get variant => 'Wariant';
 
   @override
-  String get verification => 'Verification';
+  String get verification => 'Weryfikacja';
 
   @override
-  String get verified => 'Verified';
+  String get verified => 'Zweryfikowano';
 
   @override
   String get verifiedOnDevice => 'Zweryfikowano na urzadzeniu';
 
   @override
-  String get verifyContact => 'Verify Contact';
+  String get verifyContact => 'Zweryfikuj kontakt';
 
   @override
   String get verifyFingerprintBeforeAccepting =>
-      'Verify Fingerprint Before Accepting';
+      'Urządzenie dołączyło do tego zaproszenia. Sprawdź odcisk przed zaakceptowaniem kontaktu.';
 
   @override
-  String get visualActivity => 'Visual Activity';
+  String get visualActivity => 'Aktywność avatara i interfejsu';
 
   @override
   String voiceClipRecording(Object secondsLeft) {
-    return '$secondsLeft';
+    return 'Nagrywanie klipu, pozostalo $secondsLeft s';
   }
 
   @override
-  String get voiceClipRecordingFailed => 'Voice Clip Recording Failed';
+  String get voiceClipRecordingFailed =>
+      'Nie udalo sie nagrac klipu glosowego.';
 
   @override
-  String get voiceMessage => 'Voice Message';
+  String get voiceMessage => 'Wiadomosc glosowa';
 
   @override
-  String get voiceMessagePlayed => 'Voice Message Played';
+  String get voiceMessagePlayed => 'Odtworzono';
 
   @override
-  String get voiceMessageReady => 'Voice Message Ready';
+  String get voiceMessageReady => 'Gotowe do odtworzenia';
 
   @override
   String waitingForDependency(Object dependency) {
-    return '$dependency';
+    return 'Oczekuje: $dependency';
   }
 
   @override
@@ -1494,10 +1539,10 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get waitingToReceive => 'Oczekiwanie na odbior';
 
   @override
-  String get wakeSources => 'Wake Sources';
+  String get wakeSources => 'Źródła wybudzeń';
 
   @override
-  String get whyAwake => 'Why Awake';
+  String get whyAwake => 'Dlaczego aktywny';
 
   @override
   String get yesterday => 'Wczoraj';
@@ -1509,5 +1554,5 @@ class TorcaLocalizationsPl extends TorcaLocalizations {
   String get yourInvitation => 'Twoje zaproszenie';
 
   @override
-  String get zeroDelayDeadlines => 'Zero Delay Deadlines';
+  String get zeroDelayDeadlines => 'Terminy bez opóźnienia';
 }

@@ -40,18 +40,18 @@ class RadioIndicator extends StatelessWidget {
       _ => colors.outline,
     };
     final label = switch (state) {
-      RadioState.ready => context.strings.radioReady,
-      RadioState.transmitting => context.strings.radioTransmitting,
-      RadioState.receiving => context.strings.radioReceiving(
-        contactName ?? context.strings.contactLabel,
+      RadioState.ready => context.l10n.radioReady,
+      RadioState.transmitting => context.l10n.radioTransmitting,
+      RadioState.receiving => context.l10n.radioReceiving(
+        contactName ?? context.l10n.contactLabel,
       ),
-      RadioState.requestingFloor => context.strings.radioRequestingFloor,
-      RadioState.startingCapture => context.strings.radioRequestingFloor,
-      RadioState.connecting => context.strings.radioConnecting,
-      RadioState.reconnecting => context.strings.radioReconnecting,
+      RadioState.requestingFloor => context.l10n.radioRequestingFloor,
+      RadioState.startingCapture => context.l10n.radioRequestingFloor,
+      RadioState.connecting => context.l10n.radioConnecting,
+      RadioState.reconnecting => context.l10n.radioReconnecting,
       RadioState.available ||
-      RadioState.waitingForPeer => context.strings.radioWaitingForPeer,
-      _ => context.strings.radioUnavailable,
+      RadioState.waitingForPeer => context.l10n.radioWaitingForPeer,
+      _ => context.l10n.radioUnavailable,
     };
     return Tooltip(
       message: label,

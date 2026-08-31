@@ -94,7 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
   ) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text(context.strings.buildAndConnectionInfo),
+      title: Text(context.l10n.buildAndConnectionInfo),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -148,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.strings.close),
+          child: Text(context.l10n.close),
         ),
       ],
     ),
@@ -194,9 +194,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 _selectedConversationId != null),
         buildLabel:
             'f ${_shortBuild(_buildId)} / '
-            'r ${_shortBuild(buildInfo?.buildId ?? '—')}',
+            'r ${_shortBuild(buildInfo?.buildId ?? 'â€”')}',
         serviceLabel: pairingServiceInfo == null
-            ? 'svc —'
+            ? 'svc â€”'
             : 'svc ${_shortBuild(pairingServiceInfo.buildId)}',
         onBuildInfo: () => _showBuildInfo(buildInfo, pairingServiceInfo),
         selectedIndex: _section.index,
@@ -228,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: context.torcaIcons.chats,
               count: snapshot.navigationBadges.unreadMessages,
             ),
-            label: context.strings.chats,
+            label: context.l10n.chats,
           ),
           NavigationDestination(
             icon: _NavigationIcon(
@@ -239,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: context.torcaIcons.contacts,
               count: snapshot.navigationBadges.newContacts,
             ),
-            label: context.strings.contacts,
+            label: context.l10n.contacts,
           ),
           NavigationDestination(
             icon: _NavigationIcon(
@@ -250,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: context.torcaIcons.invitations,
               count: snapshot.navigationBadges.pairingAttention,
             ),
-            label: context.strings.invitations,
+            label: context.l10n.invitations,
           ),
         ],
         actions: <Widget>[
@@ -277,7 +277,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _section == _HomeSection.chats
             ? null
             : FloatingActionButton(
-                tooltip: context.strings.pairContact,
+                tooltip: context.l10n.pairContact,
                 onPressed: _openJoinInvitation,
                 child: Icon(context.torcaIcons.addContact),
               ),
@@ -584,7 +584,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case ConversationAction.markRead:
         await _execute(
           MarkConversationReadCommandDto(conversationIdHex: conversation.id),
-          context.strings.operationFailed,
+          context.l10n.operationFailed,
         );
       case ConversationAction.contactDetails:
         _openContactDetails(contact);
@@ -683,7 +683,7 @@ class _HomeScreenState extends State<HomeScreen> {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: Text(context.strings.cancel),
+              child: Text(context.l10n.cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
@@ -781,7 +781,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  context.strings.couldNotStartConversation(
+                  context.l10n.couldNotStartConversation(
                     contact.displayName,
                   ),
                 ),
@@ -860,3 +860,5 @@ class _HomeScreenState extends State<HomeScreen> {
 
 String _shortBuild(String value) =>
     value.length > 8 ? value.substring(0, 8) : value;
+
+

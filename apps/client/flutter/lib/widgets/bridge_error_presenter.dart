@@ -14,7 +14,8 @@ abstract final class BridgeErrorPresenter {
     String? fallback,
   }) {
     if (result.ok) return '';
-    final strings = TorcaStrings.of(context);
+    final strings =
+        TorcaLocalizations.of(context) ?? TorcaLocalizationsEn();
     final code = (result.errorCode ?? result.messageKey ?? '')
         .trim()
         .toLowerCase()

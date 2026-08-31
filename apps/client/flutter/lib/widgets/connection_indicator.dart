@@ -26,7 +26,7 @@ class ConnectionIndicator extends StatelessWidget {
       blocked: blocked,
       icons: context.torcaIcons,
       provider: provider,
-      strings: context.strings,
+      strings: context.l10n,
     );
     final semantic = Theme.of(context).extension<AppSemanticColors>();
     final scheme = Theme.of(context).colorScheme;

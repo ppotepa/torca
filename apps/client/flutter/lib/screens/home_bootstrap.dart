@@ -31,13 +31,13 @@ class _BootstrapFailureScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        context.strings.secureRuntimeNotReady,
+                        context.l10n.secureRuntimeNotReady,
                         style: Theme.of(context).textTheme.headlineSmall,
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        context.strings.runtimePreparationFailed,
+                        context.l10n.runtimePreparationFailed,
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 16),
@@ -53,7 +53,7 @@ class _BootstrapFailureScreen extends StatelessWidget {
                         FilledButton.icon(
                           onPressed: onRetry,
                           icon: Icon(context.torcaIcons.retry),
-                          label: Text(context.strings.retryNow),
+                          label: Text(context.l10n.retryNow),
                         ),
                       ],
                     ],
@@ -150,7 +150,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
                                 TorcaDeviceAvatar(
-                                  label: context.strings.identity,
+                                  label: context.l10n.identity,
                                   identityId: widget.snapshot.identity?.id,
                                   stableDevice: true,
                                   presentation:
@@ -163,7 +163,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  context.strings.preparingPrivateSpace,
+                                  context.l10n.preparingPrivateSpace,
                                   style: Theme.of(
                                     context,
                                   ).textTheme.headlineSmall,
@@ -172,7 +172,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 const SizedBox(height: 8),
                                 Text(
                                   context
-                                      .strings
+                                      .l10n
                                       .preparingPrivateSpaceDescription,
                                   style: Theme.of(context).textTheme.bodyMedium,
                                   textAlign: TextAlign.center,
@@ -188,7 +188,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  context.strings.bootstrapProgress(
+                                  context.l10n.bootstrapProgress(
                                     ready,
                                     steps.length,
                                     _formatDuration(elapsed),
@@ -232,9 +232,9 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                         child: Text(
                                           restartRequired
                                               ? context
-                                                    .strings
+                                                    .l10n
                                                     .restartApplication
-                                              : context.strings.retryNow,
+                                              : context.l10n.retryNow,
                                         ),
                                       ),
                                     ],
@@ -289,14 +289,14 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
     );
     final step = failed.isEmpty ? null : failed.first;
     if (step == null || step.code == null || step.code!.isEmpty) {
-      return context.strings.runtimeNotReadyDiagnostic(
+      return context.l10n.runtimeNotReadyDiagnostic(
         snapshot.communicationProvider,
       );
     }
     return '${step.id}: ${step.code}';
   }
 
-  String _bootstrapLabel(String id) => context.strings.bootstrapStepLabel(id);
+  String _bootstrapLabel(String id) => context.l10n.bootstrapStepLabel(id);
 
   String _formatDuration(Duration value) {
     final minutes = value.inMinutes.toString().padLeft(2, '0');
@@ -357,7 +357,7 @@ class _BootstrapStepTile extends StatelessWidget {
                   (step.id == 'communication_runtime' ||
                       step.id == 'incoming_reachability' ||
                       step.id == 'rendezvous')
-              ? context.strings.bootstrapAttempt(label, step.attempt)
+              ? context.l10n.bootstrapAttempt(label, step.attempt)
               : label,
         ),
         subtitle: Text(_stateDescription(context, step, retryRemaining)),
@@ -403,7 +403,7 @@ class _BootstrapStepTile extends StatelessWidget {
             value == BootstrapStepState.ready)) {
       return providerSummary;
     }
-    return context.strings.bootstrapStateDescription(id, value, code);
+    return context.l10n.bootstrapStateDescription(code ?? '', id, value);
   }
 
   String _formatDuration(Duration value) {

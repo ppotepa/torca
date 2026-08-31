@@ -121,7 +121,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @activeDemands.
   ///
   /// In en, this message translates to:
-  /// **'Active Demands'**
+  /// **'Active demands'**
   String get activeDemands;
 
   /// No description provided for @activeInvitationsDescription.
@@ -133,43 +133,43 @@ abstract class TorcaLocalizations {
   /// No description provided for @activeLeases.
   ///
   /// In en, this message translates to:
-  /// **'Active Leases'**
+  /// **'Active leases'**
   String get activeLeases;
 
   /// No description provided for @activeTransfers.
   ///
   /// In en, this message translates to:
-  /// **'Active Transfers'**
+  /// **'Active'**
   String get activeTransfers;
 
   /// No description provided for @allOperations.
   ///
   /// In en, this message translates to:
-  /// **'All Operations'**
+  /// **'All'**
   String get allOperations;
 
   /// No description provided for @allowAll.
   ///
   /// In en, this message translates to:
-  /// **'Allow All'**
+  /// **'Allow all'**
   String get allowAll;
 
   /// No description provided for @allowDelayedBackgroundDelivery.
   ///
   /// In en, this message translates to:
-  /// **'Allow Delayed Background Delivery'**
+  /// **'Allow delayed background delivery'**
   String get allowDelayedBackgroundDelivery;
 
   /// No description provided for @allowDelayedBackgroundDeliveryDescription.
   ///
   /// In en, this message translates to:
-  /// **'Allow Delayed Background Delivery Description'**
+  /// **'Required before Automatic or Saver can suspend the communication runtime while the app is idle.'**
   String get allowDelayedBackgroundDeliveryDescription;
 
   /// No description provided for @alwaysAvailable.
   ///
   /// In en, this message translates to:
-  /// **'Always Available'**
+  /// **'Always available'**
   String get alwaysAvailable;
 
   /// No description provided for @appearance.
@@ -193,7 +193,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @archiveConversation.
   ///
   /// In en, this message translates to:
-  /// **'Archive Conversation'**
+  /// **'Archive conversation'**
   String get archiveConversation;
 
   /// No description provided for @attachFiles.
@@ -277,13 +277,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @audioDeviceUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Audio Device Unavailable'**
+  /// **'The selected audio device is unavailable.'**
   String get audioDeviceUnavailable;
 
   /// No description provided for @audioOutput.
   ///
   /// In en, this message translates to:
-  /// **'Audio Output'**
+  /// **'Audio output'**
   String get audioOutput;
 
   /// No description provided for @automatic.
@@ -295,37 +295,37 @@ abstract class TorcaLocalizations {
   /// No description provided for @availabilityMode.
   ///
   /// In en, this message translates to:
-  /// **'Availability Mode'**
+  /// **'Availability mode'**
   String get availabilityMode;
 
   /// No description provided for @batteryAvailability.
   ///
   /// In en, this message translates to:
-  /// **'Battery Availability'**
+  /// **'Battery & availability'**
   String get batteryAvailability;
 
   /// No description provided for @batteryObservation.
   ///
   /// In en, this message translates to:
-  /// **'Battery Observation'**
+  /// **'Battery observation'**
   String get batteryObservation;
 
   /// No description provided for @batterySaver.
   ///
   /// In en, this message translates to:
-  /// **'Battery Saver'**
+  /// **'Battery saver'**
   String get batterySaver;
 
   /// No description provided for @batterySettingsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Battery Settings Description'**
+  /// **'Choose when Torca may defer background work. Incoming work is never silently discarded.'**
   String get batterySettingsDescription;
 
   /// No description provided for @batteryTab.
   ///
   /// In en, this message translates to:
-  /// **'Battery Tab'**
+  /// **'Battery'**
   String get batteryTab;
 
   /// No description provided for @blockContact.
@@ -355,31 +355,31 @@ abstract class TorcaLocalizations {
   /// No description provided for @blockedSendBlocked.
   ///
   /// In en, this message translates to:
-  /// **'Blocked Send Blocked'**
+  /// **'This contact is blocked. Unblock the contact to send a message.'**
   String get blockedSendBlocked;
 
   /// No description provided for @bookmarkMessage.
   ///
   /// In en, this message translates to:
-  /// **'Bookmark Message'**
+  /// **'Bookmark message'**
   String get bookmarkMessage;
 
   /// No description provided for @bootstrapAttempt.
   ///
   /// In en, this message translates to:
-  /// **'{label} {attempt}'**
-  String bootstrapAttempt(Object attempt, Object label);
+  /// **'{label} · attempt {attempt}'**
+  String bootstrapAttempt(String label, int attempt);
 
   /// No description provided for @bootstrapProgress.
   ///
   /// In en, this message translates to:
-  /// **'{ready} {total} {elapsed}'**
-  String bootstrapProgress(Object elapsed, Object ready, Object total);
+  /// **'{ready} of {total} secure checks complete  •  {elapsed}'**
+  String bootstrapProgress(int ready, int total, String elapsed);
 
   /// No description provided for @bootstrapStateDescription.
   ///
   /// In en, this message translates to:
-  /// **'{id} {value} {code}'**
+  /// **'{id}: {value} {code}'**
   String bootstrapStateDescription(Object code, Object id, Object value);
 
   /// No description provided for @bootstrapStepLabel.
@@ -415,8 +415,8 @@ abstract class TorcaLocalizations {
   /// No description provided for @buildTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Torca build {build}\\nProvider service: {service}'**
-  String buildTooltip(Object build, Object service);
+  /// **'Torca build {build}\nProvider service: {providerService}'**
+  String buildTooltip(Object build, Object providerService);
 
   /// No description provided for @cancel.
   ///
@@ -433,7 +433,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @cancelMessage.
   ///
   /// In en, this message translates to:
-  /// **'Cancel Message'**
+  /// **'Cancel message'**
   String get cancelMessage;
 
   /// No description provided for @cancelRequest.
@@ -463,7 +463,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @chooseConversation.
   ///
   /// In en, this message translates to:
-  /// **'Choose Conversation'**
+  /// **'Choose conversation'**
   String get chooseConversation;
 
   /// No description provided for @chooseLanguage.
@@ -487,13 +487,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @clearConversationHistory.
   ///
   /// In en, this message translates to:
-  /// **'Clear Conversation History'**
+  /// **'Clear conversation history'**
   String get clearConversationHistory;
 
   /// No description provided for @clearSearch.
   ///
   /// In en, this message translates to:
-  /// **'Clear Search'**
+  /// **'Clear search'**
   String get clearSearch;
 
   /// No description provided for @close.
@@ -505,7 +505,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @closeInvitationDescription.
   ///
   /// In en, this message translates to:
-  /// **'Close Invitation Description'**
+  /// **'Close this window to continue using the application. The invitation will appear here automatically when the connection is ready.'**
   String get closeInvitationDescription;
 
   /// No description provided for @closeScanner.
@@ -541,7 +541,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @collapseNavigation.
   ///
   /// In en, this message translates to:
-  /// **'Collapse Navigation'**
+  /// **'Collapse navigation'**
   String get collapseNavigation;
 
   /// No description provided for @comfortableDensity.
@@ -553,13 +553,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @communicationProvider.
   ///
   /// In en, this message translates to:
-  /// **'Communication Provider'**
+  /// **'Communication provider'**
   String get communicationProvider;
 
   /// No description provided for @communicationState.
   ///
   /// In en, this message translates to:
-  /// **'Communication State'**
+  /// **'Communication state'**
   String get communicationState;
 
   /// No description provided for @compactDensity.
@@ -571,7 +571,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @completedTransfers.
   ///
   /// In en, this message translates to:
-  /// **'Completed Transfers'**
+  /// **'Completed'**
   String get completedTransfers;
 
   /// No description provided for @connecting.
@@ -583,8 +583,8 @@ abstract class TorcaLocalizations {
   /// No description provided for @connectingPeerThrough.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String connectingPeerThrough(Object provider);
+  /// **'{provider, select, iroh {Connecting to peer through Iroh} memory {Connecting to peer through Memory test} other {Connecting to peer through {provider}}}'**
+  String connectingPeerThrough(String provider);
 
   /// No description provided for @connection.
   ///
@@ -607,13 +607,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @connectionEvidenceNote.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String connectionEvidenceNote(Object provider);
+  /// **'Quality describes the authenticated direct peer link over {provider}. It is runtime evidence, not radio or internet signal strength.'**
+  String connectionEvidenceNote(String provider);
 
   /// No description provided for @connectionQuality.
   ///
   /// In en, this message translates to:
-  /// **'{quality} {rtt}'**
+  /// **'Connection quality {quality}{rtt}'**
   String connectionQuality(Object quality, Object rtt);
 
   /// No description provided for @connectionSelfTest.
@@ -655,13 +655,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @contactConnected.
   ///
   /// In en, this message translates to:
-  /// **'Contact Connected'**
+  /// **'Contact connected'**
   String get contactConnected;
 
   /// No description provided for @contactConnectedDescription.
   ///
   /// In en, this message translates to:
-  /// **'Contact Connected Description'**
+  /// **'The invitation was accepted and this contact is ready to chat.'**
   String get contactConnectedDescription;
 
   /// No description provided for @contactDetails.
@@ -727,7 +727,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @conversationActions.
   ///
   /// In en, this message translates to:
-  /// **'Conversation Actions'**
+  /// **'Conversation actions'**
   String get conversationActions;
 
   /// No description provided for @copy.
@@ -745,7 +745,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @copyFingerprint.
   ///
   /// In en, this message translates to:
-  /// **'Copy Fingerprint'**
+  /// **'Copy fingerprint'**
   String get copyFingerprint;
 
   /// No description provided for @couldNotBlockContact.
@@ -757,7 +757,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @couldNotForwardMessage.
   ///
   /// In en, this message translates to:
-  /// **'Could Not Forward Message'**
+  /// **'Could not forward message'**
   String get couldNotForwardMessage;
 
   /// No description provided for @couldNotQueueAttachment.
@@ -781,19 +781,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @couldNotSaveNickname.
   ///
   /// In en, this message translates to:
-  /// **'Could Not Save Nickname'**
+  /// **'Could not save nickname'**
   String get couldNotSaveNickname;
 
   /// No description provided for @couldNotStartConversation.
   ///
   /// In en, this message translates to:
-  /// **'{name}'**
+  /// **'Could not start conversation with {name}.'**
   String couldNotStartConversation(Object name);
 
   /// No description provided for @couldNotStartRadio.
   ///
   /// In en, this message translates to:
-  /// **'Could Not Start Radio'**
+  /// **'Could not start transmission'**
   String get couldNotStartRadio;
 
   /// No description provided for @couldNotUnblockContact.
@@ -805,19 +805,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @couldNotUpdateRadio.
   ///
   /// In en, this message translates to:
-  /// **'Could Not Update Radio'**
+  /// **'Could not update Radio mode'**
   String get couldNotUpdateRadio;
 
   /// No description provided for @couldNotUpdateReaction.
   ///
   /// In en, this message translates to:
-  /// **'Could Not Update Reaction'**
+  /// **'Could not send reaction'**
   String get couldNotUpdateReaction;
 
   /// No description provided for @country.
   ///
   /// In en, this message translates to:
-  /// **'Country'**
+  /// **'Where are you from?'**
   String get country;
 
   /// No description provided for @createInvitationForContact.
@@ -847,19 +847,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @defaultAudioDevice.
   ///
   /// In en, this message translates to:
-  /// **'{name}'**
+  /// **'{name} (default)'**
   String defaultAudioDevice(Object name);
 
   /// No description provided for @deleteMessage.
   ///
   /// In en, this message translates to:
-  /// **'Delete Message'**
+  /// **'Delete for everyone'**
   String get deleteMessage;
 
   /// No description provided for @deleteMessageTitle.
   ///
   /// In en, this message translates to:
-  /// **'Delete Message Title'**
+  /// **'Delete message?'**
   String get deleteMessageTitle;
 
   /// No description provided for @delivered.
@@ -883,7 +883,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @deviceFingerprint.
   ///
   /// In en, this message translates to:
-  /// **'{fingerprint}'**
+  /// **'Device fingerprint\n{fingerprint}'**
   String deviceFingerprint(Object fingerprint);
 
   /// No description provided for @diagnostics.
@@ -919,8 +919,8 @@ abstract class TorcaLocalizations {
   /// No description provided for @directProviderContact.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String directProviderContact(Object provider);
+  /// **'{provider, select, iroh {Direct Iroh contact} memory {Direct Memory test contact} other {Direct {provider} contact}}'**
+  String directProviderContact(String provider);
 
   /// No description provided for @displayName.
   ///
@@ -931,7 +931,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @documentTransfers.
   ///
   /// In en, this message translates to:
-  /// **'Document Transfers'**
+  /// **'Documents'**
   String get documentTransfers;
 
   /// No description provided for @done.
@@ -949,7 +949,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @editMessage.
   ///
   /// In en, this message translates to:
-  /// **'Edit Message'**
+  /// **'Edit message'**
   String get editMessage;
 
   /// No description provided for @emoji.
@@ -979,7 +979,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @englishCountry.
   ///
   /// In en, this message translates to:
-  /// **'English Country'**
+  /// **'England'**
   String get englishCountry;
 
   /// No description provided for @enterSixCharacterCode.
@@ -997,7 +997,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @expandNavigation.
   ///
   /// In en, this message translates to:
-  /// **'Expand Navigation'**
+  /// **'Expand navigation'**
   String get expandNavigation;
 
   /// No description provided for @exportDiagnostics.
@@ -1015,7 +1015,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @exportTorcaDiagnostics.
   ///
   /// In en, this message translates to:
-  /// **'Export Torca Diagnostics'**
+  /// **'Export Torca diagnostics'**
   String get exportTorcaDiagnostics;
 
   /// No description provided for @fair.
@@ -1027,13 +1027,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @fileTransfers.
   ///
   /// In en, this message translates to:
-  /// **'File Transfers'**
+  /// **'Files'**
   String get fileTransfers;
 
   /// No description provided for @finalizingContact.
   ///
   /// In en, this message translates to:
-  /// **'Finalizing Contact'**
+  /// **'Finalizing secure contact…'**
   String get finalizingContact;
 
   /// No description provided for @fingerprint.
@@ -1045,25 +1045,25 @@ abstract class TorcaLocalizations {
   /// No description provided for @fingerprintCopied.
   ///
   /// In en, this message translates to:
-  /// **'Fingerprint Copied'**
+  /// **'Fingerprint copied'**
   String get fingerprintCopied;
 
   /// No description provided for @focusedOnly.
   ///
   /// In en, this message translates to:
-  /// **'Focused Only'**
+  /// **'Animate focused views'**
   String get focusedOnly;
 
   /// No description provided for @followSystem.
   ///
   /// In en, this message translates to:
-  /// **'Follow System'**
+  /// **'Follow system setting'**
   String get followSystem;
 
   /// No description provided for @forwardMessage.
   ///
   /// In en, this message translates to:
-  /// **'Forward Message'**
+  /// **'Forward message'**
   String get forwardMessage;
 
   /// No description provided for @forwardNoAvailableAttachments.
@@ -1081,7 +1081,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @fullAnimation.
   ///
   /// In en, this message translates to:
-  /// **'Full Animation'**
+  /// **'Full animation'**
   String get fullAnimation;
 
   /// No description provided for @generateInvitation.
@@ -1105,13 +1105,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @holdToRecordVoiceClip.
   ///
   /// In en, this message translates to:
-  /// **'Hold To Record Voice Clip'**
+  /// **'Hold to record a voice clip'**
   String get holdToRecordVoiceClip;
 
   /// No description provided for @identicalDeadlineReplacements.
   ///
   /// In en, this message translates to:
-  /// **'Identical Deadline Replacements'**
+  /// **'Identical deadline replacements'**
   String get identicalDeadlineReplacements;
 
   /// No description provided for @identity.
@@ -1129,31 +1129,31 @@ abstract class TorcaLocalizations {
   /// No description provided for @identityChangedSendBlocked.
   ///
   /// In en, this message translates to:
-  /// **'Identity Changed Send Blocked'**
+  /// **'Sending is paused until this contact is verified again.'**
   String get identityChangedSendBlocked;
 
   /// No description provided for @incidentDescription.
   ///
   /// In en, this message translates to:
-  /// **'Incident Description'**
+  /// **'Run a self-test, mark the current state and export the redacted snapshot. Message text, attachments, audio and secrets are not included.'**
   String get incidentDescription;
 
   /// No description provided for @incidentSnapshotSaved.
   ///
   /// In en, this message translates to:
-  /// **'Incident Snapshot Saved'**
+  /// **'Incident snapshot saved to this run\'s local diagnostics.'**
   String get incidentSnapshotSaved;
 
   /// No description provided for @incidentTab.
   ///
   /// In en, this message translates to:
-  /// **'Incident Tab'**
+  /// **'Incident'**
   String get incidentTab;
 
   /// No description provided for @incidentTools.
   ///
   /// In en, this message translates to:
-  /// **'Incident Tools'**
+  /// **'Incident tools'**
   String get incidentTools;
 
   /// No description provided for @incomingMessage.
@@ -1165,19 +1165,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @incompatibleStorageEpoch.
   ///
   /// In en, this message translates to:
-  /// **'Incompatible Storage Epoch'**
+  /// **'The encrypted local profile is incompatible. Reset local Torca data explicitly before continuing.'**
   String get incompatibleStorageEpoch;
 
   /// No description provided for @instantMode.
   ///
   /// In en, this message translates to:
-  /// **'Instant Mode'**
+  /// **'Instant mode'**
   String get instantMode;
 
   /// No description provided for @instantModeEnabled.
   ///
   /// In en, this message translates to:
-  /// **'Instant Mode Enabled'**
+  /// **'Instant mode enabled'**
   String get instantModeEnabled;
 
   /// No description provided for @invalidInput.
@@ -1201,13 +1201,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @invitationCodeLabel.
   ///
   /// In en, this message translates to:
-  /// **'{code}'**
+  /// **'Code {code}'**
   String invitationCodeLabel(Object code);
 
   /// No description provided for @invitationExpiresIn.
   ///
   /// In en, this message translates to:
-  /// **'{countdown}'**
+  /// **'Expires in {countdown}'**
   String invitationExpiresIn(Object countdown);
 
   /// No description provided for @invitationGenerating.
@@ -1273,7 +1273,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @joinRequestWaiting.
   ///
   /// In en, this message translates to:
-  /// **'Join Request Waiting'**
+  /// **'Your request is waiting for the invitation owner to verify and accept it.'**
   String get joinRequestWaiting;
 
   /// No description provided for @joinedInvitation.
@@ -1327,7 +1327,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @lastSeenAt.
   ///
   /// In en, this message translates to:
-  /// **'{time}'**
+  /// **'Last seen {time}'**
   String lastSeenAt(Object time);
 
   /// No description provided for @lastSuccessfulProbe.
@@ -1339,7 +1339,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @leaseReasons.
   ///
   /// In en, this message translates to:
-  /// **'Lease Reasons'**
+  /// **'Lease reasons'**
   String get leaseReasons;
 
   /// No description provided for @light.
@@ -1351,7 +1351,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @loadCurrentRunLogs.
   ///
   /// In en, this message translates to:
-  /// **'Load Current Run Logs'**
+  /// **'Load current run logs'**
   String get loadCurrentRunLogs;
 
   /// No description provided for @loaded.
@@ -1375,7 +1375,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @localIdentityNotReady.
   ///
   /// In en, this message translates to:
-  /// **'Local Identity Not Ready'**
+  /// **'Local identity is not ready'**
   String get localIdentityNotReady;
 
   /// No description provided for @localName.
@@ -1387,25 +1387,25 @@ abstract class TorcaLocalizations {
   /// No description provided for @logsTab.
   ///
   /// In en, this message translates to:
-  /// **'Logs Tab'**
+  /// **'Logs'**
   String get logsTab;
 
   /// No description provided for @markConversationRead.
   ///
   /// In en, this message translates to:
-  /// **'Mark Conversation Read'**
+  /// **'Mark as read'**
   String get markConversationRead;
 
   /// No description provided for @markIncident.
   ///
   /// In en, this message translates to:
-  /// **'Mark Incident'**
+  /// **'Mark incident'**
   String get markIncident;
 
   /// No description provided for @mediaTransfers.
   ///
   /// In en, this message translates to:
-  /// **'Media Transfers'**
+  /// **'Media'**
   String get mediaTransfers;
 
   /// No description provided for @message.
@@ -1417,13 +1417,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @messageActions.
   ///
   /// In en, this message translates to:
-  /// **'Message Actions'**
+  /// **'Message actions'**
   String get messageActions;
 
   /// No description provided for @messageCancelled.
   ///
   /// In en, this message translates to:
-  /// **'Message Cancelled'**
+  /// **'Message cancelled'**
   String get messageCancelled;
 
   /// No description provided for @messageCopied.
@@ -1435,7 +1435,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @messageDeleted.
   ///
   /// In en, this message translates to:
-  /// **'Message Deleted'**
+  /// **'Message deleted'**
   String get messageDeleted;
 
   /// No description provided for @messageDetails.
@@ -1447,13 +1447,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @messageEdited.
   ///
   /// In en, this message translates to:
-  /// **'Message Edited'**
+  /// **'Message edited'**
   String get messageEdited;
 
   /// No description provided for @messageForwarded.
   ///
   /// In en, this message translates to:
-  /// **'Message Forwarded'**
+  /// **'Message forwarded'**
   String get messageForwarded;
 
   /// No description provided for @messageQueued.
@@ -1477,13 +1477,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @messageTooLong.
   ///
   /// In en, this message translates to:
-  /// **'{maximum}'**
-  String messageTooLong(Object maximum);
+  /// **'Messages can contain at most {maximum} characters.'**
+  String messageTooLong(int maximum);
 
   /// No description provided for @meteredTransfers.
   ///
   /// In en, this message translates to:
-  /// **'Metered Transfers'**
+  /// **'Metered network transfers'**
   String get meteredTransfers;
 
   /// No description provided for @microphone.
@@ -1495,7 +1495,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @microphonePermissionRequired.
   ///
   /// In en, this message translates to:
-  /// **'Microphone Permission Required'**
+  /// **'Microphone access is required to transmit.'**
   String get microphonePermissionRequired;
 
   /// No description provided for @modern.
@@ -1507,7 +1507,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @muteConversation.
   ///
   /// In en, this message translates to:
-  /// **'Mute Conversation'**
+  /// **'Mute conversation'**
   String get muteConversation;
 
   /// No description provided for @nativeBridge.
@@ -1519,13 +1519,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @nativeLogTails.
   ///
   /// In en, this message translates to:
-  /// **'Native Log Tails'**
+  /// **'Native log tails'**
   String get nativeLogTails;
 
   /// No description provided for @nativeLogTailsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Native Log Tails Description'**
+  /// **'Loads a bounded, redacted tail from current-run native logs only. This explicit read does not keep a watcher alive.'**
   String get nativeLogTailsDescription;
 
   /// No description provided for @networkUnavailable.
@@ -1543,7 +1543,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @newContact.
   ///
   /// In en, this message translates to:
-  /// **'New Contact'**
+  /// **'New contact'**
   String get newContact;
 
   /// No description provided for @newDevice.
@@ -1579,7 +1579,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @nextDeadline.
   ///
   /// In en, this message translates to:
-  /// **'Next Deadline'**
+  /// **'Next deadline'**
   String get nextDeadline;
 
   /// No description provided for @nickname.
@@ -1591,25 +1591,25 @@ abstract class TorcaLocalizations {
   /// No description provided for @nicknameIntro.
   ///
   /// In en, this message translates to:
-  /// **'Nickname Intro'**
+  /// **'The selected communication provider is ready. This name will be shown to contacts.'**
   String get nicknameIntro;
 
   /// No description provided for @nicknameRequired.
   ///
   /// In en, this message translates to:
-  /// **'Nickname Required'**
+  /// **'Nickname is required'**
   String get nicknameRequired;
 
   /// No description provided for @noActiveTransfers.
   ///
   /// In en, this message translates to:
-  /// **'No Active Transfers'**
+  /// **'No active transfers.'**
   String get noActiveTransfers;
 
   /// No description provided for @noChatsMatch.
   ///
   /// In en, this message translates to:
-  /// **'No Chats Match'**
+  /// **'No chats match your search'**
   String get noChatsMatch;
 
   /// No description provided for @noContactsPaired.
@@ -1627,7 +1627,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @noForwardableContent.
   ///
   /// In en, this message translates to:
-  /// **'No Forwardable Content'**
+  /// **'This message has no content that can be forwarded.'**
   String get noForwardableContent;
 
   /// No description provided for @noInvitations.
@@ -1639,7 +1639,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @noMatchingMessages.
   ///
   /// In en, this message translates to:
-  /// **'No Matching Messages'**
+  /// **'No matching messages.'**
   String get noMatchingMessages;
 
   /// No description provided for @noMessagesYet.
@@ -1693,37 +1693,37 @@ abstract class TorcaLocalizations {
   /// No description provided for @observationRecording.
   ///
   /// In en, this message translates to:
-  /// **'Observation Recording'**
+  /// **'recording'**
   String get observationRecording;
 
   /// No description provided for @observationRecordingDescription.
   ///
   /// In en, this message translates to:
-  /// **'Observation Recording Description'**
+  /// **'Recording deltas since the observation baseline.'**
   String get observationRecordingDescription;
 
   /// No description provided for @observationState.
   ///
   /// In en, this message translates to:
-  /// **'Observation State'**
+  /// **'State'**
   String get observationState;
 
   /// No description provided for @observationStopped.
   ///
   /// In en, this message translates to:
-  /// **'Observation Stopped'**
+  /// **'stopped'**
   String get observationStopped;
 
   /// No description provided for @observationStoppedDescription.
   ///
   /// In en, this message translates to:
-  /// **'Observation Stopped Description'**
+  /// **'Start before an idle or recovery scenario to record only new work.'**
   String get observationStoppedDescription;
 
   /// No description provided for @observationWork.
   ///
   /// In en, this message translates to:
-  /// **'Observation Work'**
+  /// **'Work'**
   String get observationWork;
 
   /// No description provided for @offlineShort.
@@ -1765,7 +1765,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @originalMessageUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Original Message Unavailable'**
+  /// **'Original message unavailable'**
   String get originalMessageUnavailable;
 
   /// No description provided for @outgoingMessage.
@@ -1801,7 +1801,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @pairingCompletedMessage.
   ///
   /// In en, this message translates to:
-  /// **'Pairing Completed Message'**
+  /// **'The contact was added securely. Open the private conversation now.'**
   String get pairingCompletedMessage;
 
   /// No description provided for @pairingExpired.
@@ -1813,7 +1813,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @pairingInactiveMessage.
   ///
   /// In en, this message translates to:
-  /// **'Pairing Inactive Message'**
+  /// **'This invitation is no longer active. The other device will receive the same final state.'**
   String get pairingInactiveMessage;
 
   /// No description provided for @pairingProviderMismatch.
@@ -1825,7 +1825,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @pairingQrSemanticLabel.
   ///
   /// In en, this message translates to:
-  /// **'Pairing Qr Semantic Label'**
+  /// **'Torca pairing invitation QR code'**
   String get pairingQrSemanticLabel;
 
   /// No description provided for @pairingRequestDescription.
@@ -1837,19 +1837,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @pairingStateLabel.
   ///
   /// In en, this message translates to:
-  /// **'{state}'**
-  String pairingStateLabel(Object state);
+  /// **'{state, select, open {Open} peer_joined {Peer joined} awaiting_approval {Awaiting approval} approved {Approved} completed {Completed} rejected {Rejected} cancelled {Cancelled} expired {Expired} unknown {Unknown} other {Unknown}}'**
+  String pairingStateLabel(String state);
 
   /// No description provided for @pauseAll.
   ///
   /// In en, this message translates to:
-  /// **'Pause All'**
+  /// **'Pause all transfers'**
   String get pauseAll;
 
   /// No description provided for @pauseLarge.
   ///
   /// In en, this message translates to:
-  /// **'Pause Large'**
+  /// **'Pause large files'**
   String get pauseLarge;
 
   /// No description provided for @peerOffline.
@@ -1861,31 +1861,31 @@ abstract class TorcaLocalizations {
   /// No description provided for @peerState.
   ///
   /// In en, this message translates to:
-  /// **'Peer State'**
+  /// **'P2P state'**
   String get peerState;
 
   /// No description provided for @pendingOperations.
   ///
   /// In en, this message translates to:
-  /// **'Pending Operations'**
+  /// **'Pending'**
   String get pendingOperations;
 
   /// No description provided for @pinConversation.
   ///
   /// In en, this message translates to:
-  /// **'Pin Conversation'**
+  /// **'Pin conversation'**
   String get pinConversation;
 
   /// No description provided for @playVoiceMessage.
   ///
   /// In en, this message translates to:
-  /// **'Play Voice Message'**
+  /// **'Play voice message'**
   String get playVoiceMessage;
 
   /// No description provided for @polishCountry.
   ///
   /// In en, this message translates to:
-  /// **'Polish Country'**
+  /// **'Poland'**
   String get polishCountry;
 
   /// No description provided for @poor.
@@ -1903,13 +1903,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @preparingPrivateSpace.
   ///
   /// In en, this message translates to:
-  /// **'Preparing Private Space'**
+  /// **'Preparing your private space'**
   String get preparingPrivateSpace;
 
   /// No description provided for @preparingPrivateSpaceDescription.
   ///
   /// In en, this message translates to:
-  /// **'Preparing Private Space Description'**
+  /// **'Setting up encrypted storage and secure communication. You can safely leave this screen open.'**
   String get preparingPrivateSpaceDescription;
 
   /// No description provided for @preparingSecureCopy.
@@ -1945,7 +1945,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @productVersion.
   ///
   /// In en, this message translates to:
-  /// **'Product Version'**
+  /// **'Product version'**
   String get productVersion;
 
   /// No description provided for @profileNotReady.
@@ -1963,44 +1963,44 @@ abstract class TorcaLocalizations {
   /// No description provided for @providerEndpointAvailable.
   ///
   /// In en, this message translates to:
-  /// **'Provider Endpoint Available'**
+  /// **'Available'**
   String get providerEndpointAvailable;
 
   /// No description provided for @providerEndpointUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Provider Endpoint Unavailable'**
+  /// **'Unavailable'**
   String get providerEndpointUnavailable;
 
   /// No description provided for @providerName.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String providerName(Object provider);
+  /// **'{provider, select, iroh {Iroh} memory {Memory test} other {{provider}}}'**
+  String providerName(String provider);
 
   /// No description provided for @providerReady.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String providerReady(Object provider);
+  /// **'{provider, select, iroh {Iroh ready} memory {Memory test ready} other {{provider} ready}}'**
+  String providerReady(String provider);
 
   /// No description provided for @providerReconnecting.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String providerReconnecting(Object provider);
+  /// **'{provider, select, iroh {Iroh reconnecting} memory {Memory test reconnecting} other {{provider} reconnecting}}'**
+  String providerReconnecting(String provider);
 
   /// No description provided for @providerStarting.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String providerStarting(Object provider);
+  /// **'{provider, select, iroh {Iroh starting} memory {Memory test starting} other {{provider} starting}}'**
+  String providerStarting(String provider);
 
   /// No description provided for @providerStateLabel.
   ///
   /// In en, this message translates to:
-  /// **'{provider} {state}'**
-  String providerStateLabel(Object provider, Object state);
+  /// **'{provider}: {state}'**
+  String providerStateLabel(String provider, String state);
 
   /// No description provided for @published.
   ///
@@ -2023,97 +2023,97 @@ abstract class TorcaLocalizations {
   /// No description provided for @radioChannelInterrupted.
   ///
   /// In en, this message translates to:
-  /// **'Radio Channel Interrupted'**
+  /// **'Radio channel was interrupted'**
   String get radioChannelInterrupted;
 
   /// No description provided for @radioChannelReady.
   ///
   /// In en, this message translates to:
-  /// **'Radio Channel Ready'**
+  /// **'Private Radio channel is ready'**
   String get radioChannelReady;
 
   /// No description provided for @radioChannelRestored.
   ///
   /// In en, this message translates to:
-  /// **'Radio Channel Restored'**
+  /// **'Radio channel was restored'**
   String get radioChannelRestored;
 
   /// No description provided for @radioConnecting.
   ///
   /// In en, this message translates to:
-  /// **'Radio Connecting'**
+  /// **'Connecting the private audio channel...'**
   String get radioConnecting;
 
   /// No description provided for @radioDisabledBy.
   ///
   /// In en, this message translates to:
-  /// **'{actor}'**
+  /// **'{actor} disabled Radio mode'**
   String radioDisabledBy(Object actor);
 
   /// No description provided for @radioEnabledBy.
   ///
   /// In en, this message translates to:
-  /// **'{actor}'**
+  /// **'{actor} enabled Radio mode'**
   String radioEnabledBy(Object actor);
 
   /// No description provided for @radioMode.
   ///
   /// In en, this message translates to:
-  /// **'Radio Mode'**
+  /// **'Radio mode'**
   String get radioMode;
 
   /// No description provided for @radioModeDescription.
   ///
   /// In en, this message translates to:
-  /// **'Radio Mode Description'**
+  /// **'Short push-to-talk transmissions of up to 10 seconds. Radio becomes available only after both contacts enable it.'**
   String get radioModeDescription;
 
   /// No description provided for @radioReady.
   ///
   /// In en, this message translates to:
-  /// **'Radio Ready'**
+  /// **'Hold to talk'**
   String get radioReady;
 
   /// No description provided for @radioReceiving.
   ///
   /// In en, this message translates to:
-  /// **'{name}'**
+  /// **'{name} is transmitting'**
   String radioReceiving(Object name);
 
   /// No description provided for @radioReconnecting.
   ///
   /// In en, this message translates to:
-  /// **'Radio Reconnecting'**
+  /// **'Radio is reconnecting...'**
   String get radioReconnecting;
 
   /// No description provided for @radioRequestingFloor.
   ///
   /// In en, this message translates to:
-  /// **'Radio Requesting Floor'**
+  /// **'Requesting the channel...'**
   String get radioRequestingFloor;
 
   /// No description provided for @radioTransmitting.
   ///
   /// In en, this message translates to:
-  /// **'Radio Transmitting'**
+  /// **'Transmitting'**
   String get radioTransmitting;
 
   /// No description provided for @radioTransportFailure.
   ///
   /// In en, this message translates to:
-  /// **'{code}'**
-  String radioTransportFailure(Object code);
+  /// **'Radio: {code, select, endpoint_unavailable {endpoint unavailable} connect_timeout {connection timeout} stream_reset {stream reset} idle_timeout {idle timeout} network_changed {network changed} worker_unavailable {audio worker unavailable} protocol {protocol error} other {unknown transport error}}'**
+  String radioTransportFailure(String code);
 
   /// No description provided for @radioUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Radio Unavailable'**
+  /// **'Radio is temporarily unavailable'**
   String get radioUnavailable;
 
   /// No description provided for @radioWaitingForPeer.
   ///
   /// In en, this message translates to:
-  /// **'Radio Waiting For Peer'**
+  /// **'Waiting for the contact to enable Radio'**
   String get radioWaitingForPeer;
 
   /// No description provided for @rawDiagnostics.
@@ -2125,7 +2125,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @reactToMessage.
   ///
   /// In en, this message translates to:
-  /// **'React To Message'**
+  /// **'React'**
   String get reactToMessage;
 
   /// No description provided for @read.
@@ -2143,7 +2143,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @recentEmoji.
   ///
   /// In en, this message translates to:
-  /// **'Recent Emoji'**
+  /// **'Recently used'**
   String get recentEmoji;
 
   /// No description provided for @recentInvitations.
@@ -2167,8 +2167,8 @@ abstract class TorcaLocalizations {
   /// No description provided for @reconnectingPeerThrough.
   ///
   /// In en, this message translates to:
-  /// **'{provider}'**
-  String reconnectingPeerThrough(Object provider);
+  /// **'{provider, select, iroh {Reconnecting to peer through Iroh} memory {Reconnecting to peer through Memory test} other {Reconnecting to peer through {provider}}}'**
+  String reconnectingPeerThrough(String provider);
 
   /// No description provided for @reconnectingShort.
   ///
@@ -2179,7 +2179,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @recordingTransfers.
   ///
   /// In en, this message translates to:
-  /// **'Recording Transfers'**
+  /// **'Recordings'**
   String get recordingTransfers;
 
   /// No description provided for @redactedDeveloperEventStream.
@@ -2197,7 +2197,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @redactedSchedulerDescription.
   ///
   /// In en, this message translates to:
-  /// **'Redacted Scheduler Description'**
+  /// **'Redacted scheduler explanation; contact identifiers are never shown here.'**
   String get redactedSchedulerDescription;
 
   /// No description provided for @reduceMotion.
@@ -2215,13 +2215,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @refreshProviderRoute.
   ///
   /// In en, this message translates to:
-  /// **'Refresh Provider Route'**
+  /// **'Refresh provider route'**
   String get refreshProviderRoute;
 
   /// No description provided for @regressionScore.
   ///
   /// In en, this message translates to:
-  /// **'Regression Score'**
+  /// **'Regression score'**
   String get regressionScore;
 
   /// No description provided for @reject.
@@ -2234,12 +2234,12 @@ abstract class TorcaLocalizations {
   ///
   /// In en, this message translates to:
   /// **'Identity {id}'**
-  String remoteIdentity(Object id);
+  String remoteIdentity(String id);
 
   /// No description provided for @remoteIdentityTitle.
   ///
   /// In en, this message translates to:
-  /// **'Remote Identity Title'**
+  /// **'Remote identity'**
   String get remoteIdentityTitle;
 
   /// No description provided for @remove.
@@ -2257,7 +2257,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @removeBookmark.
   ///
   /// In en, this message translates to:
-  /// **'Remove Bookmark'**
+  /// **'Remove bookmark'**
   String get removeBookmark;
 
   /// No description provided for @removeContact.
@@ -2293,25 +2293,25 @@ abstract class TorcaLocalizations {
   /// No description provided for @resetBaseline.
   ///
   /// In en, this message translates to:
-  /// **'Reset Baseline'**
+  /// **'Reset baseline'**
   String get resetBaseline;
 
   /// No description provided for @resetVerification.
   ///
   /// In en, this message translates to:
-  /// **'Reset Verification'**
+  /// **'Reset verification'**
   String get resetVerification;
 
   /// No description provided for @restartApplication.
   ///
   /// In en, this message translates to:
-  /// **'Restart Application'**
+  /// **'Restart application'**
   String get restartApplication;
 
   /// No description provided for @restoreConversation.
   ///
   /// In en, this message translates to:
-  /// **'Restore Conversation'**
+  /// **'Restore conversation'**
   String get restoreConversation;
 
   /// No description provided for @retry.
@@ -2347,19 +2347,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @route.
   ///
   /// In en, this message translates to:
-  /// **'Route'**
+  /// **'Provider route'**
   String get route;
 
   /// No description provided for @routeRefreshRequested.
   ///
   /// In en, this message translates to:
-  /// **'Route Refresh Requested'**
+  /// **'Provider route refresh requested.'**
   String get routeRefreshRequested;
 
   /// No description provided for @routeRefreshRequired.
   ///
   /// In en, this message translates to:
-  /// **'Route Refresh Required'**
+  /// **'The communication route is being refreshed. Try again shortly.'**
   String get routeRefreshRequired;
 
   /// No description provided for @runSelfTest.
@@ -2371,7 +2371,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @runtimeHealth.
   ///
   /// In en, this message translates to:
-  /// **'Runtime Health'**
+  /// **'Runtime health'**
   String get runtimeHealth;
 
   /// No description provided for @runtimeNotReadyDiagnostic.
@@ -2389,7 +2389,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @runtimeTab.
   ///
   /// In en, this message translates to:
-  /// **'Runtime Tab'**
+  /// **'Runtime'**
   String get runtimeTab;
 
   /// No description provided for @runtimeUnavailable.
@@ -2437,7 +2437,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @saving.
   ///
   /// In en, this message translates to:
-  /// **'Saving'**
+  /// **'Saving…'**
   String get saving;
 
   /// No description provided for @scanQr.
@@ -2449,19 +2449,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @scheduledWork.
   ///
   /// In en, this message translates to:
-  /// **'Scheduled Work'**
+  /// **'Scheduled work'**
   String get scheduledWork;
 
   /// No description provided for @searchChats.
   ///
   /// In en, this message translates to:
-  /// **'Search Chats'**
+  /// **'Search chats'**
   String get searchChats;
 
   /// No description provided for @searchConversationHint.
   ///
   /// In en, this message translates to:
-  /// **'Search Conversation Hint'**
+  /// **'Search this conversation'**
   String get searchConversationHint;
 
   /// No description provided for @searchMessages.
@@ -2473,8 +2473,8 @@ abstract class TorcaLocalizations {
   /// No description provided for @searchResultsCount.
   ///
   /// In en, this message translates to:
-  /// **'{count}'**
-  String searchResultsCount(Object count);
+  /// **'{count, plural, =1 {{count} result} other {{count} results}}'**
+  String searchResultsCount(int count);
 
   /// No description provided for @secureRuntimeNotReady.
   ///
@@ -2545,19 +2545,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @sharedMedia.
   ///
   /// In en, this message translates to:
-  /// **'Shared Media'**
+  /// **'Shared media and files'**
   String get sharedMedia;
 
   /// No description provided for @sharedMediaCount.
   ///
   /// In en, this message translates to:
-  /// **'{count}'**
-  String sharedMediaCount(Object count);
+  /// **'{count, plural, =1 {1 item} other {{count} items}}'**
+  String sharedMediaCount(int count);
 
   /// No description provided for @sourceCommit.
   ///
   /// In en, this message translates to:
-  /// **'Source Commit'**
+  /// **'Source commit'**
   String get sourceCommit;
 
   /// No description provided for @startConversation.
@@ -2569,13 +2569,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @startObservation.
   ///
   /// In en, this message translates to:
-  /// **'Start Observation'**
+  /// **'Start observation'**
   String get startObservation;
 
   /// No description provided for @startingSecureNetwork.
   ///
   /// In en, this message translates to:
-  /// **'Starting secure network…'**
+  /// **'Starting communication…'**
   String get startingSecureNetwork;
 
   /// No description provided for @startingShort.
@@ -2593,7 +2593,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @staticIdle.
   ///
   /// In en, this message translates to:
-  /// **'Static Idle'**
+  /// **'Static when idle'**
   String get staticIdle;
 
   /// No description provided for @status.
@@ -2605,13 +2605,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @stopObservation.
   ///
   /// In en, this message translates to:
-  /// **'Stop Observation'**
+  /// **'Stop observation'**
   String get stopObservation;
 
   /// No description provided for @storageEpoch.
   ///
   /// In en, this message translates to:
-  /// **'Storage Epoch'**
+  /// **'Storage epoch'**
   String get storageEpoch;
 
   /// No description provided for @storageFailure.
@@ -2629,7 +2629,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @systemDefaultAudioDevice.
   ///
   /// In en, this message translates to:
-  /// **'System Default Audio Device'**
+  /// **'System default device'**
   String get systemDefaultAudioDevice;
 
   /// No description provided for @systemLanguage.
@@ -2677,7 +2677,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @typeToSearchConversation.
   ///
   /// In en, this message translates to:
-  /// **'Type To Search Conversation'**
+  /// **'Type to search this conversation.'**
   String get typeToSearchConversation;
 
   /// No description provided for @unavailable.
@@ -2701,19 +2701,19 @@ abstract class TorcaLocalizations {
   /// No description provided for @unknownCountry.
   ///
   /// In en, this message translates to:
-  /// **'Unknown Country'**
+  /// **'Unknown'**
   String get unknownCountry;
 
   /// No description provided for @unmuteConversation.
   ///
   /// In en, this message translates to:
-  /// **'Unmute Conversation'**
+  /// **'Unmute conversation'**
   String get unmuteConversation;
 
   /// No description provided for @unpinConversation.
   ///
   /// In en, this message translates to:
-  /// **'Unpin Conversation'**
+  /// **'Unpin conversation'**
   String get unpinConversation;
 
   /// No description provided for @unverified.
@@ -2749,55 +2749,55 @@ abstract class TorcaLocalizations {
   /// No description provided for @verifyContact.
   ///
   /// In en, this message translates to:
-  /// **'Verify Contact'**
+  /// **'Verify contact'**
   String get verifyContact;
 
   /// No description provided for @verifyFingerprintBeforeAccepting.
   ///
   /// In en, this message translates to:
-  /// **'Verify Fingerprint Before Accepting'**
+  /// **'A device joined this invitation. Verify the fingerprint before accepting the contact.'**
   String get verifyFingerprintBeforeAccepting;
 
   /// No description provided for @visualActivity.
   ///
   /// In en, this message translates to:
-  /// **'Visual Activity'**
+  /// **'Avatar and visual activity'**
   String get visualActivity;
 
   /// No description provided for @voiceClipRecording.
   ///
   /// In en, this message translates to:
-  /// **'{secondsLeft}'**
+  /// **'Recording voice clip, {secondsLeft} s remaining'**
   String voiceClipRecording(Object secondsLeft);
 
   /// No description provided for @voiceClipRecordingFailed.
   ///
   /// In en, this message translates to:
-  /// **'Voice Clip Recording Failed'**
+  /// **'Could not record the voice clip.'**
   String get voiceClipRecordingFailed;
 
   /// No description provided for @voiceMessage.
   ///
   /// In en, this message translates to:
-  /// **'Voice Message'**
+  /// **'Voice message'**
   String get voiceMessage;
 
   /// No description provided for @voiceMessagePlayed.
   ///
   /// In en, this message translates to:
-  /// **'Voice Message Played'**
+  /// **'Played'**
   String get voiceMessagePlayed;
 
   /// No description provided for @voiceMessageReady.
   ///
   /// In en, this message translates to:
-  /// **'Voice Message Ready'**
+  /// **'Ready to play'**
   String get voiceMessageReady;
 
   /// No description provided for @waitingForDependency.
   ///
   /// In en, this message translates to:
-  /// **'{dependency}'**
+  /// **'Waiting for: {dependency}'**
   String waitingForDependency(Object dependency);
 
   /// No description provided for @waitingForPeer.
@@ -2815,13 +2815,13 @@ abstract class TorcaLocalizations {
   /// No description provided for @wakeSources.
   ///
   /// In en, this message translates to:
-  /// **'Wake Sources'**
+  /// **'Wake sources'**
   String get wakeSources;
 
   /// No description provided for @whyAwake.
   ///
   /// In en, this message translates to:
-  /// **'Why Awake'**
+  /// **'Why awake'**
   String get whyAwake;
 
   /// No description provided for @yesterday.
@@ -2845,7 +2845,7 @@ abstract class TorcaLocalizations {
   /// No description provided for @zeroDelayDeadlines.
   ///
   /// In en, this message translates to:
-  /// **'Zero Delay Deadlines'**
+  /// **'Zero-delay deadlines'**
   String get zeroDelayDeadlines;
 }
 

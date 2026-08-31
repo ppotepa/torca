@@ -320,7 +320,7 @@ class _StartupScreen extends StatelessWidget {
     theme: ThemeData.dark(useMaterial3: true),
     localizationsDelegates: const <LocalizationsDelegate<Object>>[
       TorcaLocalizations.delegate,
-      TorcaStrings.delegate,
+      
     ],
     supportedLocales: TorcaLocaleRegistry.locales,
     home: Scaffold(
@@ -337,7 +337,7 @@ class _StartupScreen extends StatelessWidget {
               if (failure == null) ...<Widget>[
                 const CircularProgressIndicator(),
                 const SizedBox(height: 16),
-                Text(context.strings.startingSecureNetwork),
+                Text(context.l10n.startingSecureNetwork),
               ] else ...<Widget>[
                 Icon(TorcaIconSet.modern.error, size: 40),
                 const SizedBox(height: 16),
@@ -348,7 +348,7 @@ class _StartupScreen extends StatelessWidget {
                 const SizedBox(height: 20),
                 FilledButton(
                   onPressed: onRetry,
-                  child: Text(context.strings.retryNow),
+                  child: Text(context.l10n.retryNow),
                 ),
               ],
             ],

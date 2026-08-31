@@ -25,7 +25,7 @@ class PairingProgress extends StatelessWidget {
         : typedState == PairingState.completed
         ? context.torcaIcons.success
         : context.torcaIcons.invitations;
-    final label = context.strings.pairingStateLabel(typedState);
+    final label = context.l10n.pairingStateLabel(state);
     return Semantics(
       label: label,
       child: Column(

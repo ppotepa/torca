@@ -65,7 +65,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   Future<void> _export() async {
     final value = _json ?? await widget.gateway.diagnosticsJson();
     final path = await FilePicker.saveFile(
-      dialogTitle: context.strings.exportTorcaDiagnostics,
+      dialogTitle: context.l10n.exportTorcaDiagnostics,
       fileName: 'torca-diagnostics.json',
       bytes: Uint8List.fromList(utf8.encode(value)),
       mimeType: 'application/json',
@@ -73,7 +73,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     if (path == null || !mounted) return;
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.strings.diagnosticsExported)),
+        SnackBar(content: Text(context.l10n.diagnosticsExported)),
       );
     }
   }
@@ -109,7 +109,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         snapshot.endpointSummary ?? 'Provider owns endpoint discovery',
       ),
       _Check(
-        context.strings.diagnosticsStream,
+        context.l10n.diagnosticsStream,
         _hasReadableEvents(_json),
         _hasReadableEvents(_json)
             ? 'Health events readable'
@@ -119,7 +119,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(context.strings.connectionSelfTest),
+        title: Text(context.l10n.connectionSelfTest),
         content: SizedBox(
           width: 520,
           child: ListView(
@@ -142,7 +142,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text(context.strings.close),
+            child: Text(context.l10n.close),
           ),
         ],
       ),
@@ -177,14 +177,14 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: context.strings.operationFailed,
+            fallback: context.l10n.operationFailed,
           ),
         );
       }
       await _refresh();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.strings.routeRefreshRequested)),
+          SnackBar(content: Text(context.l10n.routeRefreshRequested)),
         );
       }
     } on Object catch (error) {
@@ -198,7 +198,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     await _observation(const MarkIncidentCommandDto());
     if (!mounted || _error != null) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.strings.incidentSnapshotSaved)),
+      SnackBar(content: Text(context.l10n.incidentSnapshotSaved)),
     );
   }
 
@@ -217,10 +217,10 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     length: 4,
     child: Scaffold(
       appBar: RuntimeAppBar(
-        title: Text(context.strings.diagnostics),
+        title: Text(context.l10n.diagnostics),
         actions: <Widget>[
           IconButton(
-            tooltip: context.strings.refresh,
+            tooltip: context.l10n.refresh,
             onPressed: _loading ? null : _refresh,
             icon: Icon(context.torcaIcons.retry),
           ),
@@ -228,10 +228,10 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         bottom: TabBar(
           isScrollable: true,
           tabs: <Widget>[
-            Tab(text: context.strings.batteryTab),
-            Tab(text: context.strings.runtimeTab),
-            Tab(text: context.strings.logsTab),
-            Tab(text: context.strings.incidentTab),
+            Tab(text: context.l10n.batteryTab),
+            Tab(text: context.l10n.runtimeTab),
+            Tab(text: context.l10n.logsTab),
+            Tab(text: context.l10n.incidentTab),
           ],
         ),
       ),
@@ -276,7 +276,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       _boundedList(
         children: <Widget>[
           Text(
-            context.strings.runtimeHealth,
+            context.l10n.runtimeHealth,
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 12),
@@ -290,7 +290,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             child: OutlinedButton.icon(
               onPressed: _loading ? null : _refreshProviderRoute,
               icon: Icon(context.torcaIcons.retry),
-              label: Text(context.strings.refreshProviderRoute),
+              label: Text(context.l10n.refreshProviderRoute),
             ),
           ),
           const SizedBox(height: 12),
@@ -301,11 +301,11 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   Widget _logsTab(BuildContext context) => _boundedList(
     children: <Widget>[
       Text(
-        context.strings.nativeLogTails,
+        context.l10n.nativeLogTails,
         style: Theme.of(context).textTheme.titleLarge,
       ),
       const SizedBox(height: 6),
-      Text(context.strings.nativeLogTailsDescription),
+      Text(context.l10n.nativeLogTailsDescription),
       const SizedBox(height: 12),
       Align(
         alignment: Alignment.centerLeft,
@@ -317,7 +317,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : Icon(context.torcaIcons.retry),
-          label: Text(context.strings.loadCurrentRunLogs),
+          label: Text(context.l10n.loadCurrentRunLogs),
         ),
       ),
       const SizedBox(height: 12),
@@ -338,11 +338,11 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   Widget _incidentTab(BuildContext context) => _boundedList(
     children: <Widget>[
       Text(
-        context.strings.incidentTab,
+        context.l10n.incidentTab,
         style: Theme.of(context).textTheme.titleLarge,
       ),
       const SizedBox(height: 6),
-      Text(context.strings.incidentDescription),
+      Text(context.l10n.incidentDescription),
       const SizedBox(height: 16),
       Wrap(
         spacing: 8,
@@ -351,17 +351,17 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           FilledButton.tonalIcon(
             onPressed: _loading ? null : _selfTest,
             icon: Icon(context.torcaIcons.diagnostics),
-            label: Text(context.strings.runSelfTest),
+            label: Text(context.l10n.runSelfTest),
           ),
           FilledButton.icon(
             onPressed: _loading ? null : _markIncident,
             icon: Icon(context.torcaIcons.diagnostics),
-            label: Text(context.strings.markIncident),
+            label: Text(context.l10n.markIncident),
           ),
           OutlinedButton.icon(
             onPressed: _loading ? null : _export,
             icon: Icon(context.torcaIcons.save),
-            label: Text(context.strings.exportDiagnostics),
+            label: Text(context.l10n.exportDiagnostics),
           ),
         ],
       ),
@@ -441,27 +441,27 @@ class _ObservationCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              context.strings.batteryObservation,
+              context.l10n.batteryObservation,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
             Text(
               active
-                  ? context.strings.observationRecordingDescription
-                  : context.strings.observationStoppedDescription,
+                  ? context.l10n.observationRecordingDescription
+                  : context.l10n.observationStoppedDescription,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
             Text(
-              '${context.strings.observationState}: ${active ? context.strings.observationRecording : context.strings.observationStopped}',
+              '${context.l10n.observationState}: ${active ? context.l10n.observationRecording : context.l10n.observationStopped}',
             ),
             Text(
-              '${context.strings.observationWork}: ${data?['totalWork'] ?? 0}',
+              '${context.l10n.observationWork}: ${data?['totalWork'] ?? 0}',
             ),
             Text(
-              '${context.strings.regressionScore}: ${data?['energyScore'] ?? 0}',
+              '${context.l10n.regressionScore}: ${data?['energyScore'] ?? 0}',
             ),
-            Text('${context.strings.wakeSources}: $wakeSources'),
+            Text('${context.l10n.wakeSources}: $wakeSources'),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -469,15 +469,15 @@ class _ObservationCard extends StatelessWidget {
               children: <Widget>[
                 FilledButton.tonal(
                   onPressed: busy || active ? null : onStart,
-                  child: Text(context.strings.startObservation),
+                  child: Text(context.l10n.startObservation),
                 ),
                 OutlinedButton(
                   onPressed: busy || !active ? null : onStop,
-                  child: Text(context.strings.stopObservation),
+                  child: Text(context.l10n.stopObservation),
                 ),
                 OutlinedButton(
                   onPressed: busy ? null : onReset,
-                  child: Text(context.strings.resetBaseline),
+                  child: Text(context.l10n.resetBaseline),
                 ),
               ],
             ),
@@ -515,32 +515,32 @@ class _WhyAwakeCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              context.strings.whyAwake,
+              context.l10n.whyAwake,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
             Text(
-              context.strings.redactedSchedulerDescription,
+              context.l10n.redactedSchedulerDescription,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
-            _row(context.strings.activeLeases, '${value['activeLeases'] ?? 0}'),
+            _row(context.l10n.activeLeases, '${value['activeLeases'] ?? 0}'),
             _row(
-              context.strings.activeDemands,
+              context.l10n.activeDemands,
               '${value['activeDemands'] ?? 0}',
             ),
-            _row(context.strings.leaseReasons, reasons),
-            _row(context.strings.scheduledWork, scheduled),
+            _row(context.l10n.leaseReasons, reasons),
+            _row(context.l10n.scheduledWork, scheduled),
             _row(
-              context.strings.nextDeadline,
+              context.l10n.nextDeadline,
               deadline == null ? 'none' : '${deadline} ms',
             ),
             _row(
-              context.strings.zeroDelayDeadlines,
+              context.l10n.zeroDelayDeadlines,
               '${value['zeroDelayDeadlines'] ?? 0}',
             ),
             _row(
-              context.strings.identicalDeadlineReplacements,
+              context.l10n.identicalDeadlineReplacements,
               '${value['identicalDeadlineReplacements'] ?? 0}',
             ),
           ],
@@ -561,3 +561,5 @@ class _Check {
   final bool ok;
   final String detail;
 }
+
+

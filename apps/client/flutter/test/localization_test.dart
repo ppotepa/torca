@@ -1,7 +1,15 @@
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/localization/app_locale_mode.dart';
 import 'package:torca_l10n/torca_l10n.dart';
+
+TorcaLocalizations catalog(String languageCode) => switch (languageCode) {
+  'de' => TorcaLocalizationsDe(),
+  'es' => TorcaLocalizationsEs(),
+  'fr' => TorcaLocalizationsFr(),
+  'pl' => TorcaLocalizationsPl(),
+  'uk' => TorcaLocalizationsUk(),
+  _ => TorcaLocalizationsEn(),
+};
 
 void main() {
   test('locale preference parsing is stable', () {
@@ -15,7 +23,7 @@ void main() {
   });
 
   test('Polish catalog exposes translated primary settings strings', () {
-    const strings = TorcaStrings(Locale('pl'));
+    final strings = TorcaLocalizationsPl();
     expect(strings.settings, 'Ustawienia');
     expect(strings.enableNotifications, 'Włącz powiadomienia');
     expect(strings.closeToTray, 'Zamykaj do zasobnika');
@@ -29,7 +37,7 @@ void main() {
       'uk': ('Налаштування', 'Мова', 'Оберіть псевдонім'),
     };
     for (final entry in expected.entries) {
-      final strings = TorcaStrings(Locale(entry.key));
+      final strings = catalog(entry.key);
       expect(strings.settings, entry.value.$1);
       expect(strings.language, entry.value.$2);
       expect(strings.chooseNickname, entry.value.$3);

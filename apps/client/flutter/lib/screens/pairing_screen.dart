@@ -275,7 +275,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
                     right: 8,
                     top: 8,
                     child: IconButton.filledTonal(
-                      tooltip: context.strings.closeScanner,
+                      tooltip: context.l10n.closeScanner,
                       onPressed: () => Navigator.of(dialogContext).pop(),
                       icon: Icon(context.torcaIcons.close),
                     ),
@@ -308,7 +308,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     final code = parser == null ? raw : await parser.parsePairingUri(raw);
     if (!mounted) return;
     if (code == null) {
-      setState(() => _error = context.strings.enterSixCharacterCode);
+      setState(() => _error = context.l10n.enterSixCharacterCode);
       return;
     }
     final ticket = RegExp(
@@ -335,14 +335,14 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
     final capabilities = capabilitiesFor(widget.gateway);
     if (!capabilities.pairingShortCode && bootstrapJson == null) {
       if (mounted)
-        setState(() => _error = context.strings.pairingBootstrapRequired);
+        setState(() => _error = context.l10n.pairingBootstrapRequired);
       return;
     }
     if (provider != null &&
         activeProvider.isNotEmpty &&
         provider.toLowerCase() != activeProvider) {
       if (mounted)
-        setState(() => _error = context.strings.pairingProviderMismatch);
+        setState(() => _error = context.l10n.pairingProviderMismatch);
       return;
     }
     final result = await _run(
@@ -361,8 +361,8 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       SnackBar(
         content: Text(
           result!.kind == 'pairing_queued'
-              ? context.strings.invitationSavedLocally
-              : context.strings.invitationJoinSent,
+              ? context.l10n.invitationSavedLocally
+              : context.l10n.invitationJoinSent,
         ),
       ),
     );
@@ -408,11 +408,11 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       if (result?.ok != true && mounted) {
         setState(
           () => _error = result == null
-              ? context.strings.invitationOperationFailed
+              ? context.l10n.invitationOperationFailed
               : BridgeErrorPresenter.localized(
                   context,
                   result!,
-                  fallback: context.strings.invitationOperationFailed,
+                  fallback: context.l10n.invitationOperationFailed,
                 ),
         );
       }
@@ -434,7 +434,7 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
             : BridgeErrorPresenter.localized(
                 context,
                 result,
-                fallback: context.strings.invitationOperationFailed,
+                fallback: context.l10n.invitationOperationFailed,
               );
       });
     });
@@ -451,8 +451,8 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
   @override
   Widget build(BuildContext context) => AppModal(
     title: widget.mode == _PairingComposerMode.create
-        ? context.strings.yourInvitation
-        : context.strings.joinInvitation,
+        ? context.l10n.yourInvitation
+        : context.l10n.joinInvitation,
     height: widget.mode == _PairingComposerMode.create ? 620 : 360,
     scrollable: widget.mode == _PairingComposerMode.create,
     child: widget.mode == _PairingComposerMode.create
@@ -547,10 +547,10 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
       children: <Widget>[
         Text(
           busy
-              ? context.strings.invitationGenerating
+              ? context.l10n.invitationGenerating
               : queued
-              ? context.strings.invitationQueued
-              : context.strings.invitationWaitingForNetwork,
+              ? context.l10n.invitationQueued
+              : context.l10n.invitationWaitingForNetwork,
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.titleMedium,
         ),
@@ -573,7 +573,7 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
         ],
         if (queued)
           Text(
-            context.strings.closeInvitationDescription,
+            context.l10n.closeInvitationDescription,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           )
@@ -583,8 +583,8 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
             icon: Icon(context.torcaIcons.reconnect),
             label: Text(
               busy
-                  ? context.strings.generatingInvitation
-                  : context.strings.retryGeneration,
+                  ? context.l10n.generatingInvitation
+                  : context.l10n.retryGeneration,
             ),
           ),
       ],
@@ -667,8 +667,8 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
       final pairing = _current(snapshot);
       return AppModal(
         title: pairing?.typedRole == PairingRole.creator
-            ? context.strings.yourInvitation
-            : context.strings.joinInvitation,
+            ? context.l10n.yourInvitation
+            : context.l10n.joinInvitation,
         height: 560,
         scrollable: true,
         child: pairing == null
@@ -729,14 +729,14 @@ class _JoinCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Text(
-            context.strings.joinInvitation,
+            context.l10n.joinInvitation,
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 4),
           Text(
             shortCodeSupported
-                ? context.strings.enterSixCharacterCode
-                : context.strings.pairingBootstrapRequired,
+                ? context.l10n.enterSixCharacterCode
+                : context.l10n.pairingBootstrapRequired,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -761,13 +761,13 @@ class _JoinCard extends StatelessWidget {
             // still owns the actual pairing action.
             textInputAction: TextInputAction.done,
             decoration: InputDecoration(
-              labelText: context.strings.invitationCode,
+              labelText: context.l10n.invitationCode,
               hintText: 'ABC123',
               errorText: error,
               prefixIcon: Icon(context.torcaIcons.identity),
               suffixIcon: scanEnabled || scanBusy
                   ? IconButton(
-                      tooltip: context.strings.scanQr,
+                      tooltip: context.l10n.scanQr,
                       onPressed: scanEnabled ? onScan : null,
                       icon: scanBusy
                           ? const SizedBox(
@@ -796,8 +796,8 @@ class _JoinCard extends StatelessWidget {
                   : Icon(context.torcaIcons.send),
               label: Text(
                 busy
-                    ? context.strings.checkingInvitation
-                    : context.strings.joinInvitation,
+                    ? context.l10n.checkingInvitation
+                    : context.l10n.joinInvitation,
               ),
             ),
           ),
@@ -853,7 +853,7 @@ class _PairingSessionDetails extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: busy ? null : onRefreshRoute,
             icon: Icon(context.torcaIcons.retry),
-            label: Text(context.strings.refreshProviderRoute),
+            label: Text(context.l10n.refreshProviderRoute),
           ),
         ),
         const SizedBox(height: 12),
@@ -875,7 +875,7 @@ class _PairingSessionDetails extends StatelessWidget {
                 children: <Widget>[
                   TorcaDeviceAvatar(
                     label:
-                        pairing.remoteDisplayName ?? context.strings.newDevice,
+                        pairing.remoteDisplayName ?? context.l10n.newDevice,
                     identityId: pairing.remoteIdentityId,
                     fallbackIdentityId: pairing.id,
                     size: 48,
@@ -883,7 +883,7 @@ class _PairingSessionDetails extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      context.strings.remoteIdentityTitle,
+                      context.l10n.remoteIdentityTitle,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
@@ -907,7 +907,7 @@ class _PairingSessionDetails extends StatelessWidget {
               if (pairing.remoteIdentityId != null) ...<Widget>[
                 const SizedBox(height: 5),
                 Text(
-                  context.strings.remoteIdentity(pairing.remoteIdentityId),
+                  context.l10n.remoteIdentity(pairing.remoteIdentityId!),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -920,20 +920,20 @@ class _PairingSessionDetails extends StatelessWidget {
       const SizedBox(height: 12),
       if (pairing.typedState == PairingState.completed) ...<Widget>[
         Text(
-          context.strings.contactConnected,
+          context.l10n.contactConnected,
           style: Theme.of(context).textTheme.titleMedium,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 8),
         Text(
-          context.strings.contactConnectedDescription,
+          context.l10n.contactConnectedDescription,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 18),
         FilledButton.icon(
           onPressed: onDone,
           icon: Icon(context.torcaIcons.success),
-          label: Text(context.strings.done),
+          label: Text(context.l10n.done),
         ),
       ] else ...<Widget>[
         if (pairing.typedRole == PairingRole.creator &&
@@ -947,7 +947,7 @@ class _PairingSessionDetails extends StatelessWidget {
         ],
         if (_canReview) ...<Widget>[
           Text(
-            context.strings.verifyFingerprintBeforeAccepting,
+            context.l10n.verifyFingerprintBeforeAccepting,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 14),
@@ -957,7 +957,7 @@ class _PairingSessionDetails extends StatelessWidget {
                 child: FilledButton.icon(
                   onPressed: busy ? null : onApprove,
                   icon: Icon(context.torcaIcons.confirm),
-                  label: Text(context.strings.accept),
+                  label: Text(context.l10n.accept),
                 ),
               ),
               const SizedBox(width: 10),
@@ -965,14 +965,14 @@ class _PairingSessionDetails extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: busy ? null : onReject,
                   icon: Icon(context.torcaIcons.close),
-                  label: Text(context.strings.reject),
+                  label: Text(context.l10n.reject),
                 ),
               ),
             ],
           ),
         ] else if (pairing.typedRole == PairingRole.joiner &&
             !_canReview) ...<Widget>[
-          Text(context.strings.joinRequestWaiting),
+          Text(context.l10n.joinRequestWaiting),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: busy ? null : onCancel,
@@ -981,7 +981,7 @@ class _PairingSessionDetails extends StatelessWidget {
               side: BorderSide(color: Theme.of(context).colorScheme.error),
             ),
             icon: Icon(context.torcaIcons.cancelled),
-            label: Text(context.strings.cancelRequest),
+            label: Text(context.l10n.cancelRequest),
           ),
         ] else if (pairing.typedState == PairingState.open) ...<Widget>[
           OutlinedButton.icon(
@@ -991,7 +991,7 @@ class _PairingSessionDetails extends StatelessWidget {
               side: BorderSide(color: Theme.of(context).colorScheme.error),
             ),
             icon: Icon(context.torcaIcons.cancelled),
-            label: Text(context.strings.cancelInvitation),
+            label: Text(context.l10n.cancelInvitation),
           ),
         ],
       ],
@@ -1036,13 +1036,13 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
   }
 
   String get _countdown {
-    if (_remaining.isNegative) return context.strings.pairingExpired;
+    if (_remaining.isNegative) return context.l10n.pairingExpired;
     final minutes = _remaining.inMinutes.toString().padLeft(2, '0');
     final seconds = _remaining.inSeconds
         .remainder(60)
         .toString()
         .padLeft(2, '0');
-    return context.strings.invitationExpiresIn('$minutes:$seconds');
+    return context.l10n.invitationExpiresIn('$minutes:$seconds');
   }
 
   @override
@@ -1062,7 +1062,7 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
             data: widget.uri,
             size: 200,
             backgroundColor: Colors.white,
-            semanticsLabel: context.strings.pairingQrSemanticLabel,
+            semanticsLabel: context.l10n.pairingQrSemanticLabel,
           ),
         ),
         const SizedBox(height: 12),
@@ -1095,13 +1095,13 @@ class _QrInvitationCardState extends State<_QrInvitationCard> {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text(context.strings.invitationCodeCopied),
+                          content: Text(context.l10n.invitationCodeCopied),
                         ),
                       );
                     }
                   },
             icon: Icon(context.torcaIcons.copy),
-            label: Text(context.strings.copyCode),
+            label: Text(context.l10n.copyCode),
           ),
         ),
       ],
@@ -1129,8 +1129,8 @@ class _TerminalPairingContent extends StatelessWidget {
       const SizedBox(height: 14),
       Text(
         completed
-            ? context.strings.pairingCompletedMessage
-            : context.strings.pairingInactiveMessage,
+            ? context.l10n.pairingCompletedMessage
+            : context.l10n.pairingInactiveMessage,
         textAlign: TextAlign.center,
       ),
       const SizedBox(height: 20),
@@ -1140,7 +1140,7 @@ class _TerminalPairingContent extends StatelessWidget {
           completed ? context.torcaIcons.chats : context.torcaIcons.close,
         ),
         label: Text(
-          completed ? context.strings.openConversation : context.strings.close,
+          completed ? context.l10n.openConversation : context.l10n.close,
         ),
       ),
     ],

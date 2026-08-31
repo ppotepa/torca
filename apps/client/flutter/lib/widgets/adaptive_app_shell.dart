@@ -16,7 +16,7 @@ class AdaptiveAppShell extends StatefulWidget {
     this.actions = const <Widget>[],
     this.floatingActionButton,
     this.buildLabel = 'dev',
-    this.serviceLabel = 'svc —',
+    this.serviceLabel = 'svc â€”',
     this.showRuntimeStatus = true,
     this.onBuildInfo,
     super.key,
@@ -60,8 +60,8 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
           padding: const EdgeInsets.only(top: 8, bottom: 12),
           child: IconButton(
             tooltip: railExtended
-                ? context.strings.collapseNavigation
-                : context.strings.expandNavigation,
+                ? context.l10n.collapseNavigation
+                : context.l10n.expandNavigation,
             onPressed: canExtendRail
                 ? () => setState(() => _railExpanded = !_railExpanded)
                 : null,
@@ -113,7 +113,7 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
                     child: InkWell(
                       onTap: widget.onBuildInfo,
                       child: Text(
-                        context.strings.buildServiceSummary(
+                        context.l10n.buildServiceSummary(
                           widget.buildLabel,
                           widget.serviceLabel,
                         ),
@@ -173,7 +173,7 @@ class _BuildFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Tooltip(
-    message: context.strings.buildTooltip(buildLabel, serviceLabel),
+    message: context.l10n.buildTooltip(buildLabel, serviceLabel),
     child: InkWell(
       onTap: onTap,
       child: expanded
@@ -184,7 +184,7 @@ class _BuildFooter extends StatelessWidget {
                 const SizedBox(height: 5),
                 const Text('Torca'),
                 Text(
-                  context.strings.buildLabel(buildLabel),
+                  context.l10n.buildLabel(buildLabel),
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
                 Text(
@@ -197,3 +197,5 @@ class _BuildFooter extends StatelessWidget {
     ),
   );
 }
+
+

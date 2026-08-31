@@ -27,9 +27,9 @@ class ConnectionDetailsScreen extends StatelessWidget {
       if (contact == null) {
         return Scaffold(
           appBar: RuntimeAppBar(
-            title: Text(context.strings.connectionDetailsTitle),
+            title: Text(context.l10n.connectionDetailsTitle),
           ),
-          body: Center(child: Text(context.strings.contactUnavailable)),
+          body: Center(child: Text(context.l10n.contactUnavailable)),
         );
       }
       final blocked = contact.typedStatus == ContactStatus.blocked;
@@ -38,11 +38,11 @@ class ConnectionDetailsScreen extends StatelessWidget {
         blocked: blocked,
         icons: context.torcaIcons,
         provider: contact.transportProvider,
-        strings: context.strings,
+        strings: context.l10n,
       );
       return Scaffold(
         appBar: RuntimeAppBar(
-          title: Text(context.strings.connectionDetailsTitle),
+          title: Text(context.l10n.connectionDetailsTitle),
         ),
         body: Center(
           child: ConstrainedBox(
@@ -83,7 +83,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           blocked
-                              ? Text(context.strings.blocked)
+                              ? Text(context.l10n.blocked)
                               : PeerHealthIndicator(health: contact.peerHealth),
                         ],
                       ),
@@ -98,7 +98,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          context.strings.connection,
+                          context.l10n.connection,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: 8),
@@ -127,21 +127,21 @@ class ConnectionDetailsScreen extends StatelessWidget {
                           SizedBox(
                             width: cardWidth,
                             child: _DetailCard(
-                              label: context.strings.status,
+                              label: context.l10n.status,
                               value: presentation.label,
                             ),
                           ),
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.transport,
+                            label: context.l10n.transport,
                             value: presentation.label,
                           ),
                         ),
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.quality,
+                            label: context.l10n.quality,
                             value: _quality(
                               contact.peerHealth.quality,
                               context,
@@ -151,16 +151,16 @@ class ConnectionDetailsScreen extends StatelessWidget {
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.roundTrip,
+                            label: context.l10n.roundTrip,
                             value: contact.peerHealth.rttMs == null
-                                ? context.strings.unavailable
+                                ? context.l10n.unavailable
                                 : '${contact.peerHealth.rttMs} ms',
                           ),
                         ),
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.lastSuccessfulProbe,
+                            label: context.l10n.lastSuccessfulProbe,
                             value: _timestamp(
                               contact.peerHealth.lastSuccessAtMs,
                               context,
@@ -170,41 +170,41 @@ class ConnectionDetailsScreen extends StatelessWidget {
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.consecutiveFailures,
+                            label: context.l10n.consecutiveFailures,
                             value: '${contact.peerHealth.consecutiveFailures}',
                           ),
                         ),
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.reconnectAttempts,
+                            label: context.l10n.reconnectAttempts,
                             value: '${contact.peerHealth.reconnectAttempt}',
                           ),
                         ),
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.route,
+                            label: context.l10n.route,
                             value: snapshot.transport.providerRouteState,
                           ),
                         ),
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.peerState,
+                            label: context.l10n.peerState,
                             value: contact.peerHealth.state,
                           ),
                         ),
                         SizedBox(
                           width: cardWidth,
                           child: _DetailCard(
-                            label: context.strings.providerEndpoint,
+                            label: context.l10n.providerEndpoint,
                             value:
                                 snapshot.endpointSummary ??
                                 (contact.endpointAvailable
-                                    ? context.strings.providerEndpointAvailable
+                                    ? context.l10n.providerEndpointAvailable
                                     : context
-                                          .strings
+                                          .l10n
                                           .providerEndpointUnavailable),
                           ),
                         ),
@@ -214,7 +214,7 @@ class ConnectionDetailsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  context.strings.connectionEvidenceNote(
+                  context.l10n.connectionEvidenceNote(
                     contact.transportProvider,
                   ),
                   style: Theme.of(context).textTheme.bodySmall,
@@ -235,15 +235,15 @@ class ConnectionDetailsScreen extends StatelessWidget {
   }
 
   String _quality(String value, BuildContext context) => switch (value) {
-    'excellent' => context.strings.excellent,
-    'good' => context.strings.good,
-    'fair' => context.strings.fair,
-    'poor' => context.strings.poor,
-    _ => context.strings.unknown,
+    'excellent' => context.l10n.excellent,
+    'good' => context.l10n.good,
+    'fair' => context.l10n.fair,
+    'poor' => context.l10n.poor,
+    _ => context.l10n.unknown,
   };
 
   String _timestamp(int? value, BuildContext context) {
-    if (value == null || value <= 0) return context.strings.unavailable;
+    if (value == null || value <= 0) return context.l10n.unavailable;
     return DateTime.fromMillisecondsSinceEpoch(value).toLocal().toString();
   }
 }
@@ -258,3 +258,5 @@ class _DetailCard extends StatelessWidget {
     child: ListTile(title: Text(label), subtitle: SelectableText(value)),
   );
 }
+
+

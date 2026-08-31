@@ -55,47 +55,49 @@ class MessageStatusIndicator extends StatelessWidget {
 ) => switch (status) {
   MessageStatus.queued => (
     icon: context.torcaIcons.queued,
-    label: context.strings.queued,
+    label: context.l10n.queued,
     isError: false,
   ),
   MessageStatus.sending => (
     icon: context.torcaIcons.sending,
-    label: context.strings.sendingSecurely,
+    label: context.l10n.sendingSecurely,
     isError: false,
   ),
   MessageStatus.sent => (
     icon: context.torcaIcons.sent,
-    label: context.strings.sent,
+    label: context.l10n.sent,
     isError: false,
   ),
   MessageStatus.delivered => (
     icon: context.torcaIcons.delivered,
-    label: context.strings.delivered,
+    label: context.l10n.delivered,
     isError: false,
   ),
   MessageStatus.read => (
     icon: context.torcaIcons.read,
-    label: context.strings.read,
+    label: context.l10n.read,
     isError: false,
   ),
   MessageStatus.failed => (
     icon: context.torcaIcons.error,
-    label: context.strings.deliveryFailed,
+    label: context.l10n.deliveryFailed,
     isError: true,
   ),
   MessageStatus.cancelled => (
     icon: context.torcaIcons.cancelled,
-    label: context.strings.cancelled,
+    label: context.l10n.cancelled,
     isError: true,
   ),
   MessageStatus.deleted => (
     icon: context.torcaIcons.remove,
-    label: context.strings.messageDeleted,
+    label: context.l10n.messageDeleted,
     isError: false,
   ),
   MessageStatus.unknown => (
     icon: context.torcaIcons.info,
-    label: context.strings.unavailable,
+    label: context.l10n.unavailable,
     isError: false,
   ),
 };
+
+

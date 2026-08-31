@@ -27,9 +27,9 @@ abstract final class ConnectionStatePresenter {
     required bool blocked,
     required TorcaIconSet icons,
     String provider = 'iroh',
-    TorcaStrings? strings,
+    TorcaLocalizations? strings,
   }) {
-    final labels = strings ?? const TorcaStrings(Locale('en'));
+    final labels = strings ?? TorcaLocalizationsEn();
     final providerLabel = provider.isEmpty ? 'iroh' : provider;
     final directLabel = labels.directProviderContact(providerLabel);
     final directTooltip = labels.directProviderContact(providerLabel);
@@ -77,9 +77,9 @@ abstract final class ConnectionStatePresenter {
   static ConnectionPresentation iroh(
     String state,
     TorcaIconSet icons, [
-    TorcaStrings? strings,
+    TorcaLocalizations? strings,
   ]) {
-    final labels = strings ?? const TorcaStrings(Locale('en'));
+    final labels = strings ?? TorcaLocalizationsEn();
     return provider(
       state: state,
       provider: 'iroh',
@@ -92,9 +92,9 @@ abstract final class ConnectionStatePresenter {
     required String state,
     required String provider,
     required TorcaIconSet icons,
-    TorcaStrings? strings,
+    TorcaLocalizations? strings,
   }) {
-    final labels = strings ?? const TorcaStrings(Locale('en'));
+    final labels = strings ?? TorcaLocalizationsEn();
     return switch (state) {
       'ready' => ConnectionPresentation(
         label: labels.providerReady(provider),

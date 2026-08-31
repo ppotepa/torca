@@ -105,7 +105,7 @@ class _ConversationListState extends State<_ConversationList> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                     child: Text(
-                      context.strings.searchResultsCount(filtered.length),
+                      context.l10n.searchResultsCount(filtered.length),
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                   ),
@@ -126,12 +126,12 @@ class _ConversationListState extends State<_ConversationList> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: <Widget>[
             IconButton(
-              tooltip: context.strings.searchChats,
+              tooltip: context.l10n.searchChats,
               onPressed: () => setState(() => _searching = true),
               icon: Icon(context.torcaIcons.search),
             ),
             IconButton(
-              tooltip: context.strings.pairContact,
+              tooltip: context.l10n.pairContact,
               onPressed: widget.onPairContact,
               icon: Icon(context.torcaIcons.addContact),
             ),
@@ -149,12 +149,12 @@ class _ConversationListState extends State<_ConversationList> {
               autofocus: true,
               decoration: InputDecoration(
                 isDense: true,
-                hintText: context.strings.searchChats,
+                hintText: context.l10n.searchChats,
                 prefixIcon: Icon(context.torcaIcons.search),
                 suffixIcon: _searchController.text.isEmpty
                     ? null
                     : IconButton(
-                        tooltip: context.strings.clearSearch,
+                        tooltip: context.l10n.clearSearch,
                         onPressed: () {
                           _searchController.clear();
                           setState(() {});
@@ -166,12 +166,12 @@ class _ConversationListState extends State<_ConversationList> {
             ),
           ),
           IconButton(
-            tooltip: context.strings.pairContact,
+            tooltip: context.l10n.pairContact,
             onPressed: widget.onPairContact,
             icon: Icon(context.torcaIcons.addContact),
           ),
           IconButton(
-            tooltip: context.strings.closeSearch,
+            tooltip: context.l10n.closeSearch,
             onPressed: () {
               _searchController.clear();
               setState(() => _searching = false);
@@ -194,8 +194,8 @@ class _ConversationListState extends State<_ConversationList> {
           padding: const EdgeInsets.all(24),
           child: Text(
             query.isEmpty
-                ? context.strings.pairContactHint
-                : context.strings.noChatsMatch,
+                ? context.l10n.pairContactHint
+                : context.l10n.noChatsMatch,
             textAlign: TextAlign.center,
           ),
         ),
@@ -343,8 +343,8 @@ class _ContactsSection extends StatelessWidget {
     if (contacts.isEmpty && pendingPairings.isEmpty) {
       return _SectionEmptyState(
         icon: context.torcaIcons.contacts,
-        title: context.strings.noContactsYet,
-        message: context.strings.createInvitationForContact,
+        title: context.l10n.noContactsYet,
+        message: context.l10n.createInvitationForContact,
       );
     }
     return LayoutBuilder(
@@ -362,12 +362,12 @@ class _ContactsSection extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           children: <Widget>[
             Text(
-              context.strings.contacts,
+              context.l10n.contacts,
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
             Text(
-              context.strings.contactsCount(
+              context.l10n.contactsCount(
                 contacts.length + pendingPairings.length,
               ),
             ),
@@ -422,7 +422,7 @@ class _ContactsSection extends StatelessWidget {
                           showLabel: false,
                         ),
                         IconButton(
-                          tooltip: context.strings.contactInformation,
+                          tooltip: context.l10n.contactInformation,
                           onPressed: () => onOpenDetails(contact),
                           icon: Icon(context.torcaIcons.contactInfo),
                         ),
@@ -508,9 +508,9 @@ class _PendingContactCard extends StatelessWidget {
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
         title: Text(
-          name == null || name.isEmpty ? context.strings.newContact : name,
+          name == null || name.isEmpty ? context.l10n.newContact : name,
         ),
-        subtitle: Text(context.strings.finalizingContact),
+        subtitle: Text(context.l10n.finalizingContact),
         trailing: Icon(context.torcaIcons.reconnect),
       ),
     );
@@ -547,27 +547,27 @@ class _InvitationsSection extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       children: <Widget>[
         Text(
-          context.strings.invitations,
+          context.l10n.invitations,
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 8),
-        Text(context.strings.createManageInvitations),
+        Text(context.l10n.createManageInvitations),
         const SizedBox(height: 20),
         FilledButton.icon(
           onPressed: onOpen,
           icon: Icon(context.torcaIcons.invitations),
-          label: Text(context.strings.generateInvitation),
+          label: Text(context.l10n.generateInvitation),
         ),
         const SizedBox(height: 24),
         if (activePairings.isEmpty)
           _SectionEmptyState(
             icon: context.torcaIcons.invitations,
-            title: context.strings.noInvitations,
-            message: context.strings.activeInvitationsDescription,
+            title: context.l10n.noInvitations,
+            message: context.l10n.activeInvitationsDescription,
           )
         else ...<Widget>[
           Text(
-            context.strings.recentInvitations,
+            context.l10n.recentInvitations,
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
@@ -581,15 +581,15 @@ class _InvitationsSection extends StatelessWidget {
                 ),
                 title: Text(
                   pairing.typedRole == PairingRole.creator
-                      ? context.strings.createdInvitation
-                      : context.strings.joinedInvitation,
+                      ? context.l10n.createdInvitation
+                      : context.l10n.joinedInvitation,
                 ),
                 subtitle: Text(
-                  context.strings.invitationCodeLabel(pairing.code),
+                  context.l10n.invitationCodeLabel(pairing.code),
                 ),
                 trailing: Chip(
                   label: Text(
-                    context.strings.pairingStateLabel(pairing.typedState),
+                    context.l10n.pairingStateLabel(pairing.state),
                   ),
                 ),
                 onTap: () => onOpenInvitation(pairing),
@@ -637,17 +637,17 @@ class _ContactContextPanel extends StatelessWidget {
 
 String _contactPresence(BuildContext context, ContactDto contact) {
   if (contact.typedAvailability == PeerAvailability.reachable) {
-    return context.strings.online;
+    return context.l10n.online;
   }
   if (contact.typedAvailability == PeerAvailability.unknown) {
-    return context.strings.offlineShort;
+    return context.l10n.offlineShort;
   }
   final milliseconds = contact.lastSeenAtMs;
-  if (milliseconds == null) return context.strings.offlineShort;
+  if (milliseconds == null) return context.l10n.offlineShort;
   final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
   final time =
       '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-  return context.strings.lastSeenAt(time);
+  return context.l10n.lastSeenAt(time);
 }
 
 class _SectionEmptyState extends StatelessWidget {
@@ -692,7 +692,7 @@ class _ConversationPlaceholder extends StatelessWidget {
       children: <Widget>[
         Icon(context.torcaIcons.chats, size: 48),
         const SizedBox(height: 12),
-        Text(context.strings.selectConversation),
+        Text(context.l10n.selectConversation),
       ],
     ),
   );
@@ -742,7 +742,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                 Align(
                   child: TorcaDeviceAvatar(
                     key: const ValueKey<String>('profile-device-avatar'),
-                    label: context.strings.yourIdentity,
+                    label: context.l10n.yourIdentity,
                     identityId: widget.identityId,
                     stableDevice: true,
                     size: avatarSize,
@@ -750,7 +750,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  context.strings.yourIdentity,
+                  context.l10n.yourIdentity,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.4,
@@ -759,19 +759,19 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  context.strings.chooseNickname,
+                  context.l10n.chooseNickname,
                   style: Theme.of(context).textTheme.headlineSmall,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  context.strings.nicknameIntro,
+                  context.l10n.nicknameIntro,
                   textAlign: TextAlign.center,
                 ),
                 if (widget.fingerprint != null) ...<Widget>[
                   const SizedBox(height: 16),
                   SelectableText(
-                    context.strings.deviceFingerprint(widget.fingerprint!),
+                    context.l10n.deviceFingerprint(widget.fingerprint!),
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -780,7 +780,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                   controller: controller,
                   enabled: !_submitting,
                   decoration: InputDecoration(
-                    labelText: context.strings.nickname,
+                    labelText: context.l10n.nickname,
                     errorText: _error,
                   ),
                   onSubmitted: _submitting ? null : (_) => _saveProfile(),
@@ -789,25 +789,25 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                 DropdownButtonFormField<String>(
                   initialValue: _countryCode,
                   decoration: InputDecoration(
-                    labelText: context.strings.country,
+                    labelText: context.l10n.country,
                   ),
                   items: <DropdownMenuItem<String>>[
                     DropdownMenuItem(
                       value: 'UNKNOWN',
                       child: Text(
-                        '\u{1F4CD} ${context.strings.unknownCountry}',
+                        '\u{1F4CD} ${context.l10n.unknownCountry}',
                       ),
                     ),
                     DropdownMenuItem(
                       value: 'PL',
                       child: Text(
-                        '\u{1F1F5}\u{1F1F1} ${context.strings.polishCountry}',
+                        '\u{1F1F5}\u{1F1F1} ${context.l10n.polishCountry}',
                       ),
                     ),
                     DropdownMenuItem(
                       value: 'GB',
                       child: Text(
-                        '\u{1F1EC}\u{1F1E7} ${context.strings.englishCountry}',
+                        '\u{1F1EC}\u{1F1E7} ${context.l10n.englishCountry}',
                       ),
                     ),
                   ],
@@ -821,8 +821,8 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                   onPressed: _submitting ? null : _saveProfile,
                   child: Text(
                     _submitting
-                        ? context.strings.saving
-                        : context.strings.continueLabel,
+                        ? context.l10n.saving
+                        : context.l10n.continueLabel,
                   ),
                 ),
               ],
@@ -836,7 +836,7 @@ class _ProfileSetupState extends State<_ProfileSetup> {
   Future<void> _saveProfile() async {
     final displayName = controller.text.trim();
     if (displayName.isEmpty) {
-      setState(() => _error = context.strings.nicknameRequired);
+      setState(() => _error = context.l10n.nicknameRequired);
       return;
     }
     setState(() {
@@ -878,9 +878,10 @@ class _ProfileSetupState extends State<_ProfileSetup> {
                   BridgeErrorPresenter.localized(
                     context,
                     result ?? const BridgeResultDto(ok: false, kind: 'error'),
-                    fallback: context.strings.couldNotSaveNickname,
+                    fallback: context.l10n.couldNotSaveNickname,
                   );
       });
     }
   }
 }
+

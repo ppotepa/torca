@@ -51,7 +51,7 @@ class AppModal extends StatelessWidget {
                           ),
                         ),
                         IconButton(
-                          tooltip: context.strings.closeTooltip,
+                          tooltip: context.l10n.closeTooltip,
                           onPressed: () => Navigator.of(context).pop(),
                           icon: Icon(context.torcaIcons.close),
                         ),
@@ -82,3 +82,5 @@ class AppModal extends StatelessWidget {
     ),
   );
 }
+
+

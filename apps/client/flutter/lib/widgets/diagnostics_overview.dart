@@ -23,22 +23,22 @@ class DiagnosticsOverview extends StatelessWidget {
         .length;
     final totalPeers = snapshot.contacts.length;
     final peerDetail = totalPeers == 0
-        ? context.strings.noContactsPaired
-        : context.strings.directPeerLinksReady(readyPeers, totalPeers);
+        ? context.l10n.noContactsPaired
+        : context.l10n.directPeerLinksReady(readyPeers, totalPeers);
 
     final checks = <_OverviewItem>[
       _OverviewItem(
-        context.strings.nativeBridge,
+        context.l10n.nativeBridge,
         true,
-        '${context.strings.contractSnapshotReadable} ($torcaContractVersion)',
+        '${context.l10n.contractSnapshotReadable} ($torcaContractVersion)',
         context.torcaIcons.diagnostics,
       ),
       _OverviewItem(
-        context.strings.localIdentityCheck,
+        context.l10n.localIdentityCheck,
         snapshot.identity != null,
         snapshot.identity == null
-            ? context.strings.notInitialized
-            : context.strings.loaded,
+            ? context.l10n.notInitialized
+            : context.l10n.loaded,
         context.torcaIcons.identity,
       ),
       _OverviewItem(
@@ -55,17 +55,17 @@ class DiagnosticsOverview extends StatelessWidget {
         context.torcaIcons.link,
       ),
       _OverviewItem(
-        context.strings.directPeers,
+        context.l10n.directPeers,
         totalPeers == 0 || readyPeers > 0,
         peerDetail,
         context.torcaIcons.online,
       ),
       _OverviewItem(
-        context.strings.diagnosticsStream,
+        context.l10n.diagnosticsStream,
         diagnosticsReadable,
         diagnosticsReadable
-            ? context.strings.redactedHealthEventsReadable
-            : context.strings.noReadableHealthEvents,
+            ? context.l10n.redactedHealthEventsReadable
+            : context.l10n.noReadableHealthEvents,
         context.torcaIcons.diagnostics,
       ),
     ];
@@ -150,3 +150,5 @@ class _OverviewItem {
   final String detail;
   final IconData icon;
 }
+
+

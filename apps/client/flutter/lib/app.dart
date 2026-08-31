@@ -228,7 +228,7 @@ class _TorcaAppState extends State<TorcaApp> {
               ..showSnackBar(
                 SnackBar(
                   content: Text(
-                    context.strings.contactAddedToContacts(contact.displayName),
+                    context.l10n.contactAddedToContacts(contact.displayName),
                   ),
                 ),
               );
@@ -351,7 +351,7 @@ class _TorcaAppState extends State<TorcaApp> {
       supportedLocales: TorcaLocaleRegistry.locales,
       localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
         TorcaLocalizations.delegate,
-        TorcaStrings.delegate,
+        
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,

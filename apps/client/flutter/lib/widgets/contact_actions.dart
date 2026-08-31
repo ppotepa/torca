@@ -15,7 +15,7 @@ class ContactActions {
     EngineGateway gateway,
     ContactDto contact,
   ) async {
-    final strings = context.strings;
+    final strings = context.l10n;
     var draft = contact.displayName;
     final value = await showDialog<String>(
       context: context,
@@ -56,7 +56,7 @@ class ContactActions {
     EngineGateway gateway,
     ContactDto contact,
   ) async {
-    final strings = context.strings;
+    final strings = context.l10n;
     final blocking = contact.typedStatus != ContactStatus.blocked;
     if (blocking &&
         !await _confirm(
@@ -83,7 +83,7 @@ class ContactActions {
     EngineGateway gateway,
     ContactDto contact,
   ) async {
-    final strings = context.strings;
+    final strings = context.l10n;
     if (!await _confirm(
       context,
       strings.removeContactTitle(contact.displayName),
@@ -115,7 +115,7 @@ class ContactActions {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text(context.strings.cancel),
+              child: Text(context.l10n.cancel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),

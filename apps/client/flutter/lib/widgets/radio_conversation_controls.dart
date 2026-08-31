@@ -49,17 +49,17 @@ class RadioConversationStatus extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final text = switch (state) {
       RadioState.available ||
-      RadioState.waitingForPeer => context.strings.radioWaitingForPeer,
-      RadioState.connecting => context.strings.radioConnecting,
-      RadioState.ready => context.strings.radioReady,
-      RadioState.requestingFloor => context.strings.radioRequestingFloor,
-      RadioState.startingCapture => context.strings.radioRequestingFloor,
-      RadioState.transmitting => context.strings.radioTransmitting,
-      RadioState.receiving => context.strings.radioReceiving(
+      RadioState.waitingForPeer => context.l10n.radioWaitingForPeer,
+      RadioState.connecting => context.l10n.radioConnecting,
+      RadioState.ready => context.l10n.radioReady,
+      RadioState.requestingFloor => context.l10n.radioRequestingFloor,
+      RadioState.startingCapture => context.l10n.radioRequestingFloor,
+      RadioState.transmitting => context.l10n.radioTransmitting,
+      RadioState.receiving => context.l10n.radioReceiving(
         contact.displayName,
       ),
-      RadioState.reconnecting => context.strings.radioReconnecting,
-      _ => context.strings.radioUnavailable,
+      RadioState.reconnecting => context.l10n.radioReconnecting,
+      _ => context.l10n.radioUnavailable,
     };
     final background = transmissionActive
         ? colors.errorContainer
@@ -107,17 +107,17 @@ class RadioConversationStatus extends StatelessWidget {
 
   Widget _notice(BuildContext context, RadioTimelineEventDto event) {
     final actor = switch (event.actor) {
-      'local' => context.strings.senderYou,
+      'local' => context.l10n.senderYou,
       'remote' => contact.displayName,
-      _ => context.strings.radioMode,
+      _ => context.l10n.radioMode,
     };
     final label = switch (event.kind) {
-      'enabled' => context.strings.radioEnabledBy(actor),
-      'disabled' => context.strings.radioDisabledBy(actor),
-      'ready' => context.strings.radioChannelReady,
-      'interrupted' => context.strings.radioChannelInterrupted,
-      'restored' => context.strings.radioChannelRestored,
-      _ => context.strings.radioMode,
+      'enabled' => context.l10n.radioEnabledBy(actor),
+      'disabled' => context.l10n.radioDisabledBy(actor),
+      'ready' => context.l10n.radioChannelReady,
+      'interrupted' => context.l10n.radioChannelInterrupted,
+      'restored' => context.l10n.radioChannelRestored,
+      _ => context.l10n.radioMode,
     };
     final occurred = DateTime.fromMillisecondsSinceEpoch(
       event.occurredAtMs,
@@ -154,7 +154,7 @@ class RadioConversationStatus extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              context.strings.radioTransportFailure(transportFailure!),
+              context.l10n.radioTransportFailure(transportFailure!),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(
@@ -270,7 +270,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
     return Semantics(
       button: true,
       enabled: canPress,
-      label: context.strings.radioReady,
+      label: context.l10n.radioReady,
       // A tap recognizer is deliberately not used here. A PTT press owns one
       // raw pointer until its matching up/cancel event. Otherwise a tiny drag
       // can lose Flutter's gesture arena and release capture while the user is
@@ -321,14 +321,14 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
   }
 
   String _tooltip(BuildContext context, RadioState state) => switch (state) {
-    RadioState.ready => context.strings.radioReady,
-    RadioState.receiving => context.strings.radioReceiving(
+    RadioState.ready => context.l10n.radioReady,
+    RadioState.receiving => context.l10n.radioReceiving(
       widget.contact.displayName,
     ),
     RadioState.waitingForPeer ||
-    RadioState.available => context.strings.radioWaitingForPeer,
-    RadioState.startingCapture => context.strings.radioRequestingFloor,
-    _ => context.strings.radioUnavailable,
+    RadioState.available => context.l10n.radioWaitingForPeer,
+    RadioState.startingCapture => context.l10n.radioRequestingFloor,
+    _ => context.l10n.radioUnavailable,
   };
 
   Future<void> _press(int pointerId) async {
@@ -348,7 +348,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
           _pointerHeld = false;
         });
         _syncPulse();
-        _showError(context.strings.microphonePermissionRequired);
+        _showError(context.l10n.microphonePermissionRequired);
       }
       return;
     }
@@ -372,7 +372,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _commandBusy = false;
       });
       _syncPulse();
-      _showError(context.strings.couldNotStartRadio);
+      _showError(context.l10n.couldNotStartRadio);
       return;
     }
     if (!mounted) {
@@ -416,7 +416,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         BridgeErrorPresenter.localized(
           context,
           result,
-          fallback: context.strings.couldNotStartRadio,
+          fallback: context.l10n.couldNotStartRadio,
         ),
       );
       return;
@@ -454,7 +454,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _syncPulse();
       }
       if (!granted && !_releaseRequested) {
-        _showError(context.strings.couldNotStartRadio);
+        _showError(context.l10n.couldNotStartRadio);
       }
       return;
     }
@@ -481,7 +481,7 @@ class _RadioPushToTalkState extends State<RadioPushToTalk>
         _commandBusy = false;
       });
       _syncPulse();
-      _showError(context.strings.couldNotStartRadio);
+      _showError(context.l10n.couldNotStartRadio);
       return;
     }
     unawaited(HapticFeedback.mediumImpact());

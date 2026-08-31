@@ -30,7 +30,7 @@ class PairingActionController extends ChangeNotifier {
       : BridgeErrorPresenter.localized(
           context,
           _failure!,
-          fallback: context.strings.invitationOperationFailed,
+          fallback: context.l10n.invitationOperationFailed,
         );
 
   Future<bool> run(PairingAction action, String sessionId) async {

@@ -155,14 +155,14 @@ class ConversationComposer extends StatelessWidget {
             builder: (context, constraints) {
               final narrow = constraints.maxWidth < 430;
               final emoji = IconButton(
-                tooltip: context.strings.emoji,
+                tooltip: context.l10n.emoji,
                 onPressed: disabled || searching || sending || sendingAttachment
                     ? null
                     : onInsertEmoji,
                 icon: Icon(context.torcaIcons.emoji),
               );
               final attachment = IconButton(
-                tooltip: context.strings.attachFiles,
+                tooltip: context.l10n.attachFiles,
                 onPressed:
                     disabled ||
                         pickingAttachment ||
@@ -179,7 +179,7 @@ class ConversationComposer extends StatelessWidget {
                     : Icon(context.torcaIcons.attachment),
               );
               final send = IconButton.filled(
-                tooltip: context.strings.sendMessage,
+                tooltip: context.l10n.sendMessage,
                 onPressed: disabled || sending || sendingAttachment || searching
                     ? null
                     : onSend,
@@ -265,8 +265,8 @@ class _DateSeparator extends StatelessWidget {
     final day = DateTime(date.year, date.month, date.day);
     final difference = today.difference(day).inDays;
     final label = switch (difference) {
-      0 => context.strings.today,
-      1 => context.strings.yesterday,
+      0 => context.l10n.today,
+      1 => context.l10n.yesterday,
       _ =>
         '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
     };
@@ -288,7 +288,7 @@ class _UnreadSeparator extends StatelessWidget {
       const Expanded(child: Divider()),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Text(context.strings.newMessages),
+        child: Text(context.l10n.newMessages),
       ),
       const Expanded(child: Divider()),
     ],
@@ -319,7 +319,7 @@ class _ReplyComposerPreview extends StatelessWidget {
           ),
         ),
         IconButton(
-          tooltip: context.strings.cancel,
+          tooltip: context.l10n.cancel,
           visualDensity: VisualDensity.compact,
           onPressed: onCancel,
           icon: Icon(context.torcaIcons.close),
@@ -406,7 +406,7 @@ class _AttachmentTray extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: context.strings.removeAttachment,
+                tooltip: context.l10n.removeAttachment,
                 visualDensity: VisualDensity.compact,
                 onPressed: () => onRemove(item),
                 icon: Icon(context.torcaIcons.close),
@@ -471,7 +471,7 @@ class _ConversationSearchBar extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.only(right: 8),
           child: IconButton(
-            tooltip: context.strings.searchMessages,
+            tooltip: context.l10n.searchMessages,
             onPressed: onStart,
             icon: Icon(context.torcaIcons.search),
           ),
@@ -488,12 +488,12 @@ class _ConversationSearchBar extends StatelessWidget {
               autofocus: true,
               decoration: InputDecoration(
                 isDense: true,
-                hintText: context.strings.searchConversationHint,
+                hintText: context.l10n.searchConversationHint,
                 prefixIcon: Icon(context.torcaIcons.search),
                 suffixIcon: controller.text.isEmpty
                     ? null
                     : IconButton(
-                        tooltip: context.strings.clearSearch,
+                        tooltip: context.l10n.clearSearch,
                         onPressed: () {
                           controller.clear();
                           onChanged('');
@@ -515,7 +515,7 @@ class _ConversationSearchBar extends StatelessWidget {
             )
           else
             IconButton(
-              tooltip: context.strings.closeSearch,
+              tooltip: context.l10n.closeSearch,
               onPressed: onClose,
               icon: Icon(context.torcaIcons.close),
             ),
@@ -524,3 +524,5 @@ class _ConversationSearchBar extends StatelessWidget {
     );
   }
 }
+
+

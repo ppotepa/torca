@@ -1,15 +1,9 @@
 import 'package:flutter/widgets.dart';
 
-import 'legacy_localizations.dart';
-
 import 'generated/torca_localizations.dart';
-
-/// Transitional API name shared by clients while individual screens move to
-/// the generated `TorcaLocalizations` API.
-extension TorcaStringsContext on BuildContext {
-  TorcaStrings get strings => TorcaStrings.of(this);
-}
+import 'generated/torca_localizations_en.dart';
 
 extension TorcaGeneratedL10nContext on BuildContext {
-  TorcaLocalizations get l10n => TorcaLocalizations.of(this)!;
+  TorcaLocalizations get l10n =>
+      TorcaLocalizations.of(this) ?? TorcaLocalizationsEn();
 }

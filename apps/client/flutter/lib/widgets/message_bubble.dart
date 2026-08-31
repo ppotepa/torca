@@ -58,12 +58,12 @@ class MessageBubble extends StatelessWidget {
     );
     final sender =
         senderLabel ??
-        (outbound ? context.strings.senderYou : context.strings.senderContact);
+        (outbound ? context.l10n.senderYou : context.l10n.senderContact);
     final semanticBody = showBody
         ? message.body
         : message.typedStatus == MessageStatus.deleted
-        ? context.strings.messageDeleted
-        : context.strings.attachmentMessagePending;
+        ? context.l10n.messageDeleted
+        : context.l10n.attachmentMessagePending;
     final alignment = outbound ? Alignment.centerRight : Alignment.centerLeft;
     final normalRadius = context.torcaTokens.radiusLarge;
     final tailRadius = context.torcaTokens.radiusSmall;
@@ -212,7 +212,7 @@ class MessageBubble extends StatelessWidget {
                                     else if (message.typedStatus ==
                                         MessageStatus.deleted)
                                       Text(
-                                        context.strings.messageDeleted,
+                                        context.l10n.messageDeleted,
                                         key: ValueKey<String>(
                                           'message-body-${message.id}',
                                         ),
@@ -353,7 +353,7 @@ class _MessageActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => IconButton(
     key: ValueKey<String>('message-actions-$messageId'),
-    tooltip: context.strings.messageActions,
+    tooltip: context.l10n.messageActions,
     onPressed: onPressed,
     color: color,
     icon: Icon(context.torcaIcons.more, size: 14),
@@ -381,12 +381,12 @@ class _LifecycleMilestone extends StatelessWidget {
     final value =
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     final (description, icon) = switch (kind) {
-      _LifecycleKind.sent => (context.strings.sent, context.torcaIcons.sent),
+      _LifecycleKind.sent => (context.l10n.sent, context.torcaIcons.sent),
       _LifecycleKind.delivered => (
-        context.strings.delivered,
+        context.l10n.delivered,
         context.torcaIcons.delivered,
       ),
-      _LifecycleKind.read => (context.strings.read, context.torcaIcons.read),
+      _LifecycleKind.read => (context.l10n.read, context.torcaIcons.read),
     };
     return Tooltip(
       message: '$description $value',
@@ -417,3 +417,5 @@ class _LifecycleTimeline extends StatelessWidget {
     return _LifecycleMilestone(kind: kind, milliseconds: timestamp);
   }
 }
+
+

@@ -84,7 +84,7 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
             ? _pulse.value * 2
             : (1 - _pulse.value) * 2;
         return Semantics(
-          label: context.strings.connectionQuality(quality, rtt),
+          label: context.l10n.connectionQuality(quality, rtt),
           button: widget.onPressed != null,
           child: Row(
             mainAxisSize: MainAxisSize.min,

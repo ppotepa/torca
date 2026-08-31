@@ -120,7 +120,7 @@ class _ContactDetailsScreenState extends State<ContactDetailsScreen> {
     if (!mounted || result.ok) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(context.strings.identityChanged)));
+    ).showSnackBar(SnackBar(content: Text(context.l10n.identityChanged)));
   }
 }
 
@@ -168,8 +168,8 @@ class ContactDetailsContent extends StatelessWidget {
             title: Text(contact.displayName),
             subtitle: Text(
               contact.typedStatus == ContactStatus.blocked
-                  ? context.strings.blocked
-                  : context.strings.directProviderContact(
+                  ? context.l10n.blocked
+                  : context.l10n.directProviderContact(
                       contact.transportProvider,
                     ),
             ),
@@ -183,10 +183,10 @@ class ContactDetailsContent extends StatelessWidget {
         const SizedBox(height: 12),
         if (sharedAttachmentNames.isNotEmpty) ...<Widget>[
           _DetailsCard(
-            title: context.strings.sharedMedia,
+            title: context.l10n.sharedMedia,
             children: <Widget>[
               Text(
-                context.strings.sharedMediaCount(sharedAttachmentNames.length),
+                context.l10n.sharedMediaCount(sharedAttachmentNames.length),
               ),
               const SizedBox(height: 8),
               for (final name in sharedAttachmentNames.take(8))
@@ -207,25 +207,25 @@ class ContactDetailsContent extends StatelessWidget {
           const SizedBox(height: 12),
         ],
         _DetailsCard(
-          title: context.strings.connection,
+          title: context.l10n.connection,
           children: <Widget>[
             _ValueRow(
-              label: context.strings.state,
+              label: context.l10n.state,
               value: contact.connectionState,
             ),
             _ValueRow(
-              label: context.strings.quality,
+              label: context.l10n.quality,
               value: contact.peerHealth.quality,
             ),
             _ValueRow(
-              label: context.strings.transport,
+              label: context.l10n.transport,
               value: contact.transportProvider.toUpperCase(),
             ),
             _ValueRow(
-              label: context.strings.providerEndpoint,
+              label: context.l10n.providerEndpoint,
               value: contact.endpointAvailable
-                  ? context.strings.providerEndpointAvailable
-                  : context.strings.providerEndpointUnavailable,
+                  ? context.l10n.providerEndpointAvailable
+                  : context.l10n.providerEndpointUnavailable,
             ),
             if (onOpenConnectionDetails != null)
               Align(
@@ -233,7 +233,7 @@ class ContactDetailsContent extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: onOpenConnectionDetails,
                   icon: Icon(context.torcaIcons.diagnostics),
-                  label: Text(context.strings.connectionDetails),
+                  label: Text(context.l10n.connectionDetails),
                 ),
               ),
           ],
@@ -241,12 +241,12 @@ class ContactDetailsContent extends StatelessWidget {
         if (onVerify != null) ...<Widget>[
           const SizedBox(height: 12),
           _DetailsCard(
-            title: context.strings.verification,
+            title: context.l10n.verification,
             children: <Widget>[
               Text(
                 contact.typedVerificationStatus == VerificationStatus.verified
-                    ? context.strings.verified
-                    : context.strings.unverified,
+                    ? context.l10n.verified
+                    : context.l10n.unverified,
               ),
               if (contact.safetyNumber != null) ...<Widget>[
                 const SizedBox(height: 8),
@@ -262,8 +262,8 @@ class ContactDetailsContent extends StatelessWidget {
                 ),
                 label: Text(
                   contact.typedVerificationStatus == VerificationStatus.verified
-                      ? context.strings.resetVerification
-                      : context.strings.verifyContact,
+                      ? context.l10n.resetVerification
+                      : context.l10n.verifyContact,
                 ),
               ),
             ],
@@ -271,13 +271,13 @@ class ContactDetailsContent extends StatelessWidget {
         ],
         const SizedBox(height: 12),
         _DetailsCard(
-          title: context.strings.contactActions,
+          title: context.l10n.contactActions,
           children: <Widget>[
             if (onRename != null)
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(context.torcaIcons.edit),
-                title: Text(context.strings.renameContact),
+                title: Text(context.l10n.renameContact),
                 onTap: onRename,
               ),
             if (onToggleBlock != null)
@@ -290,8 +290,8 @@ class ContactDetailsContent extends StatelessWidget {
                 ),
                 title: Text(
                   contact.typedStatus == ContactStatus.blocked
-                      ? context.strings.unblockContact
-                      : context.strings.blockContact,
+                      ? context.l10n.unblockContact
+                      : context.l10n.blockContact,
                 ),
                 onTap: onToggleBlock,
               ),
@@ -303,7 +303,7 @@ class ContactDetailsContent extends StatelessWidget {
                   color: Theme.of(context).colorScheme.error,
                 ),
                 title: Text(
-                  context.strings.removeContact,
+                  context.l10n.removeContact,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
                 onTap: onRemove,
@@ -336,7 +336,7 @@ class IdentityDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: RuntimeAppBar(title: Text(context.strings.yourIdentity)),
+    appBar: RuntimeAppBar(title: Text(context.l10n.yourIdentity)),
     body: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
@@ -344,14 +344,14 @@ class IdentityDetailsScreen extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           children: <Widget>[
             _DetailsCard(
-              title: context.strings.localIdentity,
+              title: context.l10n.localIdentity,
               children: <Widget>[
                 Row(
                   children: <Widget>[
                     TorcaDeviceAvatar(
                       label:
                           snapshot.identity?.displayName ??
-                          context.strings.yourIdentity,
+                          context.l10n.yourIdentity,
                       identityId: snapshot.identity?.id,
                       stableDevice: true,
                       size: 64,
@@ -360,7 +360,7 @@ class IdentityDetailsScreen extends StatelessWidget {
                     Expanded(
                       child: Text(
                         snapshot.identity?.displayName ??
-                            context.strings.unavailable,
+                            context.l10n.unavailable,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
@@ -368,28 +368,28 @@ class IdentityDetailsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 _ValueRow(
-                  label: context.strings.displayName,
+                  label: context.l10n.displayName,
                   value:
                       snapshot.identity?.displayName ??
-                      context.strings.unavailable,
+                      context.l10n.unavailable,
                 ),
                 _ValueRow(
-                  label: context.strings.communicationProvider,
+                  label: context.l10n.communicationProvider,
                   value: snapshot.communicationProvider.toUpperCase(),
                 ),
                 _ValueRow(
-                  label: context.strings.communicationState,
+                  label: context.l10n.communicationState,
                   value: snapshot.communicationState,
                 ),
                 if (snapshot.endpointSummary != null)
                   _ValueRow(
-                    label: context.strings.endpoint,
+                    label: context.l10n.endpoint,
                     value: snapshot.endpointSummary!,
                     selectable: true,
                   ),
                 if (snapshot.identity?.fingerprint != null) ...<Widget>[
                   _ValueRow(
-                    label: context.strings.fingerprint,
+                    label: context.l10n.fingerprint,
                     value: snapshot.identity!.fingerprint!,
                     selectable: true,
                   ),
@@ -407,13 +407,13 @@ class IdentityDetailsScreen extends StatelessWidget {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text(context.strings.fingerprintCopied),
+                              content: Text(context.l10n.fingerprintCopied),
                             ),
                           );
                         }
                       },
                       icon: Icon(context.torcaIcons.copy),
-                      label: Text(context.strings.copyFingerprint),
+                      label: Text(context.l10n.copyFingerprint),
                     ),
                   ),
                 ],
@@ -422,29 +422,29 @@ class IdentityDetailsScreen extends StatelessWidget {
             if (buildInfo != null) ...<Widget>[
               const SizedBox(height: 12),
               _DetailsCard(
-                title: context.strings.buildAndConnectionInfo,
+                title: context.l10n.buildAndConnectionInfo,
                 children: <Widget>[
                   _ValueRow(
-                    label: context.strings.productVersion,
+                    label: context.l10n.productVersion,
                     value: buildInfo!.productVersion,
                   ),
                   _ValueRow(
-                    label: context.strings.build,
+                    label: context.l10n.build,
                     value: buildInfo!.buildId,
                     selectable: true,
                   ),
                   _ValueRow(
-                    label: context.strings.sourceCommit,
+                    label: context.l10n.sourceCommit,
                     value: buildInfo!.sourceCommit,
                     selectable: true,
                   ),
                   _ValueRow(
-                    label: context.strings.contract,
+                    label: context.l10n.contract,
                     value:
                         '${buildInfo!.contractSchema} / ${buildInfo!.wireVersion}',
                   ),
                   _ValueRow(
-                    label: context.strings.storageEpoch,
+                    label: context.l10n.storageEpoch,
                     value: '${buildInfo!.storageEpoch}',
                   ),
                 ],
@@ -501,3 +501,5 @@ class _ValueRow extends StatelessWidget {
     ),
   );
 }
+
+

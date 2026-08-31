@@ -45,11 +45,11 @@ class ConversationSummaryTile extends StatelessWidget {
         ? 'You: '
         : '';
     final subtitle = draft
-        ? context.strings.draft
+        ? context.l10n.draft
         : blocked
-        ? context.strings.blocked
+        ? context.l10n.blocked
         : message == null || message.isEmpty
-        ? context.strings.noMessagesYet
+        ? context.l10n.noMessagesYet
         : '$prefix$message';
 
     return GestureDetector(
@@ -58,7 +58,7 @@ class ConversationSummaryTile extends StatelessWidget {
       child: ListTile(
         selected: selected,
         leading: TorcaDeviceAvatar(
-          label: contact?.displayName ?? context.strings.contactLabel,
+          label: contact?.displayName ?? context.l10n.contactLabel,
           identityId: contact?.remoteIdentityId,
           fallbackIdentityId: contact?.id,
           presentation: AvatarActivityPresentation.resolve(
@@ -77,7 +77,7 @@ class ConversationSummaryTile extends StatelessWidget {
           children: <Widget>[
             Expanded(
               child: Text(
-                contact?.displayName ?? context.strings.contactLabel,
+                contact?.displayName ?? context.l10n.contactLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -123,7 +123,7 @@ class ConversationSummaryTile extends StatelessWidget {
             ),
             if (contact != null)
               IconButton(
-                tooltip: context.strings.contactDetails,
+                tooltip: context.l10n.contactDetails,
                 icon: Icon(context.torcaIcons.info, size: 19),
                 onPressed: onContactInfo,
               ),

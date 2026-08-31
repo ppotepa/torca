@@ -1,6 +1,10 @@
 export 'src/generated/torca_localizations.dart';
 export 'src/generated/torca_localizations_en.dart';
-export 'src/legacy_localizations.dart';
+export 'src/generated/torca_localizations_de.dart';
+export 'src/generated/torca_localizations_es.dart';
+export 'src/generated/torca_localizations_fr.dart';
+export 'src/generated/torca_localizations_pl.dart';
+export 'src/generated/torca_localizations_uk.dart';
 export 'src/locale_definition.dart';
 export 'src/locale_registry.dart';
 export 'src/torca_l10n_context.dart';

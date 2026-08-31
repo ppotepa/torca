@@ -17,7 +17,7 @@ class AppOverflowMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => PopupMenuButton<AppOverflowAction>(
-    tooltip: context.strings.applicationMenu,
+    tooltip: context.l10n.applicationMenu,
     onSelected: onSelected,
     itemBuilder: (context) => <PopupMenuEntry<AppOverflowAction>>[
       PopupMenuItem(
@@ -27,7 +27,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.addContact),
-          title: Text(context.strings.newPairing),
+          title: Text(context.l10n.newPairing),
         ),
       ),
       PopupMenuItem(
@@ -37,7 +37,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.identity),
-          title: Text(context.strings.yourIdentity),
+          title: Text(context.l10n.yourIdentity),
         ),
       ),
       if (kDebugMode) ...<PopupMenuEntry<AppOverflowAction>>[
@@ -48,7 +48,7 @@ class AppOverflowMenu extends StatelessWidget {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.diagnostics),
-            title: Text(context.strings.diagnostics),
+            title: Text(context.l10n.diagnostics),
           ),
         ),
       ],
@@ -58,7 +58,7 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.settings),
-          title: Text(context.strings.settings),
+          title: Text(context.l10n.settings),
         ),
       ),
       PopupMenuItem(
@@ -67,9 +67,11 @@ class AppOverflowMenu extends StatelessWidget {
           dense: true,
           contentPadding: EdgeInsets.zero,
           leading: Icon(context.torcaIcons.info),
-          title: Text(context.strings.aboutTorca),
+          title: Text(context.l10n.aboutTorca),
         ),
       ),
     ],
   );
 }
+
+

@@ -119,7 +119,7 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
       final started = await _recorder.start(path);
       if (!mounted || !started) {
         await _discardFile(path);
-        if (mounted) _showError(context.strings.microphonePermissionRequired);
+        if (mounted) _showError(context.l10n.microphonePermissionRequired);
         return;
       }
       _recording = true;
@@ -144,7 +144,7 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
     } on Object {
       await _recorder.cancel();
       await _discardFile(path);
-      if (mounted) _showError(context.strings.voiceClipRecordingFailed);
+      if (mounted) _showError(context.l10n.voiceClipRecordingFailed);
     } finally {
       _starting = false;
       if (mounted) setState(() {});
@@ -163,14 +163,14 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
       final file = File(path);
       if (!await file.exists() || await file.length() == 0) {
         await _discardFile(path);
-        if (mounted) _showError(context.strings.voiceClipRecordingFailed);
+        if (mounted) _showError(context.l10n.voiceClipRecordingFailed);
         return;
       }
       await widget.onClipReady(path, file.uri.pathSegments.last);
     } on Object {
       final path = _pendingPath;
       if (path != null) await _discardFile(path);
-      if (mounted) _showError(context.strings.voiceClipRecordingFailed);
+      if (mounted) _showError(context.l10n.voiceClipRecordingFailed);
     } finally {
       _pendingPath = null;
       _finishing = false;
@@ -250,8 +250,8 @@ class _VoiceClipRecorderState extends State<VoiceClipRecorder>
     return Semantics(
       button: true,
       label: _recording
-          ? context.strings.voiceClipRecording(secondsLeft.clamp(0, 10))
-          : context.strings.holdToRecordVoiceClip,
+          ? context.l10n.voiceClipRecording(secondsLeft.clamp(0, 10))
+          : context.l10n.holdToRecordVoiceClip,
       child: Listener(
         behavior: HitTestBehavior.opaque,
         onPointerDown: widget.disabled
@@ -396,7 +396,7 @@ class _RecordingOverlay extends StatelessWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  context.strings.voiceClipRecording(secondsLeft),
+                  context.l10n.voiceClipRecording(secondsLeft),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -427,7 +427,7 @@ class _RecordingOverlay extends StatelessWidget {
           ),
           const SizedBox(height: 3),
           Text(
-            '← ${context.strings.cancel}',
+            '← ${context.l10n.cancel}',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: Theme.of(context).colorScheme.onErrorContainer,
             ),

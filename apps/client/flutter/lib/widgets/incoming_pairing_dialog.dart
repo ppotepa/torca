@@ -85,7 +85,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    context.strings.newPairingRequest,
+                    context.l10n.newPairingRequest,
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
@@ -93,7 +93,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                   _IdentitySummary(pairing: pairing ?? widget.pairing),
                   const SizedBox(height: 14),
                   Text(
-                    context.strings.pairingRequestDescription,
+                    context.l10n.pairingRequestDescription,
                     textAlign: TextAlign.center,
                   ),
                   if (_actions.error(context) != null) ...<Widget>[
@@ -123,7 +123,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                                   ),
                                 )
                               : Icon(context.torcaIcons.confirm),
-                          label: Text(context.strings.accept),
+                          label: Text(context.l10n.accept),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -133,7 +133,7 @@ class _IncomingPairingDialogState extends State<IncomingPairingDialog> {
                               ? null
                               : () => _run(PairingAction.reject, accept: false),
                           icon: Icon(context.torcaIcons.close),
-                          label: Text(context.strings.reject),
+                          label: Text(context.l10n.reject),
                         ),
                       ),
                     ],
@@ -169,7 +169,7 @@ class _IdentitySummary extends StatelessWidget {
             children: <Widget>[
               TorcaDeviceAvatar(
                 label: name == null || name.isEmpty
-                    ? context.strings.newDevice
+                    ? context.l10n.newDevice
                     : name,
                 identityId: pairing.remoteIdentityId,
                 fallbackIdentityId: pairing.id,
@@ -179,7 +179,7 @@ class _IdentitySummary extends StatelessWidget {
               Expanded(
                 child: Text(
                   name == null || name.isEmpty
-                      ? context.strings.newDevice
+                      ? context.l10n.newDevice
                       : name,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
@@ -188,7 +188,7 @@ class _IdentitySummary extends StatelessWidget {
           ),
           if (pairing.remoteIdentityId != null) ...<Widget>[
             const SizedBox(height: 6),
-            Text(context.strings.remoteIdentity(pairing.remoteIdentityId)),
+            Text(context.l10n.remoteIdentity(pairing.remoteIdentityId!)),
           ],
           if (pairing.remoteFingerprint != null) ...<Widget>[
             const SizedBox(height: 8),

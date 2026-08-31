@@ -30,7 +30,7 @@ class SettingsScreen extends StatelessWidget {
       body: ListenableBuilder(
         listenable: preferences,
         builder: (context, _) {
-          final strings = context.strings;
+          final strings = context.l10n;
           // Settings contains several relatively expensive controls and a
           // themed preview. A sliver-backed list only lays out the visible
           // portion on mobile instead of rebuilding and laying out the entire
@@ -250,7 +250,7 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  String _themeLabel(TorcaStrings strings, AppThemeMode mode) => switch (mode) {
+  String _themeLabel(TorcaLocalizations strings, AppThemeMode mode) => switch (mode) {
     AppThemeMode.system => strings.system,
     AppThemeMode.light => strings.light,
     AppThemeMode.dark => strings.dark,
@@ -274,13 +274,13 @@ class _BatterySettingsCard extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
           child: Text(
-            context.strings.batterySettingsDescription,
+            context.l10n.batterySettingsDescription,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
         _select<TorcaBatteryMode>(
           context,
-          label: context.strings.availabilityMode,
+          label: context.l10n.availabilityMode,
           value: preferences.batteryMode,
           values: TorcaBatteryMode.values,
           labelFor: (value) => _batteryModeLabel(context, value),
@@ -288,16 +288,16 @@ class _BatterySettingsCard extends StatelessWidget {
         ),
         TorcaSwitchTile(
           secondary: Icon(context.torcaIcons.save),
-          title: Text(context.strings.allowDelayedBackgroundDelivery),
+          title: Text(context.l10n.allowDelayedBackgroundDelivery),
           subtitle: Text(
-            context.strings.allowDelayedBackgroundDeliveryDescription,
+            context.l10n.allowDelayedBackgroundDeliveryDescription,
           ),
           value: preferences.allowDelayedBackgroundDelivery,
           onChanged: preferences.setAllowDelayedBackgroundDelivery,
         ),
         _select<TorcaMeteredTransferPolicy>(
           context,
-          label: context.strings.meteredTransfers,
+          label: context.l10n.meteredTransfers,
           value: preferences.meteredTransfers,
           values: TorcaMeteredTransferPolicy.values,
           labelFor: (value) => _meteredLabel(context, value),
@@ -305,7 +305,7 @@ class _BatterySettingsCard extends StatelessWidget {
         ),
         _select<TorcaVisualActivityPolicy>(
           context,
-          label: context.strings.visualActivity,
+          label: context.l10n.visualActivity,
           value: preferences.visualActivity,
           values: TorcaVisualActivityPolicy.values,
           labelFor: (value) => _visualLabel(context, value),
@@ -342,26 +342,26 @@ class _BatterySettingsCard extends StatelessWidget {
 
   String _batteryModeLabel(BuildContext context, TorcaBatteryMode value) =>
       switch (value) {
-        TorcaBatteryMode.automatic => context.strings.automatic,
-        TorcaBatteryMode.alwaysAvailable => context.strings.alwaysAvailable,
-        TorcaBatteryMode.batterySaver => context.strings.batterySaver,
+        TorcaBatteryMode.automatic => context.l10n.automatic,
+        TorcaBatteryMode.alwaysAvailable => context.l10n.alwaysAvailable,
+        TorcaBatteryMode.batterySaver => context.l10n.batterySaver,
       };
 
   String _meteredLabel(
     BuildContext context,
     TorcaMeteredTransferPolicy value,
   ) => switch (value) {
-    TorcaMeteredTransferPolicy.allowAll => context.strings.allowAll,
-    TorcaMeteredTransferPolicy.pauseLarge => context.strings.pauseLarge,
-    TorcaMeteredTransferPolicy.pauseAll => context.strings.pauseAll,
+    TorcaMeteredTransferPolicy.allowAll => context.l10n.allowAll,
+    TorcaMeteredTransferPolicy.pauseLarge => context.l10n.pauseLarge,
+    TorcaMeteredTransferPolicy.pauseAll => context.l10n.pauseAll,
   };
 
   String _visualLabel(BuildContext context, TorcaVisualActivityPolicy value) =>
       switch (value) {
-        TorcaVisualActivityPolicy.full => context.strings.fullAnimation,
-        TorcaVisualActivityPolicy.focusedOnly => context.strings.focusedOnly,
-        TorcaVisualActivityPolicy.staticOnly => context.strings.staticIdle,
-        TorcaVisualActivityPolicy.followSystem => context.strings.followSystem,
+        TorcaVisualActivityPolicy.full => context.l10n.fullAnimation,
+        TorcaVisualActivityPolicy.focusedOnly => context.l10n.focusedOnly,
+        TorcaVisualActivityPolicy.staticOnly => context.l10n.staticIdle,
+        TorcaVisualActivityPolicy.followSystem => context.l10n.followSystem,
       };
 }
 
@@ -385,7 +385,7 @@ class _AudioSettingsCard extends StatelessWidget {
             children: <Widget>[
               _deviceDropdown(
                 context,
-                label: context.strings.microphone,
+                label: context.l10n.microphone,
                 devices: audio.inputDevices,
                 selectedId: preferences.audioInputDeviceId,
                 onChanged: preferences.setAudioInputDevice,
@@ -393,7 +393,7 @@ class _AudioSettingsCard extends StatelessWidget {
               const SizedBox(height: 12),
               _deviceDropdown(
                 context,
-                label: context.strings.audioOutput,
+                label: context.l10n.audioOutput,
                 devices: audio.outputDevices,
                 selectedId: preferences.audioOutputDeviceId,
                 onChanged: preferences.setAudioOutputDevice,
@@ -422,14 +422,14 @@ class _AudioSettingsCard extends StatelessWidget {
       items: <DropdownMenuItem<String>>[
         DropdownMenuItem<String>(
           value: _systemDefaultDeviceId,
-          child: Text(context.strings.systemDefaultAudioDevice),
+          child: Text(context.l10n.systemDefaultAudioDevice),
         ),
         ...devices.map(
           (device) => DropdownMenuItem<String>(
             value: device.id,
             child: Text(
               device.isDefault
-                  ? context.strings.defaultAudioDevice(device.name)
+                  ? context.l10n.defaultAudioDevice(device.name)
                   : device.name,
               overflow: TextOverflow.ellipsis,
             ),
@@ -442,7 +442,7 @@ class _AudioSettingsCard extends StatelessWidget {
         } on Object {
           if (!context.mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.strings.audioDeviceUnavailable)),
+            SnackBar(content: Text(context.l10n.audioDeviceUnavailable)),
           );
         }
       },
@@ -500,9 +500,9 @@ class _AppearancePreview extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Text(context.strings.sampleContactName),
+                        Text(context.l10n.sampleContactName),
                         Text(
-                          context.strings.sampleOnline,
+                          context.l10n.sampleOnline,
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: Theme.of(context).colorScheme.primary,
@@ -512,14 +512,14 @@ class _AppearancePreview extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    context.strings.sampleTime,
+                    context.l10n.sampleTime,
                     style: Theme.of(context).textTheme.labelSmall,
                   ),
                 ],
               ),
               const SizedBox(height: 12),
               Text(
-                context.strings.todayUpper,
+                context.l10n.todayUpper,
                 style: Theme.of(context).textTheme.labelSmall,
               ),
               const SizedBox(height: 8),
@@ -532,7 +532,7 @@ class _AppearancePreview extends StatelessWidget {
                   status: 'delivered',
                   createdAtMs: 1725106800000,
                 ),
-                senderLabel: context.strings.sampleContactName,
+                senderLabel: context.l10n.sampleContactName,
                 senderColorKey: 'appearance-contact',
                 compactBottom: true,
                 onLongPress: () {},
@@ -556,7 +556,7 @@ class _AppearancePreview extends StatelessWidget {
               TextField(
                 readOnly: true,
                 decoration: InputDecoration(
-                  hintText: context.strings.message,
+                  hintText: context.l10n.message,
                   prefixIcon: Icon(context.torcaIcons.attachment),
                   suffixIcon: Icon(context.torcaIcons.send),
                 ),
@@ -595,8 +595,8 @@ class _PreviewMessage extends StatelessWidget {
       deliveredAtMs: outbound ? 1725106860000 : null,
     ),
     senderLabel: outbound
-        ? context.strings.senderYou
-        : context.strings.sampleContactName,
+        ? context.l10n.senderYou
+        : context.l10n.sampleContactName,
     senderColorKey: outbound ? 'appearance-local' : 'appearance-contact',
     showSender: showSender,
     compactTop: !showSender,
@@ -604,3 +604,5 @@ class _PreviewMessage extends StatelessWidget {
     onLongPress: () {},
   );
 }
+
+

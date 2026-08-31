@@ -26,7 +26,7 @@ String? contentExtension(String mediaType) => switch (mediaType) {
 bool hasVisualAttachmentPreview(String mediaType) =>
     mediaType.startsWith('image/') || mediaType.startsWith('video/');
 
-String messageStatusLabel(String status, TorcaStrings strings) =>
+String messageStatusLabel(String status, TorcaLocalizations strings) =>
     switch (status) {
       'queued' => strings.messageQueued,
       'sending' => strings.sendingSecurely,

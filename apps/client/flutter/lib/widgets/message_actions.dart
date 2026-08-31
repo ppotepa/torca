@@ -44,7 +44,7 @@ abstract final class MessageActionMenu {
                     (emoji) => Expanded(
                       child: Semantics(
                         button: true,
-                        label: '${context.strings.reactToMessage} $emoji',
+                        label: '${context.l10n.reactToMessage} $emoji',
                         child: InkWell(
                           borderRadius: BorderRadius.circular(12),
                           onTap: () {
@@ -70,60 +70,60 @@ abstract final class MessageActionMenu {
             context,
             MessageAction.reply,
             context.torcaIcons.reply,
-            context.strings.reply,
+            context.l10n.reply,
           ),
           _tile(
             context,
             MessageAction.react,
             context.torcaIcons.emoji,
-            context.strings.reactToMessage,
+            context.l10n.reactToMessage,
           ),
           _tile(
             context,
             MessageAction.copy,
             context.torcaIcons.copy,
-            context.strings.copy,
+            context.l10n.copy,
           ),
           _tile(
             context,
             MessageAction.forward,
             context.torcaIcons.forward,
-            context.strings.forwardMessage,
+            context.l10n.forwardMessage,
           ),
           _tile(
             context,
             MessageAction.bookmark,
             context.torcaIcons.bookmark,
             bookmarked
-                ? context.strings.removeBookmark
-                : context.strings.bookmarkMessage,
+                ? context.l10n.removeBookmark
+                : context.l10n.bookmarkMessage,
           ),
           if (canCancel)
             _tile(
               context,
               MessageAction.cancel,
               context.torcaIcons.close,
-              context.strings.cancelMessage,
+              context.l10n.cancelMessage,
             ),
           if (canEdit)
             _tile(
               context,
               MessageAction.edit,
               context.torcaIcons.edit,
-              context.strings.editMessage,
+              context.l10n.editMessage,
             ),
           if (canDelete)
             _tile(
               context,
               MessageAction.delete,
               context.torcaIcons.remove,
-              context.strings.deleteMessage,
+              context.l10n.deleteMessage,
             ),
           _tile(
             context,
             MessageAction.details,
             context.torcaIcons.info,
-            context.strings.messageDetails,
+            context.l10n.messageDetails,
           ),
         ],
       ),
@@ -155,7 +155,7 @@ abstract final class MessageActionMenu {
             children: <Widget>[
               for (final emoji in quickReactions)
                 IconButton(
-                  tooltip: '${context.strings.reactToMessage} $emoji',
+                  tooltip: '${context.l10n.reactToMessage} $emoji',
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(
                     minWidth: 34,
@@ -179,7 +179,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.reply),
-            title: Text(context.strings.reply),
+            title: Text(context.l10n.reply),
           ),
         ),
         PopupMenuItem(
@@ -188,7 +188,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.emoji),
-            title: Text(context.strings.reactToMessage),
+            title: Text(context.l10n.reactToMessage),
           ),
         ),
         PopupMenuItem(
@@ -197,7 +197,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.forward),
-            title: Text(context.strings.forwardMessage),
+            title: Text(context.l10n.forwardMessage),
           ),
         ),
         PopupMenuItem(
@@ -206,7 +206,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.copy),
-            title: Text(context.strings.copy),
+            title: Text(context.l10n.copy),
           ),
         ),
         PopupMenuItem(
@@ -217,8 +217,8 @@ abstract final class MessageActionMenu {
             leading: Icon(context.torcaIcons.bookmark),
             title: Text(
               bookmarked
-                  ? context.strings.removeBookmark
-                  : context.strings.bookmarkMessage,
+                  ? context.l10n.removeBookmark
+                  : context.l10n.bookmarkMessage,
             ),
           ),
         ),
@@ -229,7 +229,7 @@ abstract final class MessageActionMenu {
               dense: true,
               contentPadding: EdgeInsets.zero,
               leading: Icon(context.torcaIcons.close),
-              title: Text(context.strings.cancelMessage),
+              title: Text(context.l10n.cancelMessage),
             ),
           ),
         if (canEdit)
@@ -239,7 +239,7 @@ abstract final class MessageActionMenu {
               dense: true,
               contentPadding: EdgeInsets.zero,
               leading: Icon(context.torcaIcons.edit),
-              title: Text(context.strings.editMessage),
+              title: Text(context.l10n.editMessage),
             ),
           ),
         if (canDelete)
@@ -249,7 +249,7 @@ abstract final class MessageActionMenu {
               dense: true,
               contentPadding: EdgeInsets.zero,
               leading: Icon(context.torcaIcons.remove),
-              title: Text(context.strings.deleteMessage),
+              title: Text(context.l10n.deleteMessage),
             ),
           ),
         PopupMenuItem(
@@ -258,7 +258,7 @@ abstract final class MessageActionMenu {
             dense: true,
             contentPadding: EdgeInsets.zero,
             leading: Icon(context.torcaIcons.info),
-            title: Text(context.strings.messageDetails),
+            title: Text(context.l10n.messageDetails),
           ),
         ),
       ],
@@ -276,3 +276,5 @@ abstract final class MessageActionMenu {
     onTap: () => Navigator.of(context).pop(action),
   );
 }
+
+

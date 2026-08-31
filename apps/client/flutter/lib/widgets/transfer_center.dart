@@ -41,7 +41,7 @@ class TransferCenterButton extends StatelessWidget {
         .length;
     final count = active + failed + pending;
     return IconButton(
-      tooltip: context.strings.transfers,
+      tooltip: context.l10n.transfers,
       onPressed: () => _show(context),
       icon: Badge(
         isLabelVisible: count > 0,
@@ -112,7 +112,7 @@ class _TransferCenterDialogState extends State<_TransferCenterDialog> {
     final showFiles = _statusFilter != _TransferStatusFilter.completed;
     final showCompleted = _statusFilter != _TransferStatusFilter.active;
     return AlertDialog(
-      title: Text(context.strings.transfers),
+      title: Text(context.l10n.transfers),
       content: ConstrainedBox(
         constraints: BoxConstraints(
           minWidth: dialogWidth,
@@ -123,7 +123,7 @@ class _TransferCenterDialogState extends State<_TransferCenterDialog> {
             (!showFiles || visible.isEmpty) &&
                 (!showPending || pending.isEmpty) &&
                 (!showCompleted || completed.isEmpty)
-            ? Text(context.strings.noActiveTransfers)
+            ? Text(context.l10n.noActiveTransfers)
             : Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
@@ -169,7 +169,7 @@ class _TransferCenterDialogState extends State<_TransferCenterDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.strings.close),
+          child: Text(context.l10n.close),
         ),
       ],
     );
@@ -180,19 +180,19 @@ class _TransferCenterDialogState extends State<_TransferCenterDialog> {
     runSpacing: 6,
     children: <Widget>[
       FilterChip(
-        label: Text(context.strings.allOperations),
+        label: Text(context.l10n.allOperations),
         selected: _statusFilter == _TransferStatusFilter.all,
         onSelected: (_) =>
             setState(() => _statusFilter = _TransferStatusFilter.all),
       ),
       FilterChip(
-        label: Text(context.strings.activeTransfers),
+        label: Text(context.l10n.activeTransfers),
         selected: _statusFilter == _TransferStatusFilter.active,
         onSelected: (_) =>
             setState(() => _statusFilter = _TransferStatusFilter.active),
       ),
       FilterChip(
-        label: Text(context.strings.completedTransfers),
+        label: Text(context.l10n.completedTransfers),
         selected: _statusFilter == _TransferStatusFilter.completed,
         onSelected: (_) =>
             setState(() => _statusFilter = _TransferStatusFilter.completed),
@@ -205,31 +205,31 @@ class _TransferCenterDialogState extends State<_TransferCenterDialog> {
     runSpacing: 6,
     children: <Widget>[
       FilterChip(
-        label: Text(context.strings.allOperations),
+        label: Text(context.l10n.allOperations),
         selected: _kindFilter == _TransferKindFilter.all,
         onSelected: (_) =>
             setState(() => _kindFilter = _TransferKindFilter.all),
       ),
       FilterChip(
-        label: Text(context.strings.mediaTransfers),
+        label: Text(context.l10n.mediaTransfers),
         selected: _kindFilter == _TransferKindFilter.media,
         onSelected: (_) =>
             setState(() => _kindFilter = _TransferKindFilter.media),
       ),
       FilterChip(
-        label: Text(context.strings.documentTransfers),
+        label: Text(context.l10n.documentTransfers),
         selected: _kindFilter == _TransferKindFilter.documents,
         onSelected: (_) =>
             setState(() => _kindFilter = _TransferKindFilter.documents),
       ),
       FilterChip(
-        label: Text(context.strings.recordingTransfers),
+        label: Text(context.l10n.recordingTransfers),
         selected: _kindFilter == _TransferKindFilter.recordings,
         onSelected: (_) =>
             setState(() => _kindFilter = _TransferKindFilter.recordings),
       ),
       FilterChip(
-        label: Text(context.strings.fileTransfers),
+        label: Text(context.l10n.fileTransfers),
         selected: _kindFilter == _TransferKindFilter.files,
         onSelected: (_) =>
             setState(() => _kindFilter = _TransferKindFilter.files),
@@ -288,8 +288,8 @@ class _PendingOperationRow extends StatelessWidget {
     final error = operation.lastError?.trim();
     if (error?.isNotEmpty == true) return error!;
     final state = operation.typedState == PendingOperationState.retrying
-        ? context.strings.retrying
-        : context.strings.messageQueued;
+        ? context.l10n.retrying
+        : context.l10n.messageQueued;
     final dependency = switch (operation.typedDependency) {
       PendingOperationDependency.provider => 'provider',
       PendingOperationDependency.communication => 'transport',
@@ -302,7 +302,7 @@ class _PendingOperationRow extends StatelessWidget {
     };
     return dependency == null
         ? state
-        : '$state · ${context.strings.waitingForDependency(dependency)}';
+        : '$state · ${context.l10n.waitingForDependency(dependency)}';
   }
 
   String _label(String kind) {
@@ -360,7 +360,7 @@ class _TransferRow extends StatelessWidget {
                 children: <Widget>[
                   Icon(context.torcaIcons.success, size: 16),
                   const SizedBox(width: 4),
-                  Text(context.strings.completedTransfers),
+                  Text(context.l10n.completedTransfers),
                 ],
               )
             else if (failed)
@@ -369,14 +369,14 @@ class _TransferRow extends StatelessWidget {
                   RetryAttachmentCommandDto(attachmentIdHex: attachment.id),
                 ),
                 icon: Icon(context.torcaIcons.retry, size: 16),
-                label: Text(context.strings.retryNow),
+                label: Text(context.l10n.retryNow),
               ),
             TextButton.icon(
               onPressed: () => gateway.execute(
                 CancelAttachmentCommandDto(attachmentIdHex: attachment.id),
               ),
               icon: Icon(context.torcaIcons.close, size: 16),
-              label: Text(context.strings.cancel),
+              label: Text(context.l10n.cancel),
             ),
           ],
         ),

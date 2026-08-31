@@ -448,7 +448,7 @@ class _ConversationPaneState extends State<ConversationPane>
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: context.strings.operationFailed,
+            fallback: context.l10n.operationFailed,
           ),
         );
       }
@@ -572,7 +572,7 @@ class _ConversationPaneState extends State<ConversationPane>
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                   child: Text(
-                    context.strings.searchResultsCount(_searchResults.length),
+                    context.l10n.searchResultsCount(_searchResults.length),
                     style: Theme.of(context).textTheme.labelMedium,
                   ),
                 ),
@@ -589,9 +589,9 @@ class _ConversationPaneState extends State<ConversationPane>
                         child: Text(
                           _searching
                               ? (_searchController.text.trim().isEmpty
-                                    ? context.strings.typeToSearchConversation
-                                    : context.strings.noMatchingMessages)
-                              : '${context.strings.noMessagesYet}. ${context.strings.noMessagesYetDescription}',
+                                    ? context.l10n.typeToSearchConversation
+                                    : context.l10n.noMatchingMessages)
+                              : '${context.l10n.noMessagesYet}. ${context.l10n.noMessagesYetDescription}',
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -675,9 +675,9 @@ class _ConversationPaneState extends State<ConversationPane>
                               senderLabel:
                                   message.typedDirection ==
                                       MessageDirection.outbound
-                                  ? context.strings.senderYou
+                                  ? context.l10n.senderYou
                                   : contact?.displayName ??
-                                        context.strings.contactLabel,
+                                        context.l10n.contactLabel,
                               senderColorKey:
                                   message.typedDirection ==
                                       MessageDirection.outbound
@@ -697,7 +697,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                   ? null
                                   : quoted?.body ??
                                         context
-                                            .strings
+                                            .l10n
                                             .originalMessageUnavailable,
                               quotedUnavailable:
                                   message.replyToMessageId != null &&
@@ -708,7 +708,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                     context.torcaIcons.bookmark,
                                     size: 16,
                                     semanticLabel:
-                                        context.strings.bookmarkMessage,
+                                        context.l10n.bookmarkMessage,
                                   ),
                                 if (attachmentAnnouncement &&
                                     attachments.isEmpty)
@@ -738,8 +738,8 @@ class _ConversationPaneState extends State<ConversationPane>
                                           : Icon(context.torcaIcons.retry),
                                       label: Text(
                                         retryBusy
-                                            ? context.strings.retrying
-                                            : context.strings.retryNow,
+                                            ? context.l10n.retrying
+                                            : context.l10n.retryNow,
                                       ),
                                     ),
                                   ),
@@ -828,7 +828,7 @@ class _ConversationPaneState extends State<ConversationPane>
                         label: Text('$_jumpMessageCount'),
                         child: FloatingActionButton.small(
                           heroTag: null,
-                          tooltip: context.strings.jumpToLatest,
+                          tooltip: context.l10n.jumpToLatest,
                           onPressed: _scrollToBottom,
                           child: Icon(context.torcaIcons.jumpToLatest),
                         ),
@@ -864,9 +864,9 @@ class _ConversationPaneState extends State<ConversationPane>
           searching: _searching,
           disabled: sending || _searching || composerRestricted,
           disabledMessage: identityChanged
-              ? context.strings.identityChangedSendBlocked
+              ? context.l10n.identityChangedSendBlocked
               : contactBlocked
-              ? context.strings.blockedSendBlocked
+              ? context.l10n.blockedSendBlocked
               : null,
           reply: reply,
           onCancelReply: () => setState(() => _replyingTo = null),
@@ -942,10 +942,10 @@ class _ConversationPaneState extends State<ConversationPane>
       textInputAction: TextInputAction.newline,
       decoration: InputDecoration(
         labelText: editing
-            ? context.strings.editMessage
+            ? context.l10n.editMessage
             : replying
-            ? context.strings.reply
-            : context.strings.message,
+            ? context.l10n.reply
+            : context.l10n.message,
       ),
     );
     if (!isTorcaDesktop) return field;
@@ -996,7 +996,7 @@ class _ConversationPaneState extends State<ConversationPane>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               if (_recentEmojis.isNotEmpty) ...<Widget>[
-                Text(context.strings.recentEmoji),
+                Text(context.l10n.recentEmoji),
                 const SizedBox(height: 8),
                 _emojiWrap(context, _recentEmojis),
                 const SizedBox(height: 12),
@@ -1076,7 +1076,7 @@ class _ConversationPaneState extends State<ConversationPane>
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: context.strings.operationFailed,
+            fallback: context.l10n.operationFailed,
           ),
         );
       }
@@ -1140,7 +1140,7 @@ class _ConversationPaneState extends State<ConversationPane>
         await Clipboard.setData(ClipboardData(text: message.body));
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.strings.messageCopied)),
+            SnackBar(content: Text(context.l10n.messageCopied)),
           );
         }
       case MessageAction.edit:
@@ -1176,16 +1176,16 @@ class _ConversationPaneState extends State<ConversationPane>
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: Text(context.strings.cancelMessage),
-            content: Text(context.strings.cancelMessage),
+            title: Text(context.l10n.cancelMessage),
+            content: Text(context.l10n.cancelMessage),
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: Text(context.strings.close),
+                child: Text(context.l10n.close),
               ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(true),
-                child: Text(context.strings.cancel),
+                child: Text(context.l10n.cancel),
               ),
             ],
           ),
@@ -1198,14 +1198,14 @@ class _ConversationPaneState extends State<ConversationPane>
           if (!mounted) return;
           if (result.ok) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.strings.messageCancelled)),
+              SnackBar(content: Text(context.l10n.messageCancelled)),
             );
           } else {
             _showError(
               BridgeErrorPresenter.localized(
                 context,
                 result,
-                fallback: context.strings.operationFailed,
+                fallback: context.l10n.operationFailed,
               ),
             );
           }
@@ -1214,16 +1214,16 @@ class _ConversationPaneState extends State<ConversationPane>
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: Text(context.strings.deleteMessageTitle),
-            content: Text(context.strings.deleteMessage),
+            title: Text(context.l10n.deleteMessageTitle),
+            content: Text(context.l10n.deleteMessage),
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: Text(context.strings.close),
+                child: Text(context.l10n.close),
               ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(true),
-                child: Text(context.strings.deleteMessage),
+                child: Text(context.l10n.deleteMessage),
               ),
             ],
           ),
@@ -1235,7 +1235,7 @@ class _ConversationPaneState extends State<ConversationPane>
             DeleteMessageCommandDto(messageIdHex: message.id),
           );
         } on Object {
-          if (mounted) _showError(context.strings.operationFailed);
+          if (mounted) _showError(context.l10n.operationFailed);
           return;
         }
         if (!result.ok && mounted) {
@@ -1243,7 +1243,7 @@ class _ConversationPaneState extends State<ConversationPane>
             BridgeErrorPresenter.localized(
               context,
               result,
-              fallback: context.strings.operationFailed,
+              fallback: context.l10n.operationFailed,
             ),
           );
         }
@@ -1255,7 +1255,7 @@ class _ConversationPaneState extends State<ConversationPane>
   Future<void> _reactToMessage(MessageDto message, {String? emoji}) async {
     final actorId = widget.gateway.snapshots.value.identity?.id;
     if (actorId == null || actorId.isEmpty) {
-      _showError(context.strings.localIdentityNotReady);
+      _showError(context.l10n.localIdentityNotReady);
       return;
     }
     final selectedEmoji =
@@ -1296,7 +1296,7 @@ class _ConversationPaneState extends State<ConversationPane>
         ),
       );
     } on Object {
-      if (mounted) _showError(context.strings.couldNotUpdateReaction);
+      if (mounted) _showError(context.l10n.couldNotUpdateReaction);
       return;
     }
     if (!result.ok && mounted) {
@@ -1304,7 +1304,7 @@ class _ConversationPaneState extends State<ConversationPane>
         BridgeErrorPresenter.localized(
           context,
           result,
-          fallback: context.strings.couldNotUpdateReaction,
+          fallback: context.l10n.couldNotUpdateReaction,
         ),
       );
     }
@@ -1313,7 +1313,7 @@ class _ConversationPaneState extends State<ConversationPane>
   Future<void> _showMessageDetails(MessageDto message) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text(context.strings.messageDetails),
+      title: Text(context.l10n.messageDetails),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1322,7 +1322,7 @@ class _ConversationPaneState extends State<ConversationPane>
           _detail('Direction', message.direction),
           _detail(
             'Status',
-            messageStatusLabel(message.status, context.strings),
+            messageStatusLabel(message.status, context.l10n),
           ),
           _detail('Queued / received', _date(message.createdAtMs)),
           if (message.sentAtMs != null)
@@ -1337,7 +1337,7 @@ class _ConversationPaneState extends State<ConversationPane>
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.strings.close),
+          child: Text(context.l10n.close),
         ),
       ],
     ),
@@ -1367,3 +1367,5 @@ class _ConversationPaneState extends State<ConversationPane>
   }
   return (sending, receiving);
 }
+
+

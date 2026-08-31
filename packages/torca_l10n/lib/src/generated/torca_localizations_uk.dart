@@ -152,12 +152,12 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get bookmarkMessage => 'Bookmark Message';
 
   @override
-  String bootstrapAttempt(Object attempt, Object label) {
+  String bootstrapAttempt(String label, int attempt) {
     return '$label $attempt';
   }
 
   @override
-  String bootstrapProgress(Object elapsed, Object ready, Object total) {
+  String bootstrapProgress(int ready, int total, String elapsed) {
     return '$ready $total $elapsed';
   }
 
@@ -188,8 +188,8 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   }
 
   @override
-  String buildTooltip(Object build, Object service) {
-    return 'Torca build $build\\nProvider service: $service';
+  String buildTooltip(Object build, Object providerService) {
+    return 'Torca build $build\\nProvider service: $providerService';
   }
 
   @override
@@ -275,7 +275,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get connecting => 'Connecting';
 
   @override
-  String connectingPeerThrough(Object provider) {
+  String connectingPeerThrough(String provider) {
     return '$provider';
   }
 
@@ -289,7 +289,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get connectionDetailsTitle => 'Connection details';
 
   @override
-  String connectionEvidenceNote(Object provider) {
+  String connectionEvidenceNote(String provider) {
     return '$provider';
   }
 
@@ -472,7 +472,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get directPeers => 'Direct peers';
 
   @override
-  String directProviderContact(Object provider) {
+  String directProviderContact(String provider) {
     return '$provider';
   }
 
@@ -673,7 +673,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get jumpToLatest => 'Jump to latest message';
 
   @override
-  String get language => 'Language';
+  String get language => 'Мова';
 
   @override
   String get languageEnglish => 'English';
@@ -768,7 +768,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get messageSenderYou => 'Ви';
 
   @override
-  String messageTooLong(Object maximum) {
+  String messageTooLong(int maximum) {
     return '$maximum';
   }
 
@@ -957,7 +957,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
       'This device joined your invitation. Review the contact details before accepting.';
 
   @override
-  String pairingStateLabel(Object state) {
+  String pairingStateLabel(String state) {
     return '$state';
   }
 
@@ -1029,27 +1029,27 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get providerEndpointUnavailable => 'Provider Endpoint Unavailable';
 
   @override
-  String providerName(Object provider) {
+  String providerName(String provider) {
     return '$provider';
   }
 
   @override
-  String providerReady(Object provider) {
+  String providerReady(String provider) {
     return '$provider';
   }
 
   @override
-  String providerReconnecting(Object provider) {
+  String providerReconnecting(String provider) {
     return '$provider';
   }
 
   @override
-  String providerStarting(Object provider) {
+  String providerStarting(String provider) {
     return '$provider';
   }
 
   @override
-  String providerStateLabel(Object provider, Object state) {
+  String providerStateLabel(String provider, String state) {
     return '$provider $state';
   }
 
@@ -1108,7 +1108,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get radioTransmitting => 'Radio Transmitting';
 
   @override
-  String radioTransportFailure(Object code) {
+  String radioTransportFailure(String code) {
     return '$code';
   }
 
@@ -1143,7 +1143,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get reconnecting => 'Reconnecting';
 
   @override
-  String reconnectingPeerThrough(Object provider) {
+  String reconnectingPeerThrough(String provider) {
     return '$provider';
   }
 
@@ -1178,7 +1178,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get reject => 'Reject';
 
   @override
-  String remoteIdentity(Object id) {
+  String remoteIdentity(String id) {
     return 'Identity $id';
   }
 
@@ -1307,7 +1307,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get searchMessages => 'Search messages';
 
   @override
-  String searchResultsCount(Object count) {
+  String searchResultsCount(int count) {
     return '$count';
   }
 
@@ -1340,7 +1340,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get sent => 'Sent';
 
   @override
-  String get settings => 'Settings';
+  String get settings => 'Налаштування';
 
   @override
   String get settingsTitle => 'Налаштування';
@@ -1349,7 +1349,7 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get sharedMedia => 'Shared Media';
 
   @override
-  String sharedMediaCount(Object count) {
+  String sharedMediaCount(int count) {
     return '$count';
   }
 

@@ -100,7 +100,7 @@ class ConversationHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final value = contact;
     final blocked = value?.typedStatus == ContactStatus.blocked;
-    final name = value?.displayName ?? context.strings.contactLabel;
+    final name = value?.displayName ?? context.l10n.contactLabel;
     final radioState = session?.typedState ?? radio?.typedState;
     final avatar = TorcaDeviceAvatar(
       label: name,
@@ -146,13 +146,13 @@ class ConversationHeader extends StatelessWidget {
               ),
               if (radioAction != null) radioAction,
               IconButton(
-                tooltip: context.strings.connectionDetails,
+                tooltip: context.l10n.connectionDetails,
                 onPressed: onConnectionDetails,
                 icon: Icon(context.torcaIcons.info),
               ),
               if (onConversationActions != null)
                 IconButton(
-                  tooltip: context.strings.conversationActions,
+                  tooltip: context.l10n.conversationActions,
                   onPressed: onConversationActions,
                   icon: Icon(context.torcaIcons.more),
                 ),
@@ -221,13 +221,13 @@ class ConversationHeader extends StatelessWidget {
             ),
             if (radioAction != null) radioAction,
             IconButton(
-              tooltip: context.strings.connectionDetails,
+              tooltip: context.l10n.connectionDetails,
               onPressed: onConnectionDetails,
               icon: Icon(context.torcaIcons.info),
             ),
             if (onConversationActions != null)
               IconButton(
-                tooltip: context.strings.conversationActions,
+                tooltip: context.l10n.conversationActions,
                 onPressed: onConversationActions,
                 icon: Icon(context.torcaIcons.more),
               ),
@@ -255,13 +255,13 @@ class ConversationHeader extends StatelessWidget {
               ),
               if (radioAction != null) radioAction,
               IconButton(
-                tooltip: context.strings.connectionDetails,
+                tooltip: context.l10n.connectionDetails,
                 onPressed: onConnectionDetails,
                 icon: Icon(context.torcaIcons.info),
               ),
               if (onConversationActions != null)
                 IconButton(
-                  tooltip: context.strings.conversationActions,
+                  tooltip: context.l10n.conversationActions,
                   onPressed: onConversationActions,
                   icon: Icon(context.torcaIcons.more),
                 ),
@@ -300,7 +300,7 @@ class ConversationHeader extends StatelessWidget {
       if (value != null)
         blocked
             ? Text(
-                context.strings.blocked,
+                context.l10n.blocked,
                 style: Theme.of(context).textTheme.bodySmall,
               )
             : InkWell(
@@ -347,8 +347,8 @@ class _InstantContactAction extends StatelessWidget {
     // keeps the compact header honest for read-only embeds).
     if (onChanged == null) return const SizedBox.shrink();
     final label = enabled
-        ? context.strings.instantModeEnabled
-        : context.strings.instantMode;
+        ? context.l10n.instantModeEnabled
+        : context.l10n.instantMode;
     return Semantics(
       label: label,
       toggled: enabled,
@@ -399,10 +399,10 @@ class _RadioHeaderAction extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return Semantics(
       label: capturing
-          ? context.strings.radioTransmitting
+          ? context.l10n.radioTransmitting
           : receiving
-          ? context.strings.radioReceiving(contact.displayName)
-          : context.strings.radioMode,
+          ? context.l10n.radioReceiving(contact.displayName)
+          : context.l10n.radioMode,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -429,7 +429,7 @@ class _RadioHeaderAction extends StatelessWidget {
           ),
           TorcaSwitch(
             value: radio.localEnabled,
-            semanticLabel: context.strings.radioMode,
+            semanticLabel: context.l10n.radioMode,
             onChanged: (enabled) => _setEnabled(context, enabled),
           ),
         ],
@@ -444,7 +444,7 @@ class _RadioHeaderAction extends StatelessWidget {
     if (!context.mounted || result.ok) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(context.strings.couldNotStartRadio)));
+    ).showSnackBar(SnackBar(content: Text(context.l10n.couldNotStartRadio)));
   }
 }
 

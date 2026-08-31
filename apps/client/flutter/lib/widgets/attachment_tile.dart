@@ -42,8 +42,8 @@ class AttachmentPendingTile extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     outbound
-                        ? context.strings.preparingUpload
-                        : context.strings.preparingDownload,
+                        ? context.l10n.preparingUpload
+                        : context.l10n.preparingDownload,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -179,25 +179,25 @@ class AttachmentTile extends StatelessWidget {
                 TextButton.icon(
                   onPressed: operationBusy ? null : onOpen,
                   icon: Icon(context.torcaIcons.open),
-                  label: Text(context.strings.open),
+                  label: Text(context.l10n.open),
                 ),
               if (available)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onSave,
                   icon: Icon(context.torcaIcons.save),
-                  label: Text(context.strings.saveAs),
+                  label: Text(context.l10n.saveAs),
                 ),
               if (failed)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onRetry,
                   icon: Icon(context.torcaIcons.retry),
-                  label: Text(context.strings.retryNow),
+                  label: Text(context.l10n.retryNow),
                 ),
               if (!terminal)
                 TextButton.icon(
                   onPressed: operationBusy ? null : onCancel,
                   icon: Icon(context.torcaIcons.close),
-                  label: Text(context.strings.cancel),
+                  label: Text(context.l10n.cancel),
                 ),
             ],
           ),
@@ -234,24 +234,24 @@ class AttachmentTile extends StatelessWidget {
     String status,
     String direction,
   ) => switch (status) {
-    'prepared' => context.strings.preparingSecureCopy,
-    'encrypting' => context.strings.encrypting,
+    'prepared' => context.l10n.preparingSecureCopy,
+    'encrypting' => context.l10n.encrypting,
     'queued' =>
       direction == 'inbound'
-          ? context.strings.waitingToReceive
-          : context.strings.waitingForPeer,
+          ? context.l10n.waitingToReceive
+          : context.l10n.waitingForPeer,
     'transferring' || 'sending' =>
       direction == 'inbound'
-          ? context.strings.receivingSecurely
-          : context.strings.sendingSecurely,
-    'receiving' => context.strings.receivingSecurely,
+          ? context.l10n.receivingSecurely
+          : context.l10n.sendingSecurely,
+    'receiving' => context.l10n.receivingSecurely,
     // A message receipt may reach the projection before its attachment
     // state refresh. Keep delivery wording in MessageBubble's footer;
     // this card describes file availability only.
-    'delivered' => context.strings.attachmentSyncing,
-    'available' => context.strings.verifiedOnDevice,
-    'failed' => context.strings.transferFailed,
-    'cancelled' => context.strings.cancelled,
+    'delivered' => context.l10n.attachmentSyncing,
+    'available' => context.l10n.verifiedOnDevice,
+    'failed' => context.l10n.transferFailed,
+    'cancelled' => context.l10n.cancelled,
     _ => status,
   };
 
@@ -277,14 +277,14 @@ class AttachmentTile extends StatelessWidget {
     BuildContext context,
     String code,
   ) => switch (code) {
-    'ATTACHMENT_ACK_TIMEOUT' => context.strings.attachmentAckTimeout,
-    'ATTACHMENT_PEER_UNAVAILABLE' => context.strings.attachmentPeerUnavailable,
-    'ATTACHMENT_INTEGRITY_FAILED' => context.strings.attachmentIntegrityFailed,
-    'ATTACHMENT_STORAGE_FAILED' => context.strings.attachmentStorageFailed,
-    'ATTACHMENT_MESSAGE_PENDING' => context.strings.attachmentMessagePending,
+    'ATTACHMENT_ACK_TIMEOUT' => context.l10n.attachmentAckTimeout,
+    'ATTACHMENT_PEER_UNAVAILABLE' => context.l10n.attachmentPeerUnavailable,
+    'ATTACHMENT_INTEGRITY_FAILED' => context.l10n.attachmentIntegrityFailed,
+    'ATTACHMENT_STORAGE_FAILED' => context.l10n.attachmentStorageFailed,
+    'ATTACHMENT_MESSAGE_PENDING' => context.l10n.attachmentMessagePending,
     'ATTACHMENT_DEPENDENCY_MISSING' =>
-      context.strings.attachmentDependencyMissing,
-    _ => context.strings.attachmentRetryAvailable,
+      context.l10n.attachmentDependencyMissing,
+    _ => context.l10n.attachmentRetryAvailable,
   };
 }
 

@@ -59,7 +59,7 @@ extension on _ConversationPaneState {
         );
       }
     } on Object {
-      if (mounted) _showError(context.strings.couldNotQueueAttachment);
+      if (mounted) _showError(context.l10n.couldNotQueueAttachment);
     } finally {
       if (await source.exists()) await source.delete();
     }
@@ -73,16 +73,16 @@ extension on _ConversationPaneState {
       widget.conversation,
     );
     if (contact?.typedStatus == ContactStatus.blocked) {
-      _showError(context.strings.blockedSendBlocked);
+      _showError(context.l10n.blockedSendBlocked);
       return;
     }
     if (contact?.typedVerificationStatus ==
         VerificationStatus.identityChanged) {
-      _showError(context.strings.identityChangedSendBlocked);
+      _showError(context.l10n.identityChangedSendBlocked);
       return;
     }
     if (body.characters.length > maxMessageCharacters) {
-      _showError(context.strings.messageTooLong(maxMessageCharacters));
+      _showError(context.l10n.messageTooLong(maxMessageCharacters));
       return;
     }
     if (body.isNotEmpty) {
@@ -121,7 +121,7 @@ extension on _ConversationPaneState {
             BridgeErrorPresenter.localized(
               context,
               result,
-              fallback: context.strings.operationFailed,
+              fallback: context.l10n.operationFailed,
             ),
           );
         }
@@ -249,7 +249,7 @@ extension on _ConversationPaneState {
         if (!mounted) return;
         if (!response.ok) {
           _showError(
-            '${item.originalName}: ${BridgeErrorPresenter.localized(context, response, fallback: context.strings.couldNotQueueAttachment)}',
+            '${item.originalName}: ${BridgeErrorPresenter.localized(context, response, fallback: context.l10n.couldNotQueueAttachment)}',
           );
           unawaited(prepared.disposeAfter(_attachmentStagingGrace));
           continue;
@@ -266,7 +266,7 @@ extension on _ConversationPaneState {
       if (queued > 0) await _timeline.refreshLatest();
       if (mounted && queued > 1) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.strings.attachmentsQueued(queued))),
+          SnackBar(content: Text(context.l10n.attachmentsQueued(queued))),
         );
       }
     });
@@ -298,7 +298,7 @@ extension on _ConversationPaneState {
               BridgeErrorPresenter.localized(
                 context,
                 result,
-                fallback: context.strings.operationFailed,
+                fallback: context.l10n.operationFailed,
               ),
             );
           }
@@ -306,14 +306,14 @@ extension on _ConversationPaneState {
         }
         final bytes = await temp.readAsBytes();
         final destination = await FilePicker.saveFile(
-          dialogTitle: context.strings.saveAttachment,
+          dialogTitle: context.l10n.saveAttachment,
           fileName: attachment.name,
           bytes: bytes,
           mimeType: attachment.mediaType,
         );
         if (mounted && destination != null) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.strings.attachmentSaved)),
+            SnackBar(content: Text(context.l10n.attachmentSaved)),
           );
         }
       } finally {
@@ -369,7 +369,7 @@ extension on _ConversationPaneState {
                 top: 8,
                 right: 8,
                 child: IconButton.filledTonal(
-                  tooltip: context.strings.close,
+                  tooltip: context.l10n.close,
                   onPressed: () => Navigator.of(context).pop(),
                   icon: Icon(context.torcaIcons.close),
                 ),
@@ -400,7 +400,7 @@ extension on _ConversationPaneState {
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: context.strings.operationFailed,
+            fallback: context.l10n.operationFailed,
           ),
         );
         return;
@@ -438,7 +438,7 @@ extension on _ConversationPaneState {
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: context.strings.attachmentOperationFailed,
+            fallback: context.l10n.attachmentOperationFailed,
           ),
         );
       }
@@ -453,7 +453,7 @@ extension on _ConversationPaneState {
     if (!mounted || options.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.strings.chooseConversation)),
+          SnackBar(content: Text(context.l10n.chooseConversation)),
         );
       }
       return;
@@ -461,14 +461,14 @@ extension on _ConversationPaneState {
     final target = await showDialog<ConversationDto>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: Text(context.strings.chooseConversation),
+        title: Text(context.l10n.chooseConversation),
         children: options
             .map(
               (conversation) => SimpleDialogOption(
                 onPressed: () => Navigator.of(context).pop(conversation),
                 child: Text(
                   contactForSnapshot(snapshot, conversation)?.displayName ??
-                      context.strings.contactLabel,
+                      context.l10n.contactLabel,
                 ),
               ),
             )
@@ -490,8 +490,8 @@ extension on _ConversationPaneState {
     if (body.isEmpty && attachments.isEmpty) {
       _showError(
         skippedAttachments > 0
-            ? context.strings.forwardNoAvailableAttachments(skippedAttachments)
-            : context.strings.noForwardableContent,
+            ? context.l10n.forwardNoAvailableAttachments(skippedAttachments)
+            : context.l10n.noForwardableContent,
       );
       return;
     }
@@ -508,7 +508,7 @@ extension on _ConversationPaneState {
             BridgeErrorPresenter.localized(
               context,
               result,
-              fallback: context.strings.couldNotForwardMessage,
+              fallback: context.l10n.couldNotForwardMessage,
             ),
           );
           return;
@@ -524,7 +524,7 @@ extension on _ConversationPaneState {
         }
         if (prepared == null) {
           _showError(
-            '${attachment.name}: ${context.strings.couldNotQueueAttachment}',
+            '${attachment.name}: ${context.l10n.couldNotQueueAttachment}',
           );
           continue;
         }
@@ -546,7 +546,7 @@ extension on _ConversationPaneState {
         } else {
           unawaited(prepared.disposeAfter(_attachmentStagingGrace));
           _showError(
-            '${attachment.name}: ${BridgeErrorPresenter.localized(context, result, fallback: context.strings.couldNotQueueAttachment)}',
+            '${attachment.name}: ${BridgeErrorPresenter.localized(context, result, fallback: context.l10n.couldNotQueueAttachment)}',
           );
         }
       }
@@ -556,10 +556,10 @@ extension on _ConversationPaneState {
           SnackBar(
             content: Text(
               skippedAttachments > 0
-                  ? context.strings.forwardSkippedAttachments(
+                  ? context.l10n.forwardSkippedAttachments(
                       skippedAttachments,
                     )
-                  : context.strings.messageForwarded,
+                  : context.l10n.messageForwarded,
             ),
           ),
         );
@@ -626,6 +626,8 @@ extension on _ConversationPaneState {
   );
 
   String _date(int ms) => ms <= 0
-      ? context.strings.unavailable
+      ? context.l10n.unavailable
       : DateTime.fromMillisecondsSinceEpoch(ms).toLocal().toString();
 }
+
+

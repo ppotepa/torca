@@ -200,7 +200,7 @@ class _VoiceMessageTileState extends State<VoiceMessageTile> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  context.strings.voiceMessage,
+                  context.l10n.voiceMessage,
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
               ),
@@ -212,8 +212,8 @@ class _VoiceMessageTileState extends State<VoiceMessageTile> {
             children: <Widget>[
               IconButton.filledTonal(
                 tooltip: available
-                    ? context.strings.playVoiceMessage
-                    : context.strings.waitingForPeer,
+                    ? context.l10n.playVoiceMessage
+                    : context.l10n.waitingForPeer,
                 onPressed: available && !_loading ? _toggle : null,
                 icon: _loading
                     ? const SizedBox(
@@ -244,8 +244,8 @@ class _VoiceMessageTileState extends State<VoiceMessageTile> {
           Text(
             available
                 ? (_playback.wasPlayed(attachment.id)
-                      ? context.strings.voiceMessagePlayed
-                      : context.strings.voiceMessageReady)
+                      ? context.l10n.voiceMessagePlayed
+                      : context.l10n.voiceMessageReady)
                 : _statusLabel(context, attachment),
             style: Theme.of(context).textTheme.labelSmall,
           ),
@@ -261,13 +261,13 @@ class _VoiceMessageTileState extends State<VoiceMessageTile> {
                   TextButton.icon(
                     onPressed: widget.operationBusy ? null : widget.onRetry,
                     icon: Icon(context.torcaIcons.retry),
-                    label: Text(context.strings.retryNow),
+                    label: Text(context.l10n.retryNow),
                   ),
                 if (!available)
                   TextButton.icon(
                     onPressed: widget.operationBusy ? null : widget.onCancel,
                     icon: Icon(context.torcaIcons.close),
-                    label: Text(context.strings.cancel),
+                    label: Text(context.l10n.cancel),
                   ),
               ],
             ),
@@ -281,8 +281,8 @@ class _VoiceMessageTileState extends State<VoiceMessageTile> {
 
   String _statusLabel(BuildContext context, AttachmentDto attachment) =>
       attachment.typedDirection == AttachmentDirection.inbound
-      ? context.strings.receivingSecurely
-      : context.strings.sendingSecurely;
+      ? context.l10n.receivingSecurely
+      : context.l10n.sendingSecurely;
 }
 
 class _VoiceWaveformProgress extends StatelessWidget {
