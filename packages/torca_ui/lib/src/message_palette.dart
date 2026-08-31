@@ -15,10 +15,18 @@ abstract final class TorcaMessagePalette {
     Color(0xFFD05A6E),
   ];
 
-  static ({Color surface, Color border, Color foreground, Color muted}) resolve(
-    BuildContext context,
-    String key,
-  ) {
+  static ({
+    Color surface,
+    Color header,
+    Color body,
+    Color footer,
+    Color connector,
+    Color border,
+    Color headerForeground,
+    Color foreground,
+    Color muted,
+  })
+  resolve(BuildContext context, String key) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final index = _stableIndex(key, _accents.length);
@@ -26,14 +34,29 @@ abstract final class TorcaMessagePalette {
     final background =
         theme.extension<TorcaSemanticColors>()?.chatBackground ??
         scheme.surface;
-    final surface = Color.alphaBlend(accent.withValues(alpha: .34), background);
+    // Message cards are intentionally built from three solid surfaces.  The
+    // accent is identity-specific, while the blend levels keep the hierarchy
+    // legible in both light and dark themes without relying on a card border.
+    final header = Color.alphaBlend(accent.withValues(alpha: .82), background);
+    final body = Color.alphaBlend(accent.withValues(alpha: .28), background);
+    final footer = Color.alphaBlend(accent.withValues(alpha: .16), background);
+    final surface = body;
+    final headerForeground =
+        ThemeData.estimateBrightnessForColor(header) == Brightness.dark
+        ? Colors.white
+        : Colors.black87;
     final foreground =
         ThemeData.estimateBrightnessForColor(surface) == Brightness.dark
         ? Colors.white
         : Colors.black87;
     return (
       surface: surface,
+      header: header,
+      body: body,
+      footer: footer,
+      connector: accent.withValues(alpha: .78),
       border: accent,
+      headerForeground: headerForeground,
       foreground: foreground,
       muted: foreground.withValues(alpha: .72),
     );

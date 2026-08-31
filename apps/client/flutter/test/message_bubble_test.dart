@@ -65,9 +65,58 @@ void main() {
     expect(outbound.width, lessThanOrEqualTo(282.3));
     // The footer stays inside the bubble border in both modern and terminal
     // appearances.
-    expect(outboundFooter.right, closeTo(outbound.right - 10 - 1.2, 0.1));
+    expect(outboundFooter.right, closeTo(outbound.right - 10, 0.1));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'message sections use solid layered surfaces and grouped connectors',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark(),
+          home: Scaffold(
+            body: MessageBubble(
+              message: const MessageDto(
+                id: 'layered',
+                conversationId: 'conversation',
+                body: 'Layered message',
+                direction: 'inbound',
+                status: 'delivered',
+                createdAtMs: 1000,
+              ),
+              compactTop: true,
+              onLongPress: () {},
+            ),
+          ),
+        ),
+      );
+
+      final header = tester.widget<Container>(
+        find.byKey(const ValueKey<String>('message-header-layered')),
+      );
+      final body = tester.widget<Container>(
+        find.byKey(const ValueKey<String>('message-body-section-layered')),
+      );
+      final footer = tester.widget<Container>(
+        find.byKey(const ValueKey<String>('message-footer-section-layered')),
+      );
+      final headerDecoration = header.decoration! as BoxDecoration;
+      final bodyDecoration = body.decoration! as BoxDecoration;
+      final footerDecoration = footer.decoration! as BoxDecoration;
+
+      expect(headerDecoration.border, isNull);
+      expect(bodyDecoration.border, isNull);
+      expect(footerDecoration.border, isNull);
+      expect(headerDecoration.color, isNot(bodyDecoration.color));
+      expect(bodyDecoration.color, isNot(footerDecoration.color));
+      expect(
+        find.byKey(const ValueKey<String>('message-connector-layered')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('message body and footer stay visible across parity widths', (
     tester,
