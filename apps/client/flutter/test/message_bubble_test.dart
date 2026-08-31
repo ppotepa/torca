@@ -282,6 +282,56 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('grouped messages show the sender only at the block start', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: Column(
+            children: <Widget>[
+              MessageBubble(
+                message: const MessageDto(
+                  id: 'block-first',
+                  conversationId: '02',
+                  body: 'First',
+                  direction: 'inbound',
+                  status: 'delivered',
+                  createdAtMs: 1000,
+                ),
+                senderLabel: 'Alex',
+                onLongPress: () {},
+              ),
+              MessageBubble(
+                message: const MessageDto(
+                  id: 'block-second',
+                  conversationId: '02',
+                  body: 'Second',
+                  direction: 'inbound',
+                  status: 'delivered',
+                  createdAtMs: 2000,
+                ),
+                senderLabel: 'Alex',
+                compactTop: true,
+                showSender: false,
+                onLongPress: () {},
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Alex'), findsOneWidget);
+    expect(find.text('First'), findsOneWidget);
+    expect(find.text('Second'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('message-header-block-second')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('footer aggregates active reactions and hides inactive ones', (
     tester,
   ) async {

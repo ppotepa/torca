@@ -541,11 +541,20 @@ class _AppearancePreview extends StatelessWidget {
               ),
               const SizedBox(height: 5),
               const _PreviewMessage(
+                body: 'I will be there shortly.',
+                showSender: false,
+              ),
+              const SizedBox(height: 5),
+              const _PreviewMessage(
                 body: 'Yes, give me 5 min.',
                 outbound: true,
               ),
               const SizedBox(height: 5),
-              const _PreviewMessage(body: 'Perfect!'),
+              const _PreviewMessage(
+                body: 'Perfect!',
+                outbound: true,
+                showSender: false,
+              ),
               const SizedBox(height: 10),
               TextField(
                 readOnly: true,
@@ -567,10 +576,12 @@ class _PreviewMessage extends StatelessWidget {
   const _PreviewMessage({
     required this.body,
     this.outbound = false,
+    this.showSender = true,
   });
 
   final String body;
   final bool outbound;
+  final bool showSender;
 
   @override
   Widget build(BuildContext context) => MessageBubble(
@@ -588,6 +599,8 @@ class _PreviewMessage extends StatelessWidget {
         ? context.strings.senderYou
         : context.strings.sampleContactName,
     senderColorKey: outbound ? 'appearance-local' : 'appearance-contact',
+    showSender: showSender,
+    compactTop: !showSender,
     onLongPress: () {},
   );
 }

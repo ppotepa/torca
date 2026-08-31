@@ -379,7 +379,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Appearance'), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, -1400));
+    // The Appearance preview intentionally contains a representative grouped
+    // conversation, so scroll to the end instead of relying on a fixed offset.
+    await tester.drag(find.byType(ListView), const Offset(0, -4000));
     await tester.pumpAndSettle();
     expect(find.text('Notifications'), findsOneWidget);
     expect(find.text('Enable notifications'), findsOneWidget);

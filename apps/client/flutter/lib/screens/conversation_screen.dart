@@ -652,9 +652,10 @@ class _ConversationPaneState extends State<ConversationPane>
                               showBody:
                                   !attachmentAnnouncement &&
                                   message.typedStatus != MessageStatus.deleted,
-                              // Keep the sender visible in every message. The
-                              // compact group geometry still reduces spacing,
-                              // but never removes the identity cue.
+                              // Show the identity once at the start of a block.
+                              // The compact geometry keeps subsequent messages
+                              // visually connected without repeating the name.
+                              showSender: !grouped,
                               senderLabel:
                                   message.typedDirection ==
                                       MessageDirection.outbound

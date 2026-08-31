@@ -18,6 +18,7 @@ class MessageBubble extends StatelessWidget {
     this.reactions = const <ReactionDto>[],
     this.showBody = true,
     this.compactTop = false,
+    this.showSender = true,
     this.senderLabel,
     this.senderColorKey,
     super.key,
@@ -32,6 +33,7 @@ class MessageBubble extends StatelessWidget {
   final List<ReactionDto> reactions;
   final bool showBody;
   final bool compactTop;
+  final bool showSender;
   final String? senderLabel;
   final String? senderColorKey;
 
@@ -128,21 +130,25 @@ class MessageBubble extends StatelessWidget {
                               child: Row(
                                 children: <Widget>[
                                   Expanded(
-                                    child: Text(
-                                      senderLabel ??
-                                          (outbound
-                                              ? context.strings.senderYou
-                                              : context.strings.senderContact),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w800,
-                                            color: palette.foreground,
-                                          ),
-                                    ),
+                                    child: showSender
+                                        ? Text(
+                                            senderLabel ??
+                                                (outbound
+                                                    ? context.strings.senderYou
+                                                    : context
+                                                          .strings
+                                                          .senderContact),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelMedium
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w800,
+                                                  color: palette.foreground,
+                                                ),
+                                          )
+                                        : const SizedBox.shrink(),
                                   ),
                                   IconButton(
                                     key: ValueKey<String>(
