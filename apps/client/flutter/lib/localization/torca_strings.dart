@@ -8,7 +8,14 @@ class TorcaStrings {
 
   final Locale locale;
 
-  static const supportedLocales = <Locale>[Locale('en'), Locale('pl')];
+  static const supportedLocales = <Locale>[
+    Locale('en'),
+    Locale('pl'),
+    Locale('de'),
+    Locale('es'),
+    Locale('fr'),
+    Locale('uk'),
+  ];
   static const LocalizationsDelegate<TorcaStrings> delegate =
       _TorcaStringsDelegate();
 
@@ -18,10 +25,54 @@ class TorcaStrings {
 
   bool get _pl => locale.languageCode.toLowerCase() == 'pl';
 
-  String get settings => _pl ? 'Ustawienia' : 'Settings';
-  String get chats => _pl ? 'Rozmowy' : 'Chats';
-  String get appearance => _pl ? 'Wygląd' : 'Appearance';
-  String get variant => _pl ? 'Wariant' : 'Variant';
+  String _localized({
+    required String en,
+    required String pl,
+    required String de,
+    required String es,
+    required String fr,
+    required String uk,
+  }) => switch (locale.languageCode.toLowerCase()) {
+    'pl' => pl,
+    'de' => de,
+    'es' => es,
+    'fr' => fr,
+    'uk' => uk,
+    _ => en,
+  };
+
+  String get settings => _localized(
+    en: 'Settings',
+    pl: 'Ustawienia',
+    de: 'Einstellungen',
+    es: 'Ajustes',
+    fr: 'Paramètres',
+    uk: 'Налаштування',
+  );
+  String get chats => _localized(
+    en: 'Chats',
+    pl: 'Rozmowy',
+    de: 'Chats',
+    es: 'Chats',
+    fr: 'Discussions',
+    uk: 'Чати',
+  );
+  String get appearance => _localized(
+    en: 'Appearance',
+    pl: 'Wygląd',
+    de: 'Darstellung',
+    es: 'Apariencia',
+    fr: 'Apparence',
+    uk: 'Вигляд',
+  );
+  String get variant => _localized(
+    en: 'Variant',
+    pl: 'Wariant',
+    de: 'Variante',
+    es: 'Variante',
+    fr: 'Variante',
+    uk: 'Варіант',
+  );
   String get batteryAvailability =>
       _pl ? 'Bateria i dostępność' : 'Battery & availability';
   String get availabilityMode => _pl ? 'Tryb dostępności' : 'Availability mode';
@@ -52,28 +103,113 @@ class TorcaStrings {
       _pl ? 'Statycznie podczas bezczynności' : 'Static when idle';
   String get followSystem =>
       _pl ? 'Zgodnie z ustawieniami systemu' : 'Follow system setting';
-  String get system => _pl ? 'System' : 'System';
-  String get light => _pl ? 'Jasny' : 'Light';
-  String get dark => _pl ? 'Ciemny' : 'Dark';
-  String get language => _pl ? 'Język' : 'Language';
-  String get chooseLanguage => _pl ? 'Wybierz język' : 'Choose your language';
+  String get system => _localized(
+    en: 'System',
+    pl: 'System',
+    de: 'System',
+    es: 'Sistema',
+    fr: 'Système',
+    uk: 'Система',
+  );
+  String get light => _localized(
+    en: 'Light',
+    pl: 'Jasny',
+    de: 'Hell',
+    es: 'Claro',
+    fr: 'Clair',
+    uk: 'Світла',
+  );
+  String get dark => _localized(
+    en: 'Dark',
+    pl: 'Ciemny',
+    de: 'Dunkel',
+    es: 'Oscuro',
+    fr: 'Sombre',
+    uk: 'Темна',
+  );
+  String get language => _localized(
+    en: 'Language',
+    pl: 'Język',
+    de: 'Sprache',
+    es: 'Idioma',
+    fr: 'Langue',
+    uk: 'Мова',
+  );
+  String get chooseLanguage => _localized(
+    en: 'Choose your language',
+    pl: 'Wybierz język',
+    de: 'Sprache auswählen',
+    es: 'Elige tu idioma',
+    fr: 'Choisissez votre langue',
+    uk: 'Оберіть мову',
+  );
   String get chooseLanguagePolish => 'Wybierz język';
-  String get languageSystem => _pl ? 'Język systemowy' : 'System language';
+  String get languageSystem => _localized(
+    en: 'System language',
+    pl: 'Język systemowy',
+    de: 'Systemsprache',
+    es: 'Idioma del sistema',
+    fr: 'Langue du système',
+    uk: 'Мова системи',
+  );
   String get languageEnglish => _pl ? 'Angielski' : 'English';
   String get languagePolish => _pl ? 'Polski' : 'Polish';
-  String get privacy => _pl ? 'Prywatność' : 'Privacy';
-  String get sendReadReceipts =>
-      _pl ? 'Wysyłaj potwierdzenia odczytu' : 'Send read receipts';
-  String get sendReadReceiptsDescription => _pl
-      ? 'Oznaczaj wiadomości lokalnie jako przeczytane, ale pozwól kontaktom zobaczyć stan Read tylko wtedy, gdy ta opcja jest włączona.'
-      : 'Messages are marked read locally, but contacts see the Read state only when this option is enabled.';
-  String get notifications => _pl ? 'Powiadomienia' : 'Notifications';
-  String get enableNotifications =>
-      _pl ? 'Włącz powiadomienia' : 'Enable notifications';
-  String get notificationPrivacy => _pl
-      ? 'Pokazuj powiadomienia o prywatnych wiadomościach bez ich treści.'
-      : 'Show private-message notifications without message content.';
-  String get desktop => _pl ? 'Pulpit' : 'Desktop';
+  String get privacy => _localized(
+    en: 'Privacy',
+    pl: 'Prywatność',
+    de: 'Datenschutz',
+    es: 'Privacidad',
+    fr: 'Confidentialité',
+    uk: 'Конфіденційність',
+  );
+  String get sendReadReceipts => _localized(
+    en: 'Send read receipts',
+    pl: 'Wysyłaj potwierdzenia odczytu',
+    de: 'Lesebestätigungen senden',
+    es: 'Enviar confirmaciones de lectura',
+    fr: 'Envoyer les accusés de lecture',
+    uk: 'Надсилати звіти про прочитання',
+  );
+  String get sendReadReceiptsDescription => _localized(
+    en: 'Messages are marked read locally, but contacts see the Read state only when this option is enabled.',
+    pl: 'Oznaczaj wiadomości lokalnie jako przeczytane, ale pozwól kontaktom zobaczyć stan Read tylko wtedy, gdy ta opcja jest włączona.',
+    de: 'Nachrichten werden lokal als gelesen markiert. Kontakte sehen den Lesestatus nur, wenn diese Option aktiviert ist.',
+    es: 'Los mensajes se marcan como leídos localmente. Los contactos solo ven el estado si esta opción está activada.',
+    fr: 'Les messages sont marqués comme lus localement. Les contacts ne voient cet état que si cette option est activée.',
+    uk: 'Повідомлення позначаються прочитаними локально. Контакти бачать цей стан лише коли параметр увімкнено.',
+  );
+  String get notifications => _localized(
+    en: 'Notifications',
+    pl: 'Powiadomienia',
+    de: 'Benachrichtigungen',
+    es: 'Notificaciones',
+    fr: 'Notifications',
+    uk: 'Сповіщення',
+  );
+  String get enableNotifications => _localized(
+    en: 'Enable notifications',
+    pl: 'Włącz powiadomienia',
+    de: 'Benachrichtigungen aktivieren',
+    es: 'Activar notificaciones',
+    fr: 'Activer les notifications',
+    uk: 'Увімкнути сповіщення',
+  );
+  String get notificationPrivacy => _localized(
+    en: 'Show private-message notifications without message content.',
+    pl: 'Pokazuj powiadomienia o prywatnych wiadomościach bez ich treści.',
+    de: 'Benachrichtigungen für private Nachrichten ohne Inhalt anzeigen.',
+    es: 'Mostrar notificaciones de mensajes privados sin su contenido.',
+    fr: 'Afficher les notifications de messages privés sans leur contenu.',
+    uk: 'Показувати сповіщення про приватні повідомлення без їхнього вмісту.',
+  );
+  String get desktop => _localized(
+    en: 'Desktop',
+    pl: 'Pulpit',
+    de: 'Desktop',
+    es: 'Escritorio',
+    fr: 'Bureau',
+    uk: 'Робочий стіл',
+  );
   String get audio => _pl ? 'Dźwięk' : 'Audio';
   String get microphone => _pl ? 'Mikrofon' : 'Microphone';
   String get audioOutput => _pl ? 'Wyjście audio' : 'Audio output';
@@ -84,10 +220,22 @@ class TorcaStrings {
   String get audioDeviceUnavailable => _pl
       ? 'Nie można użyć wybranego urządzenia audio.'
       : 'The selected audio device is unavailable.';
-  String get closeToTray => _pl ? 'Zamykaj do zasobnika' : 'Close to tray';
-  String get closeToTrayDescription => _pl
-      ? 'Pozostaw Torca uruchomioną po zamknięciu głównego okna. Wyłącz, aby zamknięcie okna kończyło aplikację.'
-      : 'Keep Torca running when the main window is closed. Disable this to quit Torca when closing the window.';
+  String get closeToTray => _localized(
+    en: 'Close to tray',
+    pl: 'Zamykaj do zasobnika',
+    de: 'In den Infobereich schließen',
+    es: 'Cerrar en la bandeja',
+    fr: 'Réduire dans la zone de notification',
+    uk: 'Згортати в системний трей',
+  );
+  String get closeToTrayDescription => _localized(
+    en: 'Keep Torca running when the main window is closed. Disable this to quit Torca when closing the window.',
+    pl: 'Pozostaw Torca uruchomioną po zamknięciu głównego okna. Wyłącz, aby zamknięcie okna kończyło aplikację.',
+    de: 'Torca läuft weiter, wenn das Hauptfenster geschlossen wird. Deaktivieren, um Torca vollständig zu beenden.',
+    es: 'Mantén Torca en ejecución al cerrar la ventana principal. Desactívalo para salir al cerrar.',
+    fr: 'Garde Torca actif après la fermeture de la fenêtre principale. Désactivez cette option pour quitter.',
+    uk: 'Torca продовжуватиме працювати після закриття головного вікна. Вимкніть, щоб завершувати програму.',
+  );
   String get pairContact => _pl ? 'Połącz kontakt' : 'Pair contact';
   String get newPrivateMessage =>
       _pl ? 'Nowa prywatna wiadomość' : 'New private message';
@@ -186,19 +334,50 @@ class TorcaStrings {
   String get removeContactDescription => _pl
       ? 'Usuwa to lokalną relację, historię rozmowy, oczekujące operacje i chronione dane uwierzytelniające kontaktu.'
       : 'This removes the local relationship, conversation history, pending work and protected peer credential.';
-  String get chooseNickname =>
-      _pl ? 'Wybierz pseudonim' : 'Choose your nickname';
-  String get nicknameIntro => _pl
-      ? 'Bezpieczny provider komunikacji jest gotowy. Ta nazwa będzie widoczna dla kontaktów.'
-      : 'The selected communication provider is ready. This name will be shown to contacts.';
+  String get chooseNickname => _localized(
+    en: 'Choose your nickname',
+    pl: 'Wybierz pseudonim',
+    de: 'Wähle deinen Spitznamen',
+    es: 'Elige tu apodo',
+    fr: 'Choisissez votre pseudonyme',
+    uk: 'Оберіть псевдонім',
+  );
+  String get nicknameIntro => _localized(
+    en: 'The selected communication provider is ready. This name will be shown to contacts.',
+    pl: 'Bezpieczny provider komunikacji jest gotowy. Ta nazwa będzie widoczna dla kontaktów.',
+    de: 'Der Kommunikationsdienst ist bereit. Dieser Name wird deinen Kontakten angezeigt.',
+    es: 'El proveedor de comunicación está listo. Tus contactos verán este nombre.',
+    fr: 'Le service de communication est prêt. Ce nom sera visible par vos contacts.',
+    uk: 'Служба зв’язку готова. Це ім’я буде видно вашим контактам.',
+  );
   String deviceFingerprint(String fingerprint) => _pl
       ? 'Odcisk urządzenia\n$fingerprint'
       : 'Device fingerprint\n$fingerprint';
-  String get nickname => _pl ? 'Pseudonim' : 'Nickname';
+  String get nickname => _localized(
+    en: 'Nickname',
+    pl: 'Pseudonim',
+    de: 'Spitzname',
+    es: 'Apodo',
+    fr: 'Pseudonyme',
+    uk: 'Псевдонім',
+  );
   String get saving => _pl ? 'Zapisywanie…' : 'Saving…';
-  String get continueLabel => _pl ? 'Dalej' : 'Continue';
-  String get nicknameRequired =>
-      _pl ? 'Pseudonim jest wymagany' : 'Nickname is required';
+  String get continueLabel => _localized(
+    en: 'Continue',
+    pl: 'Dalej',
+    de: 'Weiter',
+    es: 'Continuar',
+    fr: 'Continuer',
+    uk: 'Продовжити',
+  );
+  String get nicknameRequired => _localized(
+    en: 'Nickname is required',
+    pl: 'Pseudonim jest wymagany',
+    de: 'Ein Spitzname ist erforderlich',
+    es: 'El apodo es obligatorio',
+    fr: 'Le pseudonyme est obligatoire',
+    uk: 'Псевдонім є обов’язковим',
+  );
   String get couldNotSaveNickname =>
       _pl ? 'Nie udało się zapisać pseudonimu' : 'Could not save nickname';
   String get couldNotRenameContact =>
@@ -475,12 +654,46 @@ class TorcaStrings {
         : 'The $label communication runtime is not ready. Check diagnostics and retry.';
   }
 
-  String get modern => _pl ? 'Nowoczesny' : 'Modern';
-  String get terminal => _pl ? 'Terminal' : 'Terminal';
-  String get compactDensity => _pl ? 'Gestosc kompaktowa' : 'Compact density';
-  String get comfortableDensity =>
-      _pl ? 'Gestosc wygodna' : 'Comfortable density';
-  String get reduceMotion => _pl ? 'Ogranicz ruch' : 'Reduce motion';
+  String get modern => _localized(
+    en: 'Modern',
+    pl: 'Nowoczesny',
+    de: 'Modern',
+    es: 'Moderno',
+    fr: 'Moderne',
+    uk: 'Сучасний',
+  );
+  String get terminal => _localized(
+    en: 'Terminal',
+    pl: 'Terminal',
+    de: 'Terminal',
+    es: 'Terminal',
+    fr: 'Terminal',
+    uk: 'Термінал',
+  );
+  String get compactDensity => _localized(
+    en: 'Compact density',
+    pl: 'Gęstość kompaktowa',
+    de: 'Kompakte Dichte',
+    es: 'Densidad compacta',
+    fr: 'Densité compacte',
+    uk: 'Компактна щільність',
+  );
+  String get comfortableDensity => _localized(
+    en: 'Comfortable density',
+    pl: 'Gęstość wygodna',
+    de: 'Komfortable Dichte',
+    es: 'Densidad cómoda',
+    fr: 'Densité confortable',
+    uk: 'Комфортна щільність',
+  );
+  String get reduceMotion => _localized(
+    en: 'Reduce motion',
+    pl: 'Ogranicz ruch',
+    de: 'Bewegung reduzieren',
+    es: 'Reducir movimiento',
+    fr: 'Réduire les animations',
+    uk: 'Зменшити анімацію',
+  );
   String get rawDiagnostics => _pl ? 'Surowa diagnostyka' : 'Raw diagnostics';
   String get redactedDeveloperEventStream => _pl
       ? 'Zanonimizowany strumien zdarzen deweloperskich'

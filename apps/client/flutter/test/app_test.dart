@@ -359,6 +359,10 @@ void main() {
     expect(find.text('Choose your language'), findsOneWidget);
     expect(find.text('🇬🇧'), findsOneWidget);
     expect(find.text('🇵🇱'), findsOneWidget);
+    expect(find.text('🇩🇪'), findsOneWidget);
+    expect(find.text('🇪🇸'), findsOneWidget);
+    expect(find.text('🇫🇷'), findsOneWidget);
+    expect(find.text('🇺🇦'), findsOneWidget);
     expect(find.text('Choose your nickname'), findsNothing);
 
     await tester.tap(find.text('Polski'));

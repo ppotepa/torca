@@ -8,6 +8,10 @@ void main() {
     expect(parseAppLocaleMode(null), AppLocaleMode.system);
     expect(parseAppLocaleMode('en'), AppLocaleMode.english);
     expect(parseAppLocaleMode('pl'), AppLocaleMode.polish);
+    expect(parseAppLocaleMode('de'), AppLocaleMode.german);
+    expect(parseAppLocaleMode('es'), AppLocaleMode.spanish);
+    expect(parseAppLocaleMode('fr'), AppLocaleMode.french);
+    expect(parseAppLocaleMode('uk'), AppLocaleMode.ukrainian);
   });
 
   test('Polish catalog exposes translated primary settings strings', () {
@@ -15,5 +19,20 @@ void main() {
     expect(strings.settings, 'Ustawienia');
     expect(strings.enableNotifications, 'Włącz powiadomienia');
     expect(strings.closeToTray, 'Zamykaj do zasobnika');
+  });
+
+  test('new locale catalogs translate onboarding and settings', () {
+    const expected = <String, (String, String, String)>{
+      'de': ('Einstellungen', 'Sprache', 'Wähle deinen Spitznamen'),
+      'es': ('Ajustes', 'Idioma', 'Elige tu apodo'),
+      'fr': ('Paramètres', 'Langue', 'Choisissez votre pseudonyme'),
+      'uk': ('Налаштування', 'Мова', 'Оберіть псевдонім'),
+    };
+    for (final entry in expected.entries) {
+      final strings = TorcaStrings(Locale(entry.key));
+      expect(strings.settings, entry.value.$1);
+      expect(strings.language, entry.value.$2);
+      expect(strings.chooseNickname, entry.value.$3);
+    }
   });
 }

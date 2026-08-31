@@ -48,26 +48,26 @@ class _LanguageSelectionScreenState extends State<LanguageSelectionScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  context.strings.chooseLanguagePolish,
+                  AppLocaleMode.values
+                      .where((mode) => mode != AppLocaleMode.system)
+                      .map((mode) => mode.selectionPrompt)
+                      .join('  •  '),
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 28),
-                _LanguageCard(
-                  flag: '\u{1F1EC}\u{1F1E7}',
-                  title: 'English',
-                  semanticLabel: context.strings.languageEnglish,
-                  enabled: !_saving,
-                  onTap: () => _choose(AppLocaleMode.english),
-                ),
-                const SizedBox(height: 12),
-                _LanguageCard(
-                  flag: '\u{1F1F5}\u{1F1F1}',
-                  title: 'Polski',
-                  semanticLabel: context.strings.languagePolish,
-                  enabled: !_saving,
-                  onTap: () => _choose(AppLocaleMode.polish),
-                ),
+                for (final mode in AppLocaleMode.values)
+                  if (mode != AppLocaleMode.system) ...<Widget>[
+                    _LanguageCard(
+                      flag: mode.flag,
+                      title: mode.nativeName,
+                      semanticLabel: mode.nativeName,
+                      enabled: !_saving,
+                      onTap: () => _choose(mode),
+                    ),
+                    if (mode != AppLocaleMode.ukrainian)
+                      const SizedBox(height: 12),
+                  ],
               ],
             ),
           ),

@@ -258,11 +258,9 @@ class SettingsScreen extends StatelessWidget {
   };
 
   String _localeLabel(TorcaStrings strings, AppLocaleMode mode) =>
-      switch (mode) {
-        AppLocaleMode.system => strings.languageSystem,
-        AppLocaleMode.english => strings.languageEnglish,
-        AppLocaleMode.polish => strings.languagePolish,
-      };
+      mode == AppLocaleMode.system
+      ? '${mode.flag} ${strings.languageSystem}'
+      : '${mode.flag} ${mode.nativeName}';
 }
 
 class _BatterySettingsCard extends StatelessWidget {
