@@ -106,11 +106,71 @@ abstract class TorcaLocalizations {
     Locale('uk'),
   ];
 
-  /// No description provided for @settings.
+  /// No description provided for @aboutTorca.
   ///
   /// In en, this message translates to:
-  /// **'Settings'**
-  String get settings;
+  /// **'About Torca'**
+  String get aboutTorca;
+
+  /// No description provided for @accept.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get accept;
+
+  /// No description provided for @activeDemands.
+  ///
+  /// In en, this message translates to:
+  /// **'Active Demands'**
+  String get activeDemands;
+
+  /// No description provided for @activeInvitationsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Your active invitations and pairing requests will appear here.'**
+  String get activeInvitationsDescription;
+
+  /// No description provided for @activeLeases.
+  ///
+  /// In en, this message translates to:
+  /// **'Active Leases'**
+  String get activeLeases;
+
+  /// No description provided for @activeTransfers.
+  ///
+  /// In en, this message translates to:
+  /// **'Active Transfers'**
+  String get activeTransfers;
+
+  /// No description provided for @allOperations.
+  ///
+  /// In en, this message translates to:
+  /// **'All Operations'**
+  String get allOperations;
+
+  /// No description provided for @allowAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow All'**
+  String get allowAll;
+
+  /// No description provided for @allowDelayedBackgroundDelivery.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow Delayed Background Delivery'**
+  String get allowDelayedBackgroundDelivery;
+
+  /// No description provided for @allowDelayedBackgroundDeliveryDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow Delayed Background Delivery Description'**
+  String get allowDelayedBackgroundDeliveryDescription;
+
+  /// No description provided for @alwaysAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Always Available'**
+  String get alwaysAvailable;
 
   /// No description provided for @appearance.
   ///
@@ -118,89 +178,347 @@ abstract class TorcaLocalizations {
   /// **'Appearance'**
   String get appearance;
 
-  /// No description provided for @system.
+  /// No description provided for @appearanceTitle.
   ///
   /// In en, this message translates to:
-  /// **'System'**
-  String get system;
+  /// **'Appearance'**
+  String get appearanceTitle;
 
-  /// No description provided for @light.
+  /// No description provided for @applicationMenu.
   ///
   /// In en, this message translates to:
-  /// **'Light'**
-  String get light;
+  /// **'Application menu'**
+  String get applicationMenu;
 
-  /// No description provided for @dark.
+  /// No description provided for @archiveConversation.
   ///
   /// In en, this message translates to:
-  /// **'Dark'**
-  String get dark;
+  /// **'Archive Conversation'**
+  String get archiveConversation;
 
-  /// No description provided for @language.
+  /// No description provided for @attachFiles.
   ///
   /// In en, this message translates to:
-  /// **'Language'**
-  String get language;
+  /// **'Attach files'**
+  String get attachFiles;
 
-  /// No description provided for @languageSystem.
+  /// No description provided for @attachmentAckTimeout.
   ///
   /// In en, this message translates to:
-  /// **'System language'**
-  String get languageSystem;
+  /// **'waiting for peer acknowledgement'**
+  String get attachmentAckTimeout;
 
-  /// No description provided for @languageEnglish.
+  /// No description provided for @attachmentDependencyMissing.
   ///
   /// In en, this message translates to:
-  /// **'English'**
-  String get languageEnglish;
+  /// **'waiting for conversation'**
+  String get attachmentDependencyMissing;
 
-  /// No description provided for @languagePolish.
+  /// No description provided for @attachmentIntegrityFailed.
   ///
   /// In en, this message translates to:
-  /// **'Polish'**
-  String get languagePolish;
+  /// **'integrity check failed'**
+  String get attachmentIntegrityFailed;
 
-  /// No description provided for @privacy.
+  /// No description provided for @attachmentMessagePending.
   ///
   /// In en, this message translates to:
-  /// **'Privacy'**
-  String get privacy;
+  /// **'waiting for message'**
+  String get attachmentMessagePending;
 
-  /// No description provided for @sendReadReceipts.
+  /// No description provided for @attachmentOperationFailed.
   ///
   /// In en, this message translates to:
-  /// **'Send read receipts'**
-  String get sendReadReceipts;
+  /// **'Attachment operation failed'**
+  String get attachmentOperationFailed;
 
-  /// No description provided for @sendReadReceiptsDescription.
+  /// No description provided for @attachmentPeerUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Messages are marked read locally, but contacts see the Read state only when this option is enabled.'**
-  String get sendReadReceiptsDescription;
+  /// **'peer unavailable'**
+  String get attachmentPeerUnavailable;
 
-  /// No description provided for @notifications.
+  /// No description provided for @attachmentRetryAvailable.
   ///
   /// In en, this message translates to:
-  /// **'Notifications'**
-  String get notifications;
+  /// **'retry available'**
+  String get attachmentRetryAvailable;
 
-  /// No description provided for @enableNotifications.
+  /// No description provided for @attachmentSaved.
   ///
   /// In en, this message translates to:
-  /// **'Enable notifications'**
-  String get enableNotifications;
+  /// **'Attachment saved'**
+  String get attachmentSaved;
 
-  /// No description provided for @notificationPrivacy.
+  /// No description provided for @attachmentStorageFailed.
   ///
   /// In en, this message translates to:
-  /// **'Show private-message notifications without message content.'**
-  String get notificationPrivacy;
+  /// **'local storage failed'**
+  String get attachmentStorageFailed;
 
-  /// No description provided for @desktop.
+  /// No description provided for @attachmentSyncing.
   ///
   /// In en, this message translates to:
-  /// **'Desktop'**
-  String get desktop;
+  /// **'Attachment is syncing…'**
+  String get attachmentSyncing;
+
+  /// No description provided for @attachmentsQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 attachment queued} other{{count} attachments queued}}'**
+  String attachmentsQueued(num count);
+
+  /// No description provided for @audio.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio'**
+  String get audio;
+
+  /// No description provided for @audioDeviceUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio Device Unavailable'**
+  String get audioDeviceUnavailable;
+
+  /// No description provided for @audioOutput.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio Output'**
+  String get audioOutput;
+
+  /// No description provided for @automatic.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get automatic;
+
+  /// No description provided for @availabilityMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Availability Mode'**
+  String get availabilityMode;
+
+  /// No description provided for @batteryAvailability.
+  ///
+  /// In en, this message translates to:
+  /// **'Battery Availability'**
+  String get batteryAvailability;
+
+  /// No description provided for @batteryObservation.
+  ///
+  /// In en, this message translates to:
+  /// **'Battery Observation'**
+  String get batteryObservation;
+
+  /// No description provided for @batterySaver.
+  ///
+  /// In en, this message translates to:
+  /// **'Battery Saver'**
+  String get batterySaver;
+
+  /// No description provided for @batterySettingsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Battery Settings Description'**
+  String get batterySettingsDescription;
+
+  /// No description provided for @batteryTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Battery Tab'**
+  String get batteryTab;
+
+  /// No description provided for @blockContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Block contact'**
+  String get blockContact;
+
+  /// No description provided for @blockContactDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Torca will close the peer connection and will not reconnect until you unblock this contact.'**
+  String get blockContactDescription;
+
+  /// No description provided for @blockContactTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Block {name}?'**
+  String blockContactTitle(Object name);
+
+  /// No description provided for @blocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked'**
+  String get blocked;
+
+  /// No description provided for @blockedSendBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked Send Blocked'**
+  String get blockedSendBlocked;
+
+  /// No description provided for @bookmarkMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Bookmark Message'**
+  String get bookmarkMessage;
+
+  /// No description provided for @bootstrapAttempt.
+  ///
+  /// In en, this message translates to:
+  /// **'{label} {attempt}'**
+  String bootstrapAttempt(Object attempt, Object label);
+
+  /// No description provided for @bootstrapProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'{ready} {total} {elapsed}'**
+  String bootstrapProgress(Object elapsed, Object ready, Object total);
+
+  /// No description provided for @bootstrapStateDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'{id} {value} {code}'**
+  String bootstrapStateDescription(Object code, Object id, Object value);
+
+  /// No description provided for @bootstrapStepLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{id}'**
+  String bootstrapStepLabel(Object id);
+
+  /// No description provided for @build.
+  ///
+  /// In en, this message translates to:
+  /// **'Build'**
+  String get build;
+
+  /// No description provided for @buildAndConnectionInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Build & connection info'**
+  String get buildAndConnectionInfo;
+
+  /// No description provided for @buildLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'build {build}'**
+  String buildLabel(Object build);
+
+  /// No description provided for @buildServiceSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{build} {service}'**
+  String buildServiceSummary(Object build, Object service);
+
+  /// No description provided for @buildTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Torca build {build}\\nProvider service: {service}'**
+  String buildTooltip(Object build, Object service);
+
+  /// No description provided for @cancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get cancel;
+
+  /// No description provided for @cancelInvitation.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel invitation'**
+  String get cancelInvitation;
+
+  /// No description provided for @cancelMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel Message'**
+  String get cancelMessage;
+
+  /// No description provided for @cancelRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel request'**
+  String get cancelRequest;
+
+  /// No description provided for @cancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get cancelled;
+
+  /// No description provided for @chats.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats'**
+  String get chats;
+
+  /// No description provided for @checkingInvitation.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking invitation...'**
+  String get checkingInvitation;
+
+  /// No description provided for @chooseConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose Conversation'**
+  String get chooseConversation;
+
+  /// No description provided for @chooseLanguage.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose your language'**
+  String get chooseLanguage;
+
+  /// No description provided for @chooseLanguagePolish.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose Language Polish'**
+  String get chooseLanguagePolish;
+
+  /// No description provided for @chooseNickname.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose your nickname'**
+  String get chooseNickname;
+
+  /// No description provided for @clearConversationHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear Conversation History'**
+  String get clearConversationHistory;
+
+  /// No description provided for @clearSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear Search'**
+  String get clearSearch;
+
+  /// No description provided for @close.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get close;
+
+  /// No description provided for @closeInvitationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Invitation Description'**
+  String get closeInvitationDescription;
+
+  /// No description provided for @closeScanner.
+  ///
+  /// In en, this message translates to:
+  /// **'Close scanner'**
+  String get closeScanner;
+
+  /// No description provided for @closeSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Close search'**
+  String get closeSearch;
 
   /// No description provided for @closeToTray.
   ///
@@ -214,143 +532,59 @@ abstract class TorcaLocalizations {
   /// **'Keep Torca running when the main window is closed. Disable this to quit Torca when closing the window.'**
   String get closeToTrayDescription;
 
-  /// No description provided for @pairContact.
+  /// No description provided for @closeTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Pair contact'**
-  String get pairContact;
+  /// **'Close'**
+  String get closeTooltip;
 
-  /// No description provided for @newPrivateMessage.
+  /// No description provided for @collapseNavigation.
   ///
   /// In en, this message translates to:
-  /// **'New private message'**
-  String get newPrivateMessage;
+  /// **'Collapse Navigation'**
+  String get collapseNavigation;
 
-  /// No description provided for @message.
+  /// No description provided for @comfortableDensity.
   ///
   /// In en, this message translates to:
-  /// **'Message'**
-  String get message;
+  /// **'Comfortable density'**
+  String get comfortableDensity;
 
-  /// No description provided for @senderYou.
+  /// No description provided for @communicationProvider.
   ///
   /// In en, this message translates to:
-  /// **'You'**
-  String get senderYou;
+  /// **'Communication Provider'**
+  String get communicationProvider;
 
-  /// No description provided for @senderContact.
+  /// No description provided for @communicationState.
   ///
   /// In en, this message translates to:
-  /// **'Contact'**
-  String get senderContact;
+  /// **'Communication State'**
+  String get communicationState;
 
-  /// No description provided for @outgoingMessage.
+  /// No description provided for @compactDensity.
   ///
   /// In en, this message translates to:
-  /// **'Outgoing message'**
-  String get outgoingMessage;
+  /// **'Compact density'**
+  String get compactDensity;
 
-  /// No description provided for @incomingMessage.
+  /// No description provided for @completedTransfers.
   ///
   /// In en, this message translates to:
-  /// **'Incoming message'**
-  String get incomingMessage;
+  /// **'Completed Transfers'**
+  String get completedTransfers;
 
-  /// No description provided for @sent.
+  /// No description provided for @connecting.
   ///
   /// In en, this message translates to:
-  /// **'Sent'**
-  String get sent;
+  /// **'Connecting'**
+  String get connecting;
 
-  /// No description provided for @delivered.
+  /// No description provided for @connectingPeerThrough.
   ///
   /// In en, this message translates to:
-  /// **'Delivered'**
-  String get delivered;
-
-  /// No description provided for @read.
-  ///
-  /// In en, this message translates to:
-  /// **'Read'**
-  String get read;
-
-  /// No description provided for @messageQueued.
-  ///
-  /// In en, this message translates to:
-  /// **'Queued — waiting for a direct peer connection'**
-  String get messageQueued;
-
-  /// No description provided for @deliveryFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Delivery failed'**
-  String get deliveryFailed;
-
-  /// No description provided for @reply.
-  ///
-  /// In en, this message translates to:
-  /// **'Reply'**
-  String get reply;
-
-  /// No description provided for @sendMessage.
-  ///
-  /// In en, this message translates to:
-  /// **'Send message'**
-  String get sendMessage;
-
-  /// No description provided for @attachFiles.
-  ///
-  /// In en, this message translates to:
-  /// **'Attach files'**
-  String get attachFiles;
-
-  /// No description provided for @newMessages.
-  ///
-  /// In en, this message translates to:
-  /// **'New messages'**
-  String get newMessages;
-
-  /// No description provided for @jumpToLatest.
-  ///
-  /// In en, this message translates to:
-  /// **'Jump to latest message'**
-  String get jumpToLatest;
-
-  /// No description provided for @today.
-  ///
-  /// In en, this message translates to:
-  /// **'Today'**
-  String get today;
-
-  /// No description provided for @yesterday.
-  ///
-  /// In en, this message translates to:
-  /// **'Yesterday'**
-  String get yesterday;
-
-  /// No description provided for @retryNow.
-  ///
-  /// In en, this message translates to:
-  /// **'Retry now'**
-  String get retryNow;
-
-  /// No description provided for @retrying.
-  ///
-  /// In en, this message translates to:
-  /// **'Retrying…'**
-  String get retrying;
-
-  /// No description provided for @blocked.
-  ///
-  /// In en, this message translates to:
-  /// **'Blocked'**
-  String get blocked;
-
-  /// No description provided for @startConversation.
-  ///
-  /// In en, this message translates to:
-  /// **'Start conversation'**
-  String get startConversation;
+  /// **'{provider}'**
+  String connectingPeerThrough(Object provider);
 
   /// No description provided for @connection.
   ///
@@ -358,23 +592,47 @@ abstract class TorcaLocalizations {
   /// **'Connection'**
   String get connection;
 
-  /// No description provided for @state.
-  ///
-  /// In en, this message translates to:
-  /// **'State'**
-  String get state;
-
-  /// No description provided for @quality.
-  ///
-  /// In en, this message translates to:
-  /// **'Quality'**
-  String get quality;
-
   /// No description provided for @connectionDetails.
   ///
   /// In en, this message translates to:
   /// **'Connection details'**
   String get connectionDetails;
+
+  /// No description provided for @connectionDetailsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection details'**
+  String get connectionDetailsTitle;
+
+  /// No description provided for @connectionEvidenceNote.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String connectionEvidenceNote(Object provider);
+
+  /// No description provided for @connectionQuality.
+  ///
+  /// In en, this message translates to:
+  /// **'{quality} {rtt}'**
+  String connectionQuality(Object quality, Object rtt);
+
+  /// No description provided for @connectionSelfTest.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection self-test'**
+  String get connectionSelfTest;
+
+  /// No description provided for @consecutiveFailures.
+  ///
+  /// In en, this message translates to:
+  /// **'Consecutive failures'**
+  String get consecutiveFailures;
+
+  /// No description provided for @contactAcceptedJoin.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} accepted your join request'**
+  String contactAcceptedJoin(Object name);
 
   /// No description provided for @contactActions.
   ///
@@ -382,71 +640,113 @@ abstract class TorcaLocalizations {
   /// **'Contact actions'**
   String get contactActions;
 
-  /// No description provided for @renameContact.
+  /// No description provided for @contactAddedToContacts.
   ///
   /// In en, this message translates to:
-  /// **'Rename contact'**
-  String get renameContact;
+  /// **'{name} was added to Contacts'**
+  String contactAddedToContacts(Object name);
 
-  /// No description provided for @unblockContact.
+  /// No description provided for @contactBlocked.
   ///
   /// In en, this message translates to:
-  /// **'Unblock contact'**
-  String get unblockContact;
+  /// **'Contact is blocked'**
+  String get contactBlocked;
 
-  /// No description provided for @blockContact.
+  /// No description provided for @contactConnected.
   ///
   /// In en, this message translates to:
-  /// **'Block contact'**
-  String get blockContact;
+  /// **'Contact Connected'**
+  String get contactConnected;
 
-  /// No description provided for @removeContact.
+  /// No description provided for @contactConnectedDescription.
   ///
   /// In en, this message translates to:
-  /// **'Remove contact'**
-  String get removeContact;
+  /// **'Contact Connected Description'**
+  String get contactConnectedDescription;
 
-  /// No description provided for @localName.
+  /// No description provided for @contactDetails.
   ///
   /// In en, this message translates to:
-  /// **'Local name'**
-  String get localName;
+  /// **'Contact details'**
+  String get contactDetails;
 
-  /// No description provided for @cancel.
+  /// No description provided for @contactInformation.
   ///
   /// In en, this message translates to:
-  /// **'Cancel'**
-  String get cancel;
+  /// **'Contact information'**
+  String get contactInformation;
 
-  /// No description provided for @save.
+  /// No description provided for @contactLabel.
   ///
   /// In en, this message translates to:
-  /// **'Save'**
-  String get save;
+  /// **'Contact'**
+  String get contactLabel;
 
-  /// No description provided for @remove.
+  /// No description provided for @contactUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Remove'**
-  String get remove;
+  /// **'This contact is no longer available.'**
+  String get contactUnavailable;
 
-  /// No description provided for @blockContactDescription.
+  /// No description provided for @contacts.
   ///
   /// In en, this message translates to:
-  /// **'Torca will close the peer connection and will not reconnect until you unblock this contact.'**
-  String get blockContactDescription;
+  /// **'Contacts'**
+  String get contacts;
 
-  /// No description provided for @removeContactDescription.
+  /// No description provided for @contactsCount.
   ///
   /// In en, this message translates to:
-  /// **'This removes the local relationship, conversation history, pending work and protected peer credential.'**
-  String get removeContactDescription;
+  /// **'{count, plural, =1{1 private contact} other{{count} private contacts}}'**
+  String contactsCount(num count);
 
-  /// No description provided for @couldNotRenameContact.
+  /// No description provided for @continueLabel.
   ///
   /// In en, this message translates to:
-  /// **'Could not rename contact'**
-  String get couldNotRenameContact;
+  /// **'Continue'**
+  String get continueLabel;
+
+  /// No description provided for @contract.
+  ///
+  /// In en, this message translates to:
+  /// **'Contract'**
+  String get contract;
+
+  /// No description provided for @contractDecodeFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The client and native runtime use incompatible data. Rebuild and redeploy both.'**
+  String get contractDecodeFailed;
+
+  /// No description provided for @contractSnapshotReadable.
+  ///
+  /// In en, this message translates to:
+  /// **'Contract snapshot readable'**
+  String get contractSnapshotReadable;
+
+  /// No description provided for @conversationActions.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation Actions'**
+  String get conversationActions;
+
+  /// No description provided for @copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get copy;
+
+  /// No description provided for @copyCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy invitation'**
+  String get copyCode;
+
+  /// No description provided for @copyFingerprint.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Fingerprint'**
+  String get copyFingerprint;
 
   /// No description provided for @couldNotBlockContact.
   ///
@@ -454,11 +754,17 @@ abstract class TorcaLocalizations {
   /// **'Could not block contact'**
   String get couldNotBlockContact;
 
-  /// No description provided for @couldNotUnblockContact.
+  /// No description provided for @couldNotForwardMessage.
   ///
   /// In en, this message translates to:
-  /// **'Could not unblock contact'**
-  String get couldNotUnblockContact;
+  /// **'Could Not Forward Message'**
+  String get couldNotForwardMessage;
+
+  /// No description provided for @couldNotQueueAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not queue attachment'**
+  String get couldNotQueueAttachment;
 
   /// No description provided for @couldNotRemoveContact.
   ///
@@ -466,11 +772,353 @@ abstract class TorcaLocalizations {
   /// **'Could not remove contact'**
   String get couldNotRemoveContact;
 
-  /// No description provided for @profileNotReady.
+  /// No description provided for @couldNotRenameContact.
   ///
   /// In en, this message translates to:
-  /// **'The secure profile is not ready yet.'**
-  String get profileNotReady;
+  /// **'Could not rename contact'**
+  String get couldNotRenameContact;
+
+  /// No description provided for @couldNotSaveNickname.
+  ///
+  /// In en, this message translates to:
+  /// **'Could Not Save Nickname'**
+  String get couldNotSaveNickname;
+
+  /// No description provided for @couldNotStartConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}'**
+  String couldNotStartConversation(Object name);
+
+  /// No description provided for @couldNotStartRadio.
+  ///
+  /// In en, this message translates to:
+  /// **'Could Not Start Radio'**
+  String get couldNotStartRadio;
+
+  /// No description provided for @couldNotUnblockContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not unblock contact'**
+  String get couldNotUnblockContact;
+
+  /// No description provided for @couldNotUpdateRadio.
+  ///
+  /// In en, this message translates to:
+  /// **'Could Not Update Radio'**
+  String get couldNotUpdateRadio;
+
+  /// No description provided for @couldNotUpdateReaction.
+  ///
+  /// In en, this message translates to:
+  /// **'Could Not Update Reaction'**
+  String get couldNotUpdateReaction;
+
+  /// No description provided for @country.
+  ///
+  /// In en, this message translates to:
+  /// **'Country'**
+  String get country;
+
+  /// No description provided for @createInvitationForContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Create an invitation to add a private contact.'**
+  String get createInvitationForContact;
+
+  /// No description provided for @createManageInvitations.
+  ///
+  /// In en, this message translates to:
+  /// **'Create and manage short-lived private contact invitations.'**
+  String get createManageInvitations;
+
+  /// No description provided for @createdInvitation.
+  ///
+  /// In en, this message translates to:
+  /// **'Created invitation'**
+  String get createdInvitation;
+
+  /// No description provided for @dark.
+  ///
+  /// In en, this message translates to:
+  /// **'Dark'**
+  String get dark;
+
+  /// No description provided for @defaultAudioDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}'**
+  String defaultAudioDevice(Object name);
+
+  /// No description provided for @deleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete Message'**
+  String get deleteMessage;
+
+  /// No description provided for @deleteMessageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete Message Title'**
+  String get deleteMessageTitle;
+
+  /// No description provided for @delivered.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivered'**
+  String get delivered;
+
+  /// No description provided for @deliveryFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivery failed'**
+  String get deliveryFailed;
+
+  /// No description provided for @desktop.
+  ///
+  /// In en, this message translates to:
+  /// **'Desktop'**
+  String get desktop;
+
+  /// No description provided for @deviceFingerprint.
+  ///
+  /// In en, this message translates to:
+  /// **'{fingerprint}'**
+  String deviceFingerprint(Object fingerprint);
+
+  /// No description provided for @diagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostics'**
+  String get diagnostics;
+
+  /// No description provided for @diagnosticsExported.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostics exported'**
+  String get diagnosticsExported;
+
+  /// No description provided for @diagnosticsStream.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostics stream'**
+  String get diagnosticsStream;
+
+  /// No description provided for @directPeerLinksReady.
+  ///
+  /// In en, this message translates to:
+  /// **'{ready} of {total} direct peer links ready'**
+  String directPeerLinksReady(Object ready, Object total);
+
+  /// No description provided for @directPeers.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct peers'**
+  String get directPeers;
+
+  /// No description provided for @directProviderContact.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String directProviderContact(Object provider);
+
+  /// No description provided for @displayName.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name'**
+  String get displayName;
+
+  /// No description provided for @documentTransfers.
+  ///
+  /// In en, this message translates to:
+  /// **'Document Transfers'**
+  String get documentTransfers;
+
+  /// No description provided for @done.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get done;
+
+  /// No description provided for @draft.
+  ///
+  /// In en, this message translates to:
+  /// **'Draft'**
+  String get draft;
+
+  /// No description provided for @editMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Message'**
+  String get editMessage;
+
+  /// No description provided for @emoji.
+  ///
+  /// In en, this message translates to:
+  /// **'Emoji'**
+  String get emoji;
+
+  /// No description provided for @enableNotifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable notifications'**
+  String get enableNotifications;
+
+  /// No description provided for @encrypting.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypting'**
+  String get encrypting;
+
+  /// No description provided for @endpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Endpoint'**
+  String get endpoint;
+
+  /// No description provided for @englishCountry.
+  ///
+  /// In en, this message translates to:
+  /// **'English Country'**
+  String get englishCountry;
+
+  /// No description provided for @enterSixCharacterCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a six-character code or scan the QR code.'**
+  String get enterSixCharacterCode;
+
+  /// No description provided for @excellent.
+  ///
+  /// In en, this message translates to:
+  /// **'Excellent'**
+  String get excellent;
+
+  /// No description provided for @expandNavigation.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand Navigation'**
+  String get expandNavigation;
+
+  /// No description provided for @exportDiagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Export diagnostics'**
+  String get exportDiagnostics;
+
+  /// No description provided for @exportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Export failed'**
+  String get exportFailed;
+
+  /// No description provided for @exportTorcaDiagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Export Torca Diagnostics'**
+  String get exportTorcaDiagnostics;
+
+  /// No description provided for @fair.
+  ///
+  /// In en, this message translates to:
+  /// **'Fair'**
+  String get fair;
+
+  /// No description provided for @fileTransfers.
+  ///
+  /// In en, this message translates to:
+  /// **'File Transfers'**
+  String get fileTransfers;
+
+  /// No description provided for @finalizingContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Finalizing Contact'**
+  String get finalizingContact;
+
+  /// No description provided for @fingerprint.
+  ///
+  /// In en, this message translates to:
+  /// **'Fingerprint'**
+  String get fingerprint;
+
+  /// No description provided for @fingerprintCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Fingerprint Copied'**
+  String get fingerprintCopied;
+
+  /// No description provided for @focusedOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Focused Only'**
+  String get focusedOnly;
+
+  /// No description provided for @followSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow System'**
+  String get followSystem;
+
+  /// No description provided for @forwardMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward Message'**
+  String get forwardMessage;
+
+  /// No description provided for @forwardNoAvailableAttachments.
+  ///
+  /// In en, this message translates to:
+  /// **'{count}'**
+  String forwardNoAvailableAttachments(Object count);
+
+  /// No description provided for @forwardSkippedAttachments.
+  ///
+  /// In en, this message translates to:
+  /// **'{count}'**
+  String forwardSkippedAttachments(Object count);
+
+  /// No description provided for @fullAnimation.
+  ///
+  /// In en, this message translates to:
+  /// **'Full Animation'**
+  String get fullAnimation;
+
+  /// No description provided for @generateInvitation.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate Invitation'**
+  String get generateInvitation;
+
+  /// No description provided for @generatingInvitation.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating…'**
+  String get generatingInvitation;
+
+  /// No description provided for @good.
+  ///
+  /// In en, this message translates to:
+  /// **'Good'**
+  String get good;
+
+  /// No description provided for @holdToRecordVoiceClip.
+  ///
+  /// In en, this message translates to:
+  /// **'Hold To Record Voice Clip'**
+  String get holdToRecordVoiceClip;
+
+  /// No description provided for @identicalDeadlineReplacements.
+  ///
+  /// In en, this message translates to:
+  /// **'Identical Deadline Replacements'**
+  String get identicalDeadlineReplacements;
+
+  /// No description provided for @identity.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity'**
+  String get identity;
 
   /// No description provided for @identityChanged.
   ///
@@ -478,11 +1126,131 @@ abstract class TorcaLocalizations {
   /// **'The contact identity changed. Verify the Safety Number.'**
   String get identityChanged;
 
-  /// No description provided for @pairingExpired.
+  /// No description provided for @identityChangedSendBlocked.
   ///
   /// In en, this message translates to:
-  /// **'The pairing invitation has expired.'**
-  String get pairingExpired;
+  /// **'Identity Changed Send Blocked'**
+  String get identityChangedSendBlocked;
+
+  /// No description provided for @incidentDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Incident Description'**
+  String get incidentDescription;
+
+  /// No description provided for @incidentSnapshotSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Incident Snapshot Saved'**
+  String get incidentSnapshotSaved;
+
+  /// No description provided for @incidentTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Incident Tab'**
+  String get incidentTab;
+
+  /// No description provided for @incidentTools.
+  ///
+  /// In en, this message translates to:
+  /// **'Incident Tools'**
+  String get incidentTools;
+
+  /// No description provided for @incomingMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming message'**
+  String get incomingMessage;
+
+  /// No description provided for @incompatibleStorageEpoch.
+  ///
+  /// In en, this message translates to:
+  /// **'Incompatible Storage Epoch'**
+  String get incompatibleStorageEpoch;
+
+  /// No description provided for @instantMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Instant Mode'**
+  String get instantMode;
+
+  /// No description provided for @instantModeEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Instant Mode Enabled'**
+  String get instantModeEnabled;
+
+  /// No description provided for @invalidInput.
+  ///
+  /// In en, this message translates to:
+  /// **'The supplied value is not valid.'**
+  String get invalidInput;
+
+  /// No description provided for @invitationCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitation code'**
+  String get invitationCode;
+
+  /// No description provided for @invitationCodeCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Full invitation copied'**
+  String get invitationCodeCopied;
+
+  /// No description provided for @invitationCodeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{code}'**
+  String invitationCodeLabel(Object code);
+
+  /// No description provided for @invitationExpiresIn.
+  ///
+  /// In en, this message translates to:
+  /// **'{countdown}'**
+  String invitationExpiresIn(Object countdown);
+
+  /// No description provided for @invitationGenerating.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating a private invitation...'**
+  String get invitationGenerating;
+
+  /// No description provided for @invitationJoinSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Join request sent. You will be notified when it is accepted.'**
+  String get invitationJoinSent;
+
+  /// No description provided for @invitationOperationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitation operation failed'**
+  String get invitationOperationFailed;
+
+  /// No description provided for @invitationQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitation queued for the secure network.'**
+  String get invitationQueued;
+
+  /// No description provided for @invitationSavedLocally.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved locally. It will retry when the selected communication provider is ready.'**
+  String get invitationSavedLocally;
+
+  /// No description provided for @invitationWaitingForNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitation is waiting for the network.'**
+  String get invitationWaitingForNetwork;
+
+  /// No description provided for @invitations.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitations'**
+  String get invitations;
 
   /// No description provided for @itemAlreadyExists.
   ///
@@ -496,47 +1264,101 @@ abstract class TorcaLocalizations {
   /// **'The item is no longer available.'**
   String get itemNotFound;
 
-  /// No description provided for @invalidInput.
+  /// No description provided for @joinInvitation.
   ///
   /// In en, this message translates to:
-  /// **'The supplied value is not valid.'**
-  String get invalidInput;
+  /// **'Join invitation'**
+  String get joinInvitation;
 
-  /// No description provided for @storageFailure.
+  /// No description provided for @joinRequestWaiting.
   ///
   /// In en, this message translates to:
-  /// **'Encrypted local storage could not complete the operation.'**
-  String get storageFailure;
+  /// **'Join Request Waiting'**
+  String get joinRequestWaiting;
 
-  /// No description provided for @networkUnavailable.
+  /// No description provided for @joinedInvitation.
   ///
   /// In en, this message translates to:
-  /// **'The selected communication connection is currently unavailable.'**
-  String get networkUnavailable;
+  /// **'Joined invitation'**
+  String get joinedInvitation;
 
-  /// No description provided for @runtimeUnavailable.
+  /// No description provided for @jumpToLatest.
   ///
   /// In en, this message translates to:
-  /// **'The secure Torca runtime is currently unavailable.'**
-  String get runtimeUnavailable;
+  /// **'Jump to latest message'**
+  String get jumpToLatest;
 
-  /// No description provided for @contractDecodeFailed.
+  /// No description provided for @language.
   ///
   /// In en, this message translates to:
-  /// **'The client and native runtime use incompatible data. Rebuild and redeploy both.'**
-  String get contractDecodeFailed;
+  /// **'Language'**
+  String get language;
 
-  /// No description provided for @operationFailed.
+  /// No description provided for @languageEnglish.
   ///
   /// In en, this message translates to:
-  /// **'The operation could not be completed.'**
-  String get operationFailed;
+  /// **'English'**
+  String get languageEnglish;
 
-  /// No description provided for @yourIdentity.
+  /// No description provided for @languagePolish.
   ///
   /// In en, this message translates to:
-  /// **'Your identity'**
-  String get yourIdentity;
+  /// **'Polish'**
+  String get languagePolish;
+
+  /// No description provided for @languageSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'System language'**
+  String get languageSystem;
+
+  /// No description provided for @languageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Language'**
+  String get languageTitle;
+
+  /// No description provided for @lastSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'Last seen'**
+  String get lastSeen;
+
+  /// No description provided for @lastSeenAt.
+  ///
+  /// In en, this message translates to:
+  /// **'{time}'**
+  String lastSeenAt(Object time);
+
+  /// No description provided for @lastSuccessfulProbe.
+  ///
+  /// In en, this message translates to:
+  /// **'Last successful probe'**
+  String get lastSuccessfulProbe;
+
+  /// No description provided for @leaseReasons.
+  ///
+  /// In en, this message translates to:
+  /// **'Lease Reasons'**
+  String get leaseReasons;
+
+  /// No description provided for @light.
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get light;
+
+  /// No description provided for @loadCurrentRunLogs.
+  ///
+  /// In en, this message translates to:
+  /// **'Load Current Run Logs'**
+  String get loadCurrentRunLogs;
+
+  /// No description provided for @loaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Loaded'**
+  String get loaded;
 
   /// No description provided for @localIdentity.
   ///
@@ -544,23 +1366,197 @@ abstract class TorcaLocalizations {
   /// **'Local identity'**
   String get localIdentity;
 
-  /// No description provided for @displayName.
+  /// No description provided for @localIdentityCheck.
   ///
   /// In en, this message translates to:
-  /// **'Display name'**
-  String get displayName;
+  /// **'Local identity'**
+  String get localIdentityCheck;
 
-  /// No description provided for @unavailable.
+  /// No description provided for @localIdentityNotReady.
   ///
   /// In en, this message translates to:
-  /// **'Unavailable'**
-  String get unavailable;
+  /// **'Local Identity Not Ready'**
+  String get localIdentityNotReady;
 
-  /// No description provided for @applicationMenu.
+  /// No description provided for @localName.
   ///
   /// In en, this message translates to:
-  /// **'Application menu'**
-  String get applicationMenu;
+  /// **'Local name'**
+  String get localName;
+
+  /// No description provided for @logsTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Logs Tab'**
+  String get logsTab;
+
+  /// No description provided for @markConversationRead.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark Conversation Read'**
+  String get markConversationRead;
+
+  /// No description provided for @markIncident.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark Incident'**
+  String get markIncident;
+
+  /// No description provided for @mediaTransfers.
+  ///
+  /// In en, this message translates to:
+  /// **'Media Transfers'**
+  String get mediaTransfers;
+
+  /// No description provided for @message.
+  ///
+  /// In en, this message translates to:
+  /// **'Message'**
+  String get message;
+
+  /// No description provided for @messageActions.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Actions'**
+  String get messageActions;
+
+  /// No description provided for @messageCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Cancelled'**
+  String get messageCancelled;
+
+  /// No description provided for @messageCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Message copied'**
+  String get messageCopied;
+
+  /// No description provided for @messageDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Deleted'**
+  String get messageDeleted;
+
+  /// No description provided for @messageDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Message details'**
+  String get messageDetails;
+
+  /// No description provided for @messageEdited.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Edited'**
+  String get messageEdited;
+
+  /// No description provided for @messageForwarded.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Forwarded'**
+  String get messageForwarded;
+
+  /// No description provided for @messageQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'Queued — waiting for a direct peer connection'**
+  String get messageQueued;
+
+  /// No description provided for @messageSenderContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact'**
+  String get messageSenderContact;
+
+  /// No description provided for @messageSenderYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get messageSenderYou;
+
+  /// No description provided for @messageTooLong.
+  ///
+  /// In en, this message translates to:
+  /// **'{maximum}'**
+  String messageTooLong(Object maximum);
+
+  /// No description provided for @meteredTransfers.
+  ///
+  /// In en, this message translates to:
+  /// **'Metered Transfers'**
+  String get meteredTransfers;
+
+  /// No description provided for @microphone.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone'**
+  String get microphone;
+
+  /// No description provided for @microphonePermissionRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone Permission Required'**
+  String get microphonePermissionRequired;
+
+  /// No description provided for @modern.
+  ///
+  /// In en, this message translates to:
+  /// **'Modern'**
+  String get modern;
+
+  /// No description provided for @muteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute Conversation'**
+  String get muteConversation;
+
+  /// No description provided for @nativeBridge.
+  ///
+  /// In en, this message translates to:
+  /// **'Native bridge'**
+  String get nativeBridge;
+
+  /// No description provided for @nativeLogTails.
+  ///
+  /// In en, this message translates to:
+  /// **'Native Log Tails'**
+  String get nativeLogTails;
+
+  /// No description provided for @nativeLogTailsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Native Log Tails Description'**
+  String get nativeLogTailsDescription;
+
+  /// No description provided for @networkUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected communication connection is currently unavailable.'**
+  String get networkUnavailable;
+
+  /// No description provided for @never.
+  ///
+  /// In en, this message translates to:
+  /// **'Never'**
+  String get never;
+
+  /// No description provided for @newContact.
+  ///
+  /// In en, this message translates to:
+  /// **'New Contact'**
+  String get newContact;
+
+  /// No description provided for @newDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'New device'**
+  String get newDevice;
+
+  /// No description provided for @newMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'New messages'**
+  String get newMessages;
 
   /// No description provided for @newPairing.
   ///
@@ -574,593 +1570,53 @@ abstract class TorcaLocalizations {
   /// **'New pairing request'**
   String get newPairingRequest;
 
-  /// No description provided for @newDevice.
+  /// No description provided for @newPrivateMessage.
   ///
   /// In en, this message translates to:
-  /// **'New device'**
-  String get newDevice;
+  /// **'New private message'**
+  String get newPrivateMessage;
 
-  /// No description provided for @pairingRequestDescription.
+  /// No description provided for @nextDeadline.
   ///
   /// In en, this message translates to:
-  /// **'This device joined your invitation. Review the contact details before accepting.'**
-  String get pairingRequestDescription;
+  /// **'Next Deadline'**
+  String get nextDeadline;
 
-  /// No description provided for @diagnostics.
+  /// No description provided for @nickname.
   ///
   /// In en, this message translates to:
-  /// **'Diagnostics'**
-  String get diagnostics;
+  /// **'Nickname'**
+  String get nickname;
 
-  /// No description provided for @aboutTorca.
+  /// No description provided for @nicknameIntro.
   ///
   /// In en, this message translates to:
-  /// **'About Torca'**
-  String get aboutTorca;
+  /// **'Nickname Intro'**
+  String get nicknameIntro;
 
-  /// No description provided for @connectionDetailsTitle.
+  /// No description provided for @nicknameRequired.
   ///
   /// In en, this message translates to:
-  /// **'Connection details'**
-  String get connectionDetailsTitle;
+  /// **'Nickname Required'**
+  String get nicknameRequired;
 
-  /// No description provided for @contactUnavailable.
+  /// No description provided for @noActiveTransfers.
   ///
   /// In en, this message translates to:
-  /// **'This contact is no longer available.'**
-  String get contactUnavailable;
+  /// **'No Active Transfers'**
+  String get noActiveTransfers;
 
-  /// No description provided for @status.
+  /// No description provided for @noChatsMatch.
   ///
   /// In en, this message translates to:
-  /// **'Status'**
-  String get status;
+  /// **'No Chats Match'**
+  String get noChatsMatch;
 
-  /// No description provided for @transport.
+  /// No description provided for @noContactsPaired.
   ///
   /// In en, this message translates to:
-  /// **'Transport'**
-  String get transport;
-
-  /// No description provided for @roundTrip.
-  ///
-  /// In en, this message translates to:
-  /// **'Round trip'**
-  String get roundTrip;
-
-  /// No description provided for @lastSuccessfulProbe.
-  ///
-  /// In en, this message translates to:
-  /// **'Last successful probe'**
-  String get lastSuccessfulProbe;
-
-  /// No description provided for @consecutiveFailures.
-  ///
-  /// In en, this message translates to:
-  /// **'Consecutive failures'**
-  String get consecutiveFailures;
-
-  /// No description provided for @reconnectAttempts.
-  ///
-  /// In en, this message translates to:
-  /// **'Reconnect attempts'**
-  String get reconnectAttempts;
-
-  /// No description provided for @open.
-  ///
-  /// In en, this message translates to:
-  /// **'Open'**
-  String get open;
-
-  /// No description provided for @saveAs.
-  ///
-  /// In en, this message translates to:
-  /// **'Save as'**
-  String get saveAs;
-
-  /// No description provided for @messageDetails.
-  ///
-  /// In en, this message translates to:
-  /// **'Message details'**
-  String get messageDetails;
-
-  /// No description provided for @close.
-  ///
-  /// In en, this message translates to:
-  /// **'Close'**
-  String get close;
-
-  /// No description provided for @messageCopied.
-  ///
-  /// In en, this message translates to:
-  /// **'Message copied'**
-  String get messageCopied;
-
-  /// No description provided for @attachmentSaved.
-  ///
-  /// In en, this message translates to:
-  /// **'Attachment saved'**
-  String get attachmentSaved;
-
-  /// No description provided for @diagnosticsExported.
-  ///
-  /// In en, this message translates to:
-  /// **'Diagnostics exported'**
-  String get diagnosticsExported;
-
-  /// No description provided for @exportFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Export failed'**
-  String get exportFailed;
-
-  /// No description provided for @connectionSelfTest.
-  ///
-  /// In en, this message translates to:
-  /// **'Connection self-test'**
-  String get connectionSelfTest;
-
-  /// No description provided for @runSelfTest.
-  ///
-  /// In en, this message translates to:
-  /// **'Run self-test'**
-  String get runSelfTest;
-
-  /// No description provided for @exportDiagnostics.
-  ///
-  /// In en, this message translates to:
-  /// **'Export diagnostics'**
-  String get exportDiagnostics;
-
-  /// No description provided for @noMessagesYet.
-  ///
-  /// In en, this message translates to:
-  /// **'No messages yet'**
-  String get noMessagesYet;
-
-  /// No description provided for @contactLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Contact'**
-  String get contactLabel;
-
-  /// No description provided for @closeTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Close'**
-  String get closeTooltip;
-
-  /// No description provided for @secureRuntimeNotReady.
-  ///
-  /// In en, this message translates to:
-  /// **'Secure runtime is not ready'**
-  String get secureRuntimeNotReady;
-
-  /// No description provided for @runtimePreparationFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Torca could not prepare the local encrypted runtime. Your identity has not been changed.'**
-  String get runtimePreparationFailed;
-
-  /// No description provided for @modern.
-  ///
-  /// In en, this message translates to:
-  /// **'Modern'**
-  String get modern;
-
-  /// No description provided for @terminal.
-  ///
-  /// In en, this message translates to:
-  /// **'Terminal'**
-  String get terminal;
-
-  /// No description provided for @compactDensity.
-  ///
-  /// In en, this message translates to:
-  /// **'Compact density'**
-  String get compactDensity;
-
-  /// No description provided for @comfortableDensity.
-  ///
-  /// In en, this message translates to:
-  /// **'Comfortable density'**
-  String get comfortableDensity;
-
-  /// No description provided for @reduceMotion.
-  ///
-  /// In en, this message translates to:
-  /// **'Reduce motion'**
-  String get reduceMotion;
-
-  /// No description provided for @rawDiagnostics.
-  ///
-  /// In en, this message translates to:
-  /// **'Raw diagnostics'**
-  String get rawDiagnostics;
-
-  /// No description provided for @redactedDeveloperEventStream.
-  ///
-  /// In en, this message translates to:
-  /// **'Redacted developer event stream'**
-  String get redactedDeveloperEventStream;
-
-  /// No description provided for @diagnosticsStream.
-  ///
-  /// In en, this message translates to:
-  /// **'Diagnostics stream'**
-  String get diagnosticsStream;
-
-  /// No description provided for @excellent.
-  ///
-  /// In en, this message translates to:
-  /// **'Excellent'**
-  String get excellent;
-
-  /// No description provided for @good.
-  ///
-  /// In en, this message translates to:
-  /// **'Good'**
-  String get good;
-
-  /// No description provided for @fair.
-  ///
-  /// In en, this message translates to:
-  /// **'Fair'**
-  String get fair;
-
-  /// No description provided for @poor.
-  ///
-  /// In en, this message translates to:
-  /// **'Poor'**
-  String get poor;
-
-  /// No description provided for @unknown.
-  ///
-  /// In en, this message translates to:
-  /// **'Unknown'**
-  String get unknown;
-
-  /// No description provided for @closeScanner.
-  ///
-  /// In en, this message translates to:
-  /// **'Close scanner'**
-  String get closeScanner;
-
-  /// No description provided for @generatingInvitation.
-  ///
-  /// In en, this message translates to:
-  /// **'Generating…'**
-  String get generatingInvitation;
-
-  /// No description provided for @retryGeneration.
-  ///
-  /// In en, this message translates to:
-  /// **'Retry generation'**
-  String get retryGeneration;
-
-  /// No description provided for @yourInvitation.
-  ///
-  /// In en, this message translates to:
-  /// **'Your invitation'**
-  String get yourInvitation;
-
-  /// No description provided for @joinInvitation.
-  ///
-  /// In en, this message translates to:
-  /// **'Join invitation'**
-  String get joinInvitation;
-
-  /// No description provided for @checkingInvitation.
-  ///
-  /// In en, this message translates to:
-  /// **'Checking invitation...'**
-  String get checkingInvitation;
-
-  /// No description provided for @invitationCode.
-  ///
-  /// In en, this message translates to:
-  /// **'Code {code}'**
-  String invitationCode(Object code);
-
-  /// No description provided for @enterSixCharacterCode.
-  ///
-  /// In en, this message translates to:
-  /// **'Enter a six-character code or scan the QR code.'**
-  String get enterSixCharacterCode;
-
-  /// No description provided for @pairingBootstrapRequired.
-  ///
-  /// In en, this message translates to:
-  /// **'For this provider, scan the QR code or paste the full invitation link.'**
-  String get pairingBootstrapRequired;
-
-  /// No description provided for @pairingProviderMismatch.
-  ///
-  /// In en, this message translates to:
-  /// **'This invitation belongs to a different communication provider.'**
-  String get pairingProviderMismatch;
-
-  /// No description provided for @providerEndpoint.
-  ///
-  /// In en, this message translates to:
-  /// **'Provider endpoint'**
-  String get providerEndpoint;
-
-  /// No description provided for @invitationGenerating.
-  ///
-  /// In en, this message translates to:
-  /// **'Generating a private invitation...'**
-  String get invitationGenerating;
-
-  /// No description provided for @invitationWaitingForNetwork.
-  ///
-  /// In en, this message translates to:
-  /// **'Invitation is waiting for the network.'**
-  String get invitationWaitingForNetwork;
-
-  /// No description provided for @invitationQueued.
-  ///
-  /// In en, this message translates to:
-  /// **'Invitation queued for the secure network.'**
-  String get invitationQueued;
-
-  /// No description provided for @invitationOperationFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Invitation operation failed'**
-  String get invitationOperationFailed;
-
-  /// No description provided for @invitationJoinSent.
-  ///
-  /// In en, this message translates to:
-  /// **'Join request sent. You will be notified when it is accepted.'**
-  String get invitationJoinSent;
-
-  /// No description provided for @invitationSavedLocally.
-  ///
-  /// In en, this message translates to:
-  /// **'Saved locally. It will retry when the selected communication provider is ready.'**
-  String get invitationSavedLocally;
-
-  /// No description provided for @openConversation.
-  ///
-  /// In en, this message translates to:
-  /// **'Open conversation'**
-  String get openConversation;
-
-  /// No description provided for @noMessagesYetDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Messages are sent directly through the selected communication provider.'**
-  String get noMessagesYetDescription;
-
-  /// No description provided for @attachmentSyncing.
-  ///
-  /// In en, this message translates to:
-  /// **'Attachment is syncing…'**
-  String get attachmentSyncing;
-
-  /// No description provided for @closeSearch.
-  ///
-  /// In en, this message translates to:
-  /// **'Close search'**
-  String get closeSearch;
-
-  /// No description provided for @preparingUpload.
-  ///
-  /// In en, this message translates to:
-  /// **'Preparing upload'**
-  String get preparingUpload;
-
-  /// No description provided for @preparingDownload.
-  ///
-  /// In en, this message translates to:
-  /// **'Preparing download'**
-  String get preparingDownload;
-
-  /// No description provided for @preparingSecureCopy.
-  ///
-  /// In en, this message translates to:
-  /// **'Preparing secure copy'**
-  String get preparingSecureCopy;
-
-  /// No description provided for @encrypting.
-  ///
-  /// In en, this message translates to:
-  /// **'Encrypting'**
-  String get encrypting;
-
-  /// No description provided for @waitingToReceive.
-  ///
-  /// In en, this message translates to:
-  /// **'Waiting to receive'**
-  String get waitingToReceive;
-
-  /// No description provided for @waitingForPeer.
-  ///
-  /// In en, this message translates to:
-  /// **'Waiting for peer'**
-  String get waitingForPeer;
-
-  /// No description provided for @sendingSecurely.
-  ///
-  /// In en, this message translates to:
-  /// **'Sending securely'**
-  String get sendingSecurely;
-
-  /// No description provided for @receivingSecurely.
-  ///
-  /// In en, this message translates to:
-  /// **'Receiving securely'**
-  String get receivingSecurely;
-
-  /// No description provided for @verifiedOnDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'Verified on device'**
-  String get verifiedOnDevice;
-
-  /// No description provided for @transferFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Transfer failed'**
-  String get transferFailed;
-
-  /// No description provided for @cancelled.
-  ///
-  /// In en, this message translates to:
-  /// **'Cancelled'**
-  String get cancelled;
-
-  /// No description provided for @attachmentAckTimeout.
-  ///
-  /// In en, this message translates to:
-  /// **'waiting for peer acknowledgement'**
-  String get attachmentAckTimeout;
-
-  /// No description provided for @attachmentPeerUnavailable.
-  ///
-  /// In en, this message translates to:
-  /// **'peer unavailable'**
-  String get attachmentPeerUnavailable;
-
-  /// No description provided for @attachmentIntegrityFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'integrity check failed'**
-  String get attachmentIntegrityFailed;
-
-  /// No description provided for @attachmentStorageFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'local storage failed'**
-  String get attachmentStorageFailed;
-
-  /// No description provided for @attachmentMessagePending.
-  ///
-  /// In en, this message translates to:
-  /// **'waiting for message'**
-  String get attachmentMessagePending;
-
-  /// No description provided for @attachmentDependencyMissing.
-  ///
-  /// In en, this message translates to:
-  /// **'waiting for conversation'**
-  String get attachmentDependencyMissing;
-
-  /// No description provided for @attachmentRetryAvailable.
-  ///
-  /// In en, this message translates to:
-  /// **'retry available'**
-  String get attachmentRetryAvailable;
-
-  /// No description provided for @attachmentOperationFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Attachment operation failed'**
-  String get attachmentOperationFailed;
-
-  /// No description provided for @couldNotQueueAttachment.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not queue attachment'**
-  String get couldNotQueueAttachment;
-
-  /// No description provided for @saveAttachment.
-  ///
-  /// In en, this message translates to:
-  /// **'Save attachment'**
-  String get saveAttachment;
-
-  /// No description provided for @buildAndConnectionInfo.
-  ///
-  /// In en, this message translates to:
-  /// **'Build & connection info'**
-  String get buildAndConnectionInfo;
-
-  /// No description provided for @pairContactHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Pair a contact to start a conversation.'**
-  String get pairContactHint;
-
-  /// No description provided for @contacts.
-  ///
-  /// In en, this message translates to:
-  /// **'Contacts'**
-  String get contacts;
-
-  /// No description provided for @invitations.
-  ///
-  /// In en, this message translates to:
-  /// **'Invitations'**
-  String get invitations;
-
-  /// No description provided for @selectConversation.
-  ///
-  /// In en, this message translates to:
-  /// **'Select a conversation'**
-  String get selectConversation;
-
-  /// No description provided for @createManageInvitations.
-  ///
-  /// In en, this message translates to:
-  /// **'Create and manage short-lived private contact invitations.'**
-  String get createManageInvitations;
-
-  /// No description provided for @generateInvitation.
-  ///
-  /// In en, this message translates to:
-  /// **'Generate Invitation'**
-  String get generateInvitation;
-
-  /// No description provided for @copyCode.
-  ///
-  /// In en, this message translates to:
-  /// **'Copy invitation'**
-  String get copyCode;
-
-  /// No description provided for @invitationCodeCopied.
-  ///
-  /// In en, this message translates to:
-  /// **'Full invitation copied'**
-  String get invitationCodeCopied;
-
-  /// No description provided for @done.
-  ///
-  /// In en, this message translates to:
-  /// **'Done'**
-  String get done;
-
-  /// No description provided for @accept.
-  ///
-  /// In en, this message translates to:
-  /// **'Accept'**
-  String get accept;
-
-  /// No description provided for @reject.
-  ///
-  /// In en, this message translates to:
-  /// **'Reject'**
-  String get reject;
-
-  /// No description provided for @cancelRequest.
-  ///
-  /// In en, this message translates to:
-  /// **'Cancel request'**
-  String get cancelRequest;
-
-  /// No description provided for @cancelInvitation.
-  ///
-  /// In en, this message translates to:
-  /// **'Cancel invitation'**
-  String get cancelInvitation;
-
-  /// No description provided for @copy.
-  ///
-  /// In en, this message translates to:
-  /// **'Copy'**
-  String get copy;
+  /// **'No contacts paired'**
+  String get noContactsPaired;
 
   /// No description provided for @noContactsYet.
   ///
@@ -1168,23 +1624,11 @@ abstract class TorcaLocalizations {
   /// **'No contacts yet'**
   String get noContactsYet;
 
-  /// No description provided for @createInvitationForContact.
+  /// No description provided for @noForwardableContent.
   ///
   /// In en, this message translates to:
-  /// **'Create an invitation to add a private contact.'**
-  String get createInvitationForContact;
-
-  /// No description provided for @openChat.
-  ///
-  /// In en, this message translates to:
-  /// **'Open chat'**
-  String get openChat;
-
-  /// No description provided for @contactInformation.
-  ///
-  /// In en, this message translates to:
-  /// **'Contact information'**
-  String get contactInformation;
+  /// **'No Forwardable Content'**
+  String get noForwardableContent;
 
   /// No description provided for @noInvitations.
   ///
@@ -1192,29 +1636,35 @@ abstract class TorcaLocalizations {
   /// **'No invitations'**
   String get noInvitations;
 
-  /// No description provided for @activeInvitationsDescription.
+  /// No description provided for @noMatchingMessages.
   ///
   /// In en, this message translates to:
-  /// **'Your active invitations and pairing requests will appear here.'**
-  String get activeInvitationsDescription;
+  /// **'No Matching Messages'**
+  String get noMatchingMessages;
 
-  /// No description provided for @recentInvitations.
+  /// No description provided for @noMessagesYet.
   ///
   /// In en, this message translates to:
-  /// **'Recent invitations'**
-  String get recentInvitations;
+  /// **'No messages yet'**
+  String get noMessagesYet;
 
-  /// No description provided for @createdInvitation.
+  /// No description provided for @noMessagesYetDescription.
   ///
   /// In en, this message translates to:
-  /// **'Created invitation'**
-  String get createdInvitation;
+  /// **'Messages are sent directly through the selected communication provider.'**
+  String get noMessagesYetDescription;
 
-  /// No description provided for @joinedInvitation.
+  /// No description provided for @noReadableHealthEvents.
   ///
   /// In en, this message translates to:
-  /// **'Joined invitation'**
-  String get joinedInvitation;
+  /// **'No readable health events'**
+  String get noReadableHealthEvents;
+
+  /// No description provided for @notInitialized.
+  ///
+  /// In en, this message translates to:
+  /// **'Not initialized'**
+  String get notInitialized;
 
   /// No description provided for @notMeasured.
   ///
@@ -1222,11 +1672,257 @@ abstract class TorcaLocalizations {
   /// **'Not measured'**
   String get notMeasured;
 
-  /// No description provided for @never.
+  /// No description provided for @notificationPrivacy.
   ///
   /// In en, this message translates to:
-  /// **'Never'**
-  String get never;
+  /// **'Show private-message notifications without message content.'**
+  String get notificationPrivacy;
+
+  /// No description provided for @notifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get notifications;
+
+  /// No description provided for @notificationsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get notificationsTitle;
+
+  /// No description provided for @observationRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'Observation Recording'**
+  String get observationRecording;
+
+  /// No description provided for @observationRecordingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Observation Recording Description'**
+  String get observationRecordingDescription;
+
+  /// No description provided for @observationState.
+  ///
+  /// In en, this message translates to:
+  /// **'Observation State'**
+  String get observationState;
+
+  /// No description provided for @observationStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Observation Stopped'**
+  String get observationStopped;
+
+  /// No description provided for @observationStoppedDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Observation Stopped Description'**
+  String get observationStoppedDescription;
+
+  /// No description provided for @observationWork.
+  ///
+  /// In en, this message translates to:
+  /// **'Observation Work'**
+  String get observationWork;
+
+  /// No description provided for @offlineShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get offlineShort;
+
+  /// No description provided for @online.
+  ///
+  /// In en, this message translates to:
+  /// **'Online'**
+  String get online;
+
+  /// No description provided for @open.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get open;
+
+  /// No description provided for @openChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Open chat'**
+  String get openChat;
+
+  /// No description provided for @openConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Open conversation'**
+  String get openConversation;
+
+  /// No description provided for @operationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The operation could not be completed.'**
+  String get operationFailed;
+
+  /// No description provided for @originalMessageUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Original Message Unavailable'**
+  String get originalMessageUnavailable;
+
+  /// No description provided for @outgoingMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Outgoing message'**
+  String get outgoingMessage;
+
+  /// No description provided for @p2pShort.
+  ///
+  /// In en, this message translates to:
+  /// **'P2P'**
+  String get p2pShort;
+
+  /// No description provided for @pairContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair contact'**
+  String get pairContact;
+
+  /// No description provided for @pairContactHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair a contact to start a conversation.'**
+  String get pairContactHint;
+
+  /// No description provided for @pairingBootstrapRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'For this provider, scan the QR code or paste the full invitation link.'**
+  String get pairingBootstrapRequired;
+
+  /// No description provided for @pairingCompletedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing Completed Message'**
+  String get pairingCompletedMessage;
+
+  /// No description provided for @pairingExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'The pairing invitation has expired.'**
+  String get pairingExpired;
+
+  /// No description provided for @pairingInactiveMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing Inactive Message'**
+  String get pairingInactiveMessage;
+
+  /// No description provided for @pairingProviderMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'This invitation belongs to a different communication provider.'**
+  String get pairingProviderMismatch;
+
+  /// No description provided for @pairingQrSemanticLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing Qr Semantic Label'**
+  String get pairingQrSemanticLabel;
+
+  /// No description provided for @pairingRequestDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'This device joined your invitation. Review the contact details before accepting.'**
+  String get pairingRequestDescription;
+
+  /// No description provided for @pairingStateLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{state}'**
+  String pairingStateLabel(Object state);
+
+  /// No description provided for @pauseAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause All'**
+  String get pauseAll;
+
+  /// No description provided for @pauseLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause Large'**
+  String get pauseLarge;
+
+  /// No description provided for @peerOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Peer is offline'**
+  String get peerOffline;
+
+  /// No description provided for @peerState.
+  ///
+  /// In en, this message translates to:
+  /// **'Peer State'**
+  String get peerState;
+
+  /// No description provided for @pendingOperations.
+  ///
+  /// In en, this message translates to:
+  /// **'Pending Operations'**
+  String get pendingOperations;
+
+  /// No description provided for @pinConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin Conversation'**
+  String get pinConversation;
+
+  /// No description provided for @playVoiceMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Play Voice Message'**
+  String get playVoiceMessage;
+
+  /// No description provided for @polishCountry.
+  ///
+  /// In en, this message translates to:
+  /// **'Polish Country'**
+  String get polishCountry;
+
+  /// No description provided for @poor.
+  ///
+  /// In en, this message translates to:
+  /// **'Poor'**
+  String get poor;
+
+  /// No description provided for @preparingDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing download'**
+  String get preparingDownload;
+
+  /// No description provided for @preparingPrivateSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing Private Space'**
+  String get preparingPrivateSpace;
+
+  /// No description provided for @preparingPrivateSpaceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing Private Space Description'**
+  String get preparingPrivateSpaceDescription;
+
+  /// No description provided for @preparingSecureCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing secure copy'**
+  String get preparingSecureCopy;
+
+  /// No description provided for @preparingUpload.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing upload'**
+  String get preparingUpload;
 
   /// No description provided for @presence.
   ///
@@ -1234,17 +1930,473 @@ abstract class TorcaLocalizations {
   /// **'Presence'**
   String get presence;
 
-  /// No description provided for @lastSeen.
+  /// No description provided for @privacy.
   ///
   /// In en, this message translates to:
-  /// **'Last seen'**
-  String get lastSeen;
+  /// **'Privacy'**
+  String get privacy;
 
-  /// No description provided for @todayUpper.
+  /// No description provided for @privacyTitle.
   ///
   /// In en, this message translates to:
-  /// **'TODAY'**
-  String get todayUpper;
+  /// **'Privacy'**
+  String get privacyTitle;
+
+  /// No description provided for @productVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Product Version'**
+  String get productVersion;
+
+  /// No description provided for @profileNotReady.
+  ///
+  /// In en, this message translates to:
+  /// **'The secure profile is not ready yet.'**
+  String get profileNotReady;
+
+  /// No description provided for @providerEndpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider endpoint'**
+  String get providerEndpoint;
+
+  /// No description provided for @providerEndpointAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider Endpoint Available'**
+  String get providerEndpointAvailable;
+
+  /// No description provided for @providerEndpointUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider Endpoint Unavailable'**
+  String get providerEndpointUnavailable;
+
+  /// No description provided for @providerName.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String providerName(Object provider);
+
+  /// No description provided for @providerReady.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String providerReady(Object provider);
+
+  /// No description provided for @providerReconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String providerReconnecting(Object provider);
+
+  /// No description provided for @providerStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String providerStarting(Object provider);
+
+  /// No description provided for @providerStateLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider} {state}'**
+  String providerStateLabel(Object provider, Object state);
+
+  /// No description provided for @published.
+  ///
+  /// In en, this message translates to:
+  /// **'Published'**
+  String get published;
+
+  /// No description provided for @quality.
+  ///
+  /// In en, this message translates to:
+  /// **'Quality'**
+  String get quality;
+
+  /// No description provided for @queued.
+  ///
+  /// In en, this message translates to:
+  /// **'Queued'**
+  String get queued;
+
+  /// No description provided for @radioChannelInterrupted.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Channel Interrupted'**
+  String get radioChannelInterrupted;
+
+  /// No description provided for @radioChannelReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Channel Ready'**
+  String get radioChannelReady;
+
+  /// No description provided for @radioChannelRestored.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Channel Restored'**
+  String get radioChannelRestored;
+
+  /// No description provided for @radioConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Connecting'**
+  String get radioConnecting;
+
+  /// No description provided for @radioDisabledBy.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor}'**
+  String radioDisabledBy(Object actor);
+
+  /// No description provided for @radioEnabledBy.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor}'**
+  String radioEnabledBy(Object actor);
+
+  /// No description provided for @radioMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Mode'**
+  String get radioMode;
+
+  /// No description provided for @radioModeDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Mode Description'**
+  String get radioModeDescription;
+
+  /// No description provided for @radioReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Ready'**
+  String get radioReady;
+
+  /// No description provided for @radioReceiving.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}'**
+  String radioReceiving(Object name);
+
+  /// No description provided for @radioReconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Reconnecting'**
+  String get radioReconnecting;
+
+  /// No description provided for @radioRequestingFloor.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Requesting Floor'**
+  String get radioRequestingFloor;
+
+  /// No description provided for @radioTransmitting.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Transmitting'**
+  String get radioTransmitting;
+
+  /// No description provided for @radioTransportFailure.
+  ///
+  /// In en, this message translates to:
+  /// **'{code}'**
+  String radioTransportFailure(Object code);
+
+  /// No description provided for @radioUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Unavailable'**
+  String get radioUnavailable;
+
+  /// No description provided for @radioWaitingForPeer.
+  ///
+  /// In en, this message translates to:
+  /// **'Radio Waiting For Peer'**
+  String get radioWaitingForPeer;
+
+  /// No description provided for @rawDiagnostics.
+  ///
+  /// In en, this message translates to:
+  /// **'Raw diagnostics'**
+  String get rawDiagnostics;
+
+  /// No description provided for @reactToMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'React To Message'**
+  String get reactToMessage;
+
+  /// No description provided for @read.
+  ///
+  /// In en, this message translates to:
+  /// **'Read'**
+  String get read;
+
+  /// No description provided for @receivingSecurely.
+  ///
+  /// In en, this message translates to:
+  /// **'Receiving securely'**
+  String get receivingSecurely;
+
+  /// No description provided for @recentEmoji.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent Emoji'**
+  String get recentEmoji;
+
+  /// No description provided for @recentInvitations.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent invitations'**
+  String get recentInvitations;
+
+  /// No description provided for @reconnectAttempts.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect attempts'**
+  String get reconnectAttempts;
+
+  /// No description provided for @reconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting'**
+  String get reconnecting;
+
+  /// No description provided for @reconnectingPeerThrough.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String reconnectingPeerThrough(Object provider);
+
+  /// No description provided for @reconnectingShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting'**
+  String get reconnectingShort;
+
+  /// No description provided for @recordingTransfers.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording Transfers'**
+  String get recordingTransfers;
+
+  /// No description provided for @redactedDeveloperEventStream.
+  ///
+  /// In en, this message translates to:
+  /// **'Redacted developer event stream'**
+  String get redactedDeveloperEventStream;
+
+  /// No description provided for @redactedHealthEventsReadable.
+  ///
+  /// In en, this message translates to:
+  /// **'Redacted health events readable'**
+  String get redactedHealthEventsReadable;
+
+  /// No description provided for @redactedSchedulerDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Redacted Scheduler Description'**
+  String get redactedSchedulerDescription;
+
+  /// No description provided for @reduceMotion.
+  ///
+  /// In en, this message translates to:
+  /// **'Reduce motion'**
+  String get reduceMotion;
+
+  /// No description provided for @refresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get refresh;
+
+  /// No description provided for @refreshProviderRoute.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh Provider Route'**
+  String get refreshProviderRoute;
+
+  /// No description provided for @regressionScore.
+  ///
+  /// In en, this message translates to:
+  /// **'Regression Score'**
+  String get regressionScore;
+
+  /// No description provided for @reject.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get reject;
+
+  /// No description provided for @remoteIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity {id}'**
+  String remoteIdentity(Object id);
+
+  /// No description provided for @remoteIdentityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote Identity Title'**
+  String get remoteIdentityTitle;
+
+  /// No description provided for @remove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get remove;
+
+  /// No description provided for @removeAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove attachment'**
+  String get removeAttachment;
+
+  /// No description provided for @removeBookmark.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove Bookmark'**
+  String get removeBookmark;
+
+  /// No description provided for @removeContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove contact'**
+  String get removeContact;
+
+  /// No description provided for @removeContactDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes the local relationship, conversation history, pending work and protected peer credential.'**
+  String get removeContactDescription;
+
+  /// No description provided for @removeContactTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}?'**
+  String removeContactTitle(Object name);
+
+  /// No description provided for @renameContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename contact'**
+  String get renameContact;
+
+  /// No description provided for @reply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get reply;
+
+  /// No description provided for @resetBaseline.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset Baseline'**
+  String get resetBaseline;
+
+  /// No description provided for @resetVerification.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset Verification'**
+  String get resetVerification;
+
+  /// No description provided for @restartApplication.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart Application'**
+  String get restartApplication;
+
+  /// No description provided for @restoreConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore Conversation'**
+  String get restoreConversation;
+
+  /// No description provided for @retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get retry;
+
+  /// No description provided for @retryGeneration.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry generation'**
+  String get retryGeneration;
+
+  /// No description provided for @retryNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry now'**
+  String get retryNow;
+
+  /// No description provided for @retrying.
+  ///
+  /// In en, this message translates to:
+  /// **'Retrying…'**
+  String get retrying;
+
+  /// No description provided for @roundTrip.
+  ///
+  /// In en, this message translates to:
+  /// **'Round trip'**
+  String get roundTrip;
+
+  /// No description provided for @route.
+  ///
+  /// In en, this message translates to:
+  /// **'Route'**
+  String get route;
+
+  /// No description provided for @routeRefreshRequested.
+  ///
+  /// In en, this message translates to:
+  /// **'Route Refresh Requested'**
+  String get routeRefreshRequested;
+
+  /// No description provided for @routeRefreshRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Route Refresh Required'**
+  String get routeRefreshRequired;
+
+  /// No description provided for @runSelfTest.
+  ///
+  /// In en, this message translates to:
+  /// **'Run self-test'**
+  String get runSelfTest;
+
+  /// No description provided for @runtimeHealth.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime Health'**
+  String get runtimeHealth;
+
+  /// No description provided for @runtimeNotReadyDiagnostic.
+  ///
+  /// In en, this message translates to:
+  /// **'{provider}'**
+  String runtimeNotReadyDiagnostic(Object provider);
+
+  /// No description provided for @runtimePreparationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Torca could not prepare the local encrypted runtime. Your identity has not been changed.'**
+  String get runtimePreparationFailed;
+
+  /// No description provided for @runtimeTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime Tab'**
+  String get runtimeTab;
+
+  /// No description provided for @runtimeUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The secure Torca runtime is currently unavailable.'**
+  String get runtimeUnavailable;
 
   /// No description provided for @sampleContactName.
   ///
@@ -1264,23 +2416,29 @@ abstract class TorcaLocalizations {
   /// **'14:22'**
   String get sampleTime;
 
-  /// No description provided for @searchMessages.
+  /// No description provided for @save.
   ///
   /// In en, this message translates to:
-  /// **'Search messages'**
-  String get searchMessages;
+  /// **'Save'**
+  String get save;
 
-  /// No description provided for @refresh.
+  /// No description provided for @saveAs.
   ///
   /// In en, this message translates to:
-  /// **'Refresh'**
-  String get refresh;
+  /// **'Save as'**
+  String get saveAs;
 
-  /// No description provided for @removeAttachment.
+  /// No description provided for @saveAttachment.
   ///
   /// In en, this message translates to:
-  /// **'Remove attachment'**
-  String get removeAttachment;
+  /// **'Save attachment'**
+  String get saveAttachment;
+
+  /// No description provided for @saving.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving'**
+  String get saving;
 
   /// No description provided for @scanQr.
   ///
@@ -1288,185 +2446,95 @@ abstract class TorcaLocalizations {
   /// **'Scan QR'**
   String get scanQr;
 
-  /// No description provided for @contactDetails.
+  /// No description provided for @scheduledWork.
   ///
   /// In en, this message translates to:
-  /// **'Contact details'**
-  String get contactDetails;
+  /// **'Scheduled Work'**
+  String get scheduledWork;
 
-  /// No description provided for @contactBlocked.
+  /// No description provided for @searchChats.
   ///
   /// In en, this message translates to:
-  /// **'Contact is blocked'**
-  String get contactBlocked;
+  /// **'Search Chats'**
+  String get searchChats;
 
-  /// No description provided for @connecting.
+  /// No description provided for @searchConversationHint.
   ///
   /// In en, this message translates to:
-  /// **'Connecting'**
-  String get connecting;
+  /// **'Search Conversation Hint'**
+  String get searchConversationHint;
 
-  /// No description provided for @reconnecting.
+  /// No description provided for @searchMessages.
   ///
   /// In en, this message translates to:
-  /// **'Reconnecting'**
-  String get reconnecting;
+  /// **'Search messages'**
+  String get searchMessages;
 
-  /// No description provided for @peerOffline.
+  /// No description provided for @searchResultsCount.
   ///
   /// In en, this message translates to:
-  /// **'Peer is offline'**
-  String get peerOffline;
+  /// **'{count}'**
+  String searchResultsCount(Object count);
 
-  /// No description provided for @p2pShort.
+  /// No description provided for @secureRuntimeNotReady.
   ///
   /// In en, this message translates to:
-  /// **'P2P'**
-  String get p2pShort;
+  /// **'Secure runtime is not ready'**
+  String get secureRuntimeNotReady;
 
-  /// No description provided for @startingShort.
+  /// No description provided for @selectConversation.
   ///
   /// In en, this message translates to:
-  /// **'Starting'**
-  String get startingShort;
+  /// **'Select a conversation'**
+  String get selectConversation;
 
-  /// No description provided for @reconnectingShort.
+  /// No description provided for @sendMessage.
   ///
   /// In en, this message translates to:
-  /// **'Reconnecting'**
-  String get reconnectingShort;
+  /// **'Send message'**
+  String get sendMessage;
 
-  /// No description provided for @offlineShort.
+  /// No description provided for @sendReadReceipts.
   ///
   /// In en, this message translates to:
-  /// **'Offline'**
-  String get offlineShort;
+  /// **'Send read receipts'**
+  String get sendReadReceipts;
 
-  /// No description provided for @nativeBridge.
+  /// No description provided for @sendReadReceiptsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Native bridge'**
-  String get nativeBridge;
+  /// **'Messages are marked read locally, but contacts see the Read state only when this option is enabled.'**
+  String get sendReadReceiptsDescription;
 
-  /// No description provided for @localIdentityCheck.
+  /// No description provided for @senderContact.
   ///
   /// In en, this message translates to:
-  /// **'Local identity'**
-  String get localIdentityCheck;
+  /// **'Contact'**
+  String get senderContact;
 
-  /// No description provided for @directPeers.
+  /// No description provided for @senderYou.
   ///
   /// In en, this message translates to:
-  /// **'Direct peers'**
-  String get directPeers;
+  /// **'You'**
+  String get senderYou;
 
-  /// No description provided for @noContactsPaired.
+  /// No description provided for @sendingSecurely.
   ///
   /// In en, this message translates to:
-  /// **'No contacts paired'**
-  String get noContactsPaired;
+  /// **'Sending securely'**
+  String get sendingSecurely;
 
-  /// No description provided for @contractSnapshotReadable.
+  /// No description provided for @sent.
   ///
   /// In en, this message translates to:
-  /// **'Contract snapshot readable'**
-  String get contractSnapshotReadable;
+  /// **'Sent'**
+  String get sent;
 
-  /// No description provided for @notInitialized.
+  /// No description provided for @settings.
   ///
   /// In en, this message translates to:
-  /// **'Not initialized'**
-  String get notInitialized;
-
-  /// No description provided for @loaded.
-  ///
-  /// In en, this message translates to:
-  /// **'Loaded'**
-  String get loaded;
-
-  /// No description provided for @published.
-  ///
-  /// In en, this message translates to:
-  /// **'Published'**
-  String get published;
-
-  /// No description provided for @redactedHealthEventsReadable.
-  ///
-  /// In en, this message translates to:
-  /// **'Redacted health events readable'**
-  String get redactedHealthEventsReadable;
-
-  /// No description provided for @noReadableHealthEvents.
-  ///
-  /// In en, this message translates to:
-  /// **'No readable health events'**
-  String get noReadableHealthEvents;
-
-  /// No description provided for @startingSecureNetwork.
-  ///
-  /// In en, this message translates to:
-  /// **'Starting secure network…'**
-  String get startingSecureNetwork;
-
-  /// No description provided for @blockContactTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Block {name}?'**
-  String blockContactTitle(Object name);
-
-  /// No description provided for @removeContactTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Remove {name}?'**
-  String removeContactTitle(Object name);
-
-  /// No description provided for @contactAddedToContacts.
-  ///
-  /// In en, this message translates to:
-  /// **'{name} was added to Contacts'**
-  String contactAddedToContacts(Object name);
-
-  /// No description provided for @contactAcceptedJoin.
-  ///
-  /// In en, this message translates to:
-  /// **'{name} accepted your join request'**
-  String contactAcceptedJoin(Object name);
-
-  /// No description provided for @buildTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Torca build {build}\\nProvider service: {service}'**
-  String buildTooltip(Object build, Object service);
-
-  /// No description provided for @buildLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'build {build}'**
-  String buildLabel(Object build);
-
-  /// No description provided for @attachmentsQueued.
-  ///
-  /// In en, this message translates to:
-  /// **'{count, plural, =1{1 attachment queued} other{{count} attachments queued}}'**
-  String attachmentsQueued(num count);
-
-  /// No description provided for @contactsCount.
-  ///
-  /// In en, this message translates to:
-  /// **'{count, plural, =1{1 private contact} other{{count} private contacts}}'**
-  String contactsCount(num count);
-
-  /// No description provided for @directPeerLinksReady.
-  ///
-  /// In en, this message translates to:
-  /// **'{ready} of {total} direct peer links ready'**
-  String directPeerLinksReady(Object ready, Object total);
-
-  /// No description provided for @remoteIdentity.
-  ///
-  /// In en, this message translates to:
-  /// **'Identity {id}'**
-  String remoteIdentity(Object id);
+  /// **'Settings'**
+  String get settings;
 
   /// No description provided for @settingsTitle.
   ///
@@ -1474,17 +2542,95 @@ abstract class TorcaLocalizations {
   /// **'Settings'**
   String get settingsTitle;
 
-  /// No description provided for @appearanceTitle.
+  /// No description provided for @sharedMedia.
   ///
   /// In en, this message translates to:
-  /// **'Appearance'**
-  String get appearanceTitle;
+  /// **'Shared Media'**
+  String get sharedMedia;
 
-  /// No description provided for @languageTitle.
+  /// No description provided for @sharedMediaCount.
   ///
   /// In en, this message translates to:
-  /// **'Language'**
-  String get languageTitle;
+  /// **'{count}'**
+  String sharedMediaCount(Object count);
+
+  /// No description provided for @sourceCommit.
+  ///
+  /// In en, this message translates to:
+  /// **'Source Commit'**
+  String get sourceCommit;
+
+  /// No description provided for @startConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Start conversation'**
+  String get startConversation;
+
+  /// No description provided for @startObservation.
+  ///
+  /// In en, this message translates to:
+  /// **'Start Observation'**
+  String get startObservation;
+
+  /// No description provided for @startingSecureNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting secure network…'**
+  String get startingSecureNetwork;
+
+  /// No description provided for @startingShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting'**
+  String get startingShort;
+
+  /// No description provided for @state.
+  ///
+  /// In en, this message translates to:
+  /// **'State'**
+  String get state;
+
+  /// No description provided for @staticIdle.
+  ///
+  /// In en, this message translates to:
+  /// **'Static Idle'**
+  String get staticIdle;
+
+  /// No description provided for @status.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get status;
+
+  /// No description provided for @stopObservation.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop Observation'**
+  String get stopObservation;
+
+  /// No description provided for @storageEpoch.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage Epoch'**
+  String get storageEpoch;
+
+  /// No description provided for @storageFailure.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted local storage could not complete the operation.'**
+  String get storageFailure;
+
+  /// No description provided for @system.
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get system;
+
+  /// No description provided for @systemDefaultAudioDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'System Default Audio Device'**
+  String get systemDefaultAudioDevice;
 
   /// No description provided for @systemLanguage.
   ///
@@ -1492,59 +2638,215 @@ abstract class TorcaLocalizations {
   /// **'System language'**
   String get systemLanguage;
 
-  /// No description provided for @chooseLanguage.
+  /// No description provided for @terminal.
   ///
   /// In en, this message translates to:
-  /// **'Choose your language'**
-  String get chooseLanguage;
+  /// **'Terminal'**
+  String get terminal;
 
-  /// No description provided for @chooseNickname.
+  /// No description provided for @today.
   ///
   /// In en, this message translates to:
-  /// **'Choose your nickname'**
-  String get chooseNickname;
+  /// **'Today'**
+  String get today;
 
-  /// No description provided for @nickname.
+  /// No description provided for @todayUpper.
   ///
   /// In en, this message translates to:
-  /// **'Nickname'**
-  String get nickname;
+  /// **'TODAY'**
+  String get todayUpper;
 
-  /// No description provided for @continueLabel.
+  /// No description provided for @transferFailed.
   ///
   /// In en, this message translates to:
-  /// **'Continue'**
-  String get continueLabel;
+  /// **'Transfer failed'**
+  String get transferFailed;
 
-  /// No description provided for @privacyTitle.
+  /// No description provided for @transfers.
   ///
   /// In en, this message translates to:
-  /// **'Privacy'**
-  String get privacyTitle;
+  /// **'Transfers'**
+  String get transfers;
 
-  /// No description provided for @notificationsTitle.
+  /// No description provided for @transport.
   ///
   /// In en, this message translates to:
-  /// **'Notifications'**
-  String get notificationsTitle;
+  /// **'Transport'**
+  String get transport;
 
-  /// No description provided for @messageSenderYou.
+  /// No description provided for @typeToSearchConversation.
   ///
   /// In en, this message translates to:
-  /// **'You'**
-  String get messageSenderYou;
+  /// **'Type To Search Conversation'**
+  String get typeToSearchConversation;
 
-  /// No description provided for @messageSenderContact.
+  /// No description provided for @unavailable.
   ///
   /// In en, this message translates to:
-  /// **'Contact'**
-  String get messageSenderContact;
+  /// **'Unavailable'**
+  String get unavailable;
 
-  /// No description provided for @retry.
+  /// No description provided for @unblockContact.
   ///
   /// In en, this message translates to:
-  /// **'Retry'**
-  String get retry;
+  /// **'Unblock contact'**
+  String get unblockContact;
+
+  /// No description provided for @unknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get unknown;
+
+  /// No description provided for @unknownCountry.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown Country'**
+  String get unknownCountry;
+
+  /// No description provided for @unmuteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute Conversation'**
+  String get unmuteConversation;
+
+  /// No description provided for @unpinConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin Conversation'**
+  String get unpinConversation;
+
+  /// No description provided for @unverified.
+  ///
+  /// In en, this message translates to:
+  /// **'Unverified'**
+  String get unverified;
+
+  /// No description provided for @variant.
+  ///
+  /// In en, this message translates to:
+  /// **'Variant'**
+  String get variant;
+
+  /// No description provided for @verification.
+  ///
+  /// In en, this message translates to:
+  /// **'Verification'**
+  String get verification;
+
+  /// No description provided for @verified.
+  ///
+  /// In en, this message translates to:
+  /// **'Verified'**
+  String get verified;
+
+  /// No description provided for @verifiedOnDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Verified on device'**
+  String get verifiedOnDevice;
+
+  /// No description provided for @verifyContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify Contact'**
+  String get verifyContact;
+
+  /// No description provided for @verifyFingerprintBeforeAccepting.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify Fingerprint Before Accepting'**
+  String get verifyFingerprintBeforeAccepting;
+
+  /// No description provided for @visualActivity.
+  ///
+  /// In en, this message translates to:
+  /// **'Visual Activity'**
+  String get visualActivity;
+
+  /// No description provided for @voiceClipRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'{secondsLeft}'**
+  String voiceClipRecording(Object secondsLeft);
+
+  /// No description provided for @voiceClipRecordingFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Clip Recording Failed'**
+  String get voiceClipRecordingFailed;
+
+  /// No description provided for @voiceMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Message'**
+  String get voiceMessage;
+
+  /// No description provided for @voiceMessagePlayed.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Message Played'**
+  String get voiceMessagePlayed;
+
+  /// No description provided for @voiceMessageReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Message Ready'**
+  String get voiceMessageReady;
+
+  /// No description provided for @waitingForDependency.
+  ///
+  /// In en, this message translates to:
+  /// **'{dependency}'**
+  String waitingForDependency(Object dependency);
+
+  /// No description provided for @waitingForPeer.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for peer'**
+  String get waitingForPeer;
+
+  /// No description provided for @waitingToReceive.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting to receive'**
+  String get waitingToReceive;
+
+  /// No description provided for @wakeSources.
+  ///
+  /// In en, this message translates to:
+  /// **'Wake Sources'**
+  String get wakeSources;
+
+  /// No description provided for @whyAwake.
+  ///
+  /// In en, this message translates to:
+  /// **'Why Awake'**
+  String get whyAwake;
+
+  /// No description provided for @yesterday.
+  ///
+  /// In en, this message translates to:
+  /// **'Yesterday'**
+  String get yesterday;
+
+  /// No description provided for @yourIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'Your identity'**
+  String get yourIdentity;
+
+  /// No description provided for @yourInvitation.
+  ///
+  /// In en, this message translates to:
+  /// **'Your invitation'**
+  String get yourInvitation;
+
+  /// No description provided for @zeroDelayDeadlines.
+  ///
+  /// In en, this message translates to:
+  /// **'Zero Delay Deadlines'**
+  String get zeroDelayDeadlines;
 }
 
 class _TorcaLocalizationsDelegate

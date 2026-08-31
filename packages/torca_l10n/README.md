@@ -13,6 +13,7 @@ Run the catalog gate from this directory:
 ```text
 dart run tool/verify_catalogs.dart
 dart run tool/audit_legacy_usage.dart
+dart run tool/sync_legacy_symbols.dart
 flutter gen-l10n
 flutter test
 ```
@@ -25,3 +26,10 @@ kept in the app until every feature has moved to `TorcaLocalizations`.
 symbols during the migration. The deploy validation fails only on incomplete
 shared catalogs; the audit output is the checklist for the next migration
 module.
+
+`sync_legacy_symbols.dart` is a one-way migration helper. It adds public
+symbols still present in the legacy adapter to every catalog without
+overwriting existing translations, so generated APIs can be adopted one
+feature at a time. Placeholder arguments in generated methods follow Flutter's
+generated (alphabetical) order; feature migrations must verify argument order
+when replacing legacy calls.
