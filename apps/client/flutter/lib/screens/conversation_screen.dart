@@ -448,7 +448,7 @@ class _ConversationPaneState extends State<ConversationPane>
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: 'Could not mark conversation as read',
+            fallback: context.strings.operationFailed,
           ),
         );
       }
@@ -1052,7 +1052,7 @@ class _ConversationPaneState extends State<ConversationPane>
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: 'Could not retry message',
+            fallback: context.strings.operationFailed,
           ),
         );
       }
@@ -1181,7 +1181,7 @@ class _ConversationPaneState extends State<ConversationPane>
               BridgeErrorPresenter.localized(
                 context,
                 result,
-                fallback: 'Could not cancel message',
+                fallback: context.strings.operationFailed,
               ),
             );
           }

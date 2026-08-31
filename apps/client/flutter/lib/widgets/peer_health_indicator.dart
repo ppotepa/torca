@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../theme/app_semantic_colors.dart';
 
 class PeerHealthIndicator extends StatefulWidget {
@@ -83,7 +84,7 @@ class _PeerHealthIndicatorState extends State<PeerHealthIndicator>
             ? _pulse.value * 2
             : (1 - _pulse.value) * 2;
         return Semantics(
-          label: 'Connection quality $quality$rtt',
+          label: context.strings.connectionQuality(quality, rtt),
           button: widget.onPressed != null,
           child: Row(
             mainAxisSize: MainAxisSize.min,

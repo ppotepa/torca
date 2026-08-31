@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
+import '../localization/torca_strings.dart';
 import '../widgets/bridge_error_presenter.dart';
 
 enum PairingAction { approve, reject, cancel }
@@ -29,7 +30,7 @@ class PairingActionController extends ChangeNotifier {
       : BridgeErrorPresenter.localized(
           context,
           _failure!,
-          fallback: 'Pairing operation failed',
+          fallback: context.strings.invitationOperationFailed,
         );
 
   Future<bool> run(PairingAction action, String sessionId) async {

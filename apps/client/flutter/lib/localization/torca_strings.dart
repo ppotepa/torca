@@ -260,13 +260,18 @@ class TorcaStrings {
   String get operationFailed => _pl
       ? 'Nie udało się wykonać operacji.'
       : 'The operation could not be completed.';
+  String connectionQuality(String quality, String rtt) => _pl
+      ? 'Jakość połączenia $quality$rtt'
+      : 'Connection quality $quality$rtt';
   String get yourIdentity => _pl ? 'Twoja tożsamość' : 'Your identity';
   String get country => _pl ? 'Skad jestes?' : 'Where are you from?';
   String get unknownCountry => _pl ? 'Nie podano' : 'Unknown';
   String get polishCountry => _pl ? 'Polska' : 'Poland';
   String get englishCountry => _pl ? 'Anglia' : 'England';
-  String get deleteMessage => _pl ? 'Usun dla obu stron' : 'Delete for everyone';
-  String get deleteMessageTitle => _pl ? 'Usunac wiadomosc?' : 'Delete message?';
+  String get deleteMessage =>
+      _pl ? 'Usun dla obu stron' : 'Delete for everyone';
+  String get deleteMessageTitle =>
+      _pl ? 'Usunac wiadomosc?' : 'Delete message?';
   String get messageDeleted => _pl ? 'Wiadomosc usunieta' : 'Message deleted';
   String get localIdentity => _pl ? 'Tożsamość lokalna' : 'Local identity';
   String get fingerprint => _pl ? 'Odcisk' : 'Fingerprint';

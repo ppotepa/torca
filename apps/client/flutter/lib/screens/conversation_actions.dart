@@ -121,7 +121,7 @@ extension on _ConversationPaneState {
             BridgeErrorPresenter.localized(
               context,
               result,
-              fallback: 'Could not queue message',
+              fallback: context.strings.operationFailed,
             ),
           );
         }
@@ -298,7 +298,7 @@ extension on _ConversationPaneState {
               BridgeErrorPresenter.localized(
                 context,
                 result,
-                fallback: 'Could not save attachment',
+                fallback: context.strings.operationFailed,
               ),
             );
           }
@@ -400,7 +400,7 @@ extension on _ConversationPaneState {
           BridgeErrorPresenter.localized(
             context,
             result,
-            fallback: 'Could not open attachment',
+            fallback: context.strings.operationFailed,
           ),
         );
         return;
