@@ -601,6 +601,9 @@ class TorcaStrings {
   String get pairContactHint => _pl
       ? 'Polacz kontakt, aby rozpoczac rozmowe.'
       : 'Pair a contact to start a conversation.';
+  String couldNotStartConversation(String name) => _pl
+      ? 'Nie udało się rozpocząć rozmowy z $name.'
+      : 'Could not start conversation with $name.';
   String get contacts => _pl ? 'Kontakty' : 'Contacts';
   String get invitations => _pl ? 'Zaproszenia' : 'Invitations';
   String get selectConversation =>

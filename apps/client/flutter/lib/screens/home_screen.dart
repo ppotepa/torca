@@ -781,7 +781,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  'Could not start conversation with ${contact.displayName}.',
+                  context.strings.couldNotStartConversation(
+                    contact.displayName,
+                  ),
                 ),
               ),
             );
