@@ -82,6 +82,15 @@ class TorcaForegroundService : Service() {
             network: Network,
             capabilities: android.net.NetworkCapabilities,
         ) = observeCapabilities(network, capabilities)
+
+        // A mobile/Wi-Fi handoff can replace routes, DNS servers or the local
+        // address while Android keeps the same capability set. The native
+        // transport must re-probe those paths as well; the debounced notifier
+        // coalesces the several callbacks normally emitted for one handoff.
+        override fun onLinkPropertiesChanged(
+            network: Network,
+            linkProperties: android.net.LinkProperties,
+        ) = observeLinkProperties(network, linkProperties)
     }
     private val connectivityDiagnosticsCallback =
         object : ConnectivityDiagnosticsManager.ConnectivityDiagnosticsCallback() {
@@ -354,6 +363,18 @@ class TorcaForegroundService : Service() {
             Log.d(TAG, "network capabilities changed id=$network fingerprint=$fingerprint")
             notifyNetworkChanged()
         }
+    }
+
+    private fun observeLinkProperties(
+        network: Network,
+        linkProperties: android.net.LinkProperties,
+    ) {
+        Log.d(
+            TAG,
+            "network link properties changed id=$network routes=${linkProperties.routes.size} " +
+                "dns=${linkProperties.dnsServers.size}",
+        )
+        notifyNetworkChanged()
     }
 
     private fun pollMessageNotifications() {
