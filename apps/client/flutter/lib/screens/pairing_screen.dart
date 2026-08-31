@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../controllers/pairing_action_controller.dart';
@@ -253,32 +254,34 @@ class _PairingComposerModalState extends State<_PairingComposerModal> {
       final scanned = await showDialog<String>(
         context: context,
         builder: (dialogContext) => Dialog(
-          child: SizedBox(
-            width: 420,
-            height: 520,
-            child: Stack(
-              children: <Widget>[
-                MobileScanner(
-                  onDetect: (capture) {
-                    for (final barcode in capture.barcodes) {
-                      final value = barcode.rawValue;
-                      if (value != null && value.trim().isNotEmpty) {
-                        Navigator.of(dialogContext).pop(value);
-                        return;
+          child: LayoutBuilder(
+            builder: (context, constraints) => SizedBox(
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+              child: Stack(
+                children: <Widget>[
+                  MobileScanner(
+                    onDetect: (capture) {
+                      for (final barcode in capture.barcodes) {
+                        final value = barcode.rawValue;
+                        if (value != null && value.trim().isNotEmpty) {
+                          Navigator.of(dialogContext).pop(value);
+                          return;
+                        }
                       }
-                    }
-                  },
-                ),
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: IconButton.filledTonal(
-                    tooltip: context.strings.closeScanner,
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    icon: Icon(context.torcaIcons.close),
+                    },
                   ),
-                ),
-              ],
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: IconButton.filledTonal(
+                      tooltip: context.strings.closeScanner,
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: Icon(context.torcaIcons.close),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -565,7 +568,7 @@ class _InvitationGenerationPlaceholder extends StatelessWidget {
         ],
         if (queued)
           Text(
-            'Close this window to continue using the application. The invitation will appear here automatically when the connection is ready.',
+            context.strings.closeInvitationDescription,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           )
@@ -659,8 +662,8 @@ class _PairingSessionModalState extends State<_PairingSessionModal> {
       final pairing = _current(snapshot);
       return AppModal(
         title: pairing?.typedRole == PairingRole.creator
-            ? 'Invitation'
-            : 'Join request',
+            ? context.strings.yourInvitation
+            : context.strings.joinInvitation,
         height: 560,
         scrollable: true,
         child: pairing == null
@@ -857,9 +860,24 @@ class _PairingSessionDetails extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(
-                'Remote identity',
-                style: Theme.of(context).textTheme.titleSmall,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  TorcaDeviceAvatar(
+                    label:
+                        pairing.remoteDisplayName ?? context.strings.newDevice,
+                    identityId: pairing.remoteIdentityId,
+                    fallbackIdentityId: pairing.id,
+                    size: 48,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      context.strings.remoteIdentityTitle,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                ],
               ),
               if (pairing.remoteDisplayName != null &&
                   pairing.remoteDisplayName!.trim().isNotEmpty) ...<Widget>[
@@ -879,7 +897,7 @@ class _PairingSessionDetails extends StatelessWidget {
               if (pairing.remoteIdentityId != null) ...<Widget>[
                 const SizedBox(height: 5),
                 Text(
-                  'Identity ${pairing.remoteIdentityId}',
+                  context.strings.remoteIdentity(pairing.remoteIdentityId),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -892,13 +910,13 @@ class _PairingSessionDetails extends StatelessWidget {
       const SizedBox(height: 12),
       if (pairing.typedState == PairingState.completed) ...<Widget>[
         Text(
-          'Contact connected',
+          context.strings.contactConnected,
           style: Theme.of(context).textTheme.titleMedium,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 8),
-        const Text(
-          'The invitation was accepted and this contact is ready to chat.',
+        Text(
+          context.strings.contactConnectedDescription,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 18),
@@ -919,7 +937,7 @@ class _PairingSessionDetails extends StatelessWidget {
         ],
         if (_canReview) ...<Widget>[
           Text(
-            'A device joined this invitation. Verify the fingerprint before accepting the contact.',
+            context.strings.verifyFingerprintBeforeAccepting,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 14),
@@ -944,9 +962,7 @@ class _PairingSessionDetails extends StatelessWidget {
           ),
         ] else if (pairing.typedRole == PairingRole.joiner &&
             !_canReview) ...<Widget>[
-          const Text(
-            'Your request is waiting for the invitation owner to verify and accept it.',
-          ),
+          Text(context.strings.joinRequestWaiting),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: busy ? null : onCancel,

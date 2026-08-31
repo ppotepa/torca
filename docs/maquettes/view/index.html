@@ -15,9 +15,7 @@
 </head>
 <body data-theme="modern-ocean" data-mode="dark" data-density="comfortable" data-viewport="fluid" data-live="true">
   <div id="devbar" class="devbar" aria-label="Maquette controls"></div>
-  <main id="stage" class="stage"><div class="viewport-canvas"><div id="app" class="app-root" aria-live="polite"></div></div></main>
-  <div id="modal-root"></div>
-  <div id="toast-root" class="toast-root" aria-live="assertive"></div>
+  <main id="stage" class="stage"><div class="viewport-canvas"><div id="app" class="app-root" aria-live="polite"></div><div id="modal-root"></div><div id="toast-root" class="toast-root" aria-live="assertive" aria-atomic="true"></div></div></main>
 
   <script src="core/namespace.js"></script>
   <script src="core/i18n.js"></script>
@@ -28,6 +26,7 @@
   <script src="fixtures/scenarios.js"></script>
   <script src="components/icons.js"></script>
   <script src="components/ui.js"></script>
+  <script src="components/actions.js"></script>
   <script src="components/network.js"></script>
   <script src="components/shell.js"></script>
   <script src="components/chat.js"></script>

@@ -68,6 +68,19 @@ extension on _ConversationPaneState {
   Future<void> _sendMessage() async {
     final body = _controller.text.trim();
     if ((body.isEmpty && _pendingAttachments.isEmpty) || _searching) return;
+    final contact = contactForSnapshot(
+      widget.gateway.snapshots.value,
+      widget.conversation,
+    );
+    if (contact?.typedStatus == ContactStatus.blocked) {
+      _showError(context.strings.blockedSendBlocked);
+      return;
+    }
+    if (contact?.typedVerificationStatus ==
+        VerificationStatus.identityChanged) {
+      _showError(context.strings.identityChangedSendBlocked);
+      return;
+    }
     if (body.characters.length > maxMessageCharacters) {
       _showError(context.strings.messageTooLong(maxMessageCharacters));
       return;
@@ -463,17 +476,129 @@ extension on _ConversationPaneState {
       ),
     );
     if (!mounted || target == null) return;
-    final result = await widget.gateway.execute(
-      QueueMessageCommandDto(conversationIdHex: target.id, body: message.body),
+    final attachmentAnnouncement = message.body.startsWith('Attachment: ');
+    final body = attachmentAnnouncement ? '' : message.body.trim();
+    final linkedAttachments = snapshot.attachments
+        .where((attachment) => attachment.messageId == message.id)
+        .toList(growable: false);
+    final attachments = linkedAttachments
+        .where(
+          (attachment) => attachment.typedStatus == AttachmentStatus.available,
+        )
+        .toList(growable: false);
+    final skippedAttachments = linkedAttachments.length - attachments.length;
+    if (body.isEmpty && attachments.isEmpty) {
+      _showError(
+        skippedAttachments > 0
+            ? context.strings.forwardNoAvailableAttachments(skippedAttachments)
+            : context.strings.noForwardableContent,
+      );
+      return;
+    }
+
+    await _operations.run('message:${message.id}:forward', () async {
+      var forwarded = 0;
+      if (body.isNotEmpty) {
+        final result = await widget.gateway.execute(
+          QueueMessageCommandDto(conversationIdHex: target.id, body: body),
+        );
+        if (!mounted) return;
+        if (!result.ok) {
+          _showError(
+            BridgeErrorPresenter.localized(
+              context,
+              result,
+              fallback: context.strings.couldNotForwardMessage,
+            ),
+          );
+          return;
+        }
+        forwarded++;
+      }
+
+      for (final attachment in attachments) {
+        final prepared = await _prepareForwardAttachment(attachment);
+        if (!mounted) {
+          if (prepared != null) unawaited(prepared.dispose());
+          return;
+        }
+        if (prepared == null) {
+          _showError(
+            '${attachment.name}: ${context.strings.couldNotQueueAttachment}',
+          );
+          continue;
+        }
+        final result = await widget.gateway.execute(
+          QueueAttachmentCommandDto(
+            conversationIdHex: target.id,
+            sourcePath: prepared.path,
+            previewSourcePath: prepared.previewPath,
+            name: prepared.name,
+            mediaType: prepared.mediaType,
+            size: prepared.size,
+          ),
+        );
+        if (result.ok) {
+          // The native acknowledgement only means queue admission. Keep the
+          // app-owned source lease alive until the worker can open it.
+          unawaited(prepared.disposeAfter(_attachmentStagingGrace));
+          forwarded++;
+        } else {
+          unawaited(prepared.disposeAfter(_attachmentStagingGrace));
+          _showError(
+            '${attachment.name}: ${BridgeErrorPresenter.localized(context, result, fallback: context.strings.couldNotQueueAttachment)}',
+          );
+        }
+      }
+      if (mounted && forwarded > 0) {
+        await _timeline.refreshLatest();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              skippedAttachments > 0
+                  ? context.strings.forwardSkippedAttachments(
+                      skippedAttachments,
+                    )
+                  : context.strings.messageForwarded,
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<PreparedAttachment?> _prepareForwardAttachment(
+    AttachmentDto attachment,
+  ) async {
+    final extension =
+        contentExtension(attachment.mediaType) ??
+        safeExtension(attachment.name);
+    final source = File(
+      '${Directory.systemTemp.path}${torcaPathSeparator}torca-forward-${DateTime.now().microsecondsSinceEpoch}$extension',
     );
-    if (!mounted || result.ok) return;
-    _showError(
-      BridgeErrorPresenter.localized(
-        context,
-        result,
-        fallback: 'Could not forward message',
-      ),
-    );
+    try {
+      final exported = await widget.gateway.execute(
+        ExportAttachmentCommandDto(
+          attachmentIdHex: attachment.id,
+          destinationPath: source.path,
+        ),
+      );
+      if (!exported.ok || !await source.exists()) return null;
+      final capabilities = capabilitiesFor(widget.gateway);
+      final prepared = await _attachmentProcessor.prepare(
+        sourcePath: source.path,
+        originalName: attachment.name,
+        extension: _fileExtension(attachment.name),
+        maximumBytes: capabilities.maxAttachmentBytes,
+        maximumVideoBytes: capabilities.maxVideoAttachmentBytes,
+        videoPreviewExtractor: VideoThumbnailService.extract,
+      );
+      return prepared;
+    } on Object {
+      return null;
+    } finally {
+      if (await source.exists()) await source.delete();
+    }
   }
 
   void _showError(String text) {

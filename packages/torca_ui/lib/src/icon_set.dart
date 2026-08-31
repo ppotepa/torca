@@ -72,6 +72,8 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
   IconData get pdf => pixel ? PixelArtIcons.book_open : HeroIcons.document_text;
   IconData get document => pixel ? PixelArtIcons.file_alt : HeroIcons.document;
   IconData get archive => pixel ? PixelArtIcons.archive : HeroIcons.archive_box;
+  IconData get pin => pixel ? PixelArtIcons.pin : HeroIcons.map_pin;
+  IconData get bookmark => pixel ? PixelArtIcons.bookmark : HeroIcons.bookmark;
   IconData get textFile => pixel ? PixelArtIcons.notes : HeroIcons.code_bracket;
   IconData get info => contactInfo;
   IconData get identity =>

@@ -35,195 +35,215 @@ class SettingsScreen extends StatelessWidget {
           // themed preview. A sliver-backed list only lays out the visible
           // portion on mobile instead of rebuilding and laying out the entire
           // page synchronously whenever one preference changes.
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            children: <Widget>[
-              Text(
-                strings.appearance,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: Column(
-                  children: <Widget>[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-                      child: SegmentedButton<TorcaThemeFamily>(
-                        segments: <ButtonSegment<TorcaThemeFamily>>[
-                          ButtonSegment(
-                            value: TorcaThemeFamily.modern,
-                            icon: Icon(context.torcaIcons.chats),
-                            label: Text(strings.modern),
-                          ),
-                          ButtonSegment(
-                            value: TorcaThemeFamily.terminal,
-                            icon: Icon(context.torcaIcons.diagnostics),
-                            label: Text(strings.terminal),
-                          ),
-                        ],
-                        selected: <TorcaThemeFamily>{
-                          preferences.appearance.family,
-                        },
-                        onSelectionChanged: (value) =>
-                            preferences.setThemeFamily(value.single),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: DropdownButtonFormField<TorcaThemeVariant>(
-                        key: ValueKey(preferences.appearance.family),
-                        initialValue: preferences.appearance.variant,
-                        decoration: const InputDecoration(labelText: 'Variant'),
-                        icon: Icon(context.torcaIcons.expand),
-                        items: TorcaThemeVariant.values
-                            .where(
-                              (variant) =>
-                                  variant.family ==
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                children: <Widget>[
+                  Text(
+                    strings.appearance,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: Column(
+                      children: <Widget>[
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final compact = constraints.maxWidth < 390;
+                            return Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                              child: SegmentedButton<TorcaThemeFamily>(
+                                segments: <ButtonSegment<TorcaThemeFamily>>[
+                                  ButtonSegment(
+                                    value: TorcaThemeFamily.modern,
+                                    icon: compact
+                                        ? null
+                                        : Icon(context.torcaIcons.chats),
+                                    label: Text(strings.modern),
+                                  ),
+                                  ButtonSegment(
+                                    value: TorcaThemeFamily.terminal,
+                                    icon: compact
+                                        ? null
+                                        : Icon(context.torcaIcons.diagnostics),
+                                    label: Text(strings.terminal),
+                                  ),
+                                ],
+                                selected: <TorcaThemeFamily>{
                                   preferences.appearance.family,
-                            )
-                            .map(
-                              (variant) => DropdownMenuItem(
-                                value: variant,
-                                child: Text(variant.label),
+                                },
+                                onSelectionChanged: (value) =>
+                                    preferences.setThemeFamily(value.single),
                               ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          if (value != null) {
-                            preferences.setThemeVariant(value);
-                          }
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _AppearancePreview(appearance: preferences.appearance),
-                    const Divider(height: 24),
-                    ...AppThemeMode.values.map(
-                      (mode) => TorcaRadioTile<AppThemeMode>(
-                        title: Text(_themeLabel(strings, mode)),
-                        value: mode,
-                        groupValue: preferences.themeMode,
-                        onChanged: (value) {
-                          if (value != null) {
-                            preferences.setThemeMode(value);
-                          }
-                        },
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    TorcaRadioTile<TorcaDensity>(
-                      title: Text(strings.compactDensity),
-                      value: TorcaDensity.compact,
-                      groupValue: preferences.appearance.density,
-                      onChanged: (value) {
-                        if (value != null) {
-                          preferences.setThemeDensity(value);
-                        }
-                      },
-                    ),
-                    TorcaRadioTile<TorcaDensity>(
-                      title: Text(strings.comfortableDensity),
-                      value: TorcaDensity.comfortable,
-                      groupValue: preferences.appearance.density,
-                      onChanged: (value) {
-                        if (value != null) {
-                          preferences.setThemeDensity(value);
-                        }
-                      },
-                    ),
-                    TorcaSwitchTile(
-                      secondary: Icon(context.torcaIcons.warning),
-                      title: Text(strings.reduceMotion),
-                      value: preferences.appearance.reduceMotion,
-                      onChanged: preferences.setReduceMotion,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Battery & availability',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              _BatterySettingsCard(preferences: preferences),
-              const SizedBox(height: 24),
-              Text(
-                strings.language,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: Column(
-                  children: AppLocaleMode.values
-                      .map(
-                        (mode) => TorcaRadioTile<AppLocaleMode>(
-                          title: Text(_localeLabel(strings, mode)),
-                          value: mode,
-                          groupValue: preferences.localeMode,
-                          onChanged: (value) {
-                            if (value != null) preferences.setLocaleMode(value);
+                            );
                           },
                         ),
-                      )
-                      .toList(growable: false),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                strings.privacy,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: TorcaSwitchTile(
-                  secondary: Icon(context.torcaIcons.read),
-                  title: Text(strings.sendReadReceipts),
-                  subtitle: Text(strings.sendReadReceiptsDescription),
-                  value: preferences.readReceiptsEnabled,
-                  onChanged: preferences.setReadReceiptsEnabled,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                strings.notifications,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: TorcaSwitchTile(
-                  secondary: Icon(context.torcaIcons.notifications),
-                  title: Text(strings.enableNotifications),
-                  subtitle: Text(strings.notificationPrivacy),
-                  value: preferences.notificationsEnabled,
-                  onChanged: preferences.setNotificationsEnabled,
-                ),
-              ),
-              if (isTorcaWindows) ...<Widget>[
-                const SizedBox(height: 24),
-                Text(
-                  strings.audio,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                _AudioSettingsCard(gateway: gateway, preferences: preferences),
-                const SizedBox(height: 24),
-                Text(
-                  strings.desktop,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Card(
-                  child: TorcaSwitchTile(
-                    secondary: Icon(context.torcaIcons.save),
-                    title: Text(strings.closeToTray),
-                    subtitle: Text(strings.closeToTrayDescription),
-                    value: preferences.closeToTrayEnabled,
-                    onChanged: preferences.setCloseToTrayEnabled,
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: DropdownButtonFormField<TorcaThemeVariant>(
+                            key: ValueKey(preferences.appearance.family),
+                            initialValue: preferences.appearance.variant,
+                            decoration: InputDecoration(
+                              labelText: strings.variant,
+                            ),
+                            icon: Icon(context.torcaIcons.expand),
+                            items: TorcaThemeVariant.values
+                                .where(
+                                  (variant) =>
+                                      variant.family ==
+                                      preferences.appearance.family,
+                                )
+                                .map(
+                                  (variant) => DropdownMenuItem(
+                                    value: variant,
+                                    child: Text(variant.label),
+                                  ),
+                                )
+                                .toList(growable: false),
+                            onChanged: (value) {
+                              if (value != null) {
+                                preferences.setThemeVariant(value);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _AppearancePreview(appearance: preferences.appearance),
+                        const Divider(height: 24),
+                        ...AppThemeMode.values.map(
+                          (mode) => TorcaRadioTile<AppThemeMode>(
+                            title: Text(_themeLabel(strings, mode)),
+                            value: mode,
+                            groupValue: preferences.themeMode,
+                            onChanged: (value) {
+                              if (value != null) {
+                                preferences.setThemeMode(value);
+                              }
+                            },
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        TorcaRadioTile<TorcaDensity>(
+                          title: Text(strings.compactDensity),
+                          value: TorcaDensity.compact,
+                          groupValue: preferences.appearance.density,
+                          onChanged: (value) {
+                            if (value != null) {
+                              preferences.setThemeDensity(value);
+                            }
+                          },
+                        ),
+                        TorcaRadioTile<TorcaDensity>(
+                          title: Text(strings.comfortableDensity),
+                          value: TorcaDensity.comfortable,
+                          groupValue: preferences.appearance.density,
+                          onChanged: (value) {
+                            if (value != null) {
+                              preferences.setThemeDensity(value);
+                            }
+                          },
+                        ),
+                        TorcaSwitchTile(
+                          secondary: Icon(context.torcaIcons.warning),
+                          title: Text(strings.reduceMotion),
+                          value: preferences.appearance.reduceMotion,
+                          onChanged: preferences.setReduceMotion,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ],
+                  const SizedBox(height: 24),
+                  Text(
+                    strings.batteryAvailability,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  _BatterySettingsCard(preferences: preferences),
+                  const SizedBox(height: 24),
+                  Text(
+                    strings.language,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: Column(
+                      children: AppLocaleMode.values
+                          .map(
+                            (mode) => TorcaRadioTile<AppLocaleMode>(
+                              title: Text(_localeLabel(strings, mode)),
+                              value: mode,
+                              groupValue: preferences.localeMode,
+                              onChanged: (value) {
+                                if (value != null)
+                                  preferences.setLocaleMode(value);
+                              },
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    strings.privacy,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: TorcaSwitchTile(
+                      secondary: Icon(context.torcaIcons.read),
+                      title: Text(strings.sendReadReceipts),
+                      subtitle: Text(strings.sendReadReceiptsDescription),
+                      value: preferences.readReceiptsEnabled,
+                      onChanged: preferences.setReadReceiptsEnabled,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    strings.notifications,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: TorcaSwitchTile(
+                      secondary: Icon(context.torcaIcons.notifications),
+                      title: Text(strings.enableNotifications),
+                      subtitle: Text(strings.notificationPrivacy),
+                      value: preferences.notificationsEnabled,
+                      onChanged: preferences.setNotificationsEnabled,
+                    ),
+                  ),
+                  if (isTorcaWindows) ...<Widget>[
+                    const SizedBox(height: 24),
+                    Text(
+                      strings.audio,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    _AudioSettingsCard(
+                      gateway: gateway,
+                      preferences: preferences,
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      strings.desktop,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Card(
+                      child: TorcaSwitchTile(
+                        secondary: Icon(context.torcaIcons.save),
+                        title: Text(strings.closeToTray),
+                        subtitle: Text(strings.closeToTrayDescription),
+                        value: preferences.closeToTrayEnabled,
+                        onChanged: preferences.setCloseToTrayEnabled,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           );
         },
       ),
@@ -256,41 +276,41 @@ class _BatterySettingsCard extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
           child: Text(
-            'Choose when Torca may defer background work. Incoming work is never silently discarded.',
+            context.strings.batterySettingsDescription,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
         _select<TorcaBatteryMode>(
           context,
-          label: 'Availability mode',
+          label: context.strings.availabilityMode,
           value: preferences.batteryMode,
           values: TorcaBatteryMode.values,
-          labelFor: _batteryModeLabel,
+          labelFor: (value) => _batteryModeLabel(context, value),
           onChanged: preferences.setBatteryMode,
         ),
         TorcaSwitchTile(
           secondary: Icon(context.torcaIcons.save),
-          title: const Text('Allow delayed background delivery'),
-          subtitle: const Text(
-            'Required before Automatic or Saver can suspend the communication runtime while the app is idle.',
+          title: Text(context.strings.allowDelayedBackgroundDelivery),
+          subtitle: Text(
+            context.strings.allowDelayedBackgroundDeliveryDescription,
           ),
           value: preferences.allowDelayedBackgroundDelivery,
           onChanged: preferences.setAllowDelayedBackgroundDelivery,
         ),
         _select<TorcaMeteredTransferPolicy>(
           context,
-          label: 'Metered network transfers',
+          label: context.strings.meteredTransfers,
           value: preferences.meteredTransfers,
           values: TorcaMeteredTransferPolicy.values,
-          labelFor: _meteredLabel,
+          labelFor: (value) => _meteredLabel(context, value),
           onChanged: preferences.setMeteredTransfers,
         ),
         _select<TorcaVisualActivityPolicy>(
           context,
-          label: 'Avatar and visual activity',
+          label: context.strings.visualActivity,
           value: preferences.visualActivity,
           values: TorcaVisualActivityPolicy.values,
-          labelFor: _visualLabel,
+          labelFor: (value) => _visualLabel(context, value),
           onChanged: preferences.setVisualActivity,
         ),
         const SizedBox(height: 8),
@@ -322,24 +342,29 @@ class _BatterySettingsCard extends StatelessWidget {
     ),
   );
 
-  String _batteryModeLabel(TorcaBatteryMode value) => switch (value) {
-    TorcaBatteryMode.automatic => 'Automatic',
-    TorcaBatteryMode.alwaysAvailable => 'Always available',
-    TorcaBatteryMode.batterySaver => 'Battery saver',
+  String _batteryModeLabel(BuildContext context, TorcaBatteryMode value) =>
+      switch (value) {
+        TorcaBatteryMode.automatic => context.strings.automatic,
+        TorcaBatteryMode.alwaysAvailable => context.strings.alwaysAvailable,
+        TorcaBatteryMode.batterySaver => context.strings.batterySaver,
+      };
+
+  String _meteredLabel(
+    BuildContext context,
+    TorcaMeteredTransferPolicy value,
+  ) => switch (value) {
+    TorcaMeteredTransferPolicy.allowAll => context.strings.allowAll,
+    TorcaMeteredTransferPolicy.pauseLarge => context.strings.pauseLarge,
+    TorcaMeteredTransferPolicy.pauseAll => context.strings.pauseAll,
   };
 
-  String _meteredLabel(TorcaMeteredTransferPolicy value) => switch (value) {
-    TorcaMeteredTransferPolicy.allowAll => 'Allow all',
-    TorcaMeteredTransferPolicy.pauseLarge => 'Pause large files',
-    TorcaMeteredTransferPolicy.pauseAll => 'Pause all transfers',
-  };
-
-  String _visualLabel(TorcaVisualActivityPolicy value) => switch (value) {
-    TorcaVisualActivityPolicy.full => 'Full animation',
-    TorcaVisualActivityPolicy.focusedOnly => 'Animate focused views',
-    TorcaVisualActivityPolicy.staticOnly => 'Static when idle',
-    TorcaVisualActivityPolicy.followSystem => 'Follow system setting',
-  };
+  String _visualLabel(BuildContext context, TorcaVisualActivityPolicy value) =>
+      switch (value) {
+        TorcaVisualActivityPolicy.full => context.strings.fullAnimation,
+        TorcaVisualActivityPolicy.focusedOnly => context.strings.focusedOnly,
+        TorcaVisualActivityPolicy.staticOnly => context.strings.staticIdle,
+        TorcaVisualActivityPolicy.followSystem => context.strings.followSystem,
+      };
 }
 
 const _systemDefaultDeviceId = '__system_default__';

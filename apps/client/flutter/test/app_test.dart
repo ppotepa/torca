@@ -6,6 +6,7 @@ import 'package:torca_app/app.dart';
 import 'package:torca_app/gateway/engine_gateway.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/navigation/app_navigation_controller.dart';
+import 'package:torca_app/screens/conversation_screen.dart';
 import 'package:torca_app/screens/pairing_screen.dart';
 import 'package:torca_app/settings/local_preferences.dart';
 import 'package:torca_app/widgets/pairing_modal_registry.dart';
@@ -315,6 +316,142 @@ void main() {
     expect(find.text('Enable notifications'), findsOneWidget);
   });
 
+  testWidgets('chat list search filters contacts and message previews', (
+    WidgetTester tester,
+  ) async {
+    const snapshot = AppSnapshotDto(
+      identity: IdentityDto(id: 'local', displayName: 'Me'),
+      contacts: <ContactDto>[
+        ContactDto(
+          id: 'alice-contact',
+          displayName: 'Alice',
+          status: 'active',
+          connectionState: 'ready',
+        ),
+        ContactDto(
+          id: 'bob-contact',
+          displayName: 'Bob',
+          status: 'active',
+          connectionState: 'ready',
+        ),
+      ],
+      conversations: <ConversationDto>[
+        ConversationDto(
+          id: 'alice-conversation',
+          contactId: 'alice-contact',
+          status: 'active',
+          lastMessageBody: 'Needle in the preview',
+          lastActivityAtMs: 1,
+        ),
+        ConversationDto(
+          id: 'bob-conversation',
+          contactId: 'bob-contact',
+          status: 'active',
+          lastMessageBody: 'A different message',
+          lastActivityAtMs: 2,
+        ),
+      ],
+      bootstrapPhase: 'ready',
+    );
+    await tester.pumpWidget(_app(FakeEngineGateway(initialSnapshot: snapshot)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Search chats'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'needle');
+    await tester.pump();
+
+    expect(find.byTooltip('Pair contact'), findsOneWidget);
+    expect(find.text('1 result'), findsOneWidget);
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.text('Bob'), findsNothing);
+    expect(find.text('Needle in the preview'), findsOneWidget);
+  });
+
+  testWidgets(
+    'active empty conversations remain visible while archived stay hidden',
+    (WidgetTester tester) async {
+      const snapshot = AppSnapshotDto(
+        identity: IdentityDto(id: 'local', displayName: 'Me'),
+        contacts: <ContactDto>[
+          ContactDto(
+            id: 'active-contact',
+            displayName: 'Alice',
+            status: 'active',
+            connectionState: 'ready',
+          ),
+          ContactDto(
+            id: 'archived-contact',
+            displayName: 'Bob',
+            status: 'active',
+            connectionState: 'ready',
+          ),
+        ],
+        conversations: <ConversationDto>[
+          ConversationDto(
+            id: 'active-empty-conversation',
+            contactId: 'active-contact',
+            status: 'active',
+          ),
+          ConversationDto(
+            id: 'archived-empty-conversation',
+            contactId: 'archived-contact',
+            status: 'archived',
+          ),
+        ],
+        bootstrapPhase: 'ready',
+      );
+      await tester.pumpWidget(
+        _app(FakeEngineGateway(initialSnapshot: snapshot)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Bob'), findsNothing);
+    },
+  );
+
+  testWidgets('new contact conversation appears immediately on wide layout', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const snapshot = AppSnapshotDto(
+      identity: IdentityDto(id: 'local', displayName: 'Me'),
+      contacts: <ContactDto>[
+        ContactDto(
+          id: 'new-contact',
+          displayName: 'Alice',
+          status: 'active',
+          connectionState: 'ready',
+        ),
+      ],
+      bootstrapPhase: 'ready',
+    );
+    final gateway = FakeEngineGateway(
+      initialSnapshot: snapshot,
+      responses: <FakeGatewayResponse>[
+        FakeGatewayResponse.success(kind: 'attention_updated'),
+        FakeGatewayResponse.success(kind: 'contacts_acknowledged'),
+        FakeGatewayResponse.success(
+          kind: 'conversation_started',
+          resourceId: 'new-conversation',
+        ),
+      ],
+    );
+    await tester.pumpWidget(_app(gateway));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Contacts').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConversationPane), findsOneWidget);
+    expect(find.textContaining('No messages yet.'), findsOneWidget);
+  });
+
   testWidgets('warm-up renders provider-owned commissioning presentation', (
     WidgetTester tester,
   ) async {
@@ -349,7 +486,7 @@ void main() {
     WidgetTester tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    tester.view.physicalSize = const Size(460, 900);
+    tester.view.physicalSize = const Size(360, 900);
     tester.view.devicePixelRatio = 1;
     final preferences = LocalPreferences();
     addTearDown(() {

@@ -5,6 +5,7 @@ import 'package:torca_app/gateway/engine_gateway.dart';
 import 'package:torca_app/generated/torca_contract.dart';
 import 'package:torca_app/screens/connection_details_screen.dart';
 import 'package:torca_app/theme/app_theme.dart';
+import 'package:torca_app/widgets/runtime_network_status.dart';
 
 class _SnapshotGateway implements EngineGateway {
   _SnapshotGateway(AppSnapshotDto snapshot)
@@ -34,6 +35,13 @@ void main() {
   ) async {
     final gateway = _SnapshotGateway(
       const AppSnapshotDto(
+        endpointSummary: 'iroh://endpoint-hash',
+        transport: TransportStatusDto(
+          communication: TransportIndicatorDto(state: 'ready'),
+          providerRouteState: 'fresh',
+          rendezvous: TransportIndicatorDto(state: 'healthy'),
+          peer: TransportIndicatorDto(state: 'ready'),
+        ),
         contacts: <ContactDto>[
           ContactDto(
             id: '01',
@@ -66,5 +74,7 @@ void main() {
     expect(find.text('721 ms'), findsWidgets);
     expect(find.text('Direct Iroh contact'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
+    expect(find.byType(RuntimeNetworkStatus), findsOneWidget);
+    expect(find.text('iroh://endpoint-hash'), findsOneWidget);
   });
 }

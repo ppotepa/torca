@@ -86,6 +86,9 @@ class _TransferCenterDialogState extends State<_TransferCenterDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final dialogWidth = (MediaQuery.sizeOf(context).width - 48)
+        .clamp(0.0, 460.0)
+        .toDouble();
     final visible = widget.attachments
         .where(
           (item) =>
@@ -110,8 +113,12 @@ class _TransferCenterDialogState extends State<_TransferCenterDialog> {
     final showCompleted = _statusFilter != _TransferStatusFilter.active;
     return AlertDialog(
       title: Text(context.strings.transfers),
-      content: SizedBox(
-        width: 460,
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: dialogWidth,
+          maxWidth: dialogWidth,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.68,
+        ),
         child:
             (!showFiles || visible.isEmpty) &&
                 (!showPending || pending.isEmpty) &&

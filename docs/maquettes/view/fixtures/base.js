@@ -8,7 +8,7 @@
         sourceCommit:'2c584fc', sourceFingerprint:'maquette-reference', contract:25, wire:1, storageEpoch:3, nativeAbi:1
       },
       ui: {
-        locale:'pl', theme:'modern-ocean', mode:'dark', density:'comfortable', viewport:'fluid', scenario:'normal', reduceMotion:false,
+        locale:'pl', theme:'modern-ocean', mode:'dark', density:'comfortable', viewport:'fluid', platform:'desktop', view:'chats', scenario:'normal', reduceMotion:false,
         live:true, logsPaused:false, diagnosticsTab:'runtime', logLevel:'all'
       },
       runtime: {

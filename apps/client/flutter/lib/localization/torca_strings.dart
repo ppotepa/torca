@@ -19,7 +19,39 @@ class TorcaStrings {
   bool get _pl => locale.languageCode.toLowerCase() == 'pl';
 
   String get settings => _pl ? 'Ustawienia' : 'Settings';
+  String get chats => _pl ? 'Rozmowy' : 'Chats';
   String get appearance => _pl ? 'Wygląd' : 'Appearance';
+  String get variant => _pl ? 'Wariant' : 'Variant';
+  String get batteryAvailability =>
+      _pl ? 'Bateria i dostępność' : 'Battery & availability';
+  String get availabilityMode => _pl ? 'Tryb dostępności' : 'Availability mode';
+  String get batterySettingsDescription => _pl
+      ? 'Wybierz, kiedy Torca może odroczyć pracę w tle. Przychodzące zadania nigdy nie są po cichu odrzucane.'
+      : 'Choose when Torca may defer background work. Incoming work is never silently discarded.';
+  String get allowDelayedBackgroundDelivery => _pl
+      ? 'Zezwalaj na opóźnione dostarczanie w tle'
+      : 'Allow delayed background delivery';
+  String get allowDelayedBackgroundDeliveryDescription => _pl
+      ? 'Wymagane, aby tryb automatyczny lub oszczędzania baterii mógł wstrzymać runtime komunikacji, gdy aplikacja jest bezczynna.'
+      : 'Required before Automatic or Saver can suspend the communication runtime while the app is idle.';
+  String get meteredTransfers =>
+      _pl ? 'Transfery w sieci taryfowej' : 'Metered network transfers';
+  String get visualActivity =>
+      _pl ? 'Aktywność avatara i interfejsu' : 'Avatar and visual activity';
+  String get automatic => _pl ? 'Automatycznie' : 'Automatic';
+  String get alwaysAvailable => _pl ? 'Zawsze dostępny' : 'Always available';
+  String get batterySaver => _pl ? 'Oszczędzanie baterii' : 'Battery saver';
+  String get allowAll => _pl ? 'Zezwalaj na wszystko' : 'Allow all';
+  String get pauseLarge => _pl ? 'Wstrzymuj duże pliki' : 'Pause large files';
+  String get pauseAll =>
+      _pl ? 'Wstrzymuj wszystkie transfery' : 'Pause all transfers';
+  String get fullAnimation => _pl ? 'Pełna animacja' : 'Full animation';
+  String get focusedOnly =>
+      _pl ? 'Animuj tylko aktywne widoki' : 'Animate focused views';
+  String get staticIdle =>
+      _pl ? 'Statycznie podczas bezczynności' : 'Static when idle';
+  String get followSystem =>
+      _pl ? 'Zgodnie z ustawieniami systemu' : 'Follow system setting';
   String get system => _pl ? 'System' : 'System';
   String get light => _pl ? 'Jasny' : 'Light';
   String get dark => _pl ? 'Ciemny' : 'Dark';
@@ -58,12 +90,16 @@ class TorcaStrings {
   String get newPrivateMessage =>
       _pl ? 'Nowa prywatna wiadomość' : 'New private message';
   String get message => _pl ? 'Wiadomość' : 'Message';
+  String get originalMessageUnavailable => _pl
+      ? 'Oryginalna wiadomość jest niedostępna'
+      : 'Original message unavailable';
   String get senderYou => _pl ? 'Ty' : 'You';
   String get senderContact => _pl ? 'Kontakt' : 'Contact';
   String get outgoingMessage =>
       _pl ? 'Wiadomość wychodząca' : 'Outgoing message';
   String get incomingMessage =>
       _pl ? 'Wiadomość przychodząca' : 'Incoming message';
+  String get messageActions => _pl ? 'Akcje wiadomości' : 'Message actions';
   String get sent => _pl ? 'Wysłano' : 'Sent';
   String get delivered => _pl ? 'Dostarczono' : 'Delivered';
   String get read => _pl ? 'Odczytano' : 'Read';
@@ -121,6 +157,8 @@ class TorcaStrings {
   String get connectionDetails =>
       _pl ? 'Szczegóły połączenia' : 'Connection details';
   String get contactActions => _pl ? 'Akcje kontaktu' : 'Contact actions';
+  String get conversationActions =>
+      _pl ? 'Akcje rozmowy' : 'Conversation actions';
   String get verification => _pl ? 'Weryfikacja' : 'Verification';
   String get verified => _pl ? 'Zweryfikowano' : 'Verified';
   String get verifyContact => _pl ? 'Zweryfikuj kontakt' : 'Verify contact';
@@ -177,6 +215,12 @@ class TorcaStrings {
   String get identityChanged => _pl
       ? 'Tożsamość kontaktu uległa zmianie. Sprawdź numer bezpieczeństwa.'
       : 'The contact identity changed. Verify the Safety Number.';
+  String get identityChangedSendBlocked => _pl
+      ? 'Wysyłanie jest wstrzymane do czasu ponownej weryfikacji kontaktu.'
+      : 'Sending is paused until this contact is verified again.';
+  String get blockedSendBlocked => _pl
+      ? 'Kontakt jest zablokowany. Odblokuj go, aby wysłać wiadomość.'
+      : 'This contact is blocked. Unblock the contact to send a message.';
   String get pairingExpired =>
       _pl ? 'Zaproszenie wygasło.' : 'The pairing invitation has expired.';
   String get itemAlreadyExists =>
@@ -212,6 +256,15 @@ class TorcaStrings {
       : 'The operation could not be completed.';
   String get yourIdentity => _pl ? 'Twoja tożsamość' : 'Your identity';
   String get localIdentity => _pl ? 'Tożsamość lokalna' : 'Local identity';
+  String get fingerprint => _pl ? 'Odcisk' : 'Fingerprint';
+  String get copyFingerprint => _pl ? 'Kopiuj odcisk' : 'Copy fingerprint';
+  String get fingerprintCopied =>
+      _pl ? 'Odcisk skopiowany' : 'Fingerprint copied';
+  String get productVersion => _pl ? 'Wersja produktu' : 'Product version';
+  String get build => _pl ? 'Build' : 'Build';
+  String get sourceCommit => _pl ? 'Commit źródłowy' : 'Source commit';
+  String get contract => _pl ? 'Kontrakt' : 'Contract';
+  String get storageEpoch => _pl ? 'Epoka magazynu' : 'Storage epoch';
   String get displayName => _pl ? 'Nazwa wyświetlana' : 'Display name';
   String get unavailable => _pl ? 'Niedostępne' : 'Unavailable';
   String get applicationMenu => _pl ? 'Menu aplikacji' : 'Application menu';
@@ -235,6 +288,11 @@ class TorcaStrings {
   String get newContact => _pl ? 'Nowy kontakt' : 'New contact';
   String get status => _pl ? 'Stan' : 'Status';
   String get transport => 'Transport';
+  String get route => _pl ? 'Trasa providera' : 'Provider route';
+  String get peerState => _pl ? 'Stan P2P' : 'P2P state';
+  String connectionEvidenceNote(String provider) => _pl
+      ? 'Jakość opisuje uwierzytelnione bezpośrednie połączenie z kontaktem przez ${providerName(provider)}. To dane runtime, a nie siła sygnału radiowego ani gwarancja anonimowości.'
+      : 'Quality describes the authenticated direct peer link over ${providerName(provider)}. It is runtime evidence, not radio or internet signal strength.';
   String get roundTrip => _pl ? 'Opoznienie' : 'Round trip';
   String get lastSuccessfulProbe =>
       _pl ? 'Ostatnia udana sonda' : 'Last successful probe';
@@ -287,6 +345,11 @@ class TorcaStrings {
       _pl ? 'Eksportuj diagnostyke' : 'Export diagnostics';
   String get noMessagesYet => _pl ? 'Brak wiadomosci' : 'No messages yet';
   String get contactLabel => _pl ? 'Kontakt' : 'Contact';
+  String get instantMode =>
+      _pl ? 'Tryb natychmiastowego polaczenia' : 'Instant mode';
+  String get instantModeEnabled => _pl
+      ? 'Tryb natychmiastowego polaczenia wlaczony'
+      : 'Instant mode enabled';
   String get radioMode => _pl ? 'Tryb radio' : 'Radio mode';
   String get radioModeDescription => _pl
       ? 'Krotkie, maksymalnie 10-sekundowe transmisje PTT. Radio dziala dopiero, gdy obie strony je wlacza.'
@@ -438,6 +501,11 @@ class TorcaStrings {
       : 'Invitation operation failed';
   String get providerEndpoint =>
       _pl ? 'Endpoint providera' : 'Provider endpoint';
+  String get communicationProvider =>
+      _pl ? 'Provider komunikacji' : 'Communication provider';
+  String get communicationState =>
+      _pl ? 'Stan komunikacji' : 'Communication state';
+  String get endpoint => _pl ? 'Endpoint' : 'Endpoint';
 
   String get providerEndpointAvailable => _pl ? 'Dostępny' : 'Available';
 
@@ -455,6 +523,8 @@ class TorcaStrings {
   String get attachmentSyncing =>
       _pl ? 'Synchronizacja zalacznika…' : 'Attachment is syncing…';
   String get closeSearch => _pl ? 'Zamknij wyszukiwanie' : 'Close search';
+  String get searchConversationHint =>
+      _pl ? 'Szukaj w tej rozmowie' : 'Search this conversation';
   String get typeToSearchConversation => _pl
       ? 'Wpisz tekst, aby przeszukać rozmowę.'
       : 'Type to search this conversation.';
@@ -568,6 +638,8 @@ class TorcaStrings {
   String lastSeenAt(String time) => _pl ? 'Ostatnio $time' : 'Last seen $time';
   String get clearConversationHistory =>
       _pl ? 'Wyczyść historię rozmowy' : 'Clear conversation history';
+  String get markConversationRead =>
+      _pl ? 'Oznacz jako przeczytane' : 'Mark as read';
   String get archiveConversation =>
       _pl ? 'Archiwizuj rozmowę' : 'Archive conversation';
   String get restoreConversation =>
@@ -585,6 +657,13 @@ class TorcaStrings {
   String remoteIdentity(String? id) =>
       _pl ? 'Tozsamosc ${id ?? '-'}' : 'Identity ${id ?? '-'}';
   String get searchMessages => _pl ? 'Szukaj wiadomosci' : 'Search messages';
+  String get searchChats => _pl ? 'Szukaj rozmow' : 'Search chats';
+  String get clearSearch => _pl ? 'Wyczysc wyszukiwanie' : 'Clear search';
+  String get noChatsMatch => _pl
+      ? 'Brak rozmow pasujacych do wyszukiwania'
+      : 'No chats match your search';
+  String searchResultsCount(int count) =>
+      _pl ? 'Wyniki: $count' : '$count ${count == 1 ? 'result' : 'results'}';
   String get refresh => _pl ? 'Odswiez' : 'Refresh';
   String get removeAttachment => _pl ? 'Usun zalacznik' : 'Remove attachment';
   String get scanQr => _pl ? 'Skanuj QR' : 'Scan QR';
@@ -618,6 +697,218 @@ class TorcaStrings {
       _pl ? 'Brak czytelnych zdarzen zdrowia' : 'No readable health events';
   String get startingSecureNetwork =>
       _pl ? 'Uruchamianie komunikacji…' : 'Starting communication…';
+  String get batteryTab => _pl ? 'Bateria' : 'Battery';
+  String get runtimeTab => _pl ? 'Runtime' : 'Runtime';
+  String get logsTab => _pl ? 'Logi' : 'Logs';
+  String get incidentTab => _pl ? 'Incydent' : 'Incident';
+  String get runtimeHealth => _pl ? 'Stan runtime' : 'Runtime health';
+  String get nativeLogTails => _pl ? 'Logi natywne' : 'Native log tails';
+  String get nativeLogTailsDescription => _pl
+      ? 'Wczytuje ograniczony, zanonimizowany fragment bieżących logów natywnych. Odczyt nie uruchamia ciągłego monitorowania.'
+      : 'Loads a bounded, redacted tail from current-run native logs only. This explicit read does not keep a watcher alive.';
+  String get loadCurrentRunLogs =>
+      _pl ? 'Wczytaj logi bieżącego uruchomienia' : 'Load current run logs';
+  String get incidentTools => _pl ? 'Narzędzia incydentu' : 'Incident tools';
+  String get incidentDescription => _pl
+      ? 'Uruchom autotest, oznacz bieżący stan i wyeksportuj zanonimizowany zrzut diagnostyczny. Treści wiadomości, załączniki, audio i sekrety nie są dołączane.'
+      : 'Run a self-test, mark the current state and export the redacted snapshot. Message text, attachments, audio and secrets are not included.';
+  String get markIncident => _pl ? 'Oznacz incydent' : 'Mark incident';
+  String get observationRecording => _pl ? 'rejestrowanie' : 'recording';
+  String get observationStopped => _pl ? 'zatrzymano' : 'stopped';
+  String get observationWork => _pl ? 'Praca' : 'Work';
+  String get regressionScore => _pl ? 'Wynik regresji' : 'Regression score';
+  String get batteryObservation =>
+      _pl ? 'Obserwacja baterii' : 'Battery observation';
+  String get observationRecordingDescription => _pl
+      ? 'Rejestrowanie zmian od punktu bazowego obserwacji.'
+      : 'Recording deltas since the observation baseline.';
+  String get observationStoppedDescription => _pl
+      ? 'Uruchom przed scenariuszem bezczynności lub odzyskiwania, aby zapisać nową pracę.'
+      : 'Start before an idle or recovery scenario to record only new work.';
+  String get observationState => _pl ? 'Stan' : 'State';
+  String get wakeSources => _pl ? 'Źródła wybudzeń' : 'Wake sources';
+  String get startObservation =>
+      _pl ? 'Rozpocznij obserwację' : 'Start observation';
+  String get stopObservation =>
+      _pl ? 'Zatrzymaj obserwację' : 'Stop observation';
+  String get resetBaseline => _pl ? 'Zresetuj punkt bazowy' : 'Reset baseline';
+  String get whyAwake => _pl ? 'Dlaczego aktywny' : 'Why awake';
+  String get redactedSchedulerDescription => _pl
+      ? 'Zanonimizowane wyjaśnienie harmonogramu; identyfikatory kontaktów nie są tutaj wyświetlane.'
+      : 'Redacted scheduler explanation; contact identifiers are never shown here.';
+  String get activeLeases => _pl ? 'Aktywne dzierżawy' : 'Active leases';
+  String get activeDemands =>
+      _pl ? 'Aktywne zapotrzebowania' : 'Active demands';
+  String get leaseReasons => _pl ? 'Powody dzierżaw' : 'Lease reasons';
+  String get scheduledWork => _pl ? 'Zaplanowana praca' : 'Scheduled work';
+  String get nextDeadline => _pl ? 'Następny termin' : 'Next deadline';
+  String get zeroDelayDeadlines =>
+      _pl ? 'Terminy bez opóźnienia' : 'Zero-delay deadlines';
+  String get identicalDeadlineReplacements => _pl
+      ? 'Identyczne zastąpienia terminów'
+      : 'Identical deadline replacements';
+  String get exportTorcaDiagnostics =>
+      _pl ? 'Eksportuj diagnostykę Torca' : 'Export Torca diagnostics';
+  String get incidentSnapshotSaved => _pl
+      ? 'Zrzut incydentu zapisano w lokalnej diagnostyce tego uruchomienia.'
+      : 'Incident snapshot saved to this run\'s local diagnostics.';
+  String get messageForwarded =>
+      _pl ? 'Wiadomość przekazana' : 'Message forwarded';
+  String get couldNotForwardMessage =>
+      _pl ? 'Nie udało się przekazać wiadomości' : 'Could not forward message';
+  String get noForwardableContent => _pl
+      ? 'Ta wiadomość nie zawiera treści możliwej do przekazania.'
+      : 'This message has no content that can be forwarded.';
+  String forwardSkippedAttachments(int count) => _pl
+      ? 'Przekazano wiadomość; pominięto $count niedostępnych załączników.'
+      : 'Message forwarded; skipped $count unavailable attachment${count == 1 ? '' : 's'}.';
+  String forwardNoAvailableAttachments(int count) => _pl
+      ? 'Nie można przekazać: $count załącznik${count == 1 ? ' jest' : 'i są'} niedostępny${count == 1 ? '' : 'e'} lub anulowany${count == 1 ? '' : 'e'}.'
+      : 'Cannot forward: $count attachment${count == 1 ? ' is' : 's are'} unavailable or cancelled.';
+  String get identity => _pl ? 'Tożsamość' : 'Identity';
+  String get preparingPrivateSpace => _pl
+      ? 'Przygotowywanie prywatnej przestrzeni'
+      : 'Preparing your private space';
+  String get preparingPrivateSpaceDescription => _pl
+      ? 'Konfigurowanie szyfrowanego magazynu i bezpiecznej komunikacji. Możesz pozostawić ten ekran otwarty.'
+      : 'Setting up encrypted storage and secure communication. You can safely leave this screen open.';
+  String bootstrapProgress(int ready, int total, String elapsed) => _pl
+      ? '$ready z $total kontroli bezpieczeństwa ukończonych  •  $elapsed'
+      : '$ready of $total secure checks complete  •  $elapsed';
+  String bootstrapAttempt(String label, int attempt) =>
+      _pl ? '$label · próba $attempt' : '$label · attempt $attempt';
+  String get restartApplication =>
+      _pl ? 'Uruchom aplikację ponownie' : 'Restart application';
+  String bootstrapStepLabel(String id) => switch (id) {
+    'local_storage' => _pl ? 'Magazyn lokalny' : 'Local storage',
+    'device_identity' => _pl ? 'Tożsamość urządzenia' : 'Device identity',
+    'communication_runtime' =>
+      _pl ? 'Runtime komunikacji' : 'Communication runtime',
+    'incoming_reachability' =>
+      _pl ? 'Dostępność połączeń przychodzących' : 'Incoming reachability',
+    'rendezvous' => _pl ? 'Rendezvous parowania' : 'Pairing rendezvous',
+    _ => id,
+  };
+  String bootstrapStateDescription(
+    String id,
+    BootstrapStepState value,
+    String? code,
+  ) {
+    if (value == BootstrapStepState.running ||
+        value == BootstrapStepState.verifying) {
+      if (id == 'communication_runtime') {
+        return switch (code) {
+          'COMMUNICATION_RETRYING' =>
+            _pl
+                ? 'Provider komunikacji ponownie się łączy…'
+                : 'The communication provider is reconnecting…',
+          'COMMUNICATION_FAILED' =>
+            _pl
+                ? 'Provider komunikacji wymaga uwagi…'
+                : 'The communication provider needs attention…',
+          _ =>
+            _pl
+                ? 'Przygotowywanie wybranego providera komunikacji…'
+                : 'Preparing the selected communication provider…',
+        };
+      }
+      if (id == 'incoming_reachability') {
+        return code == 'INCOMING_REACHABILITY_PENDING'
+            ? (_pl
+                  ? 'Przygotowywanie urządzenia do komunikacji przychodzącej…'
+                  : 'Preparing this device for incoming communication…')
+            : (_pl
+                  ? 'Przygotowywanie dostępności połączeń przychodzących…'
+                  : 'Preparing incoming reachability…');
+      }
+      return switch (id) {
+        'local_storage' =>
+          _pl
+              ? 'Otwieranie szyfrowanego magazynu i sprawdzanie schematu…'
+              : 'Opening encrypted storage and checking its schema…',
+        'device_identity' =>
+          _pl
+              ? 'Wczytywanie kluczy urządzenia i obliczanie odcisku…'
+              : 'Loading device keys and calculating fingerprint…',
+        'incoming_reachability' =>
+          _pl
+              ? 'Przygotowywanie trasy dla komunikacji przychodzącej…'
+              : 'Preparing a route for incoming communication…',
+        'rendezvous' =>
+          _pl
+              ? 'Sprawdzanie rendezvous parowania…'
+              : 'Testing the pairing rendezvous…',
+        _ => _pl ? 'Bezpieczne wykonywanie pracy…' : 'Working securely…',
+      };
+    }
+    return switch (value) {
+      BootstrapStepState.ready => switch (id) {
+        'local_storage' =>
+          _pl
+              ? 'Szyfrowana baza danych jest otwarta'
+              : 'Encrypted database is open',
+        'device_identity' =>
+          _pl
+              ? 'Tożsamość urządzenia jest chroniona i gotowa'
+              : 'Device identity is protected and ready',
+        'communication_runtime' =>
+          _pl
+              ? 'Runtime komunikacji jest gotowy'
+              : 'Communication runtime is ready',
+        'incoming_reachability' =>
+          _pl
+              ? 'Urządzenie może odbierać komunikację'
+              : 'This device can receive communication',
+        'rendezvous' =>
+          _pl
+              ? 'Rendezvous parowania jest dostępne'
+              : 'Pairing rendezvous is reachable',
+        _ => _pl ? 'Chronione i gotowe' : 'Protected and ready',
+      },
+      BootstrapStepState.degraded =>
+        _pl
+            ? 'Tymczasowo niedostępne; ponawianie'
+            : 'Temporarily unavailable; retrying',
+      BootstrapStepState.failed when code == 'COMMUNICATION_RESTART_REQUIRED' =>
+        _pl
+            ? 'Provider komunikacji nie zatrzymał się poprawnie; uruchom aplikację ponownie przed kolejną próbą'
+            : 'The communication provider did not stop safely; restart the application before retrying',
+      BootstrapStepState.blocked =>
+        _pl
+            ? 'Oczekiwanie na gotowość komunikacji'
+            : 'Waiting for communication to become ready',
+      BootstrapStepState.failed =>
+        _pl
+            ? 'Wymaga uwagi: ${code ?? 'COMMUNICATION_RUNTIME_FAILED'}'
+            : 'Needs attention: ${code ?? 'COMMUNICATION_RUNTIME_FAILED'}',
+      _ =>
+        _pl
+            ? 'Oczekiwanie na poprzednią kontrolę bezpieczeństwa'
+            : 'Waiting for the previous secure check',
+    };
+  }
+
+  String get closeInvitationDescription => _pl
+      ? 'Możesz zamknąć to okno i korzystać z aplikacji. Zaproszenie pojawi się tutaj automatycznie, gdy połączenie będzie gotowe.'
+      : 'Close this window to continue using the application. The invitation will appear here automatically when the connection is ready.';
+  String get remoteIdentityTitle =>
+      _pl ? 'Tożsamość zdalna' : 'Remote identity';
+  String get contactConnected =>
+      _pl ? 'Kontakt połączony' : 'Contact connected';
+  String get contactConnectedDescription => _pl
+      ? 'Zaproszenie zostało zaakceptowane, a kontakt jest gotowy do rozmowy.'
+      : 'The invitation was accepted and this contact is ready to chat.';
+  String get verifyFingerprintBeforeAccepting => _pl
+      ? 'Urządzenie dołączyło do tego zaproszenia. Sprawdź odcisk przed zaakceptowaniem kontaktu.'
+      : 'A device joined this invitation. Verify the fingerprint before accepting the contact.';
+  String get joinRequestWaiting => _pl
+      ? 'Twoje żądanie czeka na weryfikację i akceptację przez właściciela zaproszenia.'
+      : 'Your request is waiting for the invitation owner to verify and accept it.';
+  String get collapseNavigation =>
+      _pl ? 'Zwiń nawigację' : 'Collapse navigation';
+  String get expandNavigation => _pl ? 'Rozwiń nawigację' : 'Expand navigation';
+  String buildServiceSummary(String build, String service) =>
+      'build $build  •  $service';
 }
 
 extension TorcaStringsContext on BuildContext {

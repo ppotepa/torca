@@ -105,6 +105,20 @@ class MessageBubble extends StatelessWidget {
                                       ?.copyWith(fontWeight: FontWeight.w700),
                                 ),
                               ),
+                              IconButton(
+                                key: ValueKey<String>(
+                                  'message-actions-${message.id}',
+                                ),
+                                tooltip: context.strings.messageActions,
+                                onPressed: onLongPress,
+                                icon: Icon(context.torcaIcons.more),
+                                visualDensity: VisualDensity.compact,
+                                constraints: const BoxConstraints(
+                                  minWidth: 32,
+                                  minHeight: 32,
+                                ),
+                                padding: EdgeInsets.zero,
+                              ),
                             ],
                           ),
                           const SizedBox(height: 6),

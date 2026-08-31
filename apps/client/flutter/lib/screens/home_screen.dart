@@ -64,6 +64,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<String> _mutedConversationIds = <String>{};
   final Set<String> _draftConversationIds = <String>{};
   final Set<String> _loadingConversationFlags = <String>{};
+  final Map<String, ConversationDto> _optimisticConversations =
+      <String, ConversationDto>{};
   int _attentionGeneration = 0;
 
   void _reportAttention(
@@ -226,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: context.torcaIcons.chats,
               count: snapshot.navigationBadges.unreadMessages,
             ),
-            label: 'Chats',
+            label: context.strings.chats,
           ),
           NavigationDestination(
             icon: _NavigationIcon(
@@ -237,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: context.torcaIcons.contacts,
               count: snapshot.navigationBadges.newContacts,
             ),
-            label: 'Contacts',
+            label: context.strings.contacts,
           ),
           NavigationDestination(
             icon: _NavigationIcon(
@@ -248,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: context.torcaIcons.invitations,
               count: snapshot.navigationBadges.pairingAttention,
             ),
-            label: 'Invitations',
+            label: context.strings.invitations,
           ),
         ],
         actions: <Widget>[
@@ -272,8 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
         floatingActionButton:
             profileMissing ||
                 _section == _HomeSection.invitations ||
-                (_section == _HomeSection.chats &&
-                    _visibleConversations(snapshot).isNotEmpty)
+                _section == _HomeSection.chats
             ? null
             : FloatingActionButton(
                 tooltip: context.strings.pairContact,
@@ -315,6 +316,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return _ConversationList(
           conversations: conversations,
           contacts: snapshot.contacts,
+          messages: snapshot.messages,
+          attachments: snapshot.attachments,
           radio: snapshot.radio,
           pinnedConversationIds: _pinnedConversationIds,
           mutedConversationIds: _mutedConversationIds,
@@ -322,6 +325,7 @@ class _HomeScreenState extends State<HomeScreen> {
           selectedConversationId: _selectedConversationId,
           onContactInfo: _openContactDetails,
           onAction: _handleConversationAction,
+          onPairContact: _openJoinInvitation,
           onSelected: (conversation) {
             // Keep selection in the shell even when the narrow layout uses a
             // route.  This lets a later resize restore the same conversation
@@ -330,12 +334,29 @@ class _HomeScreenState extends State<HomeScreen> {
               _selectedConversationId = conversation.id;
               _selectedContactId = conversation.contactId;
             });
+            final conversationContact = _contactFor(
+              snapshot.contacts,
+              conversation.contactId,
+            );
             Navigator.of(context).push<void>(
               MaterialPageRoute(
                 builder: (_) => ConversationScreen(
                   gateway: widget.gateway,
                   conversation: conversation,
                   preferences: widget.preferences,
+                  conversationPinned: _pinnedConversationIds.contains(
+                    conversation.id,
+                  ),
+                  conversationMuted: _mutedConversationIds.contains(
+                    conversation.id,
+                  ),
+                  onConversationAction: conversationContact == null
+                      ? null
+                      : (action) => _handleConversationAction(
+                          conversation,
+                          conversationContact,
+                          action,
+                        ),
                 ),
               ),
             );
@@ -356,6 +377,8 @@ class _HomeScreenState extends State<HomeScreen> {
             child: _ConversationList(
               conversations: conversations,
               contacts: snapshot.contacts,
+              messages: snapshot.messages,
+              attachments: snapshot.attachments,
               radio: snapshot.radio,
               pinnedConversationIds: _pinnedConversationIds,
               mutedConversationIds: _mutedConversationIds,
@@ -363,6 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
               selectedConversationId: selected?.id,
               onContactInfo: _openContactDetails,
               onAction: _handleConversationAction,
+              onPairContact: _openJoinInvitation,
               onSelected: (conversation) =>
                   setState(() => _selectedConversationId = conversation.id),
             ),
@@ -383,6 +407,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     gateway: widget.gateway,
                     conversation: selected,
                     preferences: widget.preferences,
+                    conversationPinned: _pinnedConversationIds.contains(
+                      selected.id,
+                    ),
+                    conversationMuted: _mutedConversationIds.contains(
+                      selected.id,
+                    ),
+                    onConversationAction: contact == null
+                        ? null
+                        : (action) => _handleConversationAction(
+                            selected,
+                            contact,
+                            action,
+                          ),
                   ),
           ),
           if (contextPanel) ...<Widget>[
@@ -413,21 +450,39 @@ class _HomeScreenState extends State<HomeScreen> {
     },
   );
 
-  List<ConversationDto> _visibleConversations(AppSnapshotDto snapshot) =>
-      snapshot.conversations
-          .where(
-            (conversation) =>
-                conversation.lastMessageBody != null ||
-                conversation.id == _selectedConversationId,
-          )
-          .toList(growable: false)
-        ..sort((a, b) {
-          final pinOrder =
-              (_pinnedConversationIds.contains(b.id) ? 1 : 0) -
-              (_pinnedConversationIds.contains(a.id) ? 1 : 0);
-          if (pinOrder != 0) return pinOrder;
-          return b.lastActivityAtMs.compareTo(a.lastActivityAtMs);
-        });
+  List<ConversationDto> _visibleConversations(AppSnapshotDto snapshot) {
+    final conversations = <ConversationDto>[...snapshot.conversations];
+    final confirmedContacts = conversations
+        .map((item) => item.contactId)
+        .toSet();
+    final confirmedIds = conversations.map((item) => item.id).toSet();
+    _optimisticConversations.removeWhere(
+      (contactId, conversation) =>
+          confirmedContacts.contains(contactId) ||
+          confirmedIds.contains(conversation.id),
+    );
+    for (final conversation in _optimisticConversations.values) {
+      if (!confirmedIds.contains(conversation.id) &&
+          !confirmedContacts.contains(conversation.contactId)) {
+        conversations.add(conversation);
+      }
+    }
+    return conversations
+        .where(
+          (conversation) =>
+              conversation.typedStatus != ConversationStatus.archived ||
+              conversation.lastMessageBody != null ||
+              conversation.id == _selectedConversationId,
+        )
+        .toList(growable: false)
+      ..sort((a, b) {
+        final pinOrder =
+            (_pinnedConversationIds.contains(b.id) ? 1 : 0) -
+            (_pinnedConversationIds.contains(a.id) ? 1 : 0);
+        if (pinOrder != 0) return pinOrder;
+        return b.lastActivityAtMs.compareTo(a.lastActivityAtMs);
+      });
+  }
 
   void _loadConversationFlags(List<ConversationDto> conversations) {
     final pending = <ConversationDto>[];
@@ -478,9 +533,15 @@ class _HomeScreenState extends State<HomeScreen> {
       case AppOverflowAction.pairing:
         _openJoinInvitation();
       case AppOverflowAction.identity:
+        final identityBuildInfo = widget.gateway is BuildInfoProvider
+            ? (widget.gateway as BuildInfoProvider).buildInfo
+            : null;
         Navigator.of(context).push<void>(
           MaterialPageRoute(
-            builder: (_) => IdentityDetailsScreen(snapshot: snapshot),
+            builder: (_) => IdentityDetailsScreen(
+              snapshot: snapshot,
+              buildInfo: identityBuildInfo,
+            ),
           ),
         );
       case AppOverflowAction.diagnostics:
@@ -520,6 +581,11 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (action) {
       case ConversationAction.open:
         return;
+      case ConversationAction.markRead:
+        await _execute(
+          MarkConversationReadCommandDto(conversationIdHex: conversation.id),
+          context.strings.operationFailed,
+        );
       case ConversationAction.contactDetails:
         _openContactDetails(contact);
       case ConversationAction.rename:
@@ -729,16 +795,33 @@ class _HomeScreenState extends State<HomeScreen> {
           contactId: contact.id,
           status: 'active',
         );
+        // The native command is accepted before the next snapshot necessarily
+        // arrives. Keep the new empty thread visible on wide layouts so the
+        // selection, Chats list and ConversationPane do not disagree while
+        // the runtime publishes its authoritative projection.
+        _optimisticConversations[contact.id] = conversation;
       }
       if (!mounted) return;
-      _reportConversationAttention(conversation.id);
+      final openedConversation = conversation;
+      _reportConversationAttention(openedConversation.id);
       if (MediaQuery.sizeOf(context).width < _wideLayoutBreakpoint) {
         await Navigator.of(context).push<void>(
           MaterialPageRoute(
             builder: (_) => ConversationScreen(
               gateway: widget.gateway,
-              conversation: conversation!,
+              conversation: openedConversation,
               preferences: widget.preferences,
+              conversationPinned: _pinnedConversationIds.contains(
+                openedConversation.id,
+              ),
+              conversationMuted: _mutedConversationIds.contains(
+                openedConversation.id,
+              ),
+              onConversationAction: (action) => _handleConversationAction(
+                openedConversation,
+                contact,
+                action,
+              ),
             ),
           ),
         );
@@ -747,7 +830,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       setState(() {
         _section = _HomeSection.chats;
-        _selectedConversationId = conversation!.id;
+        _selectedConversationId = openedConversation.id;
         _selectedContactId = contact.id;
       });
     } finally {

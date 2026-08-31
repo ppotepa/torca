@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../controllers/pairing_action_controller.dart';
@@ -163,9 +164,27 @@ class _IdentitySummary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            name == null || name.isEmpty ? context.strings.newDevice : name,
-            style: Theme.of(context).textTheme.titleLarge,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              TorcaDeviceAvatar(
+                label: name == null || name.isEmpty
+                    ? context.strings.newDevice
+                    : name,
+                identityId: pairing.remoteIdentityId,
+                fallbackIdentityId: pairing.id,
+                size: 48,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  name == null || name.isEmpty
+                      ? context.strings.newDevice
+                      : name,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+            ],
           ),
           if (pairing.remoteIdentityId != null) ...<Widget>[
             const SizedBox(height: 6),

@@ -75,6 +75,7 @@ class ConversationHeader extends StatelessWidget {
     this.instantContactBusy = false,
     this.radioSupported = true,
     this.onInstantContactChanged,
+    this.onConversationActions,
     super.key,
   });
 
@@ -92,17 +93,19 @@ class ConversationHeader extends StatelessWidget {
   final bool instantContact;
   final bool instantContactBusy;
   final ValueChanged<bool>? onInstantContactChanged;
+  final VoidCallback? onConversationActions;
   final bool radioSupported;
 
   @override
   Widget build(BuildContext context) {
     final value = contact;
     final blocked = value?.typedStatus == ContactStatus.blocked;
-    final name = value?.displayName ?? 'Contact';
+    final name = value?.displayName ?? context.strings.contactLabel;
     final radioState = session?.typedState ?? radio?.typedState;
     final avatar = TorcaDeviceAvatar(
       label: name,
       identityId: value?.remoteIdentityId,
+      fallbackIdentityId: value?.id,
       size: compact ? 32 : 40,
       presentation: AvatarActivityPresentation.resolve(
         blocked: blocked,
@@ -130,10 +133,32 @@ class ConversationHeader extends StatelessWidget {
         : RuntimeNetworkStatus(snapshot: snapshot!, compact: compact);
 
     if (compact) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Row(
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final actionRow = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              _InstantContactAction(
+                enabled: instantContact,
+                busy: instantContactBusy,
+                compact: true,
+                onChanged: onInstantContactChanged,
+              ),
+              if (radioAction != null) radioAction,
+              IconButton(
+                tooltip: context.strings.connectionDetails,
+                onPressed: onConnectionDetails,
+                icon: Icon(context.torcaIcons.info),
+              ),
+              if (onConversationActions != null)
+                IconButton(
+                  tooltip: context.strings.conversationActions,
+                  onPressed: onConversationActions,
+                  icon: Icon(context.torcaIcons.more),
+                ),
+            ],
+          );
+          final identityRow = Row(
             children: <Widget>[
               if (leading != null) ...<Widget>[
                 leading!,
@@ -142,46 +167,116 @@ class ConversationHeader extends StatelessWidget {
               avatar,
               const SizedBox(width: 10),
               Expanded(child: _contactText(context, value, name, blocked)),
-              _InstantContactAction(
-                enabled: instantContact,
-                busy: instantContactBusy,
-                compact: true,
-                onChanged: onInstantContactChanged,
-              ),
-              if (radioAction != null) radioAction,
             ],
-          ),
-          if (networkStatus != null) ...<Widget>[
-            const SizedBox(height: 2),
-            Align(alignment: Alignment.centerRight, child: networkStatus),
-          ],
-        ],
+          );
+          final narrow = constraints.maxWidth < 430;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              if (narrow) ...<Widget>[
+                Row(children: <Widget>[Expanded(child: identityRow)]),
+                Align(alignment: Alignment.centerRight, child: actionRow),
+              ] else
+                Row(
+                  children: <Widget>[
+                    Expanded(child: identityRow),
+                    actionRow,
+                  ],
+                ),
+              if (networkStatus != null) ...<Widget>[
+                const SizedBox(height: 2),
+                Align(alignment: Alignment.centerRight, child: networkStatus),
+              ],
+            ],
+          );
+        },
       );
     }
 
-    return Row(
-      children: <Widget>[
-        if (leading != null) ...<Widget>[leading!, const SizedBox(width: 2)],
-        avatar,
-        const SizedBox(width: 10),
-        Expanded(child: _contactText(context, value, name, blocked)),
-        if (networkStatus != null) ...<Widget>[
-          const SizedBox(width: 8),
-          networkStatus,
-        ],
-        _InstantContactAction(
-          enabled: instantContact,
-          busy: instantContactBusy,
-          compact: false,
-          onChanged: onInstantContactChanged,
-        ),
-        if (radioAction != null) radioAction,
-        IconButton(
-          tooltip: context.strings.connectionDetails,
-          onPressed: onConnectionDetails,
-          icon: Icon(context.torcaIcons.info),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The conversation pane can be narrower than the physical window on
+        // desktop. Keep the network monitor readable, but move it below the
+        // identity/actions row before the switches start competing with the
+        // contact name for horizontal space.
+        final narrowPane = constraints.maxWidth < 700;
+        final paneNetworkStatus = snapshot == null
+            ? null
+            : RuntimeNetworkStatus(snapshot: snapshot!, compact: narrowPane);
+        final identityRow = Row(
+          children: <Widget>[
+            if (leading != null) ...<Widget>[
+              leading!,
+              const SizedBox(width: 2),
+            ],
+            avatar,
+            const SizedBox(width: 10),
+            Expanded(child: _contactText(context, value, name, blocked)),
+            _InstantContactAction(
+              enabled: instantContact,
+              busy: instantContactBusy,
+              compact: narrowPane,
+              onChanged: onInstantContactChanged,
+            ),
+            if (radioAction != null) radioAction,
+            IconButton(
+              tooltip: context.strings.connectionDetails,
+              onPressed: onConnectionDetails,
+              icon: Icon(context.torcaIcons.info),
+            ),
+            if (onConversationActions != null)
+              IconButton(
+                tooltip: context.strings.conversationActions,
+                onPressed: onConversationActions,
+                icon: Icon(context.torcaIcons.more),
+              ),
+          ],
+        );
+        if (paneNetworkStatus == null || !narrowPane) {
+          return Row(
+            children: <Widget>[
+              if (leading != null) ...<Widget>[
+                leading!,
+                const SizedBox(width: 2),
+              ],
+              avatar,
+              const SizedBox(width: 10),
+              Expanded(child: _contactText(context, value, name, blocked)),
+              if (paneNetworkStatus != null) ...<Widget>[
+                const SizedBox(width: 8),
+                paneNetworkStatus,
+              ],
+              _InstantContactAction(
+                enabled: instantContact,
+                busy: instantContactBusy,
+                compact: false,
+                onChanged: onInstantContactChanged,
+              ),
+              if (radioAction != null) radioAction,
+              IconButton(
+                tooltip: context.strings.connectionDetails,
+                onPressed: onConnectionDetails,
+                icon: Icon(context.torcaIcons.info),
+              ),
+              if (onConversationActions != null)
+                IconButton(
+                  tooltip: context.strings.conversationActions,
+                  onPressed: onConversationActions,
+                  icon: Icon(context.torcaIcons.more),
+                ),
+            ],
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            identityRow,
+            Align(alignment: Alignment.centerRight, child: paneNetworkStatus),
+          ],
+        );
+      },
     );
   }
 
@@ -204,7 +299,10 @@ class ConversationHeader extends StatelessWidget {
       ),
       if (value != null)
         blocked
-            ? Text('Blocked', style: Theme.of(context).textTheme.bodySmall)
+            ? Text(
+                context.strings.blocked,
+                style: Theme.of(context).textTheme.bodySmall,
+              )
             : InkWell(
                 onTap: onConnectionDetails,
                 child: Text(
@@ -236,20 +334,39 @@ class _InstantContactAction extends StatelessWidget {
   final ValueChanged<bool>? onChanged;
 
   @override
-  Widget build(BuildContext context) => IconButton(
-    visualDensity: compact ? VisualDensity.compact : null,
-    tooltip: enabled
-        ? 'Instant connection enabled'
-        : 'Keep this contact instantly available',
-    onPressed: busy || onChanged == null ? null : () => onChanged!(!enabled),
-    icon: busy
-        ? const SizedBox.square(
-            dimension: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-        : Icon(context.torcaIcons.instant),
-    color: enabled ? Theme.of(context).colorScheme.primary : null,
-  );
+  Widget build(BuildContext context) {
+    // A header action without a callback is only a presentation preview. Do
+    // not render a misleading, non-functional control in that case (this also
+    // keeps the compact header honest for read-only embeds).
+    if (onChanged == null) return const SizedBox.shrink();
+    final label = enabled
+        ? context.strings.instantModeEnabled
+        : context.strings.instantMode;
+    return Semantics(
+      label: label,
+      toggled: enabled,
+      child: Tooltip(
+        message: label,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              context.torcaIcons.instant,
+              size: compact ? 18 : 20,
+              color: enabled
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            TorcaSwitch(
+              value: enabled,
+              semanticLabel: label,
+              onChanged: busy ? null : onChanged,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _RadioHeaderAction extends StatelessWidget {
@@ -296,14 +413,13 @@ class _RadioHeaderAction extends StatelessWidget {
                 ),
               ),
             ),
-          if (!compact)
-            Text(
-              capturing
-                  ? 'REC'
-                  : receiving
-                  ? 'RX'
-                  : context.strings.radioMode,
-            ),
+          Icon(
+            context.torcaIcons.radio,
+            size: compact ? 18 : 20,
+            color: capturing || receiving
+                ? colors.error
+                : colors.onSurfaceVariant,
+          ),
           TorcaSwitch(
             value: radio.localEnabled,
             semanticLabel: context.strings.radioMode,

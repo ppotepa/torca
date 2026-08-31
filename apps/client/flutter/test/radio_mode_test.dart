@@ -145,6 +145,31 @@ void main() {
     expect(find.byType(Switch), findsNothing);
   });
 
+  testWidgets('conversation header exposes Instant as an icon switch', (
+    tester,
+  ) async {
+    final values = <bool>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ConversationHeader(
+            contact: _contact,
+            onConnectionDetails: () {},
+            instantContact: false,
+            onInstantContactChanged: values.add,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(Switch), findsOneWidget);
+    expect(find.byTooltip('Instant mode'), findsOneWidget);
+    await tester.tap(find.byType(Switch));
+    await tester.pump();
+    expect(values, <bool>[true]);
+  });
+
   testWidgets(
     'conversation header surface stays readable over scrolled content',
     (tester) async {
@@ -235,6 +260,7 @@ void main() {
       find.byKey(const ValueKey<String>('rendezvous-status-light')),
       findsOneWidget,
     );
+    expect(find.byTooltip('Connection details'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -23,7 +23,7 @@
     search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
     close:P.close, confirm:P.check, back:P.back,
     expand:'<path d="m6 9 6 6 6-6"/>', collapse:'<path d="m6 15 6-6 6 6"/>',
-    more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>', pin:'<path d="m15 4 5 5-3 3-1-1-4 4v4l-2 2-1-6-6-1 2-2h4l4-4-1-1 3-3Z"/>', muted:'<path d="M4 4l16 16M7 8v4a5 5 0 0 0 9 3M9 5a5 5 0 0 1 8 4v3M12 19v2"/>',
     reply:'<path d="m9 17-5-5 5-5M4 12h9a7 7 0 0 1 7 7"/>', forward:'<path d="m15 17 5-5-5-5M20 12h-9a7 7 0 0 0-7 7"/>',
     copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
     retry:'<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8A7 7 0 0 1 18.7 6L20 12M4 12l1.3 6A7 7 0 0 0 17.9 16"/>', reconnect:'<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8A7 7 0 0 1 18.7 6L20 12M4 12l1.3 6A7 7 0 0 0 17.9 16"/>',

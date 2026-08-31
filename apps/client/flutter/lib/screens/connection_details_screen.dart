@@ -44,89 +44,184 @@ class ConnectionDetailsScreen extends StatelessWidget {
         appBar: RuntimeAppBar(
           title: Text(context.strings.connectionDetailsTitle),
         ),
-        body: ListView(
-          padding: const EdgeInsets.all(20),
-          children: <Widget>[
-            Row(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: <Widget>[
-                TorcaDeviceAvatar(
-                  label: contact.displayName,
-                  identityId: contact.remoteIdentityId,
-                  size: 52,
-                  presentation: AvatarActivityPresentation.resolve(
-                    blocked: contact.typedStatus == ContactStatus.blocked,
-                    online:
-                        contact.typedAvailability == PeerAvailability.reachable,
-                    waking:
-                        contact.peerHealth.typedState ==
-                        TransportState.connecting,
-                    error:
-                        contact.peerHealth.typedState == TransportState.failed,
+                Row(
+                  children: <Widget>[
+                    TorcaDeviceAvatar(
+                      label: contact.displayName,
+                      identityId: contact.remoteIdentityId,
+                      fallbackIdentityId: contact.id,
+                      size: 52,
+                      presentation: AvatarActivityPresentation.resolve(
+                        blocked: contact.typedStatus == ContactStatus.blocked,
+                        online:
+                            contact.typedAvailability ==
+                            PeerAvailability.reachable,
+                        waking:
+                            contact.peerHealth.typedState ==
+                            TransportState.connecting,
+                        error:
+                            contact.peerHealth.typedState ==
+                            TransportState.failed,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            contact.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 4),
+                          blocked
+                              ? Text(context.strings.blocked)
+                              : PeerHealthIndicator(health: contact.peerHealth),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          context.strings.connection,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        LayoutBuilder(
+                          builder: (context, constraints) =>
+                              RuntimeNetworkStatus(
+                                snapshot: snapshot,
+                                compact: constraints.maxWidth < 520,
+                              ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        contact.displayName,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 4),
-                      blocked
-                          ? Text(context.strings.blocked)
-                          : PeerHealthIndicator(health: contact.peerHealth),
-                    ],
+                const SizedBox(height: 12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final cardWidth = constraints.maxWidth >= 560
+                        ? (constraints.maxWidth - 8) / 2
+                        : constraints.maxWidth;
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        if (presentation.tone != ConnectionTone.ready)
+                          SizedBox(
+                            width: cardWidth,
+                            child: _DetailCard(
+                              label: context.strings.status,
+                              value: presentation.label,
+                            ),
+                          ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.transport,
+                            value: presentation.label,
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.quality,
+                            value: _quality(
+                              contact.peerHealth.quality,
+                              context,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.roundTrip,
+                            value: contact.peerHealth.rttMs == null
+                                ? context.strings.unavailable
+                                : '${contact.peerHealth.rttMs} ms',
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.lastSuccessfulProbe,
+                            value: _timestamp(
+                              contact.peerHealth.lastSuccessAtMs,
+                              context,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.consecutiveFailures,
+                            value: '${contact.peerHealth.consecutiveFailures}',
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.reconnectAttempts,
+                            value: '${contact.peerHealth.reconnectAttempt}',
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.route,
+                            value: snapshot.transport.providerRouteState,
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.peerState,
+                            value: contact.peerHealth.state,
+                          ),
+                        ),
+                        SizedBox(
+                          width: cardWidth,
+                          child: _DetailCard(
+                            label: context.strings.providerEndpoint,
+                            value:
+                                snapshot.endpointSummary ??
+                                (contact.endpointAvailable
+                                    ? context.strings.providerEndpointAvailable
+                                    : context
+                                          .strings
+                                          .providerEndpointUnavailable),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  context.strings.connectionEvidenceNote(
+                    contact.transportProvider,
                   ),
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-            if (presentation.tone != ConnectionTone.ready) ...<Widget>[
-              _DetailCard(
-                label: context.strings.status,
-                value: presentation.label,
-              ),
-              const SizedBox(height: 8),
-            ],
-            _DetailCard(
-              label: context.strings.transport,
-              value: presentation.label,
-            ),
-            const SizedBox(height: 8),
-            _DetailCard(
-              label: 'Quality',
-              value: _quality(contact.peerHealth.quality, context),
-            ),
-            const SizedBox(height: 8),
-            _DetailCard(
-              label: context.strings.roundTrip,
-              value: contact.peerHealth.rttMs == null
-                  ? context.strings.unavailable
-                  : '${contact.peerHealth.rttMs} ms',
-            ),
-            const SizedBox(height: 8),
-            _DetailCard(
-              label: context.strings.lastSuccessfulProbe,
-              value: _timestamp(contact.peerHealth.lastSuccessAtMs, context),
-            ),
-            const SizedBox(height: 8),
-            _DetailCard(
-              label: context.strings.consecutiveFailures,
-              value: '${contact.peerHealth.consecutiveFailures}',
-            ),
-            const SizedBox(height: 8),
-            _DetailCard(
-              label: context.strings.reconnectAttempts,
-              value: '${contact.peerHealth.reconnectAttempt}',
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Quality describes the authenticated direct peer link over ${_providerLabel(contact.transportProvider)}. It is based on runtime evidence and reconnect health, not radio or internet signal strength.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
+          ),
         ),
       );
     },
@@ -146,9 +241,6 @@ class ConnectionDetailsScreen extends StatelessWidget {
     'poor' => context.strings.poor,
     _ => context.strings.unknown,
   };
-
-  String _providerLabel(String provider) =>
-      provider.isEmpty ? 'Provider' : provider.toUpperCase();
 
   String _timestamp(int? value, BuildContext context) {
     if (value == null || value <= 0) return context.strings.unavailable;

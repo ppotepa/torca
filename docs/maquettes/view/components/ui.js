@@ -6,8 +6,13 @@
   C.avatar = function avatar(contact, size) {
     const name = contact && contact.name ? contact.name : '?';
     const online = contact && contact.online;
-    const classes = ['avatar', size || '', contact && contact.identityChanged ? 'identity-warning' : ''].filter(Boolean).join(' ');
-    return `<div class="${classes}" title="${escape(name)}">${escape((contact && contact.initials) || initials(name))}${online ? '<span class="status-dot online"></span>' : ''}</div>`;
+    const seed = String((contact && (contact.genome || contact.id || contact.safety)) || name);
+    let hash = 2166136261;
+    for (let i = 0; i < seed.length; i += 1) { hash ^= seed.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+    const hueA = Math.abs(hash) % 360; const hueB = (hueA + 48 + ((hash >>> 8) % 112)) % 360;
+    const genes = Array.from({length:9},(_,i)=>`<i class="avatar__gene ${(hash >>> (i + 2)) & 1 ? 'on' : ''}"></i>`).join('');
+    const classes = ['avatar', 'avatar--genome', size || '', contact && contact.identityChanged ? 'identity-warning' : ''].filter(Boolean).join(' ');
+    return `<div class="${classes}" role="img" aria-label="${escape(name)}" title="${escape(name)}" style="--genome-a:hsl(${hueA} 72% 52%);--genome-b:hsl(${hueB} 70% 46%);--genome-angle:${Math.abs(hash)%4*45}deg"><span class="avatar__genome" aria-hidden="true">${genes}</span><span class="avatar__initials">${escape((contact && contact.initials) || initials(name))}</span>${online ? '<span class="status-dot online" aria-label="Online"></span>' : ''}</div>`;
   };
 
   C.badge = (value, tone) => `<span class="badge ${tone || ''}">${escape(value)}</span>`;
@@ -31,11 +36,16 @@
 
   C.modal = function modal(options) {
     const root = document.getElementById('modal-root'); if (!root) return;
-    root.innerHTML = `<div class="modal-backdrop" data-modal-backdrop><section class="modal ${options.className || ''}" role="dialog" aria-modal="true"><header class="modal__header"><strong>${escape(options.title || '')}</strong>${C.iconButton('close', Torca.i18n.t('close'), 'data-close-modal')}</header><div class="modal__body">${options.body || ''}</div>${options.actions ? `<footer class="modal__actions">${options.actions}</footer>` : ''}</section></div>`;
-    const close = () => { root.innerHTML=''; if (options.onClose) options.onClose(); };
+    const previousFocus=document.activeElement;
+    root.innerHTML = `<div class="modal-backdrop" data-modal-backdrop><section class="modal ${options.className || ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1"><header class="modal__header"><strong id="modal-title">${escape(options.title || '')}</strong>${C.iconButton('close', Torca.i18n.t('close'), 'data-close-modal')}</header><div class="modal__body">${options.body || ''}</div>${options.actions ? `<footer class="modal__actions">${options.actions}</footer>` : ''}</section></div>`;
+    let onKey; const close = () => { root.innerHTML=''; if (onKey) document.removeEventListener('keydown', onKey); if (previousFocus?.isConnected) previousFocus.focus(); if (options.onClose) options.onClose(); };
     root.querySelector('[data-close-modal]').addEventListener('click', close);
     root.querySelector('[data-modal-backdrop]').addEventListener('click', (event) => { if (event.target === event.currentTarget) close(); });
     if (options.bind) options.bind(root, close);
+    onKey = (event) => { if (event.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    root.querySelector('.modal')?.addEventListener('keydown', (event) => { if (event.key !== 'Tab') return; const focusable = Array.from(root.querySelectorAll('button,input,textarea,select,[tabindex]:not([tabindex="-1"])')); if (!focusable.length) return; const first=focusable[0]; const last=focusable[focusable.length-1]; if (event.shiftKey && document.activeElement===first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement===last) { event.preventDefault(); first.focus(); } });
+    requestAnimationFrame(()=>{const target=root.querySelector('input,textarea,select,[autofocus],button:not([data-close-modal])')||root.querySelector('.modal');target?.focus();});
   };
 
   C.contactStatus = function contactStatus(contact) {

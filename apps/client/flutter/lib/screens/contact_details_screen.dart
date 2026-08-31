@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:torca_avatar/torca_avatar.dart';
 import 'package:torca_ui/torca_ui.dart';
 import '../gateway/engine_gateway.dart';
@@ -157,6 +158,7 @@ class ContactDetailsContent extends StatelessWidget {
             leading: TorcaDeviceAvatar(
               label: contact.displayName,
               identityId: contact.remoteIdentityId,
+              fallbackIdentityId: contact.id,
               presentation: AvatarActivityPresentation.resolve(
                 blocked: contact.typedStatus == ContactStatus.blocked,
                 online: contact.typedAvailability == PeerAvailability.reachable,
@@ -166,7 +168,9 @@ class ContactDetailsContent extends StatelessWidget {
             subtitle: Text(
               contact.typedStatus == ContactStatus.blocked
                   ? context.strings.blocked
-                  : 'Direct ${contact.transportProvider.toUpperCase()} contact',
+                  : context.strings.directProviderContact(
+                      contact.transportProvider,
+                    ),
             ),
             trailing: ConnectionIndicator(
               state: contact.availabilityIndicatorState,
@@ -308,48 +312,146 @@ class ContactDetailsContent extends StatelessWidget {
       ],
     );
     if (!scrollable) return content;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-      children: <Widget>[content],
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: <Widget>[content],
+        ),
+      ),
     );
   }
 }
 
 class IdentityDetailsScreen extends StatelessWidget {
-  const IdentityDetailsScreen({required this.snapshot, super.key});
+  const IdentityDetailsScreen({
+    required this.snapshot,
+    this.buildInfo,
+    super.key,
+  });
   final AppSnapshotDto snapshot;
+  final ClientBuildInfo? buildInfo;
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: RuntimeAppBar(title: Text(context.strings.yourIdentity)),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: <Widget>[
-        _DetailsCard(
-          title: context.strings.localIdentity,
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: ListView(
+          padding: const EdgeInsets.all(16),
           children: <Widget>[
-            _ValueRow(
-              label: context.strings.displayName,
-              value:
-                  snapshot.identity?.displayName ?? context.strings.unavailable,
+            _DetailsCard(
+              title: context.strings.localIdentity,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    TorcaDeviceAvatar(
+                      label:
+                          snapshot.identity?.displayName ??
+                          context.strings.yourIdentity,
+                      identityId: snapshot.identity?.id,
+                      stableDevice: true,
+                      size: 64,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text(
+                        snapshot.identity?.displayName ??
+                            context.strings.unavailable,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _ValueRow(
+                  label: context.strings.displayName,
+                  value:
+                      snapshot.identity?.displayName ??
+                      context.strings.unavailable,
+                ),
+                _ValueRow(
+                  label: context.strings.communicationProvider,
+                  value: snapshot.communicationProvider.toUpperCase(),
+                ),
+                _ValueRow(
+                  label: context.strings.communicationState,
+                  value: snapshot.communicationState,
+                ),
+                if (snapshot.endpointSummary != null)
+                  _ValueRow(
+                    label: context.strings.endpoint,
+                    value: snapshot.endpointSummary!,
+                    selectable: true,
+                  ),
+                if (snapshot.identity?.fingerprint != null) ...<Widget>[
+                  _ValueRow(
+                    label: context.strings.fingerprint,
+                    value: snapshot.identity!.fingerprint!,
+                    selectable: true,
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        unawaited(
+                          Clipboard.setData(
+                            ClipboardData(
+                              text: snapshot.identity!.fingerprint!,
+                            ),
+                          ),
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(context.strings.fingerprintCopied),
+                            ),
+                          );
+                        }
+                      },
+                      icon: Icon(context.torcaIcons.copy),
+                      label: Text(context.strings.copyFingerprint),
+                    ),
+                  ),
+                ],
+              ],
             ),
-            _ValueRow(
-              label: 'Communication provider',
-              value: snapshot.communicationProvider.toUpperCase(),
-            ),
-            _ValueRow(
-              label: 'Communication state',
-              value: snapshot.communicationState,
-            ),
-            if (snapshot.endpointSummary != null)
-              _ValueRow(
-                label: 'Endpoint',
-                value: snapshot.endpointSummary!,
-                selectable: true,
+            if (buildInfo != null) ...<Widget>[
+              const SizedBox(height: 12),
+              _DetailsCard(
+                title: context.strings.buildAndConnectionInfo,
+                children: <Widget>[
+                  _ValueRow(
+                    label: context.strings.productVersion,
+                    value: buildInfo!.productVersion,
+                  ),
+                  _ValueRow(
+                    label: context.strings.build,
+                    value: buildInfo!.buildId,
+                    selectable: true,
+                  ),
+                  _ValueRow(
+                    label: context.strings.sourceCommit,
+                    value: buildInfo!.sourceCommit,
+                    selectable: true,
+                  ),
+                  _ValueRow(
+                    label: context.strings.contract,
+                    value:
+                        '${buildInfo!.contractSchema} / ${buildInfo!.wireVersion}',
+                  ),
+                  _ValueRow(
+                    label: context.strings.storageEpoch,
+                    value: '${buildInfo!.storageEpoch}',
+                  ),
+                ],
               ),
+            ],
           ],
         ),
-      ],
+      ),
     ),
   );
 }

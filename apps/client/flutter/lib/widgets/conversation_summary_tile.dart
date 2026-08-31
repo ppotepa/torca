@@ -60,6 +60,7 @@ class ConversationSummaryTile extends StatelessWidget {
         leading: TorcaDeviceAvatar(
           label: contact?.displayName ?? context.strings.contactLabel,
           identityId: contact?.remoteIdentityId,
+          fallbackIdentityId: contact?.id,
           presentation: AvatarActivityPresentation.resolve(
             blocked: contact?.typedStatus == ContactStatus.blocked,
             talking:
@@ -75,14 +76,18 @@ class ConversationSummaryTile extends StatelessWidget {
         title: Row(
           children: <Widget>[
             Expanded(
-              child: Text(contact?.displayName ?? context.strings.contactLabel),
+              child: Text(
+                contact?.displayName ?? context.strings.contactLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
             if (conversation.lastActivityAtMs > 0)
               Text(
                 _timeLabel(conversation.lastActivityAtMs),
                 style: Theme.of(context).textTheme.labelSmall,
               ),
-            if (pinned) Icon(context.torcaIcons.archive, size: 16),
+            if (pinned) Icon(context.torcaIcons.pin, size: 16),
             if (muted) Icon(context.torcaIcons.notifications, size: 16),
             if (draft) Icon(context.torcaIcons.edit, size: 16),
           ],

@@ -26,52 +26,59 @@ class AppModal extends StatelessWidget {
         maxWidth: 520,
         maxHeight: MediaQuery.sizeOf(context).height - 48,
       ),
-      child: SizedBox(
-        width: 520,
-        height: height
-            .clamp(280.0, MediaQuery.sizeOf(context).height - 48)
-            .toDouble(),
-        child: Material(
-          borderRadius: BorderRadius.circular(context.torcaTokens.radiusLarge),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 18, 12, 12),
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final modalHeight = height
+              .clamp(0.0, constraints.maxHeight)
+              .toDouble();
+          return SizedBox(
+            width: constraints.maxWidth,
+            height: modalHeight,
+            child: Material(
+              borderRadius: BorderRadius.circular(
+                context.torcaTokens.radiusLarge,
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 18, 12, 12),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: context.strings.closeTooltip,
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: Icon(context.torcaIcons.close),
+                        ),
+                      ],
                     ),
-                    IconButton(
-                      tooltip: context.strings.closeTooltip,
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: Icon(context.torcaIcons.close),
-                    ),
-                  ],
-                ),
+                  ),
+                  Divider(
+                    height: 1,
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                  Expanded(
+                    child: scrollable
+                        ? SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
+                            child: child,
+                          )
+                        : Padding(
+                            padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
+                            child: child,
+                          ),
+                  ),
+                ],
               ),
-              Divider(
-                height: 1,
-                color: Theme.of(context).colorScheme.outlineVariant,
-              ),
-              Expanded(
-                child: scrollable
-                    ? SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
-                        child: child,
-                      )
-                    : Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
-                        child: child,
-                      ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     ),
   );

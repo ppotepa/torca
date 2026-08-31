@@ -16,6 +16,7 @@ import '../platform/video_thumbnail_service.dart';
 import '../settings/local_preferences.dart';
 import '../widgets/attachment_tile.dart';
 import '../widgets/bridge_error_presenter.dart';
+import '../widgets/conversation_actions.dart';
 import '../widgets/conversation_header.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/message_bubble.dart';
@@ -40,11 +41,17 @@ class ConversationScreen extends StatelessWidget {
     required this.gateway,
     required this.conversation,
     this.preferences,
+    this.onConversationAction,
+    this.conversationPinned = false,
+    this.conversationMuted = false,
     super.key,
   });
   final EngineGateway gateway;
   final ConversationDto conversation;
   final LocalPreferences? preferences;
+  final Future<void> Function(ConversationAction action)? onConversationAction;
+  final bool conversationPinned;
+  final bool conversationMuted;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -52,6 +59,9 @@ class ConversationScreen extends StatelessWidget {
       gateway: gateway,
       conversation: conversation,
       preferences: preferences,
+      onConversationAction: onConversationAction,
+      conversationPinned: conversationPinned,
+      conversationMuted: conversationMuted,
       showHeader: true,
       showBackButton: true,
       headerTopSafeArea: true,
@@ -69,6 +79,9 @@ class ConversationPane extends StatefulWidget {
     this.showBackButton = false,
     this.headerTopSafeArea = false,
     this.compactHeader = false,
+    this.onConversationAction,
+    this.conversationPinned = false,
+    this.conversationMuted = false,
     super.key,
   });
   final EngineGateway gateway;
@@ -78,6 +91,9 @@ class ConversationPane extends StatefulWidget {
   final bool showBackButton;
   final bool headerTopSafeArea;
   final bool compactHeader;
+  final Future<void> Function(ConversationAction action)? onConversationAction;
+  final bool conversationPinned;
+  final bool conversationMuted;
 
   @override
   State<ConversationPane> createState() => _ConversationPaneState();
@@ -107,6 +123,8 @@ class _ConversationPaneState extends State<ConversationPane>
   bool _showJumpToLatest = false;
   bool _instantContact = false;
   bool _instantContactBusy = false;
+  late bool _conversationPinned;
+  late bool _conversationMuted;
   int _jumpMessageCount = 0;
   int _lastActivityAtMs = 0;
   String? _unreadBoundaryMessageId;
@@ -123,6 +141,8 @@ class _ConversationPaneState extends State<ConversationPane>
     _scrollController.addListener(_scrollChanged);
     _controller.addListener(_draftChanged);
     widget.gateway.snapshots.addListener(_snapshotChanged);
+    _conversationPinned = widget.conversationPinned;
+    _conversationMuted = widget.conversationMuted;
     _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
     unawaited(_initializeTimeline());
     unawaited(_restoreDraft());
@@ -179,6 +199,14 @@ class _ConversationPaneState extends State<ConversationPane>
       unawaited(_initializeTimeline());
       unawaited(_restoreDraft());
       unawaited(_restoreBookmarks());
+    }
+    if (oldWidget.conversation.id != widget.conversation.id ||
+        oldWidget.conversationPinned != widget.conversationPinned) {
+      _conversationPinned = widget.conversationPinned;
+    }
+    if (oldWidget.conversation.id != widget.conversation.id ||
+        oldWidget.conversationMuted != widget.conversationMuted) {
+      _conversationMuted = widget.conversationMuted;
     }
   }
 
@@ -434,6 +462,7 @@ class _ConversationPaneState extends State<ConversationPane>
     valueListenable: widget.gateway.snapshots,
     builder: (context, snapshot, _) {
       final messages = _searching ? _searchResults : _timeline.messages;
+      final searchQuery = _searchController.text.trim();
       final byId = <String, MessageDto>{
         for (final message in _timeline.messages) message.id: message,
       };
@@ -457,6 +486,11 @@ class _ConversationPaneState extends State<ConversationPane>
       }
       final reply = _replyingTo;
       final contact = contactForSnapshot(snapshot, widget.conversation);
+      final identityChanged =
+          contact?.typedVerificationStatus ==
+          VerificationStatus.identityChanged;
+      final contactBlocked = contact?.typedStatus == ContactStatus.blocked;
+      final composerRestricted = identityChanged || contactBlocked;
       final radioContact = contact == null
           ? null
           : snapshot.radio.forContact(contact.id);
@@ -494,6 +528,9 @@ class _ConversationPaneState extends State<ConversationPane>
                   instantContactBusy: _instantContactBusy,
                   radioSupported: capabilitiesFor(widget.gateway).supportsRadio,
                   onInstantContactChanged: _setInstantContact,
+                  onConversationActions: widget.onConversationAction == null
+                      ? null
+                      : () => unawaited(_showConversationActions(snapshot)),
                   leading: widget.showBackButton
                       ? BackButton(
                           onPressed: () => Navigator.of(context).maybePop(),
@@ -529,6 +566,17 @@ class _ConversationPaneState extends State<ConversationPane>
               onChanged: _searchChanged,
               onClose: _closeSearch,
             ),
+            if (_searching && searchQuery.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                  child: Text(
+                    context.strings.searchResultsCount(_searchResults.length),
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ),
+              ),
             Expanded(
               child: Stack(
                 children: <Widget>[
@@ -605,8 +653,9 @@ class _ConversationPaneState extends State<ConversationPane>
                               senderLabel:
                                   message.typedDirection ==
                                       MessageDirection.outbound
-                                  ? 'You'
-                                  : contact?.displayName ?? 'Contact',
+                                  ? context.strings.senderYou
+                                  : contact?.displayName ??
+                                        context.strings.contactLabel,
                               compactTop: grouped,
                               onLongPress: () => _showMessageActions(message),
                               onSecondaryTapDown: (details) =>
@@ -617,14 +666,16 @@ class _ConversationPaneState extends State<ConversationPane>
                               quotedBody: message.replyToMessageId == null
                                   ? null
                                   : quoted?.body ??
-                                        'Original message unavailable',
+                                        context
+                                            .strings
+                                            .originalMessageUnavailable,
                               quotedUnavailable:
                                   message.replyToMessageId != null &&
                                   quoted == null,
                               footer: <Widget>[
                                 if (_bookmarkedMessageIds.contains(message.id))
                                   Icon(
-                                    context.torcaIcons.archive,
+                                    context.torcaIcons.bookmark,
                                     size: 16,
                                     semanticLabel:
                                         context.strings.bookmarkMessage,
@@ -761,7 +812,7 @@ class _ConversationPaneState extends State<ConversationPane>
         footer: ConversationComposer(
           gateway: widget.gateway,
           messageField: _composerField(
-            sending || _searching,
+            sending || _searching || composerRestricted,
             reply != null,
             _editingMessage != null,
           ),
@@ -781,6 +832,12 @@ class _ConversationPaneState extends State<ConversationPane>
           sendingAttachment: sendingAttachment,
           pickingAttachment: pickingAttachment,
           searching: _searching,
+          disabled: sending || _searching || composerRestricted,
+          disabledMessage: identityChanged
+              ? context.strings.identityChangedSendBlocked
+              : contactBlocked
+              ? context.strings.blockedSendBlocked
+              : null,
           reply: reply,
           onCancelReply: () => setState(() => _replyingTo = null),
         ),
@@ -857,8 +914,8 @@ class _ConversationPaneState extends State<ConversationPane>
         labelText: editing
             ? context.strings.editMessage
             : replying
-            ? 'Reply'
-            : 'Message',
+            ? context.strings.reply
+            : context.strings.message,
       ),
     );
     if (!isTorcaDesktop) return field;
@@ -948,6 +1005,35 @@ class _ConversationPaneState extends State<ConversationPane>
         ),
       ),
     );
+  }
+
+  Future<void> _showConversationActions(AppSnapshotDto snapshot) async {
+    final contact = contactForSnapshot(snapshot, widget.conversation);
+    final callback = widget.onConversationAction;
+    if (contact == null || callback == null) return;
+    final summary = _conversationSummary();
+    final action = await ConversationActionMenu.showTouch(
+      context,
+      blocked: contact.typedStatus == ContactStatus.blocked,
+      archived: summary?.typedStatus == ConversationStatus.archived,
+      pinned: _conversationPinned,
+      muted: _conversationMuted,
+      unread: (summary?.unreadCount ?? 0) > 0,
+    );
+    if (!mounted || action == null) return;
+    await callback(action);
+    if (mounted) {
+      if (action == ConversationAction.pinToggle) {
+        setState(() => _conversationPinned = !_conversationPinned);
+      } else if (action == ConversationAction.muteToggle) {
+        setState(() => _conversationMuted = !_conversationMuted);
+      }
+    }
+    if (!mounted || !widget.showBackButton) return;
+    if (action == ConversationAction.archive ||
+        action == ConversationAction.remove) {
+      await Navigator.of(context).maybePop();
+    }
   }
 
   Future<void> _retryMessage(MessageDto message) async {

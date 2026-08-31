@@ -4,6 +4,30 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_avatar/torca_avatar.dart';
 
 void main() {
+  testWidgets('contact placeholder genome renders without remote identity', (
+    tester,
+  ) async {
+    final generated = AvatarGenerator().generate(
+      AvatarRequest(seed: 'contact-placeholder-seed'),
+    );
+    final envelope = AvatarGenomeCodec.encode(generated.genome);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TorcaDeviceAvatar(
+          identityId: '',
+          fallbackIdentityId: 'contact-record-42',
+          label: 'Alice',
+          envelope: envelope,
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('torca-avatar-loader')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'stable device avatar renders before the first identity snapshot',
     (tester) async {

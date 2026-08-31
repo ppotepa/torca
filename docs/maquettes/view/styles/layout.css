@@ -1,6 +1,6 @@
 body { min-height: 100vh; overflow: hidden; }
 .stage { height: 100vh; padding-top: 46px; display: grid; place-items: center; background: var(--bg); }
-.viewport-canvas { width: 100%; height: 100%; overflow: hidden; background: var(--surface); transition: width var(--motion-normal), height var(--motion-normal), border-radius var(--motion-normal); }
+.viewport-canvas { position:relative; width: 100%; height: 100%; overflow: hidden; background: var(--surface); transition: width var(--motion-normal), height var(--motion-normal), border-radius var(--motion-normal); }
 body[data-viewport="phone"] .viewport-canvas { width: min(390px, 100vw); height: min(844px, calc(100vh - 58px)); border: 1px solid var(--border); border-radius: 26px; box-shadow: var(--shadow-float); }
 body[data-viewport="tablet"] .viewport-canvas { width: min(820px, 100vw); height: min(1024px, calc(100vh - 58px)); border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow-float); }
 body[data-viewport="desktop"] .viewport-canvas { width: min(1280px, 100vw); height: min(820px, calc(100vh - 58px)); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); }

@@ -42,10 +42,12 @@ class _PaneDivider extends StatelessWidget {
   );
 }
 
-class _ConversationList extends StatelessWidget {
+class _ConversationList extends StatefulWidget {
   const _ConversationList({
     required this.conversations,
     required this.contacts,
+    required this.messages,
+    required this.attachments,
     required this.radio,
     required this.pinnedConversationIds,
     required this.mutedConversationIds,
@@ -54,10 +56,13 @@ class _ConversationList extends StatelessWidget {
     required this.onSelected,
     required this.onContactInfo,
     required this.onAction,
+    required this.onPairContact,
   });
 
   final List<ConversationDto> conversations;
   final List<ContactDto> contacts;
+  final List<MessageDto> messages;
+  final List<AttachmentDto> attachments;
   final RadioDto radio;
   final Set<String> pinnedConversationIds;
   final Set<String> mutedConversationIds;
@@ -66,14 +71,133 @@ class _ConversationList extends StatelessWidget {
   final ValueChanged<ConversationDto> onSelected;
   final ValueChanged<ContactDto> onContactInfo;
   final void Function(ConversationDto, ContactDto, ConversationAction) onAction;
+  final VoidCallback onPairContact;
+
+  @override
+  State<_ConversationList> createState() => _ConversationListState();
+}
+
+class _ConversationListState extends State<_ConversationList> {
+  final TextEditingController _searchController = TextEditingController();
+  bool _searching = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final query = _searchController.text.trim().toLowerCase();
+    final filtered = query.isEmpty
+        ? widget.conversations
+        : widget.conversations.where(_matchesQuery).toList(growable: false);
+    return Column(
+      children: <Widget>[
+        _searchHeader(context),
+        Expanded(
+          child: Column(
+            children: <Widget>[
+              if (query.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    child: Text(
+                      context.strings.searchResultsCount(filtered.length),
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ),
+                ),
+              Expanded(child: _conversationResults(context, filtered, query)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _searchHeader(BuildContext context) {
+    if (!_searching) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: <Widget>[
+            IconButton(
+              tooltip: context.strings.searchChats,
+              onPressed: () => setState(() => _searching = true),
+              icon: Icon(context.torcaIcons.search),
+            ),
+            IconButton(
+              tooltip: context.strings.pairContact,
+              onPressed: widget.onPairContact,
+              icon: Icon(context.torcaIcons.addContact),
+            ),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              autofocus: true,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: context.strings.searchChats,
+                prefixIcon: Icon(context.torcaIcons.search),
+                suffixIcon: _searchController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: context.strings.clearSearch,
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {});
+                        },
+                        icon: Icon(context.torcaIcons.close),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+          IconButton(
+            tooltip: context.strings.pairContact,
+            onPressed: widget.onPairContact,
+            icon: Icon(context.torcaIcons.addContact),
+          ),
+          IconButton(
+            tooltip: context.strings.closeSearch,
+            onPressed: () {
+              _searchController.clear();
+              setState(() => _searching = false);
+            },
+            icon: Icon(context.torcaIcons.close),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _conversationResults(
+    BuildContext context,
+    List<ConversationDto> conversations,
+    String query,
+  ) {
     if (conversations.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(context.strings.pairContactHint),
+          child: Text(
+            query.isEmpty
+                ? context.strings.pairContactHint
+                : context.strings.noChatsMatch,
+            textAlign: TextAlign.center,
+          ),
         ),
       );
     }
@@ -85,9 +209,11 @@ class _ConversationList extends StatelessWidget {
         return ConversationSummaryTile(
           conversation: conversation,
           contact: contact,
-          selected: conversation.id == selectedConversationId,
-          onTap: () => onSelected(conversation),
-          onContactInfo: contact == null ? null : () => onContactInfo(contact),
+          selected: conversation.id == widget.selectedConversationId,
+          onTap: () => widget.onSelected(conversation),
+          onContactInfo: contact == null
+              ? null
+              : () => widget.onContactInfo(contact),
           onLongPress: contact == null
               ? null
               : () => _showActions(context, conversation, contact),
@@ -99,14 +225,38 @@ class _ConversationList extends StatelessWidget {
                   contact,
                   globalPosition: details.globalPosition,
                 ),
-          radio: contact == null ? null : radio.forContact(contact.id),
-          radioSession: radio.session,
-          pinned: pinnedConversationIds.contains(conversation.id),
-          muted: mutedConversationIds.contains(conversation.id),
-          draft: draftConversationIds.contains(conversation.id),
+          radio: contact == null ? null : widget.radio.forContact(contact.id),
+          radioSession: widget.radio.session,
+          pinned: widget.pinnedConversationIds.contains(conversation.id),
+          muted: widget.mutedConversationIds.contains(conversation.id),
+          draft: widget.draftConversationIds.contains(conversation.id),
         );
       },
     );
+  }
+
+  bool _matchesQuery(ConversationDto conversation) {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    final contact = _contact(conversation.contactId);
+    if (contact?.displayName.toLowerCase().contains(query) == true ||
+        conversation.lastMessageBody?.toLowerCase().contains(query) == true) {
+      return true;
+    }
+    return widget.messages.any(
+          (message) =>
+              message.conversationId == conversation.id &&
+              message.body.toLowerCase().contains(query),
+        ) ||
+        widget.attachments.any(
+          (attachment) =>
+              widget.messages.any(
+                (message) =>
+                    message.id == attachment.messageId &&
+                    message.conversationId == conversation.id,
+              ) &&
+              attachment.name.toLowerCase().contains(query),
+        );
   }
 
   Future<void> _showActions(
@@ -117,8 +267,8 @@ class _ConversationList extends StatelessWidget {
   }) async {
     final blocked = contact.typedStatus == ContactStatus.blocked;
     final archived = conversation.typedStatus == ConversationStatus.archived;
-    final pinned = pinnedConversationIds.contains(conversation.id);
-    final muted = mutedConversationIds.contains(conversation.id);
+    final pinned = widget.pinnedConversationIds.contains(conversation.id);
+    final muted = widget.mutedConversationIds.contains(conversation.id);
     final action = globalPosition == null
         ? await ConversationActionMenu.showTouch(
             context,
@@ -126,6 +276,7 @@ class _ConversationList extends StatelessWidget {
             archived: archived,
             pinned: pinned,
             muted: muted,
+            unread: conversation.unreadCount > 0,
           )
         : await ConversationActionMenu.showDesktop(
             context,
@@ -134,17 +285,18 @@ class _ConversationList extends StatelessWidget {
             archived: archived,
             pinned: pinned,
             muted: muted,
+            unread: conversation.unreadCount > 0,
           );
     if (action == null || !context.mounted) return;
     if (action == ConversationAction.open) {
-      onSelected(conversation);
+      widget.onSelected(conversation);
       return;
     }
-    onAction(conversation, contact, action);
+    widget.onAction(conversation, contact, action);
   }
 
   ContactDto? _contact(String id) {
-    for (final contact in contacts) {
+    for (final contact in widget.contacts) {
       if (contact.id == id) return contact;
     }
     return null;
@@ -245,6 +397,7 @@ class _ContactsSection extends StatelessWidget {
                     leading: TorcaDeviceAvatar(
                       label: contact.displayName,
                       identityId: contact.remoteIdentityId,
+                      fallbackIdentityId: contact.id,
                       presentation: AvatarActivityPresentation.resolve(
                         blocked: contact.typedStatus == ContactStatus.blocked,
                         online:

@@ -37,7 +37,10 @@ body[data-viewport="wide"] .split-view.with-context { grid-template-columns:360p
 @media (min-width: 761px) and (max-width: 1120px) {
   body[data-viewport="fluid"] .torca-app { grid-template-columns:78px minmax(0,1fr); }
   body[data-viewport="fluid"] .nav-item span:not(.badge), body[data-viewport="fluid"] .brand span { display:none; }
+  body[data-viewport="fluid"] .brand .brand-mark { display:grid; }
   body[data-viewport="fluid"] .nav-item { justify-content:center; padding:0; }
+  body[data-viewport="fluid"] .runtime-footer { grid-template-columns:1fr; justify-items:center; }
+  body[data-viewport="fluid"] .runtime-footer span span, body[data-viewport="fluid"] .runtime-footer__build { display:none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration:.001ms !important; transition-duration:.001ms !important; }

@@ -12,6 +12,7 @@ class TorcaDeviceAvatar extends StatefulWidget {
     required this.identityId,
     required this.label,
     this.envelope,
+    this.fallbackIdentityId,
     this.size = 40,
     this.backgroundColor,
     this.foregroundColor,
@@ -24,6 +25,10 @@ class TorcaDeviceAvatar extends StatefulWidget {
   });
 
   final String? identityId;
+
+  /// Stable local record id used while a contact has no exchanged genome yet.
+  /// It is only a renderer seed and is never sent to the gateway.
+  final String? fallbackIdentityId;
   final AvatarGenomeEnvelope? envelope;
   final String label;
   final double size;
@@ -51,6 +56,7 @@ class _TorcaDeviceAvatarState extends State<TorcaDeviceAvatar> {
   void didUpdateWidget(covariant TorcaDeviceAvatar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.identityId != widget.identityId ||
+        oldWidget.fallbackIdentityId != widget.fallbackIdentityId ||
         oldWidget.envelope?.genomeHash != widget.envelope?.genomeHash ||
         oldWidget.size != widget.size ||
         oldWidget.presentation.state != widget.presentation.state ||
@@ -67,7 +73,9 @@ class _TorcaDeviceAvatarState extends State<TorcaDeviceAvatar> {
     if (stableId == null) return;
     final repository = AvatarRepository.instance;
     final envelopeFuture = widget.envelope == null
-        ? (widget.stableDevice
+        ? (_usesLocalFallback
+              ? repository.envelopeForIdentity(stableId)
+              : widget.stableDevice
               ? repository.envelopeForDevice(stableId)
               : repository.envelopeForPeer(stableId))
         : Future<AvatarGenomeEnvelope>.value(widget.envelope);
@@ -96,11 +104,20 @@ class _TorcaDeviceAvatarState extends State<TorcaDeviceAvatar> {
   String? get _renderIdentity {
     final identity = widget.identityId?.trim();
     if (identity != null && identity.isNotEmpty) return identity;
+    final fallback = widget.fallbackIdentityId?.trim();
+    if (fallback != null && fallback.isNotEmpty) {
+      return 'placeholder-$fallback';
+    }
     // A physical-device avatar does not depend on the freshly-created Torca
     // identity. Start rendering while the first native snapshot is still
     // arriving instead of showing initials throughout profile setup.
     return widget.stableDevice ? 'local-device' : null;
   }
+
+  bool get _usesLocalFallback =>
+      (widget.identityId == null || widget.identityId!.trim().isEmpty) &&
+      (widget.fallbackIdentityId != null &&
+          widget.fallbackIdentityId!.trim().isNotEmpty);
 
   @override
   Widget build(BuildContext context) {

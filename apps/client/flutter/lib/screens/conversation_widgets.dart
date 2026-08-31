@@ -51,6 +51,8 @@ class ConversationComposer extends StatelessWidget {
     required this.sendingAttachment,
     required this.pickingAttachment,
     required this.searching,
+    this.disabled = false,
+    this.disabledMessage,
     this.reply,
     this.onCancelReply,
     super.key,
@@ -71,6 +73,8 @@ class ConversationComposer extends StatelessWidget {
   final bool sendingAttachment;
   final bool pickingAttachment;
   final bool searching;
+  final bool disabled;
+  final String? disabledMessage;
   final MessageDto? reply;
   final VoidCallback? onCancelReply;
 
@@ -96,18 +100,59 @@ class ConversationComposer extends StatelessWidget {
             ),
             const SizedBox(height: 8),
           ],
-          Row(
-            children: <Widget>[
-              IconButton(
+          if (disabledMessage != null) ...<Widget>[
+            Semantics(
+              liveRegion: true,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(
+                    context.torcaTokens.radiusMedium,
+                  ),
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      context.torcaIcons.warning,
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        disabledMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 430;
+              final emoji = IconButton(
                 tooltip: context.strings.emoji,
-                onPressed: searching || sending || sendingAttachment
+                onPressed: disabled || searching || sending || sendingAttachment
                     ? null
                     : onInsertEmoji,
                 icon: Icon(context.torcaIcons.emoji),
-              ),
-              IconButton(
+              );
+              final attachment = IconButton(
                 tooltip: context.strings.attachFiles,
-                onPressed: pickingAttachment || sendingAttachment || searching
+                onPressed:
+                    disabled ||
+                        pickingAttachment ||
+                        sendingAttachment ||
+                        searching
                     ? null
                     : onPickAttachments,
                 icon: pickingAttachment
@@ -117,13 +162,10 @@ class ConversationComposer extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Icon(context.torcaIcons.attachment),
-              ),
-              const SizedBox(width: 4),
-              Expanded(child: messageField),
-              const SizedBox(width: 8),
-              IconButton.filled(
+              );
+              final send = IconButton.filled(
                 tooltip: context.strings.sendMessage,
-                onPressed: sending || sendingAttachment || searching
+                onPressed: disabled || sending || sendingAttachment || searching
                     ? null
                     : onSend,
                 icon: sending || sendingAttachment
@@ -133,24 +175,62 @@ class ConversationComposer extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Icon(context.torcaIcons.send),
-              ),
-              if (contact != null) ...<Widget>[
-                const SizedBox(width: 4),
-                if (radio?.localEnabled == true)
-                  RadioPushToTalk(
-                    gateway: gateway,
-                    contact: contact!,
-                    radio: radio!,
-                    session: session,
-                    disabled: searching,
-                  )
-                else
-                  VoiceClipRecorder(
-                    onClipReady: onVoiceClipReady,
-                    disabled: searching || sending || sendingAttachment,
+              );
+              final voice = contact == null
+                  ? null
+                  : radio?.localEnabled == true
+                  ? RadioPushToTalk(
+                      gateway: gateway,
+                      contact: contact!,
+                      radio: radio!,
+                      session: session,
+                      disabled: disabled || searching,
+                    )
+                  : VoiceClipRecorder(
+                      onClipReady: onVoiceClipReady,
+                      disabled:
+                          disabled || searching || sending || sendingAttachment,
+                    );
+
+              if (!narrow) {
+                return Row(
+                  children: <Widget>[
+                    emoji,
+                    attachment,
+                    const SizedBox(width: 4),
+                    Expanded(child: messageField),
+                    const SizedBox(width: 8),
+                    send,
+                    if (voice != null) ...<Widget>[
+                      const SizedBox(width: 4),
+                      voice,
+                    ],
+                  ],
+                );
+              }
+
+              // Keep the text field and its send controls together on phones.
+              // The secondary actions get their own row so a 320px viewport
+              // never compresses the editable area into an unusable sliver.
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Row(children: <Widget>[emoji, attachment, const Spacer()]),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: <Widget>[
+                      Expanded(child: messageField),
+                      const SizedBox(width: 8),
+                      send,
+                      if (voice != null) ...<Widget>[
+                        const SizedBox(width: 4),
+                        voice,
+                      ],
+                    ],
                   ),
-              ],
-            ],
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -393,8 +473,18 @@ class _ConversationSearchBar extends StatelessWidget {
               autofocus: true,
               decoration: InputDecoration(
                 isDense: true,
-                hintText: 'Search this conversation',
+                hintText: context.strings.searchConversationHint,
                 prefixIcon: Icon(context.torcaIcons.search),
+                suffixIcon: controller.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: context.strings.clearSearch,
+                        onPressed: () {
+                          controller.clear();
+                          onChanged('');
+                        },
+                        icon: Icon(context.torcaIcons.close),
+                      ),
               ),
               onChanged: onChanged,
             ),

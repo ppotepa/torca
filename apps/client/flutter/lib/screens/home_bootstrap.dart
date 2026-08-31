@@ -150,7 +150,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
                                 TorcaDeviceAvatar(
-                                  label: 'Identity',
+                                  label: context.strings.identity,
                                   identityId: widget.snapshot.identity?.id,
                                   stableDevice: true,
                                   presentation:
@@ -163,7 +163,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  'Preparing your private space',
+                                  context.strings.preparingPrivateSpace,
                                   style: Theme.of(
                                     context,
                                   ).textTheme.headlineSmall,
@@ -171,7 +171,9 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Setting up encrypted storage and secure communication. You can safely leave this screen open.',
+                                  context
+                                      .strings
+                                      .preparingPrivateSpaceDescription,
                                   style: Theme.of(context).textTheme.bodyMedium,
                                   textAlign: TextAlign.center,
                                 ),
@@ -186,7 +188,11 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  '$ready of ${steps.length} secure checks complete  •  ${_formatDuration(elapsed)}',
+                                  context.strings.bootstrapProgress(
+                                    ready,
+                                    steps.length,
+                                    _formatDuration(elapsed),
+                                  ),
                                 ),
                                 const SizedBox(height: 16),
                                 for (final step in projectedSteps)
@@ -225,7 +231,9 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
                                             : widget.onRetry,
                                         child: Text(
                                           restartRequired
-                                              ? 'Restart application'
+                                              ? context
+                                                    .strings
+                                                    .restartApplication
                                               : context.strings.retryNow,
                                         ),
                                       ),
@@ -288,14 +296,7 @@ class _BootstrapProgressScreenState extends State<_BootstrapProgressScreen> {
     return '${step.id}: ${step.code}';
   }
 
-  String _bootstrapLabel(String id) => switch (id) {
-    'local_storage' => 'Local storage',
-    'device_identity' => 'Device identity',
-    'communication_runtime' => 'Communication runtime',
-    'incoming_reachability' => 'Incoming reachability',
-    'rendezvous' => 'Pairing rendezvous',
-    _ => id,
-  };
+  String _bootstrapLabel(String id) => context.strings.bootstrapStepLabel(id);
 
   String _formatDuration(Duration value) {
     final minutes = value.inMinutes.toString().padLeft(2, '0');
@@ -356,10 +357,10 @@ class _BootstrapStepTile extends StatelessWidget {
                   (step.id == 'communication_runtime' ||
                       step.id == 'incoming_reachability' ||
                       step.id == 'rendezvous')
-              ? '$label · attempt ${step.attempt}'
+              ? context.strings.bootstrapAttempt(label, step.attempt)
               : label,
         ),
-        subtitle: Text(_stateDescription(step, retryRemaining)),
+        subtitle: Text(_stateDescription(context, step, retryRemaining)),
         trailing: running
             ? Row(
                 mainAxisSize: MainAxisSize.min,
@@ -386,7 +387,11 @@ class _BootstrapStepTile extends StatelessWidget {
     );
   }
 
-  String _stateDescription(BootstrapStepDto step, Duration? retryRemaining) {
+  String _stateDescription(
+    BuildContext context,
+    BootstrapStepDto step,
+    Duration? retryRemaining,
+  ) {
     final id = step.id;
     final value = step.typedState;
     final code = step.code;
@@ -398,50 +403,7 @@ class _BootstrapStepTile extends StatelessWidget {
             value == BootstrapStepState.ready)) {
       return providerSummary;
     }
-    if (value == BootstrapStepState.running ||
-        value == BootstrapStepState.verifying) {
-      if (id == 'communication_runtime') {
-        return switch (code) {
-          'COMMUNICATION_RETRYING' =>
-            'The communication provider is reconnecting…',
-          'COMMUNICATION_FAILED' =>
-            'The communication provider needs attention…',
-          _ => 'Preparing the selected communication provider…',
-        };
-      }
-      if (id == 'incoming_reachability') {
-        return switch (code) {
-          'INCOMING_REACHABILITY_PENDING' =>
-            'Preparing this device for incoming communication…',
-          _ => 'Preparing incoming reachability…',
-        };
-      }
-      return switch (id) {
-        'local_storage' => 'Opening encrypted storage and checking its schema…',
-        'device_identity' => 'Loading device keys and calculating fingerprint…',
-        'incoming_reachability' =>
-          'Preparing a route for incoming communication…',
-        'rendezvous' => 'Testing the pairing rendezvous…',
-        _ => 'Working securely…',
-      };
-    }
-    return switch (value) {
-      BootstrapStepState.ready => switch (id) {
-        'local_storage' => 'Encrypted database is open',
-        'device_identity' => 'Device identity is protected and ready',
-        'communication_runtime' => 'Communication runtime is ready',
-        'incoming_reachability' => 'This device can receive communication',
-        'rendezvous' => 'Pairing rendezvous is reachable',
-        _ => 'Protected and ready',
-      },
-      BootstrapStepState.degraded => 'Temporarily unavailable; retrying',
-      BootstrapStepState.failed when code == 'COMMUNICATION_RESTART_REQUIRED' =>
-        'The communication provider did not stop safely; restart the application before retrying',
-      BootstrapStepState.blocked => 'Waiting for communication to become ready',
-      BootstrapStepState.failed =>
-        'Needs attention: ${code ?? 'COMMUNICATION_RUNTIME_FAILED'}',
-      _ => 'Waiting for the previous secure check',
-    };
+    return context.strings.bootstrapStateDescription(id, value, code);
   }
 
   String _formatDuration(Duration value) {

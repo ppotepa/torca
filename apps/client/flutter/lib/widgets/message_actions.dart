@@ -34,7 +34,7 @@ abstract final class MessageActionMenu {
           _tile(
             context,
             MessageAction.react,
-            context.torcaIcons.success,
+            context.torcaIcons.emoji,
             context.strings.reactToMessage,
           ),
           _tile(
@@ -52,7 +52,7 @@ abstract final class MessageActionMenu {
           _tile(
             context,
             MessageAction.bookmark,
-            context.torcaIcons.archive,
+            context.torcaIcons.bookmark,
             bookmarked
                 ? context.strings.removeBookmark
                 : context.strings.bookmarkMessage,
@@ -111,7 +111,7 @@ abstract final class MessageActionMenu {
           child: ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: Icon(context.torcaIcons.success),
+            leading: Icon(context.torcaIcons.emoji),
             title: Text(context.strings.reactToMessage),
           ),
         ),
@@ -138,7 +138,7 @@ abstract final class MessageActionMenu {
           child: ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: Icon(context.torcaIcons.archive),
+            leading: Icon(context.torcaIcons.bookmark),
             title: Text(
               bookmarked
                   ? context.strings.removeBookmark

@@ -7,9 +7,13 @@
     stop() { window.removeEventListener('hashchange', this.onHashChange); }
     navigate(path) { location.hash = `#${path.startsWith('/') ? path : `/${path}`}`; }
     currentPath() { return (location.hash || '#/chats').slice(1).split('?')[0] || '/chats'; }
-    refresh() { this.resolve(true); }
+    refresh() { if (this.app.currentScreen) this.app.currentScreen.mount(this.app.root); else this.resolve(); }
     resolve() {
       const path = this.currentPath();
+      const view = path==='/chats'?'chats':path.startsWith('/chat/')?'chat':(path==='/contacts'||path.startsWith('/contact/')||path.startsWith('/connection/'))?'contacts':path==='/invitations'?'invitations':path==='/settings'?'settings':path==='/diagnostics'?'diagnostics':path==='/lab'?'lab':path==='/bootstrap'?'bootstrap':path==='/profile'?'profile':path==='/identity'?'identity':path==='/about'?'about':'chats';
+      if (this.app.store.state.ui.view !== view) this.app.store.state.ui.view = view;
+      if (this.app.applyUi) this.app.applyUi();
+      if (this.app.renderDevbar) { this.app.renderDevbar(); this.app.bindDevbar(); }
       for (const route of this.routes) {
         const params = this.match(route.pattern, path);
         if (params) { this.app.mountScreen(route.factory(params)); return; }

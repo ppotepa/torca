@@ -61,6 +61,7 @@ void main() {
               archived: false,
               pinned: false,
               muted: false,
+              unread: true,
             ),
             child: const Text('Actions'),
           ),
@@ -76,5 +77,37 @@ void main() {
     expect(find.text('Archive conversation'), findsOneWidget);
     expect(find.text('Pin conversation'), findsOneWidget);
     expect(find.text('Mute conversation'), findsOneWidget);
+    expect(find.text('Mark as read'), findsOneWidget);
+  });
+
+  testWidgets('conversation actions expose mark as read only when unread', (
+    tester,
+  ) async {
+    ConversationAction? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () async {
+              selected = await ConversationActionMenu.showTouch(
+                context,
+                blocked: false,
+                archived: false,
+                pinned: false,
+                muted: false,
+                unread: true,
+              );
+            },
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark as read'));
+    await tester.pumpAndSettle();
+    expect(selected, ConversationAction.markRead);
   });
 }

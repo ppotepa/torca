@@ -12,7 +12,7 @@
     const unread = app.store.unreadTotal();
     const pending = app.store.state.pairings.filter((p) => p.state === 'awaiting').length;
     const runtime = app.store.state.runtime;
-    const activeTransfers = app.store.state.transfers.filter((item) => item.state !== 'complete').length;
+    const activeTransfers = app.store.state.transfers.filter((item) => !['complete','cancelled'].includes(item.state)).length;
     const nav = `${navItem(app,'/chats','chats',t('chats'),unread||'')}${navItem(app,'/contacts','contacts',t('contacts'))}${navItem(app,'/invitations','invitations',t('invitations'),pending||'')}`;
     const extraActions = options.actions || '';
     const globalActions = `${extraActions}${C.networkMonitor(runtime, app.isCompact())}<span class="header-action-wrap">${C.iconButton('transfer',t('transferCenter'),'data-open-transfers')}${activeTransfers ? C.badge(activeTransfers,'floating') : ''}</span>${C.iconButton('more','Menu','data-open-app-menu')}`;

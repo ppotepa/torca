@@ -120,4 +120,32 @@ void main() {
     expect(find.text('outbound'), findsNothing);
     expect(find.text('Delivered'), findsNothing);
   });
+
+  testWidgets('message actions have an explicit accessible button', (
+    tester,
+  ) async {
+    var opened = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: const MessageDto(
+              id: 'actions',
+              conversationId: '02',
+              body: 'Hello',
+              direction: 'inbound',
+              status: 'delivered',
+              createdAtMs: 1000,
+            ),
+            onLongPress: () => opened = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byTooltip('Message actions'), findsOneWidget);
+    await tester.tap(find.byTooltip('Message actions'));
+    expect(opened, isTrue);
+  });
 }

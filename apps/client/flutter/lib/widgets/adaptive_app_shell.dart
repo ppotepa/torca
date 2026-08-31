@@ -60,7 +60,9 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
         leading: Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 12),
           child: IconButton(
-            tooltip: railExtended ? 'Collapse navigation' : 'Expand navigation',
+            tooltip: railExtended
+                ? context.strings.collapseNavigation
+                : context.strings.expandNavigation,
             onPressed: canExtendRail
                 ? () => setState(() => _railExpanded = !_railExpanded)
                 : null,
@@ -112,7 +114,10 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
                     child: InkWell(
                       onTap: widget.onBuildInfo,
                       child: Text(
-                        'build ${widget.buildLabel}  ·  ${widget.serviceLabel}',
+                        context.strings.buildServiceSummary(
+                          widget.buildLabel,
+                          widget.serviceLabel,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.labelSmall,

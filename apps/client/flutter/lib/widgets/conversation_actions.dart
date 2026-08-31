@@ -5,6 +5,7 @@ import '../localization/torca_strings.dart';
 
 enum ConversationAction {
   open,
+  markRead,
   contactDetails,
   rename,
   clearHistory,
@@ -168,13 +169,16 @@ abstract final class ConversationActionMenu {
     required bool archived,
     required bool pinned,
     required bool muted,
+    required bool unread,
   }) => showModalBottomSheet<ConversationAction>(
     context: context,
     useSafeArea: true,
     isScrollControlled: false,
     enableDrag: false,
     builder: (context) => SafeArea(
-      child: Wrap(children: _tiles(context, blocked, archived, pinned, muted)),
+      child: Wrap(
+        children: _tiles(context, blocked, archived, pinned, muted, unread),
+      ),
     ),
   );
 
@@ -185,6 +189,7 @@ abstract final class ConversationActionMenu {
     required bool archived,
     required bool pinned,
     required bool muted,
+    required bool unread,
   }) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     return showMenu<ConversationAction>(
@@ -199,6 +204,12 @@ abstract final class ConversationActionMenu {
           context.torcaIcons.chats,
           context.strings.open,
         ),
+        if (unread)
+          _item(
+            ConversationAction.markRead,
+            context.torcaIcons.read,
+            context.strings.markConversationRead,
+          ),
         _item(
           ConversationAction.contactDetails,
           context.torcaIcons.contacts,
@@ -219,7 +230,7 @@ abstract final class ConversationActionMenu {
         ),
         _item(
           ConversationAction.pinToggle,
-          context.torcaIcons.archive,
+          context.torcaIcons.pin,
           pinned
               ? context.strings.unpinConversation
               : context.strings.pinConversation,
@@ -260,6 +271,7 @@ abstract final class ConversationActionMenu {
     bool archived,
     bool pinned,
     bool muted,
+    bool unread,
   ) => <Widget>[
     _tile(
       context,
@@ -267,10 +279,17 @@ abstract final class ConversationActionMenu {
       context.torcaIcons.chats,
       context.strings.open,
     ),
+    if (unread)
+      _tile(
+        context,
+        ConversationAction.markRead,
+        context.torcaIcons.read,
+        context.strings.markConversationRead,
+      ),
     _tile(
       context,
       ConversationAction.pinToggle,
-      context.torcaIcons.archive,
+      context.torcaIcons.pin,
       pinned
           ? context.strings.unpinConversation
           : context.strings.pinConversation,
