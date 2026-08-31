@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
-
-import '../localization/torca_strings.dart';
 
 import 'runtime_network_status.dart';
 

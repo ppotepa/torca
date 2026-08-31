@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 
 abstract final class BridgeErrorPresenter {
   /// Returns a localized user-facing message without exposing the native

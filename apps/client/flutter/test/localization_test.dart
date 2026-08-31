@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:torca_app/localization/app_locale_mode.dart';
-import 'package:torca_app/localization/torca_strings.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 void main() {
   test('locale preference parsing is stable', () {

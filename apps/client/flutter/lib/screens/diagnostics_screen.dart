@@ -3,11 +3,11 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/diagnostics_overview.dart';
 import '../widgets/runtime_network_status.dart';

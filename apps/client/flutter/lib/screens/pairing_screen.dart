@@ -7,12 +7,12 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:torca_avatar/torca_avatar.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../controllers/pairing_action_controller.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import '../widgets/app_modal.dart';
 import '../widgets/bridge_error_presenter.dart';
 import '../widgets/operation_tracker.dart';

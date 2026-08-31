@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import 'bridge_error_presenter.dart';
 
 /// Shared contact mutations and confirmations used by list and detail views.

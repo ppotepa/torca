@@ -2,11 +2,11 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:torca_avatar/torca_avatar.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import 'runtime_network_status.dart';
 
 class ConversationHeaderSurface extends StatelessWidget {

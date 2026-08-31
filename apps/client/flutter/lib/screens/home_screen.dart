@@ -4,11 +4,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:torca_avatar/torca_avatar.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import '../settings/local_preferences.dart';
 import '../widgets/adaptive_app_shell.dart';
 import '../widgets/app_overflow_menu.dart';

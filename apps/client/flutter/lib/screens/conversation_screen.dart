@@ -6,11 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:torca_attachment_processing/torca_attachment_processing.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
 import '../platform/video_thumbnail_service.dart';
 import '../settings/local_preferences.dart';
@@ -27,9 +27,9 @@ import '../widgets/voice_message_tile.dart';
 import 'connection_details_screen.dart';
 import 'conversation_timeline_controller.dart';
 
-part 'conversation_widgets.dart';
-part 'conversation_formatters.dart';
 part 'conversation_actions.dart';
+part 'conversation_formatters.dart';
+part 'conversation_widgets.dart';
 
 /// Must stay aligned with `torca_messaging::MessageBody::MAX_CHARACTERS`.
 /// The native layer remains authoritative; this value gives immediate UI

@@ -1,8 +1,8 @@
 import 'package:flutter/widgets.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import '../widgets/bridge_error_presenter.dart';
 
 enum PairingAction { approve, reject, cancel }

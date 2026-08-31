@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:torca_avatar/torca_avatar.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../controllers/pairing_action_controller.dart';
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 
 /// Global approval surface for a remote device that joined an invitation.
 class IncomingPairingDialog extends StatefulWidget {

@@ -8,7 +8,6 @@ import 'package:torca_l10n/torca_l10n.dart';
 import 'gateway/engine_gateway.dart';
 import 'generated/torca_contract.dart';
 import 'localization/app_locale_mode.dart';
-import 'localization/torca_strings.dart';
 import 'navigation/app_navigation_controller.dart';
 import 'screens/conversation_screen.dart';
 import 'screens/diagnostics_screen.dart';

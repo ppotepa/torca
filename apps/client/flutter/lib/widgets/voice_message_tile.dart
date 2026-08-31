@@ -3,10 +3,10 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import 'attachment_tile.dart';
 
 /// One playback lane for the whole client. A conversation can contain many

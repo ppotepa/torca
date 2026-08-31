@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:torca_avatar/torca_avatar.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 import 'connection_indicator.dart';
 import 'radio_indicator.dart';
 

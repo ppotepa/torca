@@ -3,7 +3,7 @@ import 'dart:io';
 
 void main() {
   final source = File(
-    '../../apps/client/flutter/lib/localization/torca_strings.dart',
+    'lib/src/legacy_localizations.dart',
   ).readAsStringSync();
   final catalog = jsonDecode(
     File('lib/l10n/torca_en.arb').readAsStringSync(),

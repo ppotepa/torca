@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 
 import '../localization/app_locale_mode.dart';
-import '../localization/torca_l10n_context.dart';
 import '../settings/local_preferences.dart';
 
 class LanguageSelectionScreen extends StatefulWidget {

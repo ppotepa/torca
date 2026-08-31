@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../gateway/engine_gateway.dart';
 import '../generated/torca_contract.dart';
 import '../localization/app_locale_mode.dart';
-import '../localization/torca_l10n_context.dart';
-import '../localization/torca_strings.dart';
 import '../platform/platform_capabilities.dart';
 import '../settings/battery_preferences.dart';
 import '../settings/local_preferences.dart';

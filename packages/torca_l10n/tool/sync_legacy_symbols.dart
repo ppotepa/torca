@@ -8,9 +8,8 @@ import 'dart:io';
 /// existing translations. New translations can therefore be edited directly
 /// in the ARB files after the migration pass.
 void main() {
-  final root = Directory.current.parent.parent;
   final legacy = File(
-    '${root.path}/apps/client/flutter/lib/localization/torca_strings.dart',
+    '${Directory.current.path}/lib/src/legacy_localizations.dart',
   ).readAsStringSync();
   final arbDir = Directory('${Directory.current.path}/lib/l10n');
   final files = arbDir

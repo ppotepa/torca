@@ -11,7 +11,6 @@ import 'app.dart';
 import 'gateway/engine_gateway.dart';
 import 'gateway/ffi_engine_gateway.dart';
 import 'generated/torca_contract.dart';
-import 'localization/torca_strings.dart';
 import 'navigation/app_navigation_controller.dart';
 import 'platform/android_notification_router.dart';
 import 'platform/deep_link_router.dart';

@@ -18,14 +18,14 @@ flutter gen-l10n
 flutter test
 ```
 
-The application may depend on this package for the locale registry and
-generated delegate. During migration, the legacy `TorcaStrings` adapter is
-kept in the app until every feature has moved to `TorcaLocalizations`.
+The application depends on this package for the locale registry, generated
+delegate, and the temporary `TorcaStrings` compatibility API. The latter is
+also implemented in this package, so the client contains no translation
+source of its own.
 
-`audit_legacy_usage.dart` is intentionally allowed to report remaining legacy
-symbols during the migration. The deploy validation fails only on incomplete
-shared catalogs; the audit output is the checklist for the next migration
-module.
+`audit_legacy_usage.dart` verifies that every compatibility symbol is present
+in the shared catalog. The deploy validation fails on incomplete catalogs;
+feature code can then move from `context.strings` to `context.l10n` safely.
 
 `sync_legacy_symbols.dart` is a one-way migration helper. It adds public
 symbols still present in the legacy adapter to every catalog without

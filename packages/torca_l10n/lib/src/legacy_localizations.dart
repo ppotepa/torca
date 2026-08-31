@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-import 'package:torca_l10n/torca_l10n.dart';
+import 'locale_registry.dart';
 
-import '../generated/torca_contract.dart';
+String _enumName(Object value) => value.toString().split('.').last;
 
 class TorcaStrings {
   const TorcaStrings(this.locale);
@@ -859,17 +859,17 @@ class TorcaStrings {
       _pl ? 'Utworzone zaproszenie' : 'Created invitation';
   String get joinedInvitation =>
       _pl ? 'Dolaczone zaproszenie' : 'Joined invitation';
-  String pairingStateLabel(PairingState state) => switch (state) {
-    PairingState.open => _pl ? 'Otwarte' : 'Open',
-    PairingState.peerJoined => _pl ? 'Kontakt dolaczyl' : 'Peer joined',
-    PairingState.awaitingApproval =>
-      _pl ? 'Czeka na akceptacje' : 'Awaiting approval',
-    PairingState.approved => _pl ? 'Zaakceptowane' : 'Approved',
-    PairingState.completed => _pl ? 'Polaczone' : 'Completed',
-    PairingState.rejected => _pl ? 'Odrzucone' : 'Rejected',
-    PairingState.cancelled => _pl ? 'Anulowane' : 'Cancelled',
-    PairingState.expired => _pl ? 'Wygasle' : 'Expired',
-    PairingState.unknown => _pl ? 'Nieznany stan' : 'Unknown',
+  String pairingStateLabel(Object state) => switch (_enumName(state)) {
+    'open' => _pl ? 'Otwarte' : 'Open',
+    'peerJoined' => _pl ? 'Kontakt dolaczyl' : 'Peer joined',
+    'awaitingApproval' => _pl ? 'Czeka na akceptacje' : 'Awaiting approval',
+    'approved' => _pl ? 'Zaakceptowane' : 'Approved',
+    'completed' => _pl ? 'Polaczone' : 'Completed',
+    'rejected' => _pl ? 'Odrzucone' : 'Rejected',
+    'cancelled' => _pl ? 'Anulowane' : 'Cancelled',
+    'expired' => _pl ? 'Wygasle' : 'Expired',
+    'unknown' => _pl ? 'Nieznany stan' : 'Unknown',
+    _ => _pl ? 'Nieznany stan' : 'Unknown',
   };
   String invitationCodeLabel(String code) => _pl ? 'Kod $code' : 'Code $code';
   String get notMeasured => _pl ? 'Nie zmierzono' : 'Not measured';
@@ -1031,13 +1031,9 @@ class TorcaStrings {
     'rendezvous' => _pl ? 'Rendezvous parowania' : 'Pairing rendezvous',
     _ => id,
   };
-  String bootstrapStateDescription(
-    String id,
-    BootstrapStepState value,
-    String? code,
-  ) {
-    if (value == BootstrapStepState.running ||
-        value == BootstrapStepState.verifying) {
+  String bootstrapStateDescription(String id, Object value, String? code) {
+    final state = _enumName(value);
+    if (state == 'running' || state == 'verifying') {
       if (id == 'communication_runtime') {
         return switch (code) {
           'COMMUNICATION_RETRYING' =>
@@ -1083,8 +1079,8 @@ class TorcaStrings {
         _ => _pl ? 'Bezpieczne wykonywanie pracy…' : 'Working securely…',
       };
     }
-    return switch (value) {
-      BootstrapStepState.ready => switch (id) {
+    return switch (state) {
+      'ready' => switch (id) {
         'local_storage' =>
           _pl
               ? 'Szyfrowana baza danych jest otwarta'
@@ -1107,19 +1103,19 @@ class TorcaStrings {
               : 'Pairing rendezvous is reachable',
         _ => _pl ? 'Chronione i gotowe' : 'Protected and ready',
       },
-      BootstrapStepState.degraded =>
+      'degraded' =>
         _pl
             ? 'Tymczasowo niedostępne; ponawianie'
             : 'Temporarily unavailable; retrying',
-      BootstrapStepState.failed when code == 'COMMUNICATION_RESTART_REQUIRED' =>
+      'failed' when code == 'COMMUNICATION_RESTART_REQUIRED' =>
         _pl
             ? 'Provider komunikacji nie zatrzymał się poprawnie; uruchom aplikację ponownie przed kolejną próbą'
             : 'The communication provider did not stop safely; restart the application before retrying',
-      BootstrapStepState.blocked =>
+      'blocked' =>
         _pl
             ? 'Oczekiwanie na gotowość komunikacji'
             : 'Waiting for communication to become ready',
-      BootstrapStepState.failed =>
+      'failed' =>
         _pl
             ? 'Wymaga uwagi: ${code ?? 'COMMUNICATION_RUNTIME_FAILED'}'
             : 'Needs attention: ${code ?? 'COMMUNICATION_RUNTIME_FAILED'}',
@@ -1151,11 +1147,6 @@ class TorcaStrings {
   String get expandNavigation => _pl ? 'Rozwiń nawigację' : 'Expand navigation';
   String buildServiceSummary(String build, String service) =>
       'build $build  •  $service';
-}
-
-extension TorcaStringsContext on BuildContext {
-  /// Compatibility adapter for features that have not migrated yet.
-  TorcaStrings get strings => TorcaStrings.of(this);
 }
 
 class _TorcaStringsDelegate extends LocalizationsDelegate<TorcaStrings> {

@@ -3,9 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
-
-import '../localization/torca_strings.dart';
 
 const Duration voiceClipMaximumDuration = Duration(seconds: 10);
 

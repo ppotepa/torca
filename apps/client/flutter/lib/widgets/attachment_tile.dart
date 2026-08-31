@@ -1,10 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
-import '../localization/torca_strings.dart';
 
 class AttachmentPendingTile extends StatelessWidget {
   const AttachmentPendingTile({

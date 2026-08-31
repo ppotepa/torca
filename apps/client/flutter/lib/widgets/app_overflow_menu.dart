@@ -1,8 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
-
-import '../localization/torca_strings.dart';
 
 enum AppOverflowAction { pairing, identity, diagnostics, settings, about }
 
