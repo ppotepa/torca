@@ -29,6 +29,8 @@ void main() {
                   status: 'delivered',
                   createdAtMs: 1000,
                 ),
+                senderLabel: 'Contact',
+                senderColorKey: 'same-stable-key',
                 onLongPress: () {},
               ),
               MessageBubble(
@@ -41,6 +43,8 @@ void main() {
                   createdAtMs: 2000,
                   sentAtMs: 2000,
                 ),
+                senderLabel: 'You',
+                senderColorKey: 'same-stable-key',
                 onLongPress: () {},
               ),
             ],
@@ -58,11 +62,24 @@ void main() {
     final outboundFooter = tester.getRect(
       find.byKey(const ValueKey<String>('message-footer-outbound')),
     );
+    final inboundHeader = tester.widget<Container>(
+      find.byKey(const ValueKey<String>('message-header-inbound')),
+    );
+    final outboundHeader = tester.widget<Container>(
+      find.byKey(const ValueKey<String>('message-header-outbound')),
+    );
+    final inboundHeaderColor =
+        (inboundHeader.decoration! as BoxDecoration).color;
+    final outboundHeaderColor =
+        (outboundHeader.decoration! as BoxDecoration).color;
 
     expect(inbound.left, closeTo(12, 0.1));
     expect(outbound.right, closeTo(348, 0.1));
     expect(inbound.width, lessThanOrEqualTo(282.3));
     expect(outbound.width, lessThanOrEqualTo(282.3));
+    expect(inboundHeaderColor, isNot(outboundHeaderColor));
+    expect(tester.widget<Text>(find.text('Contact')).textAlign, TextAlign.left);
+    expect(tester.widget<Text>(find.text('You')).textAlign, TextAlign.right);
     // The footer stays inside the bubble border in both modern and terminal
     // appearances.
     expect(outboundFooter.right, closeTo(outbound.right - 10, 0.1));

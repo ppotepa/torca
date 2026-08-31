@@ -7,11 +7,16 @@ import 'semantic_colors.dart';
 /// The key is an identity/contact id rather than a list position, so the same
 /// author keeps the same accent after snapshots, restarts and sorting changes.
 abstract final class TorcaMessagePalette {
-  static const List<Color> _accents = <Color>[
+  // Direction-specific families guarantee that both sides of a conversation
+  // remain distinguishable even when their stable identity hashes collide.
+  static const List<Color> _outboundAccents = <Color>[
     Color(0xFF229ED9),
+    Color(0xFF526ED3),
+    Color(0xFF7656B5),
+  ];
+  static const List<Color> _inboundAccents = <Color>[
     Color(0xFF2E9D72),
     Color(0xFFB7791F),
-    Color(0xFF9B59B6),
     Color(0xFFD05A6E),
   ];
 
@@ -26,11 +31,12 @@ abstract final class TorcaMessagePalette {
     Color foreground,
     Color muted,
   })
-  resolve(BuildContext context, String key) {
+  resolve(BuildContext context, String key, {required bool outbound}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final index = _stableIndex(key, _accents.length);
-    final accent = _accents[index];
+    final accents = outbound ? _outboundAccents : _inboundAccents;
+    final index = _stableIndex(key, accents.length);
+    final accent = accents[index];
     final background =
         theme.extension<TorcaSemanticColors>()?.chatBackground ??
         scheme.surface;

@@ -54,6 +54,7 @@ class MessageBubble extends StatelessWidget {
     final palette = TorcaMessagePalette.resolve(
       context,
       senderColorKey ?? (outbound ? 'local' : 'remote'),
+      outbound: outbound,
     );
     final sender =
         senderLabel ??
@@ -85,7 +86,7 @@ class MessageBubble extends StatelessWidget {
       builder: (context, constraints) {
         const horizontalGutter = 12.0;
         final usableWidth = constraints.maxWidth - horizontalGutter * 2;
-        final maxBubbleWidth = usableWidth < 620 ? usableWidth * 0.84 : 520.0;
+        final maxBubbleWidth = usableWidth < 620 ? usableWidth * 0.80 : 540.0;
         return Padding(
           padding: EdgeInsets.fromLTRB(
             horizontalGutter,
@@ -152,10 +153,29 @@ class MessageBubble extends StatelessWidget {
                                 ),
                                 child: Row(
                                   children: <Widget>[
+                                    if (outbound)
+                                      IconButton(
+                                        key: ValueKey<String>(
+                                          'message-actions-${message.id}',
+                                        ),
+                                        tooltip: context.strings.messageActions,
+                                        onPressed: onLongPress,
+                                        color: palette.headerForeground,
+                                        icon: Icon(context.torcaIcons.more),
+                                        visualDensity: VisualDensity.compact,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 32,
+                                          minHeight: 32,
+                                        ),
+                                        padding: EdgeInsets.zero,
+                                      ),
                                     Expanded(
                                       child: showSender
                                           ? Text(
                                               sender,
+                                              textAlign: outbound
+                                                  ? TextAlign.right
+                                                  : TextAlign.left,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: Theme.of(context)
@@ -169,25 +189,25 @@ class MessageBubble extends StatelessWidget {
                                             )
                                           : const SizedBox.shrink(),
                                     ),
-                                    IconButton(
-                                      key: ValueKey<String>(
-                                        'message-actions-${message.id}',
+                                    if (!outbound)
+                                      IconButton(
+                                        key: ValueKey<String>(
+                                          'message-actions-${message.id}',
+                                        ),
+                                        tooltip: context.strings.messageActions,
+                                        onPressed: onLongPress,
+                                        color: palette.headerForeground,
+                                        icon: Icon(context.torcaIcons.more),
+                                        visualDensity: VisualDensity.compact,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 32,
+                                          minHeight: 32,
+                                        ),
+                                        padding: EdgeInsets.zero,
                                       ),
-                                      tooltip: context.strings.messageActions,
-                                      onPressed: onLongPress,
-                                      color: palette.headerForeground,
-                                      icon: Icon(context.torcaIcons.more),
-                                      visualDensity: VisualDensity.compact,
-                                      constraints: const BoxConstraints(
-                                        minWidth: 32,
-                                        minHeight: 32,
-                                      ),
-                                      padding: EdgeInsets.zero,
-                                    ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 8),
                               Container(
                                 key: ValueKey<String>(
                                   'message-body-section-${message.id}',
