@@ -12,6 +12,7 @@ Run the catalog gate from this directory:
 
 ```text
 dart run tool/verify_catalogs.dart
+dart run tool/audit_legacy_usage.dart
 flutter gen-l10n
 flutter test
 ```
@@ -19,3 +20,8 @@ flutter test
 The application may depend on this package for the locale registry and
 generated delegate. During migration, the legacy `TorcaStrings` adapter is
 kept in the app until every feature has moved to `TorcaLocalizations`.
+
+`audit_legacy_usage.dart` is intentionally allowed to report remaining legacy
+symbols during the migration. The deploy validation fails only on incomplete
+shared catalogs; the audit output is the checklist for the next migration
+module.
