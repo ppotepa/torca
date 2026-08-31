@@ -100,4 +100,4 @@ The release-level wire marker and protocol-specific versions are compatibility c
 
 ## Release readiness is separate from versioning
 
-Version synchronization proves only that artifacts identify themselves consistently. Release readiness additionally depends on the validation/security/signing requirements described in [`STATUS.md`](STATUS.md), [`testing.md`](testing.md), [`operations.md`](operations.md) and [`../SECURITY.md`](../SECURITY.md).
+Version synchronization proves only that artifacts identify themselves consistently. Release readiness additionally depends on the validation/security/signing requirements described in [`STATUS.md`](STATUS.md), [`TESTING.md`](TESTING.md), [`OPERATIONS.md`](OPERATIONS.md) and [`../SECURITY.md`](../SECURITY.md).

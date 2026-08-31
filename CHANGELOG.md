@@ -1,13 +1,12 @@
 # Changelog
 
-Notable Torca changes are recorded here from this documentation baseline forward. The project is still pre-release; older development history remains in Git and dated validation records rather than being reconstructed as fictional releases.
+Notable Torca changes are recorded here from this documentation baseline forward. The project is still pre-release; older development history remains in Git rather than being reconstructed as fictional releases.
 
 ## [Unreleased]
 
 ### Added
 
 - Canonical product/build/compatibility versioning and release policy.
-- A maintained validation-evidence index separating dated reports from current project status.
 - A changelog workflow for future release notes.
 - A single maintained `0.3` roadmap focused on UX/UI stabilization, broken-flow repair, responsive/accessibility quality and visual regression coverage.
 - A framework-free interactive `0.3` UI maquette under `docs/maquettes/view/` with class-based screens, in-memory state, deterministic scenarios, responsive/theme/locale controls and a component UI Lab.

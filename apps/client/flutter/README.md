@@ -45,8 +45,8 @@ Memory is test-only. Tor/WebRTC are not active product providers.
 ## Further reading
 
 - [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md) — ownership and dependency rules.
-- [`../../../docs/app-flows.md`](../../../docs/app-flows.md) — current application journeys.
-- [`../../../docs/transport.md`](../../../docs/transport.md) — provider/Iroh boundary.
-- [`../../../docs/development.md`](../../../docs/development.md) — repository workflow.
-- [`../../../docs/testing.md`](../../../docs/testing.md) — validation/evidence rules.
+- [`../../../docs/APP-FLOWS.md`](../../../docs/APP-FLOWS.md) — current application journeys.
+- [`../../../docs/TRANSPORT.md`](../../../docs/TRANSPORT.md) — provider/Iroh boundary.
+- [`../../../docs/DEVELOPMENT.md`](../../../docs/DEVELOPMENT.md) — repository workflow.
+- [`../../../docs/TESTING.md`](../../../docs/TESTING.md) — validation/evidence rules.
 - [`../../../SECURITY.md`](../../../SECURITY.md) — security guarantees and limits.

@@ -33,7 +33,7 @@ A built artifact, discovered device or partially completed step is not proof tha
 
 [`../release/version.json`](../release/version.json) declares product/build/channel and compatibility metadata used by packaging/manifests. Deployment manifests project this identity together with target/configuration/provider/profile and artifact hashes/build metadata.
 
-Artifact reuse must fail on incompatible provider/profile/build metadata rather than silently deploying the wrong native/client pair. See [`versioning-and-releases.md`](versioning-and-releases.md).
+Artifact reuse must fail on incompatible provider/profile/build metadata rather than silently deploying the wrong native/client pair. See [`VERSIONING-AND-RELEASES.md`](VERSIONING-AND-RELEASES.md).
 
 ## Production provider
 
@@ -107,7 +107,6 @@ Soak/measurement tooling writes ignored local evidence under `.torca/`. A useful
 4. whether the peer/device was simulated, emulator-based or physical; and
 5. the final verdict, including incomplete/aborted state.
 
-Dated reports promoted into `docs/validation/` must preserve this context and remain historical snapshots.
 
 ## Recovery principles
 
@@ -118,4 +117,4 @@ Dated reports promoted into `docs/validation/` must preserve this context and re
 - local encrypted state remains usable whenever local initialization succeeds; and
 - deploy checkpoints support deliberate recovery after interrupted host/device operations.
 
-See [`testing.md`](testing.md) for evidence terms and [`transport.md`](transport.md) for provider behavior.
+See [`TESTING.md`](TESTING.md) for evidence terms and [`TRANSPORT.md`](TRANSPORT.md) for provider behavior.

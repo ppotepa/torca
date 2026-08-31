@@ -8,4 +8,4 @@ Protocol code remains independent from application orchestration, concrete infra
 
 Exact versions, frame fields and byte layouts are implementation contracts documented by source/tests. Long-lived architecture prose should describe ownership and compatibility rules instead of copying every constant.
 
-See [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) and [`../../docs/versioning-and-releases.md`](../../docs/versioning-and-releases.md).
+See [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) and [`../../docs/VERSIONING-AND-RELEASES.md`](../../docs/VERSIONING-AND-RELEASES.md).

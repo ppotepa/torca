@@ -69,7 +69,7 @@ Security/privacy documentation must therefore distinguish:
 - who can read/authenticate Torca content; from
 - who can observe network location, timing, volume and reachability metadata.
 
-See [`security/threat-model.md`](security/threat-model.md).
+See [`security/THREAT-MODEL.md`](security/THREAT-MODEL.md).
 
 ## Pairing/bootstrap
 

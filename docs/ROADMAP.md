@@ -731,6 +731,6 @@ If an early batch exposes a genuine functional bug, fix it in that batch instead
 - deterministic visual regression coverage exists for the highest-risk surfaces;
 - error/offline/retry states are intentionally designed rather than incidental Flutter defaults;
 - Windows and physical Android receive a final manual UI pass;
-- `CHANGELOG.md` is updated with the actual implemented subset, and release metadata is bumped only through the rules in `versioning-and-releases.md`.
+- `CHANGELOG.md` is updated with the actual implemented subset, and release metadata is bumped only through the rules in `VERSIONING-AND-RELEASES.md`.
 
 This file is the single maintained release roadmap. Detailed temporary implementation checklists should live in issues/commits and be removed/closed when finished rather than creating additional competing roadmap files.

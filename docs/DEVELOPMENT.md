@@ -70,7 +70,7 @@ Iroh is the sole production communication provider. Memory is test-only. Product
 
 Iroh profile/configuration can be part of build/deploy metadata. Artifact reuse must respect that metadata so an artifact built for another profile/configuration is not silently reused.
 
-See [`transport.md`](transport.md).
+See [`TRANSPORT.md`](TRANSPORT.md).
 
 ## Generated contract
 
@@ -100,7 +100,7 @@ Do not start a durable/security workflow as a Flutter state machine and then mir
 
 ## Data and SQL
 
-Operational/business SQL is owned by storage infrastructure and should remain parameterized and bounded. Use repository/read-model APIs from upper layers. Versioned schema compatibility and storage epoch rules are described in [`versioning-and-releases.md`](versioning-and-releases.md).
+Operational/business SQL is owned by storage infrastructure and should remain parameterized and bounded. Use repository/read-model APIs from upper layers. Versioned schema compatibility and storage epoch rules are described in [`VERSIONING-AND-RELEASES.md`](VERSIONING-AND-RELEASES.md).
 
 ## Deploy state and local artifacts
 
@@ -112,8 +112,8 @@ Destructive data reset must be an explicit choice. Normal iteration should prese
 
 When behavior changes, update the existing canonical page listed in [`README.md`](README.md). Notable user/developer/compatibility/security changes also update [`../CHANGELOG.md`](../CHANGELOG.md) under `Unreleased`.
 
-Use [`versioning-and-releases.md`](versioning-and-releases.md) for product/build/contract/storage/wire/ABI changes. Temporary implementation plans should not become long-lived competing documentation.
+Use [`VERSIONING-AND-RELEASES.md`](VERSIONING-AND-RELEASES.md) for product/build/contract/storage/wire/ABI changes. Temporary implementation plans should not become long-lived competing documentation.
 
 ## Validation
 
-Run the narrowest deterministic checks that prove the change, then expand according to [`testing.md`](testing.md). Source checks, platform builds, device runs and soak evidence are different claims.
+Run the narrowest deterministic checks that prove the change, then expand according to [`TESTING.md`](TESTING.md). Source checks, platform builds, device runs and soak evidence are different claims.

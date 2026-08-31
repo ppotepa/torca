@@ -37,4 +37,4 @@ A client-data reset is a destructive local operation and can remove identity, re
 
 Torca does not currently include product-scope cloud backup or multi-device synchronization. Any future centralized analytics, backup, discovery or account service would change this privacy model and must be documented before production use.
 
-See [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) for guarantees, non-guarantees and trust boundaries.
+See [`SECURITY.md`](SECURITY.md) and [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md) for guarantees, non-guarantees and trust boundaries.

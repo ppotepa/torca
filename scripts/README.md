@@ -75,14 +75,14 @@ Use the Rust collector for the current incident format:
 cargo run -p torca-deploy -- logs --target all
 ```
 
-Each collection creates a fresh incident directory instead of mixing new evidence with older runs. See [`../docs/operations.md`](../docs/operations.md) for the current producer and bundle layout.
+Each collection creates a fresh incident directory instead of mixing new evidence with older runs. See [`../docs/OPERATIONS.md`](../docs/OPERATIONS.md) for the current producer and bundle layout.
 
 ## Related documentation
 
 - [`../README.md`](../README.md) — product overview and developer entry point.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contributor and validation rules.
 - [`../docs/STATUS.md`](../docs/STATUS.md) — current maturity/validation status.
-- [`../docs/testing.md`](../docs/testing.md) — real-device and automated validation guidance.
+- [`../docs/TESTING.md`](../docs/TESTING.md) — real-device and automated validation guidance.
 
 ## Background Iroh benchmark
 

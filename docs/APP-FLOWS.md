@@ -134,4 +134,4 @@ Presentation-only preferences stay in Flutter/platform preferences where appropr
 
 Diagnostics expose bounded operational state such as provider health, queues, runtime/power counters and redacted errors. They must not intentionally contain message/attachment plaintext, Radio audio, private identity keys, database keys, relationship secrets or reusable pairing capabilities.
 
-See [`operations.md`](operations.md) for incident/recovery workflow.
+See [`OPERATIONS.md`](OPERATIONS.md) for incident/recovery workflow.

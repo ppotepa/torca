@@ -10,4 +10,4 @@ Memory-provider tests do not prove Iroh reachability, and emulator CPU does not 
 
 No documentation/change report should claim a platform/release gate passed unless it was actually executed for the referenced source/artifact.
 
-See [`../docs/testing.md`](../docs/testing.md) for evidence terminology and the maintained validation matrix.
+See [`../docs/TESTING.md`](../docs/TESTING.md) for evidence terminology and the maintained validation matrix.

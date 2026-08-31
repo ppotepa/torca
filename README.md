@@ -35,7 +35,7 @@ Calls, groups, multi-device synchronization, public discovery and cloud backup a
 | Tor | retired from the active product graph |
 | WebRTC | unfinished adapter retired from the active product graph |
 
-Iroh profiles affect reachability and network-metadata exposure, not Torca relationship identity or application-layer encryption. See [`docs/transport.md`](docs/transport.md).
+Iroh profiles affect reachability and network-metadata exposure, not Torca relationship identity or application-layer encryption. See [`docs/TRANSPORT.md`](docs/TRANSPORT.md).
 
 ## Architecture at a glance
 
@@ -76,7 +76,7 @@ cargo run -p torca-deploy
 
 With no subcommand it opens the interactive deployment UI. The same planner/executor is available through CLI subcommands for repeatable automation. Use subcommand help rather than copying every option into documentation.
 
-For UI-only work, run Flutter checks from `apps/client/flutter`. For validation expectations and evidence language, use [`docs/testing.md`](docs/testing.md).
+For UI-only work, run Flutter checks from `apps/client/flutter`. For validation expectations and evidence language, use [`docs/TESTING.md`](docs/TESTING.md).
 
 ## Repository map
 
@@ -100,16 +100,15 @@ Start with [`docs/README.md`](docs/README.md). The canonical documents are:
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — system ownership, layering and dependency rules;
 - [`docs/STATUS.md`](docs/STATUS.md) — current maturity, supported compositions and open release evidence;
-- [`docs/app-flows.md`](docs/app-flows.md) — startup, pairing, messaging and background flows;
-- [`docs/transport.md`](docs/transport.md) — provider-neutral transport boundary and Iroh behavior;
-- [`docs/development.md`](docs/development.md) — local development workflow;
-- [`docs/testing.md`](docs/testing.md) — validation layers and evidence language;
-- [`docs/operations.md`](docs/operations.md) — deploy/runtime diagnostics and recovery;
-- [`SECURITY.md`](SECURITY.md), [`docs/security/threat-model.md`](docs/security/threat-model.md) and [`PRIVACY.md`](PRIVACY.md) — security/privacy boundaries;
-- [`docs/versioning-and-releases.md`](docs/versioning-and-releases.md) — product/build/compatibility version rules; and
+- [`docs/APP-FLOWS.md`](docs/APP-FLOWS.md) — startup, pairing, messaging and background flows;
+- [`docs/TRANSPORT.md`](docs/TRANSPORT.md) — provider-neutral transport boundary and Iroh behavior;
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — local development workflow;
+- [`docs/TESTING.md`](docs/TESTING.md) — validation layers and evidence language;
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deploy/runtime diagnostics and recovery;
+- [`SECURITY.md`](SECURITY.md), [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md) and [`PRIVACY.md`](PRIVACY.md) — security/privacy boundaries;
+- [`docs/VERSIONING-AND-RELEASES.md`](docs/VERSIONING-AND-RELEASES.md) — product/build/compatibility version rules; and
 - [`CHANGELOG.md`](CHANGELOG.md) — user/developer-visible changes from this documentation baseline forward.
 
-Dated reports under `docs/validation/` are evidence snapshots, not the current source of truth.
 
 ## Version and release metadata
 
@@ -119,7 +118,7 @@ The current product version, build number, release channel and compatibility mar
 
 Torca does not claim Signal-style forward secrecy or post-compromise security in the current relationship-key design. A compromised endpoint can access plaintext and keys; recipients can copy delivered content; direct network paths can expose network-location metadata; availability remains best effort under suspension, network failure and denial of service.
 
-Read [`SECURITY.md`](SECURITY.md) and [`docs/security/threat-model.md`](docs/security/threat-model.md) before changing pairing, peer authentication, cryptography, storage, notifications, Radio Mode, diagnostics or platform/privacy boundaries.
+Read [`SECURITY.md`](SECURITY.md) and [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md) before changing pairing, peer authentication, cryptography, storage, notifications, Radio Mode, diagnostics or platform/privacy boundaries.
 
 ## License
 

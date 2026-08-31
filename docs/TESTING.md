@@ -90,7 +90,7 @@ Physical Android measurements are required for Android battery claims; emulator 
 
 Security-sensitive changes need negative/failure tests as well as happy paths. Bounded-input, fuzz/property testing can be useful around externally supplied pairing/wire/attachment inputs but does not replace design review or independent audit.
 
-Review/update [`../SECURITY.md`](../SECURITY.md) and [`security/threat-model.md`](security/threat-model.md) when trust boundaries or claims change.
+Review/update [`../SECURITY.md`](../SECURITY.md) and [`security/THREAT-MODEL.md`](security/THREAT-MODEL.md) when trust boundaries or claims change.
 
 ## Reporting results
 
@@ -107,5 +107,3 @@ Not run:
 This is stronger than “tests pass” because it exposes both coverage and missing evidence.
 
 ## Dated evidence
-
-Reports under [`validation/`](validation/) are immutable historical evidence for the run they describe. Use [`validation/README.md`](validation/README.md) before citing them as current evidence.

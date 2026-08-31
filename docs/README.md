@@ -1,6 +1,6 @@
 # Torca documentation
 
-This directory contains the maintained documentation for the current Torca codebase plus clearly separated roadmap, design-reference maquettes and dated evidence. The goal is one canonical place per kind of information, not a growing set of competing status/plan files.
+This directory contains the maintained documentation for the current Torca codebase, the release roadmap and design-reference maquettes. The goal is one canonical place per kind of information, not a growing set of competing status/plan files.
 
 ## Current-state documentation
 
@@ -9,15 +9,15 @@ This directory contains the maintained documentation for the current Torca codeb
 | [`../README.md`](../README.md) | product overview, supported compositions, repository entry points |
 | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | system ownership, layering, dependency direction and composition |
 | [`STATUS.md`](STATUS.md) | current maturity, supported targets/providers and outstanding release evidence |
-| [`app-flows.md`](app-flows.md) | startup, pairing, messaging, attachments, Radio and lifecycle journeys |
-| [`transport.md`](transport.md) | provider-neutral boundary and current Iroh production behavior |
-| [`development.md`](development.md) | developer setup/workflow and change placement |
-| [`testing.md`](testing.md) | automated/device/soak validation and evidence terminology |
-| [`operations.md`](operations.md) | build/deploy/runtime diagnostics, recovery and incident workflow |
+| [`APP-FLOWS.md`](APP-FLOWS.md) | startup, pairing, messaging, attachments, Radio and lifecycle journeys |
+| [`TRANSPORT.md`](TRANSPORT.md) | provider-neutral boundary and current Iroh production behavior |
+| [`DEVELOPMENT.md`](DEVELOPMENT.md) | developer setup/workflow and change placement |
+| [`TESTING.md`](TESTING.md) | automated/device/soak validation and evidence terminology |
+| [`OPERATIONS.md`](OPERATIONS.md) | build/deploy/runtime diagnostics, recovery and incident workflow |
 | [`../SECURITY.md`](../SECURITY.md) | security policy, guarantees, limits and reporting guidance |
-| [`security/threat-model.md`](security/threat-model.md) | assets, adversaries, trust boundaries, controls and review triggers |
+| [`security/THREAT-MODEL.md`](security/THREAT-MODEL.md) | assets, adversaries, trust boundaries, controls and review triggers |
 | [`../PRIVACY.md`](../PRIVACY.md) | local data, network metadata, diagnostics and export/retention behavior |
-| [`versioning-and-releases.md`](versioning-and-releases.md) | product/build/compatibility versions, tags and release discipline |
+| [`VERSIONING-AND-RELEASES.md`](VERSIONING-AND-RELEASES.md) | product/build/compatibility versions, tags and release discipline |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | notable changes from the documentation baseline forward |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | contribution, architecture, validation and documentation rules |
 
@@ -33,7 +33,7 @@ A roadmap item or maquette state describes intended work/design, not current imp
 
 Durable architectural decisions live under [`architecture/decisions/`](architecture/decisions/). ADRs preserve rationale and decision state; they do not replace current-state architecture documentation. An accepted ADR can therefore remain historically useful even after its details are summarized in `ARCHITECTURE.md`.
 
-The current provider decision is [`0006-iroh-production-provider.md`](architecture/decisions/0006-iroh-production-provider.md).
+The current provider decision is [`0006-IROH-PRODUCTION-PROVIDER.md`](architecture/decisions/0006-IROH-PRODUCTION-PROVIDER.md).
 
 ## Diagrams
 
@@ -42,12 +42,6 @@ The current provider decision is [`0006-iroh-production-provider.md`](architectu
 - [`diagrams/message-delivery.svg`](diagrams/message-delivery.svg) — outbound/inbound ownership and durable feedback.
 
 Diagrams are maintained documentation and must change when their corresponding canonical prose changes materially.
-
-## Validation evidence
-
-[`validation/`](validation/) contains dated audit/soak/measurement reports. These are evidence snapshots for the commit, device, environment and procedure recorded in each report. They are intentionally not rewritten to look current.
-
-Read [`validation/README.md`](validation/README.md) before using a dated report in a claim.
 
 ## Source-of-truth order
 
@@ -59,9 +53,8 @@ When information disagrees, use this order:
 4. `STATUS.md` and this index;
 5. accepted ADRs for rationale/history;
 6. `ROADMAP.md` for intended future release work only;
-7. `maquettes/` for intended visual/interaction design only;
-8. dated validation reports for evidence about the run they describe;
-9. Git history for retired implementation plans/handoffs.
+7. `maquettes/` for intended visual/interaction design only; and
+8. Git history for retired implementation plans/handoffs.
 
 A roadmap/maquette saying that work or design is intended, or a test file existing, is not evidence that the current commit implements or passed that gate.
 

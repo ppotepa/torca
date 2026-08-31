@@ -7,11 +7,11 @@ Torca is a security-sensitive Rust/Flutter application. Keep changes reviewable,
 1. [`README.md`](README.md) — product shape and canonical entry points.
 2. [`ARCHITECTURE.md`](ARCHITECTURE.md) — ownership, layer and provider boundaries.
 3. [`docs/STATUS.md`](docs/STATUS.md) — current maturity and missing release evidence.
-4. [`docs/app-flows.md`](docs/app-flows.md) — current product/runtime journeys.
-5. [`docs/transport.md`](docs/transport.md) — communication-provider model.
-6. [`SECURITY.md`](SECURITY.md), [`docs/security/threat-model.md`](docs/security/threat-model.md) and [`PRIVACY.md`](PRIVACY.md) for security/privacy-sensitive work.
-7. [`docs/development.md`](docs/development.md) and [`docs/testing.md`](docs/testing.md) for workflow/evidence.
-8. [`docs/versioning-and-releases.md`](docs/versioning-and-releases.md) when changing public compatibility or release metadata.
+4. [`docs/APP-FLOWS.md`](docs/APP-FLOWS.md) — current product/runtime journeys.
+5. [`docs/TRANSPORT.md`](docs/TRANSPORT.md) — communication-provider model.
+6. [`SECURITY.md`](SECURITY.md), [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md) and [`PRIVACY.md`](PRIVACY.md) for security/privacy-sensitive work.
+7. [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) and [`docs/TESTING.md`](docs/TESTING.md) for workflow/evidence.
+8. [`docs/VERSIONING-AND-RELEASES.md`](docs/VERSIONING-AND-RELEASES.md) when changing public compatibility or release metadata.
 
 ## Canonical development workflow
 
@@ -75,7 +75,7 @@ For these changes, review/update security/privacy/threat-model boundaries and ad
 
 ## Versioning and changelog
 
-Follow [`docs/versioning-and-releases.md`](docs/versioning-and-releases.md).
+Follow [`docs/VERSIONING-AND-RELEASES.md`](docs/VERSIONING-AND-RELEASES.md).
 
 When a change is notable to users/operators/developers or changes compatibility/security behavior, update [`CHANGELOG.md`](CHANGELOG.md) under `Unreleased` in the same change.
 
@@ -83,7 +83,7 @@ Do not bump the product SemVer just to distinguish two builds. Use the artifact 
 
 ## Validation
 
-Run focused deterministic tests first, then the affected repository gates. The CI workflow is the executable reference for the automated matrix; [`docs/testing.md`](docs/testing.md) defines evidence levels and minimum expectations.
+Run focused deterministic tests first, then the affected repository gates. The CI workflow is the executable reference for the automated matrix; [`docs/TESTING.md`](docs/TESTING.md) defines evidence levels and minimum expectations.
 
 Common Rust checks include:
 
@@ -104,15 +104,15 @@ Use [`docs/README.md`](docs/README.md) to find the canonical page. Update an exi
 
 - architecture/ownership -> `ARCHITECTURE.md`
 - maturity -> `docs/STATUS.md`
-- product/runtime flows -> `docs/app-flows.md`
-- provider behavior -> `docs/transport.md`
-- development -> `docs/development.md`
-- deploy/runtime diagnostics -> `docs/operations.md`
-- validation/soak -> `docs/testing.md`
-- version/release compatibility -> `docs/versioning-and-releases.md`
+- product/runtime flows -> `docs/APP-FLOWS.md`
+- provider behavior -> `docs/TRANSPORT.md`
+- development -> `docs/DEVELOPMENT.md`
+- deploy/runtime diagnostics -> `docs/OPERATIONS.md`
+- validation/soak -> `docs/TESTING.md`
+- version/release compatibility -> `docs/VERSIONING-AND-RELEASES.md`
 - security/privacy -> `SECURITY.md`, threat model, `PRIVACY.md`
 
-Durable design rationale belongs in an ADR. Dated validation reports belong in `docs/validation/` and must identify the commit/environment/run they describe. Temporary implementation plans belong in issues/PRs/work tracking and Git history.
+Durable design rationale belongs in an ADR. Temporary implementation plans belong in issues/PRs/work tracking and Git history.
 
 ## Change reporting
 

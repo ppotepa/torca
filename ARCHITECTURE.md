@@ -74,7 +74,7 @@ Important invariants:
 
 Application code is provider-neutral. The boundary uses stable provider identity, opaque provider routes/routing metadata and byte-stream/peer-transport ports. Provider-specific endpoint formats, QUIC/Iroh types, relay implementation details and reachability configuration stay in infrastructure/platform composition.
 
-Iroh is the sole production provider. Memory is a deterministic test implementation. Tor and the unfinished WebRTC adapter are retired from the active product graph; see ADR [`0006`](docs/architecture/decisions/0006-iroh-production-provider.md).
+Iroh is the sole production provider. Memory is a deterministic test implementation. Tor and the unfinished WebRTC adapter are retired from the active product graph; see ADR [`0006`](docs/architecture/decisions/0006-IROH-PRODUCTION-PROVIDER.md).
 
 Iroh owns:
 
@@ -116,7 +116,7 @@ Platform adapters may report lifecycle/capabilities into the application, but th
 
 ## Major flows
 
-The maintained journey-level descriptions are in [`docs/app-flows.md`](docs/app-flows.md). Message delivery ownership is also illustrated in [`docs/diagrams/message-delivery.svg`](docs/diagrams/message-delivery.svg).
+The maintained journey-level descriptions are in [`docs/APP-FLOWS.md`](docs/APP-FLOWS.md). Message delivery ownership is also illustrated in [`docs/diagrams/message-delivery.svg`](docs/diagrams/message-delivery.svg).
 
 Across those flows the direction remains:
 

@@ -2,7 +2,7 @@
 
 Torca is security-sensitive alpha software. It has not received an independent production security audit and should not be presented as a finished high-risk communications product.
 
-The detailed technical model lives in [`docs/security/threat-model.md`](docs/security/threat-model.md). This page summarizes security policy, current guarantees and explicit non-guarantees.
+The detailed technical model lives in [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md). This page summarizes security policy, current guarantees and explicit non-guarantees.
 
 ## Reporting a vulnerability
 

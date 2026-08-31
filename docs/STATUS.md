@@ -54,10 +54,8 @@ Torca provides authenticated application-layer protection for paired traffic and
 - control over content copied/recorded by a paired recipient; or
 - guaranteed availability under suspension, network failure or denial of service.
 
-See [`../SECURITY.md`](../SECURITY.md), [`security/threat-model.md`](security/threat-model.md) and [`../PRIVACY.md`](../PRIVACY.md).
+See [`../SECURITY.md`](../SECURITY.md), [`security/THREAT-MODEL.md`](security/THREAT-MODEL.md) and [`../PRIVACY.md`](../PRIVACY.md).
 
 ## Validation records
 
-Automated tests, builds and soaks answer different questions. Use the evidence terms defined in [`testing.md`](testing.md).
-
-Dated reports under [`validation/`](validation/) describe specific historical runs. They remain useful evidence for those runs but are not automatically evidence for current HEAD. No permanent test-count ledger is maintained here.
+Automated tests, builds and soaks answer different questions. Use the evidence terms defined in [`TESTING.md`](TESTING.md).
