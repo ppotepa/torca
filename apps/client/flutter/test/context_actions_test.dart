@@ -50,6 +50,32 @@ void main() {
     expect(find.text('Forward message'), findsOneWidget);
   });
 
+  testWidgets('desktop message menu exposes quick reactions', (tester) async {
+    String? reaction;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => MessageActionMenu.showDesktop(
+              context,
+              const Offset(20, 20),
+              onQuickReaction: (value) => reaction = value,
+            ),
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(find.text('👍'), findsOneWidget);
+    expect(find.text('❤️'), findsOneWidget);
+    await tester.tap(find.text('👍'));
+    await tester.pumpAndSettle();
+    expect(reaction, '👍');
+  });
+
   testWidgets('conversation actions reflect blocked state', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

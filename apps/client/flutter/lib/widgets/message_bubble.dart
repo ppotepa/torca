@@ -108,21 +108,25 @@ class MessageBubble extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: <Widget>[
                             Row(
+                              mainAxisAlignment: senderLabel == null
+                                  ? MainAxisAlignment.end
+                                  : MainAxisAlignment.start,
                               children: <Widget>[
-                                Expanded(
-                                  child: Text(
-                                    senderLabel ??
-                                        (outbound
-                                            ? context.strings.senderYou
-                                            : context.strings.senderContact),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelMedium
-                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                if (senderLabel != null)
+                                  Expanded(
+                                    child: Text(
+                                      senderLabel!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            color: foreground,
+                                          ),
+                                    ),
                                   ),
-                                ),
                                 IconButton(
                                   key: ValueKey<String>(
                                     'message-actions-${message.id}',

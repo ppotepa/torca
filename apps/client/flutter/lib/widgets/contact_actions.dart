@@ -132,7 +132,20 @@ class ContactActions {
     BridgeCommandDto command,
     String fallback,
   ) async {
-    final result = await gateway.execute(command);
+    BridgeResultDto result;
+    try {
+      result = await gateway.execute(command);
+    } on Object catch (_) {
+      // A native assertion or a temporarily unavailable runtime must not
+      // leave the modal route mounted with an unhandled Future. Keep the
+      // contact screen usable and let the user retry after diagnostics.
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(fallback)));
+      }
+      return false;
+    }
     if (!context.mounted) return result.ok;
     if (!result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(

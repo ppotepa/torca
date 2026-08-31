@@ -652,9 +652,13 @@ class _ConversationPaneState extends State<ConversationPane>
                               showBody:
                                   !attachmentAnnouncement &&
                                   message.typedStatus != MessageStatus.deleted,
-                              senderLabel:
-                                  message.typedDirection ==
-                                      MessageDirection.outbound
+                              // Show the sender only at the start of a visual
+                              // group. Repeating it in every one-to-one
+                              // message makes the bubble read like a card.
+                              senderLabel: grouped
+                                  ? null
+                                  : message.typedDirection ==
+                                        MessageDirection.outbound
                                   ? context.strings.senderYou
                                   : contact?.displayName ??
                                         context.strings.contactLabel,
@@ -1093,6 +1097,7 @@ class _ConversationPaneState extends State<ConversationPane>
                 message.typedDirection == MessageDirection.outbound &&
                 message.typedStatus != MessageStatus.cancelled &&
                 message.typedStatus != MessageStatus.deleted,
+            onQuickReaction: (emoji) => _reactToMessage(message, emoji: emoji),
           );
     if (!mounted || action == null) return;
     await _applyMessageAction(message, action);
@@ -1200,9 +1205,15 @@ class _ConversationPaneState extends State<ConversationPane>
           ),
         );
         if (confirmed != true) return;
-        final result = await widget.gateway.execute(
-          DeleteMessageCommandDto(messageIdHex: message.id),
-        );
+        BridgeResultDto result;
+        try {
+          result = await widget.gateway.execute(
+            DeleteMessageCommandDto(messageIdHex: message.id),
+          );
+        } on Object {
+          if (mounted) _showError(context.strings.operationFailed);
+          return;
+        }
         if (!result.ok && mounted) {
           _showError(
             BridgeErrorPresenter.localized(
@@ -1249,15 +1260,21 @@ class _ConversationPaneState extends State<ConversationPane>
           reaction.emoji == selectedEmoji &&
           reaction.active,
     );
-    final result = await widget.gateway.execute(
-      SetMessageReactionCommandDto(
-        messageIdHex: message.id,
-        conversationIdHex: message.conversationId,
-        actorIdHex: actorId,
-        emoji: selectedEmoji,
-        active: !existing,
-      ),
-    );
+    BridgeResultDto result;
+    try {
+      result = await widget.gateway.execute(
+        SetMessageReactionCommandDto(
+          messageIdHex: message.id,
+          conversationIdHex: message.conversationId,
+          actorIdHex: actorId,
+          emoji: selectedEmoji,
+          active: !existing,
+        ),
+      );
+    } on Object {
+      if (mounted) _showError(context.strings.couldNotUpdateReaction);
+      return;
+    }
     if (!result.ok && mounted) {
       _showError(
         BridgeErrorPresenter.localized(

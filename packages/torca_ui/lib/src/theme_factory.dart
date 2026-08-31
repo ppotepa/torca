@@ -136,6 +136,14 @@ abstract final class TorcaThemeFactory {
         style: ButtonStyle(
           fixedSize: const WidgetStatePropertyAll<Size>(Size.square(48)),
           padding: const WidgetStatePropertyAll<EdgeInsets>(EdgeInsets.zero),
+          // Keep icon actions visually light. The hit target remains 48dp,
+          // but profile/contact actions must not render as solid circles.
+          backgroundColor: const WidgetStatePropertyAll<Color>(
+            Colors.transparent,
+          ),
+          overlayColor: WidgetStatePropertyAll<Color>(
+            scheme.primary.withValues(alpha: .12),
+          ),
           shape: WidgetStatePropertyAll<OutlinedBorder>(
             terminal
                 ? const RoundedRectangleBorder(borderRadius: BorderRadius.zero)
@@ -238,6 +246,17 @@ abstract final class TorcaThemeFactory {
               : const Duration(milliseconds: 180),
         ),
         TorcaSemanticColors.fromScheme(scheme).copyWith(
+          // Keep chat messages distinct from the surrounding surface in both
+          // light and dark palettes. The old Material defaults could collapse
+          // into the chat background, especially for terminal variants.
+          messageInbound: Color.alphaBlend(
+            palette.outline.withValues(alpha: .18),
+            palette.surface,
+          ),
+          messageOutbound: Color.alphaBlend(
+            palette.primary.withValues(alpha: .24),
+            palette.surface,
+          ),
           chatBackground: palette.background,
           separator: palette.outline,
         ),

@@ -43,7 +43,7 @@ class TorcaIconSet extends ThemeExtension<TorcaIconSet> {
   IconData get reply =>
       pixel ? PixelArtIcons.reply : HeroIcons.arrow_uturn_left;
   IconData get forward =>
-      pixel ? PixelArtIcons.reply : HeroIcons.arrow_uturn_right;
+      pixel ? PixelArtIcons.forward : HeroIcons.arrow_uturn_right;
   IconData get copy => pixel ? PixelArtIcons.copy : HeroIcons.square_2_stack;
   IconData get retry => pixel ? PixelArtIcons.reload : HeroIcons.arrow_path;
   IconData get download =>

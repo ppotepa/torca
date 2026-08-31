@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:iconsx_plus/iconsx_plus.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 void main() {
@@ -47,6 +48,13 @@ void main() {
       modern.iconButtonTheme.style?.fixedSize?.resolve(<WidgetState>{}),
       const Size.square(48),
     );
+    expect(
+      modern.iconButtonTheme.style?.backgroundColor?.resolve(<WidgetState>{}),
+      Colors.transparent,
+    );
+    final modernColors = modern.extension<TorcaSemanticColors>()!;
+    expect(modernColors.messageInbound, isNot(modernColors.chatBackground));
+    expect(modernColors.messageOutbound, isNot(modernColors.chatBackground));
     final terminalIconShape = terminal.iconButtonTheme.style?.shape?.resolve(
       <WidgetState>{},
     );
@@ -59,6 +67,7 @@ void main() {
       terminal.extension<TorcaIconSet>()!.chats,
       isNot(modern.extension<TorcaIconSet>()!.chats),
     );
+    expect(terminal.extension<TorcaIconSet>()!.forward, PixelArtIcons.forward);
   });
 
   test('changing family selects a valid default variant', () {

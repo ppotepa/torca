@@ -138,6 +138,7 @@ abstract final class MessageActionMenu {
     bool canEdit = false,
     bool canDelete = false,
     bool bookmarked = false,
+    ValueChanged<String>? onQuickReaction,
   }) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     return showMenu<MessageAction>(
@@ -147,6 +148,32 @@ abstract final class MessageActionMenu {
         Offset.zero & overlay.size,
       ),
       items: <PopupMenuEntry<MessageAction>>[
+        PopupMenuItem<MessageAction>(
+          value: MessageAction.react,
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              for (final emoji in quickReactions)
+                IconButton(
+                  tooltip: '${context.strings.reactToMessage} $emoji',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 34,
+                    minHeight: 34,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: onQuickReaction == null
+                      ? null
+                      : () {
+                          onQuickReaction(emoji);
+                          Navigator.of(context).pop();
+                        },
+                  icon: Text(emoji, style: const TextStyle(fontSize: 20)),
+                ),
+            ],
+          ),
+        ),
         PopupMenuItem(
           value: MessageAction.reply,
           child: ListTile(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../localization/app_locale_mode.dart';
+import '../localization/torca_strings.dart';
 import '../settings/local_preferences.dart';
 
 class LanguageSelectionScreen extends StatefulWidget {
@@ -53,17 +54,17 @@ class _LanguageSelectionScreenState extends State<LanguageSelectionScreen> {
                 ),
                 const SizedBox(height: 28),
                 _LanguageCard(
-                  flag: '🇬🇧',
+                  flag: '\u{1F1EC}\u{1F1E7}',
                   title: 'English',
-                  semanticLabel: 'Select English language',
+                  semanticLabel: context.strings.languageEnglish,
                   enabled: !_saving,
                   onTap: () => _choose(AppLocaleMode.english),
                 ),
                 const SizedBox(height: 12),
                 _LanguageCard(
-                  flag: '🇵🇱',
+                  flag: '\u{1F1F5}\u{1F1F1}',
                   title: 'Polski',
-                  semanticLabel: 'Wybierz język polski',
+                  semanticLabel: context.strings.languagePolish,
                   enabled: !_saving,
                   onTap: () => _choose(AppLocaleMode.polish),
                 ),
@@ -94,6 +95,7 @@ class _LanguageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
     button: true,
+    enabled: enabled,
     label: semanticLabel,
     child: Card(
       clipBehavior: Clip.antiAlias,

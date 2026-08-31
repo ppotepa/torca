@@ -194,4 +194,38 @@ void main() {
     await tester.tap(find.byTooltip('Message actions'));
     expect(opened, isTrue);
   });
+
+  testWidgets('grouped message keeps body and footer without repeated sender', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: MessageBubble(
+            message: const MessageDto(
+              id: 'grouped',
+              conversationId: '02',
+              body: 'Second message',
+              direction: 'outbound',
+              status: 'sent',
+              createdAtMs: 2000,
+              sentAtMs: 2000,
+            ),
+            senderLabel: null,
+            compactTop: true,
+            onLongPress: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Second message'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('message-footer-grouped')),
+      findsOneWidget,
+    );
+    expect(find.text('You'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
