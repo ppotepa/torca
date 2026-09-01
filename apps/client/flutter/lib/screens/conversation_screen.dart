@@ -1087,6 +1087,11 @@ class _ConversationPaneState extends State<ConversationPane>
     MessageDto message, {
     Offset? globalPosition,
   }) async {
+    var quickReactionSelected = false;
+    Future<void> applyQuickReaction(String emoji) async {
+      quickReactionSelected = true;
+      await _reactToMessage(message, emoji: emoji);
+    }
     final action = globalPosition == null
         ? await MessageActionMenu.showTouch(
             context,
@@ -1103,7 +1108,7 @@ class _ConversationPaneState extends State<ConversationPane>
                 message.typedDirection == MessageDirection.outbound &&
                 message.typedStatus != MessageStatus.cancelled &&
                 message.typedStatus != MessageStatus.deleted,
-            onQuickReaction: (emoji) => _reactToMessage(message, emoji: emoji),
+            onQuickReaction: applyQuickReaction,
           )
         : await MessageActionMenu.showDesktop(
             context,
@@ -1121,9 +1126,12 @@ class _ConversationPaneState extends State<ConversationPane>
                 message.typedDirection == MessageDirection.outbound &&
                 message.typedStatus != MessageStatus.cancelled &&
                 message.typedStatus != MessageStatus.deleted,
-            onQuickReaction: (emoji) => _reactToMessage(message, emoji: emoji),
+            onQuickReaction: applyQuickReaction,
           );
     if (!mounted || action == null) return;
+    // The quick-reaction row already submitted the selected emoji. Do not
+    // open the full picker a second time for the menu's generic `react` value.
+    if (action == MessageAction.react && quickReactionSelected) return;
     await _applyMessageAction(message, action);
   }
 

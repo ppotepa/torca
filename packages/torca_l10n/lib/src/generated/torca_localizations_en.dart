@@ -1423,6 +1423,26 @@ class TorcaLocalizationsEn extends TorcaLocalizations {
   String get sent => 'Sent';
 
   @override
+  String sentAt(Object time) {
+    return 'Sent $time';
+  }
+
+  @override
+  String deliveredAt(Object time) {
+    return 'Delivered $time';
+  }
+
+  @override
+  String seenAt(Object time) {
+    return 'Seen at $time';
+  }
+
+  @override
+  String receivedAt(Object time) {
+    return 'Received $time';
+  }
+
+  @override
   String get settings => 'Settings';
 
   @override

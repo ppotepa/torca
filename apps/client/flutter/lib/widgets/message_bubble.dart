@@ -3,7 +3,6 @@ import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
 
 import '../generated/torca_contract.dart';
-import 'message_status_indicator.dart';
 import 'message_timestamp.dart';
 import 'reply_quote.dart';
 
@@ -299,18 +298,12 @@ class MessageBubble extends StatelessWidget {
                                         onPressed: onLongPress,
                                       ),
                                     if (outbound) const Spacer(),
-                                    if (outbound && message.sentAtMs != null)
-                                      _LifecycleTimeline(message: message)
+                                    if (outbound)
+                                      _MessageLifecycle(message: message)
                                     else ...<Widget>[
                                       MessageTimestamp(
                                         milliseconds: message.createdAtMs,
                                       ),
-                                      if (outbound) ...<Widget>[
-                                        const SizedBox(width: 5),
-                                        MessageStatusIndicator(
-                                          status: message.typedStatus,
-                                        ),
-                                      ],
                                     ],
                                     if (!outbound) ...<Widget>[
                                       const Spacer(),
@@ -367,55 +360,51 @@ class _MessageActionButton extends StatelessWidget {
   );
 }
 
-enum _LifecycleKind { sent, delivered, read }
-
-class _LifecycleMilestone extends StatelessWidget {
-  const _LifecycleMilestone({required this.kind, required this.milliseconds});
-
-  final _LifecycleKind kind;
-  final int milliseconds;
-
-  @override
-  Widget build(BuildContext context) {
-    final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
-    final value =
-        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    final (description, icon) = switch (kind) {
-      _LifecycleKind.sent => (context.l10n.sent, context.torcaIcons.sent),
-      _LifecycleKind.delivered => (
-        context.l10n.delivered,
-        context.torcaIcons.delivered,
-      ),
-      _LifecycleKind.read => (context.l10n.read, context.torcaIcons.read),
-    };
-    return Tooltip(
-      message: '$description $value',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(icon, size: 12),
-          const SizedBox(width: 2),
-          Text(value, style: Theme.of(context).textTheme.labelSmall),
-        ],
-      ),
-    );
-  }
-}
-
-class _LifecycleTimeline extends StatelessWidget {
-  const _LifecycleTimeline({required this.message});
+class _MessageLifecycle extends StatelessWidget {
+  const _MessageLifecycle({required this.message});
 
   final MessageDto message;
 
   @override
   Widget build(BuildContext context) {
-    final (kind, timestamp) = message.readAtMs != null
-        ? (_LifecycleKind.read, message.readAtMs!)
-        : message.deliveredAtMs != null
-        ? (_LifecycleKind.delivered, message.deliveredAtMs!)
-        : (_LifecycleKind.sent, message.sentAtMs!);
-    return _LifecycleMilestone(kind: kind, milliseconds: timestamp);
+    String time(int milliseconds) {
+      final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+      return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    }
+
+    final labels = <String>[];
+    if (message.sentAtMs != null) {
+      labels.add(context.l10n.sentAt(time(message.sentAtMs!)));
+      if (message.deliveredAtMs != null) {
+        labels.add(context.l10n.deliveredAt(time(message.deliveredAtMs!)));
+      }
+      if (message.readAtMs != null) {
+        labels.add(context.l10n.seenAt(time(message.readAtMs!)));
+      }
+    } else {
+      labels.add(
+        switch (message.typedStatus) {
+          MessageStatus.queued => context.l10n.queued,
+          MessageStatus.sending => context.l10n.sendingSecurely,
+          MessageStatus.failed => context.l10n.transferFailed,
+          MessageStatus.cancelled => context.l10n.cancelled,
+          _ => context.l10n.sent,
+        },
+      );
+      labels.add(time(message.createdAtMs));
+    }
+    final text = labels.join(' · ');
+    return Expanded(
+      child: Tooltip(
+        message: text,
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.right,
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+      ),
+    );
   }
 }
-
-

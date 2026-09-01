@@ -1340,6 +1340,26 @@ class TorcaLocalizationsUk extends TorcaLocalizations {
   String get sent => 'Sent';
 
   @override
+  String sentAt(Object time) {
+    return 'Надіслано $time';
+  }
+
+  @override
+  String deliveredAt(Object time) {
+    return 'Доставлено $time';
+  }
+
+  @override
+  String seenAt(Object time) {
+    return 'Переглянуто о $time';
+  }
+
+  @override
+  String receivedAt(Object time) {
+    return 'Отримано $time';
+  }
+
+  @override
   String get settings => 'Налаштування';
 
   @override

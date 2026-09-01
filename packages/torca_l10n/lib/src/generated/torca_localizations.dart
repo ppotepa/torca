@@ -2530,6 +2530,30 @@ abstract class TorcaLocalizations {
   /// **'Sent'**
   String get sent;
 
+  /// No description provided for @sentAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent {time}'**
+  String sentAt(Object time);
+
+  /// No description provided for @deliveredAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivered {time}'**
+  String deliveredAt(Object time);
+
+  /// No description provided for @seenAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Seen at {time}'**
+  String seenAt(Object time);
+
+  /// No description provided for @receivedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Received {time}'**
+  String receivedAt(Object time);
+
   /// No description provided for @settings.
   ///
   /// In en, this message translates to:

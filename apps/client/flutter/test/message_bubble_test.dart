@@ -370,28 +370,18 @@ void main() {
     expect(find.text('Hello'), findsOneWidget);
     expect(find.text('You'), findsOneWidget);
     expect(find.text('Earlier message'), findsOneWidget);
-    // The compact footer presents exactly the furthest known receipt.  Earlier
-    // milestones remain diagnostic detail, rather than duplicating Delivered
-    // and Read in the message bubble.
-    expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is Tooltip && (widget.message?.startsWith('Read ') ?? false),
-      ),
-      findsOneWidget,
-    );
+    // The footer presents the complete delivery timeline as readable text.
     expect(
       find.byWidgetPredicate(
         (widget) =>
             widget is Tooltip &&
-            ((widget.message?.startsWith('Sent ') ?? false) ||
-                (widget.message?.startsWith('Delivered ') ?? false)),
+            (widget.message?.contains('Sent ') ?? false) &&
+            (widget.message?.contains('Delivered ') ?? false) &&
+            (widget.message?.contains('Seen at ') ?? false),
       ),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(find.byTooltip('Read'), findsNothing);
     expect(find.text('outbound'), findsNothing);
-    expect(find.text('Delivered'), findsNothing);
   });
 
   testWidgets('message actions have an explicit accessible button', (

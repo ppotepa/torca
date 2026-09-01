@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:torca_l10n/torca_l10n.dart';
 import 'package:torca_ui/torca_ui.dart';
@@ -30,7 +32,7 @@ abstract final class MessageActionMenu {
     bool canEdit = false,
     bool canDelete = false,
     bool bookmarked = false,
-    ValueChanged<String>? onQuickReaction,
+    FutureOr<void> Function(String)? onQuickReaction,
   }) => showModalBottomSheet<MessageAction>(
     context: context,
     builder: (context) => SafeArea(
@@ -47,9 +49,11 @@ abstract final class MessageActionMenu {
                         label: '${context.l10n.reactToMessage} $emoji',
                         child: InkWell(
                           borderRadius: BorderRadius.circular(12),
-                          onTap: () {
-                            onQuickReaction?.call(emoji);
-                            Navigator.of(context).pop(MessageAction.react);
+                          onTap: () async {
+                            await onQuickReaction?.call(emoji);
+                            if (context.mounted) {
+                              Navigator.of(context).pop(MessageAction.react);
+                            }
                           },
                           child: Padding(
                             padding: const EdgeInsets.all(10),
@@ -137,7 +141,7 @@ abstract final class MessageActionMenu {
     bool canEdit = false,
     bool canDelete = false,
     bool bookmarked = false,
-    ValueChanged<String>? onQuickReaction,
+    FutureOr<void> Function(String)? onQuickReaction,
   }) {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     return showMenu<MessageAction>(
@@ -164,8 +168,8 @@ abstract final class MessageActionMenu {
                   padding: EdgeInsets.zero,
                   onPressed: onQuickReaction == null
                       ? null
-                      : () {
-                          onQuickReaction(emoji);
+                      : () async {
+                          await onQuickReaction(emoji);
                           Navigator.of(context).pop();
                         },
                   icon: Text(emoji, style: const TextStyle(fontSize: 20)),
@@ -276,5 +280,3 @@ abstract final class MessageActionMenu {
     onTap: () => Navigator.of(context).pop(action),
   );
 }
-
-
