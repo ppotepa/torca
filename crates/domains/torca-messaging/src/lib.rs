@@ -360,29 +360,45 @@ impl Message {
     /// Applies a monotonic delivered state.
     pub fn mark_delivered(&mut self, at: Timestamp) -> Result<bool, MessageError> {
         match self.status {
-            MessageStatus::Sent => {
+            // A peer receipt is stronger evidence than the local transport
+            // callback. It may overtake the ACK completion on another worker,
+            // or arrive after a local timeout/retry transition.
+            MessageStatus::Queued
+            | MessageStatus::Sending
+            | MessageStatus::Sent
+            | MessageStatus::Failed => {
                 self.status = MessageStatus::Delivered;
                 self.updated_at = at;
+                if self.sent_at.is_none() {
+                    self.sent_at = Some(at);
+                }
                 self.delivered_at = Some(at);
                 Ok(true)
             }
-            MessageStatus::Delivered | MessageStatus::Read => Ok(false),
+            MessageStatus::Delivered | MessageStatus::Read | MessageStatus::Deleted => Ok(false),
             _ => Err(MessageError::InvalidTransition),
         }
     }
     /// Applies a monotonic read state.
     pub fn mark_read(&mut self, at: Timestamp) -> Result<bool, MessageError> {
         match self.status {
-            MessageStatus::Sent | MessageStatus::Delivered => {
+            MessageStatus::Queued
+            | MessageStatus::Sending
+            | MessageStatus::Sent
+            | MessageStatus::Delivered
+            | MessageStatus::Failed => {
                 self.status = MessageStatus::Read;
                 self.updated_at = at;
+                if self.sent_at.is_none() {
+                    self.sent_at = Some(at);
+                }
                 if self.delivered_at.is_none() {
                     self.delivered_at = Some(at);
                 }
                 self.read_at = Some(at);
                 Ok(true)
             }
-            MessageStatus::Read => Ok(false),
+            MessageStatus::Read | MessageStatus::Deleted => Ok(false),
             _ => Err(MessageError::InvalidTransition),
         }
     }
@@ -580,7 +596,23 @@ impl MessageRepository for InMemoryMessageRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::MessageBody;
+    use super::{Message, MessageBody, MessageId, MessageStatus};
+    use torca_conversations::ConversationId;
+    use torca_foundation::Timestamp;
+
+    fn at(milliseconds: i64) -> Timestamp {
+        Timestamp::from_unix_millis(milliseconds).expect("valid test timestamp")
+    }
+
+    fn outbound() -> Message {
+        Message::outbound(
+            MessageId::from_u128(1),
+            ConversationId::from_u128(2),
+            MessageBody::new("hello").expect("message body"),
+            None,
+            at(10),
+        )
+    }
 
     #[test]
     fn message_body_accepts_one_thousand_characters() {
@@ -591,5 +623,37 @@ mod tests {
     fn message_body_rejects_more_than_one_thousand_characters_even_when_under_byte_cap() {
         let value = "🙂".repeat(MessageBody::MAX_CHARACTERS + 1);
         assert!(MessageBody::new(value).is_err());
+    }
+
+    #[test]
+    fn delivered_receipt_can_overtake_local_sent_ack() {
+        let mut message = outbound();
+        message.begin_send(at(20)).expect("send starts");
+
+        assert!(message.mark_delivered(at(30)).expect("peer receipt wins"));
+        assert_eq!(message.status(), MessageStatus::Delivered);
+        assert_eq!(message.sent_at(), Some(at(30)));
+        assert_eq!(message.delivered_at(), Some(at(30)));
+        assert!(message.mark_sent(at(40)).is_err());
+        assert_eq!(message.status(), MessageStatus::Delivered);
+    }
+
+    #[test]
+    fn read_receipt_can_overtake_ack_or_late_retry_state() {
+        let mut sending = outbound();
+        sending.begin_send(at(20)).expect("send starts");
+        assert!(sending.mark_read(at(30)).expect("read receipt wins"));
+        assert_eq!(sending.status(), MessageStatus::Read);
+        assert_eq!(sending.sent_at(), Some(at(30)));
+        assert_eq!(sending.delivered_at(), Some(at(30)));
+        assert_eq!(sending.read_at(), Some(at(30)));
+
+        let mut failed = outbound();
+        failed.begin_send(at(20)).expect("send starts");
+        failed
+            .mark_failed(at(25), torca_foundation::ErrorCode::new("timeout"))
+            .expect("local timeout");
+        assert!(failed.mark_read(at(35)).expect("late receipt wins"));
+        assert_eq!(failed.status(), MessageStatus::Read);
     }
 }
