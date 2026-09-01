@@ -24,6 +24,8 @@ use crate::SharedPeerCrypto;
 use crate::adapters::{load_contact, load_credential, open, seal};
 
 const RADIO_CONTROL_QUEUE_LIMIT: usize = 64;
+const RADIO_CONTROL_STALE_CLAIM_AGE: Duration = Duration::from_secs(120);
+const RADIO_CONTROL_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Best-effort bounded outbox over the existing authenticated peer lane.
 /// StateSync frames are revisioned and session commands are idempotent, so a
@@ -38,6 +40,7 @@ pub struct PeerRadioControl<R, S, K, C, P> {
     queued: VecDeque<(ContactId, RadioControlFrame, OpaqueId)>,
     next_attempt_at: Option<Instant>,
     retry_delay: Duration,
+    last_recovery_at: Option<Instant>,
 }
 
 impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
@@ -59,6 +62,7 @@ impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
             queued: VecDeque::new(),
             next_attempt_at: None,
             retry_delay: Duration::from_millis(500),
+            last_recovery_at: None,
         }
     }
 }
@@ -100,6 +104,16 @@ where
     }
 
     fn maintain(&mut self, now: Timestamp) -> Result<(), RadioApplicationError> {
+        let recovery_due =
+            self.last_recovery_at.is_none_or(|at| at.elapsed() >= RADIO_CONTROL_RECOVERY_INTERVAL);
+        if recovery_due {
+            let before =
+                now.checked_sub(RADIO_CONTROL_STALE_CLAIM_AGE).unwrap_or(Timestamp::UNIX_EPOCH);
+            self.outbox
+                .recover_stale(before)
+                .map_err(|_| RadioApplicationError::ControlTransport)?;
+            self.last_recovery_at = Some(Instant::now());
+        }
         if self.queued.is_empty() {
             if let Some(job) = self
                 .outbox
