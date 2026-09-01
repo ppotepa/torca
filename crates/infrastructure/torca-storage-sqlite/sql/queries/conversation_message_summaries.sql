@@ -23,7 +23,19 @@ delivered_at_ms,
 )
 SELECT
     c.conversation_id,
-    COALESCE(r.unread_count, 0),
+    COALESCE(r.unread_count, 0) + COALESCE((
+        SELECT COUNT(*)
+        FROM message_reactions mr
+        JOIN messages reacted_message ON reacted_message.message_id = mr.message_id
+        WHERE mr.conversation_id = c.conversation_id
+          AND mr.active = 1
+          AND reacted_message.direction = 0
+          AND mr.updated_at_ms > COALESCE((
+              SELECT read_through_ms
+              FROM conversation_read_state crs
+              WHERE crs.conversation_id = c.conversation_id
+          ), 0)
+    ), 0),
     COALESCE(r.content_activity_at_ms, c.updated_at_ms),
     r.message_id,
     r.direction,

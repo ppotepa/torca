@@ -370,14 +370,13 @@ void main() {
     expect(find.text('Hello'), findsOneWidget);
     expect(find.text('You'), findsOneWidget);
     expect(find.text('Earlier message'), findsOneWidget);
-    // The footer presents the complete delivery timeline as readable text.
+    // The footer presents the current monotonic lifecycle state.
     expect(
       find.byWidgetPredicate(
         (widget) =>
             widget is Tooltip &&
-            (widget.message?.contains('Sent ') ?? false) &&
-            (widget.message?.contains('Delivered ') ?? false) &&
-            (widget.message?.contains('Seen at ') ?? false),
+            (widget.message?.contains('SEEN AT ') ?? false) &&
+            !(widget.message?.contains('DELIVERED') ?? false),
       ),
       findsOneWidget,
     );

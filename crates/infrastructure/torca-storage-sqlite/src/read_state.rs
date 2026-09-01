@@ -9,6 +9,8 @@ use crate::{DatabaseKey, SqlCipherBackend, StorageBackend, StorageKernel};
 const READ_CANDIDATES_SQL: &str = include_str!("../sql/queries/read_candidates.sql");
 const MARK_READ_SQL: &str = include_str!("../sql/commands/mark_message_read.sql");
 const INSERT_RECEIPT_SQL: &str = include_str!("../sql/commands/insert_read_receipt_job.sql");
+const UPSERT_READ_STATE_SQL: &str =
+    include_str!("../sql/commands/conversation_read_state_upsert.sql");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadStateError {
@@ -70,11 +72,16 @@ impl SqlCipherReadState {
         jobs: &[PendingControlJob],
     ) -> Result<usize, ReadStateError> {
         let candidates = self.read_candidates(conversation_id)?;
-        if candidates.is_empty() {
-            return Ok(0);
-        }
         self.backend.begin().map_err(|_| ReadStateError::Storage)?;
         let result = (|| {
+            let conversation_bytes = conversation_id.into_bytes();
+            self.backend
+                .connection()
+                .execute(
+                    UPSERT_READ_STATE_SQL,
+                    params![conversation_bytes.as_slice(), at.to_unix_millis()],
+                )
+                .map_err(|_| ReadStateError::Storage)?;
             let mut changed = 0_usize;
             let mut changed_messages = Vec::new();
             for candidate in candidates {

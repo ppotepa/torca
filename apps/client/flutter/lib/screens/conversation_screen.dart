@@ -453,18 +453,16 @@ class _ConversationPaneState extends State<ConversationPane>
   }
 
   String _messageLifecycleSignature(AppSnapshotDto snapshot) {
-    final values =
-        snapshot.messages
-            .where(
-              (message) => message.conversationId == widget.conversation.id,
-            )
-            .map(
-              (message) =>
-                  '${message.id}:${message.status}:${message.updatedAtMs}:${message.sentAtMs}:${message.deliveredAtMs}:${message.readAtMs}',
-            )
-            .toList()
-          ..sort();
-    return values.join('|');
+    for (final conversation in snapshot.conversations) {
+      if (conversation.id == widget.conversation.id) {
+        // Root snapshots are overview projections and intentionally contain
+        // no message rows. The latest lifecycle is exposed by the summary;
+        // use it to trigger a paginated timeline refresh for receipt-only
+        // changes that do not alter lastActivityAtMs.
+        return '${conversation.lastMessageStatus}:${conversation.unreadCount}';
+      }
+    }
+    return '';
   }
 
   bool _nearBottom() {

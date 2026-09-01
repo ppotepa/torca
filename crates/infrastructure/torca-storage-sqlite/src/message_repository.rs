@@ -587,9 +587,10 @@ fn decode_status(value: i64) -> Result<MessageStatus, MessageError> {
 #[cfg(test)]
 mod tests {
     use crate::{DatabaseKey, SqlCipherMessageStore};
+    use rusqlite::params;
     use torca_conversations::ConversationId;
-    use torca_foundation::Timestamp;
-    use torca_messaging::{Message, MessageBody, MessageId, MessageRepository};
+    use torca_foundation::{OpaqueId, Timestamp};
+    use torca_messaging::{Message, MessageBody, MessageId, MessageReaction, MessageRepository};
 
     #[test]
     fn message_round_trips_through_sqlcipher() {
@@ -604,5 +605,69 @@ mod tests {
         );
         store.insert(message.clone()).expect("insert");
         assert_eq!(store.get(message.id()).expect("get"), Some(message));
+    }
+
+    #[test]
+    fn remote_reaction_is_unread_until_conversation_is_acknowledged() {
+        let key = DatabaseKey::new([0x27; 32]);
+        let mut store = SqlCipherMessageStore::open_in_memory(&key).expect("open store");
+        let contact = OpaqueId::from_u128(40).into_bytes();
+        let conversation = ConversationId::from_u128(41);
+        let conversation_bytes = conversation.to_opaque().into_bytes();
+        store
+            .backend
+            .connection()
+            .execute(
+                "INSERT INTO contacts (contact_id, remote_identity_id, remote_key_id, remote_key_algorithm, remote_public_key, remote_key_generation, capability_id, status, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, 0, ?4, 0, ?5, 0, 1, 1)",
+                params![&contact, &[1_u8; 16], &[2_u8; 16], &[3_u8; 32], &[4_u8; 16]],
+            )
+            .expect("insert contact");
+        store
+            .backend
+            .connection()
+            .execute(
+                "INSERT INTO conversations (conversation_id, contact_id, status, created_at_ms, updated_at_ms) VALUES (?1, ?2, 0, 1, 1)",
+                params![&conversation_bytes, &contact],
+            )
+            .expect("insert conversation");
+        let message = Message::outbound(
+            MessageId::from_u128(42),
+            conversation,
+            MessageBody::new("react to me").expect("body"),
+            None,
+            Timestamp::from_unix_millis(10).expect("time"),
+        );
+        store.insert(message.clone()).expect("insert message");
+        store
+            .upsert_reaction(
+                MessageReaction::new(
+                    message.id(),
+                    conversation,
+                    OpaqueId::from_u128(43),
+                    "👍",
+                    true,
+                    Timestamp::from_unix_millis(20).expect("time"),
+                )
+                .expect("reaction"),
+            )
+            .expect("upsert reaction");
+
+        assert_eq!(
+            store.conversation_summaries().expect("summaries")[&conversation].unread_count,
+            1
+        );
+
+        store
+            .backend
+            .connection()
+            .execute(
+                "INSERT INTO conversation_read_state (conversation_id, read_through_ms) VALUES (?1, 20)",
+                params![&conversation_bytes],
+            )
+            .expect("acknowledge conversation");
+        assert_eq!(
+            store.conversation_summaries().expect("summaries")[&conversation].unread_count,
+            0
+        );
     }
 }

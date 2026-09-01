@@ -92,15 +92,17 @@ class _LifecycleHistoryGateway extends FakeEngineGateway
         connectionState: 'ready',
       ),
     ],
-    conversations: const <ConversationDto>[
+    conversations: <ConversationDto>[
       ConversationDto(
         id: 'source',
         contactId: 'alice',
         status: 'active',
         lastActivityAtMs: 1000,
+        lastMessageStatus: message.status,
       ),
     ],
-    messages: <MessageDto>[message],
+    // Production overview snapshots do not contain message history.
+    messages: const <MessageDto>[],
     bootstrapPhase: 'ready',
   );
 
@@ -159,12 +161,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.textContaining('Sent'), findsOneWidget);
+    expect(find.textContaining('SENT'), findsOneWidget);
 
     gateway.publishRead();
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Seen at'), findsOneWidget);
+    expect(find.textContaining('SEEN AT'), findsOneWidget);
   });
 
   testWidgets('forwarding queues the message from the explicit action button', (

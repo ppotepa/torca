@@ -241,29 +241,43 @@ class MessageBubble extends StatelessWidget {
                                                 begin: 0.72,
                                                 end: 1,
                                               ),
-                                              duration: MediaQuery.disableAnimationsOf(context)
+                                              duration:
+                                                  MediaQuery.disableAnimationsOf(
+                                                    context,
+                                                  )
                                                   ? Duration.zero
-                                                  : const Duration(milliseconds: 180),
+                                                  : const Duration(
+                                                      milliseconds: 180,
+                                                    ),
                                               curve: Curves.easeOutBack,
-                                              builder: (context, scale, child) =>
-                                                  Transform.scale(
-                                                    scale: scale,
-                                                    alignment: Alignment.center,
-                                                    child: child,
-                                                  ),
+                                              builder:
+                                                  (context, scale, child) =>
+                                                      Transform.scale(
+                                                        scale: scale,
+                                                        alignment:
+                                                            Alignment.center,
+                                                        child: child,
+                                                      ),
                                               child: Semantics(
-                                                label: '${entry.key}, ${entry.value}',
+                                                label:
+                                                    '${entry.key}, ${entry.value}',
                                                 container: true,
                                                 child: Container(
-                                                  padding: const EdgeInsets.symmetric(
-                                                    horizontal: 7,
-                                                    vertical: 3,
-                                                  ),
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 7,
+                                                        vertical: 3,
+                                                      ),
                                                   decoration: BoxDecoration(
                                                     color: palette.footer,
-                                                    borderRadius: BorderRadius.circular(
-                                                      context.torcaTokens.terminal ? 0 : 10,
-                                                    ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          context
+                                                                  .torcaTokens
+                                                                  .terminal
+                                                              ? 0
+                                                              : 10,
+                                                        ),
                                                   ),
                                                   child: Text(
                                                     entry.value > 1
@@ -395,33 +409,36 @@ class _MessageLifecycle extends StatelessWidget {
       return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     }
 
-    final labels = <String>[];
-    if (message.sentAtMs != null) {
-      labels.add(context.l10n.sentAt(time(message.sentAtMs!)));
-      if (message.deliveredAtMs != null) {
-        labels.add(context.l10n.deliveredAt(time(message.deliveredAtMs!)));
-      }
-      if (message.readAtMs != null) {
-        final seen = context.l10n.seenAt(time(message.readAtMs!));
-        labels.add(
-          readByLabel == null || readByLabel!.isEmpty
-              ? seen
-              : '$readByLabel · $seen',
-        );
-      }
-    } else {
-      labels.add(
-        switch (message.typedStatus) {
-          MessageStatus.queued => context.l10n.queued,
-          MessageStatus.sending => context.l10n.sendingSecurely,
-          MessageStatus.failed => context.l10n.transferFailed,
-          MessageStatus.cancelled => context.l10n.cancelled,
-          _ => context.l10n.sent,
-        },
-      );
-      labels.add(time(message.createdAtMs));
-    }
-    final text = labels.join(' · ');
+    final status = switch (message.typedStatus) {
+      MessageStatus.queued || MessageStatus.sending => context.l10n.queued,
+      MessageStatus.sent => context.l10n.sent,
+      MessageStatus.delivered => context.l10n.delivered,
+      MessageStatus.read => context.l10n.read,
+      MessageStatus.failed => context.l10n.transferFailed,
+      MessageStatus.cancelled => context.l10n.cancelled,
+      MessageStatus.deleted => message.status,
+      MessageStatus.unknown => context.l10n.sent,
+    };
+    final statusAt = switch (message.typedStatus) {
+      MessageStatus.read => message.readAtMs,
+      MessageStatus.delivered => message.deliveredAtMs,
+      MessageStatus.sent => message.sentAtMs,
+      _ => null,
+    };
+    final actor = message.typedStatus == MessageStatus.read
+        ? readByLabel
+        : null;
+    final text = message.typedStatus == MessageStatus.read
+        ? <String>[
+            context.l10n
+                .seenAt(time(message.readAtMs ?? message.createdAtMs))
+                .toUpperCase(),
+            if (actor != null && actor.isNotEmpty) actor,
+          ].join(' · ')
+        : <String>[
+            status.toUpperCase(),
+            time(statusAt ?? message.createdAtMs),
+          ].join(' · ');
     return Expanded(
       child: Tooltip(
         message: text,
