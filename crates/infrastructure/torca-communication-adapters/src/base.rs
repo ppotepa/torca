@@ -733,6 +733,16 @@ where
                 if receipt.receipt_id != envelope.envelope_id {
                     return self.reject(&envelope);
                 }
+                let Some(message_contact) = self
+                    .engine
+                    .message_contact(MessageId::from_opaque(receipt.message_id))
+                    .map_err(|_| CommunicationError::Engine)?
+                else {
+                    return self.reject(&envelope);
+                };
+                if message_contact != contact.id() {
+                    return self.reject(&envelope);
+                }
                 let _ = self
                     .engine
                     .dispatch(EngineCommand::ApplyReceipt(Receipt {
@@ -751,6 +761,16 @@ where
             }
             (REACTION_MESSAGE_KIND, ApplicationPayload::Reaction(reaction)) => {
                 if reaction.reaction_id != envelope.envelope_id {
+                    return self.reject(&envelope);
+                }
+                let Some(message_contact) = self
+                    .engine
+                    .message_contact(MessageId::from_opaque(reaction.message_id))
+                    .map_err(|_| CommunicationError::Engine)?
+                else {
+                    return self.reject(&envelope);
+                };
+                if message_contact != contact.id() {
                     return self.reject(&envelope);
                 }
                 let domain = torca_messaging::MessageReaction::new(

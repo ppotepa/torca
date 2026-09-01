@@ -1045,8 +1045,16 @@ ConversationPageDto decodeConversationPageResponse(String raw) {
           .whereType<Map<String, dynamic>>()
           .map(MessageDto.fromJson)
           .toList(growable: false);
+  final reactions =
+      (page['reactions'] is List<Object?>
+              ? page['reactions'] as List<Object?>
+              : const <Object?>[])
+          .whereType<Map<String, dynamic>>()
+          .map(ReactionDto.fromJson)
+          .toList(growable: false);
   return ConversationPageDto(
     messages: messages,
     hasMore: page['hasMore'] == true,
+    reactions: reactions,
   );
 }

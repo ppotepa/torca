@@ -18,6 +18,7 @@ class ConversationTimelineController extends ChangeNotifier {
   final int pageSize;
 
   List<MessageDto> _messages = const <MessageDto>[];
+  List<ReactionDto> _reactions = const <ReactionDto>[];
   bool _hasMore = true;
   bool _loading = false;
   bool _refreshing = false;
@@ -26,6 +27,7 @@ class ConversationTimelineController extends ChangeNotifier {
   int _generation = 0;
 
   List<MessageDto> get messages => _messages;
+  List<ReactionDto> get reactions => _reactions;
   bool get hasMore => _hasMore;
   bool get loading => _loading;
   String get conversationId => _conversationId;
@@ -41,6 +43,7 @@ class ConversationTimelineController extends ChangeNotifier {
     _gateway = gateway;
     _conversationId = conversationId;
     _messages = const <MessageDto>[];
+    _reactions = const <ReactionDto>[];
     _hasMore = true;
     _loading = false;
     _notifyChanged();
@@ -70,6 +73,7 @@ class ConversationTimelineController extends ChangeNotifier {
       if (_disposed || generation != _generation) return 0;
       final previousCount = _messages.length;
       _messages = _merge(page.messages, _messages);
+      _reactions = _mergeReactions(page.reactions, _reactions);
       _hasMore = page.hasMore;
       return _messages.length - previousCount;
     } on TimeoutException catch (error, stackTrace) {
@@ -120,6 +124,10 @@ class ConversationTimelineController extends ChangeNotifier {
           } else {
             _messages = _merge(_messages, page.messages);
           }
+          _reactions = _mergeReactions(
+            page.reactions,
+            replaceCurrent ? const <ReactionDto>[] : _reactions,
+          );
           if (replaceCurrent ||
               _messages.length <= pageSize ||
               page.messages.isEmpty) {
@@ -173,5 +181,20 @@ class ConversationTimelineController extends ChangeNotifier {
         return byTime != 0 ? byTime : a.id.compareTo(b.id);
       });
     return result;
+  }
+
+  List<ReactionDto> _mergeReactions(
+    List<ReactionDto> first,
+    List<ReactionDto> second,
+  ) {
+    final byKey = <String, ReactionDto>{};
+    for (final reaction in <ReactionDto>[...second, ...first]) {
+      final key = '${reaction.messageId}:${reaction.actorId}:${reaction.emoji}';
+      final previous = byKey[key];
+      if (previous == null || reaction.updatedAtMs >= previous.updatedAtMs) {
+        byKey[key] = reaction;
+      }
+    }
+    return byKey.values.toList(growable: false);
   }
 }

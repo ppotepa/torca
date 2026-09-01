@@ -35,6 +35,7 @@ impl ConversationHistoryPort for SqliteHistory {
             .page_for_conversation(id, before, limit)
             .map(|page| ConversationMessagePage {
                 messages: page.messages,
+                reactions: page.reactions,
                 has_more: page.has_more,
             })
             .map_err(|_| ApplicationQueryError::Unavailable)

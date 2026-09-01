@@ -49,6 +49,7 @@ impl From<MigrationError> for SqlCipherMessageStoreOpenError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConversationMessagePage {
     pub messages: Vec<Message>,
+    pub reactions: Vec<MessageReaction>,
     pub has_more: bool,
 }
 
@@ -132,7 +133,8 @@ impl SqlCipherMessageStore {
             messages.truncate(limit);
         }
         messages.reverse();
-        Ok(ConversationMessagePage { messages, has_more })
+        let reactions = self.reactions_for_conversation(conversation_id)?;
+        Ok(ConversationMessagePage { messages, reactions, has_more })
     }
 
     /// Performs a literal case-insensitive substring search inside one conversation.

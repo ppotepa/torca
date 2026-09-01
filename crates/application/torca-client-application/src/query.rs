@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use torca_contacts::ContactId;
 use torca_conversations::ConversationId;
 use torca_foundation::Timestamp;
-use torca_messaging::{Message, MessageId};
+use torca_messaging::{Message, MessageId, MessageReaction};
 use torca_runtime_policy::{BatteryPreferences, ContactAvailabilityMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,6 +20,7 @@ impl std::error::Error for ApplicationQueryError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConversationMessagePage {
     pub messages: Vec<Message>,
+    pub reactions: Vec<MessageReaction>,
     pub has_more: bool,
 }
 

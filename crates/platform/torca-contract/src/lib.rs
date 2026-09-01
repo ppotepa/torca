@@ -494,6 +494,7 @@ pub struct BridgeMessage {
 #[serde(rename_all = "camelCase")]
 pub struct BridgeMessagePage {
     pub messages: Vec<BridgeMessage>,
+    pub reactions: Vec<BridgeReaction>,
     pub has_more: bool,
 }
 #[must_use]

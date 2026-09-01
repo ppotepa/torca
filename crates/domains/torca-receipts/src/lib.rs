@@ -86,7 +86,14 @@ impl ReceiptRepository for InMemoryReceiptRepository {
                 entry.insert(receipt);
                 Ok(true)
             }
-            Entry::Occupied(_) => Ok(false),
+            Entry::Occupied(mut entry) => {
+                if receipt.at >= entry.get().at {
+                    let _ = entry.insert(receipt);
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
         }
     }
     fn for_message(&self, message_id: MessageId) -> Result<Vec<Receipt>, ReceiptError> {

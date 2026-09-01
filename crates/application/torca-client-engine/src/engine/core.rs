@@ -86,6 +86,14 @@ where
     pub fn overview_snapshot(&self) -> Result<ClientSnapshot, EngineError> {
         let conversations = ConversationRepository::list(&self.relationships)
             .map_err(|_| EngineError::Repository)?;
+        let mut reactions = Vec::new();
+        for conversation in &conversations {
+            reactions.extend(
+                self.messages
+                    .reactions_for_conversation(conversation.id())
+                    .map_err(|_| EngineError::Repository)?,
+            );
+        }
         Ok(ClientSnapshot {
             identity: self.identity.load().map_err(|_| EngineError::Identity)?,
             pairings: self.pairings.list().map_err(|_| EngineError::Repository)?,
@@ -93,7 +101,7 @@ where
                 .map_err(|_| EngineError::Repository)?,
             conversations,
             messages: Vec::new(),
-            reactions: Vec::new(),
+            reactions,
             avatar_genome: self.relationships.local_avatar_genome()?,
         })
     }

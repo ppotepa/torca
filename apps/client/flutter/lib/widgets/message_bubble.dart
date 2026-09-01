@@ -21,6 +21,7 @@ class MessageBubble extends StatelessWidget {
     this.showSender = true,
     this.senderLabel,
     this.senderColorKey,
+    this.readByLabel,
     super.key,
   });
 
@@ -37,6 +38,7 @@ class MessageBubble extends StatelessWidget {
   final bool showSender;
   final String? senderLabel;
   final String? senderColorKey;
+  final String? readByLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -231,34 +233,51 @@ class MessageBubble extends StatelessWidget {
                                         children: <Widget>[
                                           for (final entry
                                               in reactionCounts.entries)
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
+                                            TweenAnimationBuilder<double>(
+                                              key: ValueKey<String>(
+                                                '${message.id}:${entry.key}:${entry.value}',
+                                              ),
+                                              tween: Tween<double>(
+                                                begin: 0.72,
+                                                end: 1,
+                                              ),
+                                              duration: MediaQuery.disableAnimationsOf(context)
+                                                  ? Duration.zero
+                                                  : const Duration(milliseconds: 180),
+                                              curve: Curves.easeOutBack,
+                                              builder: (context, scale, child) =>
+                                                  Transform.scale(
+                                                    scale: scale,
+                                                    alignment: Alignment.center,
+                                                    child: child,
+                                                  ),
+                                              child: Semantics(
+                                                label: '${entry.key}, ${entry.value}',
+                                                container: true,
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(
                                                     horizontal: 7,
                                                     vertical: 3,
                                                   ),
-                                              decoration: BoxDecoration(
-                                                color: palette.footer,
-                                                borderRadius:
-                                                    BorderRadius.circular(
-                                                      context
-                                                              .torcaTokens
-                                                              .terminal
-                                                          ? 0
-                                                          : 10,
+                                                  decoration: BoxDecoration(
+                                                    color: palette.footer,
+                                                    borderRadius: BorderRadius.circular(
+                                                      context.torcaTokens.terminal ? 0 : 10,
                                                     ),
-                                              ),
-                                              child: Text(
-                                                entry.value > 1
-                                                    ? '${entry.key} ${entry.value}'
-                                                    : entry.key,
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .labelSmall
-                                                    ?.copyWith(
-                                                      color: palette.muted,
-                                                      height: 1,
-                                                    ),
+                                                  ),
+                                                  child: Text(
+                                                    entry.value > 1
+                                                        ? '${entry.key} ${entry.value}'
+                                                        : entry.key,
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .labelSmall
+                                                        ?.copyWith(
+                                                          color: palette.muted,
+                                                          height: 1,
+                                                        ),
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                         ],
@@ -299,7 +318,10 @@ class MessageBubble extends StatelessWidget {
                                       ),
                                     if (outbound) const Spacer(),
                                     if (outbound)
-                                      _MessageLifecycle(message: message)
+                                      _MessageLifecycle(
+                                        message: message,
+                                        readByLabel: readByLabel,
+                                      )
                                     else ...<Widget>[
                                       MessageTimestamp(
                                         milliseconds: message.createdAtMs,
@@ -361,9 +383,10 @@ class _MessageActionButton extends StatelessWidget {
 }
 
 class _MessageLifecycle extends StatelessWidget {
-  const _MessageLifecycle({required this.message});
+  const _MessageLifecycle({required this.message, this.readByLabel});
 
   final MessageDto message;
+  final String? readByLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -379,7 +402,12 @@ class _MessageLifecycle extends StatelessWidget {
         labels.add(context.l10n.deliveredAt(time(message.deliveredAtMs!)));
       }
       if (message.readAtMs != null) {
-        labels.add(context.l10n.seenAt(time(message.readAtMs!)));
+        final seen = context.l10n.seenAt(time(message.readAtMs!));
+        labels.add(
+          readByLabel == null || readByLabel!.isEmpty
+              ? seen
+              : '$readByLabel · $seen',
+        );
       }
     } else {
       labels.add(

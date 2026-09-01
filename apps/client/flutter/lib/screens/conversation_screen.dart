@@ -110,6 +110,7 @@ class _ConversationPaneState extends State<ConversationPane>
   final List<_PendingAttachment> _pendingAttachments = <_PendingAttachment>[];
   final List<String> _recentEmojis = <String>[];
   final Set<String> _bookmarkedMessageIds = <String>{};
+  final Map<String, bool> _pendingReactionStates = <String, bool>{};
 
   late ConversationTimelineController _timeline;
   Timer? _searchDebounce;
@@ -127,6 +128,7 @@ class _ConversationPaneState extends State<ConversationPane>
   late bool _conversationMuted;
   int _jumpMessageCount = 0;
   int _lastActivityAtMs = 0;
+  String _lastReactionSignature = '';
   String? _unreadBoundaryMessageId;
   MessageDto? _replyingTo;
   MessageDto? _editingMessage;
@@ -144,6 +146,7 @@ class _ConversationPaneState extends State<ConversationPane>
     _conversationPinned = widget.conversationPinned;
     _conversationMuted = widget.conversationMuted;
     _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
+    _lastReactionSignature = _reactionSignature(widget.gateway.snapshots.value);
     unawaited(_initializeTimeline());
     unawaited(_restoreDraft());
     unawaited(_restoreBookmarks());
@@ -359,11 +362,26 @@ class _ConversationPaneState extends State<ConversationPane>
     final summary = _conversationSummary();
     final activity = summary?.lastActivityAtMs ?? 0;
     final activityChanged = activity != _lastActivityAtMs;
+    final reactionSignature = _reactionSignature(widget.gateway.snapshots.value);
+    final reactionsChanged = reactionSignature != _lastReactionSignature;
     _lastActivityAtMs = activity;
+    _lastReactionSignature = reactionSignature;
+    if (reactionsChanged && _pendingReactionStates.isNotEmpty) {
+      final projected = <String, bool>{};
+      for (final reaction in widget.gateway.snapshots.value.reactions) {
+        if (reaction.conversationId != widget.conversation.id) continue;
+        projected[
+          '${reaction.messageId}:${reaction.actorId}:${reaction.emoji}',
+        ] = reaction.active;
+      }
+      _pendingReactionStates.removeWhere(
+        (key, value) => projected[key] == value,
+      );
+    }
     // Transport/health revisions are frequent but do not change the
     // conversation projection. Avoid turning every RX/TX LED update into a
     // serialized history query (and let commands overtake stale UI refreshes).
-    if (!activityChanged && _timelineInitialized) return;
+    if (!activityChanged && !reactionsChanged && _timelineInitialized) return;
     final follow = _nearBottom();
     final beforeCount = _timeline.messages.length;
     unawaited(() async {
@@ -395,6 +413,16 @@ class _ConversationPaneState extends State<ConversationPane>
       if (conversation.id == widget.conversation.id) return conversation;
     }
     return null;
+  }
+
+  String _reactionSignature(AppSnapshotDto snapshot) {
+    final values = snapshot.reactions
+        .where((reaction) => reaction.conversationId == widget.conversation.id)
+        .map((reaction) =>
+            '${reaction.messageId}:${reaction.actorId}:${reaction.emoji}:${reaction.active}:${reaction.updatedAtMs}')
+        .toList()
+      ..sort();
+    return values.join('|');
   }
 
   bool _nearBottom() {
@@ -478,11 +506,27 @@ class _ConversationPaneState extends State<ConversationPane>
         );
       }
       final reactionsByMessage = <String, List<ReactionDto>>{};
-      for (final reaction in snapshot.reactions) {
+      for (final reaction in _timeline.reactions) {
         if (!reaction.active || !byId.containsKey(reaction.messageId)) continue;
         (reactionsByMessage[reaction.messageId] ??= <ReactionDto>[]).add(
           reaction,
         );
+      }
+      for (final entry in _pendingReactionStates.entries) {
+        final parts = entry.key.split(':');
+        if (parts.length < 3 || !entry.value) continue;
+        final reaction = ReactionDto(
+          messageId: parts[0],
+          conversationId: widget.conversation.id,
+          actorId: parts[1],
+          emoji: parts.sublist(2).join(':'),
+          active: true,
+        );
+        final list = reactionsByMessage[reaction.messageId] ??=
+            <ReactionDto>[];
+        if (!list.any((value) => value.actorId == reaction.actorId && value.emoji == reaction.emoji)) {
+          list.add(reaction);
+        }
       }
       final reply = _replyingTo;
       final contact = contactForSnapshot(snapshot, widget.conversation);
@@ -682,9 +726,10 @@ class _ConversationPaneState extends State<ConversationPane>
                                   message.typedDirection ==
                                       MessageDirection.outbound
                                   ? snapshot.identity?.id ?? 'local'
-                                  : contact?.remoteIdentityId ??
+                                      : contact?.remoteIdentityId ??
                                         contact?.id ??
                                         'remote',
+                              readByLabel: contact?.displayName,
                               compactTop: grouped,
                               compactBottom: groupedBelow,
                               onLongPress: () => _showMessageActions(message),
@@ -1285,13 +1330,16 @@ class _ConversationPaneState extends State<ConversationPane>
           ),
         );
     if (!mounted || selectedEmoji == null) return;
-    final existing = widget.gateway.snapshots.value.reactions.any(
+    final existing = _timeline.reactions.any(
       (reaction) =>
           reaction.messageId == message.id &&
           reaction.actorId == actorId &&
           reaction.emoji == selectedEmoji &&
           reaction.active,
     );
+    final key = '${message.id}:$actorId:$selectedEmoji';
+    final nextActive = !(existing || _pendingReactionStates[key] == true);
+    setState(() => _pendingReactionStates[key] = nextActive);
     BridgeResultDto result;
     try {
       result = await widget.gateway.execute(
@@ -1300,14 +1348,16 @@ class _ConversationPaneState extends State<ConversationPane>
           conversationIdHex: message.conversationId,
           actorIdHex: actorId,
           emoji: selectedEmoji,
-          active: !existing,
+          active: nextActive,
         ),
       );
     } on Object {
+      if (mounted) setState(() => _pendingReactionStates.remove(key));
       if (mounted) _showError(context.l10n.couldNotUpdateReaction);
       return;
     }
     if (!result.ok && mounted) {
+      setState(() => _pendingReactionStates.remove(key));
       _showError(
         BridgeErrorPresenter.localized(
           context,

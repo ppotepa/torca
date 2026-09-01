@@ -1139,10 +1139,12 @@ impl ClientApplicationRuntime {
                             .queue_reaction(
                                 conversation.contact_id(),
                                 ReactionPayload {
-                                    reaction_id: MessageReaction::deterministic_id(
+                                    reaction_id: MessageReaction::operation_id(
                                         MessageId::from_opaque(message_id),
                                         actor_id,
                                         &reaction_emoji,
+                                        timestamp(at_ms)?,
+                                        active,
                                     ),
                                     message_id,
                                     conversation_id,

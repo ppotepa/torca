@@ -248,10 +248,15 @@ ClientCapabilitiesDto capabilitiesFor(EngineGateway gateway) =>
     : const ClientCapabilitiesDto();
 
 class ConversationPageDto {
-  const ConversationPageDto({required this.messages, required this.hasMore});
+  const ConversationPageDto({
+    required this.messages,
+    required this.hasMore,
+    this.reactions = const <ReactionDto>[],
+  });
 
   final List<MessageDto> messages;
   final bool hasMore;
+  final List<ReactionDto> reactions;
 }
 
 abstract interface class ConversationHistoryProvider {

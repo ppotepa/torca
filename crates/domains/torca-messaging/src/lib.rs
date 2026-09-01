@@ -117,6 +117,26 @@ impl MessageReaction {
         let id = OpaqueId::from_bytes(bytes);
         if id.is_nil() { OpaqueId::from_u128(1) } else { id }
     }
+    /// Returns a unique delivery operation id for one reaction mutation.
+    /// The reaction state key remains message/actor/emoji; every mutation must
+    /// get a fresh outbox id so toggling a reaction is not swallowed as a
+    /// duplicate of the previous mutation.
+    pub fn operation_id(
+        message_id: MessageId,
+        actor_id: OpaqueId,
+        emoji: &str,
+        at: Timestamp,
+        active: bool,
+    ) -> OpaqueId {
+        let mut bytes = Self::deterministic_id(message_id, actor_id, emoji).into_bytes();
+        let time = at.to_unix_millis().to_le_bytes();
+        for (index, value) in time.iter().enumerate() {
+            bytes[index] ^= *value;
+        }
+        bytes[15] ^= u8::from(active);
+        let id = OpaqueId::from_bytes(bytes);
+        if id.is_nil() { OpaqueId::from_u128(2) } else { id }
+    }
     pub fn new(
         message_id: MessageId,
         conversation_id: ConversationId,
@@ -534,10 +554,14 @@ impl MessageRepository for InMemoryMessageRepository {
         Ok(self.messages.values().cloned().collect())
     }
     fn upsert_reaction(&mut self, reaction: MessageReaction) -> Result<(), MessageError> {
-        self.reactions.insert(
-            (reaction.message_id(), reaction.actor_id(), reaction.emoji().to_owned()),
-            reaction,
-        );
+        let key = (reaction.message_id(), reaction.actor_id(), reaction.emoji().to_owned());
+        let should_update = self
+            .reactions
+            .get(&key)
+            .is_none_or(|existing| reaction.updated_at() >= existing.updated_at());
+        if should_update {
+            self.reactions.insert(key, reaction);
+        }
         Ok(())
     }
     fn reactions_for_conversation(

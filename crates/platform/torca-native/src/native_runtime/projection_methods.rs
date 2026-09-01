@@ -381,6 +381,7 @@ impl TorcaRuntime {
             Ok(page) => {
                 let page = BridgeMessagePage {
                     messages: page.messages.into_iter().map(bridge_message_from_domain).collect(),
+                    reactions: page.reactions.into_iter().map(bridge_reaction_from_domain).collect(),
                     has_more: page.has_more,
                 };
                 self.query_json = bridge_message_page_json(&page);
@@ -407,6 +408,7 @@ impl TorcaRuntime {
             Ok(messages) => {
                 let page = BridgeMessagePage {
                     messages: messages.into_iter().map(bridge_message_from_domain).collect(),
+                    reactions: Vec::new(),
                     has_more: false,
                 };
                 self.query_json = bridge_message_page_json(&page);

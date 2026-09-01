@@ -17,8 +17,8 @@ use torca_client_application::{
 };
 use torca_client_engine::ClientEngineActor;
 use torca_contract::{
-    BridgeMessagePage, bridge_message_from_domain, bridge_result_from_application,
-    bridge_snapshot_from_application, decode_application_command,
+    BridgeMessagePage, bridge_message_from_domain, bridge_reaction_from_domain,
+    bridge_result_from_application, bridge_snapshot_from_application, decode_application_command,
 };
 use torca_conversations::ConversationId;
 use torca_foundation::{ClassifiedError, ErrorDescriptor, OpaqueId, Timestamp};
