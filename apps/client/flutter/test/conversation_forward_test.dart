@@ -65,7 +65,108 @@ class _HistoryGateway extends FakeEngineGateway
       const ConversationPageDto(messages: <MessageDto>[], hasMore: false);
 }
 
+class _LifecycleHistoryGateway extends FakeEngineGateway
+    implements ConversationHistoryProvider {
+  _LifecycleHistoryGateway() : super(initialSnapshot: _snapshot(_sentMessage));
+
+  static const MessageDto _sentMessage = MessageDto(
+    id: 'message-status',
+    conversationId: 'source',
+    body: 'Lifecycle test',
+    direction: 'outbound',
+    status: 'sent',
+    createdAtMs: 1000,
+    updatedAtMs: 2000,
+    sentAtMs: 2000,
+  );
+
+  MessageDto currentMessage = _sentMessage;
+
+  static AppSnapshotDto _snapshot(MessageDto message) => AppSnapshotDto(
+    identity: const IdentityDto(id: 'local', displayName: 'Me'),
+    contacts: const <ContactDto>[
+      ContactDto(
+        id: 'alice',
+        displayName: 'Alice',
+        status: 'active',
+        connectionState: 'ready',
+      ),
+    ],
+    conversations: const <ConversationDto>[
+      ConversationDto(
+        id: 'source',
+        contactId: 'alice',
+        status: 'active',
+        lastActivityAtMs: 1000,
+      ),
+    ],
+    messages: <MessageDto>[message],
+    bootstrapPhase: 'ready',
+  );
+
+  void publishRead() {
+    currentMessage = const MessageDto(
+      id: 'message-status',
+      conversationId: 'source',
+      body: 'Lifecycle test',
+      direction: 'outbound',
+      status: 'read',
+      createdAtMs: 1000,
+      updatedAtMs: 4000,
+      sentAtMs: 2000,
+      deliveredAtMs: 3000,
+      readAtMs: 4000,
+    );
+    publish(_snapshot(currentMessage));
+  }
+
+  @override
+  Future<ConversationPageDto> loadConversationPage(
+    String conversationId, {
+    MessageDto? before,
+    int limit = 100,
+  }) async => ConversationPageDto(
+    messages: <MessageDto>[currentMessage],
+    hasMore: false,
+  );
+
+  @override
+  Future<ConversationPageDto> searchConversation(
+    String conversationId,
+    String query, {
+    int limit = 100,
+  }) async =>
+      const ConversationPageDto(messages: <MessageDto>[], hasMore: false);
+}
+
 void main() {
+  testWidgets('receipt-only snapshot refreshes the visible message footer', (
+    tester,
+  ) async {
+    final gateway = _LifecycleHistoryGateway();
+    addTearDown(gateway.dispose);
+    const conversation = ConversationDto(
+      id: 'source',
+      contactId: 'alice',
+      status: 'active',
+      lastActivityAtMs: 1000,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: ConversationScreen(gateway: gateway, conversation: conversation),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Sent'), findsOneWidget);
+
+    gateway.publishRead();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Seen at'), findsOneWidget);
+  });
+
   testWidgets('forwarding queues the message from the explicit action button', (
     tester,
   ) async {

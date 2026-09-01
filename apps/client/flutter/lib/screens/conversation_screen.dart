@@ -128,6 +128,7 @@ class _ConversationPaneState extends State<ConversationPane>
   late bool _conversationMuted;
   int _jumpMessageCount = 0;
   int _lastActivityAtMs = 0;
+  String _lastMessageLifecycleSignature = '';
   String _lastReactionSignature = '';
   String? _unreadBoundaryMessageId;
   MessageDto? _replyingTo;
@@ -146,6 +147,9 @@ class _ConversationPaneState extends State<ConversationPane>
     _conversationPinned = widget.conversationPinned;
     _conversationMuted = widget.conversationMuted;
     _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
+    _lastMessageLifecycleSignature = _messageLifecycleSignature(
+      widget.gateway.snapshots.value,
+    );
     _lastReactionSignature = _reactionSignature(widget.gateway.snapshots.value);
     unawaited(_initializeTimeline());
     unawaited(_restoreDraft());
@@ -198,6 +202,12 @@ class _ConversationPaneState extends State<ConversationPane>
       _timeline.addListener(_timelineChanged);
       _timelineInitialized = false;
       _lastActivityAtMs = _conversationSummary()?.lastActivityAtMs ?? 0;
+      _lastMessageLifecycleSignature = _messageLifecycleSignature(
+        widget.gateway.snapshots.value,
+      );
+      _lastReactionSignature = _reactionSignature(
+        widget.gateway.snapshots.value,
+      );
       _unreadBoundaryMessageId = null;
       unawaited(_initializeTimeline());
       unawaited(_restoreDraft());
@@ -362,11 +372,17 @@ class _ConversationPaneState extends State<ConversationPane>
     final summary = _conversationSummary();
     final activity = summary?.lastActivityAtMs ?? 0;
     final activityChanged = activity != _lastActivityAtMs;
+    final messageLifecycleSignature = _messageLifecycleSignature(
+      widget.gateway.snapshots.value,
+    );
+    final messageLifecycleChanged =
+        messageLifecycleSignature != _lastMessageLifecycleSignature;
     final reactionSignature = _reactionSignature(
       widget.gateway.snapshots.value,
     );
     final reactionsChanged = reactionSignature != _lastReactionSignature;
     _lastActivityAtMs = activity;
+    _lastMessageLifecycleSignature = messageLifecycleSignature;
     _lastReactionSignature = reactionSignature;
     if (reactionsChanged && _pendingReactionStates.isNotEmpty) {
       final projected = <String, bool>{};
@@ -382,7 +398,12 @@ class _ConversationPaneState extends State<ConversationPane>
     // Transport/health revisions are frequent but do not change the
     // conversation projection. Avoid turning every RX/TX LED update into a
     // serialized history query (and let commands overtake stale UI refreshes).
-    if (!activityChanged && !reactionsChanged && _timelineInitialized) return;
+    if (!activityChanged &&
+        !messageLifecycleChanged &&
+        !reactionsChanged &&
+        _timelineInitialized) {
+      return;
+    }
     final follow = _nearBottom();
     final beforeCount = _timeline.messages.length;
     unawaited(() async {
@@ -425,6 +446,21 @@ class _ConversationPaneState extends State<ConversationPane>
             .map(
               (reaction) =>
                   '${reaction.messageId}:${reaction.actorId}:${reaction.emoji}:${reaction.active}:${reaction.updatedAtMs}',
+            )
+            .toList()
+          ..sort();
+    return values.join('|');
+  }
+
+  String _messageLifecycleSignature(AppSnapshotDto snapshot) {
+    final values =
+        snapshot.messages
+            .where(
+              (message) => message.conversationId == widget.conversation.id,
+            )
+            .map(
+              (message) =>
+                  '${message.id}:${message.status}:${message.updatedAtMs}:${message.sentAtMs}:${message.deliveredAtMs}:${message.readAtMs}',
             )
             .toList()
           ..sort();
