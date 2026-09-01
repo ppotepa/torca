@@ -347,6 +347,7 @@ fn run_loop<P: PairingDriver, C: CommunicationDriver, T: CommunicationLifecycle>
                 // sessions to reconnect. Otherwise the first reconnect can
                 // race the route refresh and dial through the old Wi-Fi path.
                 communication.network_changed(now);
+                communication.network_changed_radio(now);
                 record(
                     diagnostics,
                     sequence,

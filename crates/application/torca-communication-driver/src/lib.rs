@@ -555,6 +555,12 @@ impl torca_runtime::CommunicationDriver for TorcaCommunicationDriver {
         self.radio.as_ref().and_then(|radio| radio.next_maintenance_delay(now))
     }
 
+    fn network_changed_radio(&mut self, now: Timestamp) {
+        if let Some(radio) = self.radio.as_mut() {
+            radio.network_changed(now);
+        }
+    }
+
     fn database_write_count(&self) -> u64 {
         let attachment_writes = self
             .attachments

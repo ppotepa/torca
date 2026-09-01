@@ -11,19 +11,20 @@ WITH ranked AS (
 attempt_count,
 sent_at_ms,
 delivered_at_ms,
-read_at_ms,
+        read_at_ms,
+        MAX(created_at_ms) OVER (PARTITION BY conversation_id) AS content_activity_at_ms,
         SUM(CASE WHEN direction = 1 AND status = 3 THEN 1 ELSE 0 END)
             OVER (PARTITION BY conversation_id) AS unread_count,
         ROW_NUMBER() OVER (
             PARTITION BY conversation_id
-            ORDER BY updated_at_ms DESC, created_at_ms DESC, message_id DESC
+            ORDER BY created_at_ms DESC, message_id DESC
         ) AS row_number
     FROM messages
 )
 SELECT
     c.conversation_id,
     COALESCE(r.unread_count, 0),
-    COALESCE(r.updated_at_ms, c.updated_at_ms),
+    COALESCE(r.content_activity_at_ms, c.updated_at_ms),
     r.message_id,
     r.direction,
     r.status,
@@ -39,4 +40,4 @@ FROM conversations c
 LEFT JOIN ranked r
     ON r.conversation_id = c.conversation_id
    AND r.row_number = 1
-ORDER BY COALESCE(r.updated_at_ms, c.updated_at_ms) DESC, c.conversation_id DESC;
+ORDER BY COALESCE(r.content_activity_at_ms, c.updated_at_ms) DESC, c.conversation_id DESC;

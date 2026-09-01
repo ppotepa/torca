@@ -295,6 +295,7 @@ pub trait CommunicationDriver:
     fn maintain_radio(&mut self, _now: Timestamp) -> Result<(), RuntimeDriverError> {
         Ok(())
     }
+    fn network_changed_radio(&mut self, _now: Timestamp) {}
     /// Returns a Radio-owned deadline separately from delivery/attachment
     /// deadlines. `None` means Radio can remain event-driven and asleep.
     fn next_radio_maintenance_delay(&self, _now: Timestamp) -> Option<Duration> {

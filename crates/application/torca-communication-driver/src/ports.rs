@@ -347,6 +347,8 @@ pub trait RelationshipAdminRuntime: Send {
 /// supervisor only owns authenticated envelope routing; product state stays
 /// in the dedicated application coordinator.
 pub trait RadioInboundRuntime: Send {
+    fn network_changed(&mut self, _now: Timestamp) {}
+
     fn set_waker(&mut self, _waker: Arc<dyn Fn() + Send + Sync>) {}
 
     fn process_control(

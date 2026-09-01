@@ -431,6 +431,10 @@ impl RadioMediaPort for RadioMediaAdapter {
         self.submit(MediaCommand::CancelFloor { contact_id, session_id, request_id })
     }
 
+    fn network_changed(&mut self) {
+        let _ = self.commands.try_send(MediaCommand::NetworkChanged);
+    }
+
     fn take_event(&mut self) -> Option<RadioSessionEvent> {
         self.events.lock().ok()?.pop_front()
     }
@@ -454,6 +458,7 @@ impl RadioMediaPort for RadioMediaAdapter {
 
 enum MediaCommand {
     Wake,
+    NetworkChanged,
     Open {
         contact_id: ContactId,
         session_id: RadioSessionId,
@@ -961,6 +966,9 @@ impl MediaWorker {
                     live.local_burst_started_at = None;
                     self.audio.clear();
                 }
+            }
+            MediaCommand::NetworkChanged => {
+                self.interrupt_live(RadioTransportFailure::NetworkChanged);
             }
             MediaCommand::Shutdown => return Err(()),
         }

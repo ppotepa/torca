@@ -493,16 +493,20 @@ where
             }
         }
         for (contact_id, group) in groups {
-            let envelopes = group
-                .iter()
-                .map(|(_, envelope_id, kind, ciphertext)| (*envelope_id, *kind, ciphertext.clone()))
-                .collect();
-            let outcome = self.link.send_envelopes_batch(contact_id, envelopes);
-            for (index, _, _, _) in group {
-                results[index] = Some(match &outcome {
-                    Ok(()) => Ok(DeliveryAck::Accepted),
-                    Err(error) => Err(DeliveryTransportError(format!("{error}"))),
-                });
+            for (index, envelope_id, kind, ciphertext) in group {
+                results[index] = Some(
+                    self.link
+                        .send_and_wait_ack_with_limit(
+                            contact_id,
+                            envelope_id,
+                            kind,
+                            ciphertext,
+                            self._ack_timeout,
+                            Duration::from_millis(250),
+                        )
+                        .map(|_| DeliveryAck::Accepted)
+                        .map_err(|error| DeliveryTransportError(format!("{error}"))),
+                );
             }
         }
         results
@@ -523,11 +527,18 @@ where
 {
     fn send_message(&mut self, message: &Message) -> Result<DeliveryAck, CommunicationError> {
         let (contact_id, envelope_id, kind, encrypted) = self.encode_message(message)?;
-        // Delivery is durable and receipt-driven.  Never wait for a remote
-        // ACK while running the application actor: a missing peer must only
-        // cause the durable worker to retry on a later maintenance turn.
+        // Delivery remains durable, but completion requires the remote
+        // application ACK. The bounded wait keeps the shared peer mutex
+        // available while making a lost frame retryable by the durable worker.
         self.link
-            .send_envelope(contact_id, envelope_id, kind, encrypted)
+            .send_and_wait_ack_with_limit(
+                contact_id,
+                envelope_id,
+                kind,
+                encrypted,
+                self._ack_timeout,
+                Duration::from_millis(250),
+            )
             .map(|_| DeliveryAck::Accepted)
             .map_err(|_| CommunicationError::Peer)
     }
@@ -614,7 +625,7 @@ where
         )
         .map_err(|_| ControlTransportError)?;
         self.link
-            .send_envelope(
+            .send_and_wait_ack_with_limit(
                 contact_id,
                 job.job_id,
                 match job.kind {
@@ -623,6 +634,8 @@ where
                     _ => RECEIPT_MESSAGE_KIND,
                 },
                 encrypted,
+                self._ack_timeout,
+                Duration::from_millis(250),
             )
             .map(|_| ControlAck::Accepted)
             .map_err(|_| ControlTransportError)
@@ -743,6 +756,19 @@ where
                 if message_contact != contact.id() {
                     return self.reject(&envelope);
                 }
+                // A peer may only advance delivery state for a message that
+                // this device sent. Receipts for inbound messages are not a
+                // valid state transition on this lane.
+                let Some(message) = self
+                    .engine
+                    .message(MessageId::from_opaque(receipt.message_id))
+                    .map_err(|_| CommunicationError::Engine)?
+                else {
+                    return self.reject(&envelope);
+                };
+                if message.direction() != torca_messaging::MessageDirection::Outbound {
+                    return self.reject(&envelope);
+                }
                 let _ = self
                     .engine
                     .dispatch(EngineCommand::ApplyReceipt(Receipt {
@@ -773,6 +799,17 @@ where
                 if message_contact != contact.id() {
                     return self.reject(&envelope);
                 }
+                let Some(conversation) =
+                    ConversationRepository::for_contact(&self.relationships, contact.id())
+                        .map_err(|_| CommunicationError::Inbound)?
+                else {
+                    return self.reject(&envelope);
+                };
+                if reaction.conversation_id != conversation.id().to_opaque()
+                    || reaction.actor_id != contact.remote_identity().identity_id().to_opaque()
+                {
+                    return self.reject(&envelope);
+                }
                 let domain = torca_messaging::MessageReaction::new(
                     MessageId::from_opaque(reaction.message_id),
                     torca_conversations::ConversationId::from_opaque(reaction.conversation_id),
@@ -792,6 +829,24 @@ where
             }
             (MESSAGE_DELETION_MESSAGE_KIND, ApplicationPayload::MessageDeletion(deletion)) => {
                 if deletion.contact_id != contact.id().to_opaque() {
+                    return self.reject(&envelope);
+                }
+                let Some(message_contact) = self
+                    .engine
+                    .message_contact(MessageId::from_opaque(deletion.message_id))
+                    .map_err(|_| CommunicationError::Engine)?
+                else {
+                    return self.reject(&envelope);
+                };
+                let Some(conversation) =
+                    ConversationRepository::for_contact(&self.relationships, contact.id())
+                        .map_err(|_| CommunicationError::Inbound)?
+                else {
+                    return self.reject(&envelope);
+                };
+                if message_contact != contact.id()
+                    || deletion.conversation_id != conversation.id().to_opaque()
+                {
                     return self.reject(&envelope);
                 }
                 let _ = self

@@ -362,7 +362,9 @@ class _ConversationPaneState extends State<ConversationPane>
     final summary = _conversationSummary();
     final activity = summary?.lastActivityAtMs ?? 0;
     final activityChanged = activity != _lastActivityAtMs;
-    final reactionSignature = _reactionSignature(widget.gateway.snapshots.value);
+    final reactionSignature = _reactionSignature(
+      widget.gateway.snapshots.value,
+    );
     final reactionsChanged = reactionSignature != _lastReactionSignature;
     _lastActivityAtMs = activity;
     _lastReactionSignature = reactionSignature;
@@ -370,9 +372,8 @@ class _ConversationPaneState extends State<ConversationPane>
       final projected = <String, bool>{};
       for (final reaction in widget.gateway.snapshots.value.reactions) {
         if (reaction.conversationId != widget.conversation.id) continue;
-        projected[
-          '${reaction.messageId}:${reaction.actorId}:${reaction.emoji}',
-        ] = reaction.active;
+        projected['${reaction.messageId}:${reaction.actorId}:${reaction.emoji}'] =
+            reaction.active;
       }
       _pendingReactionStates.removeWhere(
         (key, value) => projected[key] == value,
@@ -416,12 +417,17 @@ class _ConversationPaneState extends State<ConversationPane>
   }
 
   String _reactionSignature(AppSnapshotDto snapshot) {
-    final values = snapshot.reactions
-        .where((reaction) => reaction.conversationId == widget.conversation.id)
-        .map((reaction) =>
-            '${reaction.messageId}:${reaction.actorId}:${reaction.emoji}:${reaction.active}:${reaction.updatedAtMs}')
-        .toList()
-      ..sort();
+    final values =
+        snapshot.reactions
+            .where(
+              (reaction) => reaction.conversationId == widget.conversation.id,
+            )
+            .map(
+              (reaction) =>
+                  '${reaction.messageId}:${reaction.actorId}:${reaction.emoji}:${reaction.active}:${reaction.updatedAtMs}',
+            )
+            .toList()
+          ..sort();
     return values.join('|');
   }
 
@@ -522,9 +528,12 @@ class _ConversationPaneState extends State<ConversationPane>
           emoji: parts.sublist(2).join(':'),
           active: true,
         );
-        final list = reactionsByMessage[reaction.messageId] ??=
-            <ReactionDto>[];
-        if (!list.any((value) => value.actorId == reaction.actorId && value.emoji == reaction.emoji)) {
+        final list = reactionsByMessage[reaction.messageId] ??= <ReactionDto>[];
+        if (!list.any(
+          (value) =>
+              value.actorId == reaction.actorId &&
+              value.emoji == reaction.emoji,
+        )) {
           list.add(reaction);
         }
       }
@@ -726,7 +735,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                   message.typedDirection ==
                                       MessageDirection.outbound
                                   ? snapshot.identity?.id ?? 'local'
-                                      : contact?.remoteIdentityId ??
+                                  : contact?.remoteIdentityId ??
                                         contact?.id ??
                                         'remote',
                               readByLabel: contact?.displayName,
@@ -741,9 +750,7 @@ class _ConversationPaneState extends State<ConversationPane>
                               quotedBody: message.replyToMessageId == null
                                   ? null
                                   : quoted?.body ??
-                                        context
-                                            .l10n
-                                            .originalMessageUnavailable,
+                                        context.l10n.originalMessageUnavailable,
                               quotedUnavailable:
                                   message.replyToMessageId != null &&
                                   quoted == null,
@@ -752,8 +759,7 @@ class _ConversationPaneState extends State<ConversationPane>
                                   Icon(
                                     context.torcaIcons.bookmark,
                                     size: 16,
-                                    semanticLabel:
-                                        context.l10n.bookmarkMessage,
+                                    semanticLabel: context.l10n.bookmarkMessage,
                                   ),
                                 if (attachmentAnnouncement &&
                                     attachments.isEmpty)
@@ -1137,6 +1143,7 @@ class _ConversationPaneState extends State<ConversationPane>
       quickReactionSelected = true;
       await _reactToMessage(message, emoji: emoji);
     }
+
     final action = globalPosition == null
         ? await MessageActionMenu.showTouch(
             context,
@@ -1192,9 +1199,9 @@ class _ConversationPaneState extends State<ConversationPane>
       case MessageAction.copy:
         await Clipboard.setData(ClipboardData(text: message.body));
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.l10n.messageCopied)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(context.l10n.messageCopied)));
         }
       case MessageAction.edit:
         if (!_searching) {
@@ -1378,10 +1385,7 @@ class _ConversationPaneState extends State<ConversationPane>
         children: <Widget>[
           _detail('ID', message.id),
           _detail('Direction', message.direction),
-          _detail(
-            'Status',
-            messageStatusLabel(message.status, context.l10n),
-          ),
+          _detail('Status', messageStatusLabel(message.status, context.l10n)),
           _detail('Queued / received', _date(message.createdAtMs)),
           if (message.sentAtMs != null)
             _detail('Sent', _date(message.sentAtMs!)),
@@ -1425,5 +1429,3 @@ class _ConversationPaneState extends State<ConversationPane>
   }
   return (sending, receiving);
 }
-
-

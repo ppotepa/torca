@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand_core::{OsRng, RngCore};
 use torca_communication_driver::{
     CommunicationError, InboundEnvelope, RADIO_CONTROL_MESSAGE_KIND, RadioInboundRuntime,
 };
 use torca_contacts::{ContactId, ContactRepository, ContactStatus, PeerCredentialRepository};
+use torca_control_delivery::{ControlKind, ControlOutboxStore};
 use torca_crypto::{CryptoProvider, ProtectedSecretStore};
 use torca_foundation::{OpaqueId, ProviderId, Timestamp};
 use torca_peer_protocol::{AckStatus, HandshakeSigner};
@@ -33,7 +34,8 @@ pub struct PeerRadioControl<R, S, K, C, P> {
     crypto: SharedPeerCrypto<C, P>,
     local_identity: OpaqueId,
     provider: ProviderId,
-    queued: VecDeque<(ContactId, RadioControlFrame)>,
+    outbox: Box<dyn ControlOutboxStore>,
+    queued: VecDeque<(ContactId, RadioControlFrame, OpaqueId)>,
     next_attempt_at: Option<Instant>,
     retry_delay: Duration,
 }
@@ -45,6 +47,7 @@ impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
         crypto: SharedPeerCrypto<C, P>,
         local_identity: OpaqueId,
         provider: ProviderId,
+        outbox: impl ControlOutboxStore + 'static,
     ) -> Self {
         Self {
             relationships,
@@ -52,6 +55,7 @@ impl<R, S, K, C, P> PeerRadioControl<R, S, K, C, P> {
             crypto,
             local_identity,
             provider,
+            outbox: Box::new(outbox),
             queued: VecDeque::new(),
             next_attempt_at: None,
             retry_delay: Duration::from_millis(500),
@@ -72,33 +76,48 @@ where
         contact_id: ContactId,
         frame: RadioControlFrame,
     ) -> Result<(), RadioApplicationError> {
-        if matches!(&frame, RadioControlFrame::StateSync { .. }) {
-            if let Some(existing) = self.queued.iter_mut().find(|(queued_contact, queued_frame)| {
-                *queued_contact == contact_id
-                    && matches!(queued_frame, RadioControlFrame::StateSync { .. })
-            }) {
-                *existing = (contact_id, frame);
-                return Ok(());
-            }
-        }
         if self.queued.len() >= RADIO_CONTROL_QUEUE_LIMIT {
             return Err(RadioApplicationError::ControlTransport);
         }
+        let job_id = random_id()?;
+        let payload = RadioControlCodec::encode(&frame);
+        self.outbox
+            .queue(
+                job_id,
+                contact_id.to_opaque(),
+                ControlKind::Radio,
+                &payload,
+                system_timestamp()?,
+            )
+            .map_err(|_| RadioApplicationError::ControlTransport)?;
         eprintln!(
             "torca-radio: control queued contact={} frame={frame:?} queue_len={}",
             contact_id,
             self.queued.len().saturating_add(1),
         );
-        self.queued.push_back((contact_id, frame));
+        self.queued.push_back((contact_id, frame, job_id));
         Ok(())
     }
 
-    fn maintain(&mut self, _now: Timestamp) -> Result<(), RadioApplicationError> {
+    fn maintain(&mut self, now: Timestamp) -> Result<(), RadioApplicationError> {
+        if self.queued.is_empty() {
+            if let Some(job) = self
+                .outbox
+                .claim_due(now, 1)
+                .map_err(|_| RadioApplicationError::ControlTransport)?
+                .into_iter()
+                .next()
+            {
+                let frame = RadioControlCodec::decode(&job.payload)
+                    .map_err(|_| RadioApplicationError::ControlTransport)?;
+                self.queued.push_back((ContactId::from_opaque(job.contact_id), frame, job.job_id));
+            }
+        }
         let now_instant = Instant::now();
         if self.next_attempt_at.is_some_and(|deadline| deadline > now_instant) {
             return Ok(());
         }
-        let Some((contact_id, frame)) = self.queued.front().cloned() else {
+        let Some((contact_id, frame, job_id)) = self.queued.front().cloned() else {
             return Ok(());
         };
         // Arm the retry deadline before doing repository/crypto/transport
@@ -109,7 +128,7 @@ where
             .map_err(|_| RadioApplicationError::ContactUnavailable)?;
         let credential = load_credential(&self.relationships, contact_id)
             .map_err(|_| RadioApplicationError::ContactUnavailable)?;
-        let envelope_id = random_id()?;
+        let envelope_id = job_id;
         let payload = RadioControlCodec::encode(&frame);
         let ciphertext = seal(
             &self.crypto,
@@ -121,15 +140,20 @@ where
             &payload,
         )
         .map_err(|_| RadioApplicationError::Crypto)?;
-        match self.link.send_envelope(
+        match self.link.send_and_wait_ack_with_limit(
             contact_id,
             envelope_id,
             RADIO_CONTROL_MESSAGE_KIND,
             ciphertext,
+            Duration::from_secs(5),
+            Duration::from_millis(250),
         ) {
-            Ok(()) => {
+            Ok(_) => {
                 eprintln!("torca-radio: control sent contact={contact_id}");
                 self.queued.pop_front();
+                self.outbox
+                    .complete(job_id)
+                    .map_err(|_| RadioApplicationError::ControlTransport)?;
                 self.next_attempt_at = None;
                 self.retry_delay = Duration::from_millis(500);
             }
@@ -149,11 +173,15 @@ where
                 // for every other Radio session. Rotate only when the next
                 // queued item belongs to another contact; frames for the
                 // same contact stay ordered (floor/request/end semantics).
-                let next_is_other_contact =
-                    self.queued.get(1).is_some_and(|(next_contact, _)| *next_contact != contact_id);
+                let next_is_other_contact = self
+                    .queued
+                    .get(1)
+                    .is_some_and(|(next_contact, _, _)| *next_contact != contact_id);
                 if next_is_other_contact && let Some(item) = self.queued.pop_front() {
                     self.queued.push_back(item);
                 }
+                let retry_at = now.checked_add(self.retry_delay).unwrap_or(now);
+                let _ = self.outbox.reschedule(job_id, retry_at);
                 self.next_attempt_at = Some(now_instant + self.retry_delay);
                 self.retry_delay = (self.retry_delay * 2).min(Duration::from_secs(30));
             }
@@ -162,13 +190,30 @@ where
     }
 
     fn next_maintenance_delay(&self) -> Option<Duration> {
-        if self.queued.is_empty() {
-            return None;
-        }
         self.next_attempt_at
             .map(|deadline| deadline.saturating_duration_since(Instant::now()))
-            .or(Some(Duration::ZERO))
+            .or_else(|| {
+                self.outbox.next_due().ok().flatten().map(|due| {
+                    due.duration_since(system_timestamp().unwrap_or(Timestamp::UNIX_EPOCH))
+                        .unwrap_or_default()
+                })
+            })
     }
+
+    fn network_changed(&mut self, _now: Timestamp) {
+        self.next_attempt_at = None;
+    }
+}
+
+fn system_timestamp() -> Result<Timestamp, RadioApplicationError> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| RadioApplicationError::Persistence)?
+        .as_millis();
+    Timestamp::from_unix_millis(
+        i64::try_from(millis).map_err(|_| RadioApplicationError::Persistence)?,
+    )
+    .map_err(|_| RadioApplicationError::Persistence)
 }
 
 /// Decrypts Radio control envelopes and forwards typed frames to the shared
@@ -201,6 +246,10 @@ where
     C: CryptoProvider + Send,
     P: ProtectedSecretStore + Send,
 {
+    fn network_changed(&mut self, now: Timestamp) {
+        self.coordinator.network_changed(now);
+    }
+
     fn process_control(
         &mut self,
         envelope: InboundEnvelope,

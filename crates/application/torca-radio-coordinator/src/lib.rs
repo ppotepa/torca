@@ -128,6 +128,10 @@ pub trait RadioControlPort: Send {
     fn next_maintenance_delay(&self) -> Option<Duration> {
         None
     }
+
+    /// Invalidates provider lanes after a connectivity handoff. Durable
+    /// control work remains queued and is retried on the fresh route.
+    fn network_changed(&mut self, _now: Timestamp) {}
 }
 
 /// Dedicated media lane. Implementations own socket workers but not product
@@ -189,6 +193,8 @@ pub trait RadioMediaPort: Send {
     fn worker_alive(&self) -> bool {
         true
     }
+
+    fn network_changed(&mut self) {}
 }
 
 /// Audio device capability and capture/playback boundary.
@@ -1023,6 +1029,11 @@ impl RadioCoordinator {
         }
     }
 
+    pub fn network_changed(&mut self, now: Timestamp) {
+        self.control.network_changed(now);
+        self.media.network_changed();
+    }
+
     pub fn maintain(&mut self, now: Timestamp) -> Result<(), RadioApplicationError> {
         let mut first_error = None;
         if !self.media.worker_alive()
@@ -1537,6 +1548,12 @@ impl SharedRadioCoordinator {
 
     pub fn maintain(&self, now: Timestamp) -> Result<(), RadioApplicationError> {
         self.with_mut(|coordinator| coordinator.maintain(now))
+    }
+
+    pub fn network_changed(&self, now: Timestamp) {
+        if let Ok(mut coordinator) = self.inner.lock() {
+            coordinator.network_changed(now);
+        }
     }
 
     pub fn next_maintenance_delay(&self, now: Timestamp) -> Option<Duration> {

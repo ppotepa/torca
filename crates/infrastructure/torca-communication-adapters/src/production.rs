@@ -242,12 +242,15 @@ where
         .map_err(|_| CommunicationBuildError::Radio)?;
     let radio_control_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;
+    let radio_control_outbox = SqlCipherControlOutbox::open(database_path, database_key)
+        .map_err(|_| CommunicationBuildError::Storage)?;
     let radio_control = PeerRadioControl::new(
         radio_control_relationships,
         link.clone(),
         shared_crypto.clone(),
         inputs.local_identity_id,
         inputs.communication_provider.clone(),
+        radio_control_outbox,
     );
     let radio_peer_relationships = SqlCipherStore::open(database_path, database_key)
         .map_err(|_| CommunicationBuildError::Storage)?;

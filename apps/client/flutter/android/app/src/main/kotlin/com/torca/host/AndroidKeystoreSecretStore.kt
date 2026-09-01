@@ -212,4 +212,6 @@ object AndroidKeystoreBridge {
 
     @JvmStatic external fun nativeBindRuntime(): Boolean
     @JvmStatic external fun nativeInitializeAudioContext(context: Context): Boolean
+    @JvmStatic external fun nativePushRadioPcm(data: ByteArray)
+    @JvmStatic external fun nativeSetRadioCaptureActive(active: Boolean)
 }
